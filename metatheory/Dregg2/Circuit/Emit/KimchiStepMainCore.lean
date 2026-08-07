@@ -5488,7 +5488,8 @@ is why `w11_wraphack` was in `pickles-wrapmain-harness`'s `STATEMENT_BLOCKED` se
 `KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words` named 55 and 56 as
 two of its six. Two constructions of one object, agreeing about nothing.
 
-⚑ **AND THE CYCLE IS NOT ONE.** `whPrevDigest p` reads `whOldChals p` (a `wrapFixtureQ`, which is
+⚑ **AND THE CYCLE IS NOT ONE.** `whPrevDigest p` reads `whOldChals p` (⚑ **Mina devnet block
+539508's own carried IPA challenges since 2026-08-07**, where it was a `wrapFixtureQ` — which is
 what upstream's untyped `old_bp_chals` honestly is) and `STEP_PREVCOMM_XY`, the step proof's
 `prev_challenges[p].comm` — an ARGUMENT to `ProverProof::create_recursive`, built by
 `pickles_kimchi_marshal` from its own deterministic `step_pre` ladder and therefore unmoved when

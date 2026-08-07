@@ -599,23 +599,33 @@ def FIN_LIVE_BLOCK : Nat := 1
 evaluation columns and started reading Mina devnet block 539508's own Wrap-proof evaluations
 (`MinaRealBlockGate.EVZ`/`EVZW`), so this triple is a derivation over a REAL proof for the first
 time. `EmitWrapFinDeferred` prints it; `fin_deferred_words_are_the_derivation` and
-`EmitWrapMainJson`'s refusal are what stop the literal drifting from the emission. -/
+`EmitWrapMainJson`'s refusal are what stop the literal drifting from the emission.
+
+⚠ ⚑ **AND ALL THREE MOVED AGAIN ON 2026-08-07, WHEN THE FINALIZE SPONGE'S CHALLENGE DIGEST BECAME
+THE REAL BLOCK'S.** `whOldChals` was a `wrapFixtureQ` and is `MinaRealBlockTranscript.CHALS_FLAT`
+now, so tape slot 1 — `finChalSponge`'s squeeze — is the value kimchi's own verifier computed
+(`verifier.rs:290-299`), and every value downstream of the 91-element sponge follows it. -/
 def FIN_DEFERRED_CIP : Nat :=
-  6359989686629472738469128335643037281678649527633058133389454667795680729865
+  10021882907998845644915206977161460146706016958919569096310478871579688078414
 /-- …and of the derived `b` — `challenge_polynomial ζ + r · challenge_polynomial ζω`. -/
 def FIN_DEFERRED_B : Nat :=
-  4871653580152294245178499848068324494957829690445060489896152267618388633075
+  9945670164352444464970210418481673149355280056751624682618623052360906475543
 /-- …and the RAW 128-bit ξ′, the finalize sponge's first squeeze.
 
-⚠ **THIS IS NOT MINA'S ξ′ AND THE GAP IS NOW LOCATED RATHER THAN DESCRIBED.**
+⚠ **THIS IS NOT MINA'S ξ′, AND THE GAP IS DOWN TO ONE SLOT OF NINETY-ONE.**
 `MinaRealBlockTranscript.V_CHAL` — the real block's own first phase-2 squeeze — is
 `330305781815358857211111367912836029937`. The finalize sponge eats five things ahead of the 43
-columns, and two of them are still not that proof's: the challenge digest is over `whOldChals`, a
-`wrapFixtureQ` (W-WRAPHACK's, where `MinaRealBlockGate.CHALS0`/`CHALS1` belong), and `finZW0` moves
-`z(ζω)` off the real value because the statement's `perm` word is not the derived one. Both are
-named at `finalize_reproduces_minas_own_ft_eval0`. -/
+columns, and until 2026-08-07 two of them were not that proof's. The challenge digest is that
+proof's now. What is left is tape slot **6**: `finZW0` moves `z(ζω)` off the real value because
+packed word 31 — the live block's own `perm` — is not the derived one.
+
+⚑ **AND THAT LAST SLOT IS MEASURED RATHER THAN DESCRIBED.**
+`KimchiWrapFinalizeSpongeGate.the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot`
+names it `[6]`, and `…the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges` shows the
+same tape with that one bend removed IS `MinaRealBlockTranscript.fqTape2` and squeezes to `V_CHAL`
+and `U_CHAL`. So the distance from this literal to Mina's own ξ′ is exactly one statement word. -/
 def FIN_DEFERRED_XI : Nat :=
-  339931735288088339585480564981297032938
+  197534800635343856236960545375938665224
 
 /-- ⚑⚑ **ENTRY `i`'s SCALAR IS MEASURED SINCE 2026-08-06 — it is the value the prover handed
 `kimchi::verifier`.** `STEP_PUBLIC_IN` is `stepmain_step_r8_finalize.json`'s `public_input` as the
@@ -1461,9 +1471,18 @@ Both are `exists ~request:Req.Messages_for_next_wrap_proof` on the step side —
 writes them — so the step circuit was free to publish whatever it is told, and it was telling itself
 a deterministic fixture while this file computed a squeeze. `KimchiStepMainCore.stmtWrapMsgVal` is
 `KimchiWrapMain.whPrevDigest` now, the step circuit was re-emitted and re-proved, and the tie holds
-against the public input of a proof `kimchi::verifier::batch_verify` accepted. ⚠ **The derivation
-closed; the SOUNDNESS did not** — `whOldChals` is still a `wrapFixtureQ`, which is what upstream's
-untyped `old_bp_chals` honestly is, so what a prover may choose is unchanged.
+against the public input of a proof `kimchi::verifier::batch_verify` accepted.
+
+⚑ **AND THE VALUE IT HASHES BECAME A REAL BLOCK'S ON 2026-08-07.** This paragraph used to close
+"⚠ the derivation closed; the SOUNDNESS did not — `whOldChals` is still a `wrapFixtureQ`". It is
+`MinaRealBlockTranscript.CHALS_FLAT` now — Mina devnet block 539508's own carried IPA challenges,
+the same proof whose evaluations §19c reads and whose transcript supplies packed words 32–36 — so
+both digests are squeezes over that proof's `old_bulletproof_challenges`. The step proof was
+re-emitted and re-proved a second time for it, and **exactly two of the sixty-seven entries moved
+again** (65 and 66), which is the same measurement the first pass made and for the same reason:
+`whPrevDigest` reads no packed statement word. ⚠ What a PROVER may choose is still unchanged —
+upstream's `old_bp_chals` carries no `typ` — so this buys FAITHFULNESS and a referee, not a
+constraint.
 
 ⚠ ⚑⚑ **AND THE COST OF RE-EMITTING WAS PRICED AS A FIXPOINT AND MEASURED AS TWO ENTRIES.** This
 paragraph used to say the step proof must be re-proved and "that is a FIXPOINT, because each of the

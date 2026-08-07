@@ -695,7 +695,28 @@ mod wrapmain_tests {
     /// ⚑ **WHAT IS LEFT IS `w11_finsponge` AND IT IS A DIFFERENT SHAPE OF THING.** Its three
     /// `Field.equal` legs are against packed words 27, 28 and 37 — `bpDiv2`/`bpOdd` and `vXiStmt`,
     /// values the STEP circuit DERIVES — so no statement can carry both sides. That is two
-    /// derivations of one quantity, and it closes on the wrap side, not by re-baking a statement.
+    /// derivations of one quantity.
+    ///
+    /// ⚠ ⚑⚑ **AND THE NEXT SENTENCE USED TO READ "it closes on the wrap side, not by re-baking a
+    /// statement." THAT IS REFUTED, MEASURED 2026-08-07.** The wrap side went as far as it can go:
+    /// `KimchiWrapFinalizeSpongeGate` now measures §20's own emitted 91-element tape against
+    /// `MinaRealBlockTranscript.fqTape2` — block 539508's own phase-2 tape, extracted on a path
+    /// that never sees this assembly — and it agrees in **90 of 91 slots**. The one that differs is
+    /// slot 6, `finZW0`'s solved `z(ζω)`, and with that single bend removed the tape IS `fqTape2`
+    /// and §20's two squeezes ARE that block's `V_CHAL` and `U_CHAL`
+    /// (`the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges`, closed in the kernel).
+    ///
+    /// ⚑ **SO THE RESIDUE IS ONE WIRING DEFECT WITH FOUR INSTANCES, AND IT IS ON THE STEP SIDE.**
+    /// `KimchiStepMainCore.stepStmtVar` publishes the live block's `unfinalized_proofs` deferred
+    /// words out of cells that already hold a DIFFERENT statement's deferred values: `perm`
+    /// hi/parity are `ftcDiv2 0`/`ftcOdd 0` (§6b's own ft-comm `perm`), `combined_inner_product`
+    /// and `b` are the splits of `vCipShift`/`vBShift`, and ξ is `vXiStmt` — R5/R6/R8's outputs,
+    /// which are the step circuit's native **Fp** `finalize_other_proof` results about the STEP
+    /// proof. What belongs in those words is the **Fq** deferred values about the WRAP proof, which
+    /// is exactly what §19/§20 derive. One set of cells, two statements: the aliasing IS the
+    /// blocker, and `KimchiWrapFinalizeSpongeGate.the_bend_is_the_live_blocks_own_perm_word`
+    /// exhibits it at word 31 with the target value.
+    ///
     /// See `KimchiWrapMain.finsponge_has_no_witness_on_the_published_statement` and
     /// `KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words`.
     ///

@@ -255,11 +255,23 @@ proof.
 
 ⚠ ⚑ **WHAT THIS DOES NOT SAY, AND THE SEQUEL IT LOCATES.** It does not say `w11_finsponge` proves;
 `finsponge_has_no_witness_on_the_published_statement` says it does not. The `ft_eval0` leg is real
-now and the sponge above it is not: `finSpTape`'s challenge digest is over `whOldChals`, which is
-still a `wrapFixtureQ` where `MinaRealBlockGate.CHALS0`/`CHALS1` belong, and `finZW0` moves `z(ζω)`
-off the real value because packed word `27·FIN_LIVE_BLOCK + 4` is not the derived `perm`. Those two
-are why `FIN_DEFERRED_XI` is not `V_CHAL`, and they are the next two items rather than a caveat on
-this one. -/
+and the sponge above it was not: `finSpTape`'s challenge digest was over `whOldChals`, a
+`wrapFixtureQ` where `MinaRealBlockGate.CHALS0`/`CHALS1` belong, and `finZW0` moves `z(ζω)` off the
+real value because packed word `27·FIN_LIVE_BLOCK + 4` is not the derived `perm`.
+
+✅ ⚑ **THE FIRST OF THOSE TWO CLOSED ON 2026-08-07 AND THE SPONGE HAS ITS OWN REALITY GATE NOW.**
+`whOldChals` is `MinaRealBlockTranscript.CHALS_FLAT`, and `KimchiWrapFinalizeSpongeGate` measures
+what that bought, against a referee this file cannot influence:
+
+  * `the_emitted_challenge_digest_is_the_accepted_blocks` — §20's own nested sponge squeezes
+    `PREV_CHAL_DIGEST`, and the mixer it replaced does not;
+  * `the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot` — the emitted 91-element tape
+    against `MinaRealBlockTranscript.fqTape2` is `[6]`, WHICH slot rather than how many;
+  * `the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges` — with that one bend removed
+    the tape IS `fqTape2` and §20's two squeezes ARE `V_CHAL` and `U_CHAL`.
+
+⚠ So `FIN_DEFERRED_XI` is still not `V_CHAL`, and the reason is now a SINGLE named statement word
+rather than two unlocated ones: `the_bend_is_the_live_blocks_own_perm_word`. -/
 theorem finalize_reproduces_minas_own_ft_eval0 :
     (let d := finProbeData tW.sh tW.sp FIN_LIVE_BLOCK
      d.vals.getD d.fp.slots.ftEval0 0 = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.FT0
@@ -343,7 +355,10 @@ and it is the one that priced the repair as unbounded iteration: **no transcript
 supplies variable ADDRESSES (`prevW s sp w = .external (basePrev s sp + w)`), never values; §19's own
 β and γ are `prevW s sp (finBlockWord p 6)` / `(… p 7)` — PACKED STATEMENT WORDS, not the transcript's
 β and γ; and the finalize sponge is a FRESH `runSpongeQ` over `finSpTape`, whose 91 elements are one
-statement word, a digest over `whOldChals` (a `wrapFixtureQ`), and evaluation-column fixtures.
+statement word, a digest over `whOldChals`, and evaluation columns. ⚑ Both of those last two were
+`wrapFixtureQ` when this was written and are Mina devnet block 539508's own since 2026-08-06/07; the
+STRATIFICATION is unchanged by that, which is the point of stating it over the cone below rather than
+over the provenance of the values.
 
 So the loop the docblocks named **closes upstream in Pickles, where a step proof's deferred values are
 the previous wrap's squeezes — not inside this model's definition graph.** Here it is a

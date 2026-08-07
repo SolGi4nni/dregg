@@ -3778,6 +3778,24 @@ reads**, and `derive_plonk`'s `perm` is `−(e1z · β · α²¹ · zkp · Π �
 value is `e1z · permUsed / perm₀`: one probe evaluation, one inversion, statement word untouched,
 MSM untouched, every rung below untouched.
 
+⚠ ⚑⚑ **THAT ARGUMENT'S PREMISE EXPIRED ON 2026-08-06 AND THE PARAGRAPH ABOVE IS KEPT ONLY SO THE
+EXPIRY IS VISIBLE.** "A `Req.Evals` witness this sub-circuit alone reads" was true while
+`finColVal` was `wrapFixtureQ`: bending a fixture costs nothing and the solve was free. §19c reads
+Mina devnet block 539508's own `es` columns now, so this multiply presents §20's sponge an
+evaluation **that block does not have** — and §20's sponge is the one whose squeeze is supposed to
+be that block's ξ′. `KimchiWrapFinalizeSpongeGate.the_emitted_finalize_tape_differs_from_minas_in
+_exactly_one_slot` measures the cost at exactly one tape slot of ninety-one, and
+`the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges` shows the far side: without this
+bend the tape IS `MinaRealBlockTranscript.fqTape2` and the squeezes ARE `V_CHAL` and `U_CHAL`.
+
+⚑ **WHAT IT WOULD TAKE, NAMED.** Packed word 31 must be `qSub perm FIN_SHIFT2`. It is not free on
+the step side: `KimchiStepMainCore.stepStmtVar` maps the live block's `perm` hi/parity to
+`ftcDiv2 0`/`ftcOdd 0`, the split of §6b's own ft-comm `perm` — the STEP circuit's native **Fp**
+`finalize_other_proof` output, about the STEP proof — published where an **Fq** deferred value about
+the WRAP proof belongs. Words 27, 28 and 37 are the same aliasing through `vCipShift`, `vBShift` and
+`vXiStmt`. ⚠ Until that is unwired, keeping this solve is a CONTAINMENT and is labelled one here:
+it is what makes `w10_finalize` prove, and `w11_finsponge` refuses anyway.
+
 ⚠ ⚑ **AND IT IS APPLIED ONLY TO THE BLOCK THAT CLAIMS `should_finalize`, WHICH IS NOT A DETAIL.**
 Solving it in EVERY block would force `perm = permUsed` for any statement word whatever, so
 `Field.equal` would take `bit = 1` unconditionally, `1 − finalized` would be 0 unconditionally, and
