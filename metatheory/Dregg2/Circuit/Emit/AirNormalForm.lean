@@ -540,19 +540,35 @@ disk for whenever that is worth paying. **This section is the other axis** (`Gat
 ## ⚠ IT IS ALSO NOT APPLIED YET, AND THE REASON IS MEASURED RATHER THAN CAUTIOUS
 
 The pass was landed to be wired into `EmitByName.main`. The consumer enumeration that had to clear
-first did not: **5 of the 26 descriptors this pass moves are HARD BYTE-PINNED by a `#guard` in
-their own emitter module**, each of the form `#guard emitVmJson2 <desc> == "<escaped JSON>"` —
+first did not. Every one of the 26 emitter modules was scanned for a byte FACT — not just a byte
+LITERAL — and **4 of the 26 carry one this pass breaks**:
 
-* `derivation` — `Emit/DerivationEmit.lean:401`
-* `field-delta-result-range` — `Emit/FieldDeltaRangeEmit.lean`
-* `faithful-note-spend-v2` — `Emit/FaithfulNoteSpendDescriptorPlan.lean`
-* `shielded-whole-note-swap-substrate-v1` — `Emit/ShieldedWholeNoteSwapSubstrateDescriptor.lean`
-* `dregg-shielded-spend-pinned-root-v1` — `Emit/ShieldedSpendDescriptor.lean`
+| descriptor | the guard | why it breaks |
+|---|---|---|
+| `derivation` | `DerivationEmit.lean:401` `#guard emitVmJson2 derivationDesc == "…"` | full bytes |
+| `field-delta-result-range` | `FieldDeltaRangeEmit.lean:75` `… == FIELD_DELTA_RANGE_GOLDEN` | full bytes |
+| `dregg-shielded-spend-pinned-root-v1` | `ShieldedSpendDescriptor.lean:597` `… == SHIELDED_SPEND_PINNED_ROOT_GOLDEN` | full bytes |
+| `faithful-note-spend-v2` | `FaithfulNoteSpendDescriptorPlan.lean:575` `…Json.length == 97665` | 97,665 → 96,665 |
 
-Folding in `EmitByName.main` leaves each of those `#guard`s pinning the UNFOLDED bytes while the
-artifact carries the FOLDED ones, and `scripts/check-emit-gate-weld.py` welds the two (the Rust
-`GOLDEN_JSON`s are `include_str!` of the artifact, so they follow the emit; the Lean literal does
-not). The tree would go red at the weld, not at the drift gate.
+⚠ **The other 22 are clean, and that is measured rather than assumed.** Their guards are structural
+counts (`constraints.length`, `publicPins.length`, `tables.length`, `ranges.length`) which
+`foldConstDesc_shape` preserves; `startsWith` guards over the JSON HEADER, which the fold never
+touches; positive `.contains` of structural strings (`"window_gate"`, `"stage0_schedule"`); and —
+the one that needed real checking — **8 NEGATIVE `.contains` guards forbidding a specific field
+constant** (`1347571253`, `1430520837`, `68719403010`, `1346720313`, `1246122553`). A constant fold
+MANUFACTURES literals that were not in the bytes before, so it could in principle satisfy one of
+those. It does not: all 8 were folded and re-checked, and the forbidden constant is absent before
+and after.
+
+⚠ `shielded-whole-note-swap-substrate-v1` was in an earlier draft of this list and is NOT pinned —
+its guard is a header `startsWith` that survives the fold. The list is 4.
+
+Folding in `EmitByName.main` leaves those `#guard`s pinning the UNFOLDED bytes while the artifact
+carries the FOLDED ones. Three of the four are welded to the artifact by
+`scripts/check-emit-gate-weld.py` (the Rust `GOLDEN_JSON`s are `include_str!` of the artifact, so
+they follow the emit; the Lean literal does not) and would go RED there. ⚠ **The `length` guard is
+welded to nothing** — it would stay green while describing a file that no longer exists, which is
+the worse failure of the two and the reason this stops rather than ships.
 
 ⚠ **None of this is a VK cascade** — `proof_bind` appears in exactly 6 constraints across 4
 descriptors corpus-wide (`dregg-mina-lightclient-{link,verify}-v1`, `mina-wrap-conjunction{,
