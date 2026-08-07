@@ -168,6 +168,11 @@ fn effect_body(effect: &Effect) -> String {
             payload.inputs.len(),
             payload.output_legs.len()
         ),
+        Effect::Shield {
+            value, asset_type, ..
+        } => format!(
+            "a shielded on-ramp: debit a cleartext note (value {value}, asset {asset_type}) and mint an equal-value HIDDEN shielded note bound to the debited value"
+        ),
 
         Effect::SpawnWithDelegation {
             child_public_key,

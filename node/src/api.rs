@@ -10893,7 +10893,7 @@ mod tests {
     //      any arm of the producer — or re-introducing a hand-rolled twin in the
     //      gate — flips that variant's observed class and reds this test by name.
     //
-    // Cross-check worth stating: the 29 / 5 / 2 split below is EXACTLY the
+    // Cross-check worth stating: the 29 / 5 / 3 split below is EXACTLY the
     // Descriptor / NamedResidual / RefusedResidual split of
     // `circuit/tests/effect_enum_descriptor_residual_gate.rs`, arrived at from the
     // other end (that gate reads descriptor rungs; this one runs the projector). A
@@ -11255,6 +11255,19 @@ mod tests {
             new_ml_dsa_public_key: vec![0x63; 32],
             new_key_possession_signature: vec![0x64; 32],
         },
+        // The shielded on-ramp: verified executor-side, NO deployed EffectVM row, so the
+        // SDK producer (`try_convert_effects_to_vm`) refuses it by name — Refused, like the
+        // PQ verbs above.
+        Shield => GateClass::Refused, Effect::Shield {
+            value: 1,
+            asset_type: 0,
+            note_commitment: dregg_cell::NoteCommitment([0x68; 32]),
+            encrypted_note: vec![],
+            shield_proof: vec![],
+            nullifier: dregg_cell::Nullifier([0x68; 32]),
+            note_tree_root: [0u8; 32],
+            spending_proof: vec![],
+        },
     }
 
     fn observed_gate_class(actor: &CellId, effect: &Effect) -> GateClass {
@@ -11305,13 +11318,13 @@ mod tests {
             mismatched.len(),
             mismatched.join("\n  ")
         );
-        // The 29/5/2 split mirrors the Descriptor/NamedResidual/RefusedResidual split
+        // The 29/5/3 split mirrors the Descriptor/NamedResidual/RefusedResidual split
         // of `circuit/tests/effect_enum_descriptor_residual_gate.rs`. Pinning it here
         // makes a verb SILENTLY changing posture (a residual quietly gaining or losing
         // a producer arm) red rather than invisible.
         assert_eq!(
             counts,
-            (29, 5, 2),
+            (29, 5, 3),
             "attestable / no-actor-transition / refused split moved; reconcile against \
              effect_enum_descriptor_residual_gate.rs before editing the pin"
         );

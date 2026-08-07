@@ -578,15 +578,15 @@ fn the_weld_projects_every_effect_variant_as_classified() {
     );
     assert_eq!(
         counts,
-        (11, 15, 10),
+        (11, 16, 10),
         "projected / no-cell-state-change / unprojected-mover split moved. 11 verbs the weld \
-         projects, 15 whose apply leg writes no committed field of the acting cell, 10 movers the \
+         projects, 16 whose apply leg writes no committed field of the acting cell, 10 movers the \
          sovereign producers FAIL CLOSED on. Reconcile against `rotation_witness::weld_coverage` \
-         and `node/src/api.rs`'s 29/5/2 attestation split before editing the pin"
+         and `node/src/api.rs`'s 29/5/3 attestation split before editing the pin"
     );
     assert_eq!(
         weld_rows().len(),
-        36,
+        37,
         "the ledger must carry one row per `dregg_turn::Effect` variant"
     );
 }

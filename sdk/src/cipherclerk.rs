@@ -7086,6 +7086,31 @@ impl AgentCipherclerk {
                 "EffectVM cannot yet prove {effect}: the PQ identity authority plane has no AIR row"
             )));
         }
+        // The shielded ON-RAMP (`Effect::Shield`) is verified executor-side and has NO
+        // deployed EffectVM row, so the checked projection REFUSES it BY NAME — the same
+        // fail-closed posture as the verify-side twin
+        // (`dregg_turn::executor::try_convert_turn_effects_to_vm`, `ShieldedEffect`), and
+        // nested inside `ExerciseViaCapability` too (which this projector only hash-folds).
+        fn find_shielded_onramp_effect(effects: &[Effect]) -> Option<&'static str> {
+            for effect in effects {
+                match effect {
+                    Effect::Shield { .. } => return Some("Shield"),
+                    Effect::ExerciseViaCapability { inner_effects, .. } => {
+                        if let Some(found) = find_shielded_onramp_effect(inner_effects) {
+                            return Some(found);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        if let Some(effect) = find_shielded_onramp_effect(effects) {
+            return Err(SdkError::InvalidWitness(format!(
+                "EffectVM cannot yet prove {effect}: the shielded on-ramp is verified \
+                 executor-side and has no deployed AIR row"
+            )));
+        }
         // THE AIR'S REAL FIELD-LANE CEILING (GitHub #61/#62, measured 2026-07-30).
         //
         // ⚠ THIS GUARD READ `*index > u32::MAX as u64`, and so did its executor-side twin
