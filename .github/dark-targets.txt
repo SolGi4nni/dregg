@@ -304,14 +304,49 @@ never-run fhegg-fhe test party_mpc_certified_preprocessing   # `verified-pq-runt
 never-run fhegg-fhe test party_mpc_preprocessing_use   # `verified-pq-runtime-tests`, ditto.
 never-run fhegg-fhe test distributed_threshold_committee   # `verified-pq-runtime-tests`; spawns THREE party processes + a relying party via CARGO_BIN_EXE.
 never-run fhegg-fhe test distributed_netting_processes   # `verified-pq-runtime-tests`, ditto — the separate-OS-process distributed netting demonstrator (added 2026-07-26 in f84cee425, under the same already-dark gate as the three rows above it; it was never runnable, not newly un-run).
-never-run deos-hermes test hermes_runs_js   # `js-agent` pulls deos-js (real SpiderMonkey/mozjs) — its own manifest calls it "the mozjs elephant".
+#
+# ⚑ 2026-08-07: THE NINE `deos-hermes` ROWS BELOW CARRIED THE WRONG REASON, AND IT WAS THE
+# KIND THIS BLOCK'S OWN HEADING WARNS ABOUT — an assumed verdict, not a checked one. Each
+# said "the mozjs elephant". MEASURED, at HEAD, the elephant is ALREADY PAID FOR NIGHTLY,
+# ON THE SAME RUNNER:
+#
+#   * `starbridge-v2/Cargo.toml:163-171` — `desktop` includes `agent-js`;
+#     `:287` — `agent-js = ["embedded-executor", "dep:deos-js"]`;
+#     `:215` — `native-full = ["desktop"]`.
+#     So `armed-teeth.yml`'s `gpui-gated-desktop-teeth` job, which runs
+#     `cargo test -p starbridge-v2 --features native-full` on hbox every night, builds
+#     deos-js AND SpiderMonkey already. mozjs is not a reason for these rows to be dark;
+#     it is a cost this repository elects to pay on a schedule.
+#   * `starbridge-v2/Cargo.toml:312` — `live-brain = ["agent-js", "dep:deos-hermes",
+#     "deos-hermes/js-agent"]`. The feature these nine rows are gated on is REACHABLE from
+#     the root graph; nothing merely "excludes" it.
+#   * mozjs builds on the developer box too: `target/debug/build/mozjs_sys-*/out/build/`
+#     holds `libjsapi.a` + `libjsglue.a`, rebuilt 2026-08-06.
+#
+# ⚠ THE REAL BLOCKER, AND IT IS SHARED WITH THREE OTHER RED LANES. `deos-hermes` depends on
+# `dregg-sdk` with DEFAULT features, which embed the verified Lean executor (its own
+# manifest header says so and calls it deliberate). On 2026-08-07 the seed for HEAD's Lean
+# tree does not exist: `dregg-lean-ffi/lean-seed.pin` pins `DREGG_TREE_HASH=406424cf…`
+# against a checkout of `2b72ef82…`, the derived asset
+# `libdregg_lean-Linux-x86_64-v4.30.0-d9a5c5465cb75c79.a.zst` is absent from the release's
+# 152 published assets, and `dregg-lean-ffi/build.rs:2569` then refuses to substitute an
+# older archive. That single absence is ALSO why `armed-teeth.yml`'s `lean-hard-mode`
+# (curl 404), `feature-gated-prove-teeth` (0 of 4) and `binding-teeth` (0 of 17) were all
+# red on 2026-08-07. Publish a seed for HEAD and these nine become a `--test` line.
+#
+# ⚠ WHAT IS NOT MEASURED, said plainly rather than implied: nobody has compiled
+# `deos-hermes --features js-agent` at HEAD. These rows record that the target is NEVER
+# RUN, which is exactly true; they do not assert it would pass, or even compile. The
+# invocation that would settle it is
+# `cd deos-hermes && cargo test --features js-agent --test <name>`.
+never-run deos-hermes test hermes_runs_js   # `js-agent` (deos-js/SpiderMonkey). ⚠ REASON CORRECTED 2026-08-07 — see the block above: mozjs is already built nightly by `native-full`; the live blocker is the unpublished Lean seed.
 never-run deos-hermes test hermes_authors_cards   # `js-agent`, ditto.
 never-run deos-hermes test hermes_authors_card_via_run_js   # `js-agent`, ditto.
 never-run deos-hermes test hermes_composes_multi_cell   # `js-agent`, ditto.
 never-run deos-hermes test agent_memory_as_umem   # `js-agent`, ditto.
 never-run deos-hermes test paid_agent_drives_the_world   # `js-agent`, ditto.
-never-run deos-hermes test red_team_run_js_server_surface   # `js-agent`, ditto — and it is a RED-TEAM surface test, so its darkness is the expensive kind.
-never-run deos-hermes test node_backed_hands   # `node-brain`: a confined brain driving a REMOTE node's World over a granted egress door.
+never-run deos-hermes test red_team_run_js_server_surface   # `js-agent`, ditto — and it is a RED-TEAM surface test, so its darkness is the expensive kind. ⚑ ARM THIS ONE FIRST; the blocker is named at the test itself.
+never-run deos-hermes test node_backed_hands   # `node-brain`: a confined brain driving a REMOTE node's World over a granted egress door. `node-brain` implies `js-agent`, so the block above applies here too.
 never-run deos-hermes test node_backed_round_trip   # `node-brain`, ditto.
 #
 # ⚠ PLATFORM DARKNESS, WHICH THIS SWEEP CANNOT SEE AND WHICH ALREADY COST.

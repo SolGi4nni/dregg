@@ -21,6 +21,75 @@
 //! dead sink).
 //!
 //! Run: `cd deos-hermes && cargo test --features js-agent --test red_team_run_js_server_surface`
+//!
+//! ─────────────────────────────────────────────────────────────────────────────────────
+//! ⚑ THIS TEST HAS NEVER EXECUTED. NOT ONCE. Measured 2026-08-07.
+//!
+//! It is listed `never-run` in `.github/dark-targets.txt`, and no workflow, script or
+//! gauntlet profile in this repository names `--features js-agent`. The `#![cfg]` below
+//! therefore compiles this file to an EMPTY test crate on every invocation that reaches
+//! it: `0 passed; 0 failed`, exit 0. **The F1 finding above is guarded by nothing.** A
+//! regression that reinstalled `deos.server.*` into the model's global would be green
+//! everywhere, and the file's own line count would keep reading as coverage.
+//!
+//! ── THE REASON THIS FILE CARRIED WAS WRONG, AND THE CORRECTION MATTERS ────────────────
+//! `dark-targets.txt` justified the darkness with "`js-agent` pulls deos-js (real
+//! SpiderMonkey/mozjs) — the mozjs elephant". That is a COST ESTIMATE wearing a
+//! CONSTRAINT's clothes, and it is false as a constraint. At HEAD:
+//!
+//!   * `starbridge-v2/Cargo.toml:287` — `agent-js = ["embedded-executor", "dep:deos-js"]`,
+//!     pulled by `desktop` (:163-171), pulled by `native-full` (:215). `armed-teeth.yml`'s
+//!     `gpui-gated-desktop-teeth` job runs `cargo test -p starbridge-v2 --features
+//!     native-full` on hbox NIGHTLY. **SpiderMonkey is already built, every night, on the
+//!     box this test would run on.**
+//!   * `starbridge-v2/Cargo.toml:312` — `live-brain = [..., "deos-hermes/js-agent"]`. The
+//!     very feature this file is gated on is reachable from the root graph.
+//!   * mozjs also builds on the dev box: `target/debug/build/mozjs_sys-*/out/build/`
+//!     carries `libjsapi.a` and `libjsglue.a` (rebuilt 2026-08-06).
+//!
+//! ── THE BLOCKER THAT IS ACTUALLY LOAD-BEARING ─────────────────────────────────────────
+//! `deos-hermes` depends on `dregg-sdk` with DEFAULT features, which embed the verified
+//! Lean executor — deliberately, so a Hermes tool-call terminates in a genuine receipted
+//! turn (see this crate's `Cargo.toml` header). On 2026-08-07 no Lean seed exists for
+//! HEAD's tree: `dregg-lean-ffi/lean-seed.pin` pins `DREGG_TREE_HASH=406424cf…` against a
+//! checkout of `2b72ef82…`, the derived asset
+//! `libdregg_lean-Linux-x86_64-v4.30.0-d9a5c5465cb75c79.a.zst` is absent from the
+//! `lean-seed` release's 152 assets, and `dregg-lean-ffi/build.rs:2569` refuses to
+//! substitute an older archive as current-source evidence. The SAME absence is why
+//! `armed-teeth.yml`'s `lean-hard-mode` (404), `feature-gated-prove-teeth` (0 of 4) and
+//! `binding-teeth` (0 of 17) were all red that morning. A box with the pinned Lean
+//! toolchain — hbox, which carries the `lean-seed` runner label — has it locally and does
+//! not need the release.
+//!
+//! ── TO ARM IT (one step, on the lane that already owns the elephant) ──────────────────
+//! In `armed-teeth.yml`'s `gpui-gated-desktop-teeth` job (self-hosted, `lean-seed`), after
+//! the existing steps and under `if: ${{ !cancelled() }}` — the guard that block already
+//! documents — add:
+//!
+//! ```yaml
+//! - name: Arm the deos-hermes js-agent red-team surface
+//!   if: ${{ !cancelled() }}
+//!   working-directory: deos-hermes
+//!   run: |
+//!     set +e; set -uo pipefail
+//!     log=/tmp/hermes-redteam.log
+//!     cargo test --features js-agent \
+//!       --test red_team_run_js_server_surface --no-fail-fast 2>&1 | tee "$log"
+//!     status=${PIPESTATUS[0]}
+//!     ran=$(grep -hoE '^test result: (ok|FAILED)\. [0-9]+ passed' "$log" \
+//!           | grep -oE '[0-9]+' | paste -sd+ - | bc); ran=${ran:-0}
+//!     # A `#![cfg(feature = "js-agent")]` file with the feature off reports `ok. 0 passed`
+//!     # and EXITS 0. Count what executed; never trust the exit code.
+//!     [ "${ran:-0}" -lt 1 ] && { echo "::error::the F1 red-team surface tooth did not run."; status=1; }
+//!     exit $status
+//! ```
+//!
+//! ⚠ WHAT IS NOT MEASURED, so nobody reads more into this than was done: **nobody has
+//! compiled `deos-hermes --features js-agent` at HEAD.** The claim proved here is that the
+//! test has never run and that mozjs is not why. Whether it compiles and passes today is
+//! open, and the invocation at the top of this comment is what settles it. Do not record
+//! this file as covered until a log shows `1 passed`.
+//! ─────────────────────────────────────────────────────────────────────────────────────
 
 #![cfg(feature = "js-agent")]
 
