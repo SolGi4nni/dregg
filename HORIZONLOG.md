@@ -1,5 +1,53 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 7 (PI COMPACTION) — **REFUSED**: four of the "dead eleven" are read by a deployed AIR, the census could not see it, and it can now (`368f5340e`)
+
+The August 6 entry below priced eleven published felts as dead and named one VK rotation to remove
+them. The execution lane verified §6 at source first, as briefed, and **four of the eleven are
+live**. No descriptor was re-emitted and no VK rotated.
+
+**`EFFECTS_HASH_GLOBAL` (v1 37..40) is the effects-hash block of the bilateral-schedule contract.**
+`SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE` (33) and `sched::EFFECTS_HASH_GLOBAL_BASE = 4`, so
+those four felts sit inside the 49-felt window `inner_pi[33, 82)` that
+`schedule_block_from_inner_pi` projects into `dregg-bilateral-aggregation-v3`. In the **emitted
+bytes**, cols 4..7 carry four `window_gate` transitions (equal on every row) *and* a `pi_binding`
+first + last to that descriptor's outer `PI[4..7]`. The column is forced, so the pin survives
+`dropUnforcedPins` — the aggregation enforces cross-cell agreement on the whole-`call_forest`
+effects hash **algebraically**, which is precisely what `PiDeclarationDeployed`'s `rEffectsGlobal`
+reason said "did not land". `TURN_HASH` (33..36) rides the same projection.
+
+**The class, which is the part worth carrying.** `pi_disposition_census.py` answers *"does any
+constraint in these two rotation registries read index i"*. Its zeroes were correct. They were read
+as *"does anything read this slot"* — a different question the moment a slot is projected into
+another descriptor. And the projection was cited **in the row that declared the slot dead**: *"the
+real object lives at `OUTER_EFFECTS_HASH_GLOBAL_BASE`"* — an outer slot **sourced from this one**.
+One object at two ends of a projection; "the real one lives elsewhere" was read as "this one is
+redundant" when it meant "this one is the input".
+
+**Named follow-ups this leaves:**
+1. ⚑ **The seven-slot compaction is UNSTARTED, not half-landed** (`26`, `27`, `28`, `29..32`).
+   They are contiguous, so the schedule window slides `[33,82)` → `[26,75)` intact and the
+   aggregation is unharmed. Re-priced in `docs/PI-DISPOSITION.md` §6: wide Σ piCount 3,821 →
+   **3,429** (−392, not −616), v3 3,012 → **2,599**, `V1_PI_COUNT` 42 → **35**, `BASE_COUNT`
+   209 → **202**. §6 now also records what its step list omitted — `RotationLayout.PiV3.V2_BASE_COUNT`
+   moves, and the Lean side is **54 files** carrying numeric `piCount` literals (⚠ `piCount ==
+   46/47/50` also occurs on unrelated descriptors, so a blind `sed` corrupts them).
+2. **`CUSTOM_EFFECT_COUNT` (28) has four off-circuit readers** §6 missed — it is the length prefix
+   of the custom-proof array (`atomic.rs:1159`/`:1518`, `trace.rs:1689`,
+   `preflight/checks/effect_vm.rs:342`). Deletion still stands; the length is derivable from the
+   vector the verifier holds, which beats a felt the prover wrote. Must land **with** the derivation.
+3. **Whether to remove 37..40 at all is an operator call, not a measurement.** It re-bases
+   `sched`/`agg`/`outer_pi_v2` + the Lean `Sched.*`/`OuterPi.*`, costs a *second* VK rotation, and
+   **deletes a check that currently holds**.
+
+**The instrument is repaired, not just the document.** `pi_disposition_census.py` carries a
+`PROJECTIONS` table checked against the emitted bytes on every run, a `proj-read` column, and an
+exit-1 refusal when a declared projection stops being forced+pinned — plus
+`--self-test-projections`, which drives red and green on a `mkdtemp` copy and asserts the mutation
+happened before reading the verdict. It was wired into **no gate at all**, so the refusal could
+never have fired; it is now `pi-projections` + `pi-projections-red` in `scripts/local-gates.sh`.
+Three false docblocks corrected with it (`pi.rs` ×2, `trace.rs`'s two surviving "Group 7" claims).
+
 ## ⛑⛑ AUGUST 6 (PI AUTHORITY) — the "live liveness bug" was never live, the executor comparison four docblocks credited had no caller, and the eleven dead slots are decided and priced (`f6a490eae`)
 
 Three named wounds, and the shape of the answer was different for each.
