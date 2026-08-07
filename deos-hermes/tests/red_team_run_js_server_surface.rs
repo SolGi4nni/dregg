@@ -44,8 +44,21 @@
 //!     box this test would run on.**
 //!   * `starbridge-v2/Cargo.toml:312` — `live-brain = [..., "deos-hermes/js-agent"]`. The
 //!     very feature this file is gated on is reachable from the root graph.
+//!     Confirmed by resolve, not by reading the feature names:
+//!     `cd starbridge-v2 && cargo tree --features native-full -i deos-js` returns
+//!     `deos-js <- starbridge-v2`, and `-i mozjs` returns `mozjs v0.15.7 <- deos-js`.
 //!   * mozjs also builds on the dev box: `target/debug/build/mozjs_sys-*/out/build/`
 //!     carries `libjsapi.a` and `libjsglue.a` (rebuilt 2026-08-06).
+//!
+//! ⚠ ONE CAVEAT, STATED RATHER THAN ROUNDED AWAY: `deos-hermes` is a STANDALONE workspace
+//! with its own lock (`mozjs 0.15.14` / `mozjs_sys 140.10.1-0`), while the resolve above is
+//! `mozjs 0.15.7` / `mozjs_sys 0.140.8-2`. So arming this does not literally REUSE the
+//! nightly lane's SpiderMonkey artifacts — it builds a second, differently-versioned one in
+//! `deos-hermes/target`. What is proven is that the toolchain, the prerequisites and the
+//! disk to build SpiderMonkey are all present on that runner and exercised nightly. The
+//! marginal cost is one more mozjs build, not a new capability. If that matters, unifying
+//! the two mozjs pins is the cheaper prerequisite — and it is a lockfile edit, not a design
+//! question.
 //!
 //! ── THE BLOCKER THAT IS ACTUALLY LOAD-BEARING ─────────────────────────────────────────
 //! `deos-hermes` depends on `dregg-sdk` with DEFAULT features, which embed the verified

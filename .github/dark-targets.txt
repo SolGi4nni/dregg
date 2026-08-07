@@ -322,6 +322,16 @@ never-run fhegg-fhe test distributed_netting_processes   # `verified-pq-runtime-
 #     the root graph; nothing merely "excludes" it.
 #   * mozjs builds on the developer box too: `target/debug/build/mozjs_sys-*/out/build/`
 #     holds `libjsapi.a` + `libjsglue.a`, rebuilt 2026-08-06.
+#   Confirmed by RESOLVE, not by reading feature names:
+#   `cd starbridge-v2 && cargo tree --features native-full -i deos-js` -> `deos-js <-
+#   starbridge-v2`; `-i mozjs` -> `mozjs v0.15.7 <- deos-js`.
+#
+#   ⚠ CAVEAT, NOT ROUNDED AWAY: deos-hermes is a standalone workspace pinning
+#   `mozjs 0.15.14` / `mozjs_sys 140.10.1-0`, while that resolve is `0.15.7` / `0.140.8-2`.
+#   Arming these does not REUSE the nightly SpiderMonkey; it builds a second one in
+#   `deos-hermes/target`. Proven: the toolchain, prerequisites and disk are present and
+#   exercised nightly. Unifying the two mozjs pins is a lockfile edit if the duplicate cost
+#   is worth removing.
 #
 # ⚠ THE REAL BLOCKER, AND IT IS SHARED WITH THREE OTHER RED LANES. `deos-hermes` depends on
 # `dregg-sdk` with DEFAULT features, which embed the verified Lean executor (its own
