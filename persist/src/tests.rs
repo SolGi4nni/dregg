@@ -175,7 +175,18 @@ fn schema_epoch_log_row_can_go_red() {
     // 1 · THE ORIGIN STORY, against the REAL constant. `6441705e8` moved the constant and wrote
     //     no row, so the log went on recording the epoch BEFORE the bump. Rewind the last row
     //     one epoch and the comparison `schema_epoch_log_row` makes stops holding.
-    let stale = real.replacen(&tag, &format!("| epoch:{} |", epoch - 1), 1);
+    //
+    // ⚑ THE INJECTION MUST REWIND **EVERY** ROW AT THE CURRENT EPOCH, not just the first.
+    // This was `replacen(&tag, …, 1)`, which modelled the `6441705e8` shape only while the
+    // current epoch appeared exactly ONCE in the log. Two rows at one epoch is ordinary (rows
+    // 143/144 both read `epoch:22`; 147/148/149 all read `epoch:23`), and with a duplicate
+    // present the mutation rewound a row `last_logged_epoch` does not read — leaving the
+    // assertion below comparing 26 against 26 and this red-proof asserting NOTHING. Rewinding
+    // one occurrence also breaks the reader's monotonicity leg (`the epoch only ratchets up`),
+    // which is an Err rather than the value inequality this step is about. Rewinding all of
+    // them is the actual `6441705e8` state: the constant moved, the log did not. Nothing is
+    // widened — the comparison is untouched.
+    let stale = real.replace(&tag, &format!("| epoch:{} |", epoch - 1));
     assert_ne!(stale, real, "stale-log injection matched nothing");
     assert_ne!(
         last_logged_epoch(&stale).expect("stale").0,

@@ -652,7 +652,7 @@ fn honest_transfer_conserves_and_the_minted_note_is_spendable() {
     );
 
     let executor = shielded_executor_holding(&set);
-    run(&executor, payload).expect("the honest transfer is admitted");
+    let first = run_chained(&executor, payload, None).expect("the honest transfer is admitted");
     assert!(
         executor.note_shielded.lock().unwrap().contains(&minted_cm),
         "GATE 4 appended the value-linked Poseidon2 note commitment"
@@ -667,7 +667,7 @@ fn honest_transfer_conserves_and_the_minted_note_is_spendable() {
         second.inputs[0].nullifier, 0,
         "the minted note derives its own nullifier"
     );
-    run(&executor, second).expect(
+    run_chained(&executor, second, Some(first)).expect(
         "the note a transfer MINTED must be spendable by its recipient — this is the L0.5 \
          liveness gap closing, and it is only meaningful because the value it carries was bound",
     );
