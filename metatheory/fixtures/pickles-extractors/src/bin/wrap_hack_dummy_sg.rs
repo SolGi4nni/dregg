@@ -36,7 +36,9 @@
 //!   2. **`Max_proofs_verified` and `actual_proofs_verified` are TWO numbers.** `wrap.rs:666` sets
 //!      `actual_proofs_verified = <the record>.old_bulletproof_challenges.len()` — 1 for dregg's
 //!      one-`verify_one` step rule — while this padding runs to `MAX_PROOFS_VERIFIED_N` = 2.
-//!      `KimchiWrapMainCore.shapeWrap.prevs` served BOTH until 2026-08-07.
+//!      `KimchiWrapMainCore.shapeWrap.prevs` served BOTH until 2026-08-07, when the field was
+//!      renamed `maxPrevs` and fixed at `Max_proofs_verified`; `actual` lives on `WH_REAL_SLOTS`
+//!      and on `BranchData.fz`.
 //!   3. ⚑ **THE PAD'S COMMITMENT IS `Dummy.Ipa.STEP.sg`, NOT `Dummy.Ipa.WRAP.sg`**, and this file
 //!      said the wrong one until 2026-08-07. They pad two DIFFERENT records: `dummy_ipa_wrap_sg()`
 //!      pads `messages_for_next_step_proof.challenge_polynomial_commitments` at `wrap.rs:736` (the

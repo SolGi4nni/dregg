@@ -570,7 +570,7 @@ fn prove_step(
     // ⚠ This line read `PROOFS_VERIFIED` (2) until 2026-08-07, so the step proof was PADDED where
     // upstream is not and `gate_c` reported `MATCH=false` against `gates::STEP_RULE_N_PREVIOUS`
     // every run. **WHAT RE-BAKES:** `STEP_PREVCOMM_XY` (4 coordinates → 2) and therefore
-    // `KimchiWrapMainCore.shapeWrap.prevs`, `KimchiStepWrapChain.chainTape` (37 words → 35) and
+    // `KimchiWrapMainCore.RC_SGOLD`'s real half, `KimchiStepWrapChain.chainTape` (37 words → 35) and
     // every `wrapmain_wrap_*.json` whose `sg_old` block reads it.
     let step_pre: Vec<[PreChallenge; STEP_ROUNDS]> = (0..STEP_RECURSION_SLOTS)
         .map(|j| {
@@ -1209,7 +1209,7 @@ fn main() {
              `actual_proofs_verified = <the record>.old_bulletproof_challenges.len()`, so the \
              RECORD defines the step proof's own kimchi recursion arity. `prove_step` must fold \
              ONE recursion challenge, which re-bakes STEP_PREVCOMM_XY (2 points -> 1) and \
-             therefore `shapeWrap.prevs` and the 30 wrap fixtures. Truncating in `gate_c` alone \
+             therefore `WH_REAL_SLOTS` and the 30 wrap fixtures. Truncating in `gate_c` alone \
              would disagree with `gate_b`, which folds the same vector into expand_deferred's \
              challenges_digest."
         );

@@ -116,7 +116,8 @@ const FP = 289480223093290488558927462521719769633630564819415607159546767643499
 // and the harness proves it — so the sentence that used to sit here ("a `Rung` constructor with a
 // `rungOwn` arm and NO emitted artifact") is retired. It is still not the TOP RUNG for THIS gate,
 // and that is a deliberate choice with the same reason as before: `w11_finsponge` adds two Fq
-// sponges (122 `(Poseidon × 11, Zero)` blocks at `prevs = 2`) and no curve ladder, so it carries
+// sponges (122 `(Poseidon × 11, Zero)` blocks at `maxPrevs = Max_proofs_verified = 2`) and no curve
+// ladder, so it carries
 // nothing this gadget-diff grades. The rung UNION — where those 122 blocks DO count — is
 // `wrapmain-shape-diff.mjs`'s object, and that file assembles all fifteen.
 const TOP_RUNG = 'w11_bullet';
@@ -822,6 +823,33 @@ async function selfTest() {
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
 const arg = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
+
+// ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
+// misreads this convention exists to stop happened to people reading RESULTS, not source. ──
+const SCOPE_ANSWERS =
+  'does every `conform:` leg candidate equal its reference, and does every `ledger:` divergence appear in '
+  + 'EXACTLY its recorded form — over Mina two compiled wrap_main blobs (wrap-transaction cross-checked '
+  + `against wrap-blockchain, Fq recovered from both) and the ONE rung \`wrapmain_wrap_${TOP_RUNG}\` (live `
+  + 'emission or the committed gz), whose stamp must match the current source cone and name a commit?';
+const SCOPE_DOES_NOT_ANSWER =
+  'whether the Lean assembly is Mina wrap circuit. It grades ONE tip of a three-branch rung tree (the two '
+  + 'other tips and every rung above it are unmeasured here), byte-equality is unreachable by construction '
+  + 'since wrap_main.ml:215-219 bakes per-zkApp step VKs, the gadget legs compare the MOST COMMON signature '
+  + 'class plus a count of instances carrying it, and every LEDGER row is a standing ALLOWANCE that stays '
+  + 'green while its exact recorded divergence form holds.';
+const SCOPE_ANSWERS_SELFTEST =
+  'with DREGG_WRAPMAIN_BEND substituting a WRONG reference blob (the Fp step circuit as the wrap reference, '
+  + 'then every q-1 coefficient shaved to q-2), does a CHILD `--report` run exit 1 and NAME '
+  + 'field/modulus-recovered-from-wrap-transaction, while the honest two blobs conform?';
+const SCOPE_DOES_NOT_ANSWER_SELFTEST =
+  'anything about the Lean wrap emission, which it never loads: the bend reds the blob facts and the child '
+  + 'exits before the Lean side is even looked for. It measures the blob-fact legs and `--report` exit code, '
+  + 'not the conformance vector, and not the tree.';
+{
+  const st = argv.includes('--self-test');
+  console.log(`ANSWERS:         ${st ? SCOPE_ANSWERS_SELFTEST : SCOPE_ANSWERS}`);
+  console.log(`DOES NOT ANSWER: ${st ? SCOPE_DOES_NOT_ANSWER_SELFTEST : SCOPE_DOES_NOT_ANSWER}`);
+}
 
 const bent = await bentReference();
 const a = bent ?? await loadCircuit('wrap-transaction');

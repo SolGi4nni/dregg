@@ -125,7 +125,7 @@ pub const PROOFS_VERIFIED: usize = 2;
 /// `expand_deferred`'s `challenges_digest` and kimchi's Fr-sponge folds it into
 /// `prev_challenge_digest` (`verifier.rs:289-299`) at the same transcript position, so truncating
 /// the record alone makes ξ stop agreeing. `prove_step` therefore folds ONE `RecursionChallenge`,
-/// which is what re-bakes `STEP_PREVCOMM_XY` (4 coordinates → 2) and with it `shapeWrap.prevs` and
+/// which is what re-bakes `STEP_PREVCOMM_XY` (4 coordinates → 2) and with it `WH_REAL_SLOTS` and
 /// every wrap fixture below the `sg_old` block.
 pub const STEP_RECURSION_SLOTS: usize = 1;
 
