@@ -4,7 +4,7 @@
 Substrate note: this module renders bytes.  It authors no game semantics.  Every
 verdict, successor and refusal reason below is read out of
 `Dregg2.Games.PathOfAngels.DeckDescent`, and `descentDescriptorRefinesKernel`
-parses the RENDERED bytes back and compares all 14,382 rows against `rowFor`.
+parses the RENDERED bytes back and compares all 17,316 rows against `rowFor`.
 There is no second model of the descent in this repository.
 
 ## Why this is not `Emit.lean`
@@ -19,8 +19,9 @@ The board is THREE hidden bits — does the mouth flood, does the west spur, doe
 the east spur — and the descriptor names none of them.  What it names instead is
 a table in which every row that consults a bit carries BOTH successors
 (`step_is_one_of_the_two_branches`), and a `shaft` block giving the public rules:
-the topology, the two budgets, the carrying capacity, the bank target and the
-tie-break the deck uses when a crossing overruns the sling.
+the topology, the two budgets, the carrying capacity, the bank target, how many
+relics each chamber holds (two on the east spur — the measured junction repair)
+and the tie-break the deck uses when a crossing overruns the sling.
 
 ⚑ The `shaft` block exists so `scripts/poa-design-gate.py` can rebuild the rule
 from the descriptor and check every emitted row against its own reconstruction,
@@ -99,6 +100,14 @@ private def loreJson (d : DeckDescent.Deck) : String :=
   "{" ++ String.intercalate "," (DeckDescent.allChambers.map fun c =>
     jsonString c.tag ++ ":" ++ jsonString (d.get c).lore.tag) ++ "}"
 
+/-- A per-chamber count, as an object.  Counts, not chamber lists: the east spur
+holds two relics, so "which chambers" under-describes both the deck and the
+sling and the old list shape REFUSES to validate rather than collapsing a
+count. -/
+private def countMapJson (f : DeckDescent.Chamber → Nat) : String :=
+  "{" ++ String.intercalate "," (DeckDescent.allChambers.map fun c =>
+    jsonString c.tag ++ ":" ++ toString (f c)) ++ "}"
+
 /-- The state view.  Everything the rules read is here — that is the property the
 design gate's differential depends on, and `descentDescriptorRebuildsFromView`
 below is the check that it holds.
@@ -116,10 +125,8 @@ private def stateJson (s : DeckDescent.State) : String :=
     ",\"damage\":" ++ toString s.damage ++
     ",\"capacity\":" ++ toString (DeckDescent.capacity s) ++
     ",\"lore\":" ++ loreJson s.deck ++
-    ",\"emptied\":" ++
-      chamberListJson (DeckDescent.allChambers.filter fun c => (s.deck.get c).relicTaken) ++
-    ",\"sling\":" ++
-      chamberListJson (DeckDescent.allChambers.filter fun c => s.sling.holds c) ++
+    ",\"taken\":" ++ countMapJson (fun c => (s.deck.get c).relicsTaken) ++
+    ",\"sling\":" ++ countMapJson s.sling.get ++
     ",\"banked\":" ++ jsonBool s.banked ++
     ",\"turns\":" ++ toString (DeckDescent.turnsUsed s) ++
     ",\"doomed\":" ++ jsonBool (DeckDescent.doomedB s) ++
@@ -203,7 +210,7 @@ private def shaftJson : String :=
   ",\"nodes\":" ++ jsonArray (DeckDescent.allNodes.map fun n => jsonString n.tag) ++
   ",\"surface\":\"hatch\"" ++
   ",\"chambers\":" ++ chamberListJson DeckDescent.allChambers ++
-  ",\"relics_per_chamber\":1" ++
+  ",\"relic_count\":" ++ countMapJson DeckDescent.Chamber.relicCount ++
   ",\"parent\":" ++ parentJson ++
   ",\"main_child\":" ++ mainChildJson ++
   ",\"spur_child\":" ++ spurChildJson ++
@@ -214,9 +221,10 @@ private def shaftJson : String :=
       jsonString) ++
   ",\"damaging_lore\":" ++ jsonArray ([jsonString "flooded"]) ++
   ",\"air_per_action\":1" ++
-  ",\"reserve\":\"cheapest ordered visit of the untaken chambers still needed, \
-one lift each, plus the extraction, on the most favourable board still consistent \
-with what the run has seen\"}"
+  ",\"reserve\":\"cheapest ordered collection of the relics still needed - a \
+chamber counts once per relic it still holds, one lift per relic - plus the \
+extraction, on the most favourable board still consistent with what the run has \
+seen\"}"
 
 /-! ## The descriptor -/
 
@@ -258,7 +266,7 @@ def validateDescentDescriptor (bytes : String) : Except String Unit := do
   validateInstanceDeclaration (← document.getObjVal? "instance") "oracle-only"
   exactKeys (← document.getObjVal? "output") ["requires", "contribution", "artifact"]
   let shaft ← document.getObjVal? "shaft"
-  exactKeys shaft ["budgets", "nodes", "surface", "chambers", "relics_per_chamber",
+  exactKeys shaft ["budgets", "nodes", "surface", "chambers", "relic_count",
     "parent", "main_child", "spur_child", "crossings_to_hatch", "crossings",
     "forfeit_order", "lore", "damaging_lore", "air_per_action", "reserve"]
   exactKeys (← shaft.getObjVal? "budgets")
@@ -271,7 +279,7 @@ def validateDescentDescriptor (bytes : String) : Except String Unit := do
   for state in states do
     exactKeys state ["id", "terminal", "view"]
     exactKeys (← state.getObjVal? "view")
-      ["node", "air", "shoring", "damage", "capacity", "lore", "emptied", "sling",
+      ["node", "air", "shoring", "damage", "capacity", "lore", "taken", "sling",
        "banked", "turns", "doomed", "solved"]
   let actions ← (machine.getObjVal? "actions") >>= Json.getArr?
   if actions.size != descentActions.length then
@@ -397,6 +405,14 @@ def descentViewsRefineKernel (bytes : String) : Except String Unit := do
         for c in DeckDescent.allChambers do
           if (← lore.getObjValAs? String c.tag) != (s.deck.get c).lore.tag then
             throw s!"POAG1 descent view {index} misreports the lore of {c.tag}"
+        let taken ← view.getObjVal? "taken"
+        for c in DeckDescent.allChambers do
+          if (← taken.getObjValAs? Nat c.tag) != (s.deck.get c).relicsTaken then
+            throw s!"POAG1 descent view {index} misreports the relics taken at {c.tag}"
+        let sling ← view.getObjVal? "sling"
+        for c in DeckDescent.allChambers do
+          if (← sling.getObjValAs? Nat c.tag) != s.sling.get c then
+            throw s!"POAG1 descent view {index} misreports the sling count for {c.tag}"
     index := index + 1
 
 /-! ## ⚠ The falsifiers, built constructively from the live encoder

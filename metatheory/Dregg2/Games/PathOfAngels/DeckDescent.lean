@@ -28,6 +28,20 @@ behind it.  There is now a junction: the mouth chamber has two children, and a
 body that commits to one spur pays two units of air to be standing at the other.
 `sweepLine` is the transcript that visits both, and it costs the entire budget.
 
+⚑ 2026-08-06, third pass.  The junction existed but its branches were MIRROR
+IMAGES: same depth, same parent, same one relic, crossing table invariant under
+the swap — so cautious-east was cautious-west relabelled and the branch only
+became a decision AFTER a bit was revealed.  `scripts/poa-design-gate.py`
+measured the candidate repairs over its own reconstruction: pricing a spur
+higher (extra air to enter, with or without an extra relic behind the toll)
+turns the 18/18 junction split into 26/0 — a labelled corridor nobody takes —
+while a SECOND RELIC on the east spur at the SAME distance breaks the mirror and
+keeps the branch: all eight draws become distinct games, outcome-changing forks
+rise 1145 → 1360, the junction splits 18/19, and the clock still binds at nine.
+So the east spur holds two relics, the asymmetry is in the PRIZE and never the
+PRICE (`asymmetry_is_prize_not_price`), and `Sling`/`ChamberState` count relics
+per chamber instead of flagging them.
+
 ## The four properties this design is accountable for
 
 1. **Two incomparable budgets.**  `AIR` is the clock and `SHORING` is the supply.
@@ -47,11 +61,12 @@ body that commits to one spur pays two units of air to be standing at the other.
 
 ## What the budget is sized for
 
-`AIR = 9` is not slack.  THREE different lines cost exactly nine and no fewer:
-the cautious line down the west spur, the same line down the east spur, and the
-sweep that takes the mouth relic out of the plan and visits both spurs instead.
-The first two bank on every board because they read no bit; the sweep banks on
-one board in eight because it reads three.  Same budget, opposite wagers.
+`AIR = 9` is not slack.  FOUR different lines cost exactly nine and no fewer:
+the cautious line down the west spur, the same discipline down the east spur,
+the deep-east line that shores twice and lifts BOTH east relics, and the sweep
+that takes the mouth relic out of the plan and visits both spurs instead.  The
+first three bank on every board because they read no bit; the sweep banks on one
+board in eight because it reads three.  Same budget, opposite wagers.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
@@ -179,6 +194,33 @@ theorem crossing_between_spurs_costs_two :
     Chamber.west.debt = 2 ∧ Chamber.east.debt = 2 := by
   refine ⟨rfl, rfl, rfl, rfl⟩
 
+/-- How many relics each chamber holds on a fresh deck.  ⚑ The east spur holds
+TWO — this is the measured repair of the west/east mirror.  The gate found that
+making a spur more EXPENSIVE kills the branch (nobody takes a priced spur: the
+junction split goes 26/0), while a second relic at the SAME distance breaks the
+symmetry and keeps both directions live (18/19, family forks 1145 → 1360). -/
+def Chamber.relicCount : Chamber → Nat
+  | .mouth => 1
+  | .west => 1
+  | .east => 2
+
+/-- ⚑ **The spurs differ in prize, never in price.**  Both sit the same two
+crossings from the hatch; what tells them apart is what they hold.  A spur made
+asymmetric by COST is a corridor with a toll — this is the shape the gate
+measured as the one that works. -/
+theorem asymmetry_is_prize_not_price :
+    Chamber.west.debt = Chamber.east.debt ∧
+    Chamber.west.relicCount ≠ Chamber.east.relicCount := by
+  refine ⟨rfl, by decide⟩
+
+/-- The east spur alone meets the bank target; the west spur alone cannot.
+Committing east is a self-contained expedition, committing west is a leg of a
+larger one — which is why the branch is a real decision before any bit is
+read. -/
+theorem the_east_spur_is_an_expedition_by_itself :
+    BANK_TARGET ≤ Chamber.east.relicCount ∧ Chamber.west.relicCount < BANK_TARGET := by
+  refine ⟨by decide, by decide⟩
+
 /-! ## What a chamber is, and what a player knows about it -/
 
 /-- The hidden bit.  It is drawn per chamber from the run seed and it is never in
@@ -209,14 +251,16 @@ def Lore.damaging : Lore → Bool
   | .flooded => true
   | .shored => false
 
-/-- Per-chamber record: what is known about the passage, and whether its relic is
-still on the deck.  Three of these are the whole board state. -/
+/-- Per-chamber record: what is known about the passage, and how many of its
+relics have left the deck.  A COUNT, not a flag: the east spur holds two relics,
+so "is it emptied" is `relicCount ≤ relicsTaken` and not a Bool.  Three of these
+are the whole board state. -/
 structure ChamberState where
   lore : Lore
-  relicTaken : Bool
+  relicsTaken : Nat
 deriving Repr, DecidableEq
 
-def freshChamber : ChamberState := { lore := .dark, relicTaken := false }
+def freshChamber : ChamberState := { lore := .dark, relicsTaken := 0 }
 
 /-- The three chambers, stored as named fields rather than a list so that
 `DecidableEq` and `decide` stay cheap. -/
@@ -321,45 +365,46 @@ theorem draw_below_two_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
 
 /-! ## Player state -/
 
-/-- The sling.  Which chambers' relics are in hand — a set, not a count, because
-the receipt names the relics and a forced drop must name which one fell. -/
+/-- The sling.  How many of each chamber's relics are in hand — counts, not
+flags, because the east spur holds two.  Identity survives the counting: the
+relics of one chamber leave the deck in a declared order and forfeit in the
+reverse of it (see `Config.slingRelics`), so a count still names WHICH relics
+are held and the receipt still names which one fell. -/
 structure Sling where
-  mouth : Bool
-  west : Bool
-  east : Bool
+  mouth : Nat
+  west : Nat
+  east : Nat
 deriving Repr, DecidableEq
 
-def emptySling : Sling := { mouth := false, west := false, east := false }
+def emptySling : Sling := { mouth := 0, west := 0, east := 0 }
 
-def Sling.holds (s : Sling) : Chamber → Bool
+def Sling.get (s : Sling) : Chamber → Nat
   | .mouth => s.mouth
   | .west => s.west
   | .east => s.east
 
+def Sling.holds (s : Sling) (c : Chamber) : Bool := decide (0 < s.get c)
+
 def Sling.add (s : Sling) : Chamber → Sling
-  | .mouth => { s with mouth := true }
-  | .west => { s with west := true }
-  | .east => { s with east := true }
+  | .mouth => { s with mouth := s.mouth + 1 }
+  | .west => { s with west := s.west + 1 }
+  | .east => { s with east := s.east + 1 }
 
 def Sling.drop (s : Sling) : Chamber → Sling
-  | .mouth => { s with mouth := false }
-  | .west => { s with west := false }
-  | .east => { s with east := false }
+  | .mouth => { s with mouth := s.mouth - 1 }
+  | .west => { s with west := s.west - 1 }
+  | .east => { s with east := s.east - 1 }
 
-def Sling.count (s : Sling) : Nat :=
-  (if s.mouth then 1 else 0) + (if s.west then 1 else 0) + (if s.east then 1 else 0)
+def Sling.count (s : Sling) : Nat := s.mouth + s.west + s.east
 
-theorem Sling.count_le_three (s : Sling) : s.count ≤ 3 := by
-  obtain ⟨m, w, e⟩ := s
-  cases m <;> cases w <;> cases e <;> decide
-
-/-- What the deck takes when a crossing overruns capacity: whatever was reached
-furthest for.  The spurs are equally far, so the tie is broken west-then-east and
-that order is DECLARED here rather than falling out of a field ordering. -/
+/-- What the deck takes when a crossing overruns capacity: one relic of whatever
+was reached furthest for.  The spurs are equally far, so the tie is broken
+west-then-east and that order is DECLARED here rather than falling out of a
+field ordering. -/
 def Sling.forfeit (s : Sling) : Option Chamber :=
-  if s.west then some .west
-  else if s.east then some .east
-  else if s.mouth then some .mouth
+  if 0 < s.west then some .west
+  else if 0 < s.east then some .east
+  else if 0 < s.mouth then some .mouth
   else none
 
 /-- ⚑ What the deck takes is what the run reached furthest for: nothing still in
@@ -367,14 +412,33 @@ the sling is deeper than the relic forfeited.  Stated over every chamber the
 sling holds, not just the one that fell. -/
 theorem Sling.forfeit_is_deepest (s : Sling) (c held : Chamber)
     (h : s.forfeit = some c) (hheld : s.holds held = true) : held.debt ≤ c.debt := by
-  obtain ⟨m, w, e⟩ := s
-  revert h hheld
-  cases c <;> cases held <;> cases m <;> cases w <;> cases e <;> decide
+  simp only [Sling.forfeit] at h
+  simp only [Sling.holds, decide_eq_true_eq] at hheld
+  split at h
+  · -- the west relic fell, and nothing is deeper than a spur
+    cases h; cases held <;> decide
+  · split at h
+    · cases h; cases held <;> decide
+    · split at h
+      · -- the mouth relic fell, so the sling held nothing from a spur
+        cases h
+        cases held with
+        | mouth => exact Nat.le_refl _
+        | west => simp only [Sling.get] at hheld; omega
+        | east => simp only [Sling.get] at hheld; omega
+      · exact absurd h (by simp)
 
 theorem Sling.forfeit_some_of_count (s : Sling) (h : 0 < s.count) :
     (s.forfeit).isSome = true := by
-  obtain ⟨m, w, e⟩ := s
-  cases m <;> cases w <;> cases e <;> revert h <;> decide
+  simp only [Sling.count] at h
+  simp only [Sling.forfeit]
+  split
+  · rfl
+  · split
+    · rfl
+    · split
+      · rfl
+      · omega
 
 structure State where
   position : Node
@@ -444,16 +508,25 @@ def walkCost (p : Node) (seq : List Chamber) : Nat :=
     (fun (acc : Nat × Node) c => (acc.1 + acc.2.dist (.inside c), Node.inside c)) (0, p)
   stepped.1 + stepped.2.dist .hatch
 
-/-- Every ordered visit plan over the still-untaken chambers that collects
-exactly `need` of them. -/
+/-- Relics a chamber still holds. -/
+def availableRelics (s : State) (c : Chamber) : Nat :=
+  c.relicCount - (s.deck.get c).relicsTaken
+
+/-- Every ordered visit plan over the chambers still holding relics that
+collects exactly `need` of them.  A chamber appears in a plan once per relic
+lifted there, so `[east, east]` is the plan that walks to the east spur and
+lifts twice — `Node.dist_self` prices the second visit at zero, which is what
+"a second relic at the SAME distance" means for the reserve. -/
 def visitPlans (s : State) (need : Nat) : List (List Chamber) :=
-  let avail := allChambers.filter (fun c => !(s.deck.get c).relicTaken)
+  let avail := allChambers.filter (fun c => 0 < availableRelics s c)
   if need = 1 then avail.map (fun a => [a])
-  else avail.flatMap (fun a => (avail.filter (fun b => b != a)).map (fun b => [a, b]))
+  else avail.flatMap (fun a =>
+    (if 2 ≤ availableRelics s a then [[a, a]] else []) ++
+    (avail.filter (fun b => b != a)).map (fun b => [a, b]))
 
 /-- Air needed to bank the target from here, on the most favourable board still
 consistent with what the run has seen: the cheapest ordered walk that collects
-the relics still needed and ends at the hatch, plus one lift each and the
+the relics still needed and ends at the hatch, plus one lift per relic and the
 extraction. -/
 def cheapestBank (s : State) : Nat :=
   if BANK_TARGET ≤ s.sling.count then
@@ -564,7 +637,8 @@ def openKindB (s : State) (a : Action) : Bool :=
       (match s.position with
        | .hatch => false
        | .inside c =>
-           !(s.deck.get c).relicTaken && decide (s.sling.count + 1 ≤ capacity s))
+           decide ((s.deck.get c).relicsTaken < c.relicCount) &&
+             decide (s.sling.count + 1 ≤ capacity s))
   | .ascend => decide (s.position ≠ Node.hatch)
   | .extract =>
       decide (s.position = Node.hatch) && decide (BANK_TARGET ≤ s.sling.count)
@@ -615,7 +689,7 @@ def transitionB (b : Board) (s : State) (a : Action) : Option State :=
           some { s with
             air := s.air - 1
             sling := s.sling.add c
-            deck := s.deck.set c { cs with relicTaken := true } }
+            deck := s.deck.set c { cs with relicsTaken := cs.relicsTaken + 1 } }
   | .ascend =>
       match s.position with
       | .hatch => none
@@ -851,12 +925,15 @@ theorem hatch_refuses_lift (b : Board) (s : State) (h : s.position = Node.hatch)
     stepB b s .lift = none := by
   exact not_open_refuses b s .lift (by simp [openB, openKindB, h])
 
-/-- A chamber already emptied refuses a second lift, so a relic is a relic and
-not a renewable meter. -/
+/-- A chamber already emptied refuses another lift, so a relic is a relic and
+not a renewable meter.  "Emptied" now means the COUNT is exhausted: the mouth
+and west after one lift, the east spur after two. -/
 theorem emptied_chamber_refuses_lift (b : Board) (s : State) (c : Chamber)
-    (hpos : s.position = Node.inside c) (h : (s.deck.get c).relicTaken = true) :
+    (hpos : s.position = Node.inside c)
+    (h : c.relicCount ≤ (s.deck.get c).relicsTaken) :
     stepB b s .lift = none := by
-  exact not_open_refuses b s .lift (by simp [openB, openKindB, hpos, h])
+  exact not_open_refuses b s .lift
+    (by simp [openB, openKindB, hpos, Nat.not_lt.mpr h])
 
 /-- Over capacity, the sling refuses.  This is the rule that makes damage a
 carrying constraint rather than a score. -/
@@ -941,39 +1018,53 @@ that binds the transcript into the receipt. -/
 structure Config where
   board : Board
   mission : MissionSpec
-  /-- The relic each chamber holds.  Declared in the config, checked against the
-  mission's allowlist by `relics_declared`, so a run cannot invent a relic. -/
+  /-- The relics each chamber holds — four of them, because the east spur holds
+  two.  Declared in the config, checked against the mission's allowlist by
+  `relics_declared`, so a run cannot invent a relic. -/
   mouthRelic : RelicId
   westRelic : RelicId
   eastRelic : RelicId
+  /-- The east spur's second relic.  East relics leave the deck in a DECLARED
+  order — `eastRelic` on the first lift, `eastSecondRelic` on the second — and a
+  forfeit returns the later-lifted one, so an east count of one always means
+  `eastRelic` is the one in hand and the receipt still names which relic fell. -/
+  eastSecondRelic : RelicId
   reward : Contribution
   reward_accepted : mission.acceptsContribution reward = true
   relics_distinct : mouthRelic ≠ westRelic ∧ westRelic ≠ eastRelic ∧
-    mouthRelic ≠ eastRelic
+    mouthRelic ≠ eastRelic ∧ eastSecondRelic ≠ mouthRelic ∧
+    eastSecondRelic ≠ westRelic ∧ eastSecondRelic ≠ eastRelic
   relics_declared :
     mouthRelic ∈ mission.allowedRelics ∧ westRelic ∈ mission.allowedRelics ∧
-    eastRelic ∈ mission.allowedRelics
+    eastRelic ∈ mission.allowedRelics ∧ eastSecondRelic ∈ mission.allowedRelics
   /-- ⚑ The played board is the one the precommitted seed draws.  A host cannot
   re-flood the deck after reading the transcript. -/
   board_eq : board = boardFromRunSeed mission.runSeed
 
-def Config.relicOf (cfg : Config) : Chamber → RelicId
-  | .mouth => cfg.mouthRelic
-  | .west => cfg.westRelic
-  | .east => cfg.eastRelic
+/-- The relics a sling's counts name, under the declared lift/forfeit order:
+one east relic in hand is always `eastRelic`, the second is `eastSecondRelic`. -/
+def Config.slingRelics (cfg : Config) (s : Sling) : List RelicId :=
+  (if 0 < s.mouth then [cfg.mouthRelic] else []) ++
+  (if 0 < s.west then [cfg.westRelic] else []) ++
+  (if 0 < s.east then [cfg.eastRelic] else []) ++
+  (if 2 ≤ s.east then [cfg.eastSecondRelic] else [])
+
+theorem Config.slingRelics_length_le (cfg : Config) (s : Sling) :
+    (cfg.slingRelics s).length ≤ 4 := by
+  simp only [Config.slingRelics, List.length_append]
+  split <;> split <;> split <;> split <;> simp
 
 /-- The relics a sling brings through the hatch. -/
 def Config.bankedRelics (cfg : Config) (s : Sling) : Finset RelicId :=
-  (allChambers.filter (fun c => s.holds c)).map cfg.relicOf |>.toFinset
+  (cfg.slingRelics s).toFinset
 
 def Config.terminalContribution (cfg : Config) (s : State) : Contribution :=
   { cfg.reward with
     relics := cfg.bankedRelics s.sling
     relics_bounded := by
-      have : (cfg.bankedRelics s.sling).card ≤ 3 := by
+      have : (cfg.bankedRelics s.sling).card ≤ 4 := by
         simp only [Config.bankedRelics]
-        exact le_trans (List.toFinset_card_le _)
-          (by simpa using List.length_filter_le (fun c => s.sling.holds c) allChambers)
+        exact le_trans (List.toFinset_card_le _) (Config.slingRelics_length_le cfg s.sling)
       exact le_trans this (by decide) }
 
 /-- Fail closed: a terminal state pays only if the mission itself accepts the
@@ -1179,10 +1270,20 @@ bit. -/
 def cautiousWestLine : List Action :=
   [.shore, .descend, .lift, .shore, .descend, .lift, .ascend, .ascend, .extract]
 
-/-- The same discipline down the EAST spur.  Also nine, also board-independent —
-so the spur choice is a genuine choice and not a right answer. -/
+/-- The same discipline down the EAST spur, taking the mouth relic and ONE east
+relic.  Also nine, also board-independent — so the spur choice is a genuine
+choice and not a right answer. -/
 def cautiousEastLine : List Action :=
   [.shore, .descend, .lift, .shoreEast, .descendEast, .lift, .ascend, .ascend,
+   .extract]
+
+/-- ⚑ The line the second relic creates: leave the mouth relic on the deck,
+shore both crossings, and lift the east spur TWICE.  Nine actions, board-
+independent, and it never touches west — the east commitment is a complete
+expedition of its own, which is what makes the junction a decision before any
+bit is read. -/
+def deepEastLine : List Action :=
+  [.shore, .descend, .shoreEast, .descendEast, .lift, .lift, .ascend, .ascend,
    .extract]
 
 /-- ⚑ The sweep: leave the mouth relic where it is, walk in blind, and take BOTH
@@ -1194,8 +1295,8 @@ def sweepLine : List Action :=
 
 theorem every_line_is_the_whole_budget :
     cautiousWestLine.length = AIR ∧ cautiousEastLine.length = AIR ∧
-      sweepLine.length = AIR := by
-  refine ⟨by decide, by decide, by decide⟩
+      deepEastLine.length = AIR ∧ sweepLine.length = AIR := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
 
 /-- ⚑ **Every instance is winnable, down either spur.**  Both cautious lines bank
 on all eight boards, so no draw is a dead mission and the spur choice is never
@@ -1206,6 +1307,17 @@ theorem every_board_can_be_banked :
   refine ⟨?_, ?_⟩
   · native_decide
   · native_decide
+
+/-- ⚑ **The east spur alone is an expedition.**  The deep-east line banks the
+target on all eight boards without lifting the mouth relic or entering west.
+There is no west twin of this line — one relic short — so the two branches of
+the junction differ BEFORE any bit is revealed, in what committing to them can
+win, not in what reaching them costs. -/
+theorem the_second_relic_makes_east_bankable_alone :
+    deepEastLine.length = AIR ∧
+    (∀ i : Fin 8, playsOutB (boardAt i) deepEastLine = true) := by
+  refine ⟨by decide, ?_⟩
+  native_decide
 
 /-- ⚑ **The budget binds on the cautious lines.** -/
 theorem budget_binds_on_the_cautious_lines :
@@ -1288,11 +1400,26 @@ theorem every_board_can_be_lost : ∀ i : Fin 8, 0 < doomCount (boardAt i) := by
 
 /-- The measured shape of the family, per board and summed.  These are the
 numbers `scripts/poa-design-gate.py` must independently arrive at from the
-emitted table; they are stated here so a disagreement is loud. -/
+emitted table; they are stated here so a disagreement is loud.  Before the
+east spur's second relic the triple was 3905 / 1145 / 2059. -/
 theorem family_shape_is_measured :
-    familyTotal (fun b => (reachableStates b).length) = 3905 ∧
-    familyTotal forkCount = 1145 ∧
-    familyTotal doomCount = 2059 := by
+    familyTotal (fun b => (reachableStates b).length) = 4688 ∧
+    familyTotal forkCount = 1360 ∧
+    familyTotal doomCount = 2469 := by
+  native_decide
+
+/-- One board's census, as a comparable shape. -/
+def boardShape (b : Board) : Nat × Nat × Nat :=
+  ((reachableStates b).length, forkCount b, doomCount b)
+
+/-- ⚑ **The mirror is broken.**  All eight draws are now distinct games: no two
+boards share a (reachable, forks, doomed) shape.  Before the second relic a
+board and its west/east reflection were the same game and the eight draws
+collapsed to six shapes — 0.42 of a bit of the instance doing no work, the
+gate's `the-family-collapses` finding.  This is the kernel-side statement whose
+gate-side twin is `distinct_board_shapes = 8`. -/
+theorem the_mirror_is_broken :
+    ((List.finRange 8).map (fun i => boardShape (boardAt i))).Nodup := by
   native_decide
 
 /-- The scout decision, named.  From the hatch on a flooded mouth, walking in
@@ -1476,7 +1603,8 @@ def refusalReason (s : State) (a : Action) : String :=
         match s.position with
         | .hatch => "not-in-a-chamber"
         | .inside c =>
-            if (s.deck.get c).relicTaken then "chamber-emptied" else "over-capacity"
+            if c.relicCount ≤ (s.deck.get c).relicsTaken then "chamber-emptied"
+            else "over-capacity"
     | .ascend => "at-the-hatch"
     | .extract =>
         if s.position ≠ Node.hatch then "not-at-the-hatch" else "short-sling"
@@ -1554,11 +1682,19 @@ theorem initial_state_is_declared : parametricStates.contains initialState = tru
   native_decide
 
 /-- The emitted shape, stated so the descriptor's size is a number a reader has
-before they open the file. -/
+before they open the file.  Before the second relic: 1598 states, 14382 rows. -/
 theorem parametric_shape_is_measured :
-    parametricStates.length = 1598 ∧ allActions.length = 9 ∧
-      parametricRowCount = 14382 := by
+    parametricStates.length = 1924 ∧ allActions.length = 9 ∧
+      parametricRowCount = 17316 := by
   refine ⟨by native_decide, by decide, by native_decide⟩
+
+/-- `Sling.count` is unbounded as a TYPE — the counts are `Nat` — but capacity
+is the wall the transition enforces: no declared state carries more than
+`BASE_CAPACITY` relics.  This replaces the old `Sling.count_le_three`, which was
+a fact about the type and is false of it now. -/
+theorem declared_states_fit_the_sling :
+    parametricStates.all (fun s => decide (s.sling.count ≤ BASE_CAPACITY)) = true := by
+  native_decide
 
 /-- ⚑ **The table really consults the instance.**  Some rows resolve, so the
 gate's `no-oracle-row` FAIL — "every transition is deterministic, so the instance
@@ -1623,13 +1759,14 @@ theorem action_tags_are_distinct :
     (allActions.map Action.tag).eraseDups = allActions.map Action.tag := by decide
 
 private def slingTag (s : Sling) : String :=
-  String.intercalate "+" ((allChambers.filter (fun c => s.holds c)).map Chamber.tag)
+  String.intercalate "+" ((allChambers.filter (fun c => s.holds c)).map
+    (fun c => c.tag ++ (if 2 ≤ s.get c then toString (s.get c) else "")))
 
 def stateId (s : State) : String :=
   "dd:" ++ s.position.tag ++ ":" ++ toString s.air ++ ":" ++ toString s.shoring ++
   ":" ++ toString s.damage ++ ":" ++
   (allChambers.map (fun c => (s.deck.get c).lore.code)).foldl (· ++ ·) "" ++ ":" ++
-  (allChambers.map (fun c => if (s.deck.get c).relicTaken then "t" else "-")).foldl (· ++ ·) "" ++
+  (allChambers.map (fun c => toString (s.deck.get c).relicsTaken)).foldl (· ++ ·) "" ++
   ":" ++ (if slingTag s.sling = "" then "-" else slingTag s.sling) ++
   ":" ++ (if s.banked then "banked" else "in")
 
@@ -1672,7 +1809,9 @@ def solvedB (s : State) : Bool := s.banked
 #assert_axioms boardAt_mem
 #assert_axioms boardAt_injective
 #assert_axioms draw_below_two_never_rejects
-#assert_axioms Sling.count_le_three
+#assert_axioms asymmetry_is_prize_not_price
+#assert_axioms the_east_spur_is_an_expedition_by_itself
+#assert_axioms Config.slingRelics_length_le
 #assert_axioms Sling.forfeit_is_deepest
 #assert_axioms actionCode_injective
 #assert_axioms Sling.forfeit_some_of_count
@@ -1724,12 +1863,15 @@ def solvedB (s : State) : Bool := s.banked
 #assert_axioms every_line_is_the_whole_budget
 
 #assert_compiled every_board_can_be_banked
+#assert_compiled the_second_relic_makes_east_bankable_alone
 #assert_compiled budget_binds_on_the_cautious_lines
 #assert_compiled sweep_costs_the_budget_and_banks_on_one_board
 #assert_compiled budgets_are_incomparable
 #assert_compiled every_board_forks
 #assert_compiled every_board_can_be_lost
 #assert_compiled family_shape_is_measured
+#assert_compiled the_mirror_is_broken
+#assert_compiled declared_states_fit_the_sling
 #assert_compiled walking_in_blind_costs_a_body
 #assert_compiled the_deck_keeps_what_you_could_not_carry
 #assert_compiled a_sound_shaft_keeps_both_relics

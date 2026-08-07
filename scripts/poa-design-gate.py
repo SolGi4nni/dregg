@@ -1428,8 +1428,8 @@ class DescentRules:
     ## What is reconstructed, and from what
 
     Everything comes from the descriptor: the `shaft` block (topology, budgets,
-    capacity, bank target, forfeit order, which lore damages) and the emitted state
-    VIEWS.  Nothing is read from the Lean module.  In particular the four lore values
+    capacity, bank target, per-chamber relic counts, forfeit order, which lore
+    damages) and the emitted state VIEWS.  Nothing is read from the Lean module.  In particular the four lore values
     are not hardcoded to their names:
 
       * `dark` is whatever every chamber reads in the INITIAL state view;
@@ -1463,10 +1463,11 @@ class DescentRules:
     # can only produce a finding.  It is here so that a drift between the proved
     # numbers and the emitted descriptor is LOUD rather than a thing someone notices
     # by reading two files side by side.
+    # (Before the east spur's second relic: 3905 / 1145 / 2059.)
     KERNEL_FAMILY_SHAPE = {
-        "reachable_states": 3905,
-        "outcome_forks": 1145,
-        "doomed_states": 2059,
+        "reachable_states": 4688,
+        "outcome_forks": 1360,
+        "doomed_states": 2469,
         "source": "DeckDescent.family_shape_is_measured (native_decide)",
     }
 
@@ -1491,7 +1492,13 @@ class DescentRules:
         if self.air_per_action != 1:
             raise Refusal("this model prices every action at one unit of air; the "
                           f"descriptor declares {self.air_per_action}")
-        self.relics_per_chamber = shaft["relics_per_chamber"]
+        if "relics_per_chamber" in shaft:
+            raise Refusal(
+                "the shaft declares `relics_per_chamber`, the pre-second-relic "
+                "shape.  The kernel counts relics PER CHAMBER now (the east spur "
+                "holds two); re-emit the descriptor from DeckDescentEmitMain "
+                "rather than reinterpreting a scalar")
+        self.relic_count = dict(shaft["relic_count"])
         self.surface = shaft["surface"]
         self.nodes = list(shaft["nodes"])
         self.chambers = list(shaft["chambers"])
@@ -1511,6 +1518,12 @@ class DescentRules:
             raise Refusal("the shaft names a node twice")
         if set(self.chambers) | {self.surface} != set(self.nodes):
             raise Refusal("the chambers and the surface do not exhaust the nodes")
+        if set(self.relic_count) != set(self.chambers):
+            raise Refusal("`relic_count` does not name exactly the chambers")
+        for c, n in self.relic_count.items():
+            if not isinstance(n, int) or n < 1:
+                raise Refusal(f"chamber {c} declares {n!r} relics; every chamber "
+                              f"holds at least one")
         if sorted(self.forfeit_order) != sorted(self.chambers):
             raise Refusal("the forfeit order is not a permutation of the chambers")
         for p in self.nodes:
@@ -1581,16 +1594,23 @@ class DescentRules:
 
     # -- states --------------------------------------------------------------
     #
-    # A state is (node, air, shoring, damage, lore, taken, sling, banked).  The
-    # emitted view carries every one of those and nothing else that is not derived
-    # from them, which is the property `views_are_complete` checks.
+    # A state is (node, air, shoring, damage, lore, taken, sling, banked), with
+    # `taken` and `sling` per-chamber COUNTS — the east spur holds two relics, so
+    # a chamber set would collapse a real distinction.  The emitted view carries
+    # every one of those and nothing else that is not derived from them.
 
     def state_of_view(self, view: dict) -> tuple:
+        if "emptied" in view or not isinstance(view.get("taken"), dict) \
+                or not isinstance(view.get("sling"), dict):
+            raise Refusal(
+                "state views carry the pre-relic-count shape (`emptied`/chamber "
+                "lists); the kernel counts relics per chamber now — re-emit the "
+                "descriptor from DeckDescentEmitMain")
         return (
             view["node"], view["air"], view["shoring"], view["damage"],
             tuple(view["lore"][c] for c in self.chambers),
-            tuple(c in view["emptied"] for c in self.chambers),
-            tuple(c in view["sling"] for c in self.chambers),
+            tuple(view["taken"][c] for c in self.chambers),
+            tuple(view["sling"][c] for c in self.chambers),
             bool(view["banked"]),
         )
 
@@ -1604,11 +1624,14 @@ class DescentRules:
         return sum(s[6])
 
     def cheapest_bank(self, s) -> int:
-        """`shaft.reserve`, read as arithmetic: the cheapest ordered visit of the
-        chambers still needed, one lift each, plus the extraction, on the most
-        favourable board still consistent with what the run has seen — so a dark
-        chamber is assumed to cost nothing, and a state this refuses is one no board
-        rescues."""
+        """`shaft.reserve`, read as arithmetic: the cheapest ordered collection of
+        the relics still needed — a chamber counts once per relic it still holds,
+        one lift per relic — plus the extraction, on the most favourable board still
+        consistent with what the run has seen.  A dark chamber is assumed to cost
+        nothing, and a state this refuses is one no board rescues.  Standing still
+        costs nothing (`dist[(c, c)] == 0`), so a plan that lifts twice in the same
+        chamber prices the second relic at exactly one lift — which is what "a
+        second relic at the SAME distance" means."""
         key = (s[0], s[5], s[6])
         hit = self._bank_cache.get(key)
         if hit is not None:
@@ -1618,9 +1641,11 @@ class DescentRules:
             out = self.dist[(node, self.surface)] + 1
         else:
             need = self.bank_target - self.held(s)
-            avail = [c for i, c in enumerate(self.chambers) if not s[5][i]]
+            avail = []
+            for i, c in enumerate(self.chambers):
+                avail.extend([c] * (self.relic_count[c] - s[5][i]))
             best = self.air_budget + 1
-            for seq in itertools.permutations(avail, need):
+            for seq in set(itertools.permutations(avail, need)):
                 here, cost = node, 0
                 for c in seq:
                     cost += self.dist[(here, c)]
@@ -1666,8 +1691,8 @@ class DescentRules:
             if node == self.surface:
                 return False
             i = idx[node]
-            return (not s[5][i]
-                    and self.held(s) + self.relics_per_chamber <= self.capacity(s))
+            return (s[5][i] < self.relic_count[node]
+                    and self.held(s) + 1 <= self.capacity(s))
         if kind == "ascend":
             return node != self.surface
         if kind == "extract":
@@ -1697,7 +1722,8 @@ class DescentRules:
         if kind == "lift":
             if node == self.surface:
                 return "not-in-a-chamber"
-            return "chamber-emptied" if s[5][idx[node]] else "over-capacity"
+            return ("chamber-emptied" if s[5][idx[node]] >= self.relic_count[node]
+                    else "over-capacity")
         if kind == "ascend":
             return "at-the-hatch"
         if kind == "extract":
@@ -1711,8 +1737,8 @@ class DescentRules:
         if cap < sum(sling):
             for c in self.forfeit_order:
                 i = self.chambers.index(c)
-                if sling[i]:
-                    sling[i] = False
+                if sling[i] > 0:
+                    sling[i] -= 1
                     break
         return (s[0], s[1], s[2], damage, s[4], s[5], tuple(sling), s[7])
 
@@ -1744,7 +1770,8 @@ class DescentRules:
         if kind == "lift":
             i = idx[node]
             t, g = list(taken), list(sling)
-            t[i], g[i] = True, True
+            t[i] += 1
+            g[i] += 1
             return (node, air - 1, shoring, damage, lore, tuple(t), tuple(g), banked)
         if kind == "ascend":
             i = idx[node]
@@ -2161,12 +2188,15 @@ class DescentRules:
         a, b = self.main_child[j], self.spur_child[j]
         swap = {a: b, b: a}
         sigma = lambda n: swap.get(n, n)
-        # σ is an automorphism of the shaft exactly when it preserves every crossing.
+        # σ is an automorphism of the shaft exactly when it preserves every crossing
+        # AND every prize: two spurs with different relic counts are different
+        # branches even when the walking is identical.
         same_ring = all(self.dist[(sigma(p), sigma(q))] == self.dist[(p, q)]
                         for p in self.nodes for q in self.nodes)
         same_depth = self.dist[(a, self.surface)] == self.dist[(b, self.surface)]
         same_parent = self.parent[a] == self.parent[b]
-        symmetric = same_depth and same_parent and same_ring
+        same_prize = self.relic_count[a] == self.relic_count[b]
+        symmetric = same_depth and same_parent and same_ring and same_prize
 
         # how often the choice at the junction actually goes each way
         value = getattr(self, "value", {})
@@ -2242,21 +2272,21 @@ class DescentRules:
                 f"the shaft is symmetric under swapping {a} and {b}",
                 f"both sit {self.dist[(a, self.surface)]} crossings from "
                 f"{self.surface} under the same parent, hold the same "
-                f"{self.relics_per_chamber} relic, and the crossing table is invariant "
+                f"{self.relic_count[a]} relic(s), and the crossing table is invariant "
                 f"under the swap.  The cost is exact and it is visible in the census "
-                f"above: the eight draws collapse to "
+                f"above: the draws collapse to "
                 f"{game.extra_summary.get('distinct_board_shapes')} distinct shapes, "
-                f"because a board and its west/east mirror are the same game.  ⚑ The "
-                f"repair that WORKS is not the obvious one.  Measured 2026-08-06 over "
-                f"this model: making {b} costlier to reach kills the decision (see the "
-                f"junction finding).  Giving {b} a SECOND RELIC at the SAME distance "
-                f"breaks the mirror without breaking the branch — all eight draws "
-                f"become distinct, family forks rise 1145 -> 1360, and the junction "
-                f"stays a real decision at 18/19.  It also keeps the clock binding at "
-                f"9.  ⚠ That is a prediction from this file's model, not a proved "
-                f"property of a kernel: it needs `Sling` to carry a COUNT per chamber "
-                f"rather than a flag, which is a real change to `DeckDescent` and has "
-                f"not been made.")
+                f"because a board and its mirror are the same game.  ⚑ The repair "
+                f"that WORKS is not the obvious one.  Measured 2026-08-06 over this "
+                f"model, on deck-descent: making {b} costlier to reach kills the "
+                f"decision (18/18 became 26/0 — see the junction finding), while a "
+                f"SECOND RELIC on {b} at the SAME distance broke the mirror and kept "
+                f"the branch (all eight draws distinct, family forks 1145 -> 1360, "
+                f"junction 18/19, clock still binding at 9).  That repair LANDED the "
+                f"same day — `Chamber.relicCount` in `DeckDescent` — so if this "
+                f"finding is firing, either the game has regressed to a mirror or a "
+                f"new symmetric shaft is repeating the old mistake.  Break the prize, "
+                f"not the price.")
 
 
 # A parametric table is analysed only by a tool that can rebuild it.  Registering a
