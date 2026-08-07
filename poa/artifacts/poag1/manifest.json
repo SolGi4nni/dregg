@@ -1,11 +1,12 @@
 {
   "format":"POAG1",
   "schema_version":1,
-  "source_digest":"sha256:ec549695136e4312a174b59806ba96b5143e43900d4a45cfac5cf7c39bbd52b2",
+  "source_digest":"sha256:e268cabdb589d03ee045311f340b20b8995947189a3e16dedb22bab2395802a4",
   "authority":"Dregg2.Games.PathOfAngels",
   "artifacts":[
-    {"path":"schema.json","media_type":"application/schema+json","bytes":1934,"sha256":"sha256:1c7839c14f6906dee81104c89bc9b0f1f5c8485dcaf740c1fdc37a16a3f574b8","fnv1a64":"a8a0768872713698"},
-    {"path":"catalog.json","media_type":"application/json","bytes":5508,"sha256":"sha256:2e85db1fbe2b670d2bbc210790e0b04be521a6cddfa65b9724c49aa2558b39f8","fnv1a64":"459dfb598fdc82ce"},
+    {"path":"schema.json","media_type":"application/schema+json","bytes":1972,"sha256":"sha256:35b3e7c8f107f91bdf44c32102df1c369e721801921508f0029b4f13744f9241","fnv1a64":"b33728589c582566"},
+    {"path":"catalog.json","media_type":"application/json","bytes":7347,"sha256":"sha256:f5471ac3cca241b3d75854900bb5a17fb50d900737ce11eb41a127768747957c","fnv1a64":"f7de6ea647a6905a"},
+    {"path":"games/black-box-reconstruction.json","media_type":"application/json","bytes":8107,"sha256":"sha256:dd013c82d1b62aaf9dda961b20b88313b61883d708c69c41f75f3b2e095b409a","fnv1a64":"5a68d163898e0f95"},
     {"path":"games/relay-repair.json","media_type":"application/json","bytes":122003,"sha256":"sha256:7dc4bc9dd184d1c36ca1881d15b41c0c97a8293041bb9d7b756ff84daedab840","fnv1a64":"ec202953066d45d2"},
     {"path":"games/salvage-lock.json","media_type":"application/json","bytes":635203,"sha256":"sha256:b989feb5272c3625d79b54c0399d491db8ee648b433719e5e1447e96f9c8522d","fnv1a64":"a65ebcc2789df952"},
     {"path":"games/signal-triangulation.json","media_type":"application/json","bytes":52260,"sha256":"sha256:f1df848fd9e4dfac0bc56910d5f3cb4acbc5128a4458648c0c1de3d10afaa26f","fnv1a64":"e68cfdb4a49b3c7c"}
