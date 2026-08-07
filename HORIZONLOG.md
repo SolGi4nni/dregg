@@ -97,16 +97,53 @@ cell count. A self-describing length prefix would make arity drift a first-token
 
 ## ⛑⛑⛑ AUGUST 7 (`x != x`) — the endpoint tooth gets a second value to bite on, and the four causes turn out to be **six**
 
-**⚠ FIRST, THE HONEST LABEL: THIS DID NOT BUILD, AND NOT BECAUSE OF ITSELF.** `dregg-circuit` is
-RED in the shared working tree — `circuit/src/effect_vm/trace_rotated.rs:3263`, `error[E0080]:
-evaluation panicked: "the TB weld appends exactly ONE turn-identity PI, at the first slot past
-rotateV3's 46"` — because the **PI-slot compaction lane** is mid-cutover with `V1_PI_COUNT` moved
-`42 → 35` (hence `ROT_PI_COUNT` 46 → 39) in an unstaged edit. Nothing downstream can produce an
-rlib, so `dregg-node`'s exhibit and the `discord-bot` workspace could not be checked. ⓘ What that
-red DOES establish: rustc reports const-eval failures **after** type checking, and the whole
-`dregg-circuit` compile emitted exactly **one** error and zero diagnostics naming
-`commit8_wire` — so the new module type-checks. Everything else here is UNVERIFIED and must be
-built by whoever picks it up. Reported, not touched: that file belongs to another lane.
+**⚑ THE EXHIBIT IS GREEN, END TO END, THROUGH THE REAL ROUTER.**
+`node/tests/the_served_pair_binds_the_proofs_commitments.rs` — **1 passed, 158.4 s**, `Summary [
+158.458s] 1 test run: 1 passed (1 slow), 0 skipped`. A real full-turn STARK from
+`prove_and_verify_finalized_turn`; the derived pair persisted under the key `blocklace_sync`
+writes; `GET /api/turn/{h}/anchor` driven over the real axum router; the served pair asserted
+EQUAL to `proven.(old,new)_commit`; completeness under it; and **both refusals fired** — one lane
+moved on BEFORE and one on AFTER, each mutation asserted to have changed the value *before* the
+verdict was read, each refused with `CommitmentMismatch`. The `absent` arm serves a null pair and
+the checker gets nothing to bind. ⓘ The turn A / turn B pairing also pins that the served pair is
+**not** the committee-signed one, so the day the alignment lands, that assertion is what says so.
+
+**⚠ THIS WAS WRITTEN UP AS UNVERIFIED AND THEN VERIFIED — the retraction matters more than the
+green.** For most of the lane `dregg-circuit` was RED in the shared tree
+(`effect_vm/trace_rotated.rs:3263`, `error[E0080]: "the TB weld appends exactly ONE turn-identity
+PI, at the first slot past rotateV3's 46"`) because the **PI-slot compaction lane** had
+`V1_PI_COUNT` at `42 → 35` (hence `ROT_PI_COUNT` 46 → 39) against a const block still pinned at
+46. Nothing downstream could produce an rlib. That lane reconciled it (`CAP_OPEN_TB_PI_SRC == 39`)
+and the build went through. **A red you did not cause is still a red you cannot verify through** —
+the correct move was to say so and re-run, not to reason about it.
+
+**⚑ AND THE RUN FOUND A THIRD THING, WHICH IS A GATE THAT HAD STOPPED BEING ONE.** Regressions:
+`commit8_wire`'s codec **5/5**, the six-cause gate **1/1** — and
+`node/tests/turn_anchor_binds_a_proof_to_the_committee.rs` **TIMED OUT, BOTH TESTS, at exactly
+180.0 s**. It did not regress: re-run under plain `cargo test` (which has no timeout) it is
+**2 passed, 229.53 s**. `profile.default`'s kill is `45s × 4 = 180s` and that binary mints a real
+full-turn STARK, so it does not *flirt* with the cap — it **exceeds it by 50 s**, deterministically,
+not flakily. The everyday gauntlet was reporting a hard red on the ONE test that proves a
+stranger's re-verification can refuse a proof of the wrong turn, and reporting it as a TIMEOUT,
+which reads as infrastructure rather than as a dead tooth.
+
+⚠ **And my own exhibit passed at 158.4 s against that same 180 s cap — 22 s of headroom, 12%.** A
+cap a green test clears by 12% is not a cap, it is a coin flip, and I would have shipped into it
+without noticing precisely BECAUSE it was green. Both binaries now join `.config/nextest.toml`'s
+named budget row (`120s × 30`), BUDGETED rather than segregated into `heavy` — that file's own
+stated doctrine ("how long a suite may legitimately take is a different question from which profile
+ought to run it"), and segregating a live tooth into an on-demand profile is the
+`Documented ≠ Detected` failure.
+
+⚠ **AND A SECOND PRE-EXISTING RED, THIS ONE AT HEAD.** `dregg-discord-bot` does not link: 4 ×
+`error[E0308]: expected AuthRequired, found Requirement` at `discord-bot/src/service.rs:{133,138,443}`
+and `bot_reactor.rs:112` — `ReactionPlan.auth_required` is `dregg_cell::permissions::AuthRequired`
+while those sites build `dregg_cell::Requirement::{AtLeast, Root}`. Both files are CLEAN in git, so
+it is committed breakage, unrelated to proof verification. The whole crate still **type-checked**
+(bin and bin-test targets) with **zero diagnostics naming `discord-bot/src/commands/`**, so
+`proof_verify.rs`, `status.rs` and `explorer.rs` — and `proof_verify`'s `#[cfg(test)] mod tests` —
+are green; the bot's unit tests simply cannot be RUN until that rename is finished. Not guessed at
+here: it is an authority gate, which is on `CLAUDE.md`'s short pause list.
 
 **WHAT THE DEFECT WAS.** `dregg_sdk::verify_full_turn_bound` takes `expected_old_commit` /
 `expected_new_commit` from its CALLER, and **no production surface had them**.
@@ -173,7 +210,10 @@ rotation and NO re-emit** (the carrier octets are free witness limbs on 54 of 57
 stored proof is invalidated by anything in *this* commit.
 
 **Named follow-ups this leaves:**
-1. ⚑ **Build it.** Nothing here compiled. Start after the PI-compaction lane lands.
+1. ⚑ **Finish the `Requirement` → `AuthRequired` rename** (`discord-bot/src/service.rs`,
+   `bot_reactor.rs`) so `dregg-discord-bot` links and this lane's bot unit tests can actually RUN.
+   They type-check; nothing has executed them. Whoever owns that rename owns the mapping — it is an
+   authority gate.
 2. **The gate for causes 5 and 6** — an arm in `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`
    that drives the real executor and exhibits the fee / per-row-nonce divergence, so they stop being
    prose.
