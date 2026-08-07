@@ -534,6 +534,22 @@ fn three_party_processes_open_verified_at_t_and_refuse_below_it() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// DEBUG BUILDS ONLY, and that is a property of the ADVERSARY, not a convenience.
+///
+/// The lying dealer is injected through `hostile_tamper_victim()`, whose
+/// `#[cfg(not(debug_assertions))]` twin returns `None` — the corrupting path is
+/// compiled out of release binaries on purpose, so no runtime switch reaches it.
+/// A release run therefore spawns an HONEST dealer, party 1 has nothing to refuse
+/// and never terminates, and this test fails with "party 1 never terminated on
+/// the corrupted row" — a red that says nothing about the refusal it is named
+/// for. Measured in a `--release --include-ignored` run of this suite: 3 passed,
+/// this one failed, for exactly that reason.
+///
+/// So it is gated to match its adversary. This does NOT weaken the check: in
+/// release the check could not run at all, and a guaranteed red that cannot
+/// distinguish a working refusal from a broken one is worse than an honest
+/// absence. In debug, where the adversary exists, it runs and passes.
+#[cfg(debug_assertions)]
 #[test]
 fn a_dealer_that_lies_to_one_recipient_is_refused_by_that_recipient() {
     install_verified_pq_cores();
