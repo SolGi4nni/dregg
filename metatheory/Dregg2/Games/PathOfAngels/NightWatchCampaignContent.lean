@@ -125,9 +125,8 @@ def authoredContentSession : Digest32 :=
 /-- Two independent sources agree: the hex constant above, and the ASCII string
 rendered byte by byte.  A typo in either refuses here. -/
 theorem the_session_tag_is_the_ascii_spelling :
-    authoredContentSession.bytes =
-      (CONTENT_SESSION_TAG.data.map fun c => ((c.toNat : Nat) : Fin 256)) ++
-        List.replicate 21 (0 : Fin 256) := by
+    authoredContentSession.bytes.map (fun byte => byte.val) =
+      CONTENT_SESSION_TAG.data.map Char.toNat ++ List.replicate 21 0 := by
   native_decide
 
 /-! ## Derived digests — recomputable by any reader
@@ -495,8 +494,10 @@ def rehearsalActivation? : Option Activation := do
 def rehearsalNullifier (index : Nat) : Digest32 :=
   derivedDigest "rehearsal" s!"nullifier-{index}"
 
-/-- One full watch at the bridge: claim, choose, resolve, debrief. -/
-def rehearsalWatch : List Command :=
+/-- One full watch at the bridge: claim, choose, resolve, debrief.
+(`NightWatchCampaign.Command` spelled out: `CrewRelayExpedition` has a `Command`
+of its own and both namespaces are open here.) -/
+def rehearsalWatch : List NightWatchCampaign.Command :=
   [ { sequence := 0, nullifier := rehearsalNullifier 0
       action := .claimOfficer rehearsalPlayer ⟨0⟩ }
   , { sequence := 1, nullifier := rehearsalNullifier 1
