@@ -419,9 +419,9 @@ globs = [
   "Dregg2.Games.PathOfAngels.CanonicalCodecFalsifier",  # 3 ax
   "Dregg2.Games.PathOfAngels.ContentContract",  # 17 ax, 8 comp
   "Dregg2.Games.PathOfAngels.CrewExpeditionAuthority",  # 14 ax, 18 comp
-  "Dregg2.Games.PathOfAngels.CrewFieldMission",  # 4 ax, 30 comp
-  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime",  # 3 ax, 23 comp
-  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntimeBoundary",  # 18 ax
+  "Dregg2.Games.PathOfAngels.CrewFieldMission",  # 6 ax, 35 comp
+  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime",  # 4 ax, 25 comp
+  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntimeBoundary",  # 20 ax
   "Dregg2.Games.PathOfAngels.CrewRelayExpedition",  # 2 ax, 1 comp
   "Dregg2.Games.PathOfAngels.DeckGenerator",  # 22 ax, 5 comp
   "Dregg2.Games.PathOfAngels.EditorialRegistryBoundary",  # 6 ax
