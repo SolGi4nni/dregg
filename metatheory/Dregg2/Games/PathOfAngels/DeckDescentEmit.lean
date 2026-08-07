@@ -506,17 +506,18 @@ Four edits, all additive except the third:
    target builds green on hbox (3179 jobs) and this module's five
    `#assert_compiled` pins run there.
 
-5. ⚑ `scripts/poa-design-gate.baseline.json` MUST GAIN
+5. ⚑ Baseline: NOTHING to add.  The enrollment commit used to owe
    `deck-descent/the-family-collapses` and `deck-descent/the-spurs-are-one-spur`
-   IN THE SAME COMMIT that moves this descriptor into `poa/artifacts/poag1/games/`
-   — not before and not after.  Measured 2026-08-06, both directions exit 1:
-   entries for a game the gate cannot see are VANISHED baseline entries, and a
-   game the gate can see with no entries raises UNKNOWN findings.  `test-poa.sh`
-   runs the gate with that baseline and no `--games-dir`, so today it sees three
+   in the same commit; those findings were REPAIRED on 2026-08-06 — the east
+   spur's second relic broke the mirror (`Chamber.relicCount`,
+   `the_mirror_is_broken`) — and the gate now reports 0 FAIL / 0 WARN for this
+   game, measured on the re-emitted bytes.  So enrolling the descriptor into
+   `poa/artifacts/poag1/games/` needs NO descent baseline entries — but re-run
+   the gate at enrollment and believe ITS answer, not this comment: a baseline
+   entry for a finding the gate does not produce is a VANISHED entry and exits
+   1, exactly as an unbaselined new finding does.  `test-poa.sh` runs the gate
+   with the checked-in baseline and no `--games-dir`, so today it sees three
    games and passes; the pending directory is why it is not already red.
-   (These two findings are WARN and accepted, not defects: they say the west and
-   east spurs are mirror images, which they are.  The repair, and the measurement
-   that says which repair works, is in `DescentRules.spur_symmetry`.)
 
 Until (1) and (2) land, the descriptor is emitted by
 `Dregg2/Games/PathOfAngels/DeckDescentEmitMain.lean` into
