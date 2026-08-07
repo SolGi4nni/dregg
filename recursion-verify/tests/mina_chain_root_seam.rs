@@ -33,6 +33,7 @@
 use std::path::PathBuf;
 
 use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     CHAIN_LINKS, CHAIN_PI_COUNT, OUT_PI_LO, STATE_WIDTH, chain_config, fold_chain_links,
     prove_chain_link_leaf,
@@ -311,7 +312,13 @@ fn a_real_fold_root_passes_the_nodes_path_and_a_wrong_anchor_does_not() {
     let t0 = std::time::Instant::now();
     let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
     let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
-    let root = fold_chain_links(&l0, &l1, &config).expect("links 0..1 fold");
+    let root = fold_chain_links(
+        &l0,
+        &l1,
+        &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
+        &config,
+    )
+    .expect("links 0..1 fold");
     let fold_ms = t0.elapsed().as_millis();
 
     // The wire: a root travels as postcard bytes because `dregg-turn` does not link the type.
@@ -365,7 +372,13 @@ fn the_extracted_fingerprint_is_still_deterministic() {
     let build = || {
         let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
         let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
-        fold_chain_links(&l0, &l1, &config).expect("links 0..1 fold")
+        fold_chain_links(
+            &l0,
+            &l1,
+            &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("links 0..1 fold")
     };
     let a = build();
     let b = build();
@@ -403,8 +416,14 @@ fn the_whole_chain_root_binds_to_the_deployed_sub_proof() {
     for j in 1..CHAIN_LINKS {
         let leaf = prove_chain_link_leaf(&link_trace(j), &pis[j], &config)
             .unwrap_or_else(|e| panic!("link {j} leaf: {e}"));
-        acc = fold_chain_links(&acc, &leaf, &config)
-            .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
+        acc = fold_chain_links(
+            &acc,
+            &leaf,
+            &FoldVkPins::tracked(&acc, &leaf)
+                .unwrap_or_else(|e| panic!("fold at link {j} has an unpinnable child: {e}")),
+            &config,
+        )
+        .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
         println!(
             "  link {j:>2}/46 folded (elapsed {:.1} min)",
             t_all.elapsed().as_secs_f64() / 60.0
