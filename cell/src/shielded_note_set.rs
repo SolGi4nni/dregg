@@ -95,7 +95,11 @@
 use std::collections::BTreeMap;
 
 use dregg_circuit::Faithful8;
-use dregg_circuit::exact_nullifier_aafi::{ExactLinkedDomains, exact_linked_append_root8};
+use dregg_circuit::exact_nullifier_aafi::{
+    Digest8, ExactLinkedDomains, ExactLinkedLeaf, ExactPath4, ExactTaggedKey, TREE_ARITY,
+    exact_empty_hash_ladder, exact_leaf_digest_in, exact_linked_append_root8,
+    exact_linked_dense_leaves, exact_node_digest_in,
+};
 use dregg_circuit::field::BabyBear;
 use serde::{Deserialize, Serialize};
 
@@ -371,6 +375,111 @@ impl ShieldedNoteSet {
         dregg_circuit::exact_nullifier_aafi::exact_linked_dense_leaves(&self.exact_append_records())
             .expect("the shielded commitment map's keys are unique and within the 4^16 capacity")
     }
+
+    /// **The membership authentication path for a committed shielded note** — the
+    /// input a shielded-spend proof needs to prove `commitment` is a GENUINE member
+    /// of THIS set at [`Self::root8`]. `None` if the commitment is not committed.
+    ///
+    /// This is the L4 half of DESIGN §6: a spend proof pins membership against
+    /// `root8()` (sourced by the executor, never the wire), and to build that proof
+    /// the prover must exhibit the note's real place in the committed tree. That
+    /// place is what this returns.
+    ///
+    /// The fold and the sibling/position convention are exactly the circuit's
+    /// [`dregg_circuit::exact_nullifier_aafi::exact_linked_fold_root8`] — `cur` at
+    /// child slot `position`, the three siblings in increasing child-slot order (the
+    /// `recompose` convention), least-significant level first — under the shielded
+    /// domain triple. So recomposing the returned path from the leaf digest
+    /// reproduces `root8()`, and the Lean-authored shielded-spend membership AIR
+    /// (`ShieldedSpendExactMembershipEmit`, whose `childExpr` realizes the same
+    /// `exactChildren4`/`recompose`) folds the SAME object. The
+    /// [`ShieldedMembershipPath::leaf`] carries the note's 32-byte address, its ZERO
+    /// hiding value column, and its linked `next_addr` successor — the leaf content a
+    /// satisfying spend trace is forced to open.
+    pub fn membership_path(
+        &self,
+        commitment: &ShieldedNoteCommitment,
+    ) -> Option<ShieldedMembershipPath> {
+        let records = self.exact_append_records();
+        let dense = exact_linked_dense_leaves(&records).ok()?;
+        let target_key = ExactTaggedKey::from_raw(commitment.0);
+        let target_slot = dense.iter().position(|leaf| leaf.addr() == target_key)?;
+
+        let empty = exact_empty_hash_ladder(EXACT_SHIELDED_LINKED_DOMAINS);
+        let mut level_digests: Vec<Digest8> = dense
+            .iter()
+            .map(|leaf| exact_leaf_digest_in(EXACT_SHIELDED_LINKED_DOMAINS, *leaf))
+            .collect();
+
+        let mut index = target_slot as u32;
+        let mut positions = [0u8; EXACT_SHIELDED_TREE_DEPTH];
+        let mut siblings = [[[BabyBear::ZERO; EXACT_SHIELDED_ROOT_LANES]; TREE_ARITY - 1];
+            EXACT_SHIELDED_TREE_DEPTH];
+        for level in 0..EXACT_SHIELDED_TREE_DEPTH {
+            let position = (index % TREE_ARITY as u32) as u8;
+            let parent = index / TREE_ARITY as u32;
+            positions[level] = position;
+            // The co-path: the three children of `parent` other than the target,
+            // in increasing child-slot order (the `recompose` convention).
+            let mut sib = 0usize;
+            for child_slot in 0..TREE_ARITY {
+                if child_slot as u8 == position {
+                    continue;
+                }
+                let child_index = parent as usize * TREE_ARITY + child_slot;
+                siblings[level][sib] = level_digests
+                    .get(child_index)
+                    .copied()
+                    .unwrap_or(empty[level]);
+                sib += 1;
+            }
+            // Fold this level to its parents exactly as `exact_linked_fold_root8`
+            // does, so the extracted co-path is the real one all the way up.
+            let parent_count = level_digests.len().div_ceil(TREE_ARITY).max(1);
+            let mut parents = Vec::with_capacity(parent_count);
+            for p in 0..parent_count {
+                let mut children = [empty[level]; TREE_ARITY];
+                let first = p * TREE_ARITY;
+                for (slot, child) in children.iter_mut().enumerate() {
+                    if let Some(d) = level_digests.get(first + slot) {
+                        *child = *d;
+                    }
+                }
+                parents.push(exact_node_digest_in(
+                    EXACT_SHIELDED_LINKED_DOMAINS,
+                    children,
+                ));
+            }
+            level_digests = parents;
+            index = parent;
+        }
+
+        Some(ShieldedMembershipPath {
+            leaf: dense[target_slot],
+            path: ExactPath4 {
+                positions,
+                siblings,
+            },
+        })
+    }
+}
+
+/// A membership authentication path for a committed shielded note — the witness a
+/// shielded-spend proof folds up to [`ShieldedNoteSet::root8`]. Produced by
+/// [`ShieldedNoteSet::membership_path`].
+///
+/// `leaf` is the note's committed [`ExactLinkedLeaf`] (its 32-byte address, its ZERO
+/// hiding value column, and its linked `next_addr` successor); `path` is the
+/// depth-16 arity-4 authentication path (a position digit + three sibling digests
+/// per level, least-significant level first). `recompose`-ing `path` from
+/// `exact_leaf_digest_in(FSI2, leaf)` reproduces `root8()`.
+#[derive(Clone, Debug)]
+pub struct ShieldedMembershipPath {
+    /// The committed leaf: address (the 32-byte commitment as a tagged key), the
+    /// ZERO hiding value column, and the linked `next_addr` successor.
+    pub leaf: ExactLinkedLeaf,
+    /// The depth-16 arity-4 authentication path (positions + sibling digests).
+    pub path: ExactPath4,
 }
 
 impl Default for ShieldedNoteSet {
@@ -619,6 +728,78 @@ mod tests {
             a.root8(),
             b.root8(),
             "the committed accumulator root MUST depend on the shielded commitment"
+        );
+    }
+
+    /// Recompose an authentication path from a leaf digest, matching the circuit's
+    /// private `recompose`: `cur` at child slot `position`, siblings elsewhere in
+    /// increasing slot order, under the shielded domain triple.
+    fn recompose_path(mut current: Digest8, path: &ExactPath4) -> Digest8 {
+        for level in 0..EXACT_SHIELDED_TREE_DEPTH {
+            let position = usize::from(path.positions[level]);
+            let mut children = [[BabyBear::ZERO; EXACT_SHIELDED_ROOT_LANES]; TREE_ARITY];
+            let mut sib = 0usize;
+            for (slot, child) in children.iter_mut().enumerate() {
+                if slot == position {
+                    *child = current;
+                } else {
+                    *child = path.siblings[level][sib];
+                    sib += 1;
+                }
+            }
+            current = exact_node_digest_in(EXACT_SHIELDED_LINKED_DOMAINS, children);
+        }
+        current
+    }
+
+    /// **The membership path folds a committed note back up to `root8()`** — for
+    /// EVERY member of a multi-member set (so the positions are non-trivial), the
+    /// auth path recomposes to the committed root. This is the invariant a
+    /// shielded-spend proof relies on: the note's real place in the committed tree,
+    /// pinned to `root8()`.
+    #[test]
+    fn membership_path_recomposes_to_root8() {
+        let mut set = ShieldedNoteSet::new();
+        // Reverse-insert so the append order is not the key-sorted order and the
+        // members land at non-trivial physical slots (multi-level positions).
+        let mut cms: Vec<ShieldedNoteCommitment> = (1u8..=5).map(make_commitment).collect();
+        cms.sort_by_key(|c| c.0);
+        cms.reverse();
+        for cm in &cms {
+            set.insert(*cm).unwrap();
+        }
+        let root = set.root8();
+
+        let mut saw_multilevel = false;
+        for cm in &cms {
+            let mp = set
+                .membership_path(cm)
+                .expect("a committed note has a membership path");
+            assert_eq!(
+                mp.leaf.addr(),
+                ExactTaggedKey::from_raw(cm.0),
+                "the leaf address is the note's 32-byte commitment"
+            );
+            assert_eq!(mp.leaf.value(), 0, "the hiding value column is zero");
+            if mp.path.positions[1..].iter().any(|&p| p != 0) {
+                saw_multilevel = true;
+            }
+            let leaf_digest = exact_leaf_digest_in(EXACT_SHIELDED_LINKED_DOMAINS, mp.leaf);
+            assert_eq!(
+                root.limbs(),
+                recompose_path(leaf_digest, &mp.path),
+                "the membership path must fold the leaf up to root8()"
+            );
+        }
+        assert!(
+            saw_multilevel,
+            "vacuity guard: at least one member must sit past level 0 (non-trivial position)"
+        );
+
+        // A non-member has no path.
+        assert!(
+            set.membership_path(&make_commitment(200)).is_none(),
+            "a commitment not in the set has no membership path"
         );
     }
 

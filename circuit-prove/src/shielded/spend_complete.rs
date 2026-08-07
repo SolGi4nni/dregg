@@ -53,7 +53,7 @@ use dregg_circuit::descriptor_proof_backend::{
     Plonky3HidingFriWitness,
 };
 use dregg_circuit::exact_nullifier_aafi::{
-    Digest8, ExactLinkedDomains, TaggedKeyWire, exact_empty_hash_ladder, exact_node_preimage_in,
+    Digest8, ExactLinkedDomains, TaggedKeyWire, exact_node_preimage_in,
 };
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::poseidon2::hash_fact;
@@ -263,9 +263,28 @@ fn u64_mod_p(value: u64) -> BabyBear {
     BabyBear::new((value % BABYBEAR_P as u64) as u32)
 }
 
+/// The note's authenticated place in the committed `ShieldedNoteSet` tree — the
+/// membership half of a complete spend. Built at the route step from
+/// `dregg_cell::ShieldedNoteSet::membership_path` (`ShieldedMembershipPath`), so the
+/// leaf the spend opens is a GENUINE member of the committed accumulator and the fold
+/// reaches its real `root8()` — not a synthetic single-leaf tree.
+#[derive(Clone, Debug)]
+pub struct ShieldedSpendMembership {
+    /// The child position digit (0..4) at each level, least-significant level first.
+    /// The membership core reads it as `pos = MB0 + 2·MB1`.
+    pub positions: [u8; TREE_DEPTH],
+    /// The three sibling digests at each level, in increasing child-slot order — the
+    /// `recompose` co-path convention the Lean `childExpr`/`exactChildren4` realizes.
+    pub siblings: [[Digest8; 3]; TREE_DEPTH],
+    /// The opened leaf's linked `next_addr` successor (a free witness — the committed
+    /// leaf's content, `cNEXTTAG`/`cNEXT*`). For the largest present key this is `TOP`.
+    pub next_addr: TaggedKeyWire,
+}
+
 /// Private witness for a complete FSI2 shielded spend. The value/asset/owner/key/randomness/blind and
-/// the whole membership path are witness-only; the honest membership tree is a single-member tree with
-/// the note at the leftmost leaf and empty siblings (a genuine depth-16 exact-linked tree).
+/// the whole membership path are witness-only; the note is a GENUINE member of a committed
+/// [`dregg_cell::ShieldedNoteSet`] whose `root8()` the fold reaches — the membership path
+/// ([`ShieldedSpendMembership`]) supplies its authenticated place in that tree.
 #[derive(Clone, Debug)]
 pub struct ShieldedSpendCompleteWitness {
     /// Full, unreduced note value.
@@ -279,6 +298,31 @@ pub struct ShieldedSpendCompleteWitness {
     pub spending_key: [BabyBear; 4],
     /// The six carrier blind lanes.
     pub binding_blind: [BabyBear; BINDING_BLIND_LANES],
+    /// The note's authenticated place in the committed shielded accumulator.
+    pub membership: ShieldedSpendMembership,
+}
+
+impl ShieldedSpendCompleteWitness {
+    /// **The Poseidon2 note-commitment felt this spend opens** —
+    /// `hash_fact(value mod p, [asset mod p, hash_fact(key0,[key1,key2,key3]), rand])`. Its
+    /// [`dregg_cell::felt_to_bytes32`] encoding (low 4 bytes, the rest zero) is BOTH the leaf
+    /// address the membership fold pins (`cADDR0 = cCM & 0xFFFF`, `cADDR1 = cCM >> 16`, higher
+    /// limbs zero) AND the exact 32-byte commitment a `dregg-shielded-shield::v1` mint appends to
+    /// the `ShieldedNoteSet`. So a note minted by Shield is spendable HERE iff the mint used the
+    /// same `(value mod p, asset mod p, owner = hash_fact(key), rand)`.
+    pub fn note_commitment_felt(&self) -> BabyBear {
+        let cvmod = u64_mod_p(self.value);
+        let camod = u64_mod_p(self.asset_type);
+        let cowner = hash_fact(
+            self.spending_key[0],
+            &[
+                self.spending_key[1],
+                self.spending_key[2],
+                self.spending_key[3],
+            ],
+        );
+        hash_fact(cvmod, &[camod, cowner, self.randomness])
+    }
 }
 
 /// The public claim a complete shielded-spend proof carries: the nullifier, the 8-lane committed root
@@ -358,12 +402,18 @@ pub fn generate_shielded_spend_complete_trace(
     let ccm = hash_fact(cvmod, &[camod, cowner, witness.randomness]);
     // cNUL = hash_fact(cCM, [key0..3]) — the nullifier derives from the OPENED note.
     let cnul = hash_fact(ccm, &[key[0], key[1], key[2], key[3]]);
+    debug_assert_eq!(
+        ccm,
+        witness.note_commitment_felt(),
+        "the generator's cCM must be the witness's note-commitment felt (one source)"
+    );
     // cADDR = raw_to_u16_le(cCM) low limbs: bytes 0..4 = the felt LE, so limbs 0,1 carry it.
     let ccm_u32 = ccm.as_u32();
     let addr0 = BabyBear::new(ccm_u32 & 0xffff);
     let addr1 = BabyBear::new(ccm_u32 >> 16);
-    // The opened leaf's next pointer is a free witness — a single-member tree's leaf points at TOP.
-    let next = TaggedKeyWire::top();
+    // The opened leaf's next pointer is a free witness — its content is the linked successor the
+    // committed leaf holds (the membership path carries it; `TOP` for the largest present key).
+    let next = witness.membership.next_addr;
     let next_tag = BabyBear::new(u32::from(next.tag));
     let next_limbs: [BabyBear; 16] =
         core::array::from_fn(|i| BabyBear::new(u32::from(next.raw_u16_le[i])));
@@ -387,9 +437,6 @@ pub fn generate_shielded_spend_complete_trace(
     leaf_preimage.extend_from_slice(&next_limbs);
     debug_assert_eq!(leaf_preimage.len(), 39);
 
-    // The empty exact-linked ladder: sibling subtree of height `level` on the leftmost path.
-    let empty = exact_empty_hash_ladder(SHIELDED_DOMAINS);
-
     // The leaf digest = the sponge of the FSI2 leaf block (row-0 `MCUR`, via `leafBind`).
     let leaf_digest = {
         let mut scratch = vec![BabyBear::ZERO; col::WIDTH];
@@ -401,16 +448,33 @@ pub fn generate_shielded_spend_complete_trace(
     for level in 0..TREE_DEPTH {
         let mut row = vec![BabyBear::ZERO; col::WIDTH];
 
-        // Membership core: current, position bits (leftmost => 0,0), three empty siblings, carrier.
+        let position = witness.membership.positions[level];
+        debug_assert!(position < 4, "membership position digit must be in 0..4");
+        let level_siblings = &witness.membership.siblings[level];
+
+        // Membership core: current, the 2-bit position (`pos = MB0 + 2·MB1`), the three siblings
+        // (increasing child-slot order), and the PI-pinned wide carrier.
         row[col::MCUR..col::MCUR + 8].copy_from_slice(&current);
-        // MB0 = MB1 = 0 (position 0) — already zero.
+        row[col::MB0] = BabyBear::new(u32::from(position & 1));
+        row[col::MB1] = BabyBear::new(u32::from((position >> 1) & 1));
         for s in 0..3 {
-            row[col::MSIB + s * 8..col::MSIB + s * 8 + 8].copy_from_slice(&empty[level]);
+            row[col::MSIB + s * 8..col::MSIB + s * 8 + 8].copy_from_slice(&level_siblings[s]);
         }
         row[col::MWIDE..col::MWIDE + WIDE_LANES].copy_from_slice(&wide);
 
-        // FSN2 node sponge over [current, sib, sib, sib] (position-0 child placement).
-        let children: [Digest8; 4] = [current, empty[level], empty[level], empty[level]];
+        // FSN2 node sponge over the four children with `current` at slot `position` and the three
+        // siblings filling the rest in increasing slot order — the deployed `exactChildren4` /
+        // `recompose` placement the Lean `childExpr` realizes.
+        let mut children: [Digest8; 4] = [[BabyBear::ZERO; ROOT_LANES]; 4];
+        let mut sib = 0usize;
+        for (slot, child) in children.iter_mut().enumerate() {
+            if slot == usize::from(position) {
+                *child = current;
+            } else {
+                *child = level_siblings[sib];
+                sib += 1;
+            }
+        }
         let node_preimage = exact_node_preimage_in(SHIELDED_DOMAINS, children);
         let parent = fill_sponge(&mut row, col::MNODE, &node_preimage);
 
@@ -538,20 +602,87 @@ pub fn verify_shielded_spend_complete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dregg_cell::{ShieldedNoteCommitment, ShieldedNoteSet, felt_to_bytes32};
+
+    /// Build a complete-spend witness whose note is a GENUINE member of a fresh
+    /// `ShieldedNoteSet` (populated with the note plus any `decoys`), and return the
+    /// witness, the populated set, and the note's committed 32-byte commitment. The
+    /// witness's membership path is the note's REAL authenticated place in that set,
+    /// so the generated trace folds to the set's `root8()`. This is the honest route
+    /// the executor drives: a Shield mint lands the note, a spend opens it against the
+    /// committed accumulator.
+    fn witness_in_set(
+        value: u64,
+        asset_type: u64,
+        randomness: BabyBear,
+        spending_key: [BabyBear; 4],
+        decoys: &[[u8; 32]],
+    ) -> (
+        ShieldedSpendCompleteWitness,
+        ShieldedNoteSet,
+        ShieldedNoteCommitment,
+    ) {
+        let binding_blind = core::array::from_fn(|i| BabyBear::new(100 + i as u32));
+        // A probe witness (trivial membership) just to derive the note-commitment felt.
+        let probe = ShieldedSpendCompleteWitness {
+            value,
+            asset_type,
+            randomness,
+            spending_key,
+            binding_blind,
+            membership: ShieldedSpendMembership {
+                positions: [0; TREE_DEPTH],
+                siblings: [[[BabyBear::ZERO; ROOT_LANES]; 3]; TREE_DEPTH],
+                next_addr: TaggedKeyWire::top(),
+            },
+        };
+        // The 32-byte commitment a Shield mint would append for this note.
+        let commitment = ShieldedNoteCommitment(felt_to_bytes32(probe.note_commitment_felt()));
+
+        let mut set = ShieldedNoteSet::new();
+        for d in decoys {
+            set.insert(ShieldedNoteCommitment(*d))
+                .expect("decoy commitment inserts");
+        }
+        set.insert(commitment).expect("the spent note is committed");
+
+        // The note's REAL authenticated place in the committed tree.
+        let path = set
+            .membership_path(&commitment)
+            .expect("the committed note has a membership path");
+        let membership = ShieldedSpendMembership {
+            positions: path.path.positions,
+            siblings: path.path.siblings,
+            next_addr: path.leaf.next_addr().wire(),
+        };
+        let witness = ShieldedSpendCompleteWitness {
+            membership,
+            ..probe
+        };
+        (witness, set, commitment)
+    }
+
+    /// Distinct canonical single-felt decoy commitments (the shape a Shield mint lands).
+    fn decoys(n: u32) -> Vec<[u8; 32]> {
+        (0..n)
+            .map(|i| felt_to_bytes32(BabyBear::new(0x0A0A_0000 + i)))
+            .collect()
+    }
 
     fn honest_witness() -> ShieldedSpendCompleteWitness {
-        ShieldedSpendCompleteWitness {
-            value: 123_456_789_012,
-            asset_type: 7,
-            randomness: BabyBear::new(0x1234_5678),
-            spending_key: [
+        witness_in_set(
+            123_456_789_012,
+            7,
+            BabyBear::new(0x1234_5678),
+            [
                 BabyBear::new(11),
                 BabyBear::new(22),
                 BabyBear::new(33),
                 BabyBear::new(44),
             ],
-            binding_blind: core::array::from_fn(|i| BabyBear::new(100 + i as u32)),
-        }
+            &decoys(2),
+        )
+        .0
     }
 
     #[test]
@@ -573,18 +704,142 @@ mod tests {
         );
     }
 
+    /// **PHASE 2a MILESTONE — the honest spend proves over a REAL member of a
+    /// populated `ShieldedNoteSet`, and the fold reaches its committed `root8()`.**
+    ///
+    /// The note is a genuine member of a multi-member accumulator (two decoys + the
+    /// note), so the membership path carries non-trivial positions and real sibling
+    /// digests — not a synthetic single-leaf tree. The claim's `committed_root` IS the
+    /// set's `root8()`, so the executor route can pin `piCommitted` to executor state.
     #[test]
     fn honest_spend_proves_and_verifies() {
-        let witness = honest_witness();
+        let (witness, set, _cm) = witness_in_set(
+            123_456_789_012,
+            7,
+            BabyBear::new(0x1234_5678),
+            [
+                BabyBear::new(11),
+                BabyBear::new(22),
+                BabyBear::new(33),
+                BabyBear::new(44),
+            ],
+            &decoys(2),
+        );
         let (trace, claim) = generate_shielded_spend_complete_trace(&witness);
         assert_eq!(trace.len(), TREE_DEPTH);
         assert!(trace.iter().all(|r| r.len() == col::WIDTH));
+        // THE PIN SOURCE: the fold reaches the REAL committed accumulator root8(), so
+        // the route can source `piCommitted` from executor state (never the wire).
+        assert_eq!(
+            claim.committed_root,
+            set.root8().limbs(),
+            "the membership fold must reach the populated set's committed root8()"
+        );
         // The generated trace satisfies the emitted golden and the hiding-FRI proof verifies:
         // the two-source agreement (Rust generator trace vs Lean-emitted constraint system).
         let proof =
             prove_shielded_spend_complete(&witness).expect("the honest complete spend must prove");
         assert_eq!(proof.claim, claim);
         verify_shielded_spend_complete(&proof).expect("the honest complete spend must verify");
+    }
+
+    /// **THE THEFT REFUSES (both polarities) — the #15 route mechanism, at the
+    /// descriptor + root-sourcing level.**
+    ///
+    /// This is the cryptographic heart of the #15 close: once `piCommitted` is sourced
+    /// from the executor's real `note_shielded.root8()` (never the wire), a forged-tree
+    /// proof has no satisfying assignment.
+    ///
+    /// * **HONEST** — a note genuinely committed in the real accumulator proves
+    ///   membership; the proof's `committed_root` IS the real `root8()`, and it
+    ///   verifies.
+    /// * **THEFT** — the attacker builds their OWN accumulator holding an UNAUTHORIZED
+    ///   note (never committed in the real set) and honestly proves membership at THAT
+    ///   tree's root `R`. The membership STARK is perfectly sound — it just proves
+    ///   membership in the ATTACKER's tree (the falsifier `root_substitution_forges`).
+    ///   The route then judges that proof under the REAL committed root: the fold
+    ///   reached `R ≠ root8()`, so `rootPins` (the `.piBinding .last` 8-lane pin) has no
+    ///   satisfying assignment and it REFUSES. That refusal is how the theft dies.
+    ///
+    /// ⚠ SCOPE — honest, not laundered: this exercises the refusal at the level of the
+    /// complete-spend verifier plus the executor's root-sourcing (substituting the real
+    /// `root8()` for the wire root). The full route through `apply_shielded_transfer`
+    /// (the `ShieldedTransfer`/Pedersen-conservation object, the trait plumbing, the
+    /// wire drop of `merkle_root`) is the deferred executor-plumbing pass; the
+    /// cryptographic mechanism it must invoke is exactly this.
+    #[test]
+    fn theft_forged_tree_refuses_under_real_committed_root() {
+        // The REAL committed accumulator: an authorized note the spender owns + decoys.
+        let (honest_w, real_set, _cm) = witness_in_set(
+            500_000_000,
+            3,
+            BabyBear::new(0xBEEF),
+            [
+                BabyBear::new(5),
+                BabyBear::new(6),
+                BabyBear::new(7),
+                BabyBear::new(8),
+            ],
+            &decoys(3),
+        );
+        let real_root = real_set.root8().limbs();
+
+        // HONEST: the spender's proof carries the REAL committed root and verifies.
+        let honest_proof =
+            prove_shielded_spend_complete(&honest_w).expect("the honest spend proves");
+        assert_eq!(
+            honest_proof.claim.committed_root, real_root,
+            "the honest proof's committed root IS the real accumulator root8()"
+        );
+        verify_shielded_spend_complete(&honest_proof)
+            .expect("the honest spend verifies under the executor-sourced real root");
+
+        // THEFT: the attacker builds their OWN accumulator holding an UNAUTHORIZED note
+        // and proves membership at THAT tree's root R.
+        let (attacker_w, attacker_set, forged_cm) = witness_in_set(
+            999_999_999,
+            3,
+            BabyBear::new(0xDEAD),
+            [
+                BabyBear::new(90),
+                BabyBear::new(91),
+                BabyBear::new(92),
+                BabyBear::new(93),
+            ],
+            &[],
+        );
+        let forged_root = attacker_set.root8().limbs();
+        // Vacuity guards: the forged note is NOT committed in the real accumulator, and
+        // the attacker's tree root differs from the real committed root.
+        assert!(
+            !real_set.contains(&forged_cm),
+            "the forged note must NOT be committed in the real accumulator"
+        );
+        assert_ne!(
+            forged_root, real_root,
+            "the forged tree's root R must differ from the real committed root"
+        );
+
+        let mut forged_proof = prove_shielded_spend_complete(&attacker_w)
+            .expect("the attacker can prove membership in THEIR OWN tree");
+        assert_eq!(
+            forged_proof.claim.committed_root, forged_root,
+            "the attacker's proof proves membership at R (self-consistent in their tree)"
+        );
+        // The forged proof is a GENUINE membership proof — in the attacker's tree at R.
+        // The STARK is sound; it just proves the wrong tree. This is the falsifier.
+        verify_shielded_spend_complete(&forged_proof)
+            .expect("the forged proof is valid AT R (membership in the attacker's own tree)");
+
+        // THE ROUTE (#15): `piCommitted` is sourced from the REAL executor accumulator
+        // `root8()`, NEVER the wire. Judging the attacker's proof under the real root:
+        forged_proof.claim.committed_root = real_root;
+        assert!(
+            verify_shielded_spend_complete(&forged_proof).is_err(),
+            "a forged-tree proof, judged under the REAL committed root8(), must REFUSE — \
+             the fold reached R != root8() and the 8-lane rootPins pin has no satisfying \
+             assignment. The theft dies once piCommitted comes from executor state, not the wire."
+        );
     }
 
     /// **The 8-lane committed-root pin BITES (the #15 mechanism, descriptor half).** A genuine proof,
