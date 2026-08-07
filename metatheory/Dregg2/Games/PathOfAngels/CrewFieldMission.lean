@@ -978,6 +978,157 @@ session; and the analogous fact for `admits` IS proved, immediately above, as
 `RunSeal.admitted_record_carries_the_sealed_session`.
 -/
 
+/-! ## The per-handoff step surface — what the NEXT seat has to sign
+
+`replay?` answers only about a COMPLETE run: `completedRecord?` returns `none`
+until the mission reaches `.extracted`, so a seat asked to produce the SECOND
+handoff can learn nothing from it.  And what that seat needs is not a record.
+It is `preRoot` — the exact `StateRoot` `execute` compares its body against, on
+pain of `.staleRoot` — inside the exact canonical preimage bytes its key signs.
+Neither was reachable, so a signing client could only obtain them by
+REIMPLEMENTING the kernel's transition beside it.
+
+This cone has paid for that once already: the runtime above this kernel
+reconstructed a terminal state by ASSERTING `phase := .extracted`, and the weld
+of 2026-08-06 deleted it.  A signing client that computes its own `preRoot` is
+the same twin one layer further out — and it would be the worse one, because it
+would be written by whoever holds the keys.
+
+`step?` is that same replay, stopped wherever the transcript stops.  Nothing
+here is asserted: `replayTrace` drives `execute` from the private `initialState`
+over the prefix and every field below is READ OFF the state the kernel computed.
+The view carries no authority — it verifies nothing, signs nothing, settles
+nothing, and a caller who could fabricate one would gain nothing, because
+`execute` recomputes the root it compares against and the signature is over the
+body.  What makes it more than a convenience is
+`step_view_next_body_is_the_kernel_expected_body` below: at a seat's turn, the
+body this surface hands out **is** `expectedBody?`, the one
+`signedHandoffFromTrace?` reconstructs and `execute` demands. -/
+
+/-- The state a prefix of signed handoffs REACHED, plus what the next signer
+needs to address its handoff at it.  The constructor is private: only
+`RunSeal.step?` produces one, so a view is always something the kernel replayed
+rather than something a caller wrote down. -/
+structure StepView where
+  private mk ::
+  /-- The sealed session, same value `RunSeal.session` exposes. -/
+  session : SessionDigest
+  sequence : Nat
+  phase : MissionPhase
+  /-- ⚑ The point of the surface: the root the next `HandoffBody.preRoot` must
+  equal exactly, or `execute` answers `.staleRoot`. -/
+  reachedRoot : StateRoot
+  counters : List SeatCounter
+  strategy : Option Strategy
+  operationalBudgetRemaining : Nat
+  /-- The seat whose turn it is; `none` once the roster is exhausted. -/
+  nextSeat : Option Seat
+  /-- That seat's counter as the kernel holds it now.  Its handoff must carry
+  `previousCounter` equal to this and `counter` one higher. -/
+  nextPreviousCounter : Option Nat
+  /-- The completed record, present exactly when the run genuinely reached
+  `.extracted` — the same value `replay?` returns, proved below. -/
+  completion : Option RawCombinedFieldRecord
+deriving DecidableEq
+
+private def stepViewAt (config : Config) (state : State)
+    (completion : Option (CombinedFieldRecord config)) : StepView :=
+  let seat? := config.raw.roster[state.snapshot.nextSeat]?
+  { session := config.raw.sessionDigest
+    sequence := state.snapshot.sequence
+    phase := state.snapshot.phase
+    reachedRoot := state.root
+    counters := state.snapshot.counters
+    strategy := state.snapshot.strategy
+    operationalBudgetRemaining := state.snapshot.operationalBudgetRemaining
+    nextSeat := seat?
+    nextPreviousCounter := seat?.bind fun seat => counterFor? state.snapshot.counters seat.id
+    completion := completion.map CombinedFieldRecord.toRaw }
+
+/-- The kernel's own answer for a PREFIX of signed handoffs.  Identical
+machinery to `replay?` — `replayTrace` from the private `initialState` — read at
+the point the transcript ends instead of only at the end of a completed run. -/
+def RunSeal.step? (runSeal : RunSeal) (transcript : List HandoffTrace) : Option StepView :=
+  match replayTrace runSeal.config (initialState runSeal.config) transcript with
+  | .error _ => none
+  | .ok result => some (stepViewAt runSeal.config result.state result.completion)
+
+/-- The new surface is not a second answer.  Where `replay?` speaks at all, the
+step view says the same thing; where it is silent, so is the view's completion.
+Without this the two could drift and a host could settle on one while showing
+the other. -/
+theorem RunSeal.step_completion_is_the_replayed_record (runSeal : RunSeal)
+    (transcript : List HandoffTrace) :
+    (runSeal.step? transcript).bind StepView.completion = runSeal.replay? transcript := by
+  unfold RunSeal.step? RunSeal.replay?
+  cases replayed : replayTrace runSeal.config (initialState runSeal.config) transcript with
+  | error _ => simp
+  | ok result => simp [stepViewAt]
+
+/-- The handoff body the next seat must address at this view.  A client fills in
+only its decision; session, sequence, `preRoot`, seat and both counters come
+from the state the kernel reached. -/
+def StepView.nextBody? (view : StepView) (observation : PrivateObservation)
+    (decision : Decision) : Option HandoffBody := do
+  let seat ← view.nextSeat
+  let previousCounter ← view.nextPreviousCounter
+  some {
+    session := view.session
+    sequence := view.sequence
+    preRoot := view.reachedRoot
+    seat
+    previousCounter
+    counter := previousCounter + 1
+    observation
+    decision
+  }
+
+/-- ⚑ THE REASON THIS IS A SURFACE AND NOT A MIRROR.  At the seat whose turn it
+is — `turn` is exactly the condition `execute` enforces as `.wrongSeat` — the
+body the step view hands out is *definitionally* `expectedBody?`, the body
+`signedHandoffFromTrace?` reconstructs and `execute` compares against.  A client
+that signs what this surface returns cannot be signing something the kernel will
+not recognise, and the two cannot drift apart later without this going red. -/
+theorem step_view_next_body_is_the_kernel_expected_body (config : Config) (state : State)
+    (completion : Option (CombinedFieldRecord config))
+    (capability : SeatCapability config) (briefing : Briefing config) (decision : Decision)
+    (turn : config.raw.roster[state.snapshot.nextSeat]? = some capability.seat) :
+    (stepViewAt config state completion).nextBody? briefing.observation decision
+      = expectedBody? config state capability briefing decision := by
+  simp [stepViewAt, StepView.nextBody?, expectedBody?, turn]
+
+/-- ⚑ THE AUTHENTICATED HALF.  A briefing observation reaches the wire only when
+its seat copies it into a signed body, so a surface that handed the NEXT seat's
+body to anyone who asked would publish it early.  This one opens nothing until
+the caller presents that seat's admission signature and `authenticateSeat?`
+accepts it — the same ML-DSA-65 envelope, verified by the same activated
+verifier, that mints a `SeatCapability`.
+
+⚠ The honest limit: a seat-admission signature is a bearer value, not a
+challenge-response, so this gate is "first use".  It holds where it matters —
+a seat that has not yet played has never published its admission envelope, since
+a trace carries it only once the seat has acted — and after that seat has acted
+its observation is already public in its own trace, so there is nothing left to
+leak.  It is not a defence against a party that has already seen the seat's
+handoff, and nothing here claims one.
+
+The result is the exact `HandoffSigningPreimage`: hand it to
+`ProductionSigning.handoffPreimageMessage` for the byte string, sign THOSE bytes
+under `HANDOFF_SIGNING_CONTEXT`, and the trace built from this body and that
+signature is one `execute` accepts. -/
+def RunSeal.nextSigningPreimage? (runSeal : RunSeal) (transcript : List HandoffTrace)
+    (seatSignature : SeatSignature) (decision : Decision) :
+    Option HandoffSigningPreimage :=
+  match replayTrace runSeal.config (initialState runSeal.config) transcript with
+  | .error _ => none
+  | .ok result => do
+      let expected ← runSeal.config.raw.roster[result.state.snapshot.nextSeat]?
+      let capability ← authenticateSeat? runSeal.config expected.id seatSignature
+      let briefing ← briefingFor? runSeal.config capability
+      let body ← expectedBody? runSeal.config result.state capability briefing decision
+      some (body.signingPreimage runSeal.config.raw.messageDigestSuiteId
+        runSeal.config.raw.signingSuiteId)
+
 theorem execute_deterministic (config : Config) (state : State)
     (handoff : SignedHandoff config) {left right : StepResult config}
     (hl : execute config state handoff = .ok left)
@@ -1504,6 +1655,110 @@ theorem exported_fixture_transcripts_are_four_signed_handoffs_each :
     fixtureSafeMaintenanceTranscript.length = CREW_SIZE ∧
       fixtureDeepTranscript.length = CREW_SIZE := by native_decide
 
+/-! ### The step surface, over a real signed transcript
+
+Three claims, each with its own failure mode:
+
+1. the gap this closes is REAL — `replay?` is silent at every proper prefix
+   while `step?` answers at all five of them, with a sequence and a root that
+   MOVE (a surface that reported one constant root would satisfy every "is it
+   `some`" test and be useless);
+2. a client holding only the public surface can play a whole run one signed
+   handoff at a time, and what it produces is byte-identical to the transcript
+   the kernel itself signed;
+3. the surface refuses to open a seat's briefing to anyone but that seat. -/
+
+private def fixtureSeatSignature (seat : Seat) : SeatSignature :=
+  { bytes := fixtureExpectedSignature 1 seat.playerKey seat.credential
+      (fixtureMessageDigest.seatMessageDigest
+        ((expectedAdmission fixtureConfig seat).signingPreimage
+          fixtureConfig.raw.messageDigestSuiteId fixtureConfig.raw.signingSuiteId)) }
+
+private def fixtureHandoffSignatureFor (seat : Seat) (preimage : HandoffSigningPreimage) :
+    HandoffSignature :=
+  { bytes := fixtureExpectedSignature 2 seat.playerKey seat.credential
+      (fixtureMessageDigest.handoffMessageDigest preimage) }
+
+def stepAnswersEveryPrefixWhileReplayIsSilentB : Bool :=
+  let transcript := fixtureDeepTranscript
+  let views := (List.range (CREW_SIZE + 1)).map fun k =>
+    fixtureRunSeal.step? (transcript.take k)
+  let roots := views.filterMap fun view? => view?.map StepView.reachedRoot
+  decide (roots.length = CREW_SIZE + 1) &&
+  decide (roots.Nodup) &&
+  ((List.range (CREW_SIZE + 1)).all fun k =>
+    match fixtureRunSeal.step? (transcript.take k) with
+    | none => false
+    | some view =>
+        decide (view.sequence = k) &&
+        decide (view.session = fixtureRunSeal.session) &&
+        decide (view.nextSeat.isSome = decide (k < CREW_SIZE)) &&
+        decide (view.phase = if k = CREW_SIZE then MissionPhase.extracted else .active) &&
+        decide ((fixtureRunSeal.replay? (transcript.take k)).isSome =
+          decide (k = CREW_SIZE)))
+
+/-- The prefix gap, stated: four proper prefixes at which the kernel has a state
+and `replay?` has nothing to say, and one completed run where they agree. -/
+theorem the_step_surface_answers_at_every_prefix_replay_refuses :
+    stepAnswersEveryPrefixWhileReplayIsSilentB = true := by native_decide
+
+/-- One handoff, produced through nothing but the public surface: ask the seal
+what this seat must sign, sign exactly those bytes, and emit the trace.  No
+caller-side transition, no caller-authored `preRoot`. -/
+private def stepDrive : List HandoffTrace → List Decision → Option (List HandoffTrace)
+  | transcript, [] => some transcript
+  | transcript, decision :: rest => do
+      let view ← fixtureRunSeal.step? transcript
+      let seat ← view.nextSeat
+      let seatSignature := fixtureSeatSignature seat
+      let preimage ← fixtureRunSeal.nextSigningPreimage? transcript seatSignature decision
+      let trace : HandoffTrace := {
+        sequence := preimage.body.sequence
+        seat := preimage.body.seat
+        previousCounter := preimage.body.previousCounter
+        counter := preimage.body.counter
+        observation := preimage.body.observation
+        decision := preimage.body.decision
+        seatSignature
+        signature := fixtureHandoffSignatureFor seat preimage }
+      stepDrive (transcript ++ [trace]) rest
+
+def stepSurfaceDrivesAWholeSignedRunB : Bool :=
+  match stepDrive [] (deepPlan.map Prod.snd) with
+  | none => false
+  | some transcript =>
+      decide (transcript = fixtureDeepTranscript) &&
+      (fixtureRunSeal.replay? transcript).isSome &&
+      match fixtureRunSeal.step? transcript with
+      | none => false
+      | some view => decide (view.completion = fixtureRunSeal.replay? transcript)
+
+/-- ⚑ ONE SEAT'S SIGNED HANDOFF IS COMPLETABLE — four times over.  Driven from
+the empty transcript through `step?` and `nextSigningPreimage?` alone, a client
+that never reimplements the transition reconstructs the kernel's own signed
+transcript byte for byte, and the seal admits the run it built. -/
+theorem a_crew_plays_a_whole_run_one_signed_handoff_at_a_time :
+    stepSurfaceDrivesAWholeSignedRunB = true := by native_decide
+
+def stepSurfaceRefusesAnotherSeatsAdmissionB : Bool :=
+  let decision : Decision := .specialist .signalGallery .markSalvageRoute
+  match fixtureRunSeal.step? [] with
+  | none => false
+  | some view =>
+    match view.nextSeat, seatById? fixtureRawConfig.roster ⟨1⟩ with
+    | some turn, some other =>
+        decide (other ≠ turn) &&
+        (fixtureRunSeal.nextSigningPreimage? [] (fixtureSeatSignature other) decision).isNone &&
+        (fixtureRunSeal.nextSigningPreimage? [] (fixtureSeatSignature turn) decision).isSome
+    | _, _ => false
+
+/-- The mutation is asserted present (`other ≠ turn`) and the honest control is
+in the same statement: seat 0's own admission envelope opens seat 0's briefing,
+seat 1's does not.  Without the second conjunct's control this would pass for a
+surface that refused everyone. -/
+theorem the_step_surface_opens_a_briefing_only_to_its_own_seat :
+    stepSurfaceRefusesAnotherSeatsAdmissionB = true := by native_decide
+
 /-! The seal must be satisfiable *and* refutable.  A predicate that accepted
 everything would weld the runtime to nothing at all, so each acceptance below is
 paired with a refusal built by mutating the record the kernel just produced. -/
@@ -1841,11 +2096,16 @@ theorem hostile_expanded_record_mutation_matrix_refused :
 #assert_axioms seat_signing_preimage_injective
 #assert_axioms completed_featured_artifact_is_beta_candidate
 #assert_axioms RunSeal.admitted_record_carries_the_sealed_session
+#assert_axioms RunSeal.step_completion_is_the_replayed_record
+#assert_axioms step_view_next_body_is_the_kernel_expected_body
 #assert_compiled fixture_rekeyed_config_valid
 #assert_compiled fixture_rekeyed_roster_substitutes_only_the_player_keys
 #assert_compiled the_fixture_briefing_commitment_does_not_separate_the_two_crews
 #assert_compiled the_two_fixture_seals_carry_different_sessions
 #assert_compiled exported_fixture_transcripts_are_four_signed_handoffs_each
+#assert_compiled the_step_surface_answers_at_every_prefix_replay_refuses
+#assert_compiled a_crew_plays_a_whole_run_one_signed_handoff_at_a_time
+#assert_compiled the_step_surface_opens_a_briefing_only_to_its_own_seat
 #assert_compiled run_seal_admits_the_record_the_kernel_produced
 #assert_compiled run_seal_refuses_a_terminal_state_the_kernel_did_not_reach
 #assert_compiled run_seal_refuses_a_forged_handoff_signature
@@ -2525,6 +2785,70 @@ theorem kat_seat_admission_envelope_is_refused_as_a_handoff :
     handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katSeatEnvelope⟩ = false := by
   native_decide
 
+/-! ### The step surface under real cryptography
+
+Everything above about `nextSigningPreimage?` was checked in the fixture world,
+whose verifier is a publicly computable pattern.  Here the same surface is
+driven by a seal `activate?` produced — so it cannot be a fixture seal, by
+`production_activation_refuses_the_fixture_suite_config` — with seat 0's REAL
+ML-DSA-65 admission envelope as the authenticator. -/
+
+private def katRunSeal? : Option RunSeal := activate? katRawConfig fixtureBriefings
+
+/-- ⚑ THE COMPLETABLE HANDOFF, END TO END.  Seat 0 presents the ML-DSA-65
+admission envelope the `fips204` crate produced; the surface returns the
+preimage; its message bytes are EXACTLY the bytes that crate signed
+(`katHandoffMessagePinned`, independently pinned as
+`kat_messages_are_the_pinned_bytes`); the signature over those bytes verifies
+through the real FIPS 204 verify; and the kernel executes the resulting handoff
+to sequence 1.
+
+That is the whole loop a live seat performs, with nothing computed twice: the
+client never derives `preRoot`, never assembles a body, and never re-encodes a
+preimage — it signs the bytes it was handed.  A drift in the encoder, the
+transition, or the surface breaks it here. -/
+def katStepSurfaceHandsBackTheSignedBytesB : Bool :=
+  match katRunSeal? with
+  | none => false
+  | some katSeal =>
+    match katSeal.nextSigningPreimage? [] ⟨katSeatEnvelope⟩
+        (.specialist .signalGallery .chartPressureRoute) with
+    | none => false
+    | some preimage =>
+        decide (handoffPreimageMessage preimage =
+          CrewSigningVectors.katHandoffMessagePinned.toList) &&
+        decide (preimage.body = katHandoffBody) &&
+        handoffSignatureValidB katConfig katSeat0 preimage.body ⟨katHandoffEnvelope⟩ &&
+        (match authenticateSeat? katConfig ⟨0⟩ ⟨katSeatEnvelope⟩ with
+         | none => false
+         | some capability =>
+           match briefingFor? katConfig capability with
+           | none => false
+           | some briefing =>
+             match execute katConfig katState
+                 ⟨capability, briefing, preimage.body, ⟨katHandoffEnvelope⟩⟩ with
+             | .error _ => false
+             | .ok result => decide (result.state.snapshot.sequence = 1))
+
+theorem kat_step_surface_hands_back_exactly_the_bytes_the_crate_signed :
+    katStepSurfaceHandsBackTheSignedBytesB = true := by native_decide
+
+/-- The production surface refuses a caller who is not the seat: the wrong
+keypair's envelope is a GENUINE ML-DSA-65 seat signature (it verifies under its
+own key) and it still opens nothing, because `authenticateSeat?` runs the same
+`SHAKE256(pk) = playerKey` pin.  Control in the same statement: seat 0's own
+envelope does open it. -/
+def katStepSurfaceRefusesAWrongKeyEnvelopeB : Bool :=
+  match katRunSeal? with
+  | none => false
+  | some katSeal =>
+    let decision : Decision := .specialist .signalGallery .chartPressureRoute
+    (katSeal.nextSigningPreimage? [] ⟨katWrongKeyEnvelope⟩ decision).isNone &&
+    (katSeal.nextSigningPreimage? [] ⟨katSeatEnvelope⟩ decision).isSome
+
+theorem kat_step_surface_refuses_a_genuine_signature_under_the_wrong_key :
+    katStepSurfaceRefusesAWrongKeyEnvelopeB = true := by native_decide
+
 #assert_compiled observation_codes_are_injective
 #assert_compiled decision_codes_are_injective
 #assert_compiled shake_digest_lengths_hold_on_instances
@@ -2543,6 +2867,8 @@ theorem kat_seat_admission_envelope_is_refused_as_a_handoff :
 #assert_compiled kat_wrong_key_signature_is_genuine_but_refused_by_the_key_pin
 #assert_compiled kat_signature_does_not_transfer_to_a_different_body
 #assert_compiled kat_seat_admission_envelope_is_refused_as_a_handoff
+#assert_compiled kat_step_surface_hands_back_exactly_the_bytes_the_crate_signed
+#assert_compiled kat_step_surface_refuses_a_genuine_signature_under_the_wrong_key
 
 end ProductionSigning
 

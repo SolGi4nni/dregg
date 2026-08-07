@@ -73,6 +73,8 @@ set_option autoImplicit false
 abbrev INPUT_FORMAT : String := "POA-CREW-FIELD-RUN-IN-1"
 abbrev STATE_FORMAT : String := "POA-CREW-FIELD-STATE-1"
 abbrev OUTPUT_FORMAT : String := "POA-CREW-FIELD-RUN-OUT-1"
+abbrev STEP_INPUT_FORMAT : String := "POA-CREW-FIELD-STEP-IN-1"
+abbrev STEP_OUTPUT_FORMAT : String := "POA-CREW-FIELD-STEP-OUT-1"
 abbrev WIRE_BYTE_LIMIT : Nat := 1024 * 1024
 abbrev MAX_RUNS : Nat := 4096
 abbrev MAX_PART_RULES : Nat := 64
@@ -491,15 +493,22 @@ private def observationFromWire? (wire : TraceWire) :
       if wire.observedRoute = "none" then return .quartermaster .stable else none
   | _ => none
 
-private def decisionFromWire? (wire : TraceWire) : Option CrewFieldMission.Decision := do
-  let route ← routeFromString? wire.decidedRoute
-  let command ← commandFromString? wire.command
-  match wire.decision with
+/-- The decision spelling, shared by the settlement transcript and the step
+request.  One decoder, so the two wires cannot disagree about what
+`"finalize"` means. -/
+private def decisionOfWireFields? (decision decidedRoute extraction command : String) :
+    Option CrewFieldMission.Decision := do
+  let route ← routeFromString? decidedRoute
+  let command ← commandFromString? command
+  match decision with
   | "specialist" =>
-      if wire.extraction = "none" then return .specialist route command else none
+      if extraction = "none" then return .specialist route command else none
   | "finalize" =>
-      return .finalize route (← extractionFromString? wire.extraction) command
+      return .finalize route (← extractionFromString? extraction) command
   | _ => none
+
+private def decisionFromWire? (wire : TraceWire) : Option CrewFieldMission.Decision :=
+  decisionOfWireFields? wire.decision wire.decidedRoute wire.extraction wire.command
 
 def TraceWire.toSemantic? (activation : Activation) : TraceWire →
     Option CrewFieldMission.HandoffTrace
@@ -570,6 +579,13 @@ inductive Refusal where
   | invalidTranscript
   | replayRefused
   | custodyRefused
+  /-- The step surface refused: the run is over, or the presented seat-admission
+  envelope is not the envelope of the seat whose turn it is. -/
+  | stepRefused
+  /-- The request named this activation but a different crew.  The durable key is
+  the `(activation_id, roster_binding)` PAIR; a request that carries only the
+  first half is answered for nobody. -/
+  | wrongCrew
 deriving Repr, DecidableEq
 
 /-- ⚑ THE WELD.  This function used to assemble a terminal
@@ -988,6 +1004,179 @@ def process (activation : Activation) (stateBytes commandBytes : String) : Optio
   | .error _ => none
   | .ok output => some output.toJson
 
+/-! ## The per-handoff step ABI — `POA-CREW-FIELD-STEP`
+
+`process` above is the SETTLEMENT ABI: it takes a complete four-handoff
+transcript and moves the durable cursor.  Nothing took a PARTIAL one, and a crew
+plays partially by construction — seat 1 cannot sign until seat 0 has, and what
+seat 1 must sign is addressed to the root seat 0's handoff produced.
+`parseTranscript` refuses anything but exactly four handoffs and
+`CrewFieldMission.RunSeal.replay?` is silent at every proper prefix, so the only
+way a client could have obtained that root was to reimplement the kernel's
+transition — the twin this cone deleted from the runtime in 2026-08-06 and would
+have re-grown in the signer.
+
+This ABI is read-only.  It moves no cursor, consumes no admission, mints
+nothing and persists nothing; it answers "what does the next seat sign?" and
+that is all.  Two consequences worth stating rather than inferring:
+
+* it does NOT relax the settlement path.  `parseTranscript` keeps its exact-four
+  check; `parseTranscriptPrefix` below is a second, weaker parser used only
+  here, because widening the one that guards settlement would be paying for a
+  read surface with a write check.
+* it opens a briefing only to its own seat.  The request carries that seat's
+  ML-DSA-65 admission envelope and `RunSeal.nextSigningPreimage?` runs the
+  activated verifier over it before the observation reaches the response.  The
+  limits of that gate are stated at `nextSigningPreimage?` itself. -/
+
+structure StepRequestWire where
+  activationId : Digest32
+  /-- The crew half of the identity.  Same discipline as `StateWire`: an
+  activation id alone does not say WHICH crew, and two crews can share one. -/
+  rosterBinding : Digest32
+  /-- A PREFIX: at most `CREW_SIZE` handoffs, possibly none. -/
+  transcript : List TraceWire
+  /-- The next seat's ML-DSA-65 seat-admission envelope (`publicKey ‖ signature`),
+  the same value its traces carry once it has played. -/
+  seatSignature : CrewFieldMission.SignatureBytes
+  decision : String
+  decidedRoute : String
+  extraction : String
+  command : String
+deriving DecidableEq
+
+structure StepResponseWire where
+  activationId : Digest32
+  rosterBinding : Digest32
+  /-- The sequence the kernel reached over the prefix. -/
+  sequence : Nat
+  /-- True exactly when the run reached `.extracted`. -/
+  complete : Bool
+  /-- False once the roster is exhausted; the three `next_*` numbers are then 0
+  and carry no meaning. -/
+  nextPresent : Bool
+  nextSeat : Nat
+  nextPreviousCounter : Nat
+  nextCounter : Nat
+  operationalBudgetRemaining : Nat
+  /-- ⚑ The payload: the exact canonical `POA-CREW-HANDOFF-SIGNING-1` preimage
+  bytes the next seat's key must sign, under
+  `CrewFieldMission.ProductionSigning.HANDOFF_SIGNING_CONTEXT`.  `""` when the
+  run is over.  A client signs THESE BYTES; it does not build a body, does not
+  derive a `preRoot`, and does not re-encode anything. -/
+  signingMessage : String
+deriving DecidableEq
+
+def StepRequestWire.toJson (wire : StepRequestWire) : String :=
+  "{\"format\":" ++ jsonString STEP_INPUT_FORMAT ++
+    ",\"activation_id\":" ++ jsonString (Emit.bytes32Hex wire.activationId) ++
+    ",\"roster_binding\":" ++ jsonString (Emit.bytes32Hex wire.rosterBinding) ++
+    ",\"transcript\":" ++ jsonArray (wire.transcript.map TraceWire.toJson) ++
+    ",\"seat_signature\":" ++ natArray (signatureNatList wire.seatSignature) ++
+    ",\"decision\":" ++ jsonString wire.decision ++
+    ",\"decided_route\":" ++ jsonString wire.decidedRoute ++
+    ",\"extraction\":" ++ jsonString wire.extraction ++
+    ",\"command\":" ++ jsonString wire.command ++ "}"
+
+def StepResponseWire.toJson (wire : StepResponseWire) : String :=
+  "{\"format\":" ++ jsonString STEP_OUTPUT_FORMAT ++
+    ",\"activation_id\":" ++ jsonString (Emit.bytes32Hex wire.activationId) ++
+    ",\"roster_binding\":" ++ jsonString (Emit.bytes32Hex wire.rosterBinding) ++
+    ",\"sequence\":" ++ toString wire.sequence ++
+    ",\"complete\":" ++ toString wire.complete ++
+    ",\"next_present\":" ++ toString wire.nextPresent ++
+    ",\"next_seat\":" ++ toString wire.nextSeat ++
+    ",\"next_previous_counter\":" ++ toString wire.nextPreviousCounter ++
+    ",\"next_counter\":" ++ toString wire.nextCounter ++
+    ",\"operational_budget_remaining\":" ++ toString wire.operationalBudgetRemaining ++
+    ",\"signing_message\":" ++ jsonString wire.signingMessage ++ "}"
+
+/-- Pure Lean read.  Every field of the response is projected from the
+`CrewFieldMission.StepView` the seal replayed; nothing is asserted here. -/
+def stepJudge (activation : Activation) (request : StepRequestWire) :
+    Except Refusal StepResponseWire := do
+  if request.activationId ≠ activation.raw.activationId then throw .wrongActivation
+  if request.rosterBinding ≠ activation.raw.rosterBinding then throw .wrongCrew
+  let traces ← match request.transcript.mapM (TraceWire.toSemantic? activation) with
+    | none => throw .invalidTranscript
+    | some traces => pure traces
+  let view ← match activation.runSeal.step? traces with
+    | none => throw .replayRefused
+    | some view => pure view
+  let decision ← match decisionOfWireFields? request.decision request.decidedRoute
+      request.extraction request.command with
+    | none => throw .invalidTranscript
+    | some decision => pure decision
+  let signingMessage ←
+    match view.nextSeat with
+    | none => pure ""
+    | some _ =>
+      match activation.runSeal.nextSigningPreimage? traces ⟨request.seatSignature⟩ decision with
+      | none => throw .stepRefused
+      | some preimage =>
+          pure (CrewFieldMission.ProductionSigning.handoffPreimageJson preimage)
+  pure {
+    activationId := activation.raw.activationId
+    rosterBinding := activation.raw.rosterBinding
+    sequence := view.sequence
+    complete := view.completion.isSome
+    nextPresent := view.nextSeat.isSome
+    nextSeat := (view.nextSeat.map fun seat => seat.id.value).getD 0
+    nextPreviousCounter := view.nextPreviousCounter.getD 0
+    nextCounter := (view.nextPreviousCounter.map (· + 1)).getD 0
+    operationalBudgetRemaining := view.operationalBudgetRemaining
+    signingMessage
+  }
+
+/-- ⚠ NOT `parseTranscript`.  That one guards settlement and demands exactly
+`CREW_SIZE` handoffs; this one accepts a prefix and is reachable only from the
+read-only step ABI.  Two parsers rather than one relaxed parser, because the
+weaker bound must never become the bound the write path is checked at. -/
+private def parseTranscriptPrefix (j : Json) : Except String (List TraceWire) := do
+  let values := (← j.getArr?).toList
+  if values.length > CrewFieldMission.CREW_SIZE then
+    throw "a field transcript prefix holds at most four handoffs"
+  values.mapM parseTrace
+
+private def parseStepRequestJson (j : Json) : Except String StepRequestWire := do
+  exactKeys j ["format", "activation_id", "roster_binding", "transcript",
+    "seat_signature", "decision", "decided_route", "extraction", "command"]
+  if (← j.getObjValAs? String "format") != STEP_INPUT_FORMAT then throw "wrong step format"
+  pure {
+    activationId := ← objectDigest j "activation_id"
+    rosterBinding := ← objectDigest j "roster_binding"
+    transcript := ← parseTranscriptPrefix (← j.getObjVal? "transcript")
+    seatSignature := ← parseSignature (← j.getObjVal? "seat_signature")
+    decision := ← j.getObjValAs? String "decision"
+    decidedRoute := ← j.getObjValAs? String "decided_route"
+    extraction := ← j.getObjValAs? String "extraction"
+    command := ← j.getObjValAs? String "command"
+  }
+
+def decodeStepRequestWithLimit (limit : Nat) (bytes : String) : Option StepRequestWire :=
+  if bytes.length ≤ limit then
+    canonicalDecode parseStepRequestJson StepRequestWire.toJson bytes
+  else none
+
+def decodeStepRequest (bytes : String) : Option StepRequestWire :=
+  decodeStepRequestWithLimit WIRE_BYTE_LIMIT bytes
+
+theorem decodeStepRequest_reencodes {bytes : String} {request : StepRequestWire}
+    (accepted : decodeStepRequest bytes = some request) : request.toJson = bytes := by
+  simp only [decodeStepRequest, decodeStepRequestWithLimit] at accepted
+  split at accepted
+  · exact canonicalDecode_reencodes parseStepRequestJson StepRequestWire.toJson accepted
+  · contradiction
+
+/-- Exact host ABI for the step read: pinned activation + canonical
+`POA-CREW-FIELD-STEP-IN-1` bytes -> canonical `POA-CREW-FIELD-STEP-OUT-1` bytes.
+`none` is the single refusal; it is the sentinel `""` at the `@[export]`. -/
+def stepProcess (activation : Activation) (requestBytes : String) : Option String := do
+  let request ← decodeStepRequest requestBytes
+  match stepJudge activation request with
+  | .error _ => none
+  | .ok response => some response.toJson
+
 /-! ## Executable activation and hostile cases -/
 
 private def fixtureDigest (value : Nat) : Digest32 where
@@ -1314,6 +1503,92 @@ theorem strict_state_roundtrip :
     decodeState fixtureGenesis.toJson = some fixtureGenesis := by
   native_decide
 
+/-! ### The step ABI, over the transcript the kernel signed
+
+Every seat-admission envelope used below comes out of
+`CrewFieldMission.fixtureDeepTranscript` — the kernel's own signed data — so
+these are not requests the runtime authored for itself. -/
+
+private def fixtureStepRequest? (k : Nat) : Option StepRequestWire := do
+  let trace ← CrewFieldMission.fixtureDeepTranscript[k]?
+  let (decision, decidedRoute, extraction, command) := decisionToWire trace.decision
+  some {
+    activationId := fixtureRawActivation.activationId
+    rosterBinding := fixtureRawActivation.rosterBinding
+    transcript := (CrewFieldMission.fixtureDeepTranscript.take k).map TraceWire.ofSemantic
+    seatSignature := trace.seatSignature.bytes
+    decision
+    decidedRoute
+    extraction
+    command }
+
+/-- The signing message the kernel's own step view yields for handoff `k`,
+reached by the OTHER public route (`step?` then `StepView.nextBody?`) so the
+assertion below is not the ABI agreeing with itself. -/
+private def expectedStepSigningMessage? (k : Nat) : Option String := do
+  let trace ← CrewFieldMission.fixtureDeepTranscript[k]?
+  let view ← CrewFieldMission.fixtureRunSeal.step?
+    (CrewFieldMission.fixtureDeepTranscript.take k)
+  let body ← view.nextBody? trace.observation trace.decision
+  some (CrewFieldMission.ProductionSigning.handoffPreimageJson
+    (body.signingPreimage fixtureRawActivation.fieldSession.messageDigestSuiteId
+      fixtureRawActivation.fieldSession.signingSuiteId))
+
+def stepAbiAnswersEveryPrefixB : Bool :=
+  (List.range CrewFieldMission.CREW_SIZE).all fun k =>
+    match fixtureStepRequest? k, CrewFieldMission.fixtureDeepTranscript[k]?,
+        expectedStepSigningMessage? k with
+    | some request, some trace, some message =>
+        decide (decodeStepRequest request.toJson = some request) &&
+        (match stepJudge fixtureActivation request with
+         | .error _ => false
+         | .ok response =>
+             decide (response.activationId = fixtureRawActivation.activationId) &&
+             decide (response.rosterBinding = fixtureRawActivation.rosterBinding) &&
+             decide (response.sequence = k) &&
+             decide (response.complete = false) &&
+             decide (response.nextPresent = true) &&
+             decide (response.nextSeat = trace.seat.id.value) &&
+             decide (response.nextPreviousCounter = trace.previousCounter) &&
+             decide (response.nextCounter = trace.counter) &&
+             decide (response.signingMessage = message) &&
+             decide (stepProcess fixtureActivation request.toJson = some response.toJson))
+    | _, _, _ => false
+
+/-- ⚑ The read a live crew needs: at every one of the four prefixes the
+settlement ABI cannot parse, the step ABI answers, and the cursor it reports —
+seat, previous counter, counter — is the one the kernel's own signed trace for
+that handoff used.  The `signing_message` it carries is byte-identical to the
+preimage the kernel's step view yields by the independent `nextBody?` route. -/
+theorem the_step_abi_reports_the_cursor_the_signed_transcript_used :
+    stepAbiAnswersEveryPrefixB = true := by native_decide
+
+def stepAbiRefusalsB : Bool :=
+  match fixtureStepRequest? 0, fixtureStepRequest? 1 with
+  | some request, some second =>
+      -- the crew half of the durable key: same activation, wrong roster.
+      decide ({ request with rosterBinding := fixtureDigest 199 } ≠ request) &&
+      decide (stepProcess fixtureActivation
+        { request with rosterBinding := fixtureDigest 199 }.toJson = none) &&
+      decide (stepProcess fixtureActivation
+        { request with activationId := fixtureDigest 198 }.toJson = none) &&
+      -- another seat's admission envelope does not open seat 0's briefing.
+      decide (second.seatSignature ≠ request.seatSignature) &&
+      decide (stepProcess fixtureActivation
+        { request with seatSignature := second.seatSignature }.toJson = none) &&
+      -- the prefix bound is a bound: five handoffs is not a prefix of four.
+      decide (stepProcess fixtureActivation
+        { request with transcript := fixtureDeepTranscript ++ fixtureDeepTranscript.take 1 }.toJson
+          = none) &&
+      -- and the honest control, so the four refusals above are not vacuous.
+      decide ((stepProcess fixtureActivation request.toJson).isSome = true)
+  | _, _ => false
+
+/-- Four refusals, each with its mutation asserted present in the same
+statement, and the honest control that the unmutated request is accepted. -/
+theorem the_step_abi_refuses_a_wrong_crew_a_wrong_seat_and_an_overlong_prefix :
+    stepAbiRefusalsB = true := by native_decide
+
 /-! ### The two-crews-one-key collision, and the binding that closes it
 
 `activationId` is pinned only against `fieldSession.policy.mission.activationDigest`
@@ -1419,6 +1694,7 @@ theorem callable_entrypoint_emits_the_exact_successful_receipt :
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeCommand_reencodes
 #assert_axioms decodeState_reencodes
+#assert_axioms decodeStepRequest_reencodes
 -- `rfl` closes this one, but `CrewFieldMission.fixturePolicy` was itself built with
 -- `native_decide`, so the statement inherits that axiom and pins in the compiled tier.
 #assert_compiled hostile_rekeyed_roster_shares_the_authored_activation_id
@@ -1446,6 +1722,8 @@ theorem callable_entrypoint_emits_the_exact_successful_receipt :
 #assert_compiled hostile_caller_authored_salvage_field_refused_by_strict_codec
 #assert_compiled strict_command_roundtrip
 #assert_compiled strict_state_roundtrip
+#assert_compiled the_step_abi_reports_the_cursor_the_signed_transcript_used
+#assert_compiled the_step_abi_refuses_a_wrong_crew_a_wrong_seat_and_an_overlong_prefix
 #assert_compiled callable_entrypoint_emits_the_exact_successful_receipt
 
 end Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime

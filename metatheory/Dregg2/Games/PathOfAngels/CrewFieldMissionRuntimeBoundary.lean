@@ -122,6 +122,19 @@ theorem raw_transcript_parser_is_private : True := by
   fail_if_success (have _ := parseTranscript)
   trivial
 
+/-- ⚑ 2026-08-07, with the step ABI.  `parseTranscriptPrefix` accepts 0-4
+handoffs where `parseTranscript` demands exactly 4.  Public, it would read as a
+supported way to parse a settlement transcript, and the weaker bound would
+become the bound the WRITE path is checked at — the exact substitution the
+comment beside it forbids. -/
+theorem raw_transcript_prefix_parser_is_private : True := by
+  fail_if_success (have _ := parseTranscriptPrefix)
+  trivial
+
+theorem raw_step_request_parser_is_private : True := by
+  fail_if_success (have _ := parseStepRequestJson)
+  trivial
+
 theorem raw_exact_key_checker_is_private : True := by
   fail_if_success (have _ := exactKeys)
   trivial
@@ -177,6 +190,11 @@ theorem canonical_surface_stays_public : True := by
   have _ := @StateWire.toJson
   have _ := @CommandWire.toJson
   have _ := @rosterBindingOf
+  have _ := @decodeStepRequest
+  have _ := @stepJudge
+  have _ := @stepProcess
+  have _ := @StepResponseWire.toJson
+  have _ := @StepRequestWire.toJson
   trivial
 
 #assert_axioms activation_constructor_is_private
@@ -188,6 +206,8 @@ theorem canonical_surface_stays_public : True := by
 #assert_axioms raw_command_parser_is_private
 #assert_axioms raw_state_parser_is_private
 #assert_axioms raw_transcript_parser_is_private
+#assert_axioms raw_transcript_prefix_parser_is_private
+#assert_axioms raw_step_request_parser_is_private
 #assert_axioms raw_exact_key_checker_is_private
 #assert_axioms ordinary_mint_authorizer_is_private
 #assert_axioms relic_custody_authorizer_is_private
