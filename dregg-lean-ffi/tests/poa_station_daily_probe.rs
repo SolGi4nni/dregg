@@ -3,14 +3,19 @@
 //! It calls the real linked symbol and asserts what the served document IS and, more importantly,
 //! what it is NOT.
 //!
-//! # The read is honest before any crate is opened
+//! # ⚑ THE READ FOLDS THE NODE'S OPEN LOG, and this probe proves it on the LINKED ARCHIVE
 //!
-//! The panel this read serves is `ShipInstrumentPanel.initial` — every gauge at its installed
-//! value — and that is not a placeholder: no `ShipInstrumentPanel.Receipt` can be produced without
-//! an accepted `SalvageCrate.OpenReceipt`, and no accepted opening can be produced without a
-//! `CurrentStateCapability`, which is `opaque` with no producer anywhere in the tree. The write
-//! path is absent BY TYPE. This probe pins `observed`/`admitted` at zero so the day that changes,
-//! it changes visibly.
+//! ⚠ CORRECTED. This section used to say the served panel was `ShipInstrumentPanel.initial`
+//! because "no accepted opening can be produced without a `CurrentStateCapability`, which is
+//! `opaque` with no producer anywhere in the tree. The write path is absent BY TYPE." Every
+//! clause of that is false at HEAD: the capability is a sealed structure rooted in `genesis`, the
+//! crate opens, and the request now carries the node's durable open log.
+//!
+//! So `the_communal_panel_is_the_installed_ship_and_names_nobody` pins the EMPTY-log reading —
+//! which is still every gauge at its installed value, and still the honest answer for a node
+//! nobody has opened the crate on. What it can no longer be mistaken for is a claim that the ship
+//! cannot move: `the_read_folds_the_log_and_serves_a_moved_ship` hands the SAME export a one-row
+//! log and gets a different ship back, from the archive, not from a theorem.
 //!
 //! # What must never appear
 //!
@@ -26,6 +31,7 @@
 //! is about what the linked archive actually returned.
 #![cfg(feature = "lean-lib")]
 
+use dregg_lean_ffi::poa_crate_open_ffi::CrateOpenLogRow;
 use dregg_lean_ffi::poa_station_daily_ffi::{
     poa_station_daily_read_available, read_poa_station_daily, station_daily_request,
     PoaStationDailyVerdict,
@@ -34,6 +40,12 @@ use serde_json::Value;
 
 /// The authored officer on the crate's eligible roster: `SalvageCrateExamples.digest 40`.
 const OFFICER_KEY: &str = "2828282828282828282828282828282828282828282828282828282828282828";
+
+/// `SalvageCrateExamples.digest 41` — the crew key whose authored row is the communal salvage.
+const CREW_41: [u8; 32] = [0x29; 32];
+
+/// The first authored beacon, and the only period a genesis-rooted replay is ever at.
+const INSTALLED_PERIOD: u64 = 31;
 
 fn read(request: &str) -> PoaStationDailyVerdict {
     read_poa_station_daily(request).expect("linked Lean station read must be callable")
@@ -59,7 +71,7 @@ fn the_communal_panel_is_the_installed_ship_and_names_nobody() {
         "dregg_poa_station_daily_read is absent or initialization failed; this is refusal, not skip"
     );
 
-    let (bytes, view) = document(&station_daily_request(None));
+    let (bytes, view) = document(&station_daily_request(None, &[]));
 
     assert_eq!(view["format"], "POA-STATION-DAILY-OUT-1");
     assert_eq!(
@@ -114,6 +126,111 @@ fn the_communal_panel_is_the_installed_ship_and_names_nobody() {
     }
 }
 
+/// ⭐ THE READ REALLY FOLDS THE LOG — on the linked archive, not in a theorem.
+///
+/// The only difference between the two calls is one row of durable open log, and the row is the
+/// one `node/src/poa_crate_api.rs` appends after crew 41's accepted open of the installed period.
+/// The mutation is asserted to BE one (the two requests differ) before either verdict is read, so
+/// a probe against an export that ignored `history` cannot pass by serving a constant.
+#[test]
+fn the_read_folds_the_log_and_serves_a_moved_ship() {
+    assert!(
+        poa_station_daily_read_available(),
+        "dregg_poa_station_daily_read is absent or initialization failed; this is refusal, not skip"
+    );
+
+    let opened = [CrateOpenLogRow {
+        player: CREW_41,
+        period: INSTALLED_PERIOD,
+    }];
+    let empty_wire = station_daily_request(None, &[]);
+    let folded_wire = station_daily_request(None, &opened);
+    assert_ne!(
+        empty_wire, folded_wire,
+        "the log made no difference to the request bytes; this probe would measure nothing"
+    );
+
+    let (_, installed) = document(&empty_wire);
+    let (_, moved) = document(&folded_wire);
+
+    // The installed pole is genuinely still: nothing has been folded.
+    assert_eq!(installed["gauges"][0]["exact_total"], 0);
+    assert_eq!(installed["observed"], 0);
+
+    // ⭐ And one logged opening moves the ship the archive serves.
+    assert_eq!(
+        moved["gauges"][0]["exact_total"], 1,
+        "the served ship did not move for a logged opening: {moved}"
+    );
+    assert_eq!(moved["gauges"][0]["shown"], 1);
+    assert_eq!(moved["observed"], 1);
+    assert_eq!(moved["admitted"], 1);
+    assert_eq!(moved["recovered_kinds"], 1);
+
+    // It is still COMMUNAL and still unattributed: no crew member appears because one opened.
+    assert_eq!(
+        moved["crew"],
+        Value::Null,
+        "the communal panel named a crew member after an opening"
+    );
+    // And the schedule half is untouched by the log.
+    for field in ["opens_at", "closes_at", "table_rows", "ticket_count"] {
+        assert_eq!(installed[field], moved[field]);
+    }
+}
+
+/// ⚠ A log this crate could not have produced is REFUSED, not folded into a shorter one and not
+/// served as an unmoved ship. The pole above shows the same wire shape DOES serve a document, so
+/// this is the replay guard firing rather than the transport failing.
+#[test]
+fn a_log_that_does_not_replay_is_refused_rather_than_served_as_zeros() {
+    assert!(
+        poa_station_daily_read_available(),
+        "dregg_poa_station_daily_read is absent or initialization failed; this is refusal, not skip"
+    );
+
+    // A period the crate is not at — `advancePeriod` is capability-gated and nothing calls it, so
+    // a genesis-rooted replay is always at the installed period.
+    let misdated = [CrateOpenLogRow {
+        player: CREW_41,
+        period: INSTALLED_PERIOD + 1,
+    }];
+    assert_eq!(
+        read(&station_daily_request(None, &misdated)),
+        PoaStationDailyVerdict::Rejected,
+        "a log row from another period was folded instead of refused"
+    );
+
+    // A crew key the curator never enrolled cannot have produced a row.
+    let stowaway = [CrateOpenLogRow {
+        player: [0x4d; 32],
+        period: INSTALLED_PERIOD,
+    }];
+    assert_eq!(
+        read(&station_daily_request(None, &stowaway)),
+        PoaStationDailyVerdict::Rejected,
+        "a log row naming a stowaway was folded instead of refused"
+    );
+
+    // The same crew key twice in one period: the crate's append-only `consumed` set refuses the
+    // second, so this is not a log any node could have written.
+    let replayed = [
+        CrateOpenLogRow {
+            player: CREW_41,
+            period: INSTALLED_PERIOD,
+        },
+        CrateOpenLogRow {
+            player: CREW_41,
+            period: INSTALLED_PERIOD,
+        },
+    ];
+    assert_eq!(
+        read(&station_daily_request(None, &replayed)),
+        PoaStationDailyVerdict::Rejected,
+        "a log recording one crew key opening the same period twice was folded instead of refused"
+    );
+}
+
 #[test]
 fn naming_a_crew_member_adds_a_rotation_and_moves_no_gauge() {
     assert!(
@@ -121,8 +238,8 @@ fn naming_a_crew_member_adds_a_rotation_and_moves_no_gauge() {
         "dregg_poa_station_daily_read is absent or initialization failed; this is refusal, not skip"
     );
 
-    let (anonymous_bytes, anonymous) = document(&station_daily_request(None));
-    let (crew_bytes, crew) = document(&station_daily_request(Some(OFFICER_KEY)));
+    let (anonymous_bytes, anonymous) = document(&station_daily_request(None, &[]));
+    let (crew_bytes, crew) = document(&station_daily_request(Some(OFFICER_KEY), &[]));
 
     // ⚑ The communal half, on the EMITTED BYTES of two real calls into the linked archive.
     for field in [
@@ -191,7 +308,7 @@ fn an_ineligible_crew_key_is_told_so_rather_than_refused() {
     );
 
     let stranger = "ff".repeat(32);
-    let (_, view) = document(&station_daily_request(Some(&stranger)));
+    let (_, view) = document(&station_daily_request(Some(&stranger), &[]));
     assert_eq!(view["crew"]["key"], stranger);
     assert_eq!(
         view["crew"]["eligible"], false,
@@ -228,6 +345,14 @@ fn every_uncanonical_request_is_refused() {
         r#"{"format": "POA-STATION-DAILY-1", "crew": null}"#,
         // Missing field.
         r#"{"format":"POA-STATION-DAILY-1"}"#,
+        // ⚠ THE PRE-`history` SHAPE. This was the whole request until the read grew the log, and
+        // it must be a MISSING FIELD rather than a request with an implicitly empty history — a
+        // defaulted log would serve the installed ship to every caller of the old shape.
+        r#"{"format":"POA-STATION-DAILY-1","crew":null}"#,
+        // A log row carrying its own counter — the field Lean DERIVES from position.
+        r#"{"format":"POA-STATION-DAILY-1","crew":null,"history":[{"player":"2929292929292929292929292929292929292929292929292929292929292929","period":31,"counter":0}]}"#,
+        // Transposed row keys.
+        r#"{"format":"POA-STATION-DAILY-1","crew":null,"history":[{"period":31,"player":"2929292929292929292929292929292929292929292929292929292929292929"}]}"#,
         // Not an object.
         r#"[]"#,
     ] {

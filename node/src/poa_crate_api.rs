@@ -115,7 +115,12 @@ const CRATE_CONSENSUS_CLAIM: &str = "the open is recorded in this node's durable
 
 /// The durable open-log key, scoped by federation and VERSIONED. A shape change bumps `v1` and the
 /// old blob then refuses to load rather than being reinterpreted.
-fn log_key(federation_id: &[u8; 32]) -> String {
+///
+/// ⚑ `pub(crate)` because `poa_station_api` READS this same log to fold the ship it serves. It
+/// takes the key and the decoder from here rather than re-deriving either: a station read that
+/// spelled the key its own way would silently fold an EMPTY log and serve zeros forever, which is
+/// exactly the defect that made the read and the write disagree in the first place.
+pub(crate) fn log_key(federation_id: &[u8; 32]) -> String {
     format!("poa_crate_open_log:v1:{}", hex_encode(federation_id))
 }
 
@@ -137,7 +142,7 @@ fn encode_log(rows: &[CrateOpenLogRow]) -> Vec<u8> {
 /// Refuses rather than truncating: a blob with the wrong magic, a ragged tail, or more rows than
 /// Lean's parser accepts is not a log this node wrote, and reinterpreting it would silently rewind
 /// the replay guard.
-fn decode_log(blob: &[u8]) -> Result<Vec<CrateOpenLogRow>, String> {
+pub(crate) fn decode_log(blob: &[u8]) -> Result<Vec<CrateOpenLogRow>, String> {
     if blob.len() < LOG_MAGIC.len() || &blob[..LOG_MAGIC.len()] != LOG_MAGIC {
         return Err("the stored crate-open log does not carry the POACLOG1 magic".to_owned());
     }

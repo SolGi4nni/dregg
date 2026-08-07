@@ -128,8 +128,16 @@ fn hex32(bytes: &[u8; 32]) -> String {
 /// Build the exact canonical request wire. The key order here is the one Lean re-encodes and
 /// compares against, so this function — not a serializer whose order is incidental — is the only
 /// place the request is spelled.
-pub fn crate_open_request(opener: &[u8; 32], history: &[CrateOpenLogRow]) -> String {
-    let rows: Vec<String> = history
+/// The ONE spelling of the node's durable open log as a `history` array body (no brackets).
+///
+/// ⚑ Both PoA wires that carry the log use this: the crate-open WRITE
+/// ([`crate_open_request`]) and the station-daily READ
+/// (`poa_station_daily_ffi::station_daily_request`). Lean spells a row in exactly one place too —
+/// `StationDailyRuntime.HistoryRow.toJson`, which `StationCrateOpenRuntime.Request.toJson` calls
+/// rather than re-typing. Two spellings of one log is how the read and the write come to disagree
+/// about what happened, which is the defect this function exists to make unrepresentable.
+pub fn crate_open_log_rows_json(history: &[CrateOpenLogRow]) -> String {
+    history
         .iter()
         .map(|row| {
             format!(
@@ -138,11 +146,15 @@ pub fn crate_open_request(opener: &[u8; 32], history: &[CrateOpenLogRow]) -> Str
                 row.period
             )
         })
-        .collect();
+        .collect::<Vec<String>>()
+        .join(",")
+}
+
+pub fn crate_open_request(opener: &[u8; 32], history: &[CrateOpenLogRow]) -> String {
     format!(
         "{{\"format\":\"{CRATE_OPEN_INPUT_FORMAT}\",\"opener\":\"{}\",\"history\":[{}]}}",
         hex32(opener),
-        rows.join(",")
+        crate_open_log_rows_json(history)
     )
 }
 
