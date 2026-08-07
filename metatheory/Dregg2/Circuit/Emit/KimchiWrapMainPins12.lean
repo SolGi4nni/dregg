@@ -594,8 +594,14 @@ and is why this is 46 and not 47). **61 per instance, 122 at `maxPrevs = 2`** �
 `Max_proofs_verified` is 2 at BOTH committed shapes because `wrap_main.ml:287-289` runs this loop
 over `prev_proof_state.unfinalized_proofs`, whose own upstream comment is *"This is padded to
 max_proofs_verified for the benefit of wrapping with dummy unfinalized proofs"*. So the wrap-scale
-figure is this figure, and it does NOT follow `actual_proofs_verified` — setting the shape field to
-`actual` on 2026-08-07 dropped one whole instance and put this census at 61 against Mina's 122.
+figure is this figure, and it does NOT follow `actual_proofs_verified`.
+
+⚠ **SAY WHICH SHAPE THE CENSUS IS OF.** `finSpRowsW` is `tW = mkWrap shapeSmoke`, so the `122 * 11`
+leg did NOT move when the shape field was set to `actual` on 2026-08-07 — `shapeSmoke` kept its 2.
+What moved is the WRAP shape, where `finAll` would have run ONE instance against
+`wrap_main.ml:287-289`'s `Max_proofs_verified`, and the leg that caught it is
+`shapeWrap.maxPrevs = 2` and not the row count. Two legs, two shapes, and reading the row count as
+evidence about `shapeWrap` is the misquote the `w12_close` docblock warns about one section over.
 
 Against Mina's `wrap-transaction`: **137 blocks before this rung, 259 of 261 after.** The two that
 remain are not this sponge's.
