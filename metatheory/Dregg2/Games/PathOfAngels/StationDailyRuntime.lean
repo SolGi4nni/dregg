@@ -10,34 +10,45 @@ PLATFORM-ROADMAP §7.3 pairs two rows, and both already exist and are proved:
 Neither had an `@[export]`, so no reader could see either one.  This module is
 that export, and it is deliberately a READ ONLY.
 
-## What is reachable today, and what is not — stated as structure, not as a wish
+## ⚠ CORRECTED 2026-08-07 — the write path exists now, and this READ does not see it
 
-**The write path is not "unwired". It is unreachable by type.**
+Everything under this heading used to say the write path was "unreachable by
+type": that `SalvageCrate.CurrentStateCapability` was `opaque` with no producer
+anywhere in the tree, so no `@[export]` could ever reach `openCrate`.  **That is
+false at HEAD.**  The capability is a sealed structure with a `private`
+constructor and two producers — `SalvageCrate.genesis` (the one-time install) and
+the successor an ACCEPTED open hands back — `StationCrateOpen` composes them with
+`ShipInstrumentPanel.observe`, and `StationCrateOpenRuntime` exports the whole
+ceremony as `dregg_poa_crate_open`.  A player can open the crate.
+
+What is still true, and is the reason this module is unchanged:
 
 * `SalvageCrate.openCore` is `private`, so no module outside `SalvageCrate` can
   call it.
-* The public opening, `SalvageCrate.openCrate`, demands a
-  `CurrentStateCapability`, which is declared `opaque` with no producer
-  anywhere in the tree.  No Lean term outside the crate's own laboratory can
-  construct one, and Rust cannot manufacture one either — an `@[export]` can
-  only call a Lean function, and there is no Lean function that mints it.
-* `SalvageCrate.State` has a private `mk` and *deliberately no public empty-state
-  producer*: "genesis/restore belongs to the global state adapter", and no such
-  adapter exists.
-* `ShipInstrumentPanel.Receipt` likewise has a private `mk` whose only producer
-  is `ofSalvageOpen`, which consumes an accepted `SalvageCrate.OpenReceipt`.
+* `ShipInstrumentPanel.Receipt` has a private `mk` whose only producer is
+  `ofSalvageOpen`, which consumes an accepted `SalvageCrate.OpenReceipt`.
 
-That last point is the one that decides this module's shape.  A wire that
-decoded JSON into a `Receipt` would be a public constructor for the sealed type,
-and any caller could then post a contribution the crate never authorized and
-move the ship.  So **this wire carries no receipts.**  It carries a crew key and
-nothing else, and the panel half of the document is a projection of
-`ShipInstrumentPanel.initial` — the ship exactly as installed.
+That second point still decides this module's shape.  A wire that decoded JSON
+into a `Receipt` would be a public constructor for the sealed type, and any
+caller could then post a contribution the crate never authorized and move the
+ship.  So **this wire carries no receipts.**
 
-`the_served_ship_has_not_been_moved` says that in the object language: every
-gauge reads zero, nothing has been observed, nothing admitted.  It is a theorem
-and not a placeholder, and it will go red the day a judged opening can be folded
-in — which is precisely when this module should grow a second input.
+⚑ But the reason `servedState` is `ShipInstrumentPanel.initial` is now a
+DIFFERENT reason, and a weaker one.  It is no longer "no accepted opening can
+exist"; it is "**this request carries no open history, so this read has nothing
+to fold**".  The accepted openings are real and they live in the node's durable
+open log, which `StationCrateOpenRuntime` replays; `POA-STATION-DAILY-1` has no
+field for that log, so the ship this read serves is the installed one while the
+ship the write path publishes has moved.
+
+`the_served_ship_has_not_been_moved` is therefore no longer an assertion about
+REACHABILITY — it is an assertion about this request type, and it did NOT go red
+when the write path landed, because nothing here consumes the log.  Closing the
+gap is a change to the station READ's wire (`history`), its FFI arm and
+`node/src/poa_station_api.rs`, i.e. to the station-wiring surface rather than to
+this module alone.  Until that lands, a reader of `/api/poa/station/…/panel`
+sees the installed ship and a caller of the crate-open route sees the moved one,
+and the two disagree.
 
 ## The two halves, and why one of them may be public at all
 
@@ -74,8 +85,11 @@ The crate is `SalvageCrateExamples.config` — already authored, already proved
 valid, and its docblock already names "the web/game layer" as its consumer.  It
 is reused rather than re-typed.
 
-The panel had no deployment at all outside a private laboratory, so this module
-authors one.  It authors exactly one dial, because
+⚑ The panel is `StationCrateOpen.panel`, not a second one.  This module used to
+author its own `stationPanelRaw` with the same fields, and `StationCrateOpen`
+authored an identical one for the write path — two shapes that agreed today and
+would have disagreed the first time either grew a dial.  There is now ONE panel
+deployment and both halves abbreviate it.  It carries exactly one dial, because
 `the_authored_table_moves_only_supplies` shows every row of the authored table
 leaves intel, cohesion, influence and score at zero — a second dial would be one
 that provably cannot move, which is decoration.  The panel's identity is read
@@ -121,6 +135,7 @@ import Lean.Data.Json
 import Dregg2.Games.PathOfAngels.NetworkJudgeWire
 import Dregg2.Games.PathOfAngels.ShipInstrumentPanel
 import Dregg2.Games.PathOfAngels.SalvageCrateExamples
+import Dregg2.Games.PathOfAngels.StationCrateOpen
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.StationDailyRuntime
@@ -157,22 +172,19 @@ theorem the_authored_table_moves_only_supplies :
       decide (entry.contribution.score = 0)) = true := by
   native_decide
 
-/-- The station's panel.  Identity is read off the crate's mission rather than
-re-typed; `fullAt` is an authored display scale for the reclamation bins and is
+/-- The station's panel — `StationCrateOpen.panel`, the one the WRITE path folds
+receipts into.  Identity is read off the crate's mission rather than re-typed;
+`fullAt` is an authored display scale for the reclamation bins and is
 deliberately not the mission budget, which bounds one contribution rather than
-the communal total. -/
-def stationPanelRaw : ShipInstrumentPanel.RawPanel where
-  federationId := stationCrate.raw.mission.federationId
-  contentSession := stationCrate.raw.mission.contentSession
-  contentEpoch := stationCrate.raw.mission.epoch
-  gauges := [{ id := ⟨1⟩, meter := .supplies, fullAt := 64 }]
-  capacity := ShipInstrumentPanel.MAX_OBSERVED
+the communal total.  These two abbreviations exist so the names this module's
+theorems already use keep resolving; they are not a second deployment. -/
+abbrev stationPanelRaw : ShipInstrumentPanel.RawPanel := StationCrateOpen.panelRaw
 
 theorem station_panel_valid :
-    ShipInstrumentPanel.panelValidB stationPanelRaw = true := by
-  native_decide
+    ShipInstrumentPanel.panelValidB stationPanelRaw = true :=
+  StationCrateOpen.panel_valid
 
-def stationPanel : ShipInstrumentPanel.Panel := ⟨stationPanelRaw, station_panel_valid⟩
+abbrev stationPanel : ShipInstrumentPanel.Panel := StationCrateOpen.panel
 
 /-- ⭐ The panel and the crate are ONE deployment.  Without this the panel could
 refuse every receipt the crate ever produced as `foreignDeployment`, and the
@@ -183,10 +195,12 @@ theorem the_panel_and_the_crate_are_one_deployment :
     stationPanelRaw.contentEpoch = stationCrate.raw.mission.epoch :=
   ⟨rfl, rfl, rfl⟩
 
-/-- The ship as installed.  This is the ONLY state this module can reach: see
-the docblock — no `ShipInstrumentPanel.Receipt` can be produced without an
-accepted `SalvageCrate.OpenReceipt`, and no accepted opening can be produced
-without a `CurrentStateCapability`, which is `opaque`. -/
+/-- The ship as installed.  ⚠ This is the only state this module can reach
+because **its request carries no open history to fold**, NOT because no accepted
+opening can exist — accepted openings exist and `StationCrateOpenRuntime` serves
+them.  Folding them here means giving `Request` a `history` field, which is a
+change to the station-wiring surface (this wire, its FFI arm and
+`node/src/poa_station_api.rs`) rather than to this definition. -/
 def servedState : ShipInstrumentPanel.State := ShipInstrumentPanel.initial stationPanel
 
 /-! ## The two wire records -/
@@ -507,11 +521,19 @@ theorem naming_a_crew_member_changes_only_the_crew_member
     { replyOver crate panel state request with crew := none } =
       replyOver crate panel state { crew := none } := rfl
 
-/-- ⭐ THE WRITE-PATH GAP, as a theorem rather than as a caveat.  The served ship
+/-- ⭐ THE READ-PATH GAP, as a theorem rather than as a caveat.  The served ship
 has not been moved: one dial, reading exactly zero, nothing observed, nothing
-admitted, no salvage kinds recovered.  This is honest today because no accepted
-opening can exist (see the docblock), and it is the assertion that will go RED
-the day one can — which is when this module must take a second input. -/
+admitted, no salvage kinds recovered.
+
+⚠ CORRECTED 2026-08-07.  This used to be labelled "honest today because no
+accepted opening can exist … the assertion that will go RED the day one can".
+An accepted opening CAN exist now — `StationCrateOpenRuntime` publishes moved
+ships — and this did **not** go red, because it was never an assertion about
+reachability.  It is an assertion about THIS REQUEST TYPE: `Request` has no
+`history` field, so `servedState` has nothing to fold and is `initial` by
+construction.  What would make it red is giving this wire the log, which is the
+named station-wiring work.  Read as a reachability claim it was a gate that could
+not fire. -/
 theorem the_served_ship_has_not_been_moved :
     (replyFor servedState { crew := none }).gauges =
       [{ gauge := 1, meter := "supplies", exactTotal := 0, fullAt := 64,

@@ -26,6 +26,23 @@ import Dregg2.Games.PathOfAngels.NetworkJudge
 -- to: a second copy of `HiddenInstance` in Rust would be an unproven twin of a
 -- soundness function.
 import Dregg2.Games.PathOfAngels.SlotDeriveRuntime
+-- The mid-run LOCKED/DRIFT oracle, `dregg_poa_signal_feedback`. Judged Signal was a SLOT
+-- MACHINE without it: a public claim carries ONE code, `SignalTriangulation.judge` returns
+-- `none` unless the transcript is SOLVED, and the deduction game with feedback existed only
+-- in the browser's PRACTICE mode against `HiddenInstance.practiceRunSeed`, which no judge
+-- scores. This export applies `SignalTriangulation.feedback` — the same rule `step` scores a
+-- judged transcript with — to the JUDGED instance, so a player's rounds are about the
+-- instance that will settle. Absent, `/api/poa/signal/{authority}/session/*` refuses; there
+-- is no Rust classification and there must never be one (a Rust `exactCount` that disagrees
+-- by one on a duplicate band hands players a different game than the one that settles).
+-- ⚠ Unlike the derivation beside it, this reply is DELIBERATELY route-reachable. That is
+-- sound only because `Reply` carries the two counts and nothing else — see
+-- `reply_bytes_are_a_function_of_the_feedback_alone` and
+-- `served_transcript_cannot_separate_feedback_equivalent_targets`.
+-- Costs ZERO new modules on the closure: its whole import cone (`SlotDeriveRuntime`,
+-- `SignalTriangulation`, `HiddenInstance`, `NetworkJudgeWire`, `Emit`, `Core`) is already
+-- in via the derivation and the Records read model.
+import Dregg2.Games.PathOfAngels.SignalFeedbackRuntime
 import Dregg2.Games.PathOfAngels.NetworkGenesis
 -- The Records read model. It is in §1.3 rather than §1.5 because the public
 -- `/api/poa/records/{authority}` read routes through it: the node holds the
@@ -39,14 +56,30 @@ import Dregg2.Games.PathOfAngels.RecordsRuntime
 -- either organ. Absent, that route refuses; there is no Rust projection and there must never
 -- be one: the panel's `Receipt` and the crate's `OpenResult` have PRIVATE constructors, and a
 -- Rust re-typing of either would be a public mint for a sealed authority.
--- ⚠ READ ONLY, and not by policy — by TYPE. The write path is unreachable from any export:
--- `SalvageCrate.openCore` is `private`, and `openCrate` demands a `CurrentStateCapability`
--- declared `opaque` with no producer anywhere in the tree.
+-- ⚠ CORRECTED 2026-08-07. This block used to say "READ ONLY, and not by policy — by TYPE …
+-- `openCrate` demands a `CurrentStateCapability` declared `opaque` with no producer anywhere in
+-- the tree". That is FALSE at HEAD: the capability is a sealed structure whose producers are
+-- `SalvageCrate.genesis` and the successor an accepted open hands back. This module is still a
+-- read, but because ITS REQUEST CARRIES NO OPEN HISTORY, not because writing is unreachable.
 -- Added 2026-08-06; **+4 modules** to the closure (333 → 337) — MEASURED on the transitive
 -- import graph, not guessed: `SalvageCrate`, `SalvageCrateExamples`, `ShipInstrumentPanel` and
 -- this module. `PlayerCounters`, `NetworkJudgeWire`, `Emit` and `Core` were already in via the
 -- Records read model, so the crate cone costs only itself.
 import Dregg2.Games.PathOfAngels.StationDailyRuntime
+-- The station's crate-open WRITE, `dregg_poa_crate_open`. `SalvageCrate`'s write path was proved
+-- at both poles and had NO TRANSPORT — no `@[export]`, no Rust call site — so no player could
+-- perform the daily ritual at all. This is that transport: the authenticated POST
+-- `/api/poa/station/{authority}/crate/open` routes through it. It replays the node's durable open
+-- log from `SalvageCrate.genesis`, appends the caller's open under the capability chain, and folds
+-- the crate's own sealed receipt into the panel through `ShipInstrumentPanel.observe`. Absent, that
+-- route refuses; there is no Rust write and there must never be one — `OpenResult.mk`,
+-- `OpenReceipt.mk`, `Receipt.mk` and `CurrentStateCapability.mk` are all private precisely so that
+-- only an accepted opening can move the communal gauges.
+-- Added 2026-08-07; **+2 modules** to the closure — MEASURED on the transitive import graph:
+-- `StationCrateOpen` and this module. Everything else in its cone (`SalvageCrate`,
+-- `SalvageCrateExamples`, `ShipInstrumentPanel`, `StationDailyRuntime`, `NetworkJudgeWire`,
+-- `Emit`, `Core`) is already in via the station READ above.
+import Dregg2.Games.PathOfAngels.StationCrateOpenRuntime
 import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime
 import Dregg2.Games.PathOfAngels.EventBatchRuntime

@@ -439,9 +439,11 @@ extern lean_object *dregg_poa_records_project(lean_object *input);
  * and, when a crew key was named, that crew member's VISIBLE rotation over the curator-authored
  * beacon schedule. Its module initializer is required because the projection reaches the same Emit
  * globals the evaluator does.
- * ⚠ READ ONLY BY TYPE, not by policy. There is no argument to this export by which a caller
- * reaches `SalvageCrate.openCrate`: that function demands a `CurrentStateCapability`, which is
- * `opaque` with no producer, and `openCore` is `private`. Availability confers nothing. */
+ * ⚠ CORRECTED 2026-08-07. This note used to say "READ ONLY BY TYPE … `CurrentStateCapability`
+ * is `opaque` with no producer". That is false at HEAD: the capability is a sealed structure
+ * produced by `SalvageCrate.genesis` and by each accepted open's successor, and the write path is
+ * exported beside this one as `dregg_poa_crate_open`. This export is still a read, but because ITS
+ * REQUEST CARRIES NO OPEN HISTORY — it has no field by which a caller could reach an opening. */
 #ifdef DREGG_POA_STATION_DAILY_READ
 extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_StationDailyRuntime(uint8_t builtin);
 extern lean_object *dregg_poa_station_daily_read(lean_object *input);
@@ -449,6 +451,24 @@ extern lean_object *dregg_poa_station_daily_read(lean_object *input);
  * StationDailyRuntime.WIRE_BYTE_LIMIT in Lean for the request; the reply is bounded by the
  * authored schedule length, which is far below this. */
 #define DREGG_POA_STATION_DAILY_WIRE_MAX_BYTES ((size_t)1048576u)
+#endif
+
+/* The station's crate-open WRITE (`StationCrateOpenRuntime.crateOpenFFI`). The caller supplies a
+ * format tag, the authenticated opener's crew key and the node's durable open log; Lean replays the
+ * log from `SalvageCrate.genesis` under the capability chain, appends the caller's open, folds the
+ * crate's own sealed receipt into the communal panel and returns the MOVED ship, or a tagged
+ * refusal carrying no gauge. Its module initializer is required because the ceremony reaches the
+ * same Emit globals the read does.
+ * ⚠ This export DOES write — that is its whole purpose — but it can write only what the crate
+ * authorizes: `OpenResult.mk`, `OpenReceipt.mk`, `Receipt.mk` and `CurrentStateCapability.mk` are
+ * all private, so no caller-authored contribution, draw, period or counter can reach the panel. */
+#ifdef DREGG_POA_CRATE_OPEN
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_StationCrateOpenRuntime(uint8_t builtin);
+extern lean_object *dregg_poa_crate_open(lean_object *input);
+/* Matches MAX_POA_CRATE_OPEN_WIRE_BYTES in poa_crate_open_ffi.rs and
+ * StationCrateOpenRuntime.WIRE_BYTE_LIMIT in Lean: a full 4096-row open log spells to about
+ * 390 KB, so this is a malformed-caller guard rather than a semantic bound. */
+#define DREGG_POA_CRATE_OPEN_WIRE_MAX_BYTES ((size_t)1048576u)
 #endif
 
 /* The Lean-owned first-head ceremony (`NetworkGenesis.networkGenesisFFI`). The input tuple has
@@ -474,6 +494,24 @@ extern lean_object *dregg_poa_signal_slot_derive(lean_object *input);
 /* Matches MAX_POA_SLOT_DERIVE_WIRE_BYTES in poa_slot_derive_ffi.rs and
  * SlotDeriveRuntime.WIRE_BYTE_LIMIT in Lean: the wire is a fixed handful of digests. */
 #define DREGG_POA_SLOT_DERIVE_WIRE_MAX_BYTES ((size_t)65536u)
+#endif
+
+/* The mid-run LOCKED/DRIFT oracle for judged Signal. It applies
+ * `SignalTriangulation.feedback` — the SAME rule `step` scores a settling transcript with —
+ * to the instance `SlotDeriveRuntime.derive` hands the judge, so a player's rounds are about
+ * the run that will settle rather than about a practice draw. There is deliberately no Rust
+ * classification: a second `exactCount`/`presentCount` that disagreed by one on a duplicate
+ * band would hand players a different game than the one that settles.
+ * ⚠ The request carries the curator's SLOT SECRET, as the derivation's does. These bytes are
+ * node-internal. The REPLY carries two counts and nothing else — no secret, no run seed, no
+ * commitment, no target — which is what makes this the one PoA export whose answer is meant
+ * to reach an (authenticated) route. */
+#ifdef DREGG_POA_SIGNAL_FEEDBACK
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_SignalFeedbackRuntime(uint8_t builtin);
+extern lean_object *dregg_poa_signal_feedback(lean_object *input);
+/* Matches MAX_POA_SIGNAL_FEEDBACK_WIRE_BYTES in poa_signal_feedback_ffi.rs and
+ * SignalFeedbackRuntime.WIRE_BYTE_LIMIT in Lean. */
+#define DREGG_POA_SIGNAL_FEEDBACK_WIRE_MAX_BYTES ((size_t)65536u)
 #endif
 
 /* Bounded four-order Dark Bazaar settlement evaluator. The only authorization
@@ -1405,6 +1443,20 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(poastationres);
 #endif
+#ifdef DREGG_POA_CRATE_OPEN
+    /* ⚑ INITIALIZED, not merely linked, and in LOCKSTEP with lean_init_st.cpp. A module whose
+     * initializer never runs answers with an uninitialized closure the first time it is called;
+     * this one is the daily ritual's only write path, so a cold-start fault here is every crew
+     * member's open silently refusing rather than failing loudly. */
+    lean_object *poacrateres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_StationCrateOpenRuntime(1);
+    if (!lean_io_result_is_ok(poacrateres)) {
+        lean_io_result_show_error(poacrateres);
+        lean_dec_ref(poacrateres);
+        return 1;
+    }
+    lean_dec_ref(poacrateres);
+#endif
 #ifdef DREGG_POA_NETWORK_GENESIS
     /* This module imports NetworkGenesisWire/Emit and therefore has initialized constants; keep
      * both runtime init paths in exact parity. Initialization does not verify the external tuple. */
@@ -1430,6 +1482,19 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(slotderiveres);
+#endif
+#ifdef DREGG_POA_SIGNAL_FEEDBACK
+    /* ⚑ INITIALIZED, not merely linked — same reason as the derivation above: an
+     * uninitialized closure would answer the first judged guess with a fault, which the
+     * session route cannot tell from a semantic refusal. */
+    lean_object *signalfeedbackres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_SignalFeedbackRuntime(1);
+    if (!lean_io_result_is_ok(signalfeedbackres)) {
+        lean_io_result_show_error(signalfeedbackres);
+        lean_dec_ref(signalfeedbackres);
+        return 1;
+    }
+    lean_dec_ref(signalfeedbackres);
 #endif
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
     lean_object *bazaarres =
@@ -1605,6 +1670,36 @@ size_t dregg_poa_signal_slot_derive_str(const char *in_utf8, char *out, size_t o
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_SLOT_DERIVE_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_SIGNAL_FEEDBACK
+/* Host-bounded string bridge for the mid-run LOCKED/DRIFT oracle. Zero-length output is
+ * Lean's semantic refusal (a non-canonical wire, or a secret that does not open the stated
+ * commitment); `(size_t)-1` is an unusable or over-limit host transport. */
+size_t dregg_poa_signal_feedback_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_SIGNAL_FEEDBACK_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_signal_feedback(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_SIGNAL_FEEDBACK_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;
@@ -2116,6 +2211,38 @@ size_t dregg_poa_station_daily_read_str(const char *in_utf8, char *out, size_t o
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_STATION_DAILY_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_CRATE_OPEN
+/* Bounded C string bridge over the station crate-open write. Same return contract as the station
+ * read bridge above: the full output length on success, zero for Lean's refusal sentinel (a wire
+ * the canonical seal declined), `(size_t)-1` for an unusable or over-limit host transport. A
+ * SEMANTIC refusal — the crate declining the open — is a nonempty document with `"opened":false`
+ * and no gauge, not a zero length. */
+size_t dregg_poa_crate_open_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_CRATE_OPEN_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_crate_open(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_CRATE_OPEN_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;

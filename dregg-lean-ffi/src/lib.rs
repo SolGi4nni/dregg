@@ -58,6 +58,13 @@ pub mod poa_ffi;
 #[path = "poa_slot_derive_ffi.rs"]
 pub mod poa_slot_derive_ffi;
 
+/// Lean-owned mid-run LOCKED/DRIFT classification for judged Signal. The rule is
+/// `SignalTriangulation.feedback` — the same function that decides whether a transcript
+/// settles — so it is not re-typed in Rust. The reply is two counts and nothing else,
+/// which is what makes this the one PoA export whose answer may reach a route.
+#[path = "poa_signal_feedback_ffi.rs"]
+pub mod poa_signal_feedback_ffi;
+
 /// Lean-owned bounded first-head ceremony. The host transports the exact emitted config/Canon
 /// bytes and does not reconstruct or persist them in this crate.
 #[path = "poa_network_genesis_ffi.rs"]
@@ -73,9 +80,19 @@ pub mod poa_records_ffi;
 /// crate's curator-authored VISIBLE rotation. Rust transports the request and serves the emitted
 /// document verbatim; there is no host-side projection, and none is possible — the crate's
 /// receipt and result constructors are private precisely so that only an accepted opening can
-/// move a gauge. Read-only by TYPE: the opening demands an `opaque` capability with no producer.
+/// move a gauge. Read-only because ITS REQUEST CARRIES NO OPEN HISTORY, not because writing is
+/// unreachable — see `poa_crate_open_ffi` below, which is the write.
 #[path = "poa_station_daily_ffi.rs"]
 pub mod poa_station_daily_ffi;
+
+/// Lean-owned Path of Angels station crate OPEN: the daily ritual's only write path. Rust
+/// transports the authenticated opener's key plus the node's durable open log and serves the
+/// emitted document verbatim; Lean replays the log from `SalvageCrate.genesis` under the
+/// capability chain, appends the open, and folds the crate's own sealed receipt into the communal
+/// panel. There is no host-side write and none is possible — `OpenResult`, `OpenReceipt`,
+/// `Receipt` and `CurrentStateCapability` all have private constructors.
+#[path = "poa_crate_open_ffi.rs"]
+pub mod poa_crate_open_ffi;
 
 /// Lean-owned bounded private batch-settlement evaluator. Rust transports the
 /// canonical wire and has no settlement/authorization fallback.

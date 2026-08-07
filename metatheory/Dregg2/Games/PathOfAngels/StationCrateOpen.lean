@@ -85,26 +85,76 @@ theorem panel_and_crate_are_one_deployment :
     panelRaw.contentSession = crate.raw.mission.contentSession ∧
     panelRaw.contentEpoch = crate.raw.mission.epoch := ⟨rfl, rfl, rfl⟩
 
-/-! ## The ceremony: open, then fold the receipt into the panel -/
+/-! ## The ceremony: open, then fold the receipt into the panel
+
+The three definitions below are stated over an ARBITRARY deployment, not over
+this module's `crate`/`panel`.  That is deliberate and it is what lets
+`StationCrateOpenRuntime` state its document laws without inheriting this
+content's compiled `configValidB`/`panelValidB` evaluation. -/
+
+/-- The three things a replay of the daily ritual carries: the crate state, the
+capability bound to *that* state, and the panel.  The capability field is
+dependent on the state field, which is exactly the point — there is no way to
+build a `Rolled` holding a capability for some other state, so a runtime that
+threads this triple across a replay never mints a capability from nothing.
+
+`StationCrateOpenRuntime` needs the crate state and the drawn entry as well as
+the panel, so this — rather than `observeDay`'s panel-only result — is the
+primitive, and `observeDay` is its projection.  One fold, two consumers. -/
+structure Rolled (config : SalvageCrate.Config) where
+  state : SalvageCrate.State config
+  capability : SalvageCrate.CurrentStateCapability state
+  panel : ShipInstrumentPanel.State
+
+/-- The ship exactly as installed, ready to be rolled forward: the genesis crate
+state, the one rooted capability, and the untouched panel. -/
+def genesisRolled (config : SalvageCrate.Config) (deployment : ShipInstrumentPanel.Panel) :
+    Rolled config where
+  state := SalvageCrate.genesis config
+  capability := SalvageCrate.genesisCapability config
+  panel := ShipInstrumentPanel.initial deployment
 
 /-- Open the crate under the threaded capability and, on an accepted opening, fold
 its receipt into the panel; then continue with the successor state and its
 successor capability.  Refuses (returns `none`) at the first crate refusal OR the
 first panel refusal, so the panel is never left holding a receipt the crate
-declined.  Returns the final panel. -/
-def observeDay : (state : SalvageCrate.State crate) →
-    SalvageCrate.CurrentStateCapability state → ShipInstrumentPanel.State →
-    List SalvageCrate.OpenEnvelope → Option ShipInstrumentPanel.State
-  | _, _, panelState, [] => some panelState
-  | state, cap, panelState, envelope :: rest =>
-      match SalvageCrate.openCrate crate state cap envelope with
+declined. -/
+def rollDay (config : SalvageCrate.Config) (deployment : ShipInstrumentPanel.Panel) :
+    Rolled config → List SalvageCrate.OpenEnvelope → Option (Rolled config)
+  | rolled, [] => some rolled
+  | rolled, envelope :: rest =>
+      match SalvageCrate.openCrate config rolled.state rolled.capability envelope with
       | none => none
       | some result =>
-          match ShipInstrumentPanel.observe panel panelState
+          match ShipInstrumentPanel.observe deployment rolled.panel
                   (ShipInstrumentPanel.ofSalvageOpen result.receipt) with
           | .error _ => none
           | .ok nextPanel =>
-              observeDay result.after result.nextCapability nextPanel rest
+              rollDay config deployment
+                { state := result.after, capability := result.nextCapability,
+                  panel := nextPanel } rest
+
+/-- The envelope a runtime submits.  Every field is derived from the authored
+deployment and the caller's position in the node's log; `actorRoot` is the
+curator's authored ceremony key rather than a fixture constant, so there is no
+number here a caller or a runtime chose. -/
+def envFor (config : SalvageCrate.Config) (player : Digest32) (period : EpochId)
+    (previous next sequence : Nat) : SalvageCrate.OpenEnvelope where
+  configIdentity := config.raw
+  expectedPeriod := period
+  expectedSequence := sequence
+  actorRoot := config.raw.curatorKey
+  player := player
+  previousPlayerCounter := previous
+  playerCounter := next
+
+/-- The panel-only projection of `rollDay`, which is what the two poles below
+read.  Refusal is preserved exactly: `none` in, `none` out. -/
+def observeDay (state : SalvageCrate.State crate)
+    (capability : SalvageCrate.CurrentStateCapability state)
+    (panelState : ShipInstrumentPanel.State)
+    (envelopes : List SalvageCrate.OpenEnvelope) : Option ShipInstrumentPanel.State :=
+  (rollDay crate panel ⟨state, capability, panelState⟩ envelopes).map Rolled.panel
 
 /-- One open from the installed ship, the common shape below. -/
 def observeOne (envelope : SalvageCrate.OpenEnvelope) : Option ShipInstrumentPanel.State :=
@@ -117,17 +167,8 @@ The genesis period is the first authored beacon (31).  Each envelope carries the
 running sequence position and the opener's advancing counter; the eligible crew
 are `digest 40/41/42`. -/
 
-def actorRoot : Digest32 := SalvageCrateExamples.digest 90
-
-def envFor (player : Digest32) (period : EpochId) (previous next sequence : Nat) :
-    SalvageCrate.OpenEnvelope where
-  configIdentity := crate.raw
-  expectedPeriod := period
-  expectedSequence := sequence
-  actorRoot := actorRoot
-  player := player
-  previousPlayerCounter := previous
-  playerCounter := next
+abbrev envForCrate : Digest32 → EpochId → Nat → Nat → Nat → SalvageCrate.OpenEnvelope :=
+  envFor crate
 
 def crew40 : Digest32 := SalvageCrateExamples.digest 40
 def crew41 : Digest32 := SalvageCrateExamples.digest 41
@@ -135,10 +176,10 @@ def crew42 : Digest32 := SalvageCrateExamples.digest 42
 
 /-- Crew 41, opening the genesis period from the installed ship: draws the
 communal salvage. -/
-def env41 : SalvageCrate.OpenEnvelope := envFor crew41 ⟨31⟩ 0 1 0
+def env41 : SalvageCrate.OpenEnvelope := envForCrate crew41 ⟨31⟩ 0 1 0
 
 /-- Crew 40, opening the genesis period: draws a bound record (zero contribution). -/
-def env40 : SalvageCrate.OpenEnvelope := envFor crew40 ⟨31⟩ 0 1 0
+def env40 : SalvageCrate.OpenEnvelope := envForCrate crew40 ⟨31⟩ 0 1 0
 
 /-! ## The two poles -/
 
@@ -178,7 +219,7 @@ private def afterFirstCap : SalvageCrate.CurrentStateCapability afterFirst :=
 /-- The mutation: the SAME crew member opening the SAME period again, on the
 successor state, with the correctly advanced counter — so the only check left to
 refuse it is the append-only consumed-period guard. -/
-def replayEnv41 : SalvageCrate.OpenEnvelope := envFor crew41 ⟨31⟩ 1 2 1
+def replayEnv41 : SalvageCrate.OpenEnvelope := envForCrate crew41 ⟨31⟩ 1 2 1
 
 /-- The mutation is present: crew 41 already consumed the genesis period. -/
 theorem the_first_period_is_consumed_by_crew_41 :
@@ -194,7 +235,7 @@ theorem the_replay_open_is_refused_and_never_reaches_the_panel :
 
 /-- The mutation: crew 41 asking for period 32 while the ship is still at the
 genesis period 31. -/
-def wrongPeriodEnv41 : SalvageCrate.OpenEnvelope := envFor crew41 ⟨32⟩ 0 1 0
+def wrongPeriodEnv41 : SalvageCrate.OpenEnvelope := envForCrate crew41 ⟨32⟩ 0 1 0
 
 /-- ⭐ WRONG-PERIOD REFUSED, and it never reaches the panel.  A capability for the
 installed state authorizes opening the CURRENT finalized period, not a future one.
@@ -204,8 +245,8 @@ theorem a_wrong_period_open_is_refused_and_never_reaches_the_panel :
 
 /-! ## Communal and unattributed, on the composed write path -/
 
-def env40Seq1 : SalvageCrate.OpenEnvelope := envFor crew40 ⟨31⟩ 0 1 1
-def env42Seq2 : SalvageCrate.OpenEnvelope := envFor crew42 ⟨31⟩ 0 1 2
+def env40Seq1 : SalvageCrate.OpenEnvelope := envForCrate crew40 ⟨31⟩ 0 1 1
+def env42Seq2 : SalvageCrate.OpenEnvelope := envForCrate crew42 ⟨31⟩ 0 1 2
 
 /-- The whole eligible crew opening the genesis period, in arrival order 41,40,42. -/
 def theWholeCrewOpens : Option ShipInstrumentPanel.State :=
@@ -222,8 +263,8 @@ theorem the_communal_gauge_accumulates_only_the_salvage_draw :
       some ([{ gauge := ⟨1⟩, meter := .supplies, exactTotal := 1, fullAt := 64,
                shown := 1, atFull := false }], 1, 3, 3) := by native_decide
 
-def env42Seq0 : SalvageCrate.OpenEnvelope := envFor crew42 ⟨31⟩ 0 1 0
-def env41Seq2 : SalvageCrate.OpenEnvelope := envFor crew41 ⟨31⟩ 0 1 2
+def env42Seq0 : SalvageCrate.OpenEnvelope := envForCrate crew42 ⟨31⟩ 0 1 0
+def env41Seq2 : SalvageCrate.OpenEnvelope := envForCrate crew41 ⟨31⟩ 0 1 2
 
 /-- The same crew, arriving in a different order 42,40,41. -/
 def theWholeCrewOpensReordered : Option ShipInstrumentPanel.State :=

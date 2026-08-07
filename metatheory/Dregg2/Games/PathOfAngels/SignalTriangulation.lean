@@ -100,6 +100,80 @@ theorem duplicate_band_example :
       { low := 1, mid := 2, high := 2 } = { exact := 2, present := 0 } := by
   decide
 
+/-! ## What a feedback oracle reveals, and what it cannot
+
+`SignalFeedbackRuntime` serves `feedback target guess` to a player mid-run, against the
+target the JUDGE will score.  That leak is the mechanic — five rounds are meant to solve
+216 codes — but it has to be exactly the leak and no more.  The two facts below are the
+formal content of "a reader learns no more than by playing", stated about `feedback`
+itself so that any surface serving it inherits them:
+
+* `feedback_transcript_cannot_separate` — over a whole transcript, two targets that
+  agree on every guess PLAYED produce identical answers.  A reader's posterior after
+  `k` rounds is therefore exactly the feedback-consistency class of the transcript,
+  which is the definition of having played it.
+* `one_round_never_determines_the_target` — that class is never a singleton after one
+  round, for ANY first guess.  The invariance above is consequently not vacuous: there
+  is always something left to deduce.
+
+⚠ Neither says the oracle is harmless.  It says the oracle is exactly the game. -/
+
+/-- ⚑ Two targets that answer alike on the guesses PLAYED answer alike on the whole
+transcript.  Nothing a session serves separates them, because the served value is a
+function of `feedback` and the played guesses alone. -/
+theorem feedback_transcript_cannot_separate (t₁ t₂ : Code) (guesses : List Code)
+    (agree : ∀ g ∈ guesses, feedback t₁ g = feedback t₂ g) :
+    guesses.map (feedback t₁) = guesses.map (feedback t₂) :=
+  List.map_congr_left agree
+
+/-- The three-band code whose every band is `a`. -/
+def monoCode (a : Fin 6) : Code := { low := a, mid := a, high := a }
+
+theorem monoCode_injective {a b : Fin 6} (h : a ≠ b) : monoCode a ≠ monoCode b := by
+  intro hEq
+  exact h (congrArg Code.low hEq)
+
+/-- A target none of whose bands the guess submitted scores a flat zero: no exact
+position, and no multiplicity left over to be present elsewhere. -/
+theorem feedback_of_absent_mono (guess : Code) (a : Fin 6)
+    (low : a ≠ guess.low) (mid : a ≠ guess.mid) (high : a ≠ guess.high) :
+    feedback (monoCode a) guess = { exact := 0, present := 0 } := by
+  have hexact : exactCount (monoCode a) guess = 0 := by
+    simp [exactCount, monoCode, Ne.symm low, Ne.symm mid, Ne.symm high]
+  have hinter : bands (monoCode a) ∩ bands guess = 0 := by
+    refine Multiset.eq_zero_of_forall_notMem ?_
+    intro x hx
+    rw [Multiset.mem_inter] at hx
+    obtain ⟨hleft, hright⟩ := hx
+    simp only [bands, monoCode, Multiset.mem_cons,
+      Multiset.notMem_zero, or_false] at hleft hright
+    rcases hleft with rfl | rfl | rfl <;>
+      rcases hright with h | h | h <;> simp_all
+  simp [feedback, presentCount, totalMatches, hexact, hinter]
+
+/-- A guess names at most three of the six band values, so at least two values are
+absent from it — and this exhausts the 216 guesses in the kernel rather than asserting
+the counting argument in prose. -/
+theorem two_band_values_are_always_absent (a b c : Fin 6) :
+    ∃ x y : Fin 6, x ≠ y ∧ (x ≠ a ∧ x ≠ b ∧ x ≠ c) ∧ (y ≠ a ∧ y ≠ b ∧ y ≠ c) := by
+  revert a b c
+  decide
+
+/-- ⚑ **ONE ROUND NEVER DETERMINES THE TARGET.**  For EVERY guess there are two
+distinct targets the oracle answers identically, so a single feedback leaves the
+target genuinely undecided — for any opening a player or a reader picks.
+
+The witnesses are constructed rather than searched: a guess names at most three of the
+six band values, so at least three values are absent from it, and the all-same codes
+built from any two of those are indistinguishable (both score a flat zero). -/
+theorem one_round_never_determines_the_target (guess : Code) :
+    ∃ t₁ t₂ : Code, t₁ ≠ t₂ ∧ feedback t₁ guess = feedback t₂ guess := by
+  obtain ⟨x, y, hxy, ⟨xlow, xmid, xhigh⟩, ⟨ylow, ymid, yhigh⟩⟩ :=
+    two_band_values_are_always_absent guess.low guess.mid guess.high
+  refine ⟨monoCode x, monoCode y, monoCode_injective hxy, ?_⟩
+  rw [feedback_of_absent_mono guess x xlow xmid xhigh,
+    feedback_of_absent_mono guess y ylow ymid yhigh]
+
 /-- Five intercepted bursts is the complete session budget. -/
 abbrev MAX_TURNS : Nat := 5
 
@@ -397,6 +471,11 @@ theorem refused_prefix_refuses_replay (cfg : Config) (s : State) (a : Action) (a
 #assert_axioms feedback_exact_target
 #assert_axioms feedback_present_target
 #assert_axioms duplicate_band_example
+#assert_axioms feedback_transcript_cannot_separate
+#assert_axioms monoCode_injective
+#assert_axioms feedback_of_absent_mono
+#assert_axioms two_band_values_are_always_absent
+#assert_axioms one_round_never_determines_the_target
 #assert_axioms step_deterministic
 #assert_axioms step_some_turns
 #assert_axioms step_some_bound

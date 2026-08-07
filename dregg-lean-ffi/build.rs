@@ -253,6 +253,17 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          committed to",
     ),
     (
+        "dregg_poa_signal_feedback",
+        "the Path of Angels MID-RUN FEEDBACK ORACLE compiles out: the node cannot classify a \
+         judged guess LOCKED/DRIFT, so `/api/poa/signal/{authority}/session/*` refuses and judged \
+         play reverts to what it was — a blind 1-in-216 claim against an instance the player was \
+         told nothing about, while the real deduction game lives only in the browser's practice \
+         mode. This must stay a refusal and never a Rust fallback: the rule is \
+         `SignalTriangulation.feedback`, the same function `step` scores a settling transcript \
+         with, and a Rust copy that disagrees by one on a duplicate band hands players a \
+         different game than the one that settles",
+    ),
+    (
         "dregg_poa_records_project",
         "the Path of Angels RECORDS read model compiles out: rebuilding the finalized-run \
          projection — re-judging every stored row, refolding Canon from the retained genesis, and \
@@ -267,6 +278,21 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          `SalvageCrate.OpenResult` both have PRIVATE constructors precisely so that only an \
          accepted opening can move the ship, and a Rust re-typing of either would be a public \
          mint for a sealed authority",
+    ),
+    // ⚑ LANDED 2026-08-07, in the same commit as the Lean `@[export]`
+    // (`Dregg2/Games/PathOfAngels/StationCrateOpenRuntime.lean`). It is on this list from the day
+    // the export exists, not later: this gate PANICS on every `--release` / `DREGG_REQUIRE_LEAN=1`
+    // build when the symbol is absent, which is the correct loud failure for a write path.
+    (
+        "dregg_poa_crate_open",
+        "the Path of Angels STATION CRATE-OPEN write compiles out: replaying the node's durable \
+         open log from `SalvageCrate.genesis`, appending the authenticated opener's open under the \
+         capability chain, and folding the crate's sealed receipt into the communal panel have no \
+         answer source, so NO crew member can perform the daily ritual at all. This must stay a \
+         refusal and never a Rust fallback: `OpenResult.mk`, `OpenReceipt.mk`, `Receipt.mk` and \
+         `CurrentStateCapability.mk` are all private precisely so that possession of a receipt is \
+         possession of an accepted opening, and a Rust re-typing of any of them would let a caller \
+         post a contribution the crate never authorized and move the communal gauges",
     ),
     (
         "dregg_poa_network_genesis",
@@ -2519,8 +2545,10 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_slot_derive_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_feedback_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_records_project_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_station_daily_read_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_crate_open_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_network_genesis_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
@@ -3492,6 +3520,19 @@ fn main() {
         absent_export_warn("dregg_poa_signal_slot_derive");
     }
 
+    // PATH OF ANGELS MID-RUN FEEDBACK ORACLE (`SignalTriangulation.feedback` of the JUDGED
+    // instance, behind one canonical `POA-SIGNAL-FEEDBACK-1` wire). Separately versioned from the
+    // derivation beside it because the two have opposite postures: the derivation's reply is the
+    // ANSWER and may never reach a route, while this reply is the two-count classification and is
+    // meant to. Absent, `poa_signal_feedback_available()` is false and the judged-session routes
+    // refuse; there is no Rust classification to fall back to.
+    let poa_signal_feedback_present = archive_exports(&build_archive, "dregg_poa_signal_feedback");
+    if poa_signal_feedback_present {
+        println!("cargo:rustc-cfg=dregg_poa_signal_feedback_present");
+    } else {
+        absent_export_warn("dregg_poa_signal_feedback");
+    }
+
     // PATH OF ANGELS RECORDS READ MODEL: rebuilds the finalized-run projection from the retained
     // genesis blobs plus one row per durable transition. Separately versioned from the evaluator
     // because it is a READ: presence confers no ability to settle, and absence must leave the
@@ -3514,6 +3555,21 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_poa_station_daily_read_present");
     } else {
         absent_export_warn("dregg_poa_station_daily_read");
+    }
+
+    // PATH OF ANGELS STATION CRATE-OPEN WRITE: the daily ritual's only write path. It replays the
+    // node's durable open log from `SalvageCrate.genesis`, appends the authenticated opener's open
+    // under the capability chain, and folds the crate's own sealed receipt into the communal panel.
+    // Separately versioned from the station READ beside it because their postures differ: the read
+    // can never move a gauge, this one is exactly what moves them. Absent, the crate-open route
+    // refuses and NO crew member can open the crate — which is the correct failure, because a Rust
+    // fallback would be a public mint for `OpenResult` / `OpenReceipt` / `CurrentStateCapability`,
+    // all of whose constructors are private precisely to prevent that.
+    let poa_crate_open_present = archive_exports(&build_archive, "dregg_poa_crate_open");
+    if poa_crate_open_present {
+        println!("cargo:rustc-cfg=dregg_poa_crate_open_present");
+    } else {
+        absent_export_warn("dregg_poa_crate_open");
     }
 
     // PATH OF ANGELS NETWORK GENESIS CEREMONY: validates the externally verified tuple and exact
@@ -4020,11 +4076,19 @@ fn main() {
     if poa_station_daily_read_present {
         shim.define("DREGG_POA_STATION_DAILY_READ", None);
     }
+    // POA STATION CRATE-OPEN WRITE: gates the exported Lean symbol, the bounded C bridge, and the
+    // matching module initializer in BOTH default and single-threaded runtime init paths.
+    if poa_crate_open_present {
+        shim.define("DREGG_POA_CRATE_OPEN", None);
+    }
     if poa_network_genesis_present {
         shim.define("DREGG_POA_NETWORK_GENESIS", None);
     }
     if poa_signal_slot_derive_present {
         shim.define("DREGG_POA_SIGNAL_SLOT_DERIVE", None);
+    }
+    if poa_signal_feedback_present {
+        shim.define("DREGG_POA_SIGNAL_FEEDBACK", None);
     }
     if poa_dark_bazaar_judge_present {
         shim.define("DREGG_POA_DARK_BAZAAR_JUDGE", None);
