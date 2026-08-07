@@ -50,11 +50,24 @@
 //! Lean-pinned inclusive range `[-2^80, 2^80]`.  The Fiat-Shamir transcript
 //! binds the DKG, custody party and index, opening, exact ciphertext, and public
 //! share.  Legacy setup deliberately cannot produce this certificate and a
-//! verified combiner rejects it.  The remaining cryptographic seams are the
-//! keygen ternary/CBD range proof above and a distributed ceremony in which
-//! parties publish and endorse the secret-share commitments; today the
-//! verified setup transition constructs those commitments while assembling the
-//! accepted VSS result.  The proof is also correctness-grade rather than
+//! verified combiner rejects it.  The former "publish and endorse" seam is now
+//! CLOSED on the distributed commit round: every dealer additionally publishes
+//! an additively-homomorphic (Pedersen) commitment to each exact recipient row
+//! it deals, a recipient refuses a dealing whose homomorphic row commitment
+//! does not open to the private row it received, and each custody party's
+//! published aggregate-row commitment must carry an
+//! [`AggregateRowBindingProof`] — a zero-knowledge OR-proof that the
+//! commitment equals the sum of that party's dealt rows modulo each RNS
+//! modulus, without revealing the carry.  [`assemble_distributed_transcript`]
+//! verifies that proof for EVERY party and refuses the transcript otherwise,
+//! so a party that commits to a different secret is refused at setup, not
+//! discovered as an unattributable garbage opening later.  The binding pins
+//! each committed scalar into the coset `s + q*Z` with |shift| < n, and every
+//! member of that coset can certify only the true decryption share: the
+//! certificate's in-window quotient witnesses absorb whole-`q` shifts without
+//! changing the canonical share value.  The remaining cryptographic seam on
+//! this rung is the keygen ternary/CBD range proof above — a malicious DEALER
+//! may still deal a non-short secret.  The proof is also correctness-grade rather than
 //! interactive-grade at BFV degree 4096: it ranges tens of thousands of scalar
 //! witnesses per share and still needs a compressed/batched production path.
 //! Replay state is in-memory, not persistent.  Under an accepted VSS transcript
@@ -111,10 +124,17 @@ const AUTHENTICATED_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-opening-transcript
 const AUTHENTICATED_AUDIT_DOMAIN: &[u8] = b"fhegg/quorum-opening-audit/v1";
 const DKG_Q0_SHARE_SEED_DOMAIN: &[u8] = b"fhegg/dkg-q0-share-commitment-seed/v1";
 const OPENING_SESSION_DOMAIN: &[u8] = b"fhegg/quorum-opening-session/v1";
-const VSS_COMMITMENT_MAGIC: &[u8; 8] = b"FHQVv001";
+// v2/v3 FLAG DAY (aggregate-row binding): the dealer commitment now carries
+// homomorphic Pedersen row commitments, the private row carries their
+// blindings, and the setup transcript digest binds the new dealer digests.
+// v1-shaped wires REFUSE TO LOAD (magic mismatch); every committee re-runs its
+// DKG. Nothing durable held the old shape.
+const VSS_COMMITMENT_MAGIC: &[u8; 8] = b"FHQVv002";
 const VSS_ROW_COMMITMENT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-row/v1";
-const VSS_DEALER_COMMITMENT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-dealer/v1";
-const VSS_SETUP_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-setup/v2";
+const VSS_DEALER_COMMITMENT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-dealer/v2";
+const VSS_SETUP_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-setup/v3";
+const AGGREGATE_ROW_BINDING_DOMAIN: &[u8] = b"fhegg/quorum-aggregate-row-binding/v1";
+const AGGREGATE_ROW_BINDING_MAGIC: &[u8; 8] = b"FHQEv001";
 const VSS_Q0_ANCHORED_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-q0-anchor/v1";
 const VERIFIED_DKG_COLLECTIVE_KEY_DOMAIN: &[u8] = b"fhegg/quorum-verified-dkg-collective-key/v1";
 const DECRYPT_SHARE_PROOF_DOMAIN: &[u8] = b"fhegg/quorum-decrypt-share-proof/v1";
@@ -192,6 +212,20 @@ pub enum QuorumError {
         dealer: usize,
         recipient: usize,
     },
+    /// A dealer's homomorphic (Pedersen) row commitment does not open to the
+    /// private row and blinding it sent this recipient.
+    VssPedersenRowMismatch {
+        dealer: usize,
+        recipient: usize,
+    },
+    /// A custody party's published aggregate-row commitment vector does not
+    /// carry a valid proof of equality (mod each RNS modulus) with the sum of
+    /// its VSS-admitted dealer rows. THIS is the malicious-commitment refusal:
+    /// a party that commits to a different secret lands here at transcript
+    /// assembly, before any opening.
+    PartyCommitmentUnbound {
+        party: usize,
+    },
     VssTranscriptMismatch,
     MissingDecryptShareProof {
         party: usize,
@@ -264,6 +298,13 @@ pub struct PrivateDealerShare {
     /// confidential channel as the row and is never included in the public
     /// transcript.
     vss_salt: [u8; 32],
+    /// Blindings of the dealer's PUBLIC homomorphic (Pedersen) commitments to
+    /// this exact Shamir row (`rows`, flattened row-major), one canonical
+    /// Ristretto scalar per RNS coefficient.  They ride the same confidential
+    /// channel as the row; the recipient refuses the dealing unless every
+    /// public commitment opens to `(rows[k], blinding[k])`, and later uses
+    /// their sum inside its [`AggregateRowBindingProof`].
+    pedersen_row_blindings: Vec<[u8; 32]>,
 }
 
 impl PrivateDealerShare {
@@ -316,6 +357,13 @@ pub struct DealerVssCommitment {
     /// `C_ab = -a*s_ab + e_ab`, flattened in x-major/y-minor order; every
     /// entry is one RNS ring polynomial.
     linear_commitments: Vec<Vec<Vec<u64>>>,
+    /// Additively-homomorphic (Pedersen) commitments to each recipient's exact
+    /// Shamir row: `pedersen_row_commitments[recipient][k] = rows[k]*G +
+    /// blinding[k]*H`, `k` flattened row-major over (RNS modulus, ring
+    /// coefficient).  These are what lets the public transcript check a custody
+    /// party's aggregate-row commitment against the SUM of its dealt rows
+    /// without opening any of them.
+    pedersen_row_commitments: Vec<Vec<[u8; 32]>>,
     digest: [u8; 32],
 }
 
@@ -340,6 +388,13 @@ impl DealerVssCommitment {
 
     pub fn linear_commitments(&self) -> &[Vec<Vec<u64>>] {
         &self.linear_commitments
+    }
+
+    /// One recipient's homomorphic row-commitment vector, flattened row-major.
+    pub fn pedersen_row_commitments(&self, recipient: usize) -> Option<&[[u8; 32]]> {
+        self.pedersen_row_commitments
+            .get(recipient)
+            .map(Vec::as_slice)
     }
 
     pub fn digest(&self) -> [u8; 32] {
@@ -375,6 +430,13 @@ impl DealerVssCommitment {
                 for &value in row {
                     out.extend_from_slice(&value.to_le_bytes());
                 }
+            }
+        }
+        out.extend_from_slice(&(self.pedersen_row_commitments.len() as u64).to_le_bytes());
+        for row in &self.pedersen_row_commitments {
+            out.extend_from_slice(&(row.len() as u64).to_le_bytes());
+            for commitment in row {
+                out.extend_from_slice(commitment);
             }
         }
         out.extend_from_slice(&self.digest);
@@ -427,6 +489,23 @@ impl DealerVssCommitment {
             }
             linear_commitments.push(commitment);
         }
+        let pedersen_recipient_count = cursor.usize()?;
+        if pedersen_recipient_count != n {
+            return Err(QuorumError::MalformedWire);
+        }
+        let expected_len = params.moduli().len() * params.degree();
+        let mut pedersen_row_commitments = Vec::with_capacity(pedersen_recipient_count);
+        for _ in 0..pedersen_recipient_count {
+            let count = cursor.usize()?;
+            if count != expected_len {
+                return Err(QuorumError::MalformedWire);
+            }
+            let mut row = Vec::with_capacity(count);
+            for _ in 0..count {
+                row.push(cursor.take::<32>()?);
+            }
+            pedersen_row_commitments.push(row);
+        }
         let digest = cursor.take::<32>()?;
         if !cursor.finished()
             || dealer_vss_commitment_digest(
@@ -435,6 +514,7 @@ impl DealerVssCommitment {
                 &public_key_digest,
                 &row_commitments,
                 &linear_commitments,
+                &pedersen_row_commitments,
             ) != digest
         {
             return Err(QuorumError::VssTranscriptMismatch);
@@ -445,6 +525,7 @@ impl DealerVssCommitment {
             public_key_digest,
             row_commitments,
             linear_commitments,
+            pedersen_row_commitments,
             digest,
         })
     }
@@ -797,7 +878,10 @@ pub fn deal(
 
     let public_key_digest: [u8; 32] = Sha256::digest(public.public_key_bytes()).into();
     let mut row_commitments = Vec::with_capacity(n);
-    let private = secret_row_polynomials
+    let mut pedersen_row_commitments = Vec::with_capacity(n);
+    let pc_gens = PedersenGens::default();
+    let mut scalar_rng = OsRng;
+    let private: Vec<PrivateDealerShare> = secret_row_polynomials
         .into_iter()
         .zip(error_row_polynomials)
         .enumerate()
@@ -815,14 +899,39 @@ pub fn deal(
                     &vss_error_row_coefficients,
                     params,
                 ));
+                // The homomorphic commitment covers EXACTLY the Shamir row a
+                // recipient aggregates (`rows` = the y^0 coefficients), so the
+                // public sum over dealers is a commitment to the recipient's
+                // aggregate custody row.
+                let rows: Vec<Vec<u64>> = vss_row_coefficients[0].clone();
+                let blindings: Vec<Scalar> = rows
+                    .iter()
+                    .flatten()
+                    .map(|_| Scalar::random(&mut scalar_rng))
+                    .collect();
+                let commitments: Vec<[u8; 32]> = rows
+                    .iter()
+                    .flatten()
+                    .zip(&blindings)
+                    .collect::<Vec<_>>()
+                    .into_par_iter()
+                    .map(|(&value, &blinding)| {
+                        pc_gens
+                            .commit(Scalar::from(value), blinding)
+                            .compress()
+                            .to_bytes()
+                    })
+                    .collect();
+                pedersen_row_commitments.push(commitments);
                 PrivateDealerShare {
                     session: session.clone(),
                     dealer,
                     recipient,
-                    rows: vss_row_coefficients[0].clone(),
+                    rows,
                     vss_row_coefficients,
                     vss_error_row_coefficients,
                     vss_salt,
+                    pedersen_row_blindings: blindings.iter().map(Scalar::to_bytes).collect(),
                 }
             },
         )
@@ -833,6 +942,7 @@ pub fn deal(
         &public_key_digest,
         &row_commitments,
         &linear_commitments,
+        &pedersen_row_commitments,
     );
     let vss_commitment = DealerVssCommitment {
         session: session.clone(),
@@ -840,6 +950,7 @@ pub fn deal(
         public_key_digest,
         row_commitments,
         linear_commitments,
+        pedersen_row_commitments,
         digest,
     };
     Ok(DealerBundle {
@@ -867,6 +978,11 @@ fn verify_dealer_bundle(bundle: DealerBundle, params: &BfvParams) -> Result<Veri
             .linear_commitments
             .iter()
             .any(|commitment| !valid_rows(commitment, params))
+        || vss_commitment.pedersen_row_commitments.len() != session.n_parties()
+        || vss_commitment
+            .pedersen_row_commitments
+            .iter()
+            .any(|row| row.len() != params.moduli().len() * params.degree())
     {
         return Err(QuorumError::VssTranscriptMismatch);
     }
@@ -882,6 +998,7 @@ fn verify_dealer_bundle(bundle: DealerBundle, params: &BfvParams) -> Result<Veri
             &public_key_digest,
             &vss_commitment.row_commitments,
             &vss_commitment.linear_commitments,
+            &vss_commitment.pedersen_row_commitments,
         ) != vss_commitment.digest
     {
         return Err(QuorumError::VssTranscriptMismatch);
@@ -919,6 +1036,7 @@ fn verify_dealer_bundle(bundle: DealerBundle, params: &BfvParams) -> Result<Veri
         if opened != vss_commitment.row_commitments[recipient] {
             return Err(QuorumError::VssCommitmentMismatch { dealer, recipient });
         }
+        verify_pedersen_row_opening(&vss_commitment, share, params)?;
     }
 
     // Genuine VSS check: every pair independently opens one row of the
@@ -1004,7 +1122,7 @@ fn verify_dealer_bundle(bundle: DealerBundle, params: &BfvParams) -> Result<Veri
 // inconsistent toward a pair of parties is caught by that pair, not by everyone.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CONFIDENTIAL_ROW_MAGIC: &[u8; 8] = b"FHQCv001";
+const CONFIDENTIAL_ROW_MAGIC: &[u8; 8] = b"FHQCv002";
 const CROSS_EVALUATION_MAGIC: &[u8; 8] = b"FHQXv001";
 
 impl PrivateDealerShare {
@@ -1034,6 +1152,10 @@ impl PrivateDealerShare {
                     }
                 }
             }
+        }
+        out.extend_from_slice(&(self.pedersen_row_blindings.len() as u64).to_le_bytes());
+        for blinding in &self.pedersen_row_blindings {
+            out.extend_from_slice(blinding);
         }
         out
     }
@@ -1080,6 +1202,18 @@ impl PrivateDealerShare {
             }
             coefficient_sets.push(set);
         }
+        let blinding_count = cursor.usize()?;
+        if blinding_count != params.moduli().len() * params.degree() {
+            return Err(QuorumError::MalformedWire);
+        }
+        let mut pedersen_row_blindings = Vec::with_capacity(blinding_count);
+        for _ in 0..blinding_count {
+            let bytes = cursor.take::<32>()?;
+            if Option::<Scalar>::from(Scalar::from_canonical_bytes(bytes)).is_none() {
+                return Err(QuorumError::MalformedWire);
+            }
+            pedersen_row_blindings.push(bytes);
+        }
         if !cursor.finished() {
             return Err(QuorumError::MalformedWire);
         }
@@ -1093,6 +1227,7 @@ impl PrivateDealerShare {
             vss_row_coefficients,
             vss_error_row_coefficients,
             vss_salt,
+            pedersen_row_blindings,
         })
     }
 }
@@ -1154,6 +1289,11 @@ pub fn verify_public_dealing(
             .linear_commitments
             .iter()
             .any(|commitment| !valid_rows(commitment, params))
+        || commitment.pedersen_row_commitments.len() != session.n_parties()
+        || commitment
+            .pedersen_row_commitments
+            .iter()
+            .any(|row| row.len() != params.moduli().len() * params.degree())
     {
         return Err(QuorumError::VssTranscriptMismatch);
     }
@@ -1169,9 +1309,57 @@ pub fn verify_public_dealing(
             &public_key_digest,
             &commitment.row_commitments,
             &commitment.linear_commitments,
+            &commitment.pedersen_row_commitments,
         ) != commitment.digest
     {
         return Err(QuorumError::VssTranscriptMismatch);
+    }
+    Ok(())
+}
+
+/// Check one recipient's homomorphic (Pedersen) row commitments open to the
+/// exact private Shamir row and blindings that recipient received.
+///
+/// Without this refusal a malicious DEALER could publish homomorphic
+/// commitments to some other row, making an HONEST recipient's later
+/// [`AggregateRowBindingProof`] fail through no fault of its own — a framing.
+/// With it, an honest party only ever aggregates rows whose public homomorphic
+/// commitments it verified, so its binding proof passes by construction.
+fn verify_pedersen_row_opening(
+    commitment: &DealerVssCommitment,
+    share: &PrivateDealerShare,
+    params: &BfvParams,
+) -> Result<()> {
+    let dealer = commitment.dealer;
+    let recipient = share.recipient;
+    let refusal = QuorumError::VssPedersenRowMismatch { dealer, recipient };
+    let expected_len = params.moduli().len() * params.degree();
+    let public = commitment
+        .pedersen_row_commitments
+        .get(recipient)
+        .ok_or(refusal.clone())?;
+    if public.len() != expected_len || share.pedersen_row_blindings.len() != expected_len {
+        return Err(refusal);
+    }
+    let pc_gens = PedersenGens::default();
+    let values: Vec<u64> = share.rows.iter().flatten().copied().collect();
+    if values.len() != expected_len {
+        return Err(refusal);
+    }
+    let opens = (0..expected_len).into_par_iter().all(|k| {
+        let Some(blinding) = Option::<Scalar>::from(Scalar::from_canonical_bytes(
+            share.pedersen_row_blindings[k],
+        )) else {
+            return false;
+        };
+        pc_gens
+            .commit(Scalar::from(values[k]), blinding)
+            .compress()
+            .to_bytes()
+            == public[k]
+    });
+    if !opens {
+        return Err(refusal);
     }
     Ok(())
 }
@@ -1232,6 +1420,7 @@ pub fn verify_received_dealer_row(
             recipient,
         });
     }
+    verify_pedersen_row_opening(commitment, &share, params)?;
     let public_key_ct = public_key_as_lean(public, params)?;
     if !vss_row_matches_linear_commitments(
         &share,
@@ -1620,39 +1809,392 @@ fn aggregate_secret_row(
     Ok(rows)
 }
 
+/// A zero-knowledge proof that a custody party's published aggregate-row
+/// commitment vector commits, coefficient-wise MODULO each RNS modulus, to the
+/// SUM of the dealer rows that party accepted.
+///
+/// The public inputs are the dealers' homomorphic row commitments (bound into
+/// every dealer's VSS commitment digest) and the party's own commitment
+/// vector, so any observer verifies it without opening a single row.  Per
+/// flattened coefficient `k` with modulus `q`, `P_k = (Σ_d D_{d,k}) - C_k` is
+/// a public point, and the proof shows `P_k - j*q*G ∈ ⟨H⟩` for SOME carry
+/// `j ∈ [0, n)` — a Fiat-Shamir sigma OR-proof that never reveals WHICH carry,
+/// because the carry of a sum of uniform residues is a statistical bit of the
+/// share.  Under the discrete-log binding of the Pedersen pair `(G, H)` this
+/// pins `C_k`'s value component into the coset `s_k + q·Z` with `|shift| < n`,
+/// and every member of that coset can certify only the TRUE decryption share
+/// (the certificate's in-window quotient witnesses absorb whole-`q` shifts).
+///
+/// A party that commits to any other secret cannot produce this proof, so
+/// [`assemble_distributed_transcript`] refuses it at setup —
+/// [`QuorumError::PartyCommitmentUnbound`] — instead of the committee
+/// discovering an unattributable garbage opening later.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AggregateRowBindingProof {
+    party: usize,
+    coefficient_len: usize,
+    /// Coefficient-major, then branch: `challenges[k * n + j]`.
+    challenges: Vec<Scalar>,
+    responses: Vec<Scalar>,
+}
+
+impl AggregateRowBindingProof {
+    pub fn party(&self) -> usize {
+        self.party
+    }
+
+    /// Canonical public wire form: `magic | party | coefficient count | branch
+    /// count | (challenge, response) pairs`, all scalars canonical.
+    pub fn to_wire_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 + 8 * 3 + 64 * self.challenges.len());
+        out.extend_from_slice(AGGREGATE_ROW_BINDING_MAGIC);
+        out.extend_from_slice(&(self.party as u64).to_le_bytes());
+        let branches = if self.coefficient_len == 0 {
+            0
+        } else {
+            self.challenges.len() / self.coefficient_len
+        };
+        out.extend_from_slice(&(self.coefficient_len as u64).to_le_bytes());
+        out.extend_from_slice(&(branches as u64).to_le_bytes());
+        for (challenge, response) in self.challenges.iter().zip(&self.responses) {
+            out.extend_from_slice(&challenge.to_bytes());
+            out.extend_from_slice(&response.to_bytes());
+        }
+        out
+    }
+
+    /// Parse a canonical proof for exactly this session/parameter shape.
+    pub fn from_wire_bytes(
+        bytes: &[u8],
+        session: &QuorumKeygenSession,
+        params: &BfvParams,
+    ) -> Result<Self> {
+        let mut cursor = WireCursor::new(bytes);
+        if cursor.take::<8>()? != *AGGREGATE_ROW_BINDING_MAGIC {
+            return Err(QuorumError::MalformedWire);
+        }
+        let party = cursor.usize()?;
+        if party >= session.n_parties() {
+            return Err(QuorumError::InvalidParty {
+                party,
+                n_parties: session.n_parties(),
+            });
+        }
+        let coefficients = cursor.usize()?;
+        let branches = cursor.usize()?;
+        if coefficients != params.moduli().len() * params.degree()
+            || branches != session.n_parties()
+        {
+            return Err(QuorumError::MalformedWire);
+        }
+        let total = coefficients
+            .checked_mul(branches)
+            .ok_or(QuorumError::MalformedWire)?;
+        let mut challenges = Vec::with_capacity(total);
+        let mut responses = Vec::with_capacity(total);
+        for _ in 0..total {
+            let challenge =
+                Option::<Scalar>::from(Scalar::from_canonical_bytes(cursor.take::<32>()?))
+                    .ok_or(QuorumError::MalformedWire)?;
+            let response =
+                Option::<Scalar>::from(Scalar::from_canonical_bytes(cursor.take::<32>()?))
+                    .ok_or(QuorumError::MalformedWire)?;
+            challenges.push(challenge);
+            responses.push(response);
+        }
+        if !cursor.finished() {
+            return Err(QuorumError::MalformedWire);
+        }
+        Ok(Self {
+            party,
+            coefficient_len: coefficients,
+            challenges,
+            responses,
+        })
+    }
+}
+
+/// The shared Fiat-Shamir context.  It binds the exact session, the party
+/// index, the parameter shape, EVERY dealer's commitment digest (which in turn
+/// binds every homomorphic row commitment) and the party's full published
+/// commitment vector, so a proof cannot be transplanted across parties,
+/// sessions, dealings, or commitment vectors.
+fn aggregate_row_binding_transcript(
+    session: &QuorumKeygenSession,
+    party: usize,
+    dealer_commitment_digests: &[[u8; 32]],
+    party_commitments: &[[u8; 32]],
+    params: &BfvParams,
+) -> Transcript {
+    let mut transcript = Transcript::new(AGGREGATE_ROW_BINDING_DOMAIN);
+    transcript.append_u64(b"n", session.n_parties() as u64);
+    transcript.append_u64(b"t", session.threshold() as u64);
+    transcript.append_message(b"crp-seed", &session.base.crp_seed());
+    transcript.append_u64(b"party", party as u64);
+    transcript.append_u64(b"degree", params.degree() as u64);
+    transcript.append_u64(b"moduli", params.moduli().len() as u64);
+    for &q in params.moduli() {
+        transcript.append_u64(b"q", q);
+    }
+    for digest in dealer_commitment_digests {
+        transcript.append_message(b"dealer-commitment", digest);
+    }
+    for commitment in party_commitments {
+        transcript.append_message(b"party-commitment", commitment);
+    }
+    transcript
+}
+
+/// Verify one party's [`AggregateRowBindingProof`] against the dealers' public
+/// homomorphic row commitments and that party's published commitment vector.
+/// Every failure — shape, decompression, or the sigma equations — is the same
+/// named refusal: the party's commitment is NOT publicly bound to its dealt
+/// rows.
+pub fn verify_aggregate_row_binding(
+    session: &QuorumKeygenSession,
+    party: usize,
+    dealer_commitments: &[DealerVssCommitment],
+    party_commitments: &[[u8; 32]],
+    proof: &AggregateRowBindingProof,
+    params: &BfvParams,
+) -> Result<()> {
+    let refusal = QuorumError::PartyCommitmentUnbound { party };
+    let n = session.n_parties();
+    let expected_len = params.moduli().len() * params.degree();
+    if proof.party != party
+        || proof.challenges.len() != expected_len * n
+        || proof.responses.len() != expected_len * n
+        || party_commitments.len() != expected_len
+        || dealer_commitments.len() != n
+        || dealer_commitments.iter().any(|commitment| {
+            commitment.pedersen_row_commitments.get(party).map(Vec::len) != Some(expected_len)
+        })
+    {
+        return Err(refusal);
+    }
+    let pc_gens = PedersenGens::default();
+    let g = pc_gens.B;
+    let h = pc_gens.B_blinding;
+    // Recompute every sigma commitment `A_{k,j} = z*H - c*(P_k - j*q*G)` from
+    // the public inputs; a single bad point or forged response makes the
+    // Fiat-Shamir challenge below disagree.
+    let recomputed: Option<Vec<Vec<[u8; 32]>>> = (0..expected_len)
+        .into_par_iter()
+        .map(|k| -> Option<Vec<[u8; 32]>> {
+            let mut p = -CompressedRistretto(party_commitments[k]).decompress()?;
+            for commitment in dealer_commitments {
+                p += CompressedRistretto(commitment.pedersen_row_commitments[party][k])
+                    .decompress()?;
+            }
+            let q = params.moduli()[k / params.degree()];
+            let mut points = Vec::with_capacity(n);
+            for j in 0..n {
+                let challenge = proof.challenges[k * n + j];
+                let response = proof.responses[k * n + j];
+                let a = RistrettoPoint::vartime_multiscalar_mul(
+                    [response, -challenge, challenge * Scalar::from(j as u64 * q)],
+                    [h, p, g],
+                );
+                points.push(a.compress().to_bytes());
+            }
+            Some(points)
+        })
+        .collect();
+    let Some(recomputed) = recomputed else {
+        return Err(refusal);
+    };
+    let dealer_digests: Vec<[u8; 32]> = dealer_commitments
+        .iter()
+        .map(DealerVssCommitment::digest)
+        .collect();
+    let mut transcript = aggregate_row_binding_transcript(
+        session,
+        party,
+        &dealer_digests,
+        party_commitments,
+        params,
+    );
+    for (k, points) in recomputed.iter().enumerate() {
+        for point in points {
+            transcript.append_message(b"binding-A", point);
+        }
+        let challenge = transcript_challenge_scalar(&mut transcript, b"binding-challenge");
+        let sum: Scalar = (0..n).map(|j| proof.challenges[k * n + j]).sum();
+        if sum != challenge {
+            return Err(refusal);
+        }
+    }
+    Ok(())
+}
+
 /// The distributed commit round, party side.
 ///
 /// Compute this party's coefficient-wise Pedersen commitment vector over its
-/// aggregate secret-share row, returning the PUBLIC commitments (to broadcast
-/// into [`assemble_distributed_transcript`]) and the PRIVATE blindings (to keep
-/// in a [`VerifiedPartyAssembly::from_distributed_parts`]).  Only this party's
-/// own verified rows are read, so a distributed committee runs it with no
-/// trusted viewer.  The commitment construction is byte-for-byte the one
-/// [`finish_verified_keygen`] performs centrally, so the resulting transcript is
-/// interchangeable with an in-process one.
+/// aggregate secret-share row, returning the PUBLIC commitments and binding
+/// proof (to broadcast into [`assemble_distributed_transcript`]) and the
+/// PRIVATE blindings (to keep in a
+/// [`VerifiedPartyAssembly::from_distributed_parts`]).  Only this party's own
+/// verified rows are read, so a distributed committee runs it with no trusted
+/// viewer.  The proof is what makes the published commitment PUBLICLY equal to
+/// the sum of this party's dealt rows (mod each RNS modulus): a party that
+/// commits to anything else is refused at transcript assembly.
 pub fn commit_distributed_secret_share<R: CryptoRng + RngCore>(
     session: &QuorumKeygenSession,
     party: usize,
     shares: &[VerifiedPrivateDealerShare],
     params: &BfvParams,
     rng: &mut R,
-) -> Result<(Vec<[u8; 32]>, Vec<[u8; 32]>)> {
+) -> Result<(Vec<[u8; 32]>, Vec<[u8; 32]>, AggregateRowBindingProof)> {
     let rows = aggregate_secret_row(session, party, shares, params)?;
-    let pc_gens = PedersenGens::default();
+    let n = session.n_parties();
     let expected_len = params.moduli().len() * params.degree();
-    let mut commitments = Vec::with_capacity(expected_len);
-    let mut blindings = Vec::with_capacity(expected_len);
-    for &value in rows.iter().flatten() {
-        let blinding = Scalar::random(&mut *rng);
-        commitments.push(
-            pc_gens
-                .commit(Scalar::from(value), blinding)
-                .compress()
-                .to_bytes(),
-        );
-        blindings.push(blinding.to_bytes());
+
+    // Integer (pre-reduction) coefficient sums, dealer-blinding sums, and the
+    // dealer commitment digests in canonical dealer order.  `aggregate_secret_row`
+    // already guaranteed exactly one share per dealer.
+    let mut integer_sums = vec![0u128; expected_len];
+    let mut blinding_sums = vec![Scalar::ZERO; expected_len];
+    let mut dealer_commitment_digests = vec![[0u8; 32]; n];
+    for share in shares {
+        dealer_commitment_digests[share.dealer()] = share.dealer_commitment_digest;
+        if share.inner.pedersen_row_blindings.len() != expected_len {
+            return Err(QuorumError::ParamMismatch);
+        }
+        for (k, &value) in share.inner.rows.iter().flatten().enumerate() {
+            integer_sums[k] += value as u128;
+            let blinding = Option::<Scalar>::from(Scalar::from_canonical_bytes(
+                share.inner.pedersen_row_blindings[k],
+            ))
+            .ok_or(QuorumError::ParamMismatch)?;
+            blinding_sums[k] += blinding;
+        }
     }
-    Ok((commitments, blindings))
+
+    let pc_gens = PedersenGens::default();
+    let g = pc_gens.B;
+    let h = pc_gens.B_blinding;
+    let reduced: Vec<u64> = rows.iter().flatten().copied().collect();
+    // Fresh blindings: the proof hides the carries, so the published vector
+    // leaks nothing beyond the perfectly-hiding commitments themselves.
+    let fresh: Vec<Scalar> = (0..expected_len)
+        .map(|_| Scalar::random(&mut *rng))
+        .collect();
+    let commitments: Vec<[u8; 32]> = (0..expected_len)
+        .into_par_iter()
+        .map(|k| {
+            pc_gens
+                .commit(Scalar::from(reduced[k]), fresh[k])
+                .compress()
+                .to_bytes()
+        })
+        .collect();
+
+    // Sigma OR-proof, phase 1: per coefficient, the true carry `m` and blinding
+    // difference `delta` open `P = m*q*G + delta*H`; simulate every other
+    // branch.  All branch randomness is drawn from the caller's rng serially,
+    // then the point work is parallel.
+    let mut simulated: Vec<Scalar> = Vec::with_capacity(expected_len * (n - 1) * 2);
+    let mut witnesses: Vec<Scalar> = Vec::with_capacity(expected_len);
+    for _ in 0..expected_len {
+        for _ in 0..(n - 1) * 2 {
+            simulated.push(Scalar::random(&mut *rng));
+        }
+        witnesses.push(Scalar::random(&mut *rng));
+    }
+    struct CoefficientArm {
+        carry: usize,
+        delta: Scalar,
+        announcements: Vec<[u8; 32]>,
+        challenges: Vec<Scalar>,
+        responses: Vec<Scalar>,
+    }
+    let arms: Result<Vec<CoefficientArm>> = (0..expected_len)
+        .into_par_iter()
+        .map(|k| -> Result<CoefficientArm> {
+            let q = params.moduli()[k / params.degree()];
+            let excess = integer_sums[k] - reduced[k] as u128;
+            if excess % q as u128 != 0 {
+                return Err(QuorumError::ParamMismatch);
+            }
+            let carry = (excess / q as u128) as usize;
+            if carry >= n {
+                return Err(QuorumError::ParamMismatch);
+            }
+            let delta = blinding_sums[k] - fresh[k];
+            let p = RistrettoPoint::vartime_multiscalar_mul(
+                [Scalar::from(carry as u64 * q), delta],
+                [g, h],
+            );
+            let mut announcements = vec![[0u8; 32]; n];
+            let mut challenges = vec![Scalar::ZERO; n];
+            let mut responses = vec![Scalar::ZERO; n];
+            let mut draw = simulated[k * (n - 1) * 2..(k + 1) * (n - 1) * 2].iter();
+            for j in 0..n {
+                if j == carry {
+                    announcements[j] = (witnesses[k] * h).compress().to_bytes();
+                } else {
+                    let challenge = *draw.next().expect("presampled challenge");
+                    let response = *draw.next().expect("presampled response");
+                    let a = RistrettoPoint::vartime_multiscalar_mul(
+                        [response, -challenge, challenge * Scalar::from(j as u64 * q)],
+                        [h, p, g],
+                    );
+                    announcements[j] = a.compress().to_bytes();
+                    challenges[j] = challenge;
+                    responses[j] = response;
+                }
+            }
+            Ok(CoefficientArm {
+                carry,
+                delta,
+                announcements,
+                challenges,
+                responses,
+            })
+        })
+        .collect();
+    let mut arms = arms?;
+
+    // Phase 2: one Fiat-Shamir pass in canonical coefficient order closes the
+    // true branch of every coefficient.
+    let mut transcript = aggregate_row_binding_transcript(
+        session,
+        party,
+        &dealer_commitment_digests,
+        &commitments,
+        params,
+    );
+    let mut challenges = Vec::with_capacity(expected_len * n);
+    let mut responses = Vec::with_capacity(expected_len * n);
+    for (k, arm) in arms.iter_mut().enumerate() {
+        for announcement in &arm.announcements {
+            transcript.append_message(b"binding-A", announcement);
+        }
+        let challenge = transcript_challenge_scalar(&mut transcript, b"binding-challenge");
+        let others: Scalar = arm
+            .challenges
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != arm.carry)
+            .map(|(_, c)| *c)
+            .sum();
+        arm.challenges[arm.carry] = challenge - others;
+        arm.responses[arm.carry] = witnesses[k] + arm.challenges[arm.carry] * arm.delta;
+        challenges.extend_from_slice(&arm.challenges);
+        responses.extend_from_slice(&arm.responses);
+    }
+
+    let proof = AggregateRowBindingProof {
+        party,
+        coefficient_len: expected_len,
+        challenges,
+        responses,
+    };
+    Ok((
+        commitments,
+        fresh.iter().map(Scalar::to_bytes).collect(),
+        proof,
+    ))
 }
 
 /// Domain-separated digest of a collective BFV public key, as bound into a
@@ -1666,41 +2208,79 @@ pub fn verified_collective_key_digest(collective: &CollectivePublicKey) -> [u8; 
 ///
 /// Build the public [`VerifiedDkgTranscript`] a DISTRIBUTED committee's decrypt-
 /// share certificates anchor to, from material every participant can cross-check:
-/// each dealer's public VSS commitment digest (already checked by every
-/// recipient), each custody party's own aggregate-row commitment vector from
-/// [`commit_distributed_secret_share`] in canonical party order, and the
-/// collective key.  No private row or blinding is read here, and the digest is
-/// the exact [`vss_setup_transcript_digest`] the in-process constructor produces,
-/// so [`QuorumParty::assemble_verified`], [`AuthenticatedQuorumRoster::new_verified`]
-/// and [`QuorumOpeningSession::new_verified`] all accept the result unchanged.
+/// each dealer's FULL public VSS commitment (already checked by every
+/// recipient; its digest binds the homomorphic row commitments), each custody
+/// party's own aggregate-row commitment vector and
+/// [`AggregateRowBindingProof`] from [`commit_distributed_secret_share`] in
+/// canonical party order, and the collective key.  No private row or blinding
+/// is read here, and the digest is the exact [`vss_setup_transcript_digest`]
+/// the in-process constructor produces, so [`QuorumParty::assemble_verified`],
+/// [`AuthenticatedQuorumRoster::new_verified`] and
+/// [`QuorumOpeningSession::new_verified`] all accept the result unchanged.
 ///
-/// ⚑ Scope.  This binds each HONEST party's published commitment to its
-/// VSS-admitted aggregate row through that party's own `assemble_verified` refusal
-/// (its blindings cannot open a commitment to any other row).  It does NOT carry a
-/// PUBLIC proof that a party's published commitment equals the sum of the dealer
-/// rows it accepted — a malicious party may commit to a different secret and still
-/// produce a certificate consistent with THAT commitment (a garbage opening, never
-/// a chosen plaintext).  Closing that is the endorsement seam the module header
-/// names: an additively-homomorphic dealer commitment, or a per-party equality
-/// proof from the dealer VSS commitments to the aggregate.
+/// ⚑ Scope.  EVERY party's binding proof is verified here, so a party whose
+/// published commitment is not the sum of its dealt rows (mod each RNS
+/// modulus) is REFUSED — [`QuorumError::PartyCommitmentUnbound`] — before any
+/// opening exists.  What this does NOT prove: that any dealer's hidden secret
+/// is ternary/CBD-short (the keygen range-proof seam), or anything about
+/// parties refusing to answer (availability).
 pub fn assemble_distributed_transcript(
     session: &QuorumKeygenSession,
-    dealer_commitment_digests: Vec<[u8; 32]>,
+    dealer_commitments: &[DealerVssCommitment],
     party_secret_commitments: Vec<Vec<[u8; 32]>>,
+    binding_proofs: &[AggregateRowBindingProof],
     collective: &CollectivePublicKey,
     params: &BfvParams,
 ) -> Result<VerifiedDkgTranscript> {
     let n = session.n_parties();
-    if dealer_commitment_digests.len() != n || party_secret_commitments.len() != n {
+    let expected_len = params.moduli().len() * params.degree();
+    if dealer_commitments.len() != n
+        || party_secret_commitments.len() != n
+        || binding_proofs.len() != n
+    {
         return Err(QuorumError::VssTranscriptMismatch);
     }
-    let expected_len = params.moduli().len() * params.degree();
+    for (dealer, commitment) in dealer_commitments.iter().enumerate() {
+        if commitment.session != *session
+            || commitment.dealer != dealer
+            || commitment.row_commitments.len() != n
+            || commitment.linear_commitments.len() != session.threshold() * session.threshold()
+            || commitment.pedersen_row_commitments.len() != n
+            || commitment
+                .pedersen_row_commitments
+                .iter()
+                .any(|row| row.len() != expected_len)
+        {
+            return Err(QuorumError::VssTranscriptMismatch);
+        }
+    }
     if party_secret_commitments
         .iter()
         .any(|commitments| commitments.len() != expected_len)
     {
         return Err(QuorumError::VssTranscriptMismatch);
     }
+    // THE ENDORSEMENT TOOTH: every party's published commitment vector must
+    // prove equal (mod q, per coefficient) to the sum of its dealt rows, as
+    // committed by the dealers themselves.
+    for (party, (commitments, proof)) in party_secret_commitments
+        .iter()
+        .zip(binding_proofs)
+        .enumerate()
+    {
+        verify_aggregate_row_binding(
+            session,
+            party,
+            dealer_commitments,
+            commitments,
+            proof,
+            params,
+        )?;
+    }
+    let dealer_commitment_digests: Vec<[u8; 32]> = dealer_commitments
+        .iter()
+        .map(DealerVssCommitment::digest)
+        .collect();
     let collective_key_digest = verified_dkg_collective_key_digest(collective);
     let digest = vss_setup_transcript_digest(
         session,
@@ -3191,6 +3771,7 @@ fn dealer_vss_commitment_digest(
     public_key_digest: &[u8; 32],
     row_commitments: &[[u8; 32]],
     linear_commitments: &[Vec<Vec<u64>>],
+    pedersen_row_commitments: &[Vec<[u8; 32]>],
 ) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(VSS_DEALER_COMMITMENT_DOMAIN);
@@ -3209,6 +3790,13 @@ fn dealer_vss_commitment_digest(
             for value in row {
                 hash.update(value.to_le_bytes());
             }
+        }
+    }
+    hash.update((pedersen_row_commitments.len() as u64).to_le_bytes());
+    for row in pedersen_row_commitments {
+        hash.update((row.len() as u64).to_le_bytes());
+        for commitment in row {
+            hash.update(commitment);
         }
     }
     hash.finalize().into()
@@ -4572,6 +5160,7 @@ mod vss_tests {
             &public_key_digest,
             &bundle.vss_commitment.row_commitments,
             &bundle.vss_commitment.linear_commitments,
+            &bundle.vss_commitment.pedersen_row_commitments,
         );
 
         assert!(matches!(
@@ -4617,6 +5206,7 @@ mod vss_tests {
             &bundle.vss_commitment.public_key_digest,
             &bundle.vss_commitment.row_commitments,
             &bundle.vss_commitment.linear_commitments,
+            &bundle.vss_commitment.pedersen_row_commitments,
         );
 
         assert!(matches!(
@@ -4932,17 +5522,18 @@ mod vss_tests {
     // lets the distributed opening carry the same certificate and the verified
     // combiner refuse a share that lacks one.
 
-    /// Deal a 3-of-2 committee and build the transcript the DISTRIBUTED way: every
-    /// party commits its own aggregate row, and only public commitments are pooled.
-    /// Returns each party's `(own rows, own blindings)` so a caller can assemble it.
-    fn distributed_setup(
+    /// Deal a 3-of-2 committee the DISTRIBUTED way up to the commit round:
+    /// verified dealings sorted into per-recipient inboxes, plus the FULL public
+    /// dealer commitments every participant holds (the binding proofs verify
+    /// against their homomorphic row commitments).
+    fn distributed_dealt(
         seed: [u8; 32],
     ) -> (
         QuorumKeygenSession,
         BfvParams,
         CollectivePublicKey,
-        VerifiedDkgTranscript,
-        Vec<(Vec<VerifiedPrivateDealerShare>, Vec<[u8; 32]>)>,
+        Vec<DealerVssCommitment>,
+        Vec<Vec<VerifiedPrivateDealerShare>>,
     ) {
         let params = BfvParams::fold_set();
         let session = QuorumKeygenSession::from_seed(3, 2, seed).unwrap();
@@ -4954,9 +5545,9 @@ mod vss_tests {
                     .unwrap()
             })
             .collect();
-        let dealer_commitment_digests: Vec<[u8; 32]> = bundles
+        let dealer_commitments: Vec<DealerVssCommitment> = bundles
             .iter()
-            .map(|bundle| bundle.commitment().digest)
+            .map(|bundle| bundle.commitment().clone())
             .collect();
         let contributions: Vec<PublicKeyContribution> = bundles
             .iter()
@@ -4974,26 +5565,238 @@ mod vss_tests {
                 inboxes[row.recipient()].push(row);
             }
         }
+        (session, params, collective, dealer_commitments, inboxes)
+    }
 
+    /// Deal a 3-of-2 committee and build the transcript the DISTRIBUTED way: every
+    /// party commits its own aggregate row WITH its binding proof, and only public
+    /// commitments and proofs are pooled.
+    /// Returns each party's `(own rows, own blindings)` so a caller can assemble it.
+    fn distributed_setup(
+        seed: [u8; 32],
+    ) -> (
+        QuorumKeygenSession,
+        BfvParams,
+        CollectivePublicKey,
+        VerifiedDkgTranscript,
+        Vec<(Vec<VerifiedPrivateDealerShare>, Vec<[u8; 32]>)>,
+    ) {
+        let (session, params, collective, dealer_commitments, inboxes) = distributed_dealt(seed);
         let mut rng = OsRng;
         let mut party_commitments = Vec::with_capacity(3);
+        let mut binding_proofs = Vec::with_capacity(3);
         let mut per_party = Vec::with_capacity(3);
         for (party, inbox) in inboxes.into_iter().enumerate() {
-            let (commitments, blindings) =
+            let (commitments, blindings, proof) =
                 commit_distributed_secret_share(&session, party, &inbox, &params, &mut rng)
                     .unwrap();
             party_commitments.push(commitments);
+            binding_proofs.push(proof);
             per_party.push((inbox, blindings));
         }
         let transcript = assemble_distributed_transcript(
             &session,
-            dealer_commitment_digests,
+            &dealer_commitments,
             party_commitments,
+            &binding_proofs,
             &collective,
             &params,
         )
         .unwrap();
         (session, params, collective, transcript, per_party)
+    }
+
+    /// THE ENDORSEMENT-SEAM FALSIFIER, both poles.
+    ///
+    /// RED: a party that commits to a secret that is NOT the sum of its dealt
+    /// rows — running the FULL honest prover machinery over the forged value,
+    /// the strongest cheat that does not break the discrete log — is refused at
+    /// transcript assembly as [`QuorumError::PartyCommitmentUnbound`].
+    /// GREEN: the same party, over its true rows, assembles.
+    #[test]
+    fn a_party_committing_to_a_different_secret_is_refused() {
+        let (session, params, collective, dealer_commitments, mut inboxes) =
+            distributed_dealt([0xd4; 32]);
+        let mut rng = OsRng;
+
+        // Constructive mutation, asserted present: shift one coefficient of one
+        // dealer row party 1 aggregates. Its commitment then commits to a
+        // different secret while every dealer's PUBLIC homomorphic row
+        // commitment still speaks for the true row.
+        let q = params.moduli()[0];
+        let honest_value = inboxes[1][0].inner.rows[0][0];
+        inboxes[1][0].inner.rows[0][0] = add_mod(honest_value, 1, q);
+        assert_ne!(
+            inboxes[1][0].inner.rows[0][0], honest_value,
+            "the row mutation did not take"
+        );
+
+        let mut party_commitments = Vec::with_capacity(3);
+        let mut binding_proofs = Vec::with_capacity(3);
+        for (party, inbox) in inboxes.iter().enumerate() {
+            let (commitments, _blindings, proof) =
+                commit_distributed_secret_share(&session, party, inbox, &params, &mut rng).unwrap();
+            party_commitments.push(commitments);
+            binding_proofs.push(proof);
+        }
+        assert_eq!(
+            assemble_distributed_transcript(
+                &session,
+                &dealer_commitments,
+                party_commitments.clone(),
+                &binding_proofs,
+                &collective,
+                &params,
+            )
+            .err(),
+            Some(QuorumError::PartyCommitmentUnbound { party: 1 }),
+            "a party that commits to a different secret must be refused at assembly"
+        );
+
+        // GREEN pole: restore the true row, recommit party 1, and the same
+        // assembly accepts — the refusal above was the forged value, nothing else.
+        inboxes[1][0].inner.rows[0][0] = honest_value;
+        let (commitments, _blindings, proof) =
+            commit_distributed_secret_share(&session, 1, &inboxes[1], &params, &mut rng).unwrap();
+        party_commitments[1] = commitments;
+        binding_proofs[1] = proof;
+        assemble_distributed_transcript(
+            &session,
+            &dealer_commitments,
+            party_commitments,
+            &binding_proofs,
+            &collective,
+            &params,
+        )
+        .expect("the honest committee assembles");
+    }
+
+    /// The binding proof is load-bearing, not a decoration: an honest
+    /// commitment vector whose proof was forged (one response nudged) is
+    /// refused, and the proof round-trips its canonical wire form.
+    #[test]
+    fn a_forged_binding_proof_response_is_refused() {
+        let (session, params, collective, dealer_commitments, inboxes) =
+            distributed_dealt([0xd5; 32]);
+        let mut rng = OsRng;
+        let mut party_commitments = Vec::with_capacity(3);
+        let mut binding_proofs = Vec::with_capacity(3);
+        for (party, inbox) in inboxes.iter().enumerate() {
+            let (commitments, _blindings, proof) =
+                commit_distributed_secret_share(&session, party, inbox, &params, &mut rng).unwrap();
+            party_commitments.push(commitments);
+            binding_proofs.push(proof);
+        }
+
+        // Canonical wire round-trip of a real proof.
+        let reparsed = AggregateRowBindingProof::from_wire_bytes(
+            &binding_proofs[0].to_wire_bytes(),
+            &session,
+            &params,
+        )
+        .unwrap();
+        assert_eq!(reparsed, binding_proofs[0]);
+
+        // Constructive mutation, asserted present.
+        let before = binding_proofs[0].responses[0];
+        binding_proofs[0].responses[0] += Scalar::ONE;
+        assert_ne!(
+            binding_proofs[0].responses[0], before,
+            "the proof mutation did not take"
+        );
+        assert_eq!(
+            assemble_distributed_transcript(
+                &session,
+                &dealer_commitments,
+                party_commitments,
+                &binding_proofs,
+                &collective,
+                &params,
+            )
+            .err(),
+            Some(QuorumError::PartyCommitmentUnbound { party: 0 }),
+            "a forged binding proof must be refused"
+        );
+    }
+
+    /// The dual arm that keeps the GREEN pole robust: a DEALER whose public
+    /// homomorphic row commitment does not open to the row it privately sent
+    /// is refused by the recipient (and by the dealer-side all-rows check), so
+    /// a malicious dealer cannot frame an honest party into a binding-proof
+    /// failure.
+    #[test]
+    fn a_dealer_whose_pedersen_row_commitment_does_not_open_is_refused() {
+        let params = BfvParams::fold_set();
+        let session = QuorumKeygenSession::from_seed(3, 2, [0x96; 32]).unwrap();
+        let pc_gens = PedersenGens::default();
+
+        // Arm 1: the recipient-scoped check, over the one row it holds.
+        let mut bundle = deal(&session, 0, &params).unwrap();
+        let value = bundle.private[1].rows[0][0];
+        let blinding = Option::<Scalar>::from(Scalar::from_canonical_bytes(
+            bundle.private[1].pedersen_row_blindings[0],
+        ))
+        .unwrap();
+        // Commit to value+1 under the SAME blinding and recommit the dealer
+        // digest, so every salted-hash rung still passes and the Pedersen
+        // opening is the check that fires.
+        let forged = pc_gens
+            .commit(Scalar::from(value) + Scalar::ONE, blinding)
+            .compress()
+            .to_bytes();
+        assert_ne!(
+            forged, bundle.vss_commitment.pedersen_row_commitments[1][0],
+            "the commitment mutation did not take"
+        );
+        bundle.vss_commitment.pedersen_row_commitments[1][0] = forged;
+        bundle.vss_commitment.digest = dealer_vss_commitment_digest(
+            &session,
+            0,
+            &bundle.vss_commitment.public_key_digest,
+            &bundle.vss_commitment.row_commitments,
+            &bundle.vss_commitment.linear_commitments,
+            &bundle.vss_commitment.pedersen_row_commitments,
+        );
+        let share = bundle.private.remove(1);
+        assert!(matches!(
+            verify_received_dealer_row(&bundle.vss_commitment, &bundle.public, share, 1, &params),
+            Err(QuorumError::VssPedersenRowMismatch {
+                dealer: 0,
+                recipient: 1
+            })
+        ));
+
+        // Arm 2: the dealer-side all-rows check refuses the same forgery.
+        let mut bundle = deal(&session, 0, &params).unwrap();
+        let value = bundle.private[2].rows[0][0];
+        let blinding = Option::<Scalar>::from(Scalar::from_canonical_bytes(
+            bundle.private[2].pedersen_row_blindings[0],
+        ))
+        .unwrap();
+        let forged = pc_gens
+            .commit(Scalar::from(value) + Scalar::ONE, blinding)
+            .compress()
+            .to_bytes();
+        assert_ne!(
+            forged, bundle.vss_commitment.pedersen_row_commitments[2][0],
+            "the commitment mutation did not take"
+        );
+        bundle.vss_commitment.pedersen_row_commitments[2][0] = forged;
+        bundle.vss_commitment.digest = dealer_vss_commitment_digest(
+            &session,
+            0,
+            &bundle.vss_commitment.public_key_digest,
+            &bundle.vss_commitment.row_commitments,
+            &bundle.vss_commitment.linear_commitments,
+            &bundle.vss_commitment.pedersen_row_commitments,
+        );
+        assert!(matches!(
+            bundle.verify(&params),
+            Err(QuorumError::VssPedersenRowMismatch {
+                dealer: 0,
+                recipient: 2
+            })
+        ));
     }
 
     /// FAST pole: the distributed transcript assembles from per-party commitments,

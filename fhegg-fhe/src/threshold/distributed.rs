@@ -44,13 +44,19 @@
 //!   dealer that lies to a recipient, or to a pair, is refused by that recipient
 //!   or that pair — this is the tampered-row refusal, and it fires.
 //! * **Still trusted.** That a dealer sampled a SHORT (ternary/CBD) secret — the
-//!   keygen range-proof seam named in the parent module — and that a party's
-//!   decryption share was honestly computed from its custody row. Distributed
-//!   openings here carry NO zero-knowledge share certificate; see
-//!   [`super::quorum::assemble_distributed_party`] for why that is architectural
-//!   and not a shortcut. A malicious party can therefore make an opening produce
-//!   garbage. It cannot make it produce a plaintext of its choosing, and it cannot
-//!   learn the plaintext with fewer than `t` parties.
+//!   keygen range-proof seam named in the parent module. On the LEGACY
+//!   [`DistributedDkg::finish`] path, also that a party's decryption share was
+//!   honestly computed from its custody row: that path carries NO zero-knowledge
+//!   share certificate (see [`super::quorum::assemble_distributed_party`]), so a
+//!   malicious party can make a legacy opening produce garbage. The VERIFIED
+//!   path ([`DistributedDkg::prepare_verified_custody`] →
+//!   [`DistributedPendingCustody::finalize`]) closes both halves of that: each
+//!   party's published aggregate-row commitment must carry an
+//!   [`AggregateRowBindingProof`] tying it (mod q) to the sum of its dealt rows
+//!   — a party committing to a different secret is REFUSED at transcript
+//!   assembly — and each opening share must carry the decrypt-share certificate
+//!   against that commitment. Neither path lets anyone produce a plaintext of
+//!   its choosing or learn the plaintext with fewer than `t` parties.
 //! * **Not addressed at all.** Availability. `n - t` parties may be offline for an
 //!   OPENING; all `n` must be live for the SETUP.
 //!
@@ -100,8 +106,8 @@ use crate::mpc_party::transport::{
 use crate::threshold::quorum::{
     assemble_distributed_party, assemble_distributed_transcript, commit_distributed_secret_share,
     deal as deal_contribution, finish_public_key, verify_received_dealer_row,
-    DealerRowCrossEvaluation, DealerVssCommitment, PrivateDealerShare, QuorumError,
-    QuorumKeygenSession, QuorumParty, VerifiedDkgTranscript, VerifiedPartyAssembly,
+    AggregateRowBindingProof, DealerRowCrossEvaluation, DealerVssCommitment, PrivateDealerShare,
+    QuorumError, QuorumKeygenSession, QuorumParty, VerifiedDkgTranscript, VerifiedPartyAssembly,
     VerifiedPrivateDealerShare,
 };
 use crate::threshold::{BfvParams, CollectivePublicKey, PublicKeyContribution, ThresholdError};
@@ -587,11 +593,6 @@ impl DistributedDkg {
             .collect::<Vec<_>>();
         let collective = finish_public_key(&self.session, &contributions, &self.params)?;
 
-        let dealer_commitment_digests = accepted
-            .iter()
-            .map(|dealing| dealing.commitment.digest())
-            .collect::<Vec<_>>();
-
         // The legacy setup digest is unchanged: every honest party derives the
         // same one, and the party binary still publishes it as its readiness mark.
         let mut digest = Sha256::new();
@@ -603,11 +604,13 @@ impl DistributedDkg {
         digest.update(Sha256::digest(collective.pk.to_bytes()));
         let setup_digest: [u8; 32] = digest.finalize().into();
 
-        let shares = accepted
-            .into_iter()
-            .map(|dealing| dealing.row)
-            .collect::<Vec<_>>();
-        let (secret_share_commitments, blindings) = commit_distributed_secret_share(
+        let mut dealer_commitments = Vec::with_capacity(accepted.len());
+        let mut shares = Vec::with_capacity(accepted.len());
+        for dealing in accepted {
+            dealer_commitments.push(dealing.commitment);
+            shares.push(dealing.row);
+        }
+        let (secret_share_commitments, blindings, binding_proof) = commit_distributed_secret_share(
             &self.session,
             party,
             &shares,
@@ -621,8 +624,9 @@ impl DistributedDkg {
             party,
             collective,
             setup_digest,
-            dealer_commitment_digests,
+            dealer_commitments,
             secret_share_commitments,
+            binding_proof,
             shares,
             blindings,
         })
@@ -691,8 +695,9 @@ pub struct DistributedPendingCustody {
     party: usize,
     collective: CollectivePublicKey,
     setup_digest: [u8; 32],
-    dealer_commitment_digests: Vec<[u8; 32]>,
+    dealer_commitments: Vec<DealerVssCommitment>,
     secret_share_commitments: Vec<[u8; 32]>,
+    binding_proof: AggregateRowBindingProof,
     shares: Vec<VerifiedPrivateDealerShare>,
     blindings: Vec<[u8; 32]>,
 }
@@ -712,12 +717,14 @@ impl DistributedPendingCustody {
         self.setup_digest
     }
 
-    /// Every dealer's public VSS commitment digest, in canonical dealer order, as
+    /// Every dealer's FULL public VSS commitment, in canonical dealer order, as
     /// this party checked and accepted them. Published so the collector can bind
     /// the transcript to the SAME dealings every party accepted (and refuse if two
-    /// parties disagree).
-    pub fn dealer_commitment_digests(&self) -> &[[u8; 32]] {
-        &self.dealer_commitment_digests
+    /// parties disagree), and so every participant can verify every party's
+    /// [`AggregateRowBindingProof`] against the dealers' homomorphic row
+    /// commitments.
+    pub fn dealer_commitments(&self) -> &[DealerVssCommitment] {
+        &self.dealer_commitments
     }
 
     /// This party's PUBLIC aggregate-row commitment vector. The blindings that
@@ -726,28 +733,44 @@ impl DistributedPendingCustody {
         &self.secret_share_commitments
     }
 
-    /// Collect the whole committee's public commitment vectors (in canonical party
-    /// order) into one verified transcript and complete this party's certificate-
-    /// capable custody.
+    /// This party's PUBLIC proof that its commitment vector equals the sum of
+    /// its dealt rows. Broadcast alongside the commitment vector.
+    pub fn binding_proof(&self) -> &AggregateRowBindingProof {
+        &self.binding_proof
+    }
+
+    /// Collect the whole committee's public commitment vectors and binding
+    /// proofs (in canonical party order) into one verified transcript and
+    /// complete this party's certificate-capable custody.
     ///
     /// Refuses unless the vector recorded for THIS party is exactly the one it
-    /// published (so a collector cannot silently drop or swap it) and unless this
+    /// published (so a collector cannot silently drop or swap it), unless EVERY
+    /// party's binding proof verifies against the dealings this party itself
+    /// accepted (via [`assemble_distributed_transcript`] — a malicious peer
+    /// committing to a different secret is refused HERE), and unless this
     /// party's own blindings open that vector against its re-derived aggregate row
     /// (via [`QuorumParty::assemble_verified`]). The resulting party produces
     /// openings that carry the zero-knowledge decrypt-share certificate.
     pub fn finalize(
         self,
         party_secret_commitments: Vec<Vec<[u8; 32]>>,
+        binding_proofs: Vec<AggregateRowBindingProof>,
     ) -> Result<DistributedVerifiedCustody> {
         if party_secret_commitments.get(self.party) != Some(&self.secret_share_commitments) {
             return Err(DistributedCommitteeError::Message(
                 "the collected transcript does not carry this party's own commitment",
             ));
         }
+        if binding_proofs.get(self.party) != Some(&self.binding_proof) {
+            return Err(DistributedCommitteeError::Message(
+                "the collected transcript does not carry this party's own binding proof",
+            ));
+        }
         let transcript = assemble_distributed_transcript(
             &self.session,
-            self.dealer_commitment_digests,
+            &self.dealer_commitments,
             party_secret_commitments,
+            &binding_proofs,
             &self.collective,
             &self.params,
         )?;
@@ -851,8 +874,11 @@ fn decode_cross_round(message: &[u8], params: &BfvParams) -> Result<Vec<DealerRo
     Ok(evaluations)
 }
 
-const COMMIT_RESPONSE_MAGIC: &[u8; 8] = b"FHCMv001";
-const FINALIZE_REQUEST_MAGIC: &[u8; 8] = b"FHFNv001";
+// v2 FLAG DAY (aggregate-row binding): the commit response now carries the
+// FULL dealer VSS commitments and this party's binding proof; the finalize
+// request carries every party's binding proof. v1 wires refuse to parse.
+const COMMIT_RESPONSE_MAGIC: &[u8; 8] = b"FHCMv002";
+const FINALIZE_REQUEST_MAGIC: &[u8; 8] = b"FHFNv002";
 const COMMITMENT_BYTES: usize = 32;
 /// A generous ceiling on `moduli * degree`, so a malformed length cannot force a
 /// huge allocation. Deployed fold parameters are far below it.
@@ -883,52 +909,93 @@ fn decode_digest_list(cursor: &mut Cursor, cap: usize) -> Result<Vec<[u8; 32]>> 
 }
 
 /// The commit-round response a party publishes to the collector: every dealer's
-/// commitment digest it accepted, and its own public aggregate-row commitment
-/// vector.
+/// FULL public VSS commitment it accepted (carrying the homomorphic row
+/// commitments the binding proofs verify against), its own public aggregate-row
+/// commitment vector, and its own [`AggregateRowBindingProof`].
 pub fn encode_commit_response(
-    dealer_commitment_digests: &[[u8; 32]],
+    dealer_commitments: &[DealerVssCommitment],
     secret_share_commitments: &[[u8; 32]],
+    binding_proof: &AggregateRowBindingProof,
 ) -> Vec<u8> {
-    let mut out = Vec::with_capacity(
-        16 + (dealer_commitment_digests.len() + secret_share_commitments.len()) * COMMITMENT_BYTES,
-    );
+    let mut out = Vec::new();
     out.extend_from_slice(COMMIT_RESPONSE_MAGIC);
-    encode_digest_list(&mut out, dealer_commitment_digests);
+    out.extend_from_slice(&(dealer_commitments.len() as u64).to_le_bytes());
+    for commitment in dealer_commitments {
+        let wire = commitment.to_wire_bytes();
+        out.extend_from_slice(&(wire.len() as u64).to_le_bytes());
+        out.extend_from_slice(&wire);
+    }
     encode_digest_list(&mut out, secret_share_commitments);
+    let proof_wire = binding_proof.to_wire_bytes();
+    out.extend_from_slice(&(proof_wire.len() as u64).to_le_bytes());
+    out.extend_from_slice(&proof_wire);
     out
 }
 
-/// Parse a commit-round response. Returns `(dealer_commitment_digests,
-/// secret_share_commitments)`.
-pub fn decode_commit_response(message: &[u8]) -> Result<(Vec<[u8; 32]>, Vec<[u8; 32]>)> {
+/// Parse a commit-round response. Returns `(dealer_commitments,
+/// secret_share_commitments, binding_proof)`.
+pub fn decode_commit_response(
+    message: &[u8],
+    session: &QuorumKeygenSession,
+    params: &BfvParams,
+) -> Result<(
+    Vec<DealerVssCommitment>,
+    Vec<[u8; 32]>,
+    AggregateRowBindingProof,
+)> {
     let mut cursor = Cursor::new(message);
     if cursor.take(8)? != COMMIT_RESPONSE_MAGIC {
         return Err(DistributedCommitteeError::Message("commit-response magic"));
     }
-    let dealer_commitment_digests = decode_digest_list(&mut cursor, MAX_COMMITMENT_VECTOR)?;
+    let dealer_count = cursor.length()?;
+    if dealer_count > MAX_COMMITMENT_VECTOR {
+        return Err(DistributedCommitteeError::Message("dealer arity"));
+    }
+    let mut dealer_commitments = Vec::with_capacity(dealer_count);
+    for _ in 0..dealer_count {
+        let wire = cursor.length_prefixed()?;
+        dealer_commitments.push(DealerVssCommitment::from_wire_bytes(wire, params)?);
+    }
     let secret_share_commitments = decode_digest_list(&mut cursor, MAX_COMMITMENT_VECTOR)?;
+    let proof_wire = cursor.length_prefixed()?;
+    let binding_proof = AggregateRowBindingProof::from_wire_bytes(proof_wire, session, params)?;
     if !cursor.finished() {
         return Err(DistributedCommitteeError::Message(
             "trailing commit-response bytes",
         ));
     }
-    Ok((dealer_commitment_digests, secret_share_commitments))
+    Ok((dealer_commitments, secret_share_commitments, binding_proof))
 }
 
 /// The finalize-round request the collector sends every party: the whole
-/// committee's public commitment vectors in canonical party order.
-pub fn encode_finalize_request(party_secret_commitments: &[Vec<[u8; 32]>]) -> Vec<u8> {
+/// committee's public commitment vectors and binding proofs in canonical party
+/// order.
+pub fn encode_finalize_request(
+    party_secret_commitments: &[Vec<[u8; 32]>],
+    binding_proofs: &[AggregateRowBindingProof],
+) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(FINALIZE_REQUEST_MAGIC);
     out.extend_from_slice(&(party_secret_commitments.len() as u64).to_le_bytes());
     for commitments in party_secret_commitments {
         encode_digest_list(&mut out, commitments);
     }
+    out.extend_from_slice(&(binding_proofs.len() as u64).to_le_bytes());
+    for proof in binding_proofs {
+        let wire = proof.to_wire_bytes();
+        out.extend_from_slice(&(wire.len() as u64).to_le_bytes());
+        out.extend_from_slice(&wire);
+    }
     out
 }
 
-/// Parse a finalize-round request into the ordered per-party commitment vectors.
-pub fn decode_finalize_request(message: &[u8]) -> Result<Vec<Vec<[u8; 32]>>> {
+/// Parse a finalize-round request into the ordered per-party commitment vectors
+/// and binding proofs.
+pub fn decode_finalize_request(
+    message: &[u8],
+    session: &QuorumKeygenSession,
+    params: &BfvParams,
+) -> Result<(Vec<Vec<[u8; 32]>>, Vec<AggregateRowBindingProof>)> {
     let mut cursor = Cursor::new(message);
     if cursor.take(8)? != FINALIZE_REQUEST_MAGIC {
         return Err(DistributedCommitteeError::Message("finalize-request magic"));
@@ -941,12 +1008,23 @@ pub fn decode_finalize_request(message: &[u8]) -> Result<Vec<Vec<[u8; 32]>>> {
     for _ in 0..parties {
         party_secret_commitments.push(decode_digest_list(&mut cursor, MAX_COMMITMENT_VECTOR)?);
     }
+    let proof_count = cursor.length()?;
+    if proof_count != parties {
+        return Err(DistributedCommitteeError::Message("finalize proof arity"));
+    }
+    let mut binding_proofs = Vec::with_capacity(proof_count);
+    for _ in 0..proof_count {
+        let wire = cursor.length_prefixed()?;
+        binding_proofs.push(AggregateRowBindingProof::from_wire_bytes(
+            wire, session, params,
+        )?);
+    }
     if !cursor.finished() {
         return Err(DistributedCommitteeError::Message(
             "trailing finalize-request bytes",
         ));
     }
-    Ok(party_secret_commitments)
+    Ok((party_secret_commitments, binding_proofs))
 }
 
 struct Cursor<'a> {

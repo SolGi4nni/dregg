@@ -28,10 +28,15 @@
 //!   transport. What remains single-host is deployment: the party binary binds
 //!   `LOCALHOST` and rendezvous is a shared filesystem directory. Genuinely-separate
 //!   hosting / WAN is the remaining ops item, not a change to this protocol.
-//! - The model is SEMI-HONEST, inherited from [`super::distributed`]. The verified
-//!   opening adds an in-range, key-consistent certificate per share; it does not by
-//!   itself prove a party's published commitment equals its VSS-admitted row — see
-//!   [`super::quorum::assemble_distributed_transcript`] for that endorsement seam.
+//! - The verified rounds are MALICIOUS-party-sound on the commitment surface: the
+//!   commit round refuses any party whose published commitment does not carry a
+//!   valid [`AggregateRowBindingProof`] tying it to the sum of its dealt rows
+//!   ([`super::quorum::assemble_distributed_transcript`] verifies every proof
+//!   here, in this caller), and the verified opening refuses any share without a
+//!   valid decrypt-share certificate against that commitment. What remains
+//!   semi-honest is inherited from [`super::distributed`]: dealer secret
+//!   SHORTNESS is unproven (the keygen range-proof seam), and availability is
+//!   out of scope.
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -48,8 +53,9 @@ use crate::threshold::distributed::{
     SEQUENCE_OPEN_REQUEST, SEQUENCE_OPEN_RESPONSE, SEQUENCE_PUBLIC_KEY_RESPONSE,
 };
 use crate::threshold::quorum::{
-    assemble_distributed_transcript, AuthenticatedQuorumCombiner, AuthenticatedQuorumRoster,
-    QuorumError, QuorumOpeningSession, VerifiedDkgTranscript,
+    assemble_distributed_transcript, AggregateRowBindingProof, AuthenticatedQuorumCombiner,
+    AuthenticatedQuorumRoster, DealerVssCommitment, QuorumError, QuorumOpeningSession,
+    VerifiedDkgTranscript,
 };
 use crate::threshold::{BfvParams, CollectivePublicKey};
 
@@ -270,18 +276,21 @@ impl DistributedCommitteeClient {
     /// share certificates anchor to.
     ///
     /// Two rounds, both request/response: (1) collect every party's public
-    /// aggregate-row commitment vector and the dealer commitment digests it
-    /// accepted, refusing unless every party names the SAME dealings; (2) hand the
-    /// assembled ordered commitment set back to every party so each completes its
-    /// certificate-capable custody. The transcript is then usable for
-    /// [`open_verified`](Self::open_verified).
+    /// aggregate-row commitment vector, its [`AggregateRowBindingProof`], and the
+    /// FULL dealer commitments it accepted, refusing unless every party names the
+    /// SAME dealings and refusing ANY party whose commitment does not prove equal
+    /// to the sum of its dealt rows ([`QuorumError::PartyCommitmentUnbound`]);
+    /// (2) hand the assembled ordered commitment+proof set back to every party so
+    /// each completes its certificate-capable custody. The transcript is then
+    /// usable for [`open_verified`](Self::open_verified).
     pub fn verified_transcript(
         &self,
         collective: &CollectivePublicKey,
     ) -> Result<VerifiedDkgTranscript> {
         let n = self.dkg.n_parties();
-        let mut dealer_digests: Option<Vec<[u8; 32]>> = None;
+        let mut dealer_commitments: Option<Vec<DealerVssCommitment>> = None;
         let mut party_secret_commitments: Vec<Vec<[u8; 32]>> = Vec::with_capacity(n);
+        let mut binding_proofs: Vec<AggregateRowBindingProof> = Vec::with_capacity(n);
         for party in 0..n {
             let sealed = self.request(party, KIND_COMMIT_REQUEST, &[])?;
             if sealed.is_empty() {
@@ -296,9 +305,10 @@ impl DistributedCommitteeClient {
                 SEQUENCE_COMMIT_RESPONSE,
                 &sealed,
             )?;
-            let (dealers, commitments) = decode_commit_response(&message)?;
-            match &dealer_digests {
-                None => dealer_digests = Some(dealers),
+            let (dealers, commitments, proof) =
+                decode_commit_response(&message, self.dkg.session(), self.dkg.params())?;
+            match &dealer_commitments {
+                None => dealer_commitments = Some(dealers),
                 Some(expected) if expected != &dealers => {
                     return Err(RelyingPartyError::Disagreement(
                         "two parties accepted different dealer commitment sets",
@@ -307,19 +317,21 @@ impl DistributedCommitteeClient {
                 Some(_) => {}
             }
             party_secret_commitments.push(commitments);
+            binding_proofs.push(proof);
         }
-        let dealer_digests =
-            dealer_digests.ok_or(RelyingPartyError::Configuration("no custody parties"))?;
+        let dealer_commitments =
+            dealer_commitments.ok_or(RelyingPartyError::Configuration("no custody parties"))?;
         let transcript = assemble_distributed_transcript(
             self.dkg.session(),
-            dealer_digests,
+            &dealer_commitments,
             party_secret_commitments.clone(),
+            &binding_proofs,
             collective,
             self.dkg.params(),
         )
         .map_err(RelyingPartyError::Quorum)?;
 
-        let finalize_body = encode_finalize_request(&party_secret_commitments);
+        let finalize_body = encode_finalize_request(&party_secret_commitments, &binding_proofs);
         for party in 0..n {
             let sealed = self.dkg.seal(
                 &self.identity,

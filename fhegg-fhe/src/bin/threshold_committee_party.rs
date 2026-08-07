@@ -600,13 +600,15 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
                 let _ = message.reply.send(answer);
             }
             KIND_COMMIT_REQUEST => {
-                // Publish this party's PUBLIC aggregate-row commitment vector and
-                // the dealer digests it accepted; the blindings stay in `pending`.
+                // Publish this party's PUBLIC aggregate-row commitment vector, its
+                // binding proof, and the full dealer commitments it accepted; the
+                // blindings stay in `pending`.
                 let answer = match pending.as_ref() {
                     Some(ready) => {
                         let body = encode_commit_response(
-                            ready.dealer_commitment_digests(),
+                            ready.dealer_commitments(),
                             ready.secret_share_commitments(),
+                            ready.binding_proof(),
                         );
                         dkg.seal(
                             &identity,
@@ -694,14 +696,15 @@ fn finalize_custody(
             return Vec::new();
         }
     };
-    let commitments = match decode_finalize_request(&request) {
-        Ok(commitments) => commitments,
-        Err(error) => {
-            eprintln!("party {party}: finalize decode REFUSED: {error}");
-            return Vec::new();
-        }
-    };
-    let verified = match ready.finalize(commitments) {
+    let (commitments, binding_proofs) =
+        match decode_finalize_request(&request, dkg.session(), dkg.params()) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                eprintln!("party {party}: finalize decode REFUSED: {error}");
+                return Vec::new();
+            }
+        };
+    let verified = match ready.finalize(commitments, binding_proofs) {
         Ok(verified) => verified,
         Err(error) => {
             eprintln!("party {party}: finalize REFUSED: {error}");
