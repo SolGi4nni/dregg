@@ -70,7 +70,7 @@ TAG="${TAG_OVERRIDE:-$PIN_TAG}"
 # ── compute this platform's expected asset + local provenance ─────────────────
 [ -x "$KEYSH" ] || chmod +x "$KEYSH" 2>/dev/null || true
 ASSET="$(bash "$KEYSH" --asset)"
-eval "$(bash "$KEYSH" | sed 's/^/LOCAL_/')"   # LOCAL_KEY, LOCAL_PLATFORM, LOCAL_LEAN_TOOLCHAIN, LOCAL_MATHLIB_REV, LOCAL_DREGG_TREE_HASH
+eval "$(bash "$KEYSH" | sed 's/^/LOCAL_/')"   # LOCAL_KEY, LOCAL_PLATFORM, LOCAL_LEAN_TOOLCHAIN, LOCAL_MATHLIB_REV, LOCAL_DREGG_CLOSURE_HASH, LOCAL_DREGG_CLOSURE_MODULES
 say "Platform $LOCAL_PLATFORM · toolchain $LOCAL_LEAN_TOOLCHAIN · seed key $LOCAL_KEY"
 echo "    expected release asset: $ASSET"
 

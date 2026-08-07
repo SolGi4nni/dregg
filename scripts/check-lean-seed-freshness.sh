@@ -38,18 +38,40 @@ if [ ! -f "$PIN" ]; then
   exit 2
 fi
 
-pin_tree="$(sed -n 's/^DREGG_TREE_HASH=//p' "$PIN" | head -1)"
+# ⚑ THE SUBJECT MOVED ON 2026-08-07, AND IT WAS OVER-REPORTING BY 4x. This compared the pin's
+# `DREGG_TREE_HASH` to `git rev-parse HEAD:metatheory/Dregg2` — all 2246 modules under Dregg2.
+# The seed archive contains ONE target's import closure (`Dregg2.FFI`, 339 in-tree modules), so
+# 77% of the commits this gate called "the seed does not match this tree" changed source that
+# provably cannot enter the archive: it was reporting a real staleness alongside three fake ones,
+# and a reader had no way to tell them apart. Both sides are now the closure hash from
+# `scripts/lean-seed-key.sh`, the same single definition fetch and publish resolve assets by, so
+# "matches" here means exactly "the published asset is fetchable for this checkout".
+pin_closure="$(sed -n 's/^DREGG_CLOSURE_HASH=//p' "$PIN" | head -1)"
 pin_when="$(sed -n 's/^GENERATED_UTC=//p' "$PIN" | head -1)"
 pin_tag="$(sed -n 's/^TAG=//p' "$PIN" | head -1)"
-head_tree="$(git rev-parse HEAD:metatheory/Dregg2 2>/dev/null || true)"
+head_closure="$(bash scripts/lean-seed-key.sh 2>/dev/null | sed -n 's/^DREGG_CLOSURE_HASH=//p' | head -1)"
 
-if [ -z "$pin_tree" ] || [ -z "$head_tree" ]; then
-  echo "check-lean-seed-freshness: could not read a tree hash (pin='$pin_tree' head='$head_tree')" >&2
+if [ -z "$head_closure" ]; then
+  echo "check-lean-seed-freshness: scripts/lean-seed-key.sh could not compute this checkout's closure hash. A gate that cannot measure its subject must not report a pass." >&2
   exit 2
 fi
+if [ -z "$pin_closure" ]; then
+  # ⚠ NOT exit 0. An empty pin field is the state right after the 2026-08-07 cutover, when every
+  # previously published asset became unreachable by name. That is maximal drift, not "no drift" —
+  # and reporting it as a pass is precisely how eleven days of a stale seed stayed invisible.
+  cat >&2 <<EOF
+check-lean-seed-freshness: the pin carries NO DREGG_CLOSURE_HASH.
+  Either it predates the 2026-08-07 closure-key cutover (it used to be DREGG_TREE_HASH, a
+  different hash of a different set), or no seed has been cut under the new scheme yet. NO
+  published asset is reachable for this checkout, so every verified gate CI arms from the seed
+  is dark. Cut one: gh workflow run lean-seed.yml -f platforms=linux-x86_64
+  This checkout's closure hash is ${head_closure:0:12} (key $(bash scripts/lean-seed-key.sh --key 2>/dev/null || echo '?')).
+EOF
+  exit 1
+fi
 
-if [ "$pin_tree" = "$head_tree" ]; then
-  echo "check-lean-seed-freshness: seed $pin_tag matches HEAD:metatheory/Dregg2 (${pin_tree:0:12}) — the verified gates can arm."
+if [ "$pin_closure" = "$head_closure" ]; then
+  echo "check-lean-seed-freshness: seed $pin_tag matches this checkout's Dregg2.FFI closure (${pin_closure:0:12}) — the verified gates can arm."
   exit 0
 fi
 
@@ -65,8 +87,8 @@ fi
 
 cat <<EOF
 check-lean-seed-freshness: THE PUBLISHED SEED DOES NOT MATCH THIS TREE.
-  pin  $pin_tag  DREGG_TREE_HASH=${pin_tree:0:12}  GENERATED_UTC=$pin_when
-  HEAD                DREGG_TREE_HASH=${head_tree:0:12}
+  pin  $pin_tag  DREGG_CLOSURE_HASH=${pin_closure:0:12}  GENERATED_UTC=$pin_when
+  HEAD                DREGG_CLOSURE_HASH=${head_closure:0:12}
   drift: $days day(s)
 
   CONSEQUENCE: CI downloads this seed to arm the verified cores. Where it does not match, the
