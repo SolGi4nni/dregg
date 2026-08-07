@@ -1607,6 +1607,61 @@ pub enum Effect {
         new_ml_dsa_public_key: Vec<u8>,
         new_key_possession_signature: Vec<u8>,
     },
+    /// Shielded on-ramp (Fork B, pass A2b): DEBIT a caller-owned cleartext note
+    /// worth public `value`/`asset_type` and MINT an equal-value HIDING shielded
+    /// note, whose commitment binds the debited value through the Lean-authored
+    /// shield-opening relation.
+    ///
+    /// The money-conservation is a BOUNDARY balance, not a cleartext `NoteCreate`:
+    /// value `V` LEAVES cleartext (the note-spend debit) and ENTERS the shielded
+    /// domain (the appended `note_shielded` leaf). The executor ties the two with a
+    /// plain `V == piVALUE` equality (`ShieldedOnRampPin.shield_leaving_eq_entering`)
+    /// after the shield-opening proof binds `piVALUE`/`piASSET` to `note_commitment`
+    /// (`ShieldedShieldDescriptor.shield_opening_binds_public_value`,
+    /// `shield_value_decouple_unsat` — mint-worth-more is UNSAT).
+    ///
+    /// Self-authorizing like `NoteSpend`/`ShieldedTransfer`: the debit's note-spend
+    /// proof + the shield-opening proof ARE the authority; no cross-cell capability
+    /// gate. It names no cell (`participant_cells` is empty — the debit and mint are
+    /// note-domain accumulators, not a committed cell field).
+    ///
+    /// CIRCUIT WITNESS (named residual): the executor VERIFIES the shield-opening
+    /// proof and conserves live, but binding it into the `effect_vm` descriptor (so
+    /// a pure LIGHT CLIENT witnesses it) is the VK-affecting follow-up — until then
+    /// the checked `EffectVM` projection REFUSES `Shield` BY NAME (no silent circuit
+    /// residual). See `docs/DESIGN-shielded-value-on-ramp.md`.
+    ///
+    /// APPENDED LAST (after `RotatePqIdentity`): postcard enum discriminants are
+    /// positional, so new protocol variants must never be inserted among existing
+    /// variants. FLAG DAY: adds `Effect::hash` tag `68` and the variant re-emits the
+    /// verb roster (`VerbRegistry.lean` count 36 → 37) — a rebuild, not a migration.
+    Shield {
+        /// The public value `V` being shielded — the cleartext note's value AND the
+        /// minted shielded note's value. The debit's note-spend binds `V` to the
+        /// consumed note; the shield-opening proof binds `piVALUE = V` to
+        /// `note_commitment`; and the executor checks `V == piVALUE`.
+        value: u64,
+        /// The public asset type `A` (bound as `piASSET`).
+        asset_type: u64,
+        /// The MINTED hiding shielded note commitment —
+        /// `felt_to_bytes32(hash_fact(V, [A, owner, randomness]))` (owner/randomness
+        /// hidden). This is what lands in `note_shielded`.
+        note_commitment: NoteCommitment,
+        /// Encrypted note content (only the recipient can decrypt), like `NoteCreate`.
+        encrypted_note: Vec<u8>,
+        /// The shield-opening STARK proof (postcard `Ir2BatchProof`) verified by the
+        /// injected [`crate::shielded_verifier::ShieldOpeningVerifier`] calling the
+        /// Lean-emitted `dregg-shielded-shield::v1` golden.
+        shield_proof: Vec<u8>,
+        /// DEBIT half (mirrors [`Effect::NoteSpend`]): the spent cleartext note's
+        /// nullifier.
+        nullifier: Nullifier,
+        /// Root of the note tree at debit-proof generation.
+        note_tree_root: [u8; 32],
+        /// The cleartext note-spend proof (FNSP carrier) proving the debited note is
+        /// worth `V` under asset `A` and that its nullifier is correctly derived.
+        spending_proof: Vec<u8>,
+    },
 }
 
 /// ONE SOURCE for the one-byte domain tag [`Effect::hash`] absorbs first, expanding
@@ -1706,6 +1761,10 @@ effect_hash_tags! {
     // `TurnReceipt::effects_hash`/`receipt_hash` → `canonical_effects_hash`. See the
     // macro doc above and `effect_tag_tests`.
     ShieldedTransfer      => SHIELDED_TRANSFER         = 67,
+    // ⚑ 2026-08-06 FLAG DAY: the shielded on-ramp verb (Fork B A2b). `68` is the
+    // next free tag after `ShieldedTransfer`. Adding it re-emits the verb roster
+    // and moves nothing existing — a Shield hashes under a fresh domain tag.
+    Shield                => SHIELD                    = 68,
 }
 
 /// Why a [`Effect::Refusal`] was issued. Refusals are *evidence of
@@ -2479,6 +2538,30 @@ impl Effect {
                 hasher.update(&(c.len() as u64).to_le_bytes());
                 hasher.update(&c);
             }
+            Effect::Shield {
+                value,
+                asset_type,
+                note_commitment,
+                encrypted_note,
+                shield_proof,
+                nullifier,
+                note_tree_root,
+                spending_proof,
+            } => {
+                // Every field folds — a length prefix guards each variable-length
+                // blob so no two distinct fields can splice into one preimage.
+                hasher.update(&value.to_le_bytes());
+                hasher.update(&asset_type.to_le_bytes());
+                hasher.update(&note_commitment.0);
+                hasher.update(&(encrypted_note.len() as u64).to_le_bytes());
+                hasher.update(encrypted_note);
+                hasher.update(&(shield_proof.len() as u64).to_le_bytes());
+                hasher.update(shield_proof);
+                hasher.update(&nullifier.0);
+                hasher.update(note_tree_root);
+                hasher.update(&(spending_proof.len() as u64).to_le_bytes());
+                hasher.update(spending_proof);
+            }
             Effect::Custom {
                 cell,
                 program_vk_hash,
@@ -2637,6 +2720,23 @@ impl Effect {
                         .sum::<usize>()
                     + 96 // the three 32-byte ConservationProof fields
             }
+            // Shield: the two public u64s + the 32-byte minted commitment + the
+            // 32-byte nullifier + the 32-byte note-tree root + the three
+            // variable-length blobs (ciphertext, shield-opening proof, spend proof).
+            Effect::Shield {
+                encrypted_note,
+                shield_proof,
+                spending_proof,
+                ..
+            } => {
+                8 + 8
+                    + 32
+                    + 32
+                    + 32
+                    + encrypted_note.len()
+                    + shield_proof.len()
+                    + spending_proof.len()
+            }
             // Custom: the bridge preimage only — cell + program vk_hash + the
             // 8-felt PI-commitment carrier. The sub-proof BYTES are not carried by
             // the effect; they ride `Turn::custom_program_proofs` (and are charged
@@ -2762,7 +2862,11 @@ impl Effect {
             | Effect::BridgeMint { .. }
             | Effect::CreateCellFromFactory { .. }
             | Effect::ReceiptArchive { .. }
-            | Effect::ShieldedTransfer { .. } => Vec::new(),
+            | Effect::ShieldedTransfer { .. }
+            // Shield names no cell: its debit (a note nullifier) and its mint (a
+            // shielded accumulator leaf) are note-domain, not a committed cell field.
+            // Empty ⇒ it projects onto EVERY witnessed cell (fail-closed attribution).
+            | Effect::Shield { .. } => Vec::new(),
         }
     }
 
@@ -2817,6 +2921,9 @@ impl Effect {
             // A shielded transfer consumes (hidden) note nullifiers — the same
             // note-spend facet a faceted capability gates `NoteSpend` with.
             Effect::ShieldedTransfer { .. } => dregg_cell::EFFECT_NOTE_SPEND,
+            // A shield DEBITS a cleartext note (consumes a nullifier) — the same
+            // note-spend facet, exactly as its `NoteSpend` debit half would gate.
+            Effect::Shield { .. } => dregg_cell::EFFECT_NOTE_SPEND,
             // A custom transition advances a SOVEREIGN cell's committed root under
             // an external proof — the sovereign-ops facet, the same class a faceted
             // capability would gate `MakeSovereign` / proof-carrying operation with.

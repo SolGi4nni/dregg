@@ -226,6 +226,17 @@ circuit_witness_ledger! {
          verification is executor-side; binding it into the effect_vm descriptor is the \
          VK-affecting M2 weld follow-up",
     ),
+    // Shield (added 2026-08-06): the shielded on-ramp. The shield-opening proof is verified
+    // executor-side (`apply_shield` calls the Lean-emitted `dregg-shielded-shield::v1` golden)
+    // and has NO deployed EffectVM row, so the checked projection REFUSES it BY NAME
+    // (`effect_vm_bridge.rs`, `ShieldedEffect("Shield")`) — a fail-closed residual, not a
+    // silent one. Closure = an on-ramp EffectVM descriptor (registry + producer + VK epoch).
+    Shield                => Witness::RefusedResidual(
+        "shielded on-ramp verb: the shield-opening proof is verified executor-side and has no \
+         deployed AIR row. FAIL-CLOSED: the checked EffectVM projection refuses the turn by \
+         name, so no proof-carrying turn can contain it. Closure = an on-ramp EffectVM \
+         descriptor (registry member + producer + VK epoch)",
+    ),
     // ── The PQ identity authority plane (classified 2026-07-25; the verbs landed at
     //    `turn/src/action.rs:1569,1582` without this decision being made, which is exactly what
     //    tooth 1 exists to stop). See this file's WOUND section for the full statement of what a
@@ -278,7 +289,7 @@ const EXPECTED_RESIDUALS: [&str; 5] = [
 /// The EXACT pinned REFUSED-residual set: no rung, and the checked projection refuses by name.
 /// A verb leaves ONLY by gaining a deployed rung (at which point the projection must stop refusing
 /// it and `refused_residuals_are_refused_by_the_live_projection` reds until this list is updated).
-const EXPECTED_REFUSED_RESIDUALS: [&str; 2] = ["CreateHybridCell", "RotatePqIdentity"];
+const EXPECTED_REFUSED_RESIDUALS: [&str; 3] = ["CreateHybridCell", "RotatePqIdentity", "Shield"];
 
 /// The member keys of the committed V3 registry TSV (column 0).
 fn registry_keys(tsv: &str) -> std::collections::BTreeSet<&str> {
@@ -441,6 +452,19 @@ fn refused_effect_samples(cell: dregg_cell::CellId) -> Vec<(&'static str, Effect
                 expected_epoch: 0,
                 new_ml_dsa_public_key: vec![0u8; dregg_cell::ML_DSA_65_PUBLIC_KEY_LEN],
                 new_key_possession_signature: Vec::new(),
+            },
+        ),
+        (
+            "Shield",
+            Effect::Shield {
+                value: 1,
+                asset_type: 0,
+                note_commitment: dregg_cell::NoteCommitment([0x68; 32]),
+                encrypted_note: Vec::new(),
+                shield_proof: Vec::new(),
+                nullifier: dregg_cell::Nullifier([0x68; 32]),
+                note_tree_root: [0u8; 32],
+                spending_proof: Vec::new(),
             },
         ),
     ]

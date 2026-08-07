@@ -429,6 +429,10 @@ impl Effect {
             Effect::ShieldedTransfer { .. } => {
                 Inversion::Committed(CommittedReason::NullifierConsumed)
             }
+            // A shield's debit consumes a cleartext note's nullifier one-shot (the
+            // same double-spend gate `NoteSpend` rides) and appends a shielded note —
+            // committed, no inverse.
+            Effect::Shield { .. } => Inversion::Committed(CommittedReason::NullifierConsumed),
         }
     }
 }

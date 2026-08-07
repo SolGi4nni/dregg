@@ -922,6 +922,7 @@ impl TurnExecutor {
             E::GrantCapability { .. } => 0x08,
             E::RevokeCapability { .. } => 0x09,
             E::EmitEvent { .. } => 0x0A,
+            E::Shield { .. } => 0x0E,
             _ => 0xFF,
         }
     }

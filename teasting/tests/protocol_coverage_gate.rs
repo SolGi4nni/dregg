@@ -109,6 +109,12 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         // accept+reject coverage suite gates it through `TurnExecutor::execute`)
         // this stays `false` until that fold runs in CI.
         Effect::Custom { .. } => false,
+        // Shield (landed 2026-08-06): the executor debit+mint+conserve is exercised
+        // in `turn-prover` (the minting-refusal + honest-append tests drive
+        // `apply_shield`), but a dedicated accept/reject suite through the PUBLIC
+        // `TurnExecutor::execute` path is not yet wired, so per the honesty contract
+        // this stays `false` until that lands (same posture as ShieldedTransfer).
+        Effect::Shield { .. } => false,
     }
 }
 
@@ -122,6 +128,7 @@ const NOT_YET_COVERED: &[&str] = &[
     "React",
     "ShieldedTransfer",
     "Custom",
+    "Shield",
 ];
 
 /// Ratchet: the number of not-yet-covered `Effect` variants may only DECREASE.
@@ -134,9 +141,12 @@ const NOT_YET_COVERED: &[&str] = &[
 /// Custom-VK door (`Effect::Custom`) landed with its ACCEPT flow behind an
 /// `#[ignore]`d rotated-STARK fold. Neither addition is new debt discovered by
 /// loosening the ratchet — `ShieldedTransfer` was always uncovered; the gate just
-/// could not say so. Shrink back as each gains a coverage_* suite that drives it
-/// through `TurnExecutor::execute` (Custom: once the accept fold runs in CI).
-const MAX_UNCOVERED_EFFECTS: usize = 8;
+/// could not say so. 8 → 9 on 2026-08-06 when the shielded on-ramp (`Effect::Shield`)
+/// landed with its debit+mint+conserve exercised at `apply_shield` in `turn-prover`
+/// but not yet through the PUBLIC `execute` path — a genuinely-new uncovered variant,
+/// not loosened to hide existing debt. Shrink back as each gains a coverage_* suite
+/// that drives it through `TurnExecutor::execute` (Custom: once the accept fold runs in CI).
+const MAX_UNCOVERED_EFFECTS: usize = 9;
 
 #[test]
 fn effect_coverage_ratchet_only_shrinks() {

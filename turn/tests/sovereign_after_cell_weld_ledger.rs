@@ -444,6 +444,18 @@ weld_ledger! {
         program_vk_hash: [0x11u8; 32],
         proof_commitment: [0x22u8; 32],
     },
+    // Shield moves the note-nullifier + shielded accumulator roots (rotated
+    // separately), never a committed field of the acting cell → NoCellStateChange.
+    Shield => Class::NoCellStateChange, Prep::Live, Effect::Shield {
+        value: 1,
+        asset_type: 0,
+        note_commitment: dregg_cell::NoteCommitment([0x68u8; 32]),
+        encrypted_note: vec![],
+        shield_proof: vec![],
+        nullifier: dregg_cell::Nullifier([0x68u8; 32]),
+        note_tree_root: [0u8; 32],
+        spending_proof: vec![],
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

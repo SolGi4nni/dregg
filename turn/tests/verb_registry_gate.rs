@@ -95,6 +95,7 @@ effect_roster!(
     Custom,
     CreateHybridCell,
     RotatePqIdentity,
+    Shield,
 );
 
 /// The Lean registry source — the pin target (see module header, link (2)).

@@ -114,6 +114,11 @@ const RUST_ONLY: &[&str] = &[
     // program-defined, so assigning one linearity color to `Custom` would be a claim about
     // every program that ever rides it. See the custom-effect carve-out.
     "Custom",
+    // Shield (on-ramp): value-moving, uncolored. Like ShieldedTransfer, its honest color is
+    // Conservative (cleartext-out V == shielded-in V), but stating that in Lean means
+    // modelling the shielded note domain, which `EffectKind` does not yet do. Leaves this
+    // list when a `shield` constructor is added to Lean's catalog.
+    "Shield",
 ];
 
 // ---------------------------------------------------------------------------

@@ -877,6 +877,15 @@ pub struct TurnExecutor {
     /// ledger. See [`crate::shielded_verifier`].
     pub shielded_transfer_verifier:
         Option<std::sync::Arc<dyn crate::shielded_verifier::ShieldedTransferVerifier>>,
+    /// The injected shield-opening verifier — the MINT half of [`crate::action::Effect::Shield`].
+    ///
+    /// `None` ⇒ `Effect::Shield` is refused (fail-closed by absence), the same
+    /// posture as `shielded_transfer_verifier`. Production is
+    /// `dregg_turn_prover::CircuitShieldOpeningVerifier` (calls the Lean-emitted
+    /// `dregg-shielded-shield::v1` golden). VERIFY-RETURNS-VALUE; never sees the
+    /// journal or ledger. See [`crate::shielded_verifier::ShieldOpeningVerifier`].
+    pub shield_opening_verifier:
+        Option<std::sync::Arc<dyn crate::shielded_verifier::ShieldOpeningVerifier>>,
     /// Optional budget gate (Stingray bounded counter).
     /// When present, the executor checks the silo's local budget slice before executing
     /// each turn. If the slice cannot cover the turn fee, the turn is rejected with
@@ -1273,6 +1282,7 @@ impl TurnExecutor {
             rate_limit_sum_counters: Mutex::new(HashMap::new()),
             proof_verifier: None,
             shielded_transfer_verifier: None,
+            shield_opening_verifier: None,
             budget_gate: None,
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1356,6 +1366,7 @@ impl TurnExecutor {
             rate_limit_sum_counters: Mutex::new(HashMap::new()),
             proof_verifier: None,
             shielded_transfer_verifier: None,
+            shield_opening_verifier: None,
             budget_gate: Some(Mutex::new(gate)),
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1409,6 +1420,7 @@ impl TurnExecutor {
             rate_limit_sum_counters: Mutex::new(HashMap::new()),
             proof_verifier: Some(verifier),
             shielded_transfer_verifier: None,
+            shield_opening_verifier: None,
             budget_gate: None,
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1482,6 +1494,28 @@ impl TurnExecutor {
         verifier: std::sync::Arc<dyn crate::shielded_verifier::ShieldedTransferVerifier>,
     ) -> Self {
         self.shielded_transfer_verifier = Some(verifier);
+        self
+    }
+
+    /// Inject the shield-opening verifier — the MINT half of `Effect::Shield`.
+    ///
+    /// Production is `dregg_turn_prover::CircuitShieldOpeningVerifier`. Until it is
+    /// injected, every `Effect::Shield` fails closed — a verify-only executor cannot
+    /// admit a shielded on-ramp, the same posture as the shielded-transfer seam.
+    pub fn set_shield_opening_verifier(
+        &mut self,
+        verifier: std::sync::Arc<dyn crate::shielded_verifier::ShieldOpeningVerifier>,
+    ) {
+        self.shield_opening_verifier = Some(verifier);
+    }
+
+    /// Builder form of [`Self::set_shield_opening_verifier`].
+    #[must_use]
+    pub fn with_shield_opening_verifier(
+        mut self,
+        verifier: std::sync::Arc<dyn crate::shielded_verifier::ShieldOpeningVerifier>,
+    ) -> Self {
+        self.shield_opening_verifier = Some(verifier);
         self
     }
 

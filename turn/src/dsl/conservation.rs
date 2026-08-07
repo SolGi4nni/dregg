@@ -31,6 +31,13 @@ pub fn derive_balance_change(target: CellId, effects: &[Effect]) -> i64 {
             Effect::NoteSpend { value, .. } => -(*value as i64),
             Effect::NoteCreate { value, .. } => *value as i64,
 
+            // Shield (on-ramp): converts cleartext → shielded of EQUAL value V (the
+            // debit spends a cleartext note worth V, `-V`; the mint creates a shielded
+            // note worth V, `+V`). Net ZERO for the caller — like `ShieldedTransfer`
+            // below, it neither creates nor destroys value. Explicit (not the `_ => 0`
+            // fall-through) so the self-balancing decision is on the record, not silent.
+            Effect::Shield { .. } => 0,
+
             // ReleaseEscrow / RefundEscrow / Release*Committed: the executor
             // moves the funds; we don't double-count here. The recipient's
             // action separately reflects the credit.

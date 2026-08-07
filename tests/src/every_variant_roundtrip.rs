@@ -504,6 +504,10 @@ fn assert_variant_coverage(e: &Effect) -> &'static str {
         // `VM_DOMAIN_EXCLUSIONS`, because the PQ identity authority plane has no AIR row.
         Effect::CreateHybridCell { .. } => "CreateHybridCell",
         Effect::RotatePqIdentity { .. } => "RotatePqIdentity",
+        // Shield (added 2026-08-06): the shielded on-ramp. Its EffectVM stage is a
+        // named REFUSAL (`effect_enum_descriptor_residual_gate.rs`, RefusedResidual),
+        // and its executor debit+mint is exercised in `turn-prover`.
+        Effect::Shield { .. } => "Shield",
     }
 }
 

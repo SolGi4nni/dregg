@@ -222,7 +222,10 @@ pub use pending::{
     ReactiveNullifierError, ReactiveNullifierSet, ResolutionCondition, ResolutionEvent,
     ResolutionOutcome,
 };
-pub use shielded_verifier::{ShieldedTransferVerifier, VerifiedShieldedTransfer};
+pub use shielded_verifier::{
+    ShieldOpeningVerifier, ShieldedTransferVerifier, VerifiedShieldOpening,
+    VerifiedShieldedTransfer,
+};
 pub use signed_turn::SignedTurn;
 // `Precondition` and friends collapsed into `dregg_cell::preconditions`
 // per PREDICATE-INVENTORY §4.3 case 1. Re-export from cell for any

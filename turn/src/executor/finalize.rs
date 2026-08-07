@@ -82,6 +82,9 @@ impl TurnExecutor {
             // Shielded transfer: per-input hidden-STARK verify + Pedersen
             // conservation/range verify — proof-heavy, charged as a proof_verify.
             Effect::ShieldedTransfer { .. } => self.costs.proof_verify,
+            // Shield (on-ramp): a shield-opening STARK verify PLUS the debit's
+            // note-spend proof verify — proof-heavy, charged as a proof_verify.
+            Effect::Shield { .. } => self.costs.proof_verify,
             // Custom: the executor dispatches the paired custom sub-proof to its
             // registered verifier (a recursive STARK verify) and the state weld —
             // proof-heavy, charged as a proof_verify like the other verify-gated
@@ -475,6 +478,12 @@ impl TurnExecutor {
                     Self::detect_commitment_mode_effect(inner, has_committed, has_cleartext);
                 }
             }
+            // A shield DEBITS a CLEARTEXT note (its `value` is public, not a Pedersen
+            // commitment), so it routes the turn to the cleartext conservation path —
+            // where `collect_note_effects_from_effect` balances it as a boundary exit.
+            Effect::Shield { .. } => {
+                *has_cleartext = true;
+            }
             _ => {}
         }
     }
@@ -548,6 +557,27 @@ impl TurnExecutor {
                     0,
                     u64::MAX,
                 ))?;
+            }
+            // Shield (on-ramp): value V LEAVES cleartext (the debited note) and ENTERS
+            // the shielded domain (the minted note). The cleartext ledger sees a
+            // BOUNDARY EXIT, balanced against the shielded mint — NOT a cleartext
+            // NoteCreate (there is none). So it contributes V to BOTH sides for asset
+            // A, exactly like BridgeMint, and the per-Shield `value == piVALUE` check
+            // in `apply_shield` (plus the debit's note-spend value binding) is what
+            // makes the two V's actually equal. Counting only the debit here would
+            // fail EVERY honest Shield (V spent, 0 cleartext created); omitting it
+            // entirely (the old `_ => {}`) would let the debit go UNCONSERVED — a mint.
+            Effect::Shield {
+                value, asset_type, ..
+            } => {
+                let entry = inputs.entry(*asset_type).or_insert(0);
+                *entry = entry
+                    .checked_add(*value)
+                    .ok_or((*asset_type, u64::MAX, 0))?;
+                let entry = outputs.entry(*asset_type).or_insert(0);
+                *entry = entry
+                    .checked_add(*value)
+                    .ok_or((*asset_type, 0, u64::MAX))?;
             }
             // Recurse into ExerciseViaCapability inner effects to catch nested
             // NoteSpend/NoteCreate that would otherwise bypass the conservation check.

@@ -487,6 +487,26 @@ impl TurnExecutor {
             Effect::ShieldedTransfer { payload } => {
                 self.apply_shielded_transfer(path, journal, payload)
             }
+            Effect::Shield {
+                value,
+                asset_type,
+                note_commitment,
+                shield_proof,
+                nullifier,
+                note_tree_root,
+                spending_proof,
+                ..
+            } => self.apply_shield(
+                path,
+                journal,
+                *value,
+                *asset_type,
+                note_commitment,
+                shield_proof,
+                nullifier,
+                note_tree_root,
+                spending_proof,
+            ),
             // THE CUSTOM-VK DOOR, closed on THIS side (fail-closed).
             //
             // `Effect::Custom` is adjudicated ONLY on the proof-carrying sovereign path
@@ -1885,6 +1905,119 @@ impl TurnExecutor {
                     .map_err(|e| invalid(format!("shielded output note append failed: {e}")))?;
                 journal.record_shielded_note_inserted(*commitment);
             }
+        }
+
+        Ok(())
+    }
+
+    /// Apply a **shielded on-ramp** (Fork B, pass A2b): DEBIT a caller-owned
+    /// cleartext note worth public `value`/`asset_type` and MINT an equal-value
+    /// HIDING shielded note whose commitment binds the debited value.
+    ///
+    /// Four gates, all fail-closed and atomic under the journal (any failure after
+    /// a mutation unwinds it — a Shield NEVER appends without a conserving debit,
+    /// the one outcome worse than the theft this on-ramp closes):
+    ///
+    /// 1. **MINT VERIFY** — the injected [`crate::shielded_verifier::ShieldOpeningVerifier`]
+    ///    calls the Lean-emitted `dregg-shielded-shield::v1` relation: `note_commitment`
+    ///    opens to `hash_fact(piVALUE, [piASSET, owner, rand])` with `piVALUE`/`piASSET`
+    ///    PUBLIC. A claim decoupled from the proof rejects HERE (Lean
+    ///    `shield_value_decouple_unsat` — mint-worth-more is UNSAT). Fail-closed by
+    ///    absence: no verifier injected ⇒ refused.
+    /// 2. **BOUNDARY CONSERVATION (Shield-A)** — `value == piVALUE`, `asset_type ==
+    ///    piASSET`, `note_commitment == piCM`, plain equalities
+    ///    (`ShieldedOnRampPin.shield_leaving_eq_entering`: cleartext-out ==
+    ///    shielded-in == public V). Ties the value the mint is worth to the value the
+    ///    debit removes, BEFORE any state moves.
+    /// 3. **DEBIT** — consume the cleartext note worth `value` through the existing
+    ///    `apply_note_spend` gates (nullifier + spend proof + FNSP carrier),
+    ///    journaled. This is where `V` LEAVES cleartext. A CLEARTEXT debit — no
+    ///    value commitment.
+    /// 4. **MINT APPEND** — land `note_commitment` in the committed-capable
+    ///    `note_shielded` accumulator, journaled. Unlike `apply_shielded_transfer`'s
+    ///    GATE 4 (Pedersen leg bytes), the appended leaf IS the Poseidon2 note
+    ///    commitment `hash_fact(V,[A,owner,rand])` the relation proved —
+    ///    `ShieldedOnRampPin §3`'s `shieldAppend_is_ledger_note`.
+    ///
+    /// Mint-verify runs first so the note is never consumed for a mint that will not
+    /// validate; the debit and append stay atomic under the journal.
+    ///
+    /// NOT INJECTED ⇒ the effect fails closed, exactly as the shielded-transfer
+    /// seam does.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_shield(
+        &self,
+        path: &[usize],
+        journal: &mut LedgerJournal,
+        value: u64,
+        asset_type: u64,
+        note_commitment: &NoteCommitment,
+        shield_proof: &[u8],
+        nullifier: &Nullifier,
+        note_tree_root: &[u8; 32],
+        spending_proof: &[u8],
+    ) -> Result<(), (TurnError, Vec<usize>)> {
+        let invalid = |reason: String| (TurnError::InvalidEffect { reason }, path.to_vec());
+
+        // GATE 1 (MINT VERIFY). Fail-closed by absence.
+        let Some(verifier) = self.shield_opening_verifier.as_ref() else {
+            return Err(invalid(
+                "shield requires an injected shield-opening verifier (no shield-opening \
+                 verifier linked in this verify-only executor)"
+                    .into(),
+            ));
+        };
+        let verified = verifier
+            .verify(value, asset_type, note_commitment.0, shield_proof)
+            .map_err(|error| (error, path.to_vec()))?;
+
+        // GATE 2 (BOUNDARY CONSERVATION — Shield-A): cleartext-out == shielded-in == V.
+        // The proof bound piVALUE to the CM; this ties the DEBITED value to the MINT,
+        // before any state moves. A debit-less-than-mint (V != piVALUE) refuses here
+        // (the ledger-conservation twin of the value-decouple KAT), though the mint
+        // verifier already rejects a decoupled claim in GATE 1.
+        if verified.value != value {
+            return Err(invalid(format!(
+                "shield boundary not conserved: the mint is worth piVALUE={} but the effect \
+                 debits value={} (ShieldedOnRampPin.shield_leaving_eq_entering)",
+                verified.value, value
+            )));
+        }
+        if verified.asset_type != asset_type {
+            return Err(invalid(format!(
+                "shield boundary not conserved: the mint asset piASSET={} != the effect \
+                 asset_type={}",
+                verified.asset_type, asset_type
+            )));
+        }
+        if verified.note_commitment != note_commitment.0 {
+            return Err(invalid(
+                "shield mint commitment does not equal the proven note commitment (piCM)".into(),
+            ));
+        }
+
+        // GATE 3 (DEBIT): consume the cleartext note worth `value` — V LEAVES
+        // cleartext. A CLEARTEXT debit (no value commitment). Journaled: a later
+        // failure unwinds the spend, so no note is burned by a failing Shield.
+        self.apply_note_spend(
+            path,
+            journal,
+            nullifier,
+            note_tree_root,
+            spending_proof,
+            value,
+            asset_type,
+            None,
+        )?;
+
+        // GATE 4 (MINT APPEND): land the Poseidon2 note commitment in `note_shielded`,
+        // journaled for rollback. This is where V ENTERS the shielded domain.
+        {
+            let commitment = ShieldedNoteCommitment(note_commitment.0);
+            let mut set = self.note_shielded.lock().unwrap();
+            set.insert(commitment)
+                .map_err(|e| invalid(format!("shield output note append failed: {e}")))?;
+            journal.record_shielded_note_inserted(commitment);
         }
 
         Ok(())

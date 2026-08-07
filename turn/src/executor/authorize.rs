@@ -2723,6 +2723,10 @@ impl TurnExecutor {
                 | Effect::Notify { .. }
                 | Effect::React { .. }
                 | Effect::ShieldedTransfer { .. }
+                // Shield is SELF-AUTHORIZING like NoteSpend: its debit's note-spend
+                // proof + its shield-opening proof ARE the authority — no cross-cell
+                // victim to gate, no `action.target` permission.
+                | Effect::Shield { .. }
                 // Custom is SELF-AUTHORIZING via its proof: the custom sub-proof's
                 // registry verify + the `[old8,new8]` state weld ARE the authority
                 // (the cell's own committed pre-root is the pre-image the proof

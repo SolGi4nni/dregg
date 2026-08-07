@@ -74,3 +74,53 @@ pub trait ShieldedTransferVerifier: Send + Sync {
         payload: &ShieldedTransferPayload,
     ) -> Result<VerifiedShieldedTransfer, TurnError>;
 }
+
+/// What a [`ShieldOpeningVerifier`] RETURNS on accept: the `(value, asset, note
+/// commitment)` the Lean-authored shield-opening relation PROVED, read off the
+/// verified public claim — never re-read from the untrusted wire.
+///
+/// The core `apply_shield` path binds these against the effect's declared public
+/// fields (`value == piVALUE`, the Shield-A boundary conservation) and appends
+/// `note_commitment` to the shielded accumulator. A claim decoupled from the proof
+/// never reaches here — the verifier's `.piBinding`s reject it first (Lean
+/// `shield_value_decouple_unsat`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifiedShieldOpening {
+    /// The proven public value `piVALUE` — the shielded note's worth.
+    pub value: u64,
+    /// The proven public asset `piASSET`.
+    pub asset_type: u64,
+    /// The minted note commitment the proof opened (`piCM`), as its canonical
+    /// 32-byte encoding — the leaf the core appends to `note_shielded`.
+    pub note_commitment: [u8; 32],
+}
+
+/// The injected verifier for [`crate::action::Effect::Shield`]'s MINT half — the
+/// shield-opening relation `piCM = hash_fact(piVALUE, [piASSET, owner, rand])`.
+///
+/// Implemented by `dregg_turn_prover::CircuitShieldOpeningVerifier` over
+/// `dregg-circuit-prove`'s `verify_shield_opening` (which reads the byte-pinned
+/// Lean golden `dregg-shielded-shield::v1`); injected with
+/// [`crate::executor::TurnExecutor::set_shield_opening_verifier`]. Fail-closed by
+/// absence: no verifier injected ⇒ `Effect::Shield` is refused, exactly as the
+/// `ShieldedTransferVerifier` seam behaves.
+///
+/// Pure verification, like [`ShieldedTransferVerifier`]: it receives the wire
+/// public fields plus the proof bytes, runs the STARK gate, and returns the
+/// proven data. It never sees the journal, the ledger, or the executor — the core
+/// `apply_shield` path performs (and journals) the debit and the accumulator
+/// append.
+pub trait ShieldOpeningVerifier: Send + Sync {
+    /// Verify the shield-opening proof against the declared public claim
+    /// `(value, asset_type, note_commitment)`, returning the proven data or the
+    /// refusal. `value`/`asset_type` are the effect's public fields;
+    /// `note_commitment` is its canonical 32-byte encoding; `shield_proof` is the
+    /// postcard `Ir2BatchProof`. A claim not backed by the proof MUST reject.
+    fn verify(
+        &self,
+        value: u64,
+        asset_type: u64,
+        note_commitment: [u8; 32],
+        shield_proof: &[u8],
+    ) -> Result<VerifiedShieldOpening, TurnError>;
+}

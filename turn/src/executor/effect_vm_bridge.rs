@@ -30,6 +30,11 @@ pub enum EffectVmProjectionError {
         lanes: usize,
     },
     PqIdentityEffect(&'static str),
+    /// A shielded on-ramp verb (`Effect::Shield`) with NO deployed EffectVM row: the
+    /// shield-opening proof is verified executor-side only, so a proof-carrying turn
+    /// cannot yet witness it in-circuit. Refused BY NAME (fail-closed) so no silent
+    /// circuit residual rides an unrelated descriptor until the on-ramp AIR lands.
+    ShieldedEffect(&'static str),
 }
 
 impl core::fmt::Display for EffectVmProjectionError {
@@ -48,6 +53,11 @@ impl core::fmt::Display for EffectVmProjectionError {
             Self::PqIdentityEffect(effect) => write!(
                 f,
                 "EffectVM cannot yet prove {effect}: the PQ identity authority plane has no AIR row"
+            ),
+            Self::ShieldedEffect(effect) => write!(
+                f,
+                "EffectVM cannot yet prove {effect}: the shielded on-ramp is verified \
+                 executor-side and has no deployed AIR row"
             ),
         }
     }
@@ -809,6 +819,9 @@ pub fn try_convert_turn_effects_to_vm(
                         "RotatePqIdentity",
                     ));
                 }
+                Effect::Shield { .. } => {
+                    return Err(EffectVmProjectionError::ShieldedEffect("Shield"));
+                }
                 Effect::ExerciseViaCapability { inner_effects, .. } => {
                     check_inner(inner_effects)?;
                 }
@@ -832,6 +845,9 @@ pub fn try_convert_turn_effects_to_vm(
                     return Err(EffectVmProjectionError::PqIdentityEffect(
                         "RotatePqIdentity",
                     ));
+                }
+                Effect::Shield { .. } => {
+                    return Err(EffectVmProjectionError::ShieldedEffect("Shield"));
                 }
                 Effect::ExerciseViaCapability { inner_effects, .. } => {
                     check_inner(inner_effects)?;

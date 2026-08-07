@@ -91,6 +91,7 @@ pub mod private_preference_custom;
 pub mod proven_receipt;
 pub mod recursive_bundle;
 pub mod rotation_witness;
+pub mod shield_opening_verifier;
 pub mod shielded_transfer_verifier;
 
 pub use aggregate_bilateral_prover::{
@@ -105,6 +106,7 @@ pub use proven_receipt::mint_transfer_proven_receipt;
 pub use recursive_bundle::{
     CircuitRecursiveWitnessProducer, from_components_strict_recursive, produce_recursive_variant,
 };
+pub use shield_opening_verifier::CircuitShieldOpeningVerifier;
 pub use shielded_transfer_verifier::CircuitShieldedTransferVerifier;
 
 /// Install the code-owned exact FNSP-v3 verifier as this process's ONE proof

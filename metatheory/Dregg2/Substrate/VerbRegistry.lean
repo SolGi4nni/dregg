@@ -11,7 +11,7 @@ exhaustive by the compiler, the kernel-reduction census:
     monotonicity; `write` = heap update under the frame; `create` = cell birth; `lifecycle`
     = the seal/destroy/sovereign custody automaton);
 
-  * the live 36-variant `Effect` enum (`turn/src/action.rs`: the 27 post-VERB-LOCKSTEP
+  * the live 37-variant `Effect` enum (`turn/src/action.rs`: the 27 post-VERB-LOCKSTEP
     survivors + the 7 later-authored verbs — `SetProgram`, the reactive triple
     `Promise`/`Notify`/`React`, `Mint`, `ShieldedTransfer`, `Custom`), reified as
     `EffectTag` — ONE constructor per current variant, so the Lean compiler's exhaustiveness
@@ -93,7 +93,7 @@ inductive Substance
 
 /-- The EIGHT survivor verbs — the entire dregg3 kernel signature (DREGG3 §2.3).
 `shieldUnshield` is one verb with two directions (note-create / note-spend), the evidence
-substance's structural rule. Everything else among the live 36 `Effect` variants is either a
+substance's structural rule. Everything else among the live 37 `Effect` variants is either a
 turn-structure artifact (`TurnStructure`) or a cell-program pattern (`FactoryPattern`). -/
 inductive Verb
   /-- mint a new four-substance cell (incl. factory instantiation). -/
@@ -193,7 +193,7 @@ inductive Classification
 
 /-! ## §6 — The reified live `Effect` enum (one tag per `turn/src/action.rs` variant).
 
-ONE constructor per current wire variant (36: the 27 post-VERB-LOCKSTEP survivors + `SetProgram` +
+ONE constructor per current wire variant (37: the 27 post-VERB-LOCKSTEP survivors + `SetProgram` +
 the reactive triple `Promise`/`Notify`/`React` + `Mint` + `ShieldedTransfer` + `Custom`). The Lean
 compiler's exhaustiveness check on `classify` below is the COMPLETENESS proof: a wire variant added
 without a registry entry will not compile — and the Rust-side gate
@@ -217,7 +217,7 @@ cells. The census, for the record (tag → factory pattern):
                    DropRef, ValidateHandoff                            → FactoryPattern.capsInSlots
 -/
 
-/-- The 36 live `Effect` variants, reified. Faithful 1:1 to `turn/src/action.rs`, in wire
+/-- The 37 live `Effect` variants, reified. Faithful 1:1 to `turn/src/action.rs`, in wire
 declaration order (`SetProgram` sits between `SetVerificationKey` and `NoteSpend`; the six
 postcard-appended verbs `Promise`/`Notify`/`React`/`Mint`/`ShieldedTransfer`/`Custom` close
 the enum). -/
@@ -230,11 +230,11 @@ inductive EffectTag
   | Refusal | CellSeal | CellUnseal | CellDestroy | Burn | AttenuateCapability
   | ReceiptArchive
   | Promise | Notify | React | Mint | ShieldedTransfer | Custom
-  | CreateHybridCell | RotatePqIdentity
+  | CreateHybridCell | RotatePqIdentity | Shield
   deriving DecidableEq, Repr
 
 /-- The complete roster of live tags — used to state completeness as a list cover and to witness
-the count (36). Kept in sync with `EffectTag` by the same compiler that checks `classify`
+the count (37). Kept in sync with `EffectTag` by the same compiler that checks `classify`
 (`roster_complete` below proves it lists EVERY constructor), and pinned against the wire enum by
 `turn/tests/verb_registry_gate.rs` (which requires EXACT declaration-order equality). -/
 def allEffectTags : List EffectTag :=
@@ -246,7 +246,7 @@ def allEffectTags : List EffectTag :=
     .Refusal, .CellSeal, .CellUnseal, .CellDestroy, .Burn, .AttenuateCapability,
     .ReceiptArchive,
     .Promise, .Notify, .React, .Mint, .ShieldedTransfer, .Custom,
-    .CreateHybridCell, .RotatePqIdentity ]
+    .CreateHybridCell, .RotatePqIdentity, .Shield ]
 
 /-! ## §7 — THE TOTAL COVER (completeness, exhaustive by the compiler).
 
@@ -307,6 +307,11 @@ def classify : EffectTag → Classification
   -- the cleartext ledger. Self-authorizing like `NoteSpend`/`BridgeMint` — the ZK ownership
   -- proof IS the authority, no capability gate — so no authority substance is touched.
   | .ShieldedTransfer   => .survivor .shieldUnshield
+  -- Shield (on-ramp): the SHIELD direction of the evidence verb — debit a cleartext note
+  -- (unshield-side nullifier consumed, evidence ↑) and add a hiding shielded commitment
+  -- (shield-side, evidence ↑). Self-authorizing like `NoteSpend`/`ShieldedTransfer`; the
+  -- executor's `value == piVALUE` boundary equality conserves without a cleartext `move`.
+  | .Shield             => .survivor .shieldUnshield
   -- The reactive triple rides the SAME evidence discipline — the design keystone
   -- (docs/deos/REACTIVE-EFFECTS.md §4, action.rs Track-2 header): "a promise-hole IS a
   -- nullifier; to React is to SPEND the hole." Promise/Notify are hole-MINTS (shield
@@ -358,10 +363,10 @@ manifest can consume it: every tag in `allEffectTags` has a classification. -/
 theorem classify_total : ∀ t ∈ allEffectTags, ∃ c, classify t = c := by
   intro t _; exact ⟨classify t, rfl⟩
 
-/-- The roster lists exactly the 36 live variants (the prior 34 plus cell-owned PQ birth and
-rotation). The Rust gate (`turn/tests/verb_registry_gate.rs`) greps for THIS statement's RHS, so
+/-- The roster lists exactly the 37 live variants (the prior 34 plus cell-owned PQ birth and
+rotation and the shielded on-ramp `Shield`). The Rust gate (`turn/tests/verb_registry_gate.rs`) greps for THIS statement's RHS, so
 the census here cannot silently understate the wire enum. -/
-theorem effect_tag_count : allEffectTags.length = 36 := by decide
+theorem effect_tag_count : allEffectTags.length = 37 := by decide
 
 /-- `allEffectTags` has no duplicates — it is a faithful, non-redundant census of the wire enum. -/
 theorem effect_tags_nodup : allEffectTags.Nodup := by decide
@@ -490,7 +495,7 @@ private instance : BEq Classification where
 #guard classify .React == .survivor .shieldUnshield
 #guard classify .React == classify .NoteSpend       -- a react IS a nullifier spend
 -- the roster counts:
-#guard allEffectTags.length == 36
+#guard allEffectTags.length == 37
 #guard survivors.length == 7          -- 7 constructors (shield/unshield folded)
 #guard survivorDirectionCount == 8    -- the human-facing eight
 
