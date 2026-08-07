@@ -210,8 +210,12 @@ What it costs, measured rather than guessed:
   geometry pins in ~20 Rust tests;
 * a **VK rotation**. Not a re-genesis: the pre-limb geometry and every `state_commit` are
   untouched (the caveat region rides past them), exactly like the 2026-07-31 `CANON9` flag day.
-  `CANONICAL_STATE_SCHEMA_EPOCH` does not move. ⚠ It is **24** as of 2026-08-07
-  (`persist/src/lib.rs:815`); this line said "stays at 23" against a stale read — see §6's note.
+  `CANONICAL_STATE_SCHEMA_EPOCH` does not move. ⚠ **Do not carry a NUMBER for it forward from this
+  document.** This line has now been wrong twice — it said "stays at 23", was corrected to "**24** as
+  of 2026-08-07 (`persist/src/lib.rs:815`)", and by the time the compaction actually landed the same
+  day the constant read **26** (`persist/src/lib.rs:890`), because unrelated lanes bump it. Read the
+  constant. The CLAIM is the durable part: the compaction rides past every `state_commit`, so
+  whatever the epoch is, this change does not move it.
 
 **No VK-REGEN-LOG row is written by this lane**, because no descriptor byte was re-emitted and no
 VK rotated. A row without a regen would be a false entry in the ledger the epoch identity is keyed
@@ -463,12 +467,15 @@ Steps, ordered:
 7. **A `docs/VK-REGEN-LOG.md` row — because this one really does re-emit.**
 
 **VK rotation, NOT a re-genesis:** the compaction does not move `CANONICAL_STATE_SCHEMA_EPOCH`.
-⚠ **It is 24, not 23** — re-read 2026-08-07 at `persist/src/lib.rs:815`. Both this line and §4 said
-"stays 23 (`persist/src/lib.rs:779`)"; the epoch was bumped 23 → 24 and the line moved, so the
-citation was stale in both the value and the address. The *claim* survives — the compaction rides
-past every `state_commit`, so whatever the epoch is, it does not move — but do not carry "23"
-forward. (Old text: `CANONICAL_STATE_SCHEMA_EPOCH` stays 23, `persist/src/lib.rs:779`,
-read at HEAD).
+
+⚠ **AND THE NUMBER IN THIS PARAGRAPH HAS BEEN WRONG TWICE, WHICH IS THE REAL LESSON.** It read
+"stays 23 (`persist/src/lib.rs:779`)"; that was corrected on 2026-08-07 to "it is **24**
+(`persist/src/lib.rs:815`)"; and by the time the compaction LANDED, hours later the same day, the
+constant read **26** (`persist/src/lib.rs:890`) because other lanes bump it for their own
+re-genesises. A schema epoch is a number *this* document has no authority over and no reason to
+quote. **Read `persist/src/lib.rs`.** What survives, and is the only claim worth making here: the
+compaction rides past every `state_commit`, so whatever the epoch is, THIS change does not move
+it — and the emit's `VK-REGEN-LOG` row records the value in force when it ran.
 
 ⚑ **This is the opposite trade from §4.** §4 prices *adding* a pin onto a carrier nobody anchors,
 and `DESIGN-pi-authority.md` §3 says don't. This removes **392** felts of surface that no constraint

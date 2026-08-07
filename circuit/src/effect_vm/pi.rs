@@ -115,8 +115,9 @@ pub const NET_DELTA_SIGN: usize = NET_DELTA_MAG + 1;
 //
 // What this re-emitted: every rotation descriptor (Σ piCount 3,821 → 3,429 wide, 3,012 → 2,599
 // v3), `WIDE_REGISTRY_STAGED_FP`, `dregg-epoch`'s `registry_fp`, `PROVENANCE.json`, and a VK
-// rotation. NOT a re-genesis: `CANONICAL_STATE_SCHEMA_EPOCH` (24) does not move — the compaction
-// rides past every `state_commit`.
+// rotation. NOT a re-genesis: `CANONICAL_STATE_SCHEMA_EPOCH` does not move — the compaction rides
+// past every `state_commit`. (No number for it here on purpose: this line carried "24" for a few
+// hours and the constant was already 26 by the time the emit ran. Read `persist/src/lib.rs`.)
 
 // ---- Stage 7-γ.0a additions: turn-level identity bindings ----
 //
