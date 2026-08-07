@@ -70,6 +70,7 @@ import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.PastaCurveSound
 import Dregg2.Circuit.Emit.PastaLadderThread
 import Dregg2.Circuit.Emit.MinaAccumulatorAir
+import Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo
 -- ⚑ ROUTED as of 2026-08-05 (it spent one commit imported-but-withheld while its row-local layout
 -- was threaded). Two rows: the threaded conjunction and its unthreaded twin.
 import Dregg2.Circuit.Emit.MinaWrapConjunctionAir
@@ -584,6 +585,17 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.MinaAccumulatorAir.accFinalDesc)
   , ("mina-accumulator-routed.json",
       Dregg2.Circuit.Emit.MinaAccumulatorAir.accRoutedDemoDesc)
+    -- ⚑ 2026-08-07 — THE SCALING RUNG. `-routed`'s manifest is a FREE PARAMETER: `accRoutedDesc`
+    -- emits any 97-wide table it is handed, so the routing bought "a prover cannot choose the
+    -- addends" and not "the addends are `−s_r·G_r`". `-srs`'s manifest is not a parameter at all —
+    -- it is `MinaAccumulatorAir.srsScaledAddends`' IMAGE at the pinned SRS and the challenges, so
+    -- the object anyone must certify went from `n` arbitrary Vesta points to `|u⃗|` field elements
+    -- and a byte-pinned blob. Same algebra as `-routed` (4 831 constraints, 3 049 columns) — only
+    -- the manifest and the name differ, which is what makes the pair an exhibit: the routed rung's
+    -- own honest chain PROVES under `-routed` and is REFUSED under `-srs`
+    -- (`ir2_exact_public_a97`), because it discharges and is not the scalar multiples.
+  , ("mina-accumulator-srs.json",
+      Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo.accSrsDemoDesc)
     -- ⚑ 2026-08-05 — THE CONJUNCTION, THREADED, AND ITS UNTHREADED TWIN. The row withheld below
     -- lands here: the b-polynomial's 15 rounds are 15 ROWS carried by 448 `.transition` legs, so
     -- the width is 2 536 at every round count and the artifact is 4 157 constraints instead of
@@ -673,7 +685,7 @@ Both directions are gated outside Lean:
 -- lean --run EmitByName.lean` dies, and the WHOLE by-name surface is unemittable for every lane
 -- at once. That outage is what produced the eleven private one-off emitters this file spent
 -- 2026-08-05 absorbing. Rows and pin are one atom.
-theorem byNameDescriptors_length : byNameDescriptors.length = 123 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 124 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

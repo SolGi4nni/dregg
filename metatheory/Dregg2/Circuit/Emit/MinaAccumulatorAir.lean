@@ -60,7 +60,7 @@ outgoing limbs to the right child's 96 incoming ones. The 96 is not a coincidenc
 Pasta point in the sound 8-bit encoding is `3 × 32 = 96` felts, exactly the width the phase-2 chain
 already carries its sponge state on.
 
-## ⚑ THREE DESCRIPTORS, AND EACH PAIR IS AN EXHIBIT
+## ⚑ FOUR DESCRIPTORS, AND EACH PAIR IS AN EXHIBIT
 
 * `dregg-mina-accumulator-seg::v1` — a SEGMENT of the chain. Publishes its two endpoints. Says
   nothing about vanishing, because an intermediate segment must not.
@@ -72,6 +72,12 @@ already carries its sponge state on.
   row-index column, and one exact-public lookup per row whose 97-wide tuple is
   `(row index + 1) ‖ the row's 96 addend limbs`, against a manifest the descriptor DECLARES.
   `3 049` columns, `4 831` constraints.
+
+* ⚑⚑ `dregg-mina-accumulator-srs::v1` (§10) — `-routed`'s ALGEBRA VERBATIM over a manifest that is
+  **not a parameter**: `srsScaledAddends Gs u⃗ n`, whose `r`-th entry is `−s_r · G_r` for
+  `s_r = b_poly_coefficients(u⃗)_r` and `G_r` the generator the pinned SRS carries at index `r`.
+  Same `3 049` columns and `4 831` constraints; what differs is that no list of points occurs in
+  its definition.
 
 Each pair is an OLD-ADMITS / NEW-REJECTS exhibit that cannot rot into agreement. A chain that does
 not vanish PROVES under `-seg` and is REFUSED under `-final`, and the refusing constraint is a
@@ -99,6 +105,14 @@ the refusing constraint is the exact-public balance of `mina_accumulator_addends
   in which the trace's addend columns **do not occur**.
 * `the_balance_forces_the_row_count` — the trace height is the declared addend count, FORCED by the
   permutation, so the chain cannot be padded with unrouted rows nor shortened by dropping one.
+* ⚑ `the_full_srs_routing_needs_no_cap_to_move` / `the_cell_cap_counts_the_declared_multiset_and_
+  not_the_allocation` (§9) — the three exact-public caps, each against what it actually counts,
+  established BEFORE §10 was designed rather than after.
+* ⚑⚑ `declAddend_of_srsScaled` — the value `declaredChain` folds at index `r` IS `−s_r · G_r`, over
+  ℤ with no canonicality envelope, via a general base-`2^SB` recomposition (`sumL_limbs`) rather
+  than a `decide` at the demonstration's numbers.
+* ⚑⚑⚑ `accumulator_discharge_forced_on_srs_scaled_addends` — the discharge over
+  `declaredChain (srsScaledAddends Gs u⃗ n)`, a fold in which **no list of points occurs**.
 
 ## ⚠ WHAT THIS DOES **NOT** ESTABLISH — and the residual MOVED on 2026-08-06
 
@@ -120,13 +134,38 @@ accumulator's two other trusted items, both of which are still open:
   2. **A claim rebuilt around tampered challenges is accepted** — in-circuit exactly as natively.
      The challenges `u⃗` are not bound to a transcript by anything here.
 
-And the SCALING is still not routed: forcing `A_r` to be `−s_r · G_r` for the `s` a real IPA
-challenge vector produces needs the scalars, which are per-block and not descriptor-known. What the
-declared manifest pins is the ADDENDS, not their provenance as scaled generators.
+## ⚑⚑ AND THE SCALING MOVED ON 2026-08-07 — §10, WITH THE TRICHOTOMY SAID OUT LOUD
+
+The paragraph here used to read: *"the SCALING is still not routed … what the declared manifest pins
+is the ADDENDS, not their provenance as scaled generators."* §10 changes what the manifest IS.
+`srsScaledAddends Gs u⃗ n` is a TOTAL FUNCTION whose `r`-th entry is `−s_r · G_r`; `accSrsDesc` is
+the descriptor at it; `accumulator_discharge_forced_on_srs_scaled_addends` concludes over that fold.
+The emitter can no longer supply a point — its only inputs are a generator list and `|u⃗|` field
+elements — and `circuit/tests/mina_accumulator_srs_proves.rs` re-derives every declared entry
+natively from the **sha-pinned** `vesta_srs_g` blob and refuses the rung below's manifest.
+
+⚠ **THE RESIDUAL IS NOW EXACTLY ONE THING AND IT IS STRUCTURAL, NOT AN OMISSION.** The derivation
+runs in the EMITTER; nothing in this AIR re-derives the manifest from `u⃗` in-circuit. The scaling
+relation can live in exactly three places and there is no fourth:
+
+  1. **THE CIRCUIT** — that is the deferred MSM. `PastaMsmBucketed.fused_at_step` prices the group
+     work at `1 474 800` complete additions, and §7.2 of that file records those rows are
+     denominated in the UNSOUND multiply, so on THIS file's sound row it is ~10² further out. It is
+     also the thing `mina_accumulator_discharge.rs`'s own header calls the innovation to defer.
+  2. **THE EMITTER** — §10. Certifying the emitted manifest then costs a native re-derivation,
+     which is `n` scalar multiplications, which is the discharge. So §10 does not beat the native
+     check; what it changes is the OBJECT a certifier checks, from `n` arbitrary Vesta points to
+     `|u⃗|` field elements and a byte-pinned blob.
+  3. **NOWHERE** — §8, a free 97-wide table.
+
+`PastaMsmBucketed` §7.3 reached (2) from the other side — *"the descriptor, and therefore the
+verifying key, is a function of the scalar vector: one VK per Mina block"* — and §7.4 declares the
+challenge-binding half TERMINAL for any MSM AIR. Neither is invented here and both still stand.
 
 So the emitted object checks the **SUMMATION half at full 256-bit width, over addends the VERIFIER
-rebuilds from the descriptor rather than accepts from the prover.** That is strictly more than
-before and strictly less than `Ipa.Step.accumulator_check`.
+rebuilds from the descriptor rather than accepts from the prover, and which the DESCRIPTOR in turn
+derives from a pinned SRS and a challenge vector rather than carrying as data.** That is strictly
+more than before and strictly less than `Ipa.Step.accumulator_check`.
 
 ## Axiom hygiene
 
@@ -141,10 +180,10 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 WindowExpr VmConstraint2)
 open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg WindowLeg PiPinLeg)
 open Dregg2.Circuit.TableAirIR (RowSel)
-open Dregg2.Circuit.Emit.PastaField (qN)
-open Dregg2.Circuit.Emit.PastaFieldSound (SK NG sVal qLimb)
+open Dregg2.Circuit.Emit.PastaField (pN qN)
+open Dregg2.Circuit.Emit.PastaFieldSound (SB SK NG sVal qLimb)
 open Dregg2.Circuit.Emit.PastaCurve (CZm)
-open Dregg2.Circuit.Emit.PastaCurveComplete (curveB3)
+open Dregg2.Circuit.Emit.PastaCurveComplete (curveB3 rcbAddM)
 open Dregg2.Circuit.Emit.PastaCurveSound
 open Dregg2.Circuit.Emit.PastaLadderThread
 
@@ -815,10 +854,17 @@ theorem accRoutedAir_mainRailOk (As : List Pt3) : (accRoutedAirOn As).mainRailOk
   show accRoutedAir.mainRailOk = true
   decide
 
+/-- ⚑ **THE ROUTED BLOCK, EMITTED UNDER A GIVEN NAME.** The name is a parameter because §10 emits a
+SECOND descriptor over the SAME algebra and a DERIVED manifest, and `reference-a-display-name-is-not-
+a-key` is why it may not reuse this one's. Nothing but `.name` depends on it — which is exactly what
+`the_srs_descriptor_differs_from_the_routed_one_only_in_its_name_and_its_manifest` states, and what
+makes `srs_balance_is_routed_balance` an `Iff.rfl`. -/
+def accRoutedDescNamed (nm : String) (As : List Pt3) : EffectVmDescriptor2 :=
+  Dregg2.Circuit.Emit.EffectLower.lowerAir nm ROUTED_WIDTH ACC_PI_COUNT [] (accRoutedAirOn As)
+
 /-- The emitted ROUTED descriptor. -/
 def accRoutedDesc (As : List Pt3) : EffectVmDescriptor2 :=
-  Dregg2.Circuit.Emit.EffectLower.lowerAir
-    "dregg-mina-accumulator-routed::v1" ROUTED_WIDTH ACC_PI_COUNT [] (accRoutedAirOn As)
+  accRoutedDescNamed "dregg-mina-accumulator-routed::v1" As
 
 /-- The emitted constraints are the same list at every `As` — the corollary of
 `the_legs_do_not_depend_on_the_declared_addends` that the shape pins are stated through. -/
@@ -1288,6 +1334,413 @@ realization of it is a LogUp PERMUTATION the VERIFIER checks. That is measured r
 `PublicLookupBalanced (accRoutedDesc demoAddends)` is satisfiable at all is the deployed prover
 accepting the honest trace, not anything in this kernel. -/
 
+/-! ## §9 — ⚑⚑ THE CAPS §10 STANDS ON, READ AT SOURCE BEFORE §10 WAS DESIGNED.
+
+⚠ Twice in this cone a cap was designed around before it was read. §4 priced a routing against
+`MAX_EXACT_PUBLIC_ARITY = 64` and the constant turned out to be **the member count of a JSON
+artifact**, bounding no resource. `the_split_remedy_costs_more_than_the_wide_table` retired a
+prescribed remedy that cost MORE than the thing it avoided. And `PastaMsmBucketed` §6c corrected its
+own SRS over-count from `21×` to `10×` because the model had forgotten both the all-zero pad row and
+`next_pow2`. So the caps are stated here, each against **what it actually counts**, first.
+
+Read at source 2026-08-07, `circuit/src/descriptor_ir2.rs`:
+
+| constant | line | enforced against | what it counts |
+|---|---|---|---|
+| `MAX_EXACT_PUBLIC_ROWS = 2^21` | `:590` | `rows.len()` (`:2231`) | the DECLARED manifest length, duplicates kept |
+| `MAX_EXACT_PUBLIC_CELLS = 2^25` | `:621` | `rows.len() * arity` (`:2232`) | the DECLARED multiset, duplicates kept |
+| `MAX_EXACT_PUBLIC_ARITY = 97` | `:616` | a JSON member count (`:6844`) | nothing allocated |
+
+⚑ And the matrix anything MATERIALISES is `ExactPublicManifest::committed_shape` (`:3495`) —
+`max (next_pow2 |distinct rows|) 2 × (arity + 2)` — **which is compared against no cap at all.**
+`check_descriptor2` is the ONLY enforcement site for the first two and it runs on the declared list
+before a cell is allocated. -/
+
+/-- `MAX_EXACT_PUBLIC_ROWS` (`descriptor_ir2.rs:590`). It bounds `rows.len()` of the DECLARED
+manifest. Because the exact-public semantics is a PERMUTATION, the declared length is also the trace
+height (`the_balance_forces_the_row_count`), so for a routed chain this is the one cap that IS a
+height ceiling — not by denomination but by the balance. -/
+def EP_ROWS_CAP : Nat := 2097152
+
+/-- `MAX_EXACT_PUBLIC_CELLS` (`descriptor_ir2.rs:621`). It bounds `rows.len() * arity`. -/
+def EP_CELLS_CAP : Nat := 33554432
+
+/-- What the CELL cap counts: the declared multiset, duplicates kept. -/
+def epDeclaredCells (rows arity : Nat) : Nat := rows * arity
+
+/-- What the verifier COMMITS: `committed_shape`'s height times `prep_width = arity + 2` (the table
+id column and the pinned multiplicity column, neither of which the cap's arithmetic sees). -/
+def epCommittedCells (height arity : Nat) : Nat := height * (arity + 2)
+
+/-- ⚑⚑ **THE CELL CAP AND THE ALLOCATION DISAGREE IN BOTH DIRECTIONS, AND BOTH DIRECTIONS ARE
+EXHIBITED.** A manifest with NO duplicates commits MORE than the cap counts (two extra columns); one
+with many duplicates declares far more than it commits. The second exhibit is `PastaMsmBucketed`'s
+own SRS manifest — `1 474 800` declared rows at arity `28`, whose `65 537` distinct rows round to a
+committed height of `2^17` — and it reproduces that file's `10×` bracket from this file's own two
+definitions rather than by citing it.
+
+⚠ This is the theorem that says a cell figure alone never decides admissibility. `srs_cells_exceed_
+the_deployed_cap` is TRUE and the object it refuses commits `3 932 160` cells, an eighth of the cap. -/
+theorem the_cell_cap_counts_the_declared_multiset_and_not_the_allocation :
+    epDeclaredCells 65536 ADDEND_TUP < epCommittedCells 65536 ADDEND_TUP
+    ∧ epCommittedCells 131072 28 < epDeclaredCells 1474800 28
+    ∧ EP_CELLS_CAP < epDeclaredCells 1474800 28
+    ∧ epCommittedCells 131072 28 < EP_CELLS_CAP
+    ∧ 10 * epCommittedCells 131072 28 ≤ epDeclaredCells 1474800 28
+    ∧ epDeclaredCells 1474800 28 < 11 * epCommittedCells 131072 28 := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide⟩
+
+/-- ⚑⚑ **NO CAP HAS TO MOVE FOR THE FULL-WIDTH SRS ROUTING.**
+
+§10 routes one 97-wide tuple per row against a manifest whose rows are the SRS generators. At the
+real object that manifest is `2^16` rows — one per generator, **no duplicates and no pad**, because
+the routing declares one manifest row per trace row and the trace height is the generator count.
+`65 536 ≤ 2^21`, `65 536 · 97 = 6 356 992 < 2^25` declared, and `65 536 · 99 = 6 488 064 < 2^25`
+committed — the committed height is `next_pow2 65 536 = 65 536` exactly, with no `65 537`th distinct
+row to push it up a rung.
+
+⚑ So the cap that refuses `PastaMsmBucketed`'s SRS manifest does **not** refuse this one, and the
+difference is not width: it is that the windowed layout re-declares every generator once per window
+(`20 ×`) and then pads, while the routing declares each once. Same generators, same arity class,
+one cap verdict apart. -/
+theorem the_full_srs_routing_needs_no_cap_to_move :
+    STEP_SRS ≤ EP_ROWS_CAP
+    ∧ epDeclaredCells STEP_SRS ADDEND_TUP = 6356992
+    ∧ epDeclaredCells STEP_SRS ADDEND_TUP < EP_CELLS_CAP
+    ∧ epCommittedCells STEP_SRS ADDEND_TUP = 6488064
+    ∧ epCommittedCells STEP_SRS ADDEND_TUP < EP_CELLS_CAP
+    ∧ ADDEND_TUP ≤ MAX_EP_ARITY := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide⟩
+
+/-- …and the demonstration's own manifest, measured against the same three caps. Stated separately
+so the eight-row instance is not read as evidence about the `2^16`-row one. -/
+theorem the_demonstration_manifest_is_far_inside_every_cap :
+    epDeclaredCells 8 ADDEND_TUP = 776
+    ∧ epDeclaredCells 8 ADDEND_TUP < EP_CELLS_CAP
+    ∧ 8 ≤ EP_ROWS_CAP := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-! ## §10 — ⚑⚑⚑ THE DECLARED ADDENDS ARE `−s_r · G_r`, DERIVED RATHER THAN DECLARED.
+
+§8 forced the trace's addend cells to be **the descriptor's declared addend `i`**, and said plainly
+that this is one object out from the brief: *"nothing says the declared addends are `−s_r·G_r`."*
+A prover holding a fixed descriptor could no longer choose them; whoever emitted the descriptor
+still could, because `As : List Pt3` is a free parameter and `accRoutedDesc` will emit any 97-wide
+table it is handed.
+
+⚑ **THIS SECTION REMOVES THE FREE PARAMETER.** `srsScaledAddends` is a TOTAL FUNCTION of
+  * `Gs` — the generator list, and
+  * `u⃗` — the endo-lifted bulletproof challenges,
+
+whose `r`-th entry is `−s_r · G_r` with `s_r = b_poly_coefficients(u⃗)_r` and the scalar
+multiplication run **by the same complete formula the row computes** (`rcbAddM qN curveB3`, so a
+doubling and an identity are handled without a case split). There is no path by which the emitter
+supplies a point: the only inputs are a generator list and 16 field elements.
+
+`accSrsDesc` is the descriptor at that manifest. Its algebra is `-routed`'s VERBATIM — same legs,
+same constraints, same width, same selector census — so every forcing theorem of §5–§8 applies to it
+unchanged, and the ONE thing that differs is what the manifest is a function of.
+
+## ⚠ WHAT THIS DOES NOT BUY, AT FULL RESOLUTION, AND IT IS THE HONEST HALF OF THE SECTION
+
+**`Gs` and `u⃗` are EMITTER parameters, and nothing in this AIR derives the manifest from them.**
+The derivation is a Lean function evaluated at emission time; the verifier rebuilds the manifest
+from the descriptor bytes and never re-runs it. So a node that wants to know the manifest belongs to
+this block must re-derive it natively — which is `2^16` scalar multiplications, i.e. the very MSM
+`bridge/src/mina_accumulator_discharge.rs` performs. ⚑ **Stated as the trichotomy it is: the scaling
+relation can live in the CIRCUIT (that is the deferred MSM — `PastaMsmBucketed.fused_at_step` prices
+the group work at `1 474 800` complete additions, and §7.2 of that file records those rows are
+denominated in the UNSOUND multiply, so on THIS file's sound row it is ~10² further out), or in the
+EMITTER (this section — and certifying the emitted manifest then costs exactly the native discharge),
+or NOWHERE (§8, a free table). There is no fourth place.** What §10 buys is that the middle option is
+now a function with named inputs instead of a list, so the object a certifier must check went from
+`n` arbitrary Vesta points to `|u⃗|` field elements and a byte-pinned blob.
+
+`PastaMsmBucketed` §7.3 reached the same conclusion from the other side — *"the descriptor, and
+therefore the verifying key, is a function of the scalar vector: one VK per Mina block"* — and §7.4
+declares the challenge-binding half TERMINAL for any MSM AIR. Neither is invented here; both are
+inherited, and both still stand. -/
+
+/-- The identity, in the projective coordinates the RCB formula is complete over
+(`PastaCurveComplete.Oproj`). -/
+def OprojN : Pt3 := (0, 1, 0)
+
+/-- Every coordinate reduced at the Vesta base prime. ⚑ Applied at the end of the derivation so the
+declared point is CANONICAL by construction: `coordLimb` reads base-`2^SB` digits, and a manifest
+carrying a non-canonical representative would declare limbs no honest witness can produce. -/
+def redPt (P : Pt3) : Pt3 := (P.1 % qN, P.2.1 % qN, P.2.2 % qN)
+
+theorem redPt_lt (P : Pt3) :
+    (redPt P).1 < qN ∧ (redPt P).2.1 < qN ∧ (redPt P).2.2 < qN := by
+  have hq : 0 < qN := by decide
+  exact ⟨Nat.mod_lt _ hq, Nat.mod_lt _ hq, Nat.mod_lt _ hq⟩
+
+/-- One double-and-add step, LSB-first: the accumulator absorbs `P` when the low bit is set and `P`
+doubles. ⚑ The doubling is `rcbAddM qN curveB3 P P` — the SAME strongly-unified formula the row
+computes, so nothing here is a second curve arithmetic. -/
+def smulAux : Nat → Pt3 → Pt3 → Pt3
+  | 0, _, acc => acc
+  | (k + 1), P, acc =>
+      smulAux ((k + 1) / 2) (rcbAddM qN curveB3 P P)
+        (if (k + 1) % 2 = 1 then rcbAddM qN curveB3 acc P else acc)
+  termination_by k => k
+  decreasing_by exact Nat.div_lt_self (Nat.succ_pos _) (by decide)
+
+/-- ⚑ `[k]·P` on Vesta. -/
+def smulV (k : Nat) (P : Pt3) : Pt3 := smulAux k P OprojN
+
+/-- ⚑ **`b_poly_coefficients`, at modulus `m`** — `s_i = ∏_{j : bit j of i is set} u_{|u|−1−j}`.
+
+That index convention is o1-labs' and is not a choice made here: `poly-commitment/src/commitment.rs`
+`:382-394` (tag `0.3.0`) builds `s[i] = s[i − 2^m] · chals[rounds − 1 − m]` with `m = ⌊log₂ i⌋`, and
+`dregg_circuit::pasta_msm::b_poly_coefficients_at` (`:316-340`) decodes it to exactly this product.
+`b(X) = ∏_{i<k} (1 + u_i · X^{2^{k−1−i}})` is the polynomial it is the coefficient vector of. -/
+def bPolyCoeff (m : Nat) (u : List Nat) (i : Nat) : Nat :=
+  (List.range u.length).foldl
+    (fun acc j => if (i / 2 ^ j) % 2 = 1 then acc * u.getD (u.length - 1 - j) 1 % m else acc) 1
+
+/-- ⚑⚑ **THE DECLARED ADDENDS, DERIVED.** `A_r = −s_r · G_r`, canonical.
+
+The scalars are `b_poly_coefficients(u⃗)` at the Vesta SCALAR prime `pN` — `PastaCurve::Vesta.
+scalar()` is `P_PASTA` (`pasta_msm.rs:58-64`), and the generators' coordinates reduce at the Vesta
+BASE prime `qN`. Mixing the two is the silent wrong-field bug this comment exists to prevent. -/
+def srsScaledAddends (Gs : List Pt3) (u : List Nat) (n : Nat) : List Pt3 :=
+  (List.range n).map
+    (fun r => redPt (negV (smulV (bPolyCoeff pN u r) (Gs.getD r (0, 0, 0)))))
+
+theorem srsScaledAddends_length (Gs : List Pt3) (u : List Nat) (n : Nat) :
+    (srsScaledAddends Gs u n).length = n := by
+  simp [srsScaledAddends]
+
+/-- ⚑ **ROW `r`'S DECLARED ADDEND IS THE NEGATED SCALAR MULTIPLE.** No quantifier over the list: the
+`r`-th entry IS the derivation applied at `r`. -/
+theorem srs_declared_addend_is_the_negated_scalar_multiple
+    (Gs : List Pt3) (u : List Nat) (n r : Nat) (hr : r < n) :
+    (srsScaledAddends Gs u n).getD r (0, 0, 0)
+      = redPt (negV (smulV (bPolyCoeff pN u r) (Gs.getD r (0, 0, 0)))) := by
+  have hlt : r < (List.range n).length := by simpa using hr
+  simp [srsScaledAddends, List.getD, List.getElem?_map,
+    List.getElem?_eq_getElem hlt, List.getElem_range]
+
+/-! ### §10a — FROM THE DECLARED POINT TO THE VALUE THE CHAIN FOLDS.
+
+`declAddend` recomposes `coordLimb`'s base-`2^SB` digits. That recomposition is the identity on any
+coordinate below `2^(SB·SK) = 2^256`, and `redPt` puts every coordinate below `qN`. Proved as a
+GENERAL digit fact rather than `decide`d at the demonstration's numbers — the latter would be a
+`native_decide` through 256-bit arithmetic and would say nothing at `2^16` rows. -/
+
+/-- ⚑ **BASE-`2^SB` RECOMPOSITION.** The `n` low digits of `v`, weighted, sum to `v mod 2^(SB·n)`.
+Induction on `n`; no bound on `v` is needed, which is why the statement carries the `%`. -/
+theorem nat_mod_split (x A B : Nat) :
+    x % (A * B) = A * ((x / A) % B) + x % A := by
+  have h1 : x % (A * B) % A = x % A := Nat.mod_mod_of_dvd x ⟨B, rfl⟩
+  have h2 : x % (A * B) / A = x / A % B := Nat.mod_mul_right_div_self x A B
+  conv_lhs => rw [← Nat.div_add_mod (x % (A * B)) A]
+  rw [h1, h2]
+
+theorem sumL_limbs (v : Nat) : ∀ n : Nat,
+    Dregg2.Circuit.Emit.PastaFieldSound.sumL (List.range n)
+      (fun i => ((2 : ℤ) ^ SB) ^ i * (((v / 2 ^ (SB * i)) % 2 ^ SB : Nat) : ℤ))
+      = ((v % 2 ^ (SB * n) : Nat) : ℤ)
+  | 0 => by simp [Dregg2.Circuit.Emit.PastaFieldSound.sumL]
+  | n + 1 => by
+    have ih := sumL_limbs v n
+    have hab : 2 ^ (SB * (n + 1)) = 2 ^ (SB * n) * 2 ^ SB := by
+      rw [← pow_add, Nat.mul_succ]
+    have hcast : ((2 : ℤ) ^ SB) ^ n = ((2 ^ (SB * n) : Nat) : ℤ) := by
+      push_cast; rw [pow_mul]
+    unfold Dregg2.Circuit.Emit.PastaFieldSound.sumL at ih ⊢
+    rw [List.range_succ, List.map_append, List.sum_append, ih, hab,
+      nat_mod_split v (2 ^ (SB * n)) (2 ^ SB)]
+    simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero,
+      Nat.cast_add, Nat.cast_mul]
+    rw [hcast]
+    ring
+
+/-- The declared coordinate value IS the coordinate, for any coordinate below `2^256`. -/
+theorem declVal_of_lt (P : Pt3) (off : Nat) (c : Nat)
+    (hc : c < 2 ^ (Dregg2.Circuit.Emit.PastaFieldSound.SB * SK))
+    (hoff : ∀ i, i < SK → coordLimb P (off + i)
+      = (c / 2 ^ (Dregg2.Circuit.Emit.PastaFieldSound.SB * i))
+          % 2 ^ Dregg2.Circuit.Emit.PastaFieldSound.SB) :
+    declVal P off = (c : ℤ) := by
+  unfold declVal
+  rw [sumL_congr _ _ (fun i => ((2 : ℤ) ^ Dregg2.Circuit.Emit.PastaFieldSound.SB) ^ i
+        * (((c / 2 ^ (Dregg2.Circuit.Emit.PastaFieldSound.SB * i))
+             % 2 ^ Dregg2.Circuit.Emit.PastaFieldSound.SB : Nat) : ℤ))
+      (fun i hi => by rw [hoff i (List.mem_range.mp hi)])]
+  rw [sumL_limbs c SK, Nat.mod_eq_of_lt hc]
+
+/-- A point's three coordinates in the ℤ denotation `declaredChain` folds. -/
+def ptZ (P : Pt3) : ℤ × ℤ × ℤ := ((P.1 : ℤ), (P.2.1 : ℤ), (P.2.2 : ℤ))
+
+/-- ⚑ **THE DECLARED ADDEND'S VALUE IS THE POINT**, for any manifest entry whose coordinates are
+canonical. Stated over an arbitrary `P` and an arbitrary `As` so it is a fact about the ROUTING's
+recomposition, not about §10's derivation — §8's demonstration manifest satisfies it too. -/
+theorem declAddend_of_getD (As : List Pt3) (r : Nat) (P : Pt3)
+    (hget : As.getD r (0, 0, 0) = P)
+    (h1 : P.1 < qN) (h2 : P.2.1 < qN) (h3 : P.2.2 < qN) :
+    declAddend As r = ptZ P := by
+  have hq : qN < 2 ^ (Dregg2.Circuit.Emit.PastaFieldSound.SB * SK) := by decide
+  have hsk : (0 : Nat) < SK := by decide
+  unfold declAddend ptZ
+  rw [hget]
+  refine Prod.ext ?_ (Prod.ext ?_ ?_)
+  · refine declVal_of_lt P 0 P.1 (lt_trans h1 hq) (fun i hi => ?_)
+    have e0 : 0 + i = i := by omega
+    rw [e0]
+    simp [coordLimb, hi]
+  · refine declVal_of_lt P SK P.2.1 (lt_trans h2 hq) (fun i hi => ?_)
+    have n1 : ¬ (SK + i < SK) := by omega
+    have p2 : SK + i < 2 * SK := by omega
+    have e1 : SK + i - SK = i := by omega
+    simp [coordLimb, n1, p2, e1]
+  · refine declVal_of_lt P (2 * SK) P.2.2 (lt_trans h3 hq) (fun i hi => ?_)
+    have n1 : ¬ (2 * SK + i < SK) := by omega
+    have n2 : ¬ (2 * SK + i < 2 * SK) := by omega
+    have e2 : 2 * SK + i - 2 * SK = i := by omega
+    simp [coordLimb, n1, n2, e2]
+
+/-- ⚑⚑ **THE DECLARED ADDEND IS `−s_r · G_r`, AS THE VALUE THE CHAIN FOLDS.** The three
+recompositions `declaredChain` reads are the three coordinates of the derived point — no `%` and no
+canonicality envelope, because `redPt` reduced at `qN` and `qN < 2^256`. -/
+theorem declAddend_of_srsScaled (Gs : List Pt3) (u : List Nat) (n r : Nat) (hr : r < n) :
+    declAddend (srsScaledAddends Gs u n) r
+      = ptZ (redPt (negV (smulV (bPolyCoeff pN u r) (Gs.getD r (0, 0, 0))))) := by
+  have hb := redPt_lt (negV (smulV (bPolyCoeff pN u r) (Gs.getD r (0, 0, 0))))
+  exact declAddend_of_getD _ r _
+    (srs_declared_addend_is_the_negated_scalar_multiple Gs u n r hr) hb.1 hb.2.1 hb.2.2
+
+/-! ### §10b — ⚑⚑ THE SRS DESCRIPTOR, AND THE DISCHARGE OVER THE SCALAR MULTIPLES. -/
+
+/-- ⚑⚑ **THE EMITTED SRS DESCRIPTOR.** `-routed`'s algebra, verbatim; a manifest that is the image
+of `srsScaledAddends`. -/
+def accSrsDesc (Gs : List Pt3) (u : List Nat) (n : Nat) : EffectVmDescriptor2 :=
+  accRoutedDescNamed "dregg-mina-accumulator-srs::v1" (srsScaledAddends Gs u n)
+
+theorem accSrsDesc_name (Gs : List Pt3) (u : List Nat) (n : Nat) :
+    (accSrsDesc Gs u n).name = "dregg-mina-accumulator-srs::v1" := rfl
+
+/-- ⚑ **FOUR NAMES, FOUR OBJECTS.** A registry lookup that resolved `-srs` to `-routed` would serve
+a descriptor whose manifest is a free parameter and every shape pin would still pass. -/
+theorem the_four_descriptors_do_not_share_a_name (As : List Pt3)
+    (Gs : List Pt3) (u : List Nat) (n : Nat) :
+    accSegDesc.name ≠ (accSrsDesc Gs u n).name
+    ∧ accFinalDesc.name ≠ (accSrsDesc Gs u n).name
+    ∧ (accRoutedDesc As).name ≠ (accSrsDesc Gs u n).name := by
+  rw [accSrsDesc_name, accRoutedDesc_name]
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- ⚑ **THE ALGEBRA IS THE SAME OBJECT.** Constraints, width, PI count and table ids are `-routed`'s
+at every `Gs`, `u⃗` and `n`; only `.name` and the manifest differ. This is what makes §5–§8's forcing
+theorems apply to `-srs` without being restated, and it is what
+`srs_balance_is_routed_balance` is `rfl` on. -/
+theorem the_srs_descriptor_differs_from_the_routed_one_only_in_its_name_and_its_manifest
+    (Gs : List Pt3) (u : List Nat) (n : Nat) :
+    (accSrsDesc Gs u n).constraints = (accRoutedDesc []).constraints
+    ∧ (accSrsDesc Gs u n).traceWidth = ROUTED_WIDTH
+    ∧ (accSrsDesc Gs u n).piCount = ACC_PI_COUNT
+    ∧ ((accSrsDesc Gs u n).tables.map (·.id))
+        = ((accRoutedDesc []).tables.map (·.id)) := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THE BALANCE TRANSFERS BY DEFINITION.** `PublicLookupBalanced` projects `.tables` and
+`.constraints` and nothing else, and neither depends on the name — so the routing hypothesis of §8
+is literally the same proposition on `-srs`. Not a bridge: `Iff.rfl`. -/
+theorem srs_balance_is_routed_balance (Gs : List Pt3) (u : List Nat) (n : Nat) (t : VmTrace) :
+    PublicLookupBalanced (accSrsDesc Gs u n) t
+      ↔ PublicLookupBalanced (accRoutedDesc (srsScaledAddends Gs u n)) t := Iff.rfl
+
+/-- ⚑⚑⚑ **THE ACCUMULATOR CHECK OVER THE PINNED SCALAR MULTIPLES.**
+
+`n+1` rows of deployed satisfaction, `n` held accumulator threads, the 64 discharge gates, the
+emitted index origin and thread, and the emitted routing balance force the `n+1`-fold RCB chain
+**of `−s_r · G_r`** — starting from the accumulator published at `PI[0..95]` — to be the point at
+infinity mod the real Vesta-base prime.
+
+⚑ **READ THE CONCLUSION AGAINST §8d'S.** `accumulator_discharge_forced_on_declared_addends`
+concludes over `declaredChain As`, a fold whose addends are whatever list the emitter was handed.
+This one concludes over `declaredChain (srsScaledAddends Gs u n)`, a fold whose addends are the
+image of a function of a generator list and `u⃗` — **no list of points occurs in the statement.**
+
+⚠ The limit is §10's docblock and is not softened here: the derivation runs in the EMITTER, so a
+certifier still re-derives it natively. What moved is the object it re-derives FROM. -/
+theorem accumulator_discharge_forced_on_srs_scaled_addends
+    (Gs : List Pt3) (u : List Nat) (n : Nat) (t : VmTrace) (m : Nat)
+    (hrow : ∀ r, r ≤ m → RowSoundV (traceOf t) r)
+    (hthread : ∀ r, r < m → Threaded (traceOf t) r)
+    (hd : Discharged (traceOf t) m)
+    (hbal : PublicLookupBalanced (accSrsDesc Gs u n) t)
+    (h0 : IdxStarted (traceOf t))
+    (hidx : ∀ r, r + 1 < t.rows.length → IdxThreaded (traceOf t) r)
+    (hheight : t.rows.length = m + 1) :
+    CZm (qN : ℤ) (declaredChain (srsScaledAddends Gs u n) (traceOf t) (m + 1)).1 0
+    ∧ CZm (qN : ℤ) (declaredChain (srsScaledAddends Gs u n) (traceOf t) (m + 1)).2.2 0 :=
+  accumulator_discharge_forced_on_declared_addends (srsScaledAddends Gs u n) t m
+    hrow hthread hd ((srs_balance_is_routed_balance Gs u n t).mp hbal) h0 hidx hheight
+
+/-- ⚑⚑ **AND THE FOLD'S ADDENDS, NAMED.** Every step of `declaredChain (srsScaledAddends Gs u n)`
+adds exactly `−s_r · G_r`. Together with the theorem above this is the deliverable: *the chain that
+is forced to vanish is the chain of the scalar multiples of the supplied generators.* -/
+theorem the_forced_chain_adds_the_scalar_multiples
+    (Gs : List Pt3) (u : List Nat) (n : Nat) (tr : Trace) (r : Nat) (hr : r < n) :
+    declaredChain (srsScaledAddends Gs u n) tr (r + 1)
+      = (let P := declaredChain (srsScaledAddends Gs u n) tr r
+         let A := ptZ (redPt (negV (smulV (bPolyCoeff pN u r) (Gs.getD r (0, 0, 0)))))
+         rcbOutZ (curveB3 : ℤ) P.1 P.2.1 P.2.2 A.1 A.2.1 A.2.2) := by
+  show (let P := declaredChain (srsScaledAddends Gs u n) tr r
+        rcbOutZ (curveB3 : ℤ) P.1 P.2.1 P.2.2
+          (declAddend (srsScaledAddends Gs u n) r).1
+          (declAddend (srsScaledAddends Gs u n) r).2.1
+          (declAddend (srsScaledAddends Gs u n) r).2.2) = _
+  rw [declAddend_of_srsScaled Gs u n r hr]
+
+/-! ### §10c — ⚠ THE DERIVATION IS REFUTABLE, AND WHERE EACH HALF IS MEASURED.
+
+A derivation that collapsed — `bPolyCoeff` returning `1`, `smulV` ignoring its scalar — would make
+every theorem above true and the manifest wrong, and no shape pin in this file would move. Both
+halves are therefore exhibited separating. They are exhibited in DIFFERENT PLACES and that is a
+decision, not an omission:
+
+* the CHALLENGE half is pure `Nat` arithmetic and is `decide`d here;
+* ⚠ the CURVE half is **not** evaluated in this kernel. `smulV` runs `rcbAddM`, whose `rcbTraceM`
+  body is a 33-step `let`-chain with heavy reuse, and `minted-poseidon2-perm-is-a-reduction-bomb`
+  measured exactly that shape at `47.6 GB` for ONE permutation because `whnf` zeta-expands `let`
+  helpers. A `decide` through `[2]·G ≠ [1]·G` would be that bomb. It is measured instead in
+  `circuit/tests/mina_accumulator_srs_proves.rs`, against `dregg_circuit::pasta_msm::scalar_mul_at`
+  over the **sha-pinned** `VESTA_SRS_G_BIN` — which is better evidence than a kernel `decide` would
+  have been, because it checks this derivation against the DEPLOYED native arithmetic and the
+  byte-pinned blob rather than against itself. -/
+
+/-- `[0]·P` is the RCB identity `(0 : 1 : 0)`, not a zero triple — a `smulV` seeded with `(0,0,0)`
+would make the empty chain add a point off the curve. One equation of the recursion; no field
+element is reduced. -/
+theorem smulV_at_zero (P : Pt3) : smulV 0 P = OprojN := by
+  simp [smulV, smulAux]
+
+/-- ⚑ **THE CHALLENGES MOVE THE COEFFICIENTS, AND IN THE o1-labs ORDER.** At `u⃗ = [3, 5]` the four
+coefficients are `1, u₁, u₀, u₀·u₁` — index `1` reads the LAST challenge and index `2` the FIRST. A
+`bPolyCoeff` that dropped the `|u|−1−j` reversal would swap these two, produce a manifest that is a
+PERMUTATION of the right one, and leave every other theorem in §10 true.
+
+⚠ The moved values are `3` and `5`: nonzero, distinct, and neither is the identity of the product —
+so this is not a falsifier that moved a zero into a zero. -/
+theorem the_challenge_order_is_the_o1labs_one :
+    bPolyCoeff pN [3, 5] 0 = 1
+    ∧ bPolyCoeff pN [3, 5] 1 = 5
+    ∧ bPolyCoeff pN [3, 5] 2 = 3
+    ∧ bPolyCoeff pN [3, 5] 3 = 15
+    ∧ bPolyCoeff pN [3, 5] 1 ≠ bPolyCoeff pN [3, 5] 2 := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide⟩
+
+/-- …and the coefficient vector is not constant in the challenges: one challenge changes and every
+odd index changes with it. This is the half that says the manifest is a function OF `u⃗` and not
+merely a function that ignores it. -/
+theorem the_coefficients_are_not_constant_in_the_challenges :
+    bPolyCoeff pN [3, 5] 1 ≠ bPolyCoeff pN [3, 7] 1
+    ∧ bPolyCoeff pN [3, 5] 2 ≠ bPolyCoeff pN [11, 5] 2 := by
+  refine ⟨by decide, by decide⟩
+
 #assert_axioms acc_pi_layout
 #assert_axioms pin_leg_counts
 #assert_axioms dischargeLegs_length
@@ -1351,5 +1804,25 @@ accepting the honest trace, not anything in this kernel. -/
 #assert_axioms chain_is_the_declared_chain
 #assert_axioms accumulator_discharge_forced_on_declared_addends
 #assert_axioms the_routing_key_separates_rows
+#assert_axioms the_cell_cap_counts_the_declared_multiset_and_not_the_allocation
+#assert_axioms the_full_srs_routing_needs_no_cap_to_move
+#assert_axioms the_demonstration_manifest_is_far_inside_every_cap
+#assert_axioms redPt_lt
+#assert_axioms srsScaledAddends_length
+#assert_axioms srs_declared_addend_is_the_negated_scalar_multiple
+#assert_axioms sumL_limbs
+#assert_axioms nat_mod_split
+#assert_axioms declVal_of_lt
+#assert_axioms declAddend_of_getD
+#assert_axioms declAddend_of_srsScaled
+#assert_axioms accSrsDesc_name
+#assert_axioms the_four_descriptors_do_not_share_a_name
+#assert_axioms the_srs_descriptor_differs_from_the_routed_one_only_in_its_name_and_its_manifest
+#assert_axioms srs_balance_is_routed_balance
+#assert_axioms accumulator_discharge_forced_on_srs_scaled_addends
+#assert_axioms the_forced_chain_adds_the_scalar_multiples
+#assert_axioms smulV_at_zero
+#assert_axioms the_challenge_order_is_the_o1labs_one
+#assert_axioms the_coefficients_are_not_constant_in_the_challenges
 
 end Dregg2.Circuit.Emit.MinaAccumulatorAir

@@ -34,11 +34,12 @@ generator `Gv` — chosen here, next to the emit, and never defaulted.
 This file only RENDERS; it authors nothing.
 -/
 import Dregg2.Circuit.Emit.MinaAccumulatorAir
+import Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo
 
 open Dregg2.Circuit.Emit.PastaCurveSound (rcbSoundRow)
-open Dregg2.Circuit.Emit.PastaCurveComplete (rcbAddM curveB3)
+open Dregg2.Circuit.Emit.PastaCurveComplete (rcbAddM curveB3 Oproj)
 open Dregg2.Circuit.Emit.PastaFieldSound (qLimb)
-open Dregg2.Circuit.Emit.PastaField (qN)
+open Dregg2.Circuit.Emit.PastaField (pN qN)
 
 /-- The Vesta generator in projective coordinates. -/
 def Gvesta : Nat × Nat × Nat :=
@@ -121,6 +122,28 @@ def Q2 : Nat × Nat × Nat := rcbAddM qN curveB3 Gvesta Gvesta
 def substitutedAddends : List (Nat × Nat × Nat) :=
   List.replicate N_ADDS Q2 ++ [negP qN (walk qN curveB3 Q2 Gvesta N_ADDS)]
 
+/-! ## ⚑⚑ THE SRS RAIL — the manifest is `−s_r · G_r` over the PINNED blob, not a list.
+
+`MinaAccumulatorAir` §10 removed the free `As` parameter: `srsScaledAddends Gs u n` is a total
+function of a generator list and the challenges. This section supplies the two inputs and RENDERS —
+it still authors nothing.
+
+* `Gs` is `MinaStepSrsG.SRS_G`, decoded from `metatheory/emitted/mina-accumulator/vesta_srs_g.bin`
+  (sha `f28a8a91…`), the SAME blob `dregg_bridge::mina_accumulator_discharge::VESTA_SRS_G_SHA256`
+  pins and re-checks on-curve. One decode, not a transcription.
+* `u⃗` is `demoChals` below — a PARAMETER CHOICE with §8a's exact status, and the ONLY thing the
+  emitter still chooses.
+
+⚠ THE PAIRING. `mina-accumulator-routed.json`'s manifest is `demoAddends` — seven `G`s and a closing
+negation, an internally-consistent table that DISCHARGES and is **not** anybody's scalar multiples.
+That is precisely the forgery §8's theorem admits. The routed trace already on disk therefore proves
+under `-routed` and must be REFUSED under `-srs`, by the balance of `mina_accumulator_addends` and
+by nothing else. The old-admits pole is not a fixture written for the occasion; it is the previous
+rung's own honest artifact. -/
+
+open Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo (demoChals srsDemoAddends srsDemoClaim
+  accSrsDemoDesc srsParamsText)
+
 /-- ⚑ The three descriptors' JSON, for the same reason `EmitPastaBucketed.lean` prints its own: the
 by-name ROUTER (`EmitByName.lean`, where these are registered and where the drift gate reads them)
 imports the whole wrap-verifier cone, so a sibling lane rebuilding that cone makes the router
@@ -137,6 +160,8 @@ def descJson (which : String) : Option String :=
   else if which = "routed" then
     some (Dregg2.Circuit.DescriptorIR2.emitVmJson2
       Dregg2.Circuit.Emit.MinaAccumulatorAir.accRoutedDemoDesc)
+  else if which = "srs" then
+    some (Dregg2.Circuit.DescriptorIR2.emitVmJson2 accSrsDemoDesc)
   else none
 
 def main (args : List String) : IO Unit :=
@@ -162,5 +187,12 @@ def main (args : List String) : IO Unit :=
         substitutedAddends)))
   | ["substituted-narrow"] =>
       IO.print (traceText (rowsFromAddends qN curveB3 qLimb Gvesta substitutedAddends))
+  -- ⚑ The SRS rail. The chain starts at the COMPUTED claim and its addends are the DERIVED
+  -- `−s_r·G_r`; both come from `srsScaledAddends`/`smulV`, so the manifest and the trace cannot
+  -- drift. The OLD-ADMITS pole of this pair is `mina-accumulator-routed-trace.txt`, already on disk.
+  | ["srs"] =>
+      IO.print (traceText (withRowIndex (rowsFromAddends qN curveB3 qLimb srsDemoClaim
+        srsDemoAddends)))
+  | ["srs-params"] => IO.print srsParamsText
   | _ => IO.eprintln
-      "usage: EmitMinaAccumulator.lean (discharging|open|unchained|routed|substituted|substituted-narrow)"
+      "usage: EmitMinaAccumulator.lean (discharging|open|unchained|routed|substituted|substituted-narrow|srs|srs-params)"
