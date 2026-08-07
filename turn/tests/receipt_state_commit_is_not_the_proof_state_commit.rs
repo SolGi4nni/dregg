@@ -36,9 +36,14 @@
 //! 4. **`material`.** ⚑ NOT PREVIOUSLY NAMED ANYWHERE. `consensus_ctx` hardcodes
 //!    `RotationCarrierMaterial::default()`; the proof-side builders put the installed
 //!    `child_vk` on the AFTER block of a `CreateCellFromFactory` turn. This one does not merely
-//!    diverge — it is the cause that **cannot be aligned by moving the proving side**, because
-//!    `factoryV3Carriers` publishes that octet as PI 47..54 and the executor's reconstruction
-//!    anchors it from trusted state. Aligning it moves the SIGNED ANCHOR.
+//!    diverge — it is the cause that **should not be aligned by moving the proving side**:
+//!    `factoryV3Carriers` `.piBinding`s that octet as PI 47..54 precisely to EXPOSE the installed
+//!    child VK, so zeroing it on the prover would blank a published surface rather than align one.
+//!    Aligning it properly moves the SIGNED ANCHOR.
+//!    ⓘ NOT established, and not to be relayed as if it were: whether any verifier ANCHORS those
+//!    PIs from trusted state. `turn/src/executor/proof_verify.rs` constructs no
+//!    `RotationCarrierMaterial` at all; if its reconstruction reaches the octet it does so through
+//!    the trace generators, and that routing was not traced.
 //!
 //! ## ⚑ And the proof side's `iroot` is not one convention but three
 //!
