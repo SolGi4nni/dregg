@@ -1,0 +1,25 @@
+{
+  "schema": "POA-ANGELS-EPOCH-2-MULTIPLEXED-WORLD-PROVENANCE-V1",
+  "note": "Provenance only. ONE epoch-2 world carrying BOTH organs, so mounting the night watch does not evict the galley (persist/src/poa_world_activation.rs:23 keeps exactly one active head). The world identity the curator signs is emitted by `dregg-node poa-galley-world-preview`, which supplies the real activation_digest from the epoch-2 POAG1 content-epoch envelope; neither Manifest.matchesWorldB nor authorizeCampaignConfigForWorld? reads it. The slot secret behind slot_commitment is curator-held, lives outside every repository, and is CARRIED from epoch 1 unchanged.",
+  "deployment_id": "4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d",
+  "federation_id": "70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b",
+  "content_session": "504f412d414e47454c532d320000000000000000000000000000000000000000",
+  "content_session_ascii_tag": "POA-ANGELS-2",
+  "content_epoch": 2,
+  "content_root": "85d96e549e7a8b0a7838b708e8ae78171f4a710a83c5e186200bb554178a80f5",
+  "activation_digest": null,
+  "activation_digest_note": "Supplied at install by `dregg-node poa-galley-world-preview` from the epoch-2 POAG1 content-epoch envelope. The member witnesses are insensitive to it (the_members_are_insensitive_to_the_activation_digest), so it needs no re-emit.",
+  "components": [
+    {"name": "poa.galley-maintenance-daily.policy.v1", "sha256": "4ba1012522fcd4ceb079064ecd1eed2de1f4c841c6cf133c1ae9e5983b53d81b", "carried_from": "poa/artifacts/galley/epoch-1/manifest.json", "fields_changed": ["content_epoch"]},
+    {"name": "poa.night-watch-campaign.config.v1", "sha256": "47aae1ac82595ceb4ffec8baef175b51867612fa012ec646c5a8baab2c76f05e", "carried_from": "poa/artifacts/night-watch/epoch-1/manifest.json", "fields_changed": ["progression.content_session", "progression.content_epoch"]}
+  ],
+  "slot": 1,
+  "slot_commitment": "8ec4da984d1b3f9bc5838f4b2e174f71f8539693663ed137a0b4cd896f657fdf",
+  "slot_commitment_note": "CARRIED from epoch 1. HiddenInstance.commit reads (secret, slot) only, so the curator's existing off-repository secret still opens it; missionContextOf folds the progression session and epoch into every run seed, so no epoch-1 schedule transfers (the_epoch2_run_seed_is_not_the_epoch1_run_seed).",
+  "derived_digest_note": "Every derived-label digest in BOTH components is the EPOCH-1 derivation, carried deliberately: the galley daily and the night-watch logbook are the same daily and the same logbook. Recompute them with `1`, not `2`, in the preimage. Re-running scripts/poa-galley-content.py with CONTENT_EPOCH = 2 would derive a DIFFERENT daily_id and start a different daily; that is not what this is.",
+  "predecessor": {
+    "world": "poa/artifacts/galley/epoch-1/world.json",
+    "content_epoch": 1,
+    "note": "The signed activation must be counter = (epoch-1 counter + 1), kind advance, predecessor_head = SHA-256 of the epoch-1 signed envelope, same federation_id."
+  }
+}
