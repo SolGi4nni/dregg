@@ -3578,12 +3578,19 @@ async fn get_turn_proof(
 ///
 /// ⚠ THE ANCHOR CARRIES AN 8-FELT STATE COMMIT PAIR THAT IS **NOT** THE PROOF'S. The receipt's
 /// `pre_state_hash` / `post_state_hash` are the chip 8-felt consensus commitment under
-/// `state_commit::consensus_ctx` (whole-ledger `cells_root`, `iroot = empty_iroot()`); the
-/// full-turn proof publishes the rotated leg's commitment under a single-cell context ledger with
-/// the real receipt-chain `iroot`. They are two commitments of one transition and they differ —
-/// measured, both causes independently sufficient, in
+/// `state_commit::consensus_ctx`; the full-turn proof publishes the rotated leg's commitment
+/// under a context the prover assembles for itself. They are two commitments of one transition
+/// and they differ on **four** fields of `V9RotationContext`, each independently sufficient —
+/// `cells_root` (whole ledger vs a single-cell context ledger), `iroot` (`empty_iroot()` pinned
+/// vs three different logs across four producers), `revoked_root` (the executor's live root vs
+/// `empty_revoked_root_8()`, which the proof side has no parameter to thread) and `material`
+/// (`Default` vs a factory turn's installed `child_vk`). Measured cause by cause in
 /// `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`. Passing these to
 /// `verify_full_turn_bound` as `expected_old_commit` refuses every honest proof.
+///
+/// ⚑ This docblock said TWO causes until 2026-08-07, and said the proof "folds the real receipt
+/// chain" — true of exactly one producer, the ledgerless sovereign `cipherclerk`, whose artifacts
+/// this node never serves. The live commit path folds `[receipt.receipt_hash()]`, a one-entry log.
 ///
 /// * `200` + `anchor_status: "anchored"` — the anchor, postcard-hex.
 /// * `404` + `anchor_status: "not_committed"` — no committed turn under this hash.
@@ -3685,16 +3692,9 @@ async fn get_turn_anchor(
         threshold: attested_stored.threshold,
         federation_id: attested_stored.federation_id,
         receipt_stream_root: attested_stored.receipt_stream_root,
-        hybrid_quorum: attested_stored
-            .finalization_quorum
-            .iter()
-            .map(|qs| dregg_types::HybridQuorumSig {
-                pubkey: qs.voter,
-                signature: qs.signature,
-                ml_dsa_pubkey: qs.ml_dsa_pubkey.clone(),
-                pq_signature: qs.pq_signature.clone(),
-            })
-            .collect(),
+        hybrid_quorum: dregg_persist::hybrid_quorum_from_finalization_quorum(
+            &attested_stored.finalization_quorum,
+        ),
     };
 
     // The roster the SERVER claims. A holder that uses it is trusting this node to name its own

@@ -80,12 +80,33 @@
 //!    `turn/tests/iroot_wide_old_admits_new_rejects.rs::the_residual_is_a_gate_not_a_note`.
 //!    ⚑ **On THIS path it is a pinned constant** (the empty-log root — the ctx builder
 //!    below pins it, deliberately), so the classical anchor does not depend on the
-//!    receipt log at all and the width costs nothing here. It costs on the
-//!    **sovereign proof-carrying path**, where `sdk::cipherclerk` folds the agent's
-//!    REAL receipt chain in and `executor::atomic.rs:992-993` writes the resulting
-//!    commitments straight into `TurnReceipt::{pre,post}_state_hash`. Measured: two
-//!    well-formed receipt logs, one byte-identical signed anchor, 71,133 evaluations,
-//!    0.86 s.
+//!    receipt log at all and the width costs nothing here.
+//!
+//!    ⚠ **AND THE PATH THIS NOTE SAID IT DOES COST ON IS DEAD — measured 2026-08-07.**
+//!    The sentence that stood here was: *"It costs on the sovereign proof-carrying path,
+//!    where `sdk::cipherclerk` folds the agent's REAL receipt chain in and
+//!    `executor::atomic.rs:992-993` writes the resulting commitments straight into
+//!    `TurnReceipt::{pre,post}_state_hash`."* Those two lines are inside
+//!    `build_atomic_per_cell_receipt` (`atomic.rs:969`), whose three call sites sit in
+//!    `execute_atomic_sovereign` (`:1031`) and `execute_mixed_atomic` (`:1394`) — and BOTH of
+//!    those have only `#[cfg(test)]` / `turn/tests/*` callers. (⚠ `Executor::execute_atomic`,
+//!    which `docs/DESIGN-pi-authority.md` §4(d) lists for deletion, no longer exists at all:
+//!    `grep -rn 'fn execute_atomic'` returns only the `_sovereign` arm.)
+//!    **No live path writes a receipt-log-derived `iroot` into a signed `pre/post_state_hash`.**
+//!    The 71,133-evaluation collision is real about the FOLD, and
+//!    `iroot_wide_old_admits_new_rejects::the_residual_is_a_live_exhibited_break_at_head` is
+//!    real about the WIRE LANE — but that test builds its own synthetic limb vector, not
+//!    `consensus_state_commitment`, so it exhibits a collision of the chain FUNCTION, not of a
+//!    value any committee has signed. The one live consumer of a non-constant `iroot` is the
+//!    PROOF's published commit, which no verifier compares against anything
+//!    (`turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`).
+//!
+//!    ⚑ This decides the parked receipt-octet cutover rather than merely re-pricing it. If the
+//!    proving side converges onto THIS pin, `iroot` is a constant everywhere and lanes 1..7 of a
+//!    constant buy nothing — the cutover should be RETIRED. If instead the consensus side moves
+//!    to a real receipt-chain fold, the cutover becomes a hard PREREQUISITE, because landing the
+//!    fold first would put a 2^15.45-collision component inside the signed anchor for the first
+//!    time. Half-landing either is the failure mode.
 //! 4. **Cost.** `Ledger::root()` was an incrementally-maintained O(log n) leaf
 //!    patch. This anchor is O(n_cells) Poseidon2 for `cells_root` plus a
 //!    `CanonicalHeapTree8` rebuild per accumulator, twice per turn (pre + post).
@@ -141,6 +162,35 @@ use dregg_circuit::field::BabyBear;
 /// every other empty accumulator's sentinel, and a hand-restated constant is exactly the shape that
 /// drifts from its producer (this file's own history has three such notes that ended up wrong). It
 /// is a pin against an INDEPENDENT source now — the producer — not against a literal.
+///
+/// # ⚠ THIS IS ONE OF TWO CONTEXTS FOR THE SAME TRANSITION, AND THEY DISAGREE ON FOUR FIELDS
+///
+/// The full-turn proof's rotated leg publishes an 8-felt commit built under a DIFFERENT
+/// `V9RotationContext` — `node::turn_proving::rotation_witness_for_self_sovereign_impl` and its
+/// siblings. Measured cause by cause in
+/// `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`:
+///
+/// | field | here | proof side |
+/// |---|---|---|
+/// | `cells_root` | the WHOLE ledger | a single-cell context ledger holding only the actor |
+/// | `iroot` | `empty_iroot()`, pinned | three different logs across four producers |
+/// | `revoked_root` | the executor's LIVE `note_revoked.root8()` | `empty_revoked_root_8()`, unconditionally — there is no parameter to thread it |
+/// | `material` | `Default` | the installed `child_vk` on a factory turn's AFTER block |
+///
+/// So `TurnAnchorV1`'s committee-signed pair cannot be handed to
+/// `dregg_sdk::verify_full_turn_bound` as `expected_old_commit`: it refuses every honest proof,
+/// and both endpoint `CommitmentMismatch` teeth stay reflexive. Closing that is the alignment
+/// priced in `docs/DESIGN-pi-authority.md` §4(a) — and the surface it lands on is
+/// [`crate::rotation_witness::produce_in_ctx`], which takes a context instead of assembling one,
+/// so "hand the prover the executor's context" is one argument rather than a rewrite.
+///
+/// ⚑ Three of the four rows are FREE WITNESS VALUES in the AIR — `trace_rotated::fill_block`
+/// copies `cells_root` and `iroot` straight out of the producer witness, and
+/// `EffectVmEmitRotationV3.cellsRootGroupCol`'s own docstring records that only
+/// createCell/factory/spawn constrain the cells group. So converging the PROVING side costs no VK
+/// rotation and no descriptor re-emit. The fourth row, `material`, does NOT converge that way:
+/// `factoryV3Carriers` publishes the child-VK octet as PI 47..54, so the honest factory proof must
+/// carry it and it is THIS function that has to learn to — which moves the signed anchor.
 pub fn consensus_ctx(
     ledger: &Ledger,
     nullifier_root: Faithful8,
