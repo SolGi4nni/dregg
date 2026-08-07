@@ -294,6 +294,25 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          possession of an accepted opening, and a Rust re-typing of any of them would let a caller \
          post a contribution the crate never authorized and move the communal gauges",
     ),
+    // ⚑ LANDED 2026-08-07, in the same commit as the Lean `@[export]`
+    // (`Dregg2/Games/PathOfAngels/CrewFieldMissionAdmission.lean`) and the `Dregg2/FFI.lean`
+    // import that puts it in the archive closure — measured: the symbol is emitted into
+    // `.lake/build/ir/.../CrewFieldMissionAdmission.c` as `LEAN_EXPORT`, so this row cannot be
+    // the listed-but-absent panic on the day it lands.
+    (
+        "dregg_poa_crew_field_step",
+        "the Path of Angels CREW FIELD MISSION per-handoff read compiles out: world-scoped \
+         activation admission (the crew's roster, policy and content pack are what the audited \
+         world's content root commits to, never a caller argument), MINTING the ML-DSA-65 run \
+         seal from those admitted bytes, and replaying the signed transcript prefix through the \
+         kernel to derive the exact `preRoot` and canonical preimage the next seat must sign \
+         have no answer source. Every handoff must refuse; there is no Rust twin and there must \
+         never be one. A Rust re-derivation of the signing preimage would be the kernel \
+         reimplemented BY WHOEVER HOLDS THE KEYS, which is exactly the twin the 2026-08-06 weld \
+         deleted one layer in. ⚠ This export takes NO `RunSeal` argument by construction: the \
+         public `CrewFieldMission.fixtureRunSeal` accepts a byte pattern any reader can compute, \
+         so a seal-taking export would be `anyone completes any seat`",
+    ),
     (
         "dregg_poa_network_genesis",
         "the Path of Angels Signal NETWORK GENESIS ceremony compiles out: Lean cannot bind the \

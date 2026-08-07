@@ -80,6 +80,28 @@ import Dregg2.Games.PathOfAngels.StationDailyRuntime
 -- `SalvageCrateExamples`, `ShipInstrumentPanel`, `StationDailyRuntime`, `NetworkJudgeWire`,
 -- `Emit`, `Core`) is already in via the station READ above.
 import Dregg2.Games.PathOfAngels.StationCrateOpenRuntime
+-- The crew field mission's per-handoff READ, `dregg_poa_crew_field_step`. ⚑ 2026-08-07 — the
+-- FIRST export this organ has ever had, and it could not have existed before this module.
+-- `CrewFieldMissionRuntime.stepProcess` takes a pinned `Activation`, and the only public
+-- producer of one accepted a caller-supplied `CrewFieldMission.RunSeal` — while
+-- `CrewFieldMission.fixtureRunSeal` is PUBLIC and its verifier accepts a byte pattern any
+-- reader can compute. An export taking a seal was therefore "anyone completes any seat".
+-- `CrewFieldMissionAdmission` is the producer that takes NO seal: it admits the activation
+-- as a named component of an audited world's manifest and MINTS the seal from those bytes
+-- through `ProductionSigning.activate?`, which refuses the fixture suite structurally.
+-- Absent, the step route refuses and a signing client has no way to learn the exact
+-- `preRoot` and preimage bytes its key must sign except by REIMPLEMENTING the kernel's
+-- transition beside it — written by whoever holds the keys, which is the worse twin.
+-- Added 2026-08-07; **+1 module** to the closure (317 → 318) — MEASURED on the transitive
+-- import graph, and the measurement corrected a guess of +7. The ENTIRE crew cone was
+-- already in this closure and had been for some time: `CrewFieldMissionRuntime` arrives via
+-- `OfficerLogbook`, `CrewFieldMission` and `CrewSigningVectors` under it,
+-- `Crypto.MlDsaVerifyReal` via `Crypto.Fips204Verify`, `NightWatchCampaignAdmission` via
+-- `NightWatchCampaignWire`, `ActivatedContent` via `ActivatedContentRuntime`. So the organ
+-- was being COMPILED INTO THE ARCHIVE ALL ALONG and exported nothing — the dark-organ shape
+-- this file's header describes, costing its full compile time and offering no symbol. Only
+-- the admission module is new.
+import Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission
 import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime
 import Dregg2.Games.PathOfAngels.EventBatchRuntime

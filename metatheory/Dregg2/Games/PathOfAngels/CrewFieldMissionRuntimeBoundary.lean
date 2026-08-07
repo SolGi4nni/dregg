@@ -27,12 +27,14 @@ runtime's judgements agree with the kernel's on all inputs, and the fixture
 signature suite is non-cryptographic.  The evidence is the weld plus the
 `native_decide` cases in `CrewFieldMissionRuntime`, at that resolution.
 -/
+import Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission
 import Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.CrewFieldMissionRuntimeBoundary
 
 open Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime
+open Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission
 
 set_option autoImplicit false
 
@@ -197,6 +199,60 @@ theorem canonical_surface_stays_public : True := by
   have _ := @StepRequestWire.toJson
   trivial
 
+/-! ## ⚑ 2026-08-07 — the ADMISSION seam, ratcheted from an importer
+
+`stepProcess` above is public and takes a pinned `Activation`, and `Activation.mk` is
+private — so the whole question of who may run a crew's handoffs reduces to "which
+producers of `Activation` exist".  Until `CrewFieldMissionAdmission` there was exactly
+one usable answer and it was the wrong one: `CrewFieldMissionRuntime.activate?` accepts
+ANY caller-supplied `CrewFieldMission.RunSeal`, and the public
+`CrewFieldMission.fixtureRunSeal` is a seal whose verifier accepts a byte pattern any
+reader can compute.  That is why this organ carried no `@[export]`.
+
+`CrewFieldMissionAdmission.authorizeCrewActivationForWorld?` is the producer that takes
+NO seal: it mints one from the admitted bytes.  Its witness constructor is private so
+that it is the ONLY producer, and that privacy is ratcheted HERE rather than in the
+module itself, because a `private` name is visible inside its own module and the tooth
+would have passed while guarding nothing. -/
+
+theorem admission_witness_constructor_is_private : True := by
+  fail_if_success (have _ := WorldScopedCrewActivation.mk)
+  trivial
+
+/-- `decodeActivation` parses, re-encodes and demands byte equality.  The underlying
+parsers do not.  Exposed, they would give a caller a non-canonical decode path and make
+`decodeActivation_reencodes` a statement about a function nobody has to use. -/
+theorem admission_raw_activation_parser_is_private : True := by
+  fail_if_success (have _ := parseActivation)
+  trivial
+
+theorem admission_raw_session_parser_is_private : True := by
+  fail_if_success (have _ := parseSession)
+  trivial
+
+theorem admission_raw_content_parser_is_private : True := by
+  fail_if_success (have _ := parseContent)
+  trivial
+
+theorem admission_raw_step_envelope_parser_is_private : True := by
+  fail_if_success (have _ := parseStepEnvelope)
+  trivial
+
+/-- The admitted surface stays reachable.  ⚠ `mintSeal?` is public ON PURPOSE: it takes
+a `RawActivation` and returns a seal for THAT activation's own session, so it confers no
+authority a reader of the admitted bytes does not already have — and hiding it would
+hide the very function whose refusal IS the fixture-seal ban. -/
+theorem admitted_surface_stays_public : True := by
+  have _ := @decodeActivation
+  have _ := @activationJson
+  have _ := @authorizeCrewActivationForWorld?
+  have _ := @mintSeal?
+  have _ := @configOfSession
+  have _ := @decodeStepEnvelope
+  have _ := @stepForAdmittedWorld?
+  have _ := @stepWire
+  trivial
+
 #assert_axioms activation_constructor_is_private
 #assert_axioms activation_run_seal_field_is_private
 #assert_axioms raw_record_reconstructor_is_private
@@ -216,5 +272,11 @@ theorem canonical_surface_stays_public : True := by
 #assert_axioms rekeyed_crew_activation_is_private
 #assert_axioms hostile_market_content_fixture_is_private
 #assert_axioms canonical_surface_stays_public
+#assert_axioms admission_witness_constructor_is_private
+#assert_axioms admission_raw_activation_parser_is_private
+#assert_axioms admission_raw_session_parser_is_private
+#assert_axioms admission_raw_content_parser_is_private
+#assert_axioms admission_raw_step_envelope_parser_is_private
+#assert_axioms admitted_surface_stays_public
 
 end Dregg2.Games.PathOfAngels.CrewFieldMissionRuntimeBoundary
