@@ -235,8 +235,13 @@ fn cap_open_tb_member_roundtrips_live() {
     }
     assert_eq!(
         desc.public_input_count, CAP_OPEN_TB_PI_COUNT,
-        "TB carries {CAP_OPEN_TB_PI_COUNT} PIs (the rotated 46 + `src`) regardless of the pad \
-         (columns shift, PI indices never)"
+        "TB carries {CAP_OPEN_TB_PI_COUNT} PIs (the rotated ROT_PI_COUNT + `src`) regardless of \
+         the pad (columns shift, PI indices never). ⚑ THIS is the leg that catches a PI-layout \
+         move whose descriptors were never re-emitted: the two assertions above relate the TB \
+         member to its non-TB twin and hold at ANY geometry, while this one compares a COMMITTED \
+         `public_input_count` against the Rust constant and goes red the moment they disagree. \
+         The rotated prefix was 46 until the 2026-08-07 seven-slot PI compaction \
+         (`docs/PI-DISPOSITION.md` §6) and is 39 now"
     );
 
     let trusted_src = BabyBear::new(SRC_FELT);

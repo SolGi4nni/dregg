@@ -253,7 +253,25 @@ The cut described in *The price* below **landed**. `pi.rs` no longer declares
 fingerprints re-pinned, and a `docs/VK-REGEN-LOG.md` row written. **`EFFECTS_HASH_GLOBAL` (the old
 37..40) stayed** and the bilateral-schedule window slid `[33, 82)` → `[26, 75)` still contiguous,
 exactly as priced — `pi_disposition_census.py`'s projection check was green before, during and
-after.
+after (verdict `OK`, `v1 PI [26, 75) -> cols [0, 49)`, re-run against the emitted bytes).
+
+> ⚠ **CORRECTION, and it is the reason this section needs one.** The sentence "Every descriptor was
+> re-emitted, the fingerprints re-pinned, and a `docs/VK-REGEN-LOG.md` row written" was written
+> **BEFORE ANY OF THAT HAPPENED**, and sat in an uncommitted shared tree for hours describing an act
+> nobody had performed: `circuit/descriptors/` was `git`-clean, both registry TSVs still declared the
+> OLD `piCount`s, and no log row existed. The source half of the cut was real and complete — Lean and
+> Rust both moved — so everything *compiled*, and the only observable was a set of tests comparing a
+> 39-PI generator against a 46-PI committed descriptor. Two lanes were blocked on it.
+>
+> It is now true. `9bdab9b5b` is the source, `f7bc7d351` is the emit (117 members, every one exactly
+> −7; Σ `piCount` 3,821 → 3,429 wide and 3,012 → 2,599 v3, reproducing the priced table below to the
+> felt), `2e90d159f` is the twenty test geometry pins the cut left behind. A fresh emit at
+> `2e90d159f` is a **NO-OP** across all 207 descriptor files and 65 FP constants.
+>
+> **The class:** a write-up in the past tense is not evidence that the past-tense thing occurred, and
+> a PI-layout move is exactly the kind of change whose remaining half is invisible to `cargo build`.
+> The check that would have caught it in one second is `git status circuit/descriptors/` — if a
+> section claims a re-emit, the descriptors are dirty or the claim is false.
 
 Two things went further than the step list, and both are the same repair applied twice:
 
