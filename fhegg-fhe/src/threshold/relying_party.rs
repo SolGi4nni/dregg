@@ -47,6 +47,7 @@ use fhe_traits::DeserializeParametrized;
 
 use crate::bfv_lean::LeanCiphertext;
 use crate::mpc_party::transport::NativePqTransportIdentity;
+use crate::threshold::chunked::{chunk_domain, ChunkReassembler, ChunkStream};
 use crate::threshold::distributed::{
     decode_commit_response, encode_finalize_request, DistributedCommitteeError, DistributedDkg,
     SEQUENCE_COMMIT_RESPONSE, SEQUENCE_FINALIZE_REQUEST, SEQUENCE_FINALIZE_RESPONSE,
@@ -72,7 +73,30 @@ pub const KIND_COMMIT_REQUEST: u8 = 6;
 pub const KIND_FINALIZE_REQUEST: u8 = 7;
 
 /// The largest frame either side will send or accept.
+///
+/// NOT the cap that binds. The frame carries a SEALED envelope whose own
+/// plaintext ceiling is `MAX_NATIVE_PQ_AUXILIARY_BYTES` (8 MiB), and the commit
+/// response grows as `O(n^2 * degree)` straight into it. See [`super::chunked`];
+/// both oversized rounds are chunked under that smaller ceiling.
 pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Chunk-stream domain for the commit response (party -> relying party).
+/// Single-sourced here for the same reason the frame kinds are: the party binary
+/// and its caller must not be able to drift.
+pub fn commit_response_chunk_domain() -> [u8; 32] {
+    chunk_domain(b"fhegg/committee/commit-response/v2")
+}
+
+/// Chunk-stream domain for the finalize request (relying party -> party).
+pub fn finalize_request_chunk_domain() -> [u8; 32] {
+    chunk_domain(b"fhegg/committee/finalize-request/v2")
+}
+
+/// Finalize acknowledgement bodies. A chunked finalize must distinguish
+/// "accepted, still incomplete" from "custody finalized"; an EMPTY reply remains
+/// the universal refusal it already was.
+pub const FINALIZE_ACK_INCOMPLETE: u8 = 0;
+pub const FINALIZE_ACK_FINALIZED: u8 = 1;
 
 /// Write one length-prefixed frame: `kind(1) | sender(4 BE) | len(4 BE) | payload`.
 pub fn write_frame(
@@ -292,19 +316,42 @@ impl DistributedCommitteeClient {
         let mut party_secret_commitments: Vec<Vec<[u8; 32]>> = Vec::with_capacity(n);
         let mut binding_proofs: Vec<AggregateRowBindingProof> = Vec::with_capacity(n);
         for party in 0..n {
-            let sealed = self.request(party, KIND_COMMIT_REQUEST, &[])?;
-            if sealed.is_empty() {
-                return Err(RelyingPartyError::Transport(format!(
-                    "party {party} is not ready to publish its secret-share commitment"
-                )));
-            }
-            let message = self.dkg.open(
-                &self.identity,
-                party,
-                self.dkg.relying_party(),
-                SEQUENCE_COMMIT_RESPONSE,
-                &sealed,
-            )?;
+            // The commit response outgrows one sealed envelope, so it arrives as
+            // a chunk stream: ask for index 0, learn the geometry from it, keep
+            // asking until the reassembler yields. It yields ONLY if the bytes
+            // hash to the digest every chunk declared, so a party cannot hand
+            // back a payload that is not the one it chunked.
+            let mut reassembler = ChunkReassembler::new(commit_response_chunk_domain());
+            let mut index = 0usize;
+            let message = loop {
+                let sealed =
+                    self.request(party, KIND_COMMIT_REQUEST, &(index as u64).to_le_bytes())?;
+                if sealed.is_empty() {
+                    return Err(RelyingPartyError::Transport(format!(
+                        "party {party} is not ready to publish its secret-share commitment"
+                    )));
+                }
+                let chunk = self.dkg.open(
+                    &self.identity,
+                    party,
+                    self.dkg.relying_party(),
+                    SEQUENCE_COMMIT_RESPONSE,
+                    &sealed,
+                )?;
+                match reassembler.accept(&chunk).map_err(|error| {
+                    RelyingPartyError::Transport(format!(
+                        "party {party} commit-response chunk {index}: {error}"
+                    ))
+                })? {
+                    Some(payload) => break payload,
+                    None => index += 1,
+                }
+                if index >= reassembler.expected_count().unwrap_or(1) {
+                    return Err(RelyingPartyError::Transport(format!(
+                        "party {party} ran out of commit-response chunks before the payload closed"
+                    )));
+                }
+            };
             let (dealers, commitments, proof) =
                 decode_commit_response(&message, self.dkg.session(), self.dkg.params())?;
             match &dealer_commitments {
@@ -331,30 +378,46 @@ impl DistributedCommitteeClient {
         )
         .map_err(RelyingPartyError::Quorum)?;
 
-        let finalize_body = encode_finalize_request(&party_secret_commitments, &binding_proofs);
+        // The finalize request carries every party's commitment vector AND every
+        // binding proof, so it grows with the roster exactly as the commit
+        // response does. Same treatment: one chunk stream, pushed per party.
+        let finalize_stream = ChunkStream::new(
+            finalize_request_chunk_domain(),
+            encode_finalize_request(&party_secret_commitments, &binding_proofs),
+        );
         for party in 0..n {
-            let sealed = self.dkg.seal(
-                &self.identity,
-                self.dkg.relying_party(),
-                party,
-                SEQUENCE_FINALIZE_REQUEST,
-                &finalize_body,
-            )?;
-            let sealed_ack = self.request(party, KIND_FINALIZE_REQUEST, &sealed)?;
-            if sealed_ack.is_empty() {
+            let mut finalized = false;
+            for index in 0..finalize_stream.count() {
+                let chunk = finalize_stream.chunk(index).expect("index is in range");
+                let sealed = self.dkg.seal(
+                    &self.identity,
+                    self.dkg.relying_party(),
+                    party,
+                    SEQUENCE_FINALIZE_REQUEST,
+                    &chunk,
+                )?;
+                let sealed_ack = self.request(party, KIND_FINALIZE_REQUEST, &sealed)?;
+                if sealed_ack.is_empty() {
+                    return Err(RelyingPartyError::Transport(format!(
+                        "party {party} refused to finalize its verified custody"
+                    )));
+                }
+                // The ack is sealed and route-bound like everything else; opening it is
+                // the proof the answer came from the enrolled party, not a router.
+                let ack = self.dkg.open(
+                    &self.identity,
+                    party,
+                    self.dkg.relying_party(),
+                    SEQUENCE_FINALIZE_RESPONSE,
+                    &sealed_ack,
+                )?;
+                finalized = ack.first() == Some(&FINALIZE_ACK_FINALIZED);
+            }
+            if !finalized {
                 return Err(RelyingPartyError::Transport(format!(
-                    "party {party} refused to finalize its verified custody"
+                    "party {party} acknowledged every finalize chunk without finalizing its custody"
                 )));
             }
-            // The ack is sealed and route-bound like everything else; opening it is
-            // the proof the answer came from the enrolled party, not a router.
-            self.dkg.open(
-                &self.identity,
-                party,
-                self.dkg.relying_party(),
-                SEQUENCE_FINALIZE_RESPONSE,
-                &sealed_ack,
-            )?;
         }
         Ok(transcript)
     }

@@ -61,6 +61,7 @@ use fhegg_fhe::bfv_lean::LeanCiphertext;
 use fhegg_fhe::mpc_party::transport::{
     EqualityTransportRoster, NativePqTransportIdentity, NativePqTransportPublicIdentity,
 };
+use fhegg_fhe::threshold::chunked::{ChunkReassembler, ChunkStream};
 use fhegg_fhe::threshold::distributed::{
     decode_enrollment, decode_finalize_request, encode_commit_response, encode_enrollment,
     AcceptedDealing, DistributedDkg, DistributedPendingCustody, DistributedVerifiedCustody,
@@ -70,8 +71,9 @@ use fhegg_fhe::threshold::distributed::{
 };
 use fhegg_fhe::threshold::quorum::{AuthenticatedQuorumRoster, QuorumOpeningSession};
 use fhegg_fhe::threshold::relying_party::{
-    decode_open_request, KIND_COMMIT_REQUEST, KIND_CROSS, KIND_DEALING, KIND_FINALIZE_REQUEST,
-    KIND_OPEN_REQUEST, KIND_PUBLIC_KEY_REQUEST, KIND_SHUTDOWN,
+    commit_response_chunk_domain, decode_open_request, finalize_request_chunk_domain,
+    FINALIZE_ACK_FINALIZED, FINALIZE_ACK_INCOMPLETE, KIND_COMMIT_REQUEST, KIND_CROSS, KIND_DEALING,
+    KIND_FINALIZE_REQUEST, KIND_OPEN_REQUEST, KIND_PUBLIC_KEY_REQUEST, KIND_SHUTDOWN,
 };
 use fhegg_fhe::threshold::{BfvParams, MIN_SMUDGE_BITS};
 use rand::rngs::OsRng;
@@ -482,11 +484,15 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
         _ => dkg.deal(&identity, party),
     }
     .map_err(|error| format!("deal: {error}"))?;
-    let (own, sealed) = dealing.own();
+    // `relin_secret` is this dealer's own short `s_d`. It stays in this process
+    // for the whole run: the relinearization ceremony is the one step that
+    // cannot use the Lagrange custody row, and it runs on `s = sum_d s_d`.
+    // See `fhegg_fhe::threshold::distributed_relin` for why.
+    let (own, sealed, relin_secret) = dealing.own();
     eprintln!("party {party}: dealt in {:?}", started.elapsed());
 
     let mut accepted: Vec<AcceptedDealing> = vec![own];
-    for (recipient, message) in sealed {
+    for (recipient, message) in sealed.into_iter() {
         let address = peers
             .iter()
             .find(|(peer, _)| *peer == recipient)
@@ -504,8 +510,16 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
     // collective key and setup digest are captured independently so the collective-
     // key request is answerable across that transition.
     let mut setup_done = false;
+    // Held so `s_d` outlives the DKG and is available to a relinearization
+    // ceremony; it has no serializer or coefficient accessor and overwrites
+    // itself on drop.
+    let _relin_secret = relin_secret;
     let mut pending: Option<DistributedPendingCustody> = None;
     let mut custody: Option<Custody> = None;
+    // Chunked-round state. The commit response is built once and served by
+    // index; the finalize request is accumulated until its payload closes.
+    let mut commit_stream: Option<ChunkStream> = None;
+    let mut finalize_chunks = ChunkReassembler::new(finalize_request_chunk_domain());
     let mut collective_pk_bytes: Option<Vec<u8>> = None;
     let mut setup_digest: Option<[u8; 32]> = None;
 
@@ -603,28 +617,54 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
                 // Publish this party's PUBLIC aggregate-row commitment vector, its
                 // binding proof, and the full dealer commitments it accepted; the
                 // blindings stay in `pending`.
+                //
+                // The body outgrows one sealed envelope, so it is chunked. The
+                // stream is built ONCE and cached: every chunk of one response
+                // must carry the same digest, and rebuilding per request would
+                // also redo the whole encode for each round-trip.
                 let answer = match pending.as_ref() {
                     Some(ready) => {
-                        let body = encode_commit_response(
-                            ready.dealer_commitments(),
-                            ready.secret_share_commitments(),
-                            ready.binding_proof(),
-                        );
-                        dkg.seal(
-                            &identity,
-                            party,
-                            dkg.relying_party(),
-                            SEQUENCE_COMMIT_RESPONSE,
-                            &body,
-                        )
-                        .map_err(|error| format!("seal commit response: {error}"))?
+                        let stream = commit_stream.get_or_insert_with(|| {
+                            let stream = ChunkStream::new(
+                                commit_response_chunk_domain(),
+                                encode_commit_response(
+                                    ready.dealer_commitments(),
+                                    ready.secret_share_commitments(),
+                                    ready.binding_proof(),
+                                ),
+                            );
+                            // Printed so a run's own log shows whether chunking
+                            // is LOAD-BEARING here or a one-chunk no-op. A
+                            // payload past the 8 MiB envelope ceiling could not
+                            // have been sent at all before this.
+                            eprintln!(
+                                "party {party}: commit response {} bytes in {} chunk(s)",
+                                stream.total_len(),
+                                stream.count()
+                            );
+                            stream
+                        });
+                        // A malformed or out-of-range index is a refusal, not a
+                        // panic and not a silent chunk 0.
+                        match chunk_index(&message.payload).and_then(|i| stream.chunk(i)) {
+                            Some(chunk) => dkg
+                                .seal(
+                                    &identity,
+                                    party,
+                                    dkg.relying_party(),
+                                    SEQUENCE_COMMIT_RESPONSE,
+                                    &chunk,
+                                )
+                                .map_err(|error| format!("seal commit response: {error}"))?,
+                            None => Vec::new(),
+                        }
                     }
                     None => Vec::new(),
                 };
                 let _ = message.reply.send(answer);
             }
             KIND_FINALIZE_REQUEST => {
-                let answer = finalize_custody(
+                let answer = accept_finalize_chunk(
                     &dkg,
                     &identity,
                     party,
@@ -632,6 +672,7 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
                     &signing_key,
                     &mut pending,
                     &mut custody,
+                    &mut finalize_chunks,
                     &message.payload,
                 );
                 let _ = message.reply.send(answer);
@@ -664,6 +705,90 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
     }
 }
 
+/// The requested chunk index, or `None` if the request body is not exactly one
+/// little-endian `u64`. A malformed index is a refusal, never an implicit 0.
+fn chunk_index(payload: &[u8]) -> Option<usize> {
+    let raw: [u8; 8] = payload.try_into().ok()?;
+    usize::try_from(u64::from_le_bytes(raw)).ok()
+}
+
+/// Accept one finalize-request chunk.
+///
+/// The finalize request no longer fits one sealed envelope, so it arrives as a
+/// chunk stream. Each chunk is opened (route-bound, dually signed) and fed to the
+/// reassembler; custody is finalized ONLY on the chunk that closes the payload,
+/// and only if the reassembly hashes to the digest every chunk declared. An
+/// incomplete stream gets a sealed "not yet" ack, so the caller can tell it
+/// apart from a refusal, which stays the empty reply it always was.
+///
+/// A chunk that is refused leaves `pending` INTACT on purpose: the pre-chunking
+/// code consumed `pending` before it could fail, so one transient finalize error
+/// permanently bricked the party's verified path. Only a decode or finalize
+/// failure on the COMPLETE payload is terminal now.
+#[allow(clippy::too_many_arguments)]
+fn accept_finalize_chunk(
+    dkg: &DistributedDkg,
+    identity: &NativePqTransportIdentity,
+    party: usize,
+    party_keys: &[[u8; 32]],
+    signing_key: &SigningKey,
+    pending: &mut Option<DistributedPendingCustody>,
+    custody: &mut Option<Custody>,
+    chunks: &mut ChunkReassembler,
+    sealed: &[u8],
+) -> Vec<u8> {
+    if pending.is_none() {
+        return Vec::new();
+    }
+    let chunk = match dkg.open(
+        identity,
+        dkg.relying_party(),
+        party,
+        SEQUENCE_FINALIZE_REQUEST,
+        sealed,
+    ) {
+        Ok(chunk) => chunk,
+        Err(error) => {
+            eprintln!("party {party}: finalize open REFUSED: {error}");
+            return Vec::new();
+        }
+    };
+    let request = match chunks.accept(&chunk) {
+        Ok(Some(payload)) => payload,
+        Ok(None) => {
+            // Accepted, payload still open. Sealed so the caller can tell this
+            // apart from a refusal by the same route-bound proof as any answer.
+            return match dkg.seal(
+                identity,
+                party,
+                dkg.relying_party(),
+                SEQUENCE_FINALIZE_RESPONSE,
+                &[FINALIZE_ACK_INCOMPLETE],
+            ) {
+                Ok(sealed) => sealed,
+                Err(error) => {
+                    eprintln!("party {party}: seal finalize progress ack: {error}");
+                    Vec::new()
+                }
+            };
+        }
+        Err(error) => {
+            eprintln!("party {party}: finalize chunk REFUSED: {error}");
+            return Vec::new();
+        }
+    };
+    finalize_custody(
+        dkg,
+        identity,
+        party,
+        party_keys,
+        signing_key,
+        pending,
+        custody,
+        &request,
+    )
+}
+
 /// Consume `pending` into certificate-capable verified custody, once the collector
 /// has sent the whole committee's ordered commitment vectors. Returns the sealed
 /// acknowledgement, or an empty answer if the finalize is refused (a corrupted or
@@ -678,26 +803,13 @@ fn finalize_custody(
     signing_key: &SigningKey,
     pending: &mut Option<DistributedPendingCustody>,
     custody: &mut Option<Custody>,
-    sealed: &[u8],
+    request: &[u8],
 ) -> Vec<u8> {
     let Some(ready) = pending.take() else {
         return Vec::new();
     };
-    let request = match dkg.open(
-        identity,
-        dkg.relying_party(),
-        party,
-        SEQUENCE_FINALIZE_REQUEST,
-        sealed,
-    ) {
-        Ok(request) => request,
-        Err(error) => {
-            eprintln!("party {party}: finalize open REFUSED: {error}");
-            return Vec::new();
-        }
-    };
     let (commitments, binding_proofs) =
-        match decode_finalize_request(&request, dkg.session(), dkg.params()) {
+        match decode_finalize_request(request, dkg.session(), dkg.params()) {
             Ok(decoded) => decoded,
             Err(error) => {
                 eprintln!("party {party}: finalize decode REFUSED: {error}");
@@ -732,7 +844,7 @@ fn finalize_custody(
         party,
         dkg.relying_party(),
         SEQUENCE_FINALIZE_RESPONSE,
-        &[1],
+        &[FINALIZE_ACK_FINALIZED],
     ) {
         Ok(sealed) => sealed,
         Err(error) => {

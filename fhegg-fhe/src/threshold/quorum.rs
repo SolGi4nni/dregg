@@ -5651,7 +5651,7 @@ mod vss_tests {
         let mut inboxes: Vec<Vec<VerifiedPrivateDealerShare>> =
             (0..3).map(|_| Vec::new()).collect();
         for bundle in bundles {
-            let (_, _, rows) = bundle.into_distributed_parts();
+            let (_, _, rows, _relin_secret) = bundle.into_distributed_parts();
             for row in rows {
                 inboxes[row.recipient()].push(row);
             }

@@ -388,7 +388,7 @@ where
     for trial in 0..trials {
         let left = rng.next_u64() % (bound + 1);
         let right = rng.next_u64() % (bound + 1);
-        let mut encrypt =
+        let encrypt =
             |value: u64| -> Result<fhe::bfv::Ciphertext> {
                 let mut slots = vec![0u64; params.degree()];
                 slots[0] = value;

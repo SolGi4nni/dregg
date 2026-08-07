@@ -13,6 +13,10 @@
 
 pub use fhegg_core::threshold::*;
 
+/// Chunking for committee payloads that outgrow ONE sealed envelope. The binding
+/// cap is the 8 MiB envelope plaintext ceiling, not the 16 MiB TCP frame, and
+/// the commit response grows as `O(n^2 * degree)` straight into it.
+pub mod chunked;
 /// The `t < n` custody with parties in SEPARATE PROCESSES (uses `mpc_party` + `quorum`).
 pub mod distributed;
 /// Relinearization for the DISTRIBUTED committee, run on the additive-of-dealers
