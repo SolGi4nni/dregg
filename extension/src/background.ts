@@ -4326,6 +4326,15 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
   // Internal content-element port. page.ts exposes no method, and content.ts
   // rejects unknown page messages before they can reach this route.
   "dregg:poaGalley",
+  // ⚑ 2026-08-07 — ADDED AFTER AN END-TO-END DRIVE FOUND THEM MISSING. Both were
+  // fully implemented, dispatched in the message switch, and exposed by `page.ts`,
+  // and `content.ts` restricted them — every side correct, and THIS list is the one
+  // that decides. A judged Signal run could not be played from a browser at all
+  // ("dregg:signSignalSession is not available from page context"), while a read of
+  // page.ts + content.ts + the handler said the chain was complete. Reading four
+  // agreeing files cannot see a fifth that disagrees; only driving it can.
+  "dregg:signSignalSession",
+  "dregg:signOfferingTurn",
 ]);
 
 const POPUP_ONLY_METHODS = new Set<MessageType>([
