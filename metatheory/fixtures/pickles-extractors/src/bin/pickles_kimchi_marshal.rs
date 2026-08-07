@@ -429,9 +429,20 @@ fn prove_wrap() -> (
 /// commitments `KimchiWrapMain.RC_*` absorbed, and `export_step_tape`'s own — proved over kimchi's
 /// TEST SRS with **`OsRng`**, so not reproducible, and yet the source of the Lean chain fixture.
 /// All three had `prevs = 2`, `wComms = 15`, `tComms = 7`, so no shape check could see it. The rung
-/// moved to `stepmain_smoke_r8_finalize` (the top step rung, and the circuit the chain fixture was
-/// already about) so that ONE proof serves the forty, the wrap transcript and the chain; `tape`
-/// renders the Lean modules from this function's return value and nothing else.
+/// moved to `stepmain_step_r8_finalize` (the rung that publishes a real `Types.Step.Statement`) so
+/// that ONE proof serves the forty, the wrap transcript and the chain; `tape` renders the Lean
+/// modules from this function's return value and nothing else.
+///
+/// ⚠ ⚑ **AND THIS LINE READ `stepmain_smoke_r8_finalize.json` AT HEAD UNTIL 2026-08-06, WHILE THE
+/// COMMITTED ARTIFACT IT WRITES SAID OTHERWISE.** `KimchiStepWrapChainFixture.lean` declares
+/// `STEP_CIRCUIT = "stepmain_step_r8_finalize"`, `STEP_ROWS = 10347`, `STEP_PUBLIC = 67` and carries
+/// a 67-entry `STEP_PUBLIC_IN`; the smoke rung is 3 391 rows at **12** unconstrained `Fp` elements
+/// and has no packed statement at all. So the generator at HEAD did not reproduce its own generated
+/// file — re-running it would have silently replaced the 67-word statement fixture the whole wrap
+/// ladder is now about with a 12-word one, and every `native_decide` pin over `STEP_PUBLIC_IN` would
+/// have moved under it. The flag-day commit (`d79c2ce4b`) staged the artifact from a locally edited
+/// binary and the edit was never committed. A generated artifact whose generator cannot re-emit it
+/// is a fixture wearing a derivation's name.
 fn prove_step(
     srs: &poly_commitment::ipa::SRS<Vesta>,
 ) -> (
@@ -442,8 +453,20 @@ fn prove_step(
 ) {
     let c = load(&sibling(
         "pickles-stepmain-harness",
-        "stepmain_smoke_r8_finalize.json",
+        "stepmain_step_r8_finalize.json",
     ));
+    // ⚑ The generator now REFUSES a circuit that is not the one the committed artifact names.
+    // `tape.rs` writes `STEP_CIRCUIT`/`STEP_ROWS`/`STEP_PUBLIC` out of `c` itself, so without this
+    // the only symptom of loading the wrong rung is a regenerated file that quietly disagrees with
+    // every pin built on it.
+    assert_eq!(
+        c.name, "stepmain_step_r8_finalize",
+        "the step tape is about the statement-carrying rung"
+    );
+    assert_eq!(
+        c.public_input_size, 67,
+        "a `Types.Step.Statement` is 67 published entries"
+    );
     let gates = gates_of::<Fp>(&c);
     let witness = witness_of::<Fp>(&c);
     let mut index: ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>> =
