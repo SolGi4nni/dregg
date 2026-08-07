@@ -99,12 +99,15 @@ function fixture(genesis = emptyEconomyGenesis()) {
   };
 }
 
-test("genesis wrapper executes its isolation preflight and emits a pinned federation", () => {
-  const scratch = mkdtempSync(join(tmpdir(), "poa-devnet-genesis-test-"));
-  const root = join(scratch, "poa");
-  const mainDataDir = join(scratch, "main");
+/**
+ * A stand-in `dregg-node` that emits the ZERO-ISSUANCE descriptor: two
+ * zero-balance wells, no moves, no `player_grant` — and therefore, correctly, no
+ * `player-grant.key`. It ignores `--player-grant`, which is what
+ * `the genesis wrapper refuses a funded ceremony that produced no grant seed`
+ * uses it for.
+ */
+function writeZeroIssuanceFakeNode(scratch) {
   const fakeBin = join(scratch, "dregg-node");
-  mkdirSync(mainDataDir, { recursive: true });
   writeFileSync(
     fakeBin,
     `#!/usr/bin/env node
@@ -151,9 +154,12 @@ process.exit(99);
 `,
   );
   chmodSync(fakeBin, 0o755);
+  return fakeBin;
+}
 
+function runGenesisWrapper(root, mainDataDir, fakeBin, extraEnv = {}) {
   const script = join(process.cwd(), "scripts", "poa-devnet.sh");
-  const result = spawnSync("bash", [script, "genesis"], {
+  return spawnSync("bash", [script, "genesis"], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -163,8 +169,23 @@ process.exit(99);
       POA_VALIDATORS: "3",
       POA_HTTP_BASE: "8421",
       POA_GOSSIP_BASE: "9421",
+      ...extraEnv,
     },
   });
+}
+
+test("genesis wrapper executes its isolation preflight and emits a pinned federation", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "poa-devnet-genesis-test-"));
+  const root = join(scratch, "poa");
+  const mainDataDir = join(scratch, "main");
+  mkdirSync(mainDataDir, { recursive: true });
+  const fakeBin = writeZeroIssuanceFakeNode(scratch);
+
+  // POA_PLAYER_GRANT=0 because the fixture descriptor IS the zero-issuance
+  // shape. Under the funded default the wrapper and the fake would disagree
+  // about what the ceremony produced, and that disagreement is the subject of
+  // the next test rather than something this one should carry silently.
+  const result = runGenesisWrapper(root, mainDataDir, fakeBin, { POA_PLAYER_GRANT: "0" });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /PoA federation ready/);
   assert.equal(verifyManifest({
@@ -174,6 +195,31 @@ process.exit(99);
     gossipBase: 9421,
     hosts: ["127.0.0.1", "127.0.0.1", "127.0.0.1"],
   }).federation_id, "a1".repeat(32));
+});
+
+/**
+ * ⚑ CUSTODY. Since 2026-08-07 the player-grant seed is DRAWN by
+ * `dregg-node genesis` — 32 random bytes, mode 600 — rather than derived from
+ * the descriptor's public `(deployment_domain, federation_id)`, which anyone who
+ * could read `genesis.json` could recompute. `bundle/player-grant.key` is now the
+ * SOLE COPY of the key that spends the grant, so a funded ceremony that did not
+ * produce one has silently issued value nobody can ever move.
+ *
+ * The zero-issuance fake is exactly that failure: asked for a funded federation,
+ * it writes a descriptor and no grant seed. The wrapper must refuse rather than
+ * print "PoA federation ready".
+ */
+test("genesis wrapper refuses a funded ceremony that produced no grant seed", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "poa-devnet-grant-custody-test-"));
+  const root = join(scratch, "poa");
+  const mainDataDir = join(scratch, "main");
+  mkdirSync(mainDataDir, { recursive: true });
+  const fakeBin = writeZeroIssuanceFakeNode(scratch);
+
+  const result = runGenesisWrapper(root, mainDataDir, fakeBin, { POA_PLAYER_GRANT: "1000000" });
+  assert.notEqual(result.status, 0, "a funded ceremony with no grant seed must not report ready");
+  assert.match(result.stderr, /player-grant\.key/);
+  assert.doesNotMatch(result.stdout, /PoA federation ready/);
 });
 
 test("genesis wrapper refuses overlapping storage before invoking dregg-node", () => {
