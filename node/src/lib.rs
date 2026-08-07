@@ -75,6 +75,11 @@ mod faucet_grant_e2e;
 // client's OWN first turn → finalized, asserted on the authoritative ledger.
 #[cfg(test)]
 mod first_turn_e2e;
+// THE MILESTONE: `latest_height` 0 → 1 with a real JUDGED Signal turn, driven end
+// to end through the genuine slot ceremony, the public claims route, and the solo
+// consensus loop — the one public number that says a Path of Angels game settled.
+#[cfg(test)]
+mod poa_signal_first_turn_e2e;
 // WHAT DOES A FAILED FULL-TURN PROOF LEAVE? The commit-anyway fork is NOT settled
 // there; what is pinned is that the failure is durable, served as 410, and never
 // reported as `ProofPending`.
