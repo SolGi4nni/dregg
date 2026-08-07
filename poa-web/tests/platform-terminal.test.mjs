@@ -44,8 +44,8 @@ const readyContent = Object.freeze({
   state: "ready",
   manifestDigest: `sha256:${"ab".repeat(32)}`,
   epoch: 1,
-  counter: 7,
-  missionCount: 3,
+  counter: 8,
+  missionCount: 4,
 });
 
 test("the home terminal reads the exact installed provenance and replay sources", async () => {
@@ -101,7 +101,7 @@ test("seven platform organs expose separate evidence grades instead of launderin
     "NO SETTLEMENT",
     "VERSIONED NODE",
   ]);
-  assert.match(model.surfaces[0].copy, /3 authenticated drills/);
+  assert.match(model.surfaces[0].copy, /4 authenticated drills/);
   assert.match(model.surfaces[0].grade.detail, /rules, not a played run/);
   assert.match(model.surfaces[3].grade.detail, /not a finality proof/);
   assert.deepEqual(model.register.map(({ id }) => id), ["content", "run", "expedition", "archive", "replay"]);

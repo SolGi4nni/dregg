@@ -45,9 +45,10 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
 
 - `src/poag1.js` validates and pins the envelope; `src/content-epoch.js`
   authenticates its exact bytes and rejects epoch/counter rollback.
-- `src/mission-catalog.js` accepts exactly Signal, Relay, and Salvage from one
-  authenticated content epoch, checks their shared three-descriptor content
-  root, manifest-bound beta artifacts, zero-economy policy, and preview shapes.
+- `src/mission-catalog.js` accepts exactly Signal, Relay, Salvage, and Black Box
+  from one authenticated content epoch, checks their shared four-descriptor
+  content root, manifest-bound beta artifacts, zero-economy policy, and preview
+  shapes.
 - `src/mission-launcher.js` is the exhaustive controller switch, and its
   `INSTALLED_GAME_IDS` is the single list of games this client can play. Unknown
   games and catalog/descriptor mismatches refuse; neither can fall back to
@@ -92,7 +93,7 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
 - The curator panel is a preview/inspection surface. Signing and canon
   promotion remain the responsibility of the curator tool and capability.
 
-A drill opens only after the five-file manifest, curator activation, complete
+A drill opens only after the six-file manifest, curator activation, complete
 catalog, and every descriptor validate; until then its card is a sealed slot. A
 browser transcript is not a RunReceipt and does not grant score, contribution,
 salvage, ranking, or canon status — the end screen's ladder says so on every

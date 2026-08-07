@@ -54,18 +54,33 @@ async function canonicalDescriptors() {
   };
 }
 
-test("the exact unsigned candidate catalog is ready for three-game activation", async () => {
+test("the exact unsigned candidate catalog is ready for four-game activation", async () => {
   const missions = await loadMissionCatalog(await canonicalUnsignedBundle());
-  assert.deepEqual(missions.map((mission) => mission.gameId), ["signal-triangulation", "relay-repair", "salvage-lock"]);
+  assert.deepEqual(missions.map((mission) => mission.gameId), ["signal-triangulation", "relay-repair", "salvage-lock", "black-box-reconstruction"]);
   assert.ok(missions.every((mission) => mission.rewardClass === "non-economic-demo" && mission.ballotRegime === "none"));
   // ⚠ Every mission binds a per-run hidden draw. Before counter 7 each carried a
   // `run_seed` in this same unauthenticated-readable file, which named the live
   // instance of every game in the bundle.
   assert.ok(missions.every((mission) => mission.instanceBinding === "per-run-hidden-draw"));
-  assert.deepEqual(missions.map((mission) => mission.instanceDisclosure), ["oracle-only", "per-run-open", "oracle-only"]);
+  assert.deepEqual(missions.map((mission) => mission.instanceDisclosure), ["oracle-only", "per-run-open", "oracle-only", "oracle-only"]);
   const catalog = (await canonicalUnsignedBundle()).payloads["catalog.json"].json;
   assert.ok(catalog.missions.every((mission) => !("run_seed" in mission)));
   assert.ok(catalog.fixtures.every((fixture) => !("run_seed" in fixture)));
+});
+
+test("the pre-Black-Box three-mission catalog is refused, not accepted as a subset", async () => {
+  const bundle = await canonicalUnsignedBundle();
+  const catalog = structuredClone(bundle.payloads["catalog.json"].json);
+  // The old shape: signal, relay, salvage and their three fixtures, without the
+  // fourth mission. The count pin now demands four, so this must refuse.
+  catalog.missions = catalog.missions.filter((mission) => mission.mission_id !== 4);
+  catalog.fixtures = catalog.fixtures.filter((fixture) => fixture.mission_id !== 4);
+  assert.equal(catalog.missions.length, 3);
+  const altered = {
+    ...bundle,
+    payloads: { ...bundle.payloads, "catalog.json": { ...bundle.payloads["catalog.json"], json: catalog } },
+  };
+  await assert.rejects(loadMissionCatalog(altered), { code: "catalog-missions" });
 });
 
 test("canonical Lean-emitted Relay and Salvage bytes match the strict web consumers", async () => {

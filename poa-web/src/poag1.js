@@ -7,18 +7,20 @@ export const POAG1_FORMAT = "POAG1";
 export const POAG1_SCHEMA_VERSION = 1;
 export const POAG1_AUTHORITY = "Dregg2.Games.PathOfAngels";
 /**
- * The exact artifact set, in the exact order `canonicalArtifacts` emits it.
+ * The exact artifact set, in the exact order `canonicalArtifacts` emits it —
+ * path-ascending after the schema and catalog, so `black-box-reconstruction`
+ * sorts before `relay-repair`.
  *
- * ⚠ FIVE, and the count is refused, not warned about. Black Box's controller is
- * installed in `mission-launcher.js` and its card is on the rack as a SEALED
- * slot — that is not a reason to add a sixth entry here. This list is widened to
- * the exact new set when the orchestrator lands the re-emitted bundle, against
- * the bytes that actually shipped; widening it first would mean this client
- * accepting a shape nothing has produced.
+ * ⚠ SIX, and the count is refused, not warned about. Black Box's descriptor
+ * landed in the curator-signed counter-8 bundle, so it is enrolled here against
+ * the bytes that actually shipped. This list is the exact emitted set: widening
+ * it beyond what the manifest carries would mean this client accepting a shape
+ * nothing has produced.
  */
 export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
   Object.freeze({ path: "schema.json", mediaType: "application/schema+json" }),
   Object.freeze({ path: "catalog.json", mediaType: "application/json" }),
+  Object.freeze({ path: "games/black-box-reconstruction.json", mediaType: "application/json" }),
   Object.freeze({ path: "games/relay-repair.json", mediaType: "application/json" }),
   Object.freeze({ path: "games/salvage-lock.json", mediaType: "application/json" }),
   Object.freeze({ path: "games/signal-triangulation.json", mediaType: "application/json" }),
@@ -118,7 +120,7 @@ async function checkedFetch(fetcher, url, label) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-/** Load, byte-pin, and parse the exact five-object POAG1 bundle. */
+/** Load, byte-pin, and parse the exact six-object POAG1 bundle. */
 export async function loadPOAG1({
   baseUrl = new URL("../public/artifacts/poag1/", import.meta.url),
   fetcher = globalThis.fetch,

@@ -14,9 +14,10 @@ import {
 import { mountBlackBox } from "../src/blackbox-controller.js";
 import { blackBoxFixture, blackBoxMission, blackBoxOpening } from "./blackbox-fixture.mjs";
 
-// ⚠ These run against a HAND-BUILT fixture. See tests/blackbox-fixture.mjs:
-// the Lean descriptor is not emitted or committed, so nothing here proves the
-// consumer parses the bytes Lean writes.
+// These run against the SHIPPED descriptor bytes: `blackBoxFixture` now clones
+// `poa/artifacts/poag1/games/black-box-reconstruction.json` (see
+// tests/blackbox-fixture.mjs), so a green test here means the consumer parses
+// the bytes the Lean emitter actually wrote, not a hand-built mirror of them.
 
 const load = (game = blackBoxFixture(), mission = blackBoxMission()) => loadBlackBoxDescriptor(game, mission);
 

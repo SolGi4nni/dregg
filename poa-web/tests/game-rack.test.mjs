@@ -15,7 +15,6 @@ import {
 import { INSTALLED_GAME_IDS } from "../src/mission-launcher.js";
 import { SHAPES, descriptorShape } from "../src/descriptor-shape.js";
 import { canonicalDescriptors } from "./canonical-descriptors.mjs";
-import { blackBoxFixture } from "./blackbox-fixture.mjs";
 
 class FakeElement {
   constructor(tagName) {
@@ -107,7 +106,7 @@ test("the shape a record claims is the shape the emitted descriptor actually has
     ["signal-triangulation", JSON.parse(await readFile(new URL("signal-triangulation.json", games), "utf8"))],
     ["relay-repair", JSON.parse(await readFile(new URL("relay-repair.json", games), "utf8"))],
     ["salvage-lock", JSON.parse(await readFile(new URL("salvage-lock.json", games), "utf8"))],
-    ["black-box-reconstruction", blackBoxFixture()],
+    ["black-box-reconstruction", JSON.parse(await readFile(new URL("black-box-reconstruction.json", games), "utf8"))],
   ];
   for (const [gameId, doc] of emitted) {
     assert.equal(byGame.get(gameId).shape, descriptorShape(doc), `${gameId}'s card claims a shape its descriptor does not have`);
@@ -121,14 +120,19 @@ test("the signed catalog decides what is open; a presentation record cannot enro
   assert.equal(cards.length, GAME_RACK.length);
   for (const card of cards) assert.ok(CARD_STATES.includes(card.state));
 
-  for (const gameId of ["signal-triangulation", "relay-repair", "salvage-lock"]) {
+  for (const gameId of ["signal-triangulation", "relay-repair", "salvage-lock", "black-box-reconstruction"]) {
     assert.equal(byGame.get(gameId).state, "open");
     assert.equal(byGame.get(gameId).playable, true);
     assert.equal(byGame.get(gameId).seal, null);
   }
-  // Installed, not enrolled: the honest sealed slot, not a hidden card.
-  assert.equal(byGame.get("black-box-reconstruction").state, "sealed");
-  assert.match(byGame.get("black-box-reconstruction").seal.label, /AWAITING CURATOR ACTIVATION/);
+  // Black Box is now enrolled by the signed counter-8 catalog and installed, so
+  // it opens like the rest. The honest sealed slot — installed but NOT enrolled —
+  // is still a real state, checked directly against a catalog that withholds it:
+  // a presentation record still cannot enrol its own game.
+  const withheld = buildRack({ missions: missions.filter((mission) => mission.gameId !== "black-box-reconstruction"), installed: INSTALLED_GAME_IDS });
+  const sealedBlackBox = withheld.find((card) => card.gameId === "black-box-reconstruction");
+  assert.equal(sealedBlackBox.state, "sealed");
+  assert.match(sealedBlackBox.seal.label, /AWAITING CURATOR ACTIVATION/);
   // Neither installed nor enrolled: a berth, and it claims no length.
   assert.equal(byGame.get("vent-crawl").state, "reserved");
   assert.equal(byGame.get("vent-crawl").sessionLabel, "LENGTH NOT DECLARED");

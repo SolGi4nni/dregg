@@ -74,6 +74,7 @@ test("the dev server serves everything the client actually fetches", async () =>
     for (const path of [
       "/artifacts/poag1/catalog.json",
       "/artifacts/poag1/manifest.sig.json",
+      "/artifacts/poag1/games/black-box-reconstruction.json",
       "/artifacts/poag1/games/relay-repair.json",
       "/artifacts/poag1/games/salvage-lock.json",
       "/artifacts/poag1/games/signal-triangulation.json",

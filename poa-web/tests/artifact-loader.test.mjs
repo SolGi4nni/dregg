@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ArtifactRefusal, fnv1a64, loadPOAG1, sha256Hex, validateManifest } from "../src/poag1.js";
+import { loadMissionCatalog } from "../src/mission-catalog.js";
 import { POA_EXPECTED_CONTENT_EPOCH, POA_EXPECTED_CURATOR_COUNTER } from "../src/trust-config.js";
 import { actualBundleFiles, actualFetch, fetchMap } from "./actual-bundle.mjs";
 
@@ -25,10 +26,55 @@ test("loads the actual curator-authenticated Lean-emitted POAG1 bundle", async (
   assert.deepEqual(Object.keys(bundle.payloads), [
     "schema.json",
     "catalog.json",
+    "games/black-box-reconstruction.json",
     "games/relay-repair.json",
     "games/salvage-lock.json",
     "games/signal-triangulation.json",
   ]);
+});
+
+test("the client accepts the curator-signed counter-8 four-game bundle end to end", async () => {
+  const bundle = await loadPOAG1({
+    baseUrl: "https://poa.test/artifacts/poag1/",
+    curatorKeyUrl: "https://poa.test/poa-curator-key.json",
+    expectedContentEpoch: POA_EXPECTED_CONTENT_EPOCH,
+    expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
+    fetcher: await actualFetch(),
+  });
+  assert.equal(bundle.contentEpoch.counter, 8);
+  assert.equal(bundle.manifest.artifacts.length, 6);
+  const missions = await loadMissionCatalog(bundle);
+  assert.deepEqual(missions.map((mission) => mission.gameId), [
+    "signal-triangulation",
+    "relay-repair",
+    "salvage-lock",
+    "black-box-reconstruction",
+  ]);
+  const blackBox = missions.find((mission) => mission.gameId === "black-box-reconstruction");
+  assert.equal(blackBox.missionId, 4);
+  assert.equal(blackBox.ruleset, "blackbox-v2");
+  assert.equal(blackBox.actionLimit, 15);
+  assert.equal(blackBox.instanceDisclosure, "oracle-only");
+});
+
+test("the previous five-artifact shape is refused now that Black Box is enrolled", async () => {
+  const files = await actualBundleFiles();
+  const manifest = JSON.parse(new TextDecoder().decode(files.manifest));
+  // The old bundle carried no Black Box descriptor. Drop it, and the count pin
+  // that was widened to six must refuse the five-artifact set rather than warn.
+  manifest.artifacts = manifest.artifacts.filter((pin) => pin.path !== "games/black-box-reconstruction.json");
+  assert.equal(manifest.artifacts.length, 5);
+  assert.throws(() => validateManifest(manifest), { code: "artifact-set" });
+});
+
+test("a curator counter below the deployment pin is refused as a rollback", async () => {
+  await expectRefusal(loadPOAG1({
+    baseUrl: "https://poa.test/artifacts/poag1/",
+    curatorKeyUrl: "https://poa.test/poa-curator-key.json",
+    expectedContentEpoch: POA_EXPECTED_CONTENT_EPOCH,
+    expectedCounter: POA_EXPECTED_CURATOR_COUNTER - 1,
+    fetcher: await actualFetch(),
+  }), "counter-rollback");
 });
 test("refuses a missing artifact instead of falling back", async () => {
   const files = await actualBundleFiles();

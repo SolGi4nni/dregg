@@ -2,21 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { SHAPES, descriptorShape } from "../src/descriptor-shape.js";
-import { blackBoxFixture } from "./blackbox-fixture.mjs";
 
 const games = new URL("../../poa/artifacts/poag1/games/", import.meta.url);
 const emitted = async (file) => JSON.parse(await readFile(new URL(file, games), "utf8"));
 
 test("every emitted descriptor classifies by shape, not by its game id", async () => {
-  const [signal, relay, salvage] = await Promise.all([
+  const [signal, relay, salvage, blackBox] = await Promise.all([
     emitted("signal-triangulation.json"),
     emitted("relay-repair.json"),
     emitted("salvage-lock.json"),
+    emitted("black-box-reconstruction.json"),
   ]);
   assert.equal(descriptorShape(signal), SHAPES.deduction);
   assert.equal(descriptorShape(relay), SHAPES.machineFamily);
   assert.equal(descriptorShape(salvage), SHAPES.parametric);
-  assert.equal(descriptorShape(blackBoxFixture()), SHAPES.probeOracle);
+  assert.equal(descriptorShape(blackBox), SHAPES.probeOracle);
 
   // Renaming a descriptor does not move it: the shape is read, not declared.
   assert.equal(descriptorShape({ ...relay, game_id: "salvage-lock" }), SHAPES.machineFamily);
