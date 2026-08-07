@@ -130,10 +130,38 @@ test("the session response fields are exactly the ones the node serves, in both 
   // noticing that the thing it renders changed shape.
   const known = Object.keys(sessionDocument()).sort();
   assert.deepEqual(served.slice().sort(), known);
+});
+
+/**
+ * ⚑ EXPECTED RED UNTIL THE NODE-SIDE TRANSCRIPT WORK IS COMMITTED.
+ *
+ * This client is built against a settlement that names the whole played
+ * TRANSCRIPT, because that is what closes the blind path: a claim carrying only
+ * a code is one the node did not watch anybody earn, and
+ * `verify_claim_transcript_was_played` refuses it. That mechanism is real and is
+ * in the shared working tree — it is NOT in `47cf23360` or `e1410b0f8`, and at
+ * those commits `PoaSignalSessionSettlementV1` still has only `code` and
+ * `verify_claim_transcript_was_played` does not exist at all.
+ *
+ * The client deliberately does NOT accept both shapes. Two shapes that agree
+ * today are two shapes that disagree later, and the code-only one is the path
+ * that was closed on purpose. So this pin reds against a tree where the node
+ * half has not landed, and that red is the honest report of a real split —
+ * not a flake to route around. It goes green when the sibling lands.
+ */
+test("the settlement names the played transcript, not just the solving code", async () => {
+  const rust = await readFile(new URL("../../node/src/poa_signal_session.rs", import.meta.url), "utf8");
   const settlement = rust.slice(rust.indexOf("pub struct PoaSignalSessionSettlementV1"));
-  const settlementFields = [...settlement.slice(0, settlement.indexOf("\n}")).matchAll(/pub (\w+):/g)].map((m) => m[1]);
-  assert.deepEqual(settlementFields.slice().sort(),
-    ["claims_route", "code", "method", "mission_id", "note", "transcript"]);
+  const fields = [...settlement.slice(0, settlement.indexOf("\n}")).matchAll(/pub (\w+):/g)].map((m) => m[1]);
+  assert.deepEqual(
+    fields.slice().sort(),
+    ["claims_route", "code", "method", "mission_id", "note", "transcript"],
+    "the node's settlement has no `transcript` field, so the node-side transcript work is not in this " +
+    "tree. This client is built against the transcript-carrying settlement on purpose; see the docblock.",
+  );
+  const adapter = await readFile(new URL("../../node/src/poa_signal_adapter.rs", import.meta.url), "utf8");
+  assert.match(adapter, /fn verify_claim_transcript_was_played/,
+    "the gate that makes a session the only way to settle is absent from this tree");
 });
 
 // ── The document, checked field by field ──────────────────────────────────────
