@@ -299,8 +299,15 @@ fn the_demo_challenges_are_not_degenerate() {
     let scalar = PastaCurve::Vesta.scalar();
     assert_eq!(chals.len(), 3, "2^3 = 8 coefficients tile the eight rows");
     for (k, c) in chals.iter().enumerate() {
-        assert!(*c < scalar, "challenge {k} is not reduced at the Vesta scalar prime");
-        assert!(*c > U256::from_u64(1), "challenge {k} is degenerate: {}", c.to_dec());
+        assert!(
+            *c < scalar,
+            "challenge {k} is not reduced at the Vesta scalar prime"
+        );
+        assert!(
+            *c > U256::from_u64(1),
+            "challenge {k} is degenerate: {}",
+            c.to_dec()
+        );
     }
     assert_ne!(chals[0], chals[1]);
     assert_ne!(chals[1], chals[2]);
@@ -322,7 +329,11 @@ fn the_declared_manifest_is_the_pinned_srs_scaled_by_the_challenges() {
 
     let chals = challenges();
     let idx = generator_indices();
-    assert_eq!(idx, (0..ROWS).collect::<Vec<_>>(), "the demo routes G_0..G_7");
+    assert_eq!(
+        idx,
+        (0..ROWS).collect::<Vec<_>>(),
+        "the demo routes G_0..G_7"
+    );
 
     let s = b_poly_coefficients_at(&scalar, &chals);
     assert_eq!(s.len(), 1 << chals.len());
@@ -533,7 +544,10 @@ fn the_bus_is_not_refusing_everything_and_is_not_the_only_refusal() {
     prove_and_verify_adversarial(&d, &t, &pis).expect("(1) the honest chain balances the bus");
 
     let before = cells(SRS_TRACE)[3][ADD_X];
-    assert!(before + 1 < 256, "the bump stays inside the 8-bit limb width");
+    assert!(
+        before + 1 < 256,
+        "the bump stays inside the 8-bit limb width"
+    );
     let mut bumped = t.clone();
     bumped[3][ADD_X] = BabyBear::new(u32::try_from(before + 1).unwrap());
 
