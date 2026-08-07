@@ -132,11 +132,29 @@ theorem successful_result_constructor_is_private : True := by
   fail_if_success (have _constructor := @OpenResult.mk)
   trivial
 
+/-- ⚑ The capability that gates `openCrate` cannot be minted from outside the
+crate.  This is the whole reason the write path is "reachable-through-authorization,
+not reachable-by-anyone": `genesis`/`genesisCapability` and an accepted transition's
+successor capability are the only producers, all inside `SalvageCrate`.  Making
+`CurrentStateCapability.mk` public turns this red — and would hand every importer a
+capability for any state it could name. -/
+theorem current_state_capability_constructor_is_private : True := by
+  fail_if_success (have _constructor := @CurrentStateCapability.mk)
+  trivial
+
+/-- Likewise the finality adapter's capability: only `finalityCapability` (this
+module's single producer) mints it. -/
+theorem finality_capability_constructor_is_private : True := by
+  fail_if_success (have _constructor := @FinalityCapability.mk)
+  trivial
+
 #assert_compiled authored_rotation_config_valid
 #assert_compiled generated_rotation_has_every_authored_period
 #assert_compiled generated_rotation_has_no_draw_exhaustion
 #assert_compiled generated_rotation_is_deterministic
 #assert_axioms persistent_state_constructor_is_private
 #assert_axioms successful_result_constructor_is_private
+#assert_axioms current_state_capability_constructor_is_private
+#assert_axioms finality_capability_constructor_is_private
 
 end Dregg2.Games.PathOfAngels.SalvageCrateExamples

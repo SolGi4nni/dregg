@@ -353,9 +353,56 @@ theorem receipt_period_is_the_consumed_period {config : Config}
     result.receipt.period = envelope.expectedPeriod :=
   result.period_exact
 
-/-- Minted outside this module only after authenticating the current global root.
-The index prevents a capability for one state from authorizing another. -/
-opaque CurrentStateCapability {config : Config} (state : State config) : Type
+/-- The right to open against a specific global state.  This used to be `opaque`
+with **no producer anywhere in the tree**, so `openCrate` was unreachable by type
+and the daily ritual "moved nothing because nothing could call it".  It is now a
+SEALED structure whose constructor is `private`: no module outside this one can
+mint it, and there is no `State` an outside caller could pair it with anyway
+(`State.mk` is private).  Its only producers are `genesis` — the state adapter's
+one-time install — and the successor capability an ACCEPTED transition hands back
+(`OpenResult.nextCapability`, `AdvanceResult.capability`).  So `openCrate` is
+reachable exactly through a genesis-rooted chain of accepted transitions:
+reachable-through-authorization, never reachable-by-anyone. -/
+structure CurrentStateCapability {config : Config} (_state : State config) where
+  private mk ::
+
+/-- The first authored beacon's period — the natural install point, and always a
+valid current period because `configValidB` proves the schedule is nonempty and
+`beaconByPeriod?` finds it there. -/
+def genesisPeriod (config : Config) : EpochId :=
+  match config.raw.beacons.head? with
+  | some beacon => beacon.period
+  | none => config.raw.opensAt
+
+/-- ⭐ THE STATE ADAPTER'S GENESIS — the ship exactly as installed.  No period
+consumed, sequence zero, every player counter zero, positioned at the first
+authored beacon.  This is the ONE rooted producer of a `State`; every other state
+is an accepted transition's successor, so the append-only `consumed` set can never
+be rewound by a caller who fabricated a fresh empty state — there is no such
+caller, because `State.mk` is private.  A runtime replays from here over its
+durable, node-authenticated open log; genesis is an install, not a per-request
+mint of arbitrary states. -/
+def genesis (config : Config) : State config where
+  configIdentity := config.raw
+  currentPeriod := genesisPeriod config
+  sequence := 0
+  consumed := ∅
+  playerCounters := PlayerCounterTable.empty
+
+/-- The genesis capability, minted here at the install through the private
+constructor no other module can reach. -/
+def genesisCapability (config : Config) : CurrentStateCapability (genesis config) :=
+  CurrentStateCapability.mk
+
+/-- The successor capability an accepted opening hands back.  It exists only for a
+state that is literally an accepted `OpenResult.after`, so a runtime can thread
+`(state, capability)` across a replay of many opens WITHOUT ever minting a
+capability from nothing.  This is not a public mint: its argument is an
+`OpenResult`, whose constructor is private, so a caller can only obtain one by
+having already opened under a capability. -/
+def OpenResult.nextCapability {config : Config} {envelope : OpenEnvelope}
+    (result : OpenResult config envelope) : CurrentStateCapability result.after :=
+  CurrentStateCapability.mk
 
 def stateValidB (config : Config) (state : State config) : Bool :=
   decide (state.configIdentity = config.raw) &&
@@ -444,8 +491,21 @@ structure FinalityUpdate where
   finalizedPeriod : EpochId
 deriving DecidableEq
 
-opaque FinalityCapability {config : Config} (state : State config)
-  (update : FinalityUpdate) : Type
+/-- The finality adapter's right to advance the current period.  Sealed exactly
+like `CurrentStateCapability`: the constructor is `private`, so only this module
+mints it, and `finalityCapability` below is the single producer — the object
+language for "only a finality adapter may mint `FinalityCapability`".  It gates
+nothing but `advancePeriod`, which `advanceCore` already constrains to a strictly
+later AUTHORED beacon; it can never move the panel or forge a receipt. -/
+structure FinalityCapability {config : Config} (_state : State config)
+    (_update : FinalityUpdate) where
+  private mk ::
+
+/-- The finality adapter's minting right.  A runtime calls it only when the node
+reports the period finalized; `advanceCore` re-checks that the advance is to a
+strictly later authored beacon, so the capability weakens no rule. -/
+def finalityCapability {config : Config} (state : State config) (update : FinalityUpdate) :
+    FinalityCapability state update := FinalityCapability.mk
 
 private def advanceCore (config : Config) (global : GlobalSnapshot)
     (state : State config) (update : FinalityUpdate) : Option (State config) := do
@@ -467,6 +527,22 @@ def advancePeriod (config : Config) (state : State config)
     (update : FinalityUpdate) (_finalized : FinalityCapability state update) :
     Option (State config) :=
   advanceCore config state.snapshot state update
+
+/-- An accepted advance paired with the capability for the state it produced, so a
+runtime threading `(state, capability)` across a multi-period replay never has to
+mint a capability from nothing.  The capability is bound to the accepted successor
+`next`, not handed out for an arbitrary state. -/
+structure AdvanceResult (config : Config) where
+  next : State config
+  capability : CurrentStateCapability next
+
+/-- Advance and hand back the successor's capability.  `none` exactly when
+`advancePeriod` refuses. -/
+def advancePeriodChained (config : Config) (state : State config)
+    (update : FinalityUpdate) (finalized : FinalityCapability state update) :
+    Option (AdvanceResult config) :=
+  (advancePeriod config state update finalized).map fun next =>
+    { next := next, capability := CurrentStateCapability.mk }
 
 theorem open_result_retains_exact_entry {config : Config} {state : State config}
     {envelope : OpenEnvelope} {result : OpenResult config envelope}
@@ -621,6 +697,67 @@ private def bobOpen? : Option (OpenResult fixtureConfig bobEnvelope) :=
 theorem two_crew_members_may_open_the_same_period : bobOpen?.isSome = true := by
   native_decide
 
+/-! ### The write path is now REACHABLE — through genesis and the capability chain
+
+Before this, `openCrate` demanded a `CurrentStateCapability` no term could
+construct, so every fixture above had to reach past it into the private
+`openCore`.  These exercise the PUBLIC, capability-gated API end to end: `genesis`
+installs the ship, `genesisCapability` is the only root, and each accepted open
+hands back the capability for its successor.  A player really can open the crate. -/
+
+/-- Genesis positions the ship at the first authored beacon (period 12), the same
+period the hand-built `initial` used, with an equal global snapshot — so the
+public path and the proven core path are opening the same state. -/
+theorem genesis_snapshot_is_the_installed_state :
+    (genesis fixtureConfig).snapshot = initial.snapshot := by native_decide
+
+/-- ⭐ THE HONEST OPEN, through the reachable public API.  `genesis` +
+`genesisCapability` + `openCrate` succeeds — the ritual can be performed. -/
+def genesisOpen? : Option (OpenResult fixtureConfig firstEnvelope) :=
+  openCrate fixtureConfig (genesis fixtureConfig) (genesisCapability fixtureConfig) firstEnvelope
+
+theorem public_open_from_genesis_succeeds : genesisOpen?.isSome = true := by native_decide
+
+/-- The public open agrees with the already-proven `openCore` result, so every
+exactness theorem above transfers to what a player actually runs.  `genesis`
+reduces to the hand-built `initial` and `openCrate` unfolds to `openCore` over the
+state's own snapshot, so this is definitional. -/
+theorem public_open_is_the_core_open : genesisOpen? = firstOpen? := rfl
+
+private def genesisResult : OpenResult fixtureConfig firstEnvelope :=
+  genesisOpen?.get (by native_decide)
+
+/-- The capability the accepted open hands back — the ONLY way to reach a second
+open, and it is bound to this open's successor state. -/
+private def afterGenesisCap : CurrentStateCapability genesisResult.after :=
+  genesisResult.nextCapability
+
+/-- The replayed second open: the SAME player, the SAME period, on the successor
+state, carrying the successor capability and the correctly-advanced counter — so
+the ONLY check left to fail is the consumed-period replay guard. -/
+private def replayEnvelope : OpenEnvelope := envelopeFor genesisResult.after ⟨12⟩ 1 2
+
+/-- ⭐ REPLAY REFUSED through the public API.  Holding a perfectly valid successor
+capability does not let the same crew member open the same period twice: the
+append-only `consumed` set refuses it. -/
+theorem public_double_open_in_one_period_refuses :
+    openCrate fixtureConfig genesisResult.after afterGenesisCap replayEnvelope = none := by
+  native_decide
+
+/-- ⭐ WRONG-PERIOD REFUSED through the public API.  A capability for the installed
+state authorizes opening THIS period, not tomorrow's. -/
+theorem public_tomorrow_open_refuses :
+    openCrate fixtureConfig (genesis fixtureConfig) (genesisCapability fixtureConfig)
+      (envelopeFor initial ⟨13⟩ 0 1) = none := by native_decide
+
+/-- Finality is reachable too: the adapter's capability advances period 12 → 13,
+and hands back the capability for the advanced state. -/
+theorem public_finality_advance_succeeds :
+    (advancePeriodChained fixtureConfig initial
+      { priorPeriod := ⟨12⟩, finalizedPeriod := ⟨13⟩ }
+      (finalityCapability initial { priorPeriod := ⟨12⟩, finalizedPeriod := ⟨13⟩ })).isSome
+      = true := by native_decide
+
 /-! ### Deliberately public lab witnesses
 
 `OpenReceipt`'s constructor stays private; these are two *values* of it, so a
@@ -753,6 +890,12 @@ theorem skipped_periods_do_not_change_the_daily_prize :
 #assert_axioms receipt_contribution_is_the_authored_table_row
 #assert_axioms receipt_period_is_the_consumed_period
 #assert_compiled two_crew_members_may_open_the_same_period
+#assert_compiled genesis_snapshot_is_the_installed_state
+#assert_compiled public_open_from_genesis_succeeds
+#assert_compiled public_open_is_the_core_open
+#assert_compiled public_double_open_in_one_period_refuses
+#assert_compiled public_tomorrow_open_refuses
+#assert_compiled public_finality_advance_succeeds
 #assert_compiled lab_witnesses_share_a_period_and_differ_only_in_crew
 #assert_compiled fixture_daily_open_succeeds
 #assert_compiled identical_daily_open_reroll_refuses

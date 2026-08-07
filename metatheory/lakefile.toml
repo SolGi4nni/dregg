@@ -447,8 +447,8 @@ globs = [
   "Dregg2.Games.PathOfAngels.PoaCrewPreferenceDrExExercise",  # 5 ax, 22 comp
   "Dregg2.Games.PathOfAngels.PrivateReconChoir",  # 17 ax
   "Dregg2.Games.PathOfAngels.PrivateReconChoirExamples",  # 4 ax, 16 comp
-  "Dregg2.Games.PathOfAngels.SalvageCrate",  # 6 ax, 12 comp
-  "Dregg2.Games.PathOfAngels.SalvageCrateExamples",  # 2 ax, 4 comp
+  "Dregg2.Games.PathOfAngels.SalvageCrate",  # 6 ax, 18 comp
+  "Dregg2.Games.PathOfAngels.SalvageCrateExamples",  # 4 ax, 4 comp
   "Dregg2.Games.PathOfAngels.ShipExpeditionSeason",  # 4 ax, 4 comp
   "Dregg2.Games.PathOfAngels.ShipExpeditionSeasonBoundary",  # 10 ax
   "Dregg2.Games.PathOfAngels.ShipInstrumentPanel",  # 9 ax, 9 comp
@@ -461,4 +461,12 @@ globs = [
   # DARK — zero route, zero FFI — since they landed. Unrooted, this module's pins would run in no
   # target, which is the orphan wound this list exists to close.
   "Dregg2.Games.PathOfAngels.StationDailyRuntime",  # 7 ax, 15 comp
+  # ⚑ 2026-08-07 (crate-write lane) — ROOTED WITH THE MODULE. `StationCrateOpen` is the WRITE
+  # half `StationDailyRuntime` reads: it composes the now-reachable `SalvageCrate.openCrate`
+  # (genesis-rooted capability chain) with `ShipInstrumentPanel.observe`, so an accepted opening
+  # actually moves the communal gauge. Its 9 `#assert_compiled` pins evaluate the real draw + fold
+  # (an honest salvage open moves supplies by 1; an ordinary open moves nothing; replay and
+  # wrong-period are refused and never reach the panel). Emit-free cone, so it does not wait on the
+  # descent wire. Unrooted, these pins would run in no target.
+  "Dregg2.Games.PathOfAngels.StationCrateOpen",  # 0 ax, 9 comp
 ]
