@@ -4251,6 +4251,40 @@ fn main() {
     } else {
         println!("cargo:rustc-link-lib=static=dregg_lean");
     }
+    // ── ⚑ THE LINKED ARCHIVE'S IDENTITY, HANDED TO THE TESTS ────────────────────────────────────
+    //
+    // Everything above decides WHICH archive gets linked; nothing until now let a test ask WHICH
+    // ONE IT GOT. That gap cost a week (measured 2026-08-07): the box's archive carried a
+    // 2026-07-25 `Dregg2_Exec_DeployedConstraint.o` while the Lean source had moved on 07-30, and
+    // `deployed_constraint_probe`'s six assertions — written against the SAME old wire — reported
+    // `ok` the whole time. Nothing was stale in the sense the provenance gate above measures (the
+    // `.c` was current, the splice ran); what was stale was ONE OBJECT, and no channel carried
+    // that fact.
+    //
+    // The `provenance_downgraded` gate is WHOLE-ARCHIVE and control-flow-shaped: it fires when the
+    // Lean build did not run. This is ARTIFACT-PROBED and PER-MEMBER: `tests/linked_archive_
+    // freshness.rs` reads these two paths, walks the archive's `Dregg2_*.o` members, and refuses
+    // any whose mtime precedes the `.lean` it was compiled from. Emitting the paths (rather than
+    // doing the walk here) keeps it in a channel a test can go RED in — a `cargo:warning` is
+    // hidden for dependency crates, which is exactly how the last one of these was missed.
+    let linked_archive = if runtime_trim_stub.is_some() {
+        out_dir.join("libdregg_lean_trim.a")
+    } else {
+        build_archive.clone()
+    };
+    println!(
+        "cargo:rustc-env=DREGG_LEAN_LINKED_ARCHIVE={}",
+        linked_archive.display()
+    );
+    // Empty when `metatheory_dir()` did not resolve — the freshness test reads an empty value as a
+    // FAULT it cannot measure through, never as "no drift".
+    println!(
+        "cargo:rustc-env=DREGG_LEAN_METATHEORY_DIR={}",
+        meta_opt
+            .as_ref()
+            .map(|m| m.display().to_string())
+            .unwrap_or_default()
+    );
     println!("cargo:rustc-link-search=native={}", lean_lib.display());
     println!(
         "cargo:rustc-link-search=native={}",
