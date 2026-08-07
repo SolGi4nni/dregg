@@ -210,7 +210,8 @@ What it costs, measured rather than guessed:
   geometry pins in ~20 Rust tests;
 * a **VK rotation**. Not a re-genesis: the pre-limb geometry and every `state_commit` are
   untouched (the caveat region rides past them), exactly like the 2026-07-31 `CANON9` flag day.
-  `CANONICAL_STATE_SCHEMA_EPOCH` stays at 23.
+  `CANONICAL_STATE_SCHEMA_EPOCH` does not move. ⚠ It is **24** as of 2026-08-07
+  (`persist/src/lib.rs:815`); this line said "stays at 23" against a stale read — see §6's note.
 
 **No VK-REGEN-LOG row is written by this lane**, because no descriptor byte was re-emitted and no
 VK rotated. A row without a regen would be a false entry in the ledger the epoch identity is keyed
@@ -408,7 +409,12 @@ Steps, ordered:
    `circuit/tests/vk_epoch_refusal_lifecycle_light_client_binding.rs`, …).
 7. **A `docs/VK-REGEN-LOG.md` row — because this one really does re-emit.**
 
-**VK rotation, NOT a re-genesis:** `CANONICAL_STATE_SCHEMA_EPOCH` stays 23 (`persist/src/lib.rs:779`,
+**VK rotation, NOT a re-genesis:** the compaction does not move `CANONICAL_STATE_SCHEMA_EPOCH`.
+⚠ **It is 24, not 23** — re-read 2026-08-07 at `persist/src/lib.rs:815`. Both this line and §4 said
+"stays 23 (`persist/src/lib.rs:779`)"; the epoch was bumped 23 → 24 and the line moved, so the
+citation was stale in both the value and the address. The *claim* survives — the compaction rides
+past every `state_commit`, so whatever the epoch is, it does not move — but do not carry "23"
+forward. (Old text: `CANONICAL_STATE_SCHEMA_EPOCH` stays 23, `persist/src/lib.rs:779`,
 read at HEAD).
 
 ⚑ **This is the opposite trade from §4.** §4 prices *adding* a pin onto a carrier nobody anchors,
