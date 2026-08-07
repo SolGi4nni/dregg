@@ -9,7 +9,9 @@
 //!    `plonky3_recursion_impl::recursive`).
 //! 2. [`verify::recursion_vk_fingerprint`] — *which circuit is this root a proof of*.
 //! 3. [`verify::verify_recursive_batch_proof_with_config`] — *does it verify*.
-//! 4. [`chain_root`] — reading the Mina phase-2 chain fold's exposed claim.
+//! 4. [`chain_root`] / [`kimchi_root`] — reading a Mina fold root's exposed claim. ⚠ These two
+//!    (and [`accumulator_root`]) are told apart by claim LENGTH, which is why
+//!    `kimchi_root` pins the lengths pairwise-distinct with a compile-time `const _`.
 //!
 //! # ⚑ WHY A CRATE AND NOT A CARGO FEATURE
 //!
@@ -71,12 +73,19 @@
 pub mod accumulator_root;
 pub mod chain_root;
 pub mod config;
+/// ⚑ Reading a KIMCHI-VERIFIER-GADGET root — the fold that welds the phase-2 transcript chain
+/// root to the endo/conjunction finalize root, so the ξ the finalize conjuncts check is the one
+/// the block's OWN sponge squeezed.
+pub mod kimchi_root;
 pub mod verify;
 
 pub use chain_root::{
     ChainClaim, chain_root_config, read_chain_claim_from_proof, verify_chain_root_bytes,
 };
 pub use config::{DreggRecursionConfig, create_recursion_config, ir2_leaf_wrap_config};
+pub use kimchi_root::{
+    KimchiClaim, kimchi_root_config, read_kimchi_claim_from_proof, verify_kimchi_root_bytes,
+};
 pub use verify::{
     RecursionVk, recursion_vk_fingerprint, verify_recursive_batch_proof,
     verify_recursive_batch_proof_with_config,

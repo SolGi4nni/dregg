@@ -65,6 +65,12 @@ pub mod merge_pool;
 /// `dregg-mina-accumulator-{seg,final}::v1` leaves, and the fold that carries the accumulator POINT
 /// from segment to segment INSIDE the recursion. The leg upstream's verifier does natively.
 pub mod mina_accumulator_fold;
+/// ⚑⚑ **A KIMCHI VERIFIER GADGET, IN PLONKY3'S OWN RECURSION.** The top fold that welds the
+/// phase-2 transcript chain ROOT to the endo/conjunction finalize ROOT, so the ξ the finalize
+/// conjuncts check is the one the block's OWN sponge squeezed. ⚠ **An implementation, unverified,
+/// with a named path to verification** — see the module header's §"THE VERIFICATION PATH". It
+/// authors NO AIR: every AIR under it comes out of Lean.
+pub mod mina_kimchi_verifier_gadget;
 /// The Pasta half of `dregg_circuit::mina_fixture_emit`: `DreggMinaConfig` as a
 /// fixture hash suite, plus the CHECKED `MultiField32Challenger` replica whose
 /// per-permutation sponge states the Pasta fixture publishes.
