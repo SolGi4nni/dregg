@@ -2011,14 +2011,26 @@ mod ffi_mina_account_state {
 // allowed by the decoder (on the wire the protocol state is followed by the Wrap proof and the
 // block body), so a caller may hand over the whole header prefix rather than slicing it.
 //
-// ⚑ `eh` / `ch` ARE THE ONE SUPPLIED (NOT DERIVED) INPUT, and they are a NAMED CARRIER, not a
-// hidden trust. They are the two tips' state hashes as `Fp` elements in decimal, and `select` reads
-// them ONLY as the FINAL tie-break, after `blockchain_length` and the VRF digest have both tied.
-// They are supplied rather than recomputed because `state_hash =
-// Poseidon("MinaProtoState")[previous_state_hash, body_hash]` and `Body.hash` absorbs `to_input` in
-// a field ordering that is NOT the binprot ordering; re-deriving it is a separate Lean job that
-// does not exist yet (`docs/MINA-LIGHT-CLIENT.md` carries it as an open row). Everything else on
-// this wire — including the Blake2b VRF digest — is DERIVED from the bytes by the gate.
+// ⚑ `eh` / `ch` ARE A CLAIM THE GATE CHECKS — NOT AN INPUT IT TRUSTS. They are the two tips' state
+// hashes as `Fp` elements in decimal, and `select` reads them ONLY as the FINAL tie-break, after
+// `blockchain_length` and the VRF digest have both tied.
+//
+// ⚑ CORRECTED 2026-08-07, AND THE STALE VERSION OF THIS PARAGRAPH COST A WEEK-LONG RED. It said
+// they are "the ONE SUPPLIED (NOT DERIVED) INPUT … re-deriving it is a separate Lean job that does
+// not exist yet (`docs/MINA-LIGHT-CLIENT.md` carries it as an open row)". That job LANDED on
+// 2026-07-30: `Bridge.MinaStateHashDerive.stateHash` recomputes `state_hash` from the same bytes,
+// and `MinaForkChoiceGate.decodeSide?` REFUSES a side whose presented hash is not the one its bytes
+// derive to. What that removed is concrete — a peer that could name its own tie-break could win
+// every tie by claiming a larger hash while serving whatever bytes it liked.
+//
+// So a caller passes the hash the bytes HAVE, and a wrong one is `"ERR"` (fail-closed), never a
+// verdict computed from what did parse. `mina_fork_choice_decides_on_real_devnet_bytes_through_the_
+// real_ffi` still passed `"1"`/`"2"` for eight days after that landed and had collapsed to
+// `KeepExisting` on every leg; the doc above is why it read as correct. It now pins the two
+// numerals `MinaBinprotRealBlock` kernel-`decide`s.
+//
+// Everything else on this wire — including the Blake2b VRF digest — is likewise DERIVED from the
+// bytes by the gate. Nothing on it is now taken on the peer's word.
 //
 // ⚑ WHAT AN ABSENT EXPORT COSTS. There is NO Rust twin of `select` and there will not be one; a
 // hand-written Samasika in Rust is exactly the drift these gates exist to delete. Absent, both
@@ -3072,6 +3084,26 @@ mod tests {
             return;
         }
 
+        // ⚑ THE TWO IDENTITIES, DERIVED — not chosen. Until 2026-07-30 every `eh`/`ch` on this
+        // wire was a free number: `MinaForkChoiceGate.decodeSide?` accepted the hash a peer
+        // presented, so a peer could win the final tie-break by claiming a larger one while
+        // serving whatever bytes it liked. `decodeSide?` now recomputes it
+        // (`MinaStateHashDerive.stateHash ps == served`) and REFUSES a mismatch, which is why this
+        // test's old `"1"`/`"2"` decoded to `"ERR"` and collapsed every verdict to `KeepExisting`.
+        //
+        // These are the SAME two numerals the Lean side pins, and each is a kernel `decide` there
+        // — not a transcription of a value only this file believes:
+        //   * `MinaBinprotRealBlock.the_two_transcriptions_agree_on_the_real_block` (the block)
+        //   * `MinaBinprotRealBlock.the_two_transcriptions_agree_on_the_mutation`  (the sibling)
+        // and `exportedGateOnRealBytes` / `exportedRollOnRealBytes` — the two defs this test's
+        // header says its cases ARE — build their wires from exactly these. A drift reds those
+        // theorems in `metatheory` AND reds every assertion below, because a hash that does not
+        // match its bytes yields `"ERR"`, never a wrong verdict.
+        const EXISTING_STATE_HASH: &str =
+            "23150793208165238508010746024646151327500557688103637800887369182027809926508";
+        const CANDIDATE_STATE_HASH: &str =
+            "10661633542888591627435934085864260363960762266439350948948271468094670434467";
+
         let existing = real_devnet_block_540186();
         assert_eq!(existing.len(), 1544, "the golden is not the pinned block");
         // `blockchain_length` is the 5-byte `0xfd` form beginning at offset 1067, so byte 1068 is
@@ -3084,26 +3116,48 @@ mod tests {
         // A tip does not displace ITSELF (`select_irrefl`) — a peer cannot churn the head by
         // replaying it.
         assert_eq!(
-            verified_mina_better_tip("1", "1", &existing, &existing),
+            verified_mina_better_tip(
+                EXISTING_STATE_HASH,
+                EXISTING_STATE_HASH,
+                &existing,
+                &existing
+            ),
             Ok(MinaForkChoiceVerdict::KeepExisting),
             "a tip must not displace itself"
         );
         // The one-block-longer sibling DOES.
         assert_eq!(
-            verified_mina_better_tip("1", "2", &existing, &candidate),
+            verified_mina_better_tip(
+                EXISTING_STATE_HASH,
+                CANDIDATE_STATE_HASH,
+                &existing,
+                &candidate
+            ),
             Ok(MinaForkChoiceVerdict::TakeCandidate),
             "a strictly longer short-range tip must be taken"
         );
         // And the REVERSE presentation does not (`select_asymm`).
         assert_eq!(
-            verified_mina_better_tip("2", "1", &candidate, &existing),
+            verified_mina_better_tip(
+                CANDIDATE_STATE_HASH,
+                EXISTING_STATE_HASH,
+                &candidate,
+                &existing
+            ),
             Ok(MinaForkChoiceVerdict::KeepExisting),
             "presentation order must not make both sides win"
         );
 
         // THE ROLL. `k = 290`, so the ratchet lands at 540187 − 290 = 539897.
         assert_eq!(
-            verified_mina_head_advance(true, 0, "1", "2", &existing, &candidate),
+            verified_mina_head_advance(
+                true,
+                0,
+                EXISTING_STATE_HASH,
+                CANDIDATE_STATE_HASH,
+                &existing,
+                &candidate
+            ),
             Ok(MinaHeadRoll {
                 advance: true,
                 finalized: 539897
@@ -3112,7 +3166,14 @@ mod tests {
         // FAIL CLOSED — an unavailable or refusing anchored-segment gate supplies `false` and
         // NOTHING moves (`rollHead_fails_closed_without_the_segment`).
         assert_eq!(
-            verified_mina_head_advance(false, 0, "1", "2", &existing, &candidate),
+            verified_mina_head_advance(
+                false,
+                0,
+                EXISTING_STATE_HASH,
+                CANDIDATE_STATE_HASH,
+                &existing,
+                &candidate
+            ),
             Ok(MinaHeadRoll {
                 advance: false,
                 finalized: 0
@@ -3122,7 +3183,14 @@ mod tests {
         // THE RATCHET — a refused advance does not DROP an already-finalized height, and neither
         // does a genuinely verified SHORTER candidate (`rollHead_finalized_monotone`).
         assert_eq!(
-            verified_mina_head_advance(false, 539897, "1", "2", &existing, &candidate),
+            verified_mina_head_advance(
+                false,
+                539897,
+                EXISTING_STATE_HASH,
+                CANDIDATE_STATE_HASH,
+                &existing,
+                &candidate
+            ),
             Ok(MinaHeadRoll {
                 advance: false,
                 finalized: 539897
@@ -3130,7 +3198,14 @@ mod tests {
             "a refused advance must not un-finalize"
         );
         assert_eq!(
-            verified_mina_head_advance(true, 539897, "2", "1", &candidate, &existing),
+            verified_mina_head_advance(
+                true,
+                539897,
+                CANDIDATE_STATE_HASH,
+                EXISTING_STATE_HASH,
+                &candidate,
+                &existing
+            ),
             Ok(MinaHeadRoll {
                 advance: false,
                 finalized: 539897
@@ -3144,21 +3219,37 @@ mod tests {
         assert_eq!(shadow_mina_better_tip("garbage").as_deref(), Ok("ERR"));
         assert_eq!(shadow_mina_head_advance("garbage").as_deref(), Ok("ERR"));
         assert_eq!(
-            verified_mina_better_tip("1", "2", b"\x00", b"\x00"),
+            verified_mina_better_tip(EXISTING_STATE_HASH, CANDIDATE_STATE_HASH, b"\x00", b"\x00"),
             Ok(MinaForkChoiceVerdict::KeepExisting),
             "bytes that are not a protocol state must not displace the head"
         );
         assert!(
-            verified_mina_head_advance(true, 0, "1", "2", b"\x00", b"\x00").is_err(),
+            verified_mina_head_advance(
+                true,
+                0,
+                EXISTING_STATE_HASH,
+                CANDIDATE_STATE_HASH,
+                b"\x00",
+                b"\x00"
+            )
+            .is_err(),
             "bytes that are not a protocol state must not yield a roll to persist"
         );
 
         // THE STANDING NON-CONSTANCY CANARY (see the ETH test): the two wires differ in exactly ONE
         // BYTE of 1,544 — the low byte of `blockchain_length` — and the gate must straddle it.
-        let take_raw =
-            shadow_mina_better_tip(&mina_better_tip_wire("1", "2", &existing, &candidate));
-        let keep_raw =
-            shadow_mina_better_tip(&mina_better_tip_wire("2", "1", &candidate, &existing));
+        let take_raw = shadow_mina_better_tip(&mina_better_tip_wire(
+            EXISTING_STATE_HASH,
+            CANDIDATE_STATE_HASH,
+            &existing,
+            &candidate,
+        ));
+        let keep_raw = shadow_mina_better_tip(&mina_better_tip_wire(
+            CANDIDATE_STATE_HASH,
+            EXISTING_STATE_HASH,
+            &candidate,
+            &existing,
+        ));
         assert_eq!(take_raw.as_deref(), Ok("1"));
         assert_eq!(keep_raw.as_deref(), Ok("0"));
         assert_ne!(
