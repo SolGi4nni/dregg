@@ -114,6 +114,39 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_LIST = REPO / ".github" / "dark-targets.txt"
 
+# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
+# misreads this convention exists to stop happened to people reading RESULTS, not source. ──
+SCOPE_ANSWERS = (
+    "does the sweep log name a `could not compile` target that is not a compile-fail row in "
+    ".github/dark-targets.txt, is any such row absent from that log, does cargo metadata place any "
+    "workspace package in the reverse-dependency cone of a dark lib/proc-macro/build-script, and "
+    "does every `scripts/check-` step in ci.yml's clippy-correctness job carry an `if:` line?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether any target PASSES, or that one test inside one fired. Darkness is read from cargo "
+    "DIAGNOSTICS in a log this gate is HANDED, so a unit skipped for any reason other than a red "
+    "dependency appears on neither side of the comparison; the reachability scan only checks that "
+    "SOME `if:` exists, so `if: false` would satisfy it; and the `file ` and `never-run ` rows of "
+    "the same allowlist belong to the other two sweeps, not to this one."
+)
+SCOPE_ANSWERS_SELFTEST = (
+    "can this ratchet fire — do R1-R15 (real cargo over a three-crate temp workspace, synthetic "
+    "logs, synthetic workflows, and R15 over the real .github/workflows/ci.yml) produce the exact "
+    "exit codes and messages specified?"
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "whether anything in THIS workspace is dark. No leg but R15 touches this repo and R15 reads "
+    "only ci.yml, so a green here is a working instrument over three throwaway crates, never a "
+    "swept tree — that is --sweep, and it is a whole-workspace clippy."
+)
+SCOPE_ANSWERS_DUMP = (
+    "which `could not compile` rows this parser extracts from the log, listed on stdout?"
+)
+SCOPE_DOES_NOT_ANSWER_DUMP = (
+    "whether the tree is clean: --print-dark renders NO verdict — no allowlist comparison, no "
+    "pruned-cone derivation, no reachability check — and always exits 0."
+)
+
 # The sweep CI runs. `--keep-going` is NOT optional and never has been: without it cargo
 # stops scheduling new units at the first failure and the log ends there, so the run
 # reports ONE broken crate out of ~225 and the next push shows the next one.
@@ -679,7 +712,18 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
+
+    # --print-dark writes a machine-readable row list on stdout, so its banner goes to
+    # stderr: a mode whose output another program consumes must not carry prose.
+    if args.print_dark:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_DUMP}", file=sys.stderr, flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_DUMP}", file=sys.stderr, flush=True)
+    else:
+        print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     if shutil.which("cargo") is None:
         print("::error::check-dark-targets: cargo not on PATH — this gate cannot run, and a "

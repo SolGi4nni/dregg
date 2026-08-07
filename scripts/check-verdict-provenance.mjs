@@ -31,6 +31,27 @@ import vm from "node:vm";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SELF_TEST = process.argv.includes("--self-test");
 
+// ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
+// misreads this convention exists to stop happened to people reading RESULTS, not source. ──
+const SCOPE_ANSWERS =
+  "does site/dregg-works/verify-badge.js, EXECUTED in a synthetic DOM plus fetch harness, withhold the " +
+  "success word on a page-supplied oracle and still reach it on a visitor-supplied one, over four " +
+  "scripted scenarios — and do five regex probes over transclude.js SOURCE still find its visitor-node " +
+  "precedence, its one shared painter and its forgery refusal?";
+const SCOPE_DOES_NOT_ANSWER =
+  "whether either surface is correct on a real page or on the deployed site. The DOM, the fetch and the " +
+  "node are the harness the four scenarios script; transclude.js is never EXECUTED, only substring-matched; " +
+  "and both files are read from the WORKING TREE, not from what dregg.works serves.";
+const SCOPE_ANSWERS_SELFTEST =
+  "with two exact source literals replaced in an IN-MEMORY copy of verify-badge.js, does the run produce at " +
+  "least one red scenario, and did the replacement apply at all (a patch whose text has moved is exit 1)?";
+const SCOPE_DOES_NOT_ANSWER_SELFTEST =
+  "anything about the tree, and it does not attribute its own red: the transclude source probes run in this " +
+  "mode too and land in the SAME failure list, so a red from them alone satisfies the row without the " +
+  "reinstated badge defect ever biting.";
+console.log(`ANSWERS:         ${SELF_TEST ? SCOPE_ANSWERS_SELFTEST : SCOPE_ANSWERS}`);
+console.log(`DOES NOT ANSWER: ${SELF_TEST ? SCOPE_DOES_NOT_ANSWER_SELFTEST : SCOPE_DOES_NOT_ANSWER}`);
+
 const FORGED = "<!doctype html><h1>PWNED</h1>";
 const HONEST = "<!doctype html><h1>the real page</h1>";
 // blake3 is computed by the script under test; the harness never needs its own.

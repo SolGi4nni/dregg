@@ -45,8 +45,11 @@ pub const POA_EPOCH_PREVIEW_SCHEMA: &str = "POA-EPOCH-PREVIEW-V1";
 ///
 /// ⚑ This is the shape that CANNOT SETTLE A TURN, and it is named that way on
 /// purpose. A Signal claim costs `dregg_sdk::poa_signal::signal_claim_fee_v1()`
-/// (870 at `ComputronCosts::default()`, measured 2026-08-07), `execute` refuses any agent
-/// whose balance is under the fee, and this economy has no cell with a positive
+/// — quoted by CALL and never by literal, because the number moved on 2026-08-07
+/// when the claim started carrying the played transcript (four event lanes to
+/// seventeen) and a figure written here would be wrong the next time it moves —
+/// `execute` refuses any agent whose balance is under the fee, and this economy
+/// has no cell with a positive
 /// balance at all — so a deployment declaring this policy is one whose
 /// `latest_height` is structurally pinned to 0. It is retained only because the
 /// live epoch-1 deployment declares it and has not been re-genesised yet; DELETE
@@ -953,12 +956,20 @@ fn verify_genesis_economy_and_committee(
     // and no moves. That kept the generic devnet economy out of a production
     // application federation, which was right, and it also left the deployment
     // with NO economy at all, which was not. A Signal claim costs
-    // `dregg_sdk::poa_signal::signal_claim_fee_v1()` — 870 at the default costs;
+    // `dregg_sdk::poa_signal::signal_claim_fee_v1()`;
     // `TurnExecutor::execute` refuses any agent whose balance is under the fee;
     // `/api/faucet` needs a genesis faucet cell an empty-economy deployment does
     // not have; and `Effect::Mint` needs a fee the zero-balance issuer well
     // cannot pay either. So the live chain could not settle a single turn and
     // `latest_height` was pinned to 0 by the descriptor itself.
+    //
+    // ⚠ THE LITERAL THAT WAS HERE IS GONE. This said "870 at the default costs",
+    // and the number moved on 2026-08-07 when the Signal claim started carrying
+    // the played transcript (four event lanes to seventeen). A stale figure
+    // sitting beside a derived call is how the derived call stops being read:
+    // the reader trusts the number, and the next writer hardcodes it. Every
+    // consumer here already CALLS the function; nothing needed the literal.
+    // Grants priced against the old figure must be RE-EMITTED.
     //
     // The second accepted shape is EXACTLY one issuer-move into one named
     // player-grant cell, and it is bound to the manifest policy in BOTH

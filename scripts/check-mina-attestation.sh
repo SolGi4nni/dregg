@@ -265,6 +265,36 @@ while [ $# -gt 0 ]; do
 done
 case "$TIER" in 0|1|2) ;; *) die "--tier must be 0, 1 or 2 (got '$TIER')" ;; esac
 
+# ── SCOPE ─ this block is the ONLY copy; it prints on every run, pass or fail. EACH MODE AND
+# EACH TIER ANSWERS A DIFFERENT QUESTION — that is the whole point of the tiering — so each
+# carries its own pair, and a transcript can never be read as a fuller run than it was.
+# ⚠ `--manifest` writes MACHINE-READ TSV on stdout (check-mina-npm-coverage.sh parses it), so
+# in that mode the pair goes to stderr; everywhere else it goes to stdout.
+case "$MODE" in
+  manifest)
+    SCOPE_A='which leg-name / tier / npm-script triples does the TIER_TABLE in this file declare, printed as TSV?'
+    SCOPE_D='whether any of those legs exist, run, or sit at a defensible tier. The table is a declaration inside this file, printed verbatim and compared against nothing.' ;;
+  preflight)
+    SCOPE_A='does every fault injection written in this file still match its target file at exactly one site, with nothing injected and no leg run?'
+    SCOPE_D='whether any of those injections would turn its leg RED. A pattern that matches says the falsifier still EXISTS; whether it BITES is --self-test.' ;;
+  selftest)
+    SCOPE_A='for each fault injection in this file: does its pattern still match exactly one site, and does injecting it into a SCRATCH COPY of bridge/mina-zkapp at MINA_TIER=2 drive the named leg to a non-zero exit (the expect_red_dup faults are pattern-checked only, unless SELFTEST_ALL=1)?'
+    SCOPE_D='anything about this tree. A red-proof shows the INSTRUMENT can fire at the sites somebody wrote a fault for; it never runs the gate against the real directory, and a defect nobody wrote an injection for is invisible to it.' ;;
+  *)
+    if [ "$TIER" -eq 0 ]; then
+      SCOPE_A='does bridge/mina-zkapp typecheck under tsc --noEmit at the pinned o1js 2.15.0, does every fault injection in this file still match exactly one site, is every npm script in a tier or in the allowlist, does every row of recorded-constants.tsv still match its `const NAME = RHS;` line by FIXED-STRING grep, and do the ten out-of-circuit legs (the p3 twin walks, the Poseidon KAT, the cell-fact and vk-identity readers) each exit 0 having printed the sentinel lines this file greps for?'
+      SCOPE_D='whether any circuit accepts or refuses anything. TIER 0 COMPILES NOTHING: no Pickles compile, prove or verify runs, no zkApp consumes a proof, no tamper is refused BY A PROVER, no row count is re-measured, and the splices, the chains and the compile ceiling never execute. Those are --tier 1 and --tier 2.'
+    else
+      SCOPE_A="everything tier 0 asks, and at tier $TIER also: does each leg declared at or below that tier exit 0 and print the sentences this file greps for — one representative instance per family compiled, proved and verified at tier 1; the remaining family members, the full chains and the recorded compile ceiling at tier 2?"
+      SCOPE_D='whether the o1js objects are the deployed ones. Every leg is a TWIN of p3 or of a Lean emission, measured against it on fixtures, and each leg is decided here by an exit code plus fixed substrings THE LEG PRINTS ABOUT ITSELF — a leg that stopped checking and kept printing its sentence still passes. At tier 1 the rest of each family, the full chains and the ceiling do not run.'
+    fi ;;
+esac
+if [ "$MODE" = "manifest" ]; then
+  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' "$SCOPE_A" "$SCOPE_D" >&2
+else
+  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' "$SCOPE_A" "$SCOPE_D"
+fi
+
 if [ "$MODE" = "manifest" ]; then
   printf 'leg\ttier\tnpm_script\n'
   while IFS='|' read -r leg t scripts; do

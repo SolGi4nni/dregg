@@ -163,6 +163,33 @@ BANNED_HELPERS: tuple[str, ...] = (
 MIN_FILES = 60
 MIN_POSITIONS = 400
 
+# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ────────
+SCOPE_ANSWERS = (
+    "in TRACKED non-test .rs under the hand-named SURFACE_CRATES, with comments and string "
+    "literals blanked: does the balanced-paren argument list of any of the four literal openers "
+    "text( / pill( / ViewNode::Text( / Action::new( contain one of four identity-accessor "
+    "SUBSTRINGS while containing none of three naming-call substrings; does any file declare one "
+    "of five banned `fn short_*` truncators; is every identity-as-a-name-allow.tsv row still "
+    f"live; and did the sweep clear MIN_FILES={MIN_FILES} and MIN_POSITIONS={MIN_POSITIONS}?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether a player is ever shown a routing identity. Coverage IS those three enumerations - an "
+    "identity bound to a local first, reached one call frame down through a helper, or rendered "
+    "by any call not spelled exactly text( / pill( / ViewNode::Text( / Action::new( is invisible, "
+    "because there is no dataflow here and the docstring names that blind spot. It reads TEXT, "
+    "not a render: nothing checks what a frontend paints, and for Action::new the WHOLE argument "
+    "list is tested rather than the label argument the comment names."
+)
+SCOPE_ANSWERS_SELFTEST = (
+    "can the classifier catch the six recorded real shapes and stay quiet on the eight it must "
+    "not, and does the live sweep clear both floors while a scope narrowed to one crate falls "
+    "through them?"
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "whether any site in the tree puts an identity where a person belongs - the floor legs run "
+    "the real sweep for its COUNTS only and discard every finding. PASSED is about the instrument."
+)
+
 
 def tracked_sources() -> list[Path]:
     """Every tracked Rust source under a surface crate, EXCLUDING test targets.
@@ -377,7 +404,12 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
+
+    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
+    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     hits, files, positions = findings(tracked_sources())
     allow = read_allowlist(args.list)

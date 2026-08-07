@@ -96,6 +96,22 @@ for a in "$@"; do
 done
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }
 
+# ── SCOPE ─ this block is the ONLY copy; it prints on every run, pass or fail. THE THREE
+# MODES ANSWER THREE DIFFERENT QUESTIONS and the cheap one is the one most often quoted as
+# if it were the expensive one, so each carries its own pair. ──────────────────────────
+case "$MODE" in
+  static)
+    SCOPE_A='for each of the 13 rows in the HARNESSES table of this file and for the shared pickles-circuit-driver: does the directory exist under metatheory/fixtures with a Cargo.toml and at least one fixtures JSON, does HEAD carry its src/main.rs, its fixtures and its Cargo.toml and Cargo.lock, does the HEAD copy of src/main.rs still declare at least the recorded minimum of #[test] attribute lines (a regex line count, not a parse), and is every pickles-*-harness directory on disk declared in that table?'
+    SCOPE_D='whether any harness PASSES, or even compiles. --static runs NO cargo: it counts #[test] ATTRIBUTES and compares directory names, so a harness whose every test is a tautology, or that does not build at all, is green here. "No pickles harness is failing" is what the bare run decides, and it is a separate row.' ;;
+  selftest)
+    SCOPE_A='on scratch git trees under a temp dir: do the ratchet legs fire for an undeclared directory, a vanished declared one, a COMMITTED deletion of a #[test], zero fixtures, and a fixture, a Cargo.lock or a src file absent from the commit; does a STAGED-only deletion stay green; and does corrupting one public-input word of a COPY of a pickles-publicinput-harness fixture drive cargo test --release to a non-zero exit?'
+    SCOPE_D='anything about metatheory/fixtures as it stands. Every leg grades a scratch copy and the shared tree is never judged, so a harness failing right now is invisible here; and the prover leg proves ONE crate reaches a non-zero exit through the prover, not that the other twelve can.' ;;
+  *)
+    SCOPE_A='does the coverage ratchet pass AND, for each selected harness (all of them unless names were given on the command line), does cargo test --release --manifest-path on its own Cargo.toml exit 0 while its summary lines report at least the recorded minimum of passing tests?'
+    SCOPE_D='which properties passed, or which bytes were graded. The ratchet reads HEAD while cargo builds the WORKING TREE, so the two halves can be about different objects (the ratchet says so when they differ), and the cargo verdict is a PASS COUNT — a crate that swapped a proof for a weaker assertion keeps its count and its green.' ;;
+esac
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' "$SCOPE_A" "$SCOPE_D"
+
 count_tests() { grep -cE '^[[:space:]]*#\[test\]' "$1" 2>/dev/null || echo 0; }
 
 # ⚑ HEAD, NOT THE INDEX. Measured 2026-08-02: every git leg below used to read `git ls-files`, which

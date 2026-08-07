@@ -15,26 +15,53 @@
 //! caller could then post a contribution the crate never authorized and move the
 //! communal gauges.
 //!
-//! # READ ONLY, and by TYPE rather than by policy
+//! # ⚑ THIS READ FOLDS THE NODE'S DURABLE OPEN LOG
 //!
-//! Nothing in this module needs to *decline* to write:
+//! ⚠ CORRECTED 2026-08-07. This section used to say the write path was
+//! unreachable — that `SalvageCrate.openCrate` demanded a
+//! `CurrentStateCapability` "declared `opaque` with no producer anywhere in the
+//! tree" — and that the ship served was therefore `ShipInstrumentPanel.initial`,
+//! asserted by `the_served_ship_has_not_been_moved`, "the assertion that goes
+//! RED the day a judged opening can be folded in".
 //!
-//! * `SalvageCrate.openCore` is `private`;
-//! * `SalvageCrate.openCrate` demands a `CurrentStateCapability`, declared
-//!   `opaque` with **no producer anywhere in the tree** — no Lean term builds
-//!   one, so no `@[export]` can hand one to Rust;
-//! * `SalvageCrate.State` has a private `mk` and deliberately no public
-//!   empty-state producer ("genesis/restore belongs to the global state
-//!   adapter", and no such adapter exists).
+//! Every clause of that is now false. The capability is a sealed structure
+//! rooted in `genesis`, the crate-open route accepts openings, and the old
+//! assertion did **not** go red when they landed — it was a claim about the
+//! request type (which had no `history` field), not about reachability. Measured
+//! over HTTP the same day: the write path served `exact_total: 1, observed: 2`
+//! while this route served `exact_total: 0, observed: 0`.
 //!
-//! So the ship this route serves is `ShipInstrumentPanel.initial`: the station
-//! exactly as installed. That is not a placeholder dressed as content — Lean's
-//! `the_served_ship_has_not_been_moved` asserts it (every gauge zero, nothing
-//! observed, nothing admitted), and it is the assertion that goes RED the day a
-//! judged opening can be folded in.
+//! So this route now reads the node's durable open log — the SAME blob
+//! `poa_crate_api` appends to, under the same key and through the same decoder,
+//! imported rather than re-derived — and hands it to Lean, which replays it
+//! through `SalvageCrate.openCrate` and serves the ship it folds to. The fold
+//! lives in `StationDailyRuntime` and the write path abbreviates it, so there is
+//! exactly one.
 //!
-//! [`STATION_WRITE_PATH_CLAIM`] says that in the response rather than leaving a
-//! reader to infer "nothing has happened yet" from a page of zeros.
+//! What replaces the retired assertion:
+//! `StationDailyRuntime.the_served_ship_moves_when_the_log_records_an_opening`
+//! (two logs one row apart, two different ships) and
+//! `StationCrateOpenRuntime.the_station_read_serves_the_ship_this_write_published`
+//! (this document's communal fields ARE the panel the write published).
+//!
+//! # ⚠ An unreadable or unreplayable log REFUSES; it never renders as zeros
+//!
+//! A blob without the `POACLOG1` magic, a ragged one, or one Lean cannot replay
+//! is a 500 with a named refusal. Serving the installed ship there would tell a
+//! player "nobody has opened the crate yet" when the truth is "this node's log
+//! is broken", and those are indistinguishable on a page of zeros.
+//!
+//! # It is still READ-ONLY, for a narrower and sufficient reason
+//!
+//! Lean reaches `openCrate` here, once per log row. Nothing is written, because
+//! the export returns a projection and drops every `OpenResult` the replay
+//! produces, and because **only `poa_crate_api` appends** — this module holds no
+//! write handle to the log at all. `SalvageCrate.openCore` is `private` and
+//! `ShipInstrumentPanel.Receipt` has a private `mk`, so no wire decodes a
+//! receipt into existence.
+//!
+//! [`STATION_WRITE_PATH_CLAIM`] says all of this in the response rather than
+//! leaving a reader to infer it.
 //!
 //! # Content provenance, stated rather than implied
 //!
@@ -73,30 +100,39 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 
 use crate::api::RateLimiter;
+// ⚑ The log key and its decoder come from the module that WRITES the log. A second spelling of
+// either here would fold an empty log and serve zeros forever while the write path moved the ship.
+use crate::poa_crate_api::{decode_log, log_key};
 use crate::state::NodeState;
+use dregg_lean_ffi::poa_crate_open_ffi::{CrateOpenLogRow, MAX_POA_CRATE_OPEN_HISTORY_ROWS};
 use dregg_types::hex_encode;
 
 pub const STATION_PANEL_PATH: &str = "/api/poa/station/{authority}/panel";
 pub const STATION_CREW_PATH: &str = "/api/poa/station/{authority}/crew/{crew}";
 pub const STATION_VIEW_FORMAT_V1: &str = "POA-STATION-VIEW-1";
 
-/// This read is a pure Lean function over authored constants — no replay, no
-/// store access, no sponge. It is budgeted like the other cheap public reads.
-const STATION_READS_PER_MINUTE: u32 = 120;
+/// ⚠ LOWERED from 120. This read was "a pure Lean function over authored constants — no replay,
+/// no store access, no sponge" and is not any more: it opens the store and Lean replays the whole
+/// durable log, one `openCrate` and one `observe` per row plus a prefix count, so the request is
+/// QUADRATIC in the log length exactly as the crate-open write is. It is still a cheap public read
+/// on an empty or short log and it is budgeted for the case where it is not.
+const STATION_READS_PER_MINUTE: u32 = 60;
 
-/// Says what a page of zeros MEANS, so a reader does not have to guess between
-/// "nobody has opened the crate" and "the organ is broken".
-const STATION_WRITE_PATH_CLAIM: &str = "read-only: no judged opening exists, so every gauge reads its installed value. \
-     SalvageCrate.openCrate requires a CurrentStateCapability, declared opaque with no producer \
-     anywhere, so this is a type-level absence and not an unwired route. For the same reason \
-     there is no SalvageCrate.State and therefore NO CURRENT-PERIOD POINTER: 'what does the \
-     crate hold today' is not answerable here, and `rotation` is the whole authored schedule \
-     rather than one day of it";
+/// Says what the gauges MEAN, so a reader does not have to guess between "nobody has opened the
+/// crate", "the organ is broken", and "the ship really has moved".
+const STATION_WRITE_PATH_CLAIM: &str = "read-only projection of the node's DURABLE OPEN LOG: every gauge is the fold of that log \
+     through SalvageCrate.openCrate itself, replayed from genesis, and is the same fold the \
+     crate-open write path uses (StationDailyRuntime owns it; StationCrateOpenRuntime \
+     abbreviates it). Zeros therefore mean the log is EMPTY — nobody has opened the crate on \
+     this node — and not that openings are impossible; a crew member can open the crate at \
+     POST /api/poa/station/{authority}/crate/open. A log that does not replay is a REFUSAL, \
+     never a page of zeros. There is still NO CURRENT-PERIOD POINTER on this document: \
+     `rotation` is the whole authored schedule rather than one day of it";
 
 /// The station content is authored in Lean rather than installed by a ceremony.
-const STATION_CONTENT_PROVENANCE: &str = "lean-authored station content (SalvageCrateExamples.config + StationDailyRuntime.\
-     stationPanel); no station genesis ceremony exists, so the federation_id inside the \
-     document is the AUTHORED one and need not equal authority_id";
+const STATION_CONTENT_PROVENANCE: &str = "lean-authored station content (SalvageCrateExamples.config + StationCrateOpen.panel, the SAME \
+     panel object the crate-open write folds receipts into); no station genesis ceremony exists, \
+     so the federation_id inside the document is the AUTHORED one and need not equal authority_id";
 
 const STATION_FINALITY_CLAIM: &str = "the station panel is a projection of installed content on this node; no quorum-finality \
      claim is made";
@@ -111,6 +147,13 @@ pub struct PoaStationResponseV1 {
     /// The exact `POA-STATION-DAILY-OUT-1` document native Lean emitted. Not
     /// re-serialized: these are its bytes.
     pub station: Box<RawValue>,
+    /// How many rows of the node's durable open log were folded to produce that
+    /// document. A reader can tell "the ship has not moved because nobody has
+    /// opened the crate" from "…because this read is not folding the log" —
+    /// which is exactly the pair that was indistinguishable before this field
+    /// existed, and stayed that way for as long as it did partly because
+    /// nothing on the wire could have shown it.
+    pub log_rows_folded: usize,
     pub consensus_finality: &'static str,
 }
 
@@ -228,9 +271,9 @@ async fn serve_station(
         ));
     }
 
-    let (federation_configured, federation_id) = {
+    let (federation_configured, federation_id, store) = {
         let s = state.read().await;
-        (s.federation_configured, s.federation_id)
+        (s.federation_configured, s.federation_id, s.store.clone())
     };
     if !federation_configured {
         return Err(refuse(
@@ -259,9 +302,47 @@ async fn serve_station(
         ));
     }
 
-    // Native Lean work belongs off the async runtime's threads even when it is
-    // cheap: the same discipline as every other Lean call site here.
-    let wire = station_wire(crew_key.as_ref());
+    // ⚑ THE SHIP THIS ROUTE SERVES IS THIS LOG. No lock is taken: reading a torn-free durable
+    // blob needs none, and this route never appends. A concurrent open that lands between this
+    // read and the reply is simply not in this reply — the next read has it.
+    let key = log_key(&federation_id);
+    let stored = store.get_config(&key).map_err(|error| {
+        refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &normalized,
+            "log-read-failed",
+            error.to_string(),
+        )
+    })?;
+    let history = match stored {
+        None => Vec::new(),
+        // ⚠ A blob this node did not write is a REFUSAL, not an empty log. Reading it as empty
+        // would serve the installed ship and tell a player nobody has ever opened the crate.
+        Some(blob) => decode_log(&blob).map_err(|detail| {
+            refuse(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &normalized,
+                "log-unreadable",
+                detail,
+            )
+        })?,
+    };
+    if history.len() > MAX_POA_CRATE_OPEN_HISTORY_ROWS {
+        return Err(refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &normalized,
+            "log-too-long",
+            format!(
+                "the durable open log holds {} rows, above the {MAX_POA_CRATE_OPEN_HISTORY_ROWS}-row bound Lean's parser accepts; the ship cannot be folded until the log is rotated",
+                history.len()
+            ),
+        ));
+    }
+    let log_rows_folded = history.len();
+
+    // Native Lean work belongs off the async runtime's threads, and this one is no longer cheap:
+    // the replay is a fold over the whole log.
+    let wire = station_wire(crew_key.as_ref(), &history);
     let read = tokio::task::spawn_blocking(move || read_station(&wire))
         .await
         .map_err(|error| {
@@ -280,6 +361,7 @@ async fn serve_station(
             content_provenance: STATION_CONTENT_PROVENANCE,
             write_path: STATION_WRITE_PATH_CLAIM,
             station,
+            log_rows_folded,
             consensus_finality: STATION_FINALITY_CLAIM,
         })),
         Err(StationReadError { refused, detail }) => Err(refuse(
@@ -300,9 +382,9 @@ struct StationReadError {
 /// constructor rather than by a serializer here, because Lean re-encodes what it
 /// parsed and compares BYTES: a second spelling of this request is refused with
 /// an empty sentinel that reads to a caller like an ordinary rejection.
-fn station_wire(crew: Option<&[u8; 32]>) -> String {
+fn station_wire(crew: Option<&[u8; 32]>, history: &[CrateOpenLogRow]) -> String {
     let spelling = crew.map(|key| hex_encode(key));
-    dregg_lean_ffi::poa_station_daily_ffi::station_daily_request(spelling.as_deref())
+    dregg_lean_ffi::poa_station_daily_ffi::station_daily_request(spelling.as_deref(), history)
 }
 
 fn read_station(wire: &str) -> Result<Box<RawValue>, StationReadError> {
@@ -316,10 +398,18 @@ fn read_station(wire: &str) -> Result<Box<RawValue>, StationReadError> {
     let view = match verdict {
         dregg_lean_ffi::poa_station_daily_ffi::PoaStationDailyVerdict::Read(view) => view,
         dregg_lean_ffi::poa_station_daily_ffi::PoaStationDailyVerdict::Rejected => {
+            // ⚠ Since `station_wire` builds the canonical byte image itself — pinned by
+            // `request_is_the_exact_lean_field_order_and_spelling` — the reachable cause of this
+            // refusal is the LOG: a row this crate could not have accepted in that position makes
+            // the whole replay `none`. That is deliberately NOT served as a ship at zero.
             return Err(StationReadError {
                 refused: "lean-refused",
-                detail: "native Lean refused this request: it is not the canonical byte image \
-                         StationDailyRuntime.Request.toJson emits"
+                detail: "native Lean refused this station read. The request is built from Lean's \
+                         own canonical spelling and pinned by a test, so this is the node's \
+                         durable open log failing to replay from genesis: some row is not one \
+                         this crate could have accepted in that position. The ship is NOT served \
+                         as zeros, because a broken log and an unopened crate must not read the \
+                         same"
                     .to_owned(),
             });
         }
@@ -379,27 +469,68 @@ mod tests {
     #[test]
     fn request_is_the_exact_lean_field_order_and_spelling() {
         assert_eq!(
-            station_wire(None),
-            r#"{"format":"POA-STATION-DAILY-1","crew":null}"#
+            station_wire(None, &[]),
+            r#"{"format":"POA-STATION-DAILY-1","crew":null,"history":[]}"#
         );
         let crew = [0x28; 32];
         assert_eq!(
-            station_wire(Some(&crew)),
+            station_wire(Some(&crew), &[]),
             format!(
-                r#"{{"format":"POA-STATION-DAILY-1","crew":"{}"}}"#,
+                r#"{{"format":"POA-STATION-DAILY-1","crew":"{}","history":[]}}"#,
                 "28".repeat(32)
             )
         );
         // No whitespace anywhere: Lean's encoder emits none.
-        assert!(!station_wire(None).contains(' '));
-        assert!(!station_wire(Some(&crew)).contains(' '));
+        assert!(!station_wire(None, &[]).contains(' '));
+        assert!(!station_wire(Some(&crew), &[]).contains(' '));
+    }
+
+    /// ⭐ THE LOG REACHES THE WIRE. This is the field whose absence made the read serve zeros
+    /// while the write moved the ship, so it is asserted to be PRESENT and to carry the row —
+    /// a wire that dropped it would still be canonical-looking and would still parse.
+    #[test]
+    fn the_durable_log_is_on_the_request_and_is_not_empty_when_the_node_holds_rows() {
+        let empty = station_wire(None, &[]);
+        assert!(empty.ends_with(r#""history":[]}"#), "{empty}");
+
+        let rows = [CrateOpenLogRow {
+            player: [0x29; 32],
+            period: 31,
+        }];
+        let folded = station_wire(None, &rows);
+        assert_eq!(
+            folded,
+            format!(
+                r#"{{"format":"POA-STATION-DAILY-1","crew":null,"history":[{{"player":"{}","period":31}}]}}"#,
+                "29".repeat(32)
+            )
+        );
+        assert_ne!(folded, empty, "the log made no difference to the request");
     }
 
     /// The two routes differ only in whether a crew key is named — the panel
     /// route must not quietly become a per-player read.
     #[test]
     fn the_panel_route_names_no_crew_member() {
-        assert!(!station_wire(None).contains("crew\":\""));
-        assert!(station_wire(None).contains("\"crew\":null"));
+        assert!(!station_wire(None, &[]).contains("crew\":\""));
+        assert!(station_wire(None, &[]).contains("\"crew\":null"));
+    }
+
+    /// ⚑ ONE LOG, ONE KEY, ONE DECODER. The station read must fold the very blob the crate-open
+    /// write appends to. This asserts the key is the imported one rather than a lookalike spelled
+    /// here — a divergence would make every station read fold an EMPTY log and serve zeros
+    /// forever while the write path moved the ship, which is the exact defect this lane closed.
+    #[test]
+    fn the_station_read_folds_the_same_durable_log_the_write_appends_to() {
+        let federation = [0x41; 32];
+        assert_eq!(
+            log_key(&federation),
+            format!("poa_crate_open_log:v1:{}", hex_encode(&federation))
+        );
+        // And the decoder is the write path's: an empty log is the magic alone, and a blob
+        // without it refuses rather than reading as zero rows.
+        assert_eq!(decode_log(b"POACLOG1").expect("empty log"), Vec::new());
+        assert!(decode_log(b"NOTALOG1").is_err());
+        assert!(decode_log(&[]).is_err());
     }
 }

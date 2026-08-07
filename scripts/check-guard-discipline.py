@@ -145,6 +145,34 @@ IGNORE_DIRS = {".lake", ".git", "build", "__pycache__", "wip"}
 MIN_FILES_SCANNED = 900
 MIN_GUARDS_FOUND = 10000
 
+# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
+SCOPE_ANSWERS = (
+    "does any metatheory/**/*.lean (whole tree, .lake/.git/build/wip pruned; comments and string "
+    "literals stripped) hold a different NUMBER of `#guard` tokens than its row in "
+    "scripts/guard-discipline-baseline.txt — above it, below it, or carrying guards with no row at "
+    "all — and does that ledger's header TOTAL and last provenance line equal the rows present?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "what any surviving guard CLAIMS, or whether a fallen count was a conversion or a DELETION — both "
+    "move the number identically and only the diff says which. A module sitting exactly at its row may "
+    "hold its most load-bearing pin as a `#guard` forever and stay green; a guard converted into "
+    "`theorem t : True := trivial` counts as burned down; #assert_axioms is deliberately not counted; "
+    "and even under --rev the ledger graded against is the WORKING-TREE baseline file."
+)
+
+SCOPE_ANSWERS_SELFTEST = (
+    "can this INSTRUMENT still fire? Against a synthetic tree in a temp dir it plants each fault in "
+    "turn — a module above its row, below it, deleted, unlisted, a (d1)/(d2)/(d3) refresh that would "
+    "launder a split, a hand-raised ledger row, a blinded scan — and requires each to go red while the "
+    "controls (a tree at its own baseline; `#guard` in prose, in a string, `#assert_axioms`, "
+    "`#guard_msgs`) stay green."
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "anything about metatheory/ or scripts/guard-discipline-baseline.txt. This mode never reads the "
+    "real tree or the real ledger, so an all-PASS red-proof is a fact about the READER, not about the "
+    "repo — the census is the run without --self-test."
+)
+
 
 def repo_root() -> Path:
     try:
@@ -698,7 +726,12 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return run_self_test()
+
+    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
+    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     root = repo_root()
     tmpdir = None

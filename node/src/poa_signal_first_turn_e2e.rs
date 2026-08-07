@@ -335,6 +335,42 @@ async fn a_judged_signal_turn_moves_latest_height_from_zero_to_one() {
         "the solving claim must name the public mission"
     );
 
+    // ⚑ AND IT HAS TO BE PLAYED. Deriving the answer is not settling it: since the
+    // transcript-provenance gate landed, a claim must name the rounds THIS NODE
+    // classified, so the operator who holds the slot secret still spends a burst on
+    // the code they derived. That is not ceremony — it is what makes the settled
+    // turn evidence of a game rather than of a lucky guess, and the operator is not
+    // exempt from it.
+    //
+    // The round is played through the node's own Lean oracle, exactly as
+    // `POST …/session/guess` plays one.
+    {
+        let s = state.read().await;
+        crate::poa_signal_adapter::play_session_for_test(
+            &s.store,
+            &crate::poa_signal_adapter::fixture_signal_head_for_finality_test(federation_id),
+            &crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(federation_id),
+            federation_id,
+            player.public_key().0,
+            claim.transcript(),
+        );
+        let played = s
+            .store
+            .load_poa_signal_session_v1(
+                federation_id,
+                crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(federation_id)
+                    .slot(),
+                player.public_key().0,
+            )
+            .expect("session read")
+            .expect("the played session must be durable");
+        assert!(
+            played.solved(),
+            "the derived code must SOLVE against the node's own oracle, or this \
+             milestone is about to submit a claim the judge will refuse"
+        );
+    }
+
     let signed = solved_signal_turn(&player, federation_id, claim);
     let (status, body) = post_claim(&app, &authority, &signed).await;
     assert_eq!(

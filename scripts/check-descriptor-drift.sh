@@ -51,6 +51,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'does re-running the Lean emitters at the graded revision (scripts/emit-descriptors.sh, deliberately with NO regen ack) reproduce every path in emit_descriptors.py --list-guarded-paths byte-for-byte; does the static preflight find a committed reference to an uncommitted artifact, Lean module or workflow-invoked script; and, only when both are clean, does check-drift-taxonomy.sh classify the descriptor delta as something other than a geometry widen?' \
+  'whether the Lean emission is RIGHT. It settles that the checked-in bytes are the ones THIS revision of the Lean produces and nothing more: not that a descriptor is sound, satisfiable, or says what its author meant, and not that a COSMETIC verdict from the canonicalizing comparator means the polynomials agree (only the equal-canonical-form direction is proved). Any artifact the driver does not name in its guarded-path list is neither snapshotted nor diffed.'
+
 CLEANUP=()
 cleanup() {
   local rc=$?

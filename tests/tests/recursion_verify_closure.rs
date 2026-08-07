@@ -25,9 +25,24 @@
 //! no `p3-circuit-prover`, no `dregg-circuit-prove`** — the three that carry the prover and the
 //! in-circuit verifier builder. Those are the names asserted below; asserting "p3-circuit" would
 //! go red immediately and for the wrong reason.
+//!
+//! ANSWERS:         does a SUBSTRING scan of `cargo tree -e normal` output show that dregg-turn NORMAL graph contains none of dregg-circuit-prove, p3-recursion, p3-circuit-prover; that dregg-recursion-verify reaches none of dregg-circuit-prove, wgpu, dregg-lean-ffi, p3-bn254, dregg-p3-pasta but DOES reach the three p3 recursion crates; that dregg-node takes the verify edge; and that neither recursion-verify nor turn declares the named cargo features?
+//! DOES NOT ANSWER: whether any recursion proof verifies. Despite the file name nothing here proves, verifies or even links — it reads dependency-graph TEXT and two manifests. The name checks are `contains` on rendered lines, so a crate whose name merely CONTAINS a forbidden one would match, and the required `p3-circuit` is already satisfied by `p3-circuit-prover` alone.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// SCOPE — printed by every test in this file. The module doc above and these two
+/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
+/// cheap single-source-of-truth for a doc line that is also runtime output.
+fn scope() {
+    println!(
+        "ANSWERS:         does a SUBSTRING scan of `cargo tree -e normal` output show that dregg-turn NORMAL graph contains none of dregg-circuit-prove, p3-recursion, p3-circuit-prover; that dregg-recursion-verify reaches none of dregg-circuit-prove, wgpu, dregg-lean-ffi, p3-bn254, dregg-p3-pasta but DOES reach the three p3 recursion crates; that dregg-node takes the verify edge; and that neither recursion-verify nor turn declares the named cargo features?"
+    );
+    println!(
+        "DOES NOT ANSWER: whether any recursion proof verifies. Despite the file name nothing here proves, verifies or even links — it reads dependency-graph TEXT and two manifests. The name checks are `contains` on rendered lines, so a crate whose name merely CONTAINS a forbidden one would match, and the required `p3-circuit` is already satisfied by `p3-circuit-prover` alone."
+    );
+}
 
 /// The crates whose ABSENCE from `dregg-turn`'s normal graph is the firewall.
 const FORBIDDEN_IN_TURN: &[&str] = &["dregg-circuit-prove", "p3-recursion", "p3-circuit-prover"];
@@ -71,6 +86,7 @@ fn cargo_tree(root: &Path, args: &[&str]) -> String {
 /// nothing heavy, but its *consumers* do, and a bare `cargo tree` would show their edges.
 #[test]
 fn dregg_turn_has_no_recursion_prover_edge() {
+    scope();
     let root = workspace_root();
 
     // ── HONEST POLE. The probe must be looking at a real, populated graph — otherwise "the
@@ -111,6 +127,7 @@ fn dregg_turn_has_no_recursion_prover_edge() {
 /// gate that pretended otherwise would be describing a crate that does not exist.
 #[test]
 fn dregg_recursion_verify_is_verify_only_and_says_what_it_pulls() {
+    scope();
     let root = workspace_root();
     let rv = cargo_tree(
         &root,
@@ -150,6 +167,7 @@ fn dregg_recursion_verify_is_verify_only_and_says_what_it_pulls() {
 /// where verification is wanted.
 #[test]
 fn the_node_takes_the_verify_edge_that_turn_refuses() {
+    scope();
     let root = workspace_root();
     let node = cargo_tree(
         &root,
@@ -181,6 +199,7 @@ fn the_node_takes_the_verify_edge_that_turn_refuses() {
 /// makes in prose, made checkable.
 #[test]
 fn the_verify_crate_declares_no_features() {
+    scope();
     let manifest = workspace_root().join("recursion-verify/Cargo.toml");
     let text = std::fs::read_to_string(&manifest).expect("the verify crate's manifest is readable");
 

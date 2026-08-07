@@ -20,6 +20,9 @@
 //! is the named VK-gated big-bang piece — see the adapter's module docs. Until the
 //! regen lands this is the MECHANISM tooth; `Dregg2.Circuit.BridgeBackingAttack`
 //! STANDS.
+//!
+//! ANSWERS:         do two distinct real note-spend witnesses prove as claim leaves, does folding leaf A against ITSELF through prove_note_spend_binding_node succeed and re-expose exactly the tuple A claims, and does folding leaf A against leaf B return SOME Err?
+//! DOES NOT ANSWER: whether the refusal is the BINDING that fired. This file calls bare must_refuse, not assert_refused_by_binding_node, so any Err satisfies the negative pole — an OOM, an FRI fault or a trace-shape error all read as the forgery being rejected. It also reaches no deployed leg: the positive pole folds one leaf against itself, so no leg-versus-sub-proof distinction is exercised anywhere here.
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::note_spending_witness::{NoteSpendingWitness, test_spending_key};
@@ -30,6 +33,18 @@ use dregg_circuit_prove::note_spend_leaf_adapter::{
     note_spend_leaf_public_inputs, prove_note_spend_binding_node, prove_note_spend_leaf_with_claim,
     read_exposed_note_spend_claim,
 };
+
+/// SCOPE — printed by every test in this file. The module doc above and these two
+/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
+/// cheap single-source-of-truth for a doc line that is also runtime output.
+fn scope() {
+    println!(
+        "ANSWERS:         do two distinct real note-spend witnesses prove as claim leaves, does folding leaf A against ITSELF through prove_note_spend_binding_node succeed and re-expose exactly the tuple A claims, and does folding leaf A against leaf B return SOME Err?"
+    );
+    println!(
+        "DOES NOT ANSWER: whether the refusal is the BINDING that fired. This file calls bare must_refuse, not assert_refused_by_binding_node, so any Err satisfies the negative pole — an OOM, an FRI fault or a trace-shape error all read as the forgery being rejected. It also reaches no deployed leg: the positive pole folds one leaf against itself, so no leg-versus-sub-proof distinction is exercised anywhere here."
+    );
+}
 
 /// A REAL full-width witness (raw 32-byte fields, > 2^30 value so the high limb is
 /// live), depth 2 (the one-padding-row discipline the deployed DSL circuit uses).
@@ -63,6 +78,7 @@ fn make_witness(tag: u8) -> NoteSpendingWitness {
 
 #[test]
 fn note_spend_binding_node_bites() {
+    scope();
     let config = ir2_leaf_wrap_config();
 
     // Two DISTINCT real spends → two distinct claim tuples.

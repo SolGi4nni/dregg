@@ -87,6 +87,45 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts" / "gates-executed.tsv"
 
+# ── SCOPE ─ this set is the ONLY copy; one pair prints on every run, pass or fail, because
+# the misreads this convention exists to stop happened to people reading RESULTS, not source.
+# The three modes answer three DIFFERENT questions and each gets its own pair. ─────────────
+SCOPE_ANSWERS = (
+    "does every test binary named in scripts/gates-executed.tsv, run as its own `cargo test -p "
+    "<crate> --test <stem>`, emit a reconciling `running N tests` / `test result:` pair, and does "
+    "every manifest row marked `run` appear in that output with status `ok` — on top of the static "
+    "file/glob/count checks below?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether any of those tests ASSERTS anything. A vacuous or tautological gate reports `ok` and "
+    "is counted here as executed coverage. The population is exactly the rows of "
+    "scripts/gates-executed.tsv — dregg-circuit-prove integration tests — so a critical gate in "
+    "any other crate, and any non-`*_emit_gate` file the manifest does not record, is outside this "
+    "run entirely."
+)
+SCOPE_ANSWERS_STATIC = (
+    "do the files named in scripts/gates-executed.tsv all exist on disk, does its emit-gate set "
+    "equal the circuit-prove/tests/*_emit_gate.rs glob in BOTH directions, do its `#!` counts match "
+    "its own rows, is law1_enforcement_gate named, and is the emit-gate count at or above the floor "
+    "hardcoded in this script?"
+)
+SCOPE_DOES_NOT_ANSWER_STATIC = (
+    "whether ONE of those binaries compiles, links, runs, or passes — --static-only invokes no "
+    "cargo at all, and the 2026-07-20 blackout this gate was written for (gates that compiled "
+    "nowhere for five days) satisfies every check it performs."
+)
+SCOPE_ANSWERS_SELFTEST = (
+    "can this gate go RED — do the static checker and the libtest parser return the specified "
+    "verdicts over synthetic fixtures (a deleted gate, a deleted law-1 ratchet, an unarmed extra "
+    "gate, a trimmed manifest, an under-floor manifest, and dead / red / silenced / "
+    "filtered-to-zero / spoofed-tally logs)?"
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "anything about this repository: no fixture reads scripts/gates-executed.tsv or "
+    "circuit-prove/tests, and no cargo runs. The self-test also runs BEFORE every other mode, so "
+    "its green line is never the run's verdict."
+)
+
 # ── THE FLOORS. In code, on purpose. ────────────────────────────────────────────
 # These are the claims the wound doc makes about what went dark. They live here rather than
 # only in the TSV so that emptying the TSV cannot make this gate agree that nothing was
@@ -617,6 +656,16 @@ def main() -> int:
 
     print(f"{BOLD}check-gates-executed.py — did the critical gates actually RUN?{OFF}")
     print(f"{DIM}  docs/WOUND-ci-gates-dead-since-2026-07-20.md — the class this closes{OFF}")
+
+    if only_self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
+    elif static_only:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_STATIC}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_STATIC}", flush=True)
+    else:
+        print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     if not self_test():
         print(

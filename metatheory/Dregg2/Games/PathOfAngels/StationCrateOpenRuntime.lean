@@ -130,14 +130,11 @@ abbrev OUTPUT_FORMAT : String := "POA-CRATE-OPEN-OUT-1"
 390 KB, so this is a malformed-caller guard and not a semantic bound. -/
 abbrev WIRE_BYTE_LIMIT : Nat := 1024 * 1024
 
-/-- The log bound.  `ShipInstrumentPanel.observe` refuses past its own capacity,
-so a longer log could not fold anyway; making the refusal happen at the parser
-keeps the quadratic replay bounded. -/
-abbrev MAX_HISTORY_ROWS : Nat := ShipInstrumentPanel.MAX_OBSERVED
+/-- The log bound, and the period fuse — both `StationDailyRuntime`'s, because
+both wires carry the same log and a second bound is a second thing to drift. -/
+abbrev MAX_HISTORY_ROWS : Nat := StationDailyRuntime.MAX_HISTORY_ROWS
 
-/-- A period is a small authored ordinal; this only stops a caller posting an
-integer whose decimal spelling is the whole allocation budget. -/
-abbrev PERIOD_LIMIT : Nat := 4294967296
+abbrev PERIOD_LIMIT : Nat := StationDailyRuntime.PERIOD_LIMIT
 
 /-! ## The deployment — one crate, one panel, both already authored -/
 
@@ -146,13 +143,19 @@ abbrev panel : ShipInstrumentPanel.Panel := StationCrateOpen.panel
 
 /-! ## The two wire records -/
 
-/-- One durable log row.  Counters and sequence numbers are deliberately ABSENT:
-they are derived from the row's position, so a caller cannot advance a counter
-without moving a row, and moving a row breaks the replay. -/
-structure HistoryRow where
-  player : Digest32
-  period : Nat
-deriving DecidableEq
+/-! ⚑ ONE LOG ROW TYPE, ONE SPELLING, ONE FOLD.  `HistoryRow` and the whole
+replay (`priorOpens`, `envelopeOfRow`, `envelopesOfHistory`, `replayOver`) were
+authored HERE and now live in `StationDailyRuntime`, which this module imports,
+because the station READ folds the same log.  A read that replayed it by its own
+arithmetic would be a second fold — two shapes that agree today and disagree the
+first time either grows a field.  These are aliases, not a re-typing: the
+`export` below makes the names resolve, and the objects are the same objects. -/
+
+abbrev HistoryRow := StationDailyRuntime.HistoryRow
+abbrev priorOpens := StationDailyRuntime.priorOpens
+abbrev envelopeOfRow := StationDailyRuntime.envelopeOfRow
+abbrev envelopesOfHistory := StationDailyRuntime.envelopesOfHistory
+abbrev replayOver := StationDailyRuntime.replayOver
 
 structure Request where
   opener : Digest32
@@ -241,14 +244,14 @@ private def jsonBool (b : Bool) : String := if b then "true" else "false"
 private def jsonArray (items : List String) : String :=
   "[" ++ String.intercalate "," items ++ "]"
 
-def HistoryRow.toJson (row : HistoryRow) : String :=
-  "{\"player\":" ++ jsonString (Emit.bytes32Hex row.player) ++
-    ",\"period\":" ++ toString row.period ++ "}"
-
+/-- The row spelling is `StationDailyRuntime.HistoryRow.toJson` — the SAME
+function the station read's request uses, so the node cannot spell its own log
+two ways on two wires. -/
 def Request.toJson (request : Request) : String :=
   "{\"format\":" ++ jsonString INPUT_FORMAT ++
     ",\"opener\":" ++ jsonString (Emit.bytes32Hex request.opener) ++
-    ",\"history\":" ++ jsonArray (request.history.map HistoryRow.toJson) ++ "}"
+    ",\"history\":" ++
+      jsonArray (request.history.map StationDailyRuntime.HistoryRow.toJson) ++ "}"
 
 def PanelWire.toJson (wire : PanelWire) : String :=
   "{\"gauges\":" ++ jsonArray (wire.gauges.map StationDailyRuntime.GaugeWire.toJson) ++
@@ -301,7 +304,8 @@ private def objectNat (j : Json) (key : String) (limit : Nat) : Except String Na
 
 private def parseHistoryRow (j : Json) : Except String HistoryRow := do
   exactKeys j ["player", "period"]
-  pure { player := ← objectDigest j "player", period := ← objectNat j "period" PERIOD_LIMIT }
+  pure { player := ← objectDigest j "player",
+         period := ← objectNat j "period" PERIOD_LIMIT : HistoryRow }
 
 private def parseHistory (j : Json) : Except String (List HistoryRow) := do
   let values := (← j.getArr?).toList
@@ -334,30 +338,6 @@ document laws below are properties of the CEREMONY, not of the station's
 particular content, so they hold for every deployment and can carry the strong
 `#assert_axioms` pin instead of inheriting this content's compiled
 `configValidB`/`panelValidB` evaluation. -/
-
-/-- How many times this crew key already appears in the log.  This is the crate's
-`playerCounters` value for that key after the replay, derived from position. -/
-def priorOpens (history : List HistoryRow) (player : Digest32) : Nat :=
-  history.countP (fun row => decide (row.player = player))
-
-/-- The envelope the crate accepted for log row `index`.  `expectedSequence` is
-the row's position because every accepted open advances `State.sequence` by one
-and nothing else advances it. -/
-def envelopeOfRow (config : SalvageCrate.Config) (history : List HistoryRow) (index : Nat)
-    (row : HistoryRow) : SalvageCrate.OpenEnvelope :=
-  let previous := priorOpens (history.take index) row.player
-  StationCrateOpen.envFor config row.player ⟨row.period⟩ previous (previous + 1) index
-
-def envelopesOfHistory (config : SalvageCrate.Config) (history : List HistoryRow) :
-    List SalvageCrate.OpenEnvelope :=
-  history.zipIdx.map (fun (row, index) => envelopeOfRow config history index row)
-
-/-- Replay the node's durable log from the installed ship.  `none` exactly when
-some row is not one this crate could have accepted in that position. -/
-def replayOver (config : SalvageCrate.Config) (deployment : ShipInstrumentPanel.Panel)
-    (history : List HistoryRow) : Option (StationCrateOpen.Rolled config) :=
-  StationCrateOpen.rollDay config deployment (StationCrateOpen.genesisRolled config deployment)
-    (envelopesOfHistory config history)
 
 /-- The envelope for the NEW open: the opener the caller named, the period the
 crate state is at, and the counter/sequence the log determines. -/
@@ -620,6 +600,43 @@ theorem the_replay_guard_is_exactly_as_strong_as_the_node_log :
     (openFor (firstOpen crew41)).verdict.openedB = true ∧
     (openFor (secondOpen crew41)).verdict.openedB = false := by native_decide
 
+/-! ### ⭐ THE LOOP, CLOSED
+
+The write publishes a moved ship and the node appends one row.  The station READ
+is handed that row and must serve the SAME ship.  Until 2026-08-07 it could not:
+`POA-STATION-DAILY-1` had no field for the log, so over HTTP the write served
+`exact_total: 1, observed: 2` while `/api/poa/station/…/panel` served
+`exact_total: 0, observed: 0`.
+
+The log below is `(secondOpen crew41).history` — not a third spelling of the row,
+but the very log the replay pole above is refused against, so this theorem and
+that one cannot drift. -/
+
+/-- ⭐ THE READ SERVES THE SHIP THE WRITE PUBLISHED, as one equation between two
+whole panels.  Left: the communal fields of the document `/panel` serves for the
+log the node now holds.  Right: the panel the accepted open published.  Bit for
+bit, one value.
+
+This is red if either half stops folding, if the two folds diverge, or if the
+read starts inventing a reading — and it is `Option`-valued on both sides, so it
+cannot be satisfied by both of them refusing. -/
+theorem the_station_read_serves_the_ship_this_write_published :
+    (StationDailyRuntime.readFor
+        { crew := none, history := (secondOpen crew41).history }).map
+      (fun reply =>
+        ({ gauges := reply.gauges, recoveredKinds := reply.recoveredKinds,
+           observed := reply.observed, admitted := reply.admitted } : PanelWire)) =
+      (openFor (firstOpen crew41)).verdict.panelWire? := by native_decide
+
+/-- ⚠ And it is not vacuous on either side: the write really published a panel
+and the read really served a document.  Without this, two `none`s would satisfy
+the equation above and the loop would be "closed" by both ends going dark. -/
+theorem neither_side_of_the_loop_is_a_refusal :
+    ((openFor (firstOpen crew41)).verdict.panelWire?).isSome = true ∧
+    (StationDailyRuntime.readFor
+      { crew := none, history := (secondOpen crew41).history }).isSome = true := by
+  native_decide
+
 /-- An ordinary day through the wire: crew 40 draws a bound record, is `opened`
 and admitted, and every gauge reads zero.  Showing up on an ordinary day and not
 showing up are the same ship — the roadmap's "missing a day is uninteresting", on
@@ -753,6 +770,8 @@ compiled-evaluator fact and is labelled as one. -/
 #assert_compiled an_honest_crate_open_publishes_the_moved_ship
 #assert_compiled a_second_open_of_the_installed_period_is_refused
 #assert_compiled the_replay_guard_is_exactly_as_strong_as_the_node_log
+#assert_compiled the_station_read_serves_the_ship_this_write_published
+#assert_compiled neither_side_of_the_loop_is_a_refusal
 #assert_compiled an_ordinary_open_publishes_an_unmoved_ship
 #assert_compiled an_ineligible_crew_key_is_refused
 #assert_compiled a_log_row_from_another_period_refuses

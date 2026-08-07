@@ -48,6 +48,11 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'for the archive file named on the command line (default dregg-lean-ffi/libdregg_lean.a), does `ar t` list a member called Dregg2_FFI.o, does every IN-TREE module (Dregg2/Metatheory/Polis) of the Dregg2.FFI closure that scripts/lean-ffi-closure.py computes have a member of the matching NAME, and does `nm` show zero referenced-but-undefined initialize_* symbols outside the Init/Std/Lean/Lake toolchain?' \
+  'whether any member is CURRENT. Membership is by NAME only, so an object compiled from a .lean that has changed since passes all three legs — that gap cost a week (deployed_constraint_probe printed `8 passed` from 07-30 to 08-06 with SIX assertions false against a 2026-07-25 Dregg2_Exec_DeployedConstraint.o, and this gate saw a member and said PRESENT). The per-member age question is scripts/check-lean-seed-member-freshness.py and dregg-lean-ffi/tests/linked_archive_freshness.rs, not this gate. It also says nothing about whether this file is the archive any build actually LINKS, nor whether a member computes the right thing.'
+
 ARCH="${1:-dregg-lean-ffi/libdregg_lean.a}"
 META="${DREGG_METATHEORY_DIR:-metatheory}"
 

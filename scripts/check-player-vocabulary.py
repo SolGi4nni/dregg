@@ -224,6 +224,35 @@ NOT_PLAYER_SURFACES: dict[str, str] = {
 MIN_SURFACES = 24
 MIN_UNITS = 2_000
 
+# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ────────
+SCOPE_ANSWERS = (
+    "in TRACKED `dreggnet-web/src/*.rs` ONLY, matched by BASENAME against the PLAYER_SURFACES "
+    "table: does any string literal - minus comments, test bodies, operator sinks, json!/Json "
+    "wire bodies, {placeholder} spans, and read one level down through the CSS/JS/markup reader - "
+    "contain, lowercased, a SUBSTRING equal to a term of scripts/player-vocabulary.tsv; is every "
+    "player-vocabulary-allow.tsv row still live; does every dreggnet-web/src module appear in the "
+    f"scope table; and did the sweep clear MIN_SURFACES={MIN_SURFACES} files and "
+    f"MIN_UNITS={MIN_UNITS} text units?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether the private vocabulary reaches players. ONE crate is swept: this file's own "
+    "NOT_PLAYER_SURFACES measures ~630 further sites that render to a player and are NOT gated "
+    "(site/**.html 232, discord-bot 118, dreggnet-offerings 79, dreggnet-catalog 76, ...), "
+    "including the *_DISCLOSURE consts that put `merkle` on a live session page. A substring over "
+    "SOURCE is also not a reading: a word composed at runtime, pulled in from another crate at "
+    "render time, or spelled differently is invisible, and nothing here checks that a replacement "
+    "was true rather than merely vaguer."
+)
+SCOPE_ANSWERS_SELFTEST = (
+    "can the classifier catch and subtract this script's own fixtures, does the scope table match "
+    "the modules on disk, and does the live sweep clear both floors while a scope narrowed to one "
+    "module falls through them?"
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "whether any banned word is in the tree - the floor legs run the real sweep for its COUNTS "
+    "only and never look at what it found. PASSED is evidence about the instrument."
+)
+
 # ── R5: the machine-readable sinks ─────────────────────────────────────────────────
 # A literal inside one of these is a field of a document a PROGRAM parses. The ingest
 # API's `"detail"` string is addressed to whoever wrote the submitting client.
@@ -597,7 +626,12 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
+
+    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
+    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     rows = vocabulary()
     advice = {term: instead for term, _, instead in rows}

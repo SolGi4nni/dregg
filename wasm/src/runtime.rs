@@ -2948,7 +2948,10 @@ mod poa_signal_signing_tests {
         let clerk = AgentCipherclerk::from_key_bytes(Zeroizing::new([0x61; 32]));
         let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
             1,
-            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
+            &[
+                dregg_sdk::poa_signal::SignalCode::new(0, 0, 0).unwrap(),
+                dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
+            ],
         )
         .unwrap();
         let mut turn = dregg_sdk::poa_signal::signal_claim_turn(

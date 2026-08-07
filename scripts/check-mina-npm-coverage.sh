@@ -44,6 +44,18 @@ command -v node >/dev/null 2>&1 || die "node is not on PATH (this check does not
 SELF_TEST=0
 [ "${1:-}" = "--self-test" ] && SELF_TEST=1
 
+# ── SCOPE ─ this block is the ONLY copy; it prints on every run, pass or fail. --self-test
+# is a strict SUPERSET here (the bare comparison still runs and folds into the same exit
+# code), so it gets its own pair rather than replacing the one below. ───────────────────
+if [ "$SELF_TEST" = "1" ]; then
+  SCOPE_A='everything the bare run asks, plus: on two names this script INVENTS, would an ungated script be reported and would an allowlist row with an empty reason be reported?'
+  SCOPE_D='whether either probe read anything real. Both legs run on synthetic strings — package.json and npm-scripts-allow.tsv are never modified — so they show the reader can speak, not that it looked at the tree.'
+else
+  SCOPE_A='is every key of the scripts object in bridge/mina-zkapp/package.json either named as an npm_script by check-mina-attestation.sh --manifest or listed in bridge/mina-zkapp/npm-scripts-allow.tsv with a reason of at least 20 characters, does every name in those two sources still exist in package.json, and are there at least 30 declared and at least 15 in a tier?'
+  SCOPE_D='whether a covered script RUNS, sits at a defensible tier, or checks anything. This is a NAME-SET comparison against a table the gate it serves prints about itself: a script named in TIER_TABLE counts as covered even if its leg is never invoked, and an allowlist reason is graded on LENGTH, never on content.'
+fi
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' "$SCOPE_A" "$SCOPE_D"
+
 # ── the three sets ────────────────────────────────────────────────────────────
 declared="$(node -p "Object.keys(require('$APP/package.json').scripts).join('\n')")" \
   || die "package.json's scripts block is unreadable"

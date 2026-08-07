@@ -60,6 +60,9 @@
 //! deployed order — so this tooth proves the bytes production proves. The geometry pin below is
 //! kept, re-derived through both kill-sets off their Lean-emitted single-source tables, so a
 //! future regen that legitimately moves the member still has to move this tooth deliberately.
+//!
+//! ANSWERS:         does the deployed dispatcher resolve the committed makeSovereign row byte-for-byte, does that row width and teeth column re-derive through both epoch-1 kill-sets, does the leg publish the executor KEY_COMMIT both at PI 58..61 and at the committed teeth columns, does the honest chain fold plus light-client-verify, and is a key_commit ONE greater refused by the segmented sovereign-binding node with a WitnessConflict?
+//! DOES NOT ANSWER: whether an unauthorized party is stopped from promoting a cell. The bundle sequence, anchor and new_commit are handed in by this test and no signature is checked anywhere in the chain, so what is bound is the leg published key DIGEST against a re-proven authority tuple over the same digest — never possession of the key it digests.
 
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
@@ -88,6 +91,18 @@ use dregg_circuit_prove::joint_turn_aggregation::{
 };
 use dregg_circuit_prove::sovereign_leaf_adapter::{KEY_COMMIT_LEN, SovereignAuthorityWitness};
 use dregg_turn::rotation_witness as rw;
+
+/// SCOPE — printed by every test in this file. The module doc above and these two
+/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
+/// cheap single-source-of-truth for a doc line that is also runtime output.
+fn scope() {
+    println!(
+        "ANSWERS:         does the deployed dispatcher resolve the committed makeSovereign row byte-for-byte, does that row width and teeth column re-derive through both epoch-1 kill-sets, does the leg publish the executor KEY_COMMIT both at PI 58..61 and at the committed teeth columns, does the honest chain fold plus light-client-verify, and is a key_commit ONE greater refused by the segmented sovereign-binding node with a WitnessConflict?"
+    );
+    println!(
+        "DOES NOT ANSWER: whether an unauthorized party is stopped from promoting a cell. The bundle sequence, anchor and new_commit are handed in by this test and no signature is checked anywhere in the chain, so what is bound is the leg published key DIGEST against a re-proven authority tuple over the same digest — never possession of the key it digests."
+    );
+}
 
 // ============================================================================
 // Fixtures
@@ -407,6 +422,7 @@ fn build_chain(key_commit: [BabyBear; KEY_COMMIT_LEN]) -> Vec<FinalizedTurn> {
 /// the DEPLOYED chain prover's Sovereign arm and the LIGHT CLIENT ACCEPTS.
 #[test]
 fn deployed_sovereign_turn_honest_accepts() {
+    scope();
     let turns = build_chain(owner_key_commit());
     let whole = prove_turn_chain_recursive(&turns)
         .expect("the honest sovereign-bearing chain must fold through the deployed prover");
@@ -424,6 +440,7 @@ fn deployed_sovereign_turn_honest_accepts() {
 /// REJECTED.
 #[test]
 fn deployed_sovereign_turn_forged_key_commit_rejected() {
+    scope();
     // ── S1 HONEST POLE FIRST, in THIS test. The forged chain below differs from this one by a
     //    SINGLE FELT, so without an accept here the refusal proves nothing: an arm that refuses
     //    every chain of this shape would satisfy the assertion below just as well.

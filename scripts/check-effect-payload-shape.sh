@@ -20,4 +20,9 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'does turn/tests/effect_payload_shape_gate.rs pass — i.e. do the payload FIELD LISTS of the Effect variants, the asset index specifically, and the asset-naming summaries at the receipt layer still match the correspondence the Lean FullActionA model declares?' \
+  'whether the executor USES those fields correctly. It pins the SHAPE the two sides agree on; a Transfer that carries an asset field says nothing about apply.rs picking the asset-indexed kernel for it.'
+
 exec cargo test -p dregg-turn --test effect_payload_shape_gate -- --test-threads=4

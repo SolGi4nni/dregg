@@ -215,6 +215,36 @@ IGNORE_DIRS = {".lake", ".git", "build", "__pycache__"}
 
 KINDS = ("unrooted", "sorry")
 
+# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
+SCOPE_ANSWERS = (
+    "over comment/string-stripped metatheory/Dregg2/**.lean TEXT (no Lean toolchain, no build): "
+    "which modules carry a #guard / #assert_axioms / #assert_namespace_axioms token while being "
+    "unreachable by an import-line BFS from metatheory/lakefile.toml defaultTargets, or reachable "
+    "but carrying a bare sorry / sorryAx / admit-tactic token — and does that (kind, module, WEIGHT) "
+    "set differ in EITHER direction from scripts/guard-modules-baseline.txt, whose own header TOTAL, "
+    "row count and last provenance line must equal the rows actually present?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether a guard that DOES run asserts anything — `#guard 1 == 1`, or an #assert_axioms on a "
+    "trivial lemma, is rooted and sorry-free and passes here. Rootedness says a guard CAN be compiled "
+    "by `lake build`, never that any run compiled it or that its claim holds; guard-carrying modules "
+    "outside Dregg2/ (Metatheory.*, Polis.*) are not censused at all; and even under --rev the ledger "
+    "graded against is the WORKING-TREE baseline file, not the revision's."
+)
+
+SCOPE_ANSWERS_SELFTEST = (
+    "can this INSTRUMENT still fire? Against a synthetic five-module tree in a temp dir it plants each "
+    "fault in turn — an unrooted guard module, a rooted one below a sorry, a drifted weight, a stale "
+    "row, a (d0)-(d3) refresh that would launder a split, a hand-edited ledger — and requires each to "
+    "go red while the clean controls (a rooted sorry-free guard, an `admit` identifier, a `sorryAx` "
+    "name literal) stay green."
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "anything about metatheory/ or scripts/guard-modules-baseline.txt. This mode never reads the real "
+    "tree or the real ledger, so an all-green red-proof is a fact about the READER, not about the "
+    "repo — the census is the run without --self-test."
+)
+
 
 def repo_root() -> Path:
     here = Path(__file__).resolve().parent
@@ -1293,7 +1323,12 @@ def main() -> int:
     root = repo_root()
 
     if args.self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return run_self_test(root)
+
+    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
+    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     tmpdir = None
     try:

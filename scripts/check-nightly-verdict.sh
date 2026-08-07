@@ -35,6 +35,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
 REPO="${DREGG_REPO:-emberian/dregg}"
 MAX_AGE_H="${DREGG_NIGHTLY_MAX_AGE_H:-48}"
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'did the most recent COMPLETED schedule-triggered run of .github/workflows/armed-teeth.yml, as the GitHub REST API reports it, conclude success, and did it complete within DREGG_NIGHTLY_MAX_AGE_H hours?' \
+  'whether any tooth fired, or anything at all about this tree. It runs no folds and reads a JOB RESULT: a workflow whose teeth were all skipped, filtered to zero, or silently no-ops reports success exactly like one that executed them — armed-teeth reported success across 23 runs in which 0 teeth ran. The verdict is about a different commit up to a day old, and with no gh on PATH or a failed API call this script prints that it is not a pass and then exits 0 anyway.'
+
 command -v gh >/dev/null 2>&1 || {
   echo "check-nightly-verdict: SKIPPED — no \`gh\` on PATH, so the nightly's verdict cannot be read." >&2
   echo "  This is NOT a pass. Install gh, or read it by hand:" >&2

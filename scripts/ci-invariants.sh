@@ -423,6 +423,28 @@ inv_no_fallthrough() {
 # ── dispatch ────────────────────────────────────────────────────────────────────
 main() {
   local cmd="${1:-all}"
+
+  # ── SCOPE ─ these printfs are the ONLY copy; one prints on every run, pass or fail. The two
+  # subcommands wired into scripts/local-gates.sh answer DIFFERENT questions, so they get
+  # different pairs, and it lives inside main() so the --help window (sed 2,45p) is unmoved. ──
+  case "$cmd" in
+    structural)
+      printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+        'over the working-tree SOURCE TEXT and with nothing compiled or run: is there no #[ignore] within 6 lines above a registered falsifier fn or above any fn whose NAME matches the soundness/forgery/twin/fail-closed taxonomy regex, does every lean-twins.tsv row still hold (a route pattern greps present, a forbid pattern greps absent, a cfgtest fn exists and carries #[cfg(test)] within 4 lines above), does metatheory/lakefile.toml still pin mathlib as git plus a 40-hex rev with no path require while no workflow names its own mathlib checkout or an inline lake exe cache get and every toolchain-installing workflow calls ci-mathlib-cache.sh or bootstrap.sh, and does gate-dataflow.py find every registered decision site REFUSING when its verified gate is absent?' \
+        'whether any test PASSES, or whether the tree builds. Invariants 1 and 2 are not in this subcommand, so nothing is compiled and no falsifier is executed. Invariants 3, 4 and 5 are grep and awk over text: invariant 4 is a NAME match and is blind to dataflow by construction, which is why invariant 6 exists beside it, and the taxonomy sweep of invariant 3 only opens files that a registry row already names, so a silenced soundness test in an unregistered file is not seen. Coverage is whatever the two TSV registries list.'
+      ;;
+    falsifiers)
+      printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+        'for every row of scripts/ci-invariants/falsifiers.tsv: does a source file under that crate still define the named fn, is it free of an #[ignore] in the 6 lines above it, and does cargo test for that crate and target print a line matching that test name followed by ok with exit 0 — MISSING, silenced, and DID NOT RUN (filtered to zero, compile error, or an aborted binary) each counting as FAILED rather than skipped?' \
+        'whether the registered falsifiers are the right ones or assert anything. It is a roll-call against a registry: coverage is exactly the rows in that TSV, an unregistered falsifier is never run, and a test that passes vacuously is scored a pass. It also does not build the workspace — only the crates the registry names — so it is not invariant 1.'
+      ;;
+    *)
+      printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+        'whichever of the six invariants this subcommand dispatches (see the header) — each one a registry-driven check whose corpus is the rows of scripts/ci-invariants/*.tsv, not the tree at large.' \
+        'anything about an invariant it did not run. Run structural or falsifiers for the pair that describes what the local-gates rows actually measure.'
+      ;;
+  esac
+
   require_tsv "$FALSIFIERS_TSV"; require_tsv "$TWINS_TSV"
   case "$cmd" in
     build)      inv_build ;;

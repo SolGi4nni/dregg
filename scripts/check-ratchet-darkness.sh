@@ -95,6 +95,11 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mt_dir="${METATHEORY_DIR:-$repo_root/metatheory}"
 allowlist="${RATCHET_DARK_ALLOWLIST:-$repo_root/scripts/lean-ratchet-dark-allow.txt}"
 
+# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
+  'for every .lean under metatheory as it sits on disk, is it reachable by a REGEX walk of import lines from Dregg2.lean — and if not, does its comment-stripped text contain a word equal to the LAST NAME COMPONENT of a sentinel floor parsed out of FloorCensus (plus FloorRatchet sentinelBundles when that list exists), or is it a module lake builds — with every dark-and-built module and every allowlist row still accurate?' \
+  'whether any declaration is VACUOUS, or whether these are all the refuted floors. It is a word match over source TEXT, not the ratchet: it under-reports on purpose (the sentinels are a subset of the floors #floor_ratchet derives from the elaborated environment), it over-matches an unrelated constant that happens to share a last name component, and a module being INSIDE the Dregg2 closure is not evidence that any instrument counted its theorems.'
+
 if [ ! -d "$mt_dir" ]; then
   echo "check-ratchet-darkness: FATAL — metatheory dir is not a directory: $mt_dir" >&2
   exit 2
