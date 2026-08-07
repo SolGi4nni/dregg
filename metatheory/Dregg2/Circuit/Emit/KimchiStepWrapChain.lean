@@ -655,14 +655,116 @@ theorem the_bend_moves_every_transcript_derived_public_word :
 
 #assert_compiled the_bend_moves_every_transcript_derived_public_word
 
-/-- **`the_emitted_assembly_shape_does_not_move_with_the_step_proof`** — and the assembly does NOT
-move: a bend changes the values a verifier reads, not the circuit it reads them from. Without this,
-"the public vector moved" would be consistent with having emitted a different circuit. -/
-theorem the_emitted_assembly_shape_does_not_move_with_the_step_proof :
-    (rungRows tChainBent .bind true).length = (rungRows tChain .bind true).length := by
+/-! ### §10b — ⚑⚑⚑ **COEFFICIENTS vs WITNESS: is the step↔wrap dependency a FIXPOINT?**
+
+This section exists because "it is a fixpoint" was written once about slot 12, cited by three
+docblocks and a Rust comment, and never measured. A kimchi verification key is a commitment to the
+`kind`, the `permVars` and the **`coeffs`** of a gate list — `wrapGates` is exactly that triple — so
+the question *"does the wrap VK depend on the step proof"* is the question *"does anything the step
+proof determines reach a wrap gate's coefficients"*, and it is decidable by evaluation.
+
+⚑ **THE ANSWER IS NO, AND UPSTREAM'S OWN ASYMMETRY IS WHY.** The two circuits pin each other's keys
+in OPPOSITE layers, and that is not an accident of ours:
+
+  * the **wrap** circuit's `step_keys` are `Inner_curve.constant` (`wrap_main.ml:98-101`), a
+    compile-time vector, so `keyRows`' one-hot fold carries all 56 coordinates of dregg's own step
+    verification key **as gate coefficients**. Conjunct (1) below measures that;
+  * the **step** circuit's `dlog_plonk_index` is `w.exists (merge::dlog_plonk_index(wrap_prover))`
+    (`step.rs:2718`) — an `exists`, i.e. a **WITNESS**. The wrap key never reaches a step gate's
+    coefficients, so the step VK is not a function of the wrap VK.
+
+Pin BOTH as constants and the two equations close on each other — `wrapVK = g(pins(f(pins(wrapVK))))`
+over 28 curve points through two polynomial-commitment maps, which is a genuine fixpoint with no
+reason to have a solution. The single `w.exists` is what breaks it. So a step-side model that pinned
+the outer index as an `Inner_curve.constant` would not be "stronger than upstream": it would be a
+CYCLE, and this is the note that says so before the next lane writes one.
+
+⚑ **THE PASS ORDER, therefore, and it terminates in ONE pass:**
+
+    step gates  →  step VK  →  wrap gates  →  wrap VK  →  segment D's witness  →  step proof
+                →  step statement  →  wrap witness / public input  →  wrap proof
+
+The only step-proof quantity that reaches a wrap COEFFICIENT is its evaluation **domain**, through
+`xhatBase`/`xhatCorr` — `ptConstRow` pins each Lagrange base and each correction, and a Lagrange
+basis is a function of the domain. The domain is a function of the step circuit's ROW COUNT, which
+is a function of the step SHAPE alone and is known before any value is chosen, so even that leg is
+stratified. (`STEP_ROWS = 10 349` against `2 ^ STEP_DOMAIN_LOG2 = 16 384`: the slack is 6 035 rows,
+so adding segment D's own 28-commitment index absorption does not move the domain at all.) -/
+
+/-- Every coefficient the emitted wrap circuit carries at rung `k`, flat and undeduped — a
+`dedup` over ~10⁵ `Int`s is quadratic and this is only ever a membership question. -/
+def chainCoeffs (k : Rung) : List Int :=
+  (wrapGates (rungRows tChain k true)).flatMap (·.coeffs)
+
+/-- The published step-statement entries that are not `0` or `1`. ⚑ **FIFTY-FIVE OF THE
+SIXTY-SEVEN, and the twelve excluded are exactly the `B Bool` `should_finalize` bits.** `cConst`,
+`cEq`, `cMul` and `cBool` all carry `0` and `1` by construction, so a census that included them
+would be false for a reason that says nothing at all about the step proof — the exclusion is named
+here and both values are asserted present below rather than quietly dropped.
+
+⚠ The threshold is `1`, not a width. A first draft used `2 ^ 32` and admitted only **29** entries,
+because `stepmain_step_r8_finalize` carries its `B Challenge` words as small synthetic numerals
+(`KimchiWrapMainPins09` says so); a width threshold would have thrown away half the measurement to
+guard against a collision the measured coefficient set does not contain. -/
+def chainNontrivialEntries : List Nat :=
+  Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.filter (fun v => 1 < v)
+
+/-- ⚑⚑⚑ **THE STEP PROOF'S VALUES REACH THE WRAP CIRCUIT'S WITNESS; ITS VERIFICATION KEY REACHES
+THE COEFFICIENTS. THE DEPENDENCY IS STRATIFIED, NOT A FIXPOINT.**
+
+Four conjuncts, and the first two are the ones a sponge bend cannot see — `xhatScalar` reads
+`STEP_PUBLIC_IN` **directly** rather than through the `WrapData`, so a bent-tape control is blind to
+the whole statement path and (3)/(4) alone would be the vibe this section exists to replace.
+
+  1. **THE POSITIVE HALF, said first so this is a measurement and not an absence.** All 56
+     coordinates of dregg's own compiled step key (`KimchiStepWrapChainKey.STEP_OWN_VK_XY`, selected
+     at `KEY_CHAIN_BRANCH`) DO occur as coefficients of the closing rung. The wrap VK is a function
+     of the step VK, which is exactly the leg that would close the cycle if the step side pinned the
+     wrap key back.
+  2. **AND NO PUBLISHED ENTRY OF THE STEP STATEMENT DOES**, in either sign — `cConst k` is
+     `[1,0,0,0,-k]`, so a pinned value would appear negated and checking one sign only would be a
+     hole. Fifty-five of the sixty-seven entries are testable; the other twelve are the
+     `should_finalize` bits, and `0`/`1` are asserted present rather than excluded in silence.
+     ⚑ Measured over **35 575** coefficient cells at `w12_close`, of which 23 072 are full-width.
+  3. a bend of one Fq coordinate of the step proof's `w_comm` leaves the gate list — kind, wiring
+     AND coefficients — **identical**, and
+  4. moves the witness grid, so (3) is not a statement about two identical emissions.
+
+⚠ **THIS REPLACES `the_emitted_assembly_shape_does_not_move_with_the_step_proof`**, which compared
+two ROW COUNTS. Equal lengths are consistent with every coefficient having moved, so that theorem
+could not have answered the question its docblock was later cited for. Renamed rather than
+annotated: its old name became a claim it does not make. -/
+theorem the_wrap_gates_carry_the_step_key_and_none_of_the_step_proofs_values :
+    (let cs := chainCoeffs .close
+     -- (1) dregg's own step verification key IS in the wrap circuit's coefficients, all 56.
+     ((List.range KEY_COORDS).all (fun k => cs.contains (keyConst KEY_CHAIN_BRANCH k : Int))
+     -- (2) …and no published entry of the step statement is, in either sign.
+      && chainNontrivialEntries.all (fun v =>
+           !(cs.contains (v : Int)) && !(cs.contains (-(v : Int))))
+      -- ⚑ ANTI-VACUITY: (2) is about fifty-five real numbers, not an empty filter, and the twelve
+      -- it excludes are named — `0` and `1`, both of which ARE coefficients, said out loud so the
+      -- exclusion is a stated boundary rather than a filter nobody reads.
+      && chainNontrivialEntries.length == 55
+      && cs.contains (0 : Int) && cs.contains (1 : Int)
+      && (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.filter
+            (fun v => v ≤ 1)).length == 12)) = true
+    -- (3) …and a bend of a step-proof VALUE does not move one gate. ⚠ `PGate` derives no
+    -- `DecidableEq`, so the three fields a verifier index commits to are compared one by one
+    -- rather than through a structure equality — which is also what says WHICH of them held.
+    ∧ (wrapGates (rungRows tChainBent .transcript true)).map (·.kind)
+        = (wrapGates (rungRows tChain .transcript true)).map (·.kind)
+    ∧ (wrapGates (rungRows tChainBent .transcript true)).map (·.permVars)
+        = (wrapGates (rungRows tChain .transcript true)).map (·.permVars)
+    ∧ (wrapGates (rungRows tChainBent .transcript true)).map (·.coeffs)
+        = (wrapGates (rungRows tChain .transcript true)).map (·.coeffs)
+    -- (4) …while it does move the witness grid, so (3) is not two identical emissions.
+    ∧ wrapWitnessAt tChainBent .transcript (rungPub shapeWrap .transcript)
+          (rungRows tChainBent .transcript true)
+        ≠ wrapWitnessAt tChain .transcript (rungPub shapeWrap .transcript)
+            (rungRows tChain .transcript true) := by
   native_decide
 
-#assert_compiled the_emitted_assembly_shape_does_not_move_with_the_step_proof
+#assert_compiled the_wrap_gates_carry_the_step_key_and_none_of_the_step_proofs_values
 
 /-- **`the_emitted_public_vector_does_not_move_with_what_it_does_not_read`** — the negative control
 carried to the emission. `tChainUnread` is driven by a tape RE-EXTRACTED from a second, genuinely
