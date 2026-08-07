@@ -26,7 +26,7 @@ suffices.
   * `GatedAffordance φ` — a `CellAffordance φ` (the cap-gated effect-template) PLUS a `stateCond :
     RecordProgram` (the live-state gate the same executor enforces) PLUS the `method` the firing turn
     runs (so the state gate's `Cases`/default-deny dispatch is exercised).
-  * `fireGated ga held ctx old new s post` — the gated dispatch: yields the verified-turn
+  * `fireGated ga held ctx old new fc` — the gated dispatch: yields the verified-turn
     `AffordanceIntent` (binding the attested root, leg 4) IFF `fireGate ga.aff.required held` (caps) AND
     `ga.stateCond.admitsCtx ctx ga.method old new` (state); else `none` (refused in-band).
   * **`fireGated_iff` (THE KEYSTONE).** `fireGated` commits (`isSome`) ↔ `(required ⊆ held) ∧
@@ -76,7 +76,7 @@ import Dregg2.Tactics
 namespace Dregg2.Deos.GatedAffordance
 
 open Dregg2.Authority (Auth)
-open Dregg2.Deos.Affordance (CellAffordance FiredSurface AffordanceIntent fireGate fireGate_iff_subset
+open Dregg2.Deos.Affordance (CellAffordance FireCtx FiredSurface AffordanceIntent fireGate fireGate_iff_subset
   fireGate_trans projectFor)
 open Dregg2.Exec (RecordProgram StateConstraint SimpleConstraint TurnCtx Value)
 
@@ -112,9 +112,9 @@ structure GatedAffordance (φ : Type) where
 
 /-! ## §2 — `fireGated`: commit IFF caps AND state both pass.
 
-`fireGated ga held ctx old new s post` runs the affordance ONLY when `held` authorizes `ga.aff.required`
+`fireGated ga held ctx old new fc` runs the affordance ONLY when `held` authorizes `ga.aff.required`
 (`fireGate`) AND the cell's `(old, new)` transition satisfies `ga.stateCond` under the turn context
-`ctx` (`admitsCtx`). Both teeth must bite; either refusal is in-band (`none`). `s`/`post` are the
+`ctx` (`admitsCtx`). Both teeth must bite; either refusal is in-band (`none`). `fc` carries the
 pre/post-state commitments (the receipt's `oldCommit`/`newCommit`), exactly as `Affordance.fire`. -/
 
 /-- **The combined gate** — `gatedOK ga held ctx old new`: the conjunction of the cap-gate and the
@@ -123,41 +123,41 @@ THE predicate that says "this button may fire right now, for this viewer, in thi
 def gatedOK (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCtx) (old new : Value) : Bool :=
   fireGate ga.aff.required held && ga.stateCond.admitsCtx ctx ga.method old new
 
-/-- **`fireGated ga held ctx old new s post`** — fire the gated affordance for an agent holding `held`,
-in turn context `ctx`, against the cell transition `(old, new)`, with pre/post-state commitments
-`s`/`post`. IF `gatedOK` (caps AND state both pass), yields `some` of the verified-turn
+/-- **`fireGated ga held ctx old new fc`** — fire the gated affordance for an agent holding `held`,
+in turn context `ctx`, against the cell transition `(old, new)`, in the turn context `fc` (the §8
+effect digest, the prior chain digest, the pre/post commitments). IF `gatedOK` (caps AND state both pass), yields `some` of the verified-turn
 `AffordanceIntent` whose surface binds the attested root `post`; ELSE `none` (refused in-band). Reuses
 `Affordance.fire` for the commit shape (so the leg-4 root-binding is the SAME), guarded ADDITIONALLY by
 the state gate. -/
 def fireGated (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCtx) (old new : Value)
-    (s post : Nat) : Option (AffordanceIntent φ) :=
+    (fc : FireCtx φ) : Option (AffordanceIntent φ) :=
   if gatedOK ga held ctx old new then
-    Dregg2.Deos.Affordance.fire ga.aff held s post
+    Dregg2.Deos.Affordance.fire ga.aff held fc
   else
     none
 
 /-! ## §3 — THE KEYSTONE: firing happens exactly when BOTH gates pass. -/
 
 /-- A small bridge: under `gatedOK`, the cap-gate holds, so the inner `Affordance.fire` commits. -/
-private theorem fire_isSome_of_capOK (ga : GatedAffordance φ) (held : List Auth) (s post : Nat)
+private theorem fire_isSome_of_capOK (ga : GatedAffordance φ) (held : List Auth) (fc : FireCtx φ)
     (hcap : fireGate ga.aff.required held = true) :
-    (Dregg2.Deos.Affordance.fire ga.aff held s post).isSome = true :=
-  (Dregg2.Deos.Affordance.fire_authorized_iff ga.aff held s post).mpr hcap
+    (Dregg2.Deos.Affordance.fire ga.aff held fc).isSome = true :=
+  (Dregg2.Deos.Affordance.fire_authorized_iff ga.aff held fc).mpr hcap
 
 /-- **THE KEYSTONE — `fireGated_iff`.** A gated fire COMMITS (`isSome`) if and only if BOTH the cap-gate
 (`required ⊆ held`) AND the state-gate (`stateCond` admits the transition under `ctx`) pass. The
 conjunction the language could not previously express, as an `↔`. Both teeth, both polarities: drop
 either gate and the fire is refused. -/
 theorem fireGated_iff (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCtx) (old new : Value)
-    (s post : Nat) :
-    (fireGated ga held ctx old new s post).isSome = true ↔
+    (fc : FireCtx φ) :
+    (fireGated ga held ctx old new fc).isSome = true ↔
       (fireGate ga.aff.required held = true ∧
        ga.stateCond.admitsCtx ctx ga.method old new = true) := by
   unfold fireGated gatedOK
   by_cases hcap : fireGate ga.aff.required held = true
   · by_cases hst : ga.stateCond.admitsCtx ctx ga.method old new = true
     · rw [if_pos (by rw [hcap, hst]; rfl)]
-      exact ⟨fun _ => ⟨hcap, hst⟩, fun _ => fire_isSome_of_capOK ga held s post hcap⟩
+      exact ⟨fun _ => ⟨hcap, hst⟩, fun _ => fire_isSome_of_capOK ga held fc hcap⟩
     · have hstf : ga.stateCond.admitsCtx ctx ga.method old new = false := by
         cases hb : ga.stateCond.admitsCtx ctx ga.method old new with
         | true => exact absurd hb hst | false => rfl
@@ -176,19 +176,19 @@ theorem fireGated_iff (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCt
 /-- **BOTH PASS ⇒ FIRES** (the positive corner). Caps authorize AND the state admits ⇒ the gated fire
 commits. -/
 theorem fireGated_both_pass (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCtx)
-    (old new : Value) (s post : Nat)
+    (old new : Value) (fc : FireCtx φ)
     (hcap : fireGate ga.aff.required held = true)
     (hst : ga.stateCond.admitsCtx ctx ga.method old new = true) :
-    (fireGated ga held ctx old new s post).isSome = true :=
-  (fireGated_iff ga held ctx old new s post).mpr ⟨hcap, hst⟩
+    (fireGated ga held ctx old new fc).isSome = true :=
+  (fireGated_iff ga held ctx old new fc).mpr ⟨hcap, hst⟩
 
 /-- **CAP-GATE FAILS ⇒ REFUSED** (the cap tooth), regardless of state. An agent who lacks the required
 rights cannot fire the affordance EVEN IF the live state would admit the turn. The cap-gate is
 load-bearing: a permissive state does not paper over missing authority. -/
 theorem fireGated_cap_fail_refuses (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCtx)
-    (old new : Value) (s post : Nat)
+    (old new : Value) (fc : FireCtx φ)
     (hcap : fireGate ga.aff.required held = false) :
-    fireGated ga held ctx old new s post = none := by
+    fireGated ga held ctx old new fc = none := by
   unfold fireGated gatedOK
   rw [if_neg (by rw [hcap, Bool.false_and]; decide)]
 
@@ -198,9 +198,9 @@ passed, the viewer already voted). The state-gate is load-bearing: holding the c
 cell must be in a state that admits the turn. THIS is the half the cap-only `Affordance.fire` could
 never express. -/
 theorem fireGated_state_fail_refuses (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCtx)
-    (old new : Value) (s post : Nat)
+    (old new : Value) (fc : FireCtx φ)
     (hst : ga.stateCond.admitsCtx ctx ga.method old new = false) :
-    fireGated ga held ctx old new s post = none := by
+    fireGated ga held ctx old new fc = none := by
   unfold fireGated gatedOK
   rw [if_neg (by rw [hst, Bool.and_false]; decide)]
 
@@ -215,17 +215,17 @@ lacks the cap), BOTH refuse. So the gate is a true conjunction — you cannot sa
 or with state alone. (This is the anti-"a cap is enough" / anti-"the right state is enough" pin; the
 concrete `#guard` witnesses are in §6.) -/
 theorem fireGated_needs_both (ga₁ ga₂ : GatedAffordance φ)
-    (held₁ held₂ : List Auth) (ctx₁ ctx₂ : TurnCtx) (o₁ n₁ o₂ n₂ : Value) (s post : Nat)
+    (held₁ held₂ : List Auth) (ctx₁ ctx₂ : TurnCtx) (o₁ n₁ o₂ n₂ : Value) (fc : FireCtx φ)
     -- config 1: caps OK, state STALE ⇒ refused.
     (h1cap : fireGate ga₁.aff.required held₁ = true)
     (h1st  : ga₁.stateCond.admitsCtx ctx₁ ga₁.method o₁ n₁ = false)
     -- config 2: state READY, caps MISSING ⇒ refused.
     (h2cap : fireGate ga₂.aff.required held₂ = false)
     (h2st  : ga₂.stateCond.admitsCtx ctx₂ ga₂.method o₂ n₂ = true) :
-    fireGated ga₁ held₁ ctx₁ o₁ n₁ s post = none ∧
-    fireGated ga₂ held₂ ctx₂ o₂ n₂ s post = none :=
-  ⟨fireGated_state_fail_refuses ga₁ held₁ ctx₁ o₁ n₁ s post h1st,
-   fireGated_cap_fail_refuses  ga₂ held₂ ctx₂ o₂ n₂ s post h2cap⟩
+    fireGated ga₁ held₁ ctx₁ o₁ n₁ fc = none ∧
+    fireGated ga₂ held₂ ctx₂ o₂ n₂ fc = none :=
+  ⟨fireGated_state_fail_refuses ga₁ held₁ ctx₁ o₁ n₁ fc h1st,
+   fireGated_cap_fail_refuses  ga₂ held₂ ctx₂ o₂ n₂ fc h2cap⟩
 
 /-! ## §5 — THE LEG-4 PROPERTIES SURVIVE THE STATE GATE (the gate only adds refusal). -/
 
@@ -233,22 +233,22 @@ theorem fireGated_needs_both (ga₁ ga₂ : GatedAffordance φ)
 `fireGated` commits, the resulting intent fires the affordance's REAL effect verbatim (it commits via
 the SAME `Affordance.fire`). The state gate is purely a refusal condition. -/
 theorem fireGated_carries_real_effect (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCtx)
-    (old new : Value) (s post : Nat) (intent : AffordanceIntent φ)
-    (h : fireGated ga held ctx old new s post = some intent) :
+    (old new : Value) (fc : FireCtx φ) (intent : AffordanceIntent φ)
+    (h : fireGated ga held ctx old new fc = some intent) :
     intent.surface.firedEffect = ga.aff.effect := by
   unfold fireGated gatedOK at h
   by_cases hg : (fireGate ga.aff.required held && ga.stateCond.admitsCtx ctx ga.method old new) = true
   · rw [if_pos hg] at h
-    exact Dregg2.Deos.Affordance.fire_carries_real_effect ga.aff held s post intent h
+    exact Dregg2.Deos.Affordance.fire_carries_real_effect ga.aff held fc intent h
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
 /-- **A COMMITTED GATED FIRE BINDS THE ATTESTED ROOT** — leg-4's second clause survives: the surface's
-`boundRoot` is the verified turn's `newCommit` (`= post`). The state gate adds a precondition; the
+`boundRoot` is the RECEIPT THE FIRE PRODUCED (`intent.receipt.newCommit`). The state gate adds a precondition; the
 attested-root binding is untouched (it rides the SAME `Affordance.fire`). -/
 theorem fireGated_binds_attested_root (ga : GatedAffordance φ) (held : List Auth) (ctx : TurnCtx)
-    (old new : Value) (s post : Nat) (intent : AffordanceIntent φ)
-    (h : fireGated ga held ctx old new s post = some intent) :
-    intent.surface.boundRoot = post := by
+    (old new : Value) (fc : FireCtx φ) (intent : AffordanceIntent φ)
+    (h : fireGated ga held ctx old new fc = some intent) :
+    intent.surface.boundRoot = intent.receipt.newCommit := by
   unfold fireGated gatedOK at h
   by_cases hg : (fireGate ga.aff.required held && ga.stateCond.admitsCtx ctx ga.method old new) = true
   · rw [if_pos hg] at h
@@ -273,15 +273,15 @@ a state the `stateCond` admits and refuses in one it does not. So the SAME viewe
 cell's STATE — a button dark in `(o₁,n₁)` lights in `(o₂,n₂)`. The surface is live, not a frozen ACL.
 -/
 theorem fireGated_reactive (ga : GatedAffordance φ) (held : List Auth)
-    (ctx₁ ctx₂ : TurnCtx) (o₁ n₁ o₂ n₂ : Value) (s post : Nat)
+    (ctx₁ ctx₂ : TurnCtx) (o₁ n₁ o₂ n₂ : Value) (fc : FireCtx φ)
     (hcap : fireGate ga.aff.required held = true)
     (hst₁ : ga.stateCond.admitsCtx ctx₁ ga.method o₁ n₁ = false)   -- state STALE ⇒ dark
     (hst₂ : ga.stateCond.admitsCtx ctx₂ ga.method o₂ n₂ = true) :  -- state READY ⇒ lit
-    (fireGated ga held ctx₁ o₁ n₁ s post).isSome = false ∧
-    (fireGated ga held ctx₂ o₂ n₂ s post).isSome = true := by
+    (fireGated ga held ctx₁ o₁ n₁ fc).isSome = false ∧
+    (fireGated ga held ctx₂ o₂ n₂ fc).isSome = true := by
   constructor
-  · rw [fireGated_state_fail_refuses ga held ctx₁ o₁ n₁ s post hst₁]; rfl
-  · exact fireGated_both_pass ga held ctx₂ o₂ n₂ s post hcap hst₂
+  · rw [fireGated_state_fail_refuses ga held ctx₁ o₁ n₁ fc hst₁]; rfl
+  · exact fireGated_both_pass ga held ctx₂ o₂ n₂ fc hcap hst₂
 
 /-! ## §7 — THE PER-VIEWER PROJECTION UNDER BOTH GATES (the state-aware frustum / membrane negotiation).
 
@@ -306,9 +306,9 @@ def projectGatedFor (held : List Auth) (ctx : TurnCtx) (old new : Value)
 only ever offered buttons that actually fire in the current state (no offered-but-refused buttons, even
 with the state precondition). -/
 theorem projectGatedFor_all_fireable (held : List Auth) (ctx : TurnCtx) (old new : Value)
-    (affs : GatedSurface φ) (ga : GatedAffordance φ) (s post : Nat)
+    (affs : GatedSurface φ) (ga : GatedAffordance φ) (fc : FireCtx φ)
     (hmem : ga ∈ projectGatedFor held ctx old new affs) :
-    (fireGated ga held ctx old new s post).isSome = true := by
+    (fireGated ga held ctx old new fc).isSome = true := by
   unfold projectGatedFor at hmem
   rw [List.mem_filter] at hmem
   have hgok : gatedOK ga held ctx old new = true := hmem.2
@@ -347,6 +347,16 @@ section Witnesses
 inductive DemoEffect where | approve (id : Nat) | view (id : Nat)
 deriving DecidableEq, Repr
 
+/-- An injective §8 effect digest for the witnesses (odd/even domain separation). -/
+def demoDigest : DemoEffect → Nat
+  | .approve n => 2 * n
+  | .view n    => 2 * n + 1
+
+/-- The concrete turn context the witnesses fire in: chains onto digest `9`, moves `100 → 110`, and
+commits to the EFFECT (never the affordance's display name). -/
+def demoFC : FireCtx DemoEffect :=
+  { effectDigest := demoDigest, prevDigest := 9, pre := 100, post := 110 }
+
 open Dregg2.Exec (RecordProgram StateConstraint SimpleConstraint)
 
 /-- The "approve" affordance: requires the `grant` right (the approver cap) to fire. -/
@@ -375,20 +385,20 @@ def resolvedState : Value := .record [("status", .int 2)]
 -- THE FOUR CORNERS of the conjunction (the gate bites in every quadrant):
 
 -- (1) approver caps ∧ PENDING state  ⇒ FIRES (the only firing corner):
-#guard (fireGated approveBtn approverHeld TurnCtx.empty pendingState pendingState 100 110).isSome
+#guard (fireGated approveBtn approverHeld TurnCtx.empty pendingState pendingState demoFC).isSome
 -- (2) approver caps ∧ RESOLVED state ⇒ REFUSED (state tooth: holding the cap is NOT enough):
-#guard (fireGated approveBtn approverHeld TurnCtx.empty resolvedState resolvedState 100 110).isNone
+#guard (fireGated approveBtn approverHeld TurnCtx.empty resolvedState resolvedState demoFC).isNone
 -- (3) member caps  ∧ PENDING state  ⇒ REFUSED (cap tooth: the right state is NOT enough):
-#guard (fireGated approveBtn memberHeld   TurnCtx.empty pendingState pendingState 100 110).isNone
+#guard (fireGated approveBtn memberHeld   TurnCtx.empty pendingState pendingState demoFC).isNone
 -- (4) member caps  ∧ RESOLVED state ⇒ REFUSED (neither gate passes):
-#guard (fireGated approveBtn memberHeld   TurnCtx.empty resolvedState resolvedState 100 110).isNone
+#guard (fireGated approveBtn memberHeld   TurnCtx.empty resolvedState resolvedState demoFC).isNone
 
 -- THE HTMX TOOTH: the SAME approver's button reacts to STATE — lit in PENDING, dark in RESOLVED:
-#guard (fireGated approveBtn approverHeld TurnCtx.empty pendingState  pendingState  100 110).isSome
-       && (fireGated approveBtn approverHeld TurnCtx.empty resolvedState resolvedState 100 110).isNone
+#guard (fireGated approveBtn approverHeld TurnCtx.empty pendingState  pendingState  demoFC).isSome
+       && (fireGated approveBtn approverHeld TurnCtx.empty resolvedState resolvedState demoFC).isNone
 
 -- A committed fire carries the REAL effect (the approve effect, verbatim) and binds the new root (110):
-#guard match fireGated approveBtn approverHeld TurnCtx.empty pendingState pendingState 100 110 with
+#guard match fireGated approveBtn approverHeld TurnCtx.empty pendingState pendingState demoFC with
        | some i => (i.surface.firedEffect == DemoEffect.approve 1) && (i.surface.boundRoot == 110)
        | none   => false
 

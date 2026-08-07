@@ -77,6 +77,7 @@ open Dregg2.Spec (Guard)
 open Dregg2.Laws (Verifiable)
 open Dregg2.Circuit.Argus (constraintToGuard programToGuard policyGuarded locallyDecidable
   constraintToGuard_firstParty_eval policyGuarded_reject)
+open Dregg2.Deos.Affordance (FireCtx)
 open Dregg2.Deos.GatedAffordance (GatedAffordance fireGated fireGated_iff fireGated_state_fail_refuses)
 
 set_option linter.dupNamespace false
@@ -210,10 +211,10 @@ theorem gated_surface_and_executor_both_dark
     (hloc : ∀ c ∈ cs, locallyDecidable c = true) (method : Nat)
     (k : RecordKernelState) (w : Dregg2.Circuit.Argus.ObligationStmt → Witness)
     (s : Dregg2.Circuit.Argus.RecStmt)
-    (ga : GatedAffordance φ) (held : List Dregg2.Authority.Auth) (sc post : Nat)
+    (ga : GatedAffordance φ) (held : List Dregg2.Authority.Auth) (fc : FireCtx φ)
     (hcond : ga.stateCond = .predicate cs) (hmeth : ga.method = method)
     (hdark : (RecordProgram.predicate cs).admitsCtx TurnCtx.empty method (view k).1 (view k).2 = false) :
-    fireGated ga held TurnCtx.empty (view k).1 (view k).2 sc post = none
+    fireGated ga held TurnCtx.empty (view k).1 (view k).2 fc = none
       ∧ Dregg2.Circuit.Argus.interp (policyGuarded view cs w s) k = none := by
   refine ⟨?_, bypass_refused_by_executor view cs hloc method k w s hdark⟩
   -- the surface button: its state-gate IS the installed program at this slot, which fails.

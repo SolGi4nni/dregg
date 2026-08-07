@@ -13,11 +13,29 @@ EXISTING `Dregg2.Authority.capAuthConferred` law restated for surfaces, and "a v
 grants no Granovetter introduction" is `Dregg2.Firmament.NotifyAuthority.notifyCap_confers_no_edge`
 restated: the SAME `Dregg2.Exec.confersEdgeTo` gate, on a surface cap.
 
+## ⚑ 2026-08-07 — what carries target 1, and what does NOT
+
+`docs/deos/DEOS.md` cited **`surfaceConfersExactly`** as target 1's discharge. It is not one.
+`Surface cell rights` is *defined* as `Cap.endpoint cell rights` and `capAuthConferred (.endpoint _ r)`
+is *defined* as `r`, so the theorem is `rights = rights` after unfolding — a **naming lemma**, true and
+axiom-clean and saying nothing a skeptic wants. It is kept below, relabelled, because the naming is
+worth recording; it is no longer advertised as a discharged security property.
+
+What actually carries target 1 is the **edge gate**, and it is now proved in the GENERAL form rather
+than as three separate instances (`metatheory/docs/GUARD-DISCIPLINE.md`: *where the guard was one
+instance of a general fact, prove the general fact*):
+
+  * **`surface_confersEdge_iff_write`** — for ANY cell and ANY rights, a surface confers a
+    connectivity edge to its cell **iff `write ∈ rights`**. The view/notify/interactive theorems are
+    its instances. This is a real `simp`-over-`confersEdgeTo` argument, not `rfl`.
+  * **`surface_confers_no_edge_offtarget`** — a surface on cell `c` confers NO edge to a DIFFERENT
+    cell `c'`, **whatever rights it carries** — including `write`. Authority and designation are the
+    same object; a window cannot be pointed at another cell.
+
 ## What is proven (all by REUSE — no surface-local cap algebra)
 
-  * `surfaceConfersExactly` — a `Surface cell rights` confers EXACTLY `rights` (the
-    `capAuthConferred` law: a window is its rights and nothing more). The kernel `Cap` IS the deos
-    surface; there is no extra authority hiding behind the pixels.
+  * `surfaceConfersExactly` — ⓘ **DEFINITIONAL naming lemma** (see above): `Surface` IS the kernel
+    endpoint cap, so its conferred authority IS its rights list. Records the naming; proves no property.
   * `viewSurface_confers_no_edge` — a VIEW-only surface (`[.read]`, the "look, don't touch" window)
     confers NO connectivity edge to its cell (`confersEdgeTo = false`), because `confersEdgeTo`
     requires `write`. So opening a read-only window grants no Granovetter introduction — exactly the
@@ -72,10 +90,13 @@ def interactiveSurface (cell : Label) : Cap := Surface cell [Auth.write, Auth.re
 
 /-! ## §2 — A window confers EXACTLY its rights (the `capAuthConferred` law, on a surface). -/
 
-/-- **A SURFACE CONFERS EXACTLY ITS RIGHTS** — for any cell/rights, the authority a deos surface
-confers is precisely its `rights` list, nothing more. This IS the `capAuthConferred` law
-(`.endpoint _ r ↦ r`); the deos restatement: a window is its rights, and the pixels add no hidden
-authority. The bedrock of "the desktop adds ZERO new trust". -/
+/-- ⓘ **DEFINITIONAL — A NAMING LEMMA, NOT A SECURITY PROPERTY.** `Surface cell rights` is *defined*
+as `Cap.endpoint cell rights`, and `capAuthConferred (.endpoint _ r)` is *defined* as `r`; unfold both
+and this theorem is **`rights = rights`**. It records that the deos surface IS the kernel endpoint cap
+— which is worth recording, because it is why every kernel-cap theorem applies verbatim to a window —
+but it establishes nothing about authority on its own, and `docs/deos/DEOS.md` no longer cites it as
+target 1's discharge. The property a skeptic wants is `surface_confersEdge_iff_write` (§3) and
+`surface_attenuate_no_amplify` (§4). -/
 theorem surfaceConfersExactly (cell : Label) (rights : List Auth) :
     capAuthConferred (Surface cell rights) = rights := rfl
 
@@ -95,6 +116,25 @@ The sharpest "a window confers no authority beyond its rights": at the executor'
 (`Dregg2.Exec.confersEdgeTo`, the SAME `.any` body the reconstructed `execGraph` reads, which requires
 `rights.contains Auth.write`), a VIEW-only or NOTIFY-only surface is INVISIBLE. Opening such a window
 is not a message — it grants no edge. This is `notifyCap_confers_no_edge` restated for surfaces. -/
+
+/-- **THE GENERAL FACT — A SURFACE CONFERS AN EDGE IFF IT CARRIES `write`.** For ANY cell and ANY
+rights list, `confersEdgeTo cell (Surface cell rights) = true ↔ Auth.write ∈ rights`. This is the
+statement target 1 wants ("a window confers no authority beyond its rights", at the executor's
+connectivity gate) in the form that covers every surface at once; the view / notify / interactive
+theorems below are its INSTANCES, kept as corollaries. Proved against the REAL
+`Dregg2.Exec.confersEdgeTo` — the same `.any` body the reconstructed `execGraph` reads. -/
+theorem surface_confersEdge_iff_write (cell : Label) (rights : List Auth) :
+    confersEdgeTo cell (Surface cell rights) = true ↔ Auth.write ∈ rights := by
+  simp [confersEdgeTo, Surface, List.contains_eq_mem]
+
+/-- **A SURFACE CONFERS NO EDGE TO A CELL IT DOES NOT NAME.** A window on cell `c` confers no
+connectivity edge to a DIFFERENT cell `c'` — **whatever rights it carries**, `write` included. Authority
+and designation are the same object (the cap), so there is no request-supplied target to redirect: you
+cannot drive cell `c'` by holding an interactive window onto cell `c`. The other half of "no authority
+beyond its rights": not beyond its rights, and not beyond its target. -/
+theorem surface_confers_no_edge_offtarget (c c' : Label) (rights : List Auth) (hne : c ≠ c') :
+    confersEdgeTo c' (Surface c rights) = false := by
+  simp [confersEdgeTo, Surface, hne]
 
 /-- **A VIEW-ONLY SURFACE CONFERS NO EDGE** (the executor-edge tooth, surface form). `confersEdgeTo`
 requires `node t` OR (`endpoint t r` ∧ `r.contains write`); a `[.read]` surface has neither, so it
@@ -169,6 +209,23 @@ def egView : Cap := viewSurface 7
 -- the ORIGINAL still confers the edge — projection strictly shrank authority (both polarities):
 #guard (confersEdgeTo 7 egInteractive)
 
+/-- **FIRES + BITES (`surface_confersEdge_iff_write` non-vacuity).** The NAMED, registrable companion
+(`docs/audit/NON-VACUITY-MANIFEST.md`) — the `#guard`s above check that the surface algebra computes;
+this exercises the general `↔` on both polarities AND on the off-target axis, so the theorem is
+two-valued rather than "everything confers" or "nothing confers":
+
+  * an interactive (`write`-carrying) surface DOES confer the edge to its own cell — **fires**;
+  * the SAME cell viewed read-only does NOT — **bites** (drop `write`, the edge goes dark);
+  * a `write`-carrying surface on cell 7 confers NO edge to cell 9 — **bites on the target axis**
+    (the strongest tooth: full rights, wrong cell, no edge). -/
+theorem surface_confersEdge_iff_write_satisfiable :
+    confersEdgeTo 7 (Surface 7 [Auth.write, Auth.read]) = true
+      ∧ confersEdgeTo 7 (Surface 7 [Auth.read]) = false
+      ∧ confersEdgeTo 9 (Surface 7 [Auth.write, Auth.read]) = false := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+#assert_axioms surface_confersEdge_iff_write_satisfiable
+
 end Witnesses
 
 /-! ## §6 — Axiom hygiene. -/
@@ -177,6 +234,8 @@ end Witnesses
   surfaceConfersExactly,
   viewSurface_confers_read,
   viewSurface_not_write,
+  surface_confersEdge_iff_write,
+  surface_confers_no_edge_offtarget,
   viewSurface_confers_no_edge,
   notifySurface_confers_no_edge,
   interactiveSurface_confers_edge,

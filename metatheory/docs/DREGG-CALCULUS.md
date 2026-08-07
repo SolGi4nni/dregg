@@ -562,13 +562,21 @@ membranes are calculus terms**, and the desktop is the reduction made tangible.
 | session | a cap-rooted subgraph | `DREGG-MUD.md` |
 
 - **A surface IS a capability.** `Surface cell rights := Cap.endpoint cell rights`
-  (`Surface.lean:61`): a window confers *exactly* its rights and nothing more
-  (`surfaceConfersExactly`) — the desktop adds zero new trust. A read-only window confers no
-  connectivity edge; an interactive one does (`viewSurface_confers_no_edge` vs.
-  `interactiveSurface_confers_edge`) — the distinction is real.
-- **An affordance IS a cap-gated verified turn.** `fire_authorized_iff` (`Affordance.lean:167`):
-  an agent fires only the affordances its caps authorize, fail-closed. A button on the surface is
-  a turn you may fire iff your cap-tree authorizes it — the same authority gate the kernel proves.
+  (`Surface.lean:61`). ⓘ `surfaceConfersExactly` is a NAMING LEMMA — it unfolds to `rights = rights`
+  and was retracted as a discharge on 2026-08-07 (see `docs/deos/DEOS.md`). The real law is
+  `surface_confersEdge_iff_write` (`Surface.lean:126`): a window confers a connectivity edge **iff
+  `write ∈ rights`**, for any cell and any rights — so a read-only window confers none and an
+  interactive one does, as instances of one theorem. And `surface_confers_no_edge_offtarget`: a
+  `write`-carrying window on cell `c` confers no edge to a different cell — not beyond its rights,
+  and not beyond its target.
+- **An affordance IS a cap-gated verified turn.** `fire_authorized_iff_subset` (`Affordance.lean`):
+  a fire commits **iff `aff.required ⊆ held`** — the `is_attenuation` order itself, not the boolean
+  gate restated (`fire_authorized_iff` is definitional and is labelled as such). And the turn leaves
+  an attestation: `fire` RETURNS the receipt it produces, the surface binds that receipt's
+  `newCommit`, the receipt commits to a §8 digest of the EFFECT and links onto the well-linked log,
+  and `firedReceipt_determines_effect` says the same receipt means the same effect fired. ⚑ Until
+  2026-08-07 the receipt was built into a discarded `let _receipt` and the binding theorem proved
+  `post = post`.
 - **A reactive affordance IS a turn gated by transition-shape and clock.** `fireReactive_iff`
   (`Reactive.lean:199`): a fire commits iff the cap-gate, the transition-gate (pre/post/link reads
   *both* old and new), *and* the window-gate all pass. A button that lights during a voting window
@@ -580,10 +588,13 @@ membranes are calculus terms**, and the desktop is the reduction made tangible.
   the world rendered to exactly what it authorizes. Logout is `RevokeCapability` over the session
   root: the whole tree goes dark, synchronous and transitive. An exit is a cap edge; a locked door
   is the absence of a cap; the key is the cap. A MUD is a *view over the cell calculus*.
-- **A rehydrated context IS a turn history.** `replayedDeterministic_iff_confined`
-  (`Rehydration.lean:161`): for a non-live context, the liveness-type is *exactly* the confined
-  fragment — `ReplayedDeterministic` iff every interaction stayed inside the membrane (was an
-  attested turn). The honesty label *is* a proven confinement readout.
+- **A rehydrated context IS a turn history.** ⓘ `replayedDeterministic_iff_confined` is a classifier
+  SPEC-MATCH (`classify` is an if-then-else matched against the predicate it was written to decide),
+  relabelled 2026-08-07 — useful, but not the world property it was being read as. The world property
+  is what confinement BUYS: `confined_chain_covers_log` — a confined context's replayed receipt chain
+  has ONE RECEIPT PER LOGGED INTERACTION — against `unconfined_chain_drops_interactions`, which
+  proves an unconfined trace replays to a STRICTLY SHORTER chain: the ambient reach leaves no
+  receipt, so the reconstruction is silently missing something that happened.
 
 So the desktop's every window is a cap to a cell, every message a turn through the executor, every
 screenshot/fork a cap-bounded membrane, every drag-into-chat a reshare (proven non-amplifying).
@@ -645,8 +656,11 @@ ledger is explicit.
   `settlement_soundness`, `LiveAtTip`, `revoke_before_tip_unsettleable`.
 - *firmament/flow* — `distributed_collapses_at_one`, `surface_is_another_point_on_n`,
   `verbs_independent_of_n`, `flow_choice_halfdistrib`, `flow_choice_right_skewed`.
-- *deos* — `surfaceConfersExactly`, `fire_authorized_iff`, `fireReactive_iff`,
-  `membrane_two_viewers_distinct`, `replayedDeterministic_iff_confined`.
+- *deos* — `surface_confersEdge_iff_write`, `fire_authorized_iff_subset`,
+  `firedReceipt_determines_effect`, `fireReactive_iff`, `membrane_two_viewers_distinct`,
+  `confined_chain_covers_log`. (⚑ `surfaceConfersExactly` / `fire_authorized_iff` /
+  `replayedDeterministic_iff_confined` were listed here and are DEFINITIONAL — see
+  `metatheory/CLAIMS.md` §"the deos rows".)
 
 **Structural `def`/`example` (typechecks; the correspondence is a naming, not a separate
 theorem):** `Cell`, `Capability`, `CTerm`, `GuardModality`, the π-calculus `Correspondence` table,

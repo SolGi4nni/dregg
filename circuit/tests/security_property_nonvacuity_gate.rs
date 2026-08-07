@@ -234,6 +234,52 @@ fn security_property_manifest() -> Vec<Row> {
                 bites: "reshare_refuses_amplification @ Dregg2/Deos/Membrane.lean",
             },
         },
+        // ── the deos verified-desktop targets (`docs/deos/DEOS.md`) ─────────────────────────────────
+        // ⚑ REGISTERED 2026-08-07, and their ABSENCE was the finding. `DEOS.md` advertised "four
+        // theorems ALL DISCHARGED"; a survey found four of the five definitional and one an IDENTITY
+        // CARRIER (`fire` built its receipt into a discarded `let _receipt`, so the root-binding
+        // theorem proved `post = post`). Nothing keyed on them — not this gate, not `Claims.lean`,
+        // not `CLAIMS.md`. Only the membrane row (above) existed. These four rows are the durable fix.
+        Row {
+            // target 1. fires/bites are the SAME theorem's conjuncts: a write-carrying surface DOES
+            // confer the edge; drop `write` → dark; keep `write` and change the CELL → also dark.
+            theorem: "surface_confersEdge_iff_write @ Deos/Surface.lean:126",
+            tooth: HasBitingTooth {
+                fires: "surface_confersEdge_iff_write_satisfiable @ Dregg2/Deos/Surface.lean",
+                bites: "surface_confers_no_edge_offtarget @ Dregg2/Deos/Surface.lean",
+            },
+        },
+        Row {
+            // target 3. The classifier `↔` is a spec-match, NOT a world property; the world property
+            // is COVERAGE — a confined replay has one receipt per interaction, an unconfined one is
+            // strictly shorter (the ambient reach leaves no receipt, silently).
+            theorem: "replayedDeterministic_replays @ Deos/Rehydration.lean:366",
+            tooth: HasBitingTooth {
+                fires: "replayedDeterministic_replays_satisfiable @ Dregg2/Deos/Rehydration.lean",
+                bites: "replays_coverage_needs_confinement @ Dregg2/Deos/Rehydration.lean",
+            },
+        },
+        Row {
+            // target 4, the repaired identity carrier. The surface now binds the receipt the fire
+            // RETURNED; the receipt commits to the §8 digest of the EFFECT (it was `aff.name`, a
+            // display label that collides) and DETERMINES what fired under a named injectivity
+            // obligation that `determines_effect_needs_injectivity` proves is not droppable.
+            theorem: "firedReceipt_determines_effect @ Deos/Affordance.lean:334",
+            tooth: HasBitingTooth {
+                fires: "firedSurface_binds_attested_root_satisfiable @ Dregg2/Deos/Affordance.lean",
+                bites: "firedReceipt_determines_effect_bites @ Dregg2/Deos/Affordance.lean",
+            },
+        },
+        Row {
+            // C1, past the four targets. Was literally `replayState … = replayState … := rfl` with
+            // the confinement premise unused; now ambient-environment independence, which is FALSE
+            // off the confined fragment.
+            theorem: "confined_replay_deterministic @ Deos/ReplayMembrane.lean:149",
+            tooth: HasBitingTooth {
+                fires: "confined_replay_deterministic_satisfiable @ Dregg2/Deos/ReplayMembrane.lean",
+                bites: "ambient_replay_env_dependent @ Dregg2/Deos/ReplayMembrane.lean",
+            },
+        },
         Row {
             theorem: "reachable_total_zero @ Exec/ReachableConservation.lean:49",
             tooth: HasBitingTooth {
@@ -866,6 +912,17 @@ fn pillar_4b_added_tooths_are_grounded() {
     for spec in [
         "reachable_total_zero_teeth @ Dregg2/Verify/KeystoneAuditConservation.lean",
         "reshareN_attenuates_satisfiable @ Dregg2/Deos/Membrane.lean",
+        // 2026-08-07 — the deos audit's companions. Their ABSENCE is why the four DEOS.md targets
+        // rotted into definitional identities for weeks with every instrument green.
+        "surface_confersEdge_iff_write_satisfiable @ Dregg2/Deos/Surface.lean",
+        "surface_confers_no_edge_offtarget @ Dregg2/Deos/Surface.lean",
+        "replayedDeterministic_replays_satisfiable @ Dregg2/Deos/Rehydration.lean",
+        "replays_coverage_needs_confinement @ Dregg2/Deos/Rehydration.lean",
+        "firedSurface_binds_attested_root_satisfiable @ Dregg2/Deos/Affordance.lean",
+        "firedReceipt_determines_effect_bites @ Dregg2/Deos/Affordance.lean",
+        "determines_effect_needs_injectivity @ Dregg2/Deos/Affordance.lean",
+        "confined_replay_deterministic_satisfiable @ Dregg2/Deos/ReplayMembrane.lean",
+        "ambient_replay_env_dependent @ Dregg2/Deos/ReplayMembrane.lean",
         // fix 4 — the newly-registered Lease economic world-property tooth.
         "insufficient_budget_rejected @ Dregg2/Deos/PrepaidLease.lean",
         "opened_discharge_accepts @ Dregg2/Deos/PrepaidLease.lean",

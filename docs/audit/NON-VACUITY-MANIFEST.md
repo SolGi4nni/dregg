@@ -62,8 +62,38 @@ per-keystone discipline.
 | 22 | `deco_attestation_unforgeable` (Crypto/DecoUnforgeable.lean) | HAS-BITING-TOOTH | `attestation_fires` | `attestation_bites` |
 | 23 | `decoUC_realizes` — **WRAPPER-OF-22, NOT A DISTINCT SUMMIT** (Crypto/DecoUC.lean) | HAS-BITING-TOOTH (soundness leg only) | `decoSim_works` | `forge_not_ucRealizes` |
 | 24 | `budget_never_overdrawn` (Deos/PrepaidLease.lean:378) | HAS-BITING-TOOTH | `opened_discharge_accepts` | `insufficient_budget_rejected` |
+| 25 | `surface_confersEdge_iff_write` (Deos/Surface.lean:126) **(added 08-07)** | HAS-BITING-TOOTH | `surface_confersEdge_iff_write_satisfiable` | `surface_confers_no_edge_offtarget` |
+| 26 | `replayedDeterministic_replays` (Deos/Rehydration.lean:366) **(added 08-07)** | HAS-BITING-TOOTH | `replayedDeterministic_replays_satisfiable` | `replays_coverage_needs_confinement` |
+| 27 | `firedReceipt_determines_effect` (Deos/Affordance.lean:334) **(added 08-07)** | HAS-BITING-TOOTH | `firedSurface_binds_attested_root_satisfiable` | `firedReceipt_determines_effect_bites` |
+| 28 | `confined_replay_deterministic` (Deos/ReplayMembrane.lean:149) **(added 08-07)** | HAS-BITING-TOOTH | `confined_replay_deterministic_satisfiable` | `ambient_replay_env_dependent` |
 
-**Tally: 24 rows / 24 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING.** Row 23 is retained only to
+**Rows 25–28 — the deos verified-desktop targets (added 2026-08-07, and their ABSENCE was the
+finding).** `docs/deos/DEOS.md` claimed *"four theorems ALL DISCHARGED"* as the basis for calling deos
+a verified desktop OS. A survey read all five names at source: **four were definitional and one was an
+identity carrier.** `Affordance.fire` built its receipt into `let _receipt` — underscore-prefixed and
+**discarded** — bound the surface to the caller's free `post`, and
+`firedSurface_binds_attested_root` re-derived the same receipt in its own statement, so it proved
+**`post = post`**. `Rehydration.replayedDeterministic_replays` carried its confinement premise
+underscore-prefixed and **absent from the proof term**, over a `roots : List Nat` unrelated to the log.
+`ReplayMembrane.confined_replay_deterministic` was literally `replayState … = replayState … := rfl`.
+
+⚑ **The reason none of it was caught is exactly this manifest's thesis, one level up: only ONE deos
+target (row 7, the membrane) had a row here at all, and none of the five were in
+`metatheory/Dregg2/Claims.lean` or `metatheory/CLAIMS.md`.** All five were `#assert_axioms`-clean —
+axiom hygiene is structurally blind to a definitional identity. A theorem with no registered tooth is
+not merely under-tested; it is the shape a vacuous theorem takes when it survives.
+
+Repairs (see `metatheory/CLAIMS.md` §"the deos rows"): `fire` now RETURNS its receipt and the surface
+binds `intent.receipt.newCommit`; the receipt commits to a §8 digest of the EFFECT rather than the
+affordance's display NAME (which collides) and links onto the well-linked chain rather than
+hard-coding `genesisSentinel`; the confinement premise now buys COVERAGE (one receipt per logged
+interaction) and its absence is provably fatal; and C1 states ambient-environment independence, which
+is false off the confined fragment. Row 27's `bites` is joined by a third companion,
+`determines_effect_needs_injectivity`, which shows the row's §8 injectivity hypothesis is **not
+droppable** — with a constant digest the conclusion is FALSE, so the obligation is load-bearing rather
+than decorative.
+
+**Tally: 28 rows / 28 HAS-BITING-TOOTH / 0 SPOT-CHECKED-ONLY / 0 MISSING.** Row 23 is retained only to
 keep its (soundness-conjunct) teeth registered — it is **NOT counted as a distinct world-property**; its
 Lean content is identical to row 22 (see the row-23 note below). The *distinct* world-properties are
 rows 1–22 + 24. Every companion is written `name @ file` and the gate now cross-checks theorem-kind +

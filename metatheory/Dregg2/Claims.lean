@@ -626,4 +626,88 @@ correlation custody. -/
 #assert_axioms Dregg2.Circuit.CollaborativeTensorCode.below_threshold_privacy_fires
 #assert_axioms Dregg2.Circuit.CollaborativeTensorCode.fold_tensorEncode_fires
 
+/-! ## §39 — deos: the four verified-desktop targets (`docs/deos/DEOS.md`).
+
+⚑ **REGISTERED 2026-08-07 — and the reason they rotted is that they were NOT.** `DEOS.md` advertised
+"four theorems ALL DISCHARGED" as the basis for calling deos a verified desktop OS, and **not one of
+them was pinned here or listed in `metatheory/CLAIMS.md`**, so no instrument keyed on them. A survey
+then found that four of the five headline names were definitional and one was an identity carrier
+(`firedSurface_binds_attested_root` proved `post = post` over a receipt the fire threw away in a
+`let _receipt`). The repair is in the modules; **this section is the durable half.**
+
+Pinned below: the theorems that carry content, plus their NAMED non-vacuity companions
+(`…_satisfiable` = the premise is jointly satisfiable and the conclusion exercised;
+`…_bites` / `…_needs_…` = the guarded property is refutable, so the theorem is two-valued).
+
+⚠ **NOT pinned here, deliberately** — `Deos.Surface.surfaceConfersExactly` and
+`Deos.Affordance.fire_authorized_iff` are DEFINITIONAL (`rights = rights`, and
+`(if c then some _ else none).isSome ↔ c`). They are axiom-clean and they remain in their home
+modules with honesty labels, but pinning a naming lemma in the skeptic-facing ledger is how a
+definitional identity gets read as a security result. Their content-bearing replacements
+(`surface_confersEdge_iff_write`, `fire_authorized_iff_subset`) are pinned instead. -/
+
+/-! ### §39.1 — target 1, surface-as-capability (the EDGE gate, general form + off-target). -/
+#assert_axioms Dregg2.Deos.Surface.surface_confersEdge_iff_write
+#assert_axioms Dregg2.Deos.Surface.surface_confers_no_edge_offtarget
+#assert_axioms Dregg2.Deos.Surface.viewSurface_confers_no_edge
+#assert_axioms Dregg2.Deos.Surface.notifySurface_confers_no_edge
+#assert_axioms Dregg2.Deos.Surface.interactiveSurface_confers_edge
+#assert_axioms Dregg2.Deos.Surface.surface_attenuate_no_amplify
+#assert_axioms Dregg2.Deos.Surface.surface_confersEdge_iff_write_satisfiable
+
+/-! ### §39.2 — target 2, membrane non-amplification (the one leg that was always sound). -/
+#assert_axioms Dregg2.Deos.Membrane.reshare_chain_attenuates
+#assert_axioms Dregg2.Deos.Membrane.reshareN_attenuates
+#assert_axioms Dregg2.Deos.Membrane.reshare_refuses_amplification
+#assert_axioms Dregg2.Deos.Membrane.reshareN_attenuates_satisfiable
+#assert_axioms Dregg2.Deos.Membrane.membrane_non_amplifies
+#assert_axioms Dregg2.Deos.Membrane.sealed_refuses_unheld
+
+/-! ### §39.3 — target 3, rehydration confinement. The classifier `↔` is a SPEC-MATCH (the classifier
+decides the predicate it was written to decide); the load-bearing content is the COVERAGE payoff, where
+the confinement premise is consumed and where dropping it makes the conclusion false. -/
+#assert_axioms Dregg2.Deos.Rehydration.replayedDeterministic_iff_confined
+#assert_axioms Dregg2.Deos.Rehydration.reconstructedApproximate_iff_unconfined
+#assert_axioms Dregg2.Deos.Rehydration.invalidAttestation_not_replayed
+#assert_axioms Dregg2.Deos.Rehydration.confined_witnessedRoots_length
+#assert_axioms Dregg2.Deos.Rehydration.confined_chain_covers_log
+#assert_axioms Dregg2.Deos.Rehydration.unconfined_witnessedRoots_shorter
+#assert_axioms Dregg2.Deos.Rehydration.unconfined_chain_drops_interactions
+#assert_axioms Dregg2.Deos.Rehydration.ambient_chain_drops_the_reach
+#assert_axioms Dregg2.Deos.Rehydration.replayedDeterministic_replays
+#assert_axioms Dregg2.Deos.Rehydration.replayedDeterministic_replays_satisfiable
+#assert_axioms Dregg2.Deos.Rehydration.replays_coverage_needs_confinement
+
+/-! ### §39.4 — target 4, affordance soundness. `firedSurface_binds_attested_root` now binds the
+RECEIPT THE FIRE RETURNED; `firedReceipt_determines_effect` is the attestation with teeth (under the
+named §8 digest-injectivity obligation, shown load-bearing by `determines_effect_needs_injectivity`). -/
+#assert_axioms Dregg2.Deos.Affordance.fireGate_iff_subset
+#assert_axioms Dregg2.Deos.Affordance.fire_authorized_iff_subset
+#assert_axioms Dregg2.Deos.Affordance.fire_returns_receipt
+#assert_axioms Dregg2.Deos.Affordance.firedSurface_binds_attested_root
+#assert_axioms Dregg2.Deos.Affordance.firedReceipt_commits_to_effect
+#assert_axioms Dregg2.Deos.Affordance.firedReceipt_anchors
+#assert_axioms Dregg2.Deos.Affordance.firedReceipt_extends_chain
+#assert_axioms Dregg2.Deos.Affordance.firedReceipt_determines_effect
+#assert_axioms Dregg2.Deos.Affordance.unauthorized_fire_no_surface
+#assert_axioms Dregg2.Deos.Affordance.projectFor_monotone
+#assert_axioms Dregg2.Deos.Affordance.demoDigest_injective
+#assert_axioms Dregg2.Deos.Affordance.firedSurface_binds_attested_root_satisfiable
+#assert_axioms Dregg2.Deos.Affordance.firedReceipt_determines_effect_bites
+#assert_axioms Dregg2.Deos.Affordance.determines_effect_needs_injectivity
+#assert_axioms Dregg2.Deos.Affordance.fire_authorized_iff_subset_satisfiable
+
+/-! ### §39.5 — the C1/C2 frontier past the four targets (`Deos.ReplayMembrane`). C1's keystone was
+`replayState … = replayState … := rfl` with its premise unused until 2026-08-07; it now states
+ambient-environment independence, which is FALSE off the confined fragment. -/
+#assert_axioms Dregg2.Deos.ReplayMembrane.confined_replay_deterministic
+#assert_axioms Dregg2.Deos.ReplayMembrane.ambient_replay_env_dependent
+#assert_axioms Dregg2.Deos.ReplayMembrane.confined_replay_deterministic_satisfiable
+#assert_axioms Dregg2.Deos.ReplayMembrane.replay_extensional_in_witness
+#assert_axioms Dregg2.Deos.ReplayMembrane.ambient_trace_unconfined
+#assert_axioms Dregg2.Deos.ReplayMembrane.negotiated_attenuates
+#assert_axioms Dregg2.Deos.ReplayMembrane.negotiation_refuses_over_ask
+#assert_axioms Dregg2.Deos.ReplayMembrane.deputy_confers_no_unheld_target
+#assert_axioms Dregg2.Deos.ReplayMembrane.drift_cannot_recover_dropped_authority
+
 end Dregg2.Claims

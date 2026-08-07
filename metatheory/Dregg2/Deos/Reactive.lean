@@ -30,7 +30,7 @@ one-sided), and a `Membrane` predicate conjoining viewer authority with a witnes
     e.g. `new.count = old.count + 1`). `transitionOK` is their conjunction. KEY: the `link` reads BOTH
     records, so a property of `new` ALONE can never witness it — the reactivity beyond a single-state gate.
   * §2 `ReactiveAffordance` — a `CellAffordance` (cap-gated effect-template) PLUS a `TransitionGate`
-    PLUS a `[open, close]` height window. `fireReactive ga held height old new s post` commits IFF
+    PLUS a `[open, close]` height window. `fireReactive ga held height old new fc` commits IFF
     caps pass AND the transition qualifies AND `open ≤ height ≤ close`.
   * **§3 `fireReactive_iff` (THE KEYSTONE).** `fireReactive` commits ↔ `(required ⊆ held) ∧
     transitionOK(old,new) ∧ open ≤ height ≤ close`. The three-way conjunction as an `↔`.
@@ -75,7 +75,7 @@ import Dregg2.Tactics
 namespace Dregg2.Deos.Reactive
 
 open Dregg2.Authority (Auth)
-open Dregg2.Deos.Affordance (CellAffordance FiredSurface AffordanceIntent fireGate fireGate_iff_subset
+open Dregg2.Deos.Affordance (CellAffordance FireCtx FiredSurface AffordanceIntent fireGate fireGate_iff_subset
   fireGate_trans)
 open Dregg2.Exec (Value)
 
@@ -163,24 +163,24 @@ viewer, on THIS transition, at THIS height". -/
 def reactiveOK (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Value) : Bool :=
   fireGate ra.aff.required held && transitionOK ra.gate old new && inWindow ra height
 
-/-- **`fireReactive ra held height old new s post`** — fire the reactive affordance for an agent
-holding `held`, at turn `height`, against the transition `(old, new)`, with pre/post commitments
-`s`/`post`. Commits (via the SAME `Affordance.fire`, so the leg-4 root-binding is identical) IFF
+/-- **`fireReactive ra held height old new fc`** — fire the reactive affordance for an agent
+holding `held`, at turn `height`, against the transition `(old, new)`, in the turn context `fc`
+(the §8 effect digest, the prior chain digest, and the pre/post commitments). Commits (via the SAME `Affordance.fire`, so the leg-4 root-binding is identical) IFF
 `reactiveOK` (caps AND transition AND window all pass); else `none` (refused in-band). -/
 def fireReactive (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Value)
-    (s post : Nat) : Option (AffordanceIntent φ) :=
+    (fc : FireCtx φ) : Option (AffordanceIntent φ) :=
   if reactiveOK ra held height old new then
-    Dregg2.Deos.Affordance.fire ra.aff held s post
+    Dregg2.Deos.Affordance.fire ra.aff held fc
   else
     none
 
 /-! ## §3 — THE KEYSTONE: firing happens exactly when ALL THREE gates pass. -/
 
 /-- Under `reactiveOK`, the cap-gate holds, so the inner `Affordance.fire` commits. -/
-private theorem fire_isSome_of_capOK (ra : ReactiveAffordance φ) (held : List Auth) (s post : Nat)
+private theorem fire_isSome_of_capOK (ra : ReactiveAffordance φ) (held : List Auth) (fc : FireCtx φ)
     (hcap : fireGate ra.aff.required held = true) :
-    (Dregg2.Deos.Affordance.fire ra.aff held s post).isSome = true :=
-  (Dregg2.Deos.Affordance.fire_authorized_iff ra.aff held s post).mpr hcap
+    (Dregg2.Deos.Affordance.fire ra.aff held fc).isSome = true :=
+  (Dregg2.Deos.Affordance.fire_authorized_iff ra.aff held fc).mpr hcap
 
 /-- A small bridge: `reactiveOK = true ↔` the three conjuncts each hold. -/
 theorem reactiveOK_iff (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Value) :
@@ -197,8 +197,8 @@ gates pass: the cap-gate (`required ⊆ held`), the transition-gate (`pre old �
 AND the window-gate (`open ≤ height ≤ close`). The three-way conjunction the language could not express,
 as an `↔`. Drop ANY gate and the fire is refused. -/
 theorem fireReactive_iff (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat) (old new : Value)
-    (s post : Nat) :
-    (fireReactive ra held height old new s post).isSome = true ↔
+    (fc : FireCtx φ) :
+    (fireReactive ra held height old new fc).isSome = true ↔
       (fireGate ra.aff.required held = true ∧
        transitionOK ra.gate old new = true ∧
        inWindow ra height = true) := by
@@ -208,7 +208,7 @@ theorem fireReactive_iff (ra : ReactiveAffordance φ) (held : List Auth) (height
     rw [reactiveOK_iff] at hok
     obtain ⟨hcap, _, _⟩ := hok
     exact ⟨fun _ => (reactiveOK_iff ra held height old new).mp (by unfold reactiveOK; rw [hcap]; simp_all),
-           fun _ => fire_isSome_of_capOK ra held s post hcap⟩
+           fun _ => fire_isSome_of_capOK ra held fc hcap⟩
   · have hokf : reactiveOK ra held height old new = false := by
       cases hb : reactiveOK ra held height old new with
       | true => exact absurd hb hok | false => rfl
@@ -223,17 +223,17 @@ theorem fireReactive_iff (ra : ReactiveAffordance φ) (held : List Auth) (height
 
 /-- **ALL THREE PASS ⇒ FIRES** (the positive corner). -/
 theorem fireReactive_all_pass (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat)
-    (old new : Value) (s post : Nat)
+    (old new : Value) (fc : FireCtx φ)
     (hcap : fireGate ra.aff.required held = true)
     (htr  : transitionOK ra.gate old new = true)
     (hwin : inWindow ra height = true) :
-    (fireReactive ra held height old new s post).isSome = true :=
-  (fireReactive_iff ra held height old new s post).mpr ⟨hcap, htr, hwin⟩
+    (fireReactive ra held height old new fc).isSome = true :=
+  (fireReactive_iff ra held height old new fc).mpr ⟨hcap, htr, hwin⟩
 
 /-- **CAP-GATE FAILS ⇒ REFUSED** (the cap tooth), whatever the transition / window. -/
 theorem fireReactive_cap_fail_refuses (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat)
-    (old new : Value) (s post : Nat) (hcap : fireGate ra.aff.required held = false) :
-    fireReactive ra held height old new s post = none := by
+    (old new : Value) (fc : FireCtx φ) (hcap : fireGate ra.aff.required held = false) :
+    fireReactive ra held height old new fc = none := by
   unfold fireReactive reactiveOK
   rw [if_neg (by rw [hcap, Bool.false_and, Bool.false_and]; decide)]
 
@@ -241,16 +241,16 @@ theorem fireReactive_cap_fail_refuses (ra : ReactiveAffordance φ) (held : List 
 fully-authorized agent inside the window cannot fire if the old→new transition is not the one this
 button reacts to. -/
 theorem fireReactive_transition_fail_refuses (ra : ReactiveAffordance φ) (held : List Auth)
-    (height : Nat) (old new : Value) (s post : Nat) (htr : transitionOK ra.gate old new = false) :
-    fireReactive ra held height old new s post = none := by
+    (height : Nat) (old new : Value) (fc : FireCtx φ) (htr : transitionOK ra.gate old new = false) :
+    fireReactive ra held height old new fc = none := by
   unfold fireReactive reactiveOK
   rw [if_neg (by rw [htr]; simp)]
 
 /-- **WINDOW-GATE FAILS ⇒ REFUSED** (the window tooth), whatever the caps / transition. Outside
 `[open, close]` the button is dark even for a fully-authorized, perfectly-qualifying transition. -/
 theorem fireReactive_window_fail_refuses (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat)
-    (old new : Value) (s post : Nat) (hwin : inWindow ra height = false) :
-    fireReactive ra held height old new s post = none := by
+    (old new : Value) (fc : FireCtx φ) (hwin : inWindow ra height = false) :
+    fireReactive ra held height old new fc = none := by
   unfold fireReactive reactiveOK
   rw [if_neg (by rw [hwin, Bool.and_false]; decide)]
 
@@ -266,14 +266,14 @@ by one from `old₂`), the fire is refused — EVEN WITH full caps, an open wind
 fooled by: the SHAPE of the transition is checked, not just the destination. The anti-"a good-looking
 new state is enough" pin. -/
 theorem fireReactive_wrong_old_refuses (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat)
-    (old₂ new : Value) (s post : Nat)
+    (old₂ new : Value) (fc : FireCtx φ)
     -- the destination `new` satisfies `post`, caps pass, the window is open …
     (hpost : ra.gate.post new = true)
     (hcap  : fireGate ra.aff.required held = true)
     (hwin  : inWindow ra height = true)
     -- … but the transition FROM `old₂` breaks the relational link ⇒ REFUSED.
     (hlink : ra.gate.link old₂ new = false) :
-    fireReactive ra held height old₂ new s post = none := by
+    fireReactive ra held height old₂ new fc = none := by
   apply fireReactive_transition_fail_refuses
   unfold transitionOK
   rw [hlink, Bool.and_false]
@@ -284,8 +284,8 @@ window auto-closed. The temporal gate is genuinely load-bearing — holding the 
 move is not enough once the clock runs out. (The dual of `fireReactive_window_reactive`'s "lit inside
 the window".) -/
 theorem fireReactive_after_deadline_refuses (ra : ReactiveAffordance φ) (held : List Auth)
-    (height : Nat) (old new : Value) (s post : Nat) (hlate : ra.closeHeight < height) :
-    fireReactive ra held height old new s post = none := by
+    (height : Nat) (old new : Value) (fc : FireCtx φ) (hlate : ra.closeHeight < height) :
+    fireReactive ra held height old new fc = none := by
   apply fireReactive_window_fail_refuses
   unfold inWindow
   have : decide (height ≤ ra.closeHeight) = false := by
@@ -298,22 +298,22 @@ theorem fireReactive_after_deadline_refuses (ra : ReactiveAffordance φ) (held :
 intent fires the affordance's REAL effect verbatim (it commits via the SAME `Affordance.fire`). The
 three gates are purely refusal conditions; they never forge a surface. -/
 theorem fireReactive_carries_real_effect (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat)
-    (old new : Value) (s post : Nat) (intent : AffordanceIntent φ)
-    (h : fireReactive ra held height old new s post = some intent) :
+    (old new : Value) (fc : FireCtx φ) (intent : AffordanceIntent φ)
+    (h : fireReactive ra held height old new fc = some intent) :
     intent.surface.firedEffect = ra.aff.effect := by
   unfold fireReactive at h
   by_cases hok : reactiveOK ra held height old new = true
   · rw [if_pos hok] at h
-    exact Dregg2.Deos.Affordance.fire_carries_real_effect ra.aff held s post intent h
+    exact Dregg2.Deos.Affordance.fire_carries_real_effect ra.aff held fc intent h
   · rw [if_neg hok] at h; exact absurd h (by simp)
 
 /-- **A COMMITTED REACTIVE FIRE BINDS THE ATTESTED ROOT** — leg-4's second clause survives: the
-surface's `boundRoot` is the verified turn's `newCommit` (`= post`). The three gates add preconditions;
+surface's `boundRoot` is the RECEIPT THE FIRE PRODUCED (`intent.receipt.newCommit`). The three gates add preconditions;
 the attested-root binding rides the SAME `Affordance.fire`. -/
 theorem fireReactive_binds_attested_root (ra : ReactiveAffordance φ) (held : List Auth) (height : Nat)
-    (old new : Value) (s post : Nat) (intent : AffordanceIntent φ)
-    (h : fireReactive ra held height old new s post = some intent) :
-    intent.surface.boundRoot = post := by
+    (old new : Value) (fc : FireCtx φ) (intent : AffordanceIntent φ)
+    (h : fireReactive ra held height old new fc = some intent) :
+    intent.surface.boundRoot = intent.receipt.newCommit := by
   unfold fireReactive at h
   by_cases hok : reactiveOK ra held height old new = true
   · rw [if_pos hok] at h
@@ -333,16 +333,16 @@ commits at a height INSIDE the window and refuses at a height OUTSIDE it. So the
 reacts to TIME — lit during the voting window, dark after the deadline. The surface is live against the
 clock, not just against the state. -/
 theorem fireReactive_window_reactive (ra : ReactiveAffordance φ) (held : List Auth)
-    (h₁ h₂ : Nat) (old new : Value) (s post : Nat)
+    (h₁ h₂ : Nat) (old new : Value) (fc : FireCtx φ)
     (hcap : fireGate ra.aff.required held = true)
     (htr  : transitionOK ra.gate old new = true)
     (hin  : inWindow ra h₁ = true)      -- inside the window  ⇒ lit
     (hout : inWindow ra h₂ = false) :   -- outside the window ⇒ dark
-    (fireReactive ra held h₁ old new s post).isSome = true ∧
-    (fireReactive ra held h₂ old new s post).isSome = false := by
+    (fireReactive ra held h₁ old new fc).isSome = true ∧
+    (fireReactive ra held h₂ old new fc).isSome = false := by
   constructor
-  · exact fireReactive_all_pass ra held h₁ old new s post hcap htr hin
-  · rw [fireReactive_window_fail_refuses ra held h₂ old new s post hout]; rfl
+  · exact fireReactive_all_pass ra held h₁ old new fc hcap htr hin
+  · rw [fireReactive_window_fail_refuses ra held h₂ old new fc hout]; rfl
 
 /-! ## §7 — THE MEMBRANE AS A PREDICATE: per-viewer frustum projection (authority ∧ witness-graph).
 
@@ -436,6 +436,17 @@ section Witnesses
 inductive DemoEffect where | vote (id : Nat) | resolve (id : Nat) | view (id : Nat)
 deriving DecidableEq, Repr
 
+/-- An injective §8 effect digest for the witnesses (ternary domain separation). -/
+def demoDigest : DemoEffect → Nat
+  | .vote n    => 3 * n
+  | .resolve n => 3 * n + 1
+  | .view n    => 3 * n + 2
+
+/-- The concrete turn context the witnesses fire in: chains onto digest `9`, moves `100 → 110`, and
+commits to the EFFECT (never the affordance's display name). -/
+def demoFC : FireCtx DemoEffect :=
+  { effectDigest := demoDigest, prevDigest := 9, pre := 100, post := 110 }
+
 /-- The PENDING status code (1) and RESOLVED status code (2) for the council cell. -/
 def PENDING : Int := 1
 def RESOLVED : Int := 2
@@ -495,40 +506,40 @@ def resolved3 : Value := .record [("status", .int 2), ("tally", .int 3)]
 -- ════════════ THE TRANSITION TOOTH (vote fires ONLY on the add-a-ballot transition) ════════════
 
 -- (✓) member, ballot-added (tally 0→1), inside window ⇒ FIRES (the only vote-firing corner):
-#guard (fireReactive voteBtn memberHeld 15 pend0 pend1 100 110).isSome
+#guard (fireReactive voteBtn memberHeld 15 pend0 pend1 demoFC).isSome
 -- (✗) member, NO ballot added (tally 1→1, the `link` fails) ⇒ REFUSED — the SAME `new` shape (PENDING,
 --     a valid tally) but the WRONG transition (it did not increment). A single-state gate would pass:
-#guard (fireReactive voteBtn memberHeld 15 pend1 pend1 100 110).isNone
+#guard (fireReactive voteBtn memberHeld 15 pend1 pend1 demoFC).isNone
 -- (✗) member, ballot added but from the WRONG old (tally 0→2, jumps by two — not a single ballot):
-#guard (fireReactive voteBtn memberHeld 15 pend0 pend2 100 110).isNone
+#guard (fireReactive voteBtn memberHeld 15 pend0 pend2 demoFC).isNone
 
 -- ════════════ THE DEADLINE TOOTH (vote auto-closes after height 20) ════════════
 
 -- (✗) member, perfect add-a-ballot transition, but height 25 > close 20 ⇒ REFUSED (deadline passed):
-#guard (fireReactive voteBtn memberHeld 25 pend0 pend1 100 110).isNone
+#guard (fireReactive voteBtn memberHeld 25 pend0 pend1 demoFC).isNone
 -- (✗) member, perfect transition, but height 5 < open 10 ⇒ REFUSED (window not yet open):
-#guard (fireReactive voteBtn memberHeld 5 pend0 pend1 100 110).isNone
+#guard (fireReactive voteBtn memberHeld 5 pend0 pend1 demoFC).isNone
 -- THE TEMPORAL HTMX TOOTH: the SAME member's SAME ballot is LIT at 15 (inside) and DARK at 25 (after):
-#guard (fireReactive voteBtn memberHeld 15 pend0 pend1 100 110).isSome
-       && (fireReactive voteBtn memberHeld 25 pend0 pend1 100 110).isNone
+#guard (fireReactive voteBtn memberHeld 15 pend0 pend1 demoFC).isSome
+       && (fireReactive voteBtn memberHeld 25 pend0 pend1 demoFC).isNone
 
 -- ════════════ THE CAP TOOTH (only the ballot-holder may vote) ════════════
 
 -- (✗) observer (no write cap), perfect transition, inside window ⇒ REFUSED (cap tooth):
-#guard (fireReactive voteBtn observerHeld 15 pend0 pend1 100 110).isNone
+#guard (fireReactive voteBtn observerHeld 15 pend0 pend1 demoFC).isNone
 
 -- ════════════ RESOLVE fires ONLY on the quorum-REACHED transition ════════════
 
 -- (✓) chair, quorum crossed (tally 2→3, PENDING→RESOLVED), inside window ⇒ FIRES:
-#guard (fireReactive resolveBtn chairHeld 22 pend2 resolved3 100 110).isSome
+#guard (fireReactive resolveBtn chairHeld 22 pend2 resolved3 demoFC).isSome
 -- (✗) chair, but tally 0→3 from old with tally 0 — wait, that DID cross (0<3≤3). Use a non-crossing:
 --     chair, status PENDING→RESOLVED but the quorum link fails (old already ≥ quorum: tally stays 3):
-#guard (fireReactive resolveBtn chairHeld 22 resolved3 resolved3 100 110).isNone
+#guard (fireReactive resolveBtn chairHeld 22 resolved3 resolved3 demoFC).isNone
 -- (✗) member (no grant cap) cannot resolve even on the quorum transition ⇒ REFUSED (cap tooth):
-#guard (fireReactive resolveBtn memberHeld 22 pend2 resolved3 100 110).isNone
+#guard (fireReactive resolveBtn memberHeld 22 pend2 resolved3 demoFC).isNone
 
 -- a committed vote carries the REAL effect (vote 1) and binds the new root (110):
-#guard match fireReactive voteBtn memberHeld 15 pend0 pend1 100 110 with
+#guard match fireReactive voteBtn memberHeld 15 pend0 pend1 demoFC with
        | some i => (i.surface.firedEffect == DemoEffect.vote 1) && (i.surface.boundRoot == 110)
        | none   => false
 

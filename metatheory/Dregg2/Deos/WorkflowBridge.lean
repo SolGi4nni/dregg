@@ -83,7 +83,7 @@ import Dregg2.Tactics
 namespace Dregg2.Deos.WorkflowBridge
 
 open Dregg2.Authority (Auth)
-open Dregg2.Deos.Affordance (CellAffordance AffordanceIntent fireGate fireGate_iff_subset)
+open Dregg2.Deos.Affordance (CellAffordance FireCtx AffordanceIntent fireGate fireGate_iff_subset)
 open Dregg2.Deos.GatedAffordance (GatedAffordance gatedOK fireGated fireGated_iff
   fireGated_cap_fail_refuses fireGated_state_fail_refuses fireGated_both_pass)
 open Dregg2.Deos.Reactive (TransitionGate ReactiveAffordance transitionOK inWindow
@@ -225,8 +225,8 @@ is in the step's `precond` phase. The step `(authorizedParty s, precond s)` IS t
 deos surface RENDERS the choreography step, not a fork. (The third workflow conjunct — the attestation
 `verify` — is the §8 crypto leg, carried separately in §3.) -/
 theorem workflowStep_is_gatedAffordance (actor : Party) (s : StepKind) (p : Phase) (ctx : TurnCtx)
-    (sc post : Nat) :
-    (fireGated (stepGated s) (heldFor actor s) ctx (phaseCell p) (phaseCell p) sc post).isSome = true ↔
+    (fc : FireCtx StepKind) :
+    (fireGated (stepGated s) (heldFor actor s) ctx (phaseCell p) (phaseCell p) fc).isSome = true ↔
       (actor = authorizedParty s ∧ p = precond s) := by
   rw [fireGated_iff]
   -- `stepGated s` has `.aff.required = stepRights s`, `.stateCond = stateCond s`, `.method = 0`.
@@ -250,9 +250,9 @@ step is the deos button's cap∧state gate CONJOINED with the §8 attestation le
 kernel agree exactly, the crypto leg being the only thing `exec` carries beyond the cap∧state button. -/
 theorem workflow_fires_iff_affordance_fires {Digest Proof : Type} [AddCommGroup Digest]
     [CryptoKernel Digest Proof] (stmt : Digest)
-    (k : WState Proof) (s : StepKind) (actor : Party) (att : Proof) (ctx : TurnCtx) (sc post : Nat) :
+    (k : WState Proof) (s : StepKind) (actor : Party) (att : Proof) (ctx : TurnCtx) (fc : FireCtx StepKind) :
     (exec stmt k s actor att).isSome = true ↔
-      ((fireGated (stepGated s) (heldFor actor s) ctx (phaseCell k.phase) (phaseCell k.phase) sc post).isSome = true
+      ((fireGated (stepGated s) (heldFor actor s) ctx (phaseCell k.phase) (phaseCell k.phase) fc).isSome = true
         ∧ CryptoKernel.verify stmt att = true) := by
   rw [workflowStep_is_gatedAffordance]
   -- LHS: `exec` is `some _` iff its guard `actor = authorizedParty s ∧ k.phase = precond s ∧ verify`.
@@ -281,8 +281,8 @@ tooth = `exec_in_order`'s contrapositive — the SKIP tooth), and the `merge` bu
 button is dark for anyone who is not the step's authorized party. (`exec_authorized` says a committed
 `exec` step's actor IS authorized; here the contrapositive is rendered as the cap-gate refusal.) -/
 theorem gated_cap_fail_is_unauthorized (actor : Party) (s : StepKind) (p : Phase) (ctx : TurnCtx)
-    (sc post : Nat) (hunauth : actor ≠ authorizedParty s) :
-    fireGated (stepGated s) (heldFor actor s) ctx (phaseCell p) (phaseCell p) sc post = none := by
+    (fc : FireCtx StepKind) (hunauth : actor ≠ authorizedParty s) :
+    fireGated (stepGated s) (heldFor actor s) ctx (phaseCell p) (phaseCell p) fc = none := by
   apply fireGated_cap_fail_refuses
   -- the cap-gate fails because `actor ≠ authorizedParty s` (heldFor gives `[]`, a non-empty req fails).
   show fireGate (stepRights s) (heldFor actor s) = false
@@ -295,8 +295,8 @@ dark unless the cell is in the step's `precond` phase. The choreography order is
 state-gate exactly as `exec_in_order` enforces it: you cannot fire a step's button from the wrong phase
 (no merge before approval, rendered). -/
 theorem gated_state_fail_is_out_of_order (actor : Party) (s : StepKind) (p : Phase) (ctx : TurnCtx)
-    (sc post : Nat) (hskip : p ≠ precond s) :
-    fireGated (stepGated s) (heldFor actor s) ctx (phaseCell p) (phaseCell p) sc post = none := by
+    (fc : FireCtx StepKind) (hskip : p ≠ precond s) :
+    fireGated (stepGated s) (heldFor actor s) ctx (phaseCell p) (phaseCell p) fc = none := by
   apply fireGated_state_fail_refuses
   -- the state-gate fails because `p ≠ precond s`.
   show (stateCond s).admitsCtx ctx 0 (phaseCell p) (phaseCell p) = false
@@ -308,9 +308,9 @@ theorem gated_state_fail_is_out_of_order (actor : Party) (s : StepKind) (p : Pha
 except `approved`: the CI bot cannot fire merge before the reviewer's approval lands. This is
 `Workflow.merge_requires_approved` rendered onto the deos surface — the skip tooth specialized to the
 merge step, the "no merge without prior approval" guarantee as a dark button. -/
-theorem gated_merge_requires_approved (actor : Party) (p : Phase) (ctx : TurnCtx) (sc post : Nat)
+theorem gated_merge_requires_approved (actor : Party) (p : Phase) (ctx : TurnCtx) (fc : FireCtx StepKind)
     (hp : p ≠ .approved) :
-    fireGated (stepGated .merge) (heldFor actor .merge) ctx (phaseCell p) (phaseCell p) sc post = none := by
+    fireGated (stepGated .merge) (heldFor actor .merge) ctx (phaseCell p) (phaseCell p) fc = none := by
   apply gated_state_fail_is_out_of_order
   -- `precond .merge = .approved`, so `p ≠ .approved` IS `p ≠ precond .merge`.
   show p ≠ precond .merge
@@ -373,8 +373,8 @@ step's authorized party AND the cell move is exactly `precond s → postPhase s`
 transition IS the deos reactive transition gate — the choreography edge, rendered, with the cap-gate
 biting on authorization. -/
 theorem phaseTransition_is_reactiveAffordance (actor : Party) (s : StepKind) (pold pnew : Phase)
-    {height : Nat} (hh : height ≤ 9223372036854775807) (sc post : Nat) :
-    (fireReactive (stepReactive s) (heldFor actor s) height (phaseCell pold) (phaseCell pnew) sc post).isSome = true ↔
+    {height : Nat} (hh : height ≤ 9223372036854775807) (fc : FireCtx StepKind) :
+    (fireReactive (stepReactive s) (heldFor actor s) height (phaseCell pold) (phaseCell pnew) fc).isSome = true ↔
       (actor = authorizedParty s ∧ pold = precond s ∧ pnew = postPhase s) := by
   rw [fireReactive_iff]
   -- `stepReactive s` has `.aff.required = stepRights s`, `.gate = phaseTransitionGate s`.
@@ -392,8 +392,8 @@ just that the cell LANDED in `postPhase s`: you cannot reach `approved` by a non
 move. This is the reactive analogue of the skip tooth — the relational edge `Workflow` enforces by
 `exec_in_order`, now as the transition `link`. -/
 theorem reactive_wrong_phase_refuses (actor : Party) (s : StepKind) (pold pnew : Phase) (height : Nat)
-    (sc post : Nat) (hwrong : pold ≠ precond s) :
-    fireReactive (stepReactive s) (heldFor actor s) height (phaseCell pold) (phaseCell pnew) sc post = none := by
+    (fc : FireCtx StepKind) (hwrong : pold ≠ precond s) :
+    fireReactive (stepReactive s) (heldFor actor s) height (phaseCell pold) (phaseCell pnew) fc = none := by
   apply fireReactive_transition_fail_refuses
   -- the transition gate fails: `pre (phaseCell pold)` is false since `pold ≠ precond s`.
   show transitionOK (phaseTransitionGate s) (phaseCell pold) (phaseCell pnew) = false
@@ -416,45 +416,56 @@ private def sc0 : Nat := 100
 private def post0 : Nat := 110
 private def h0 : Nat := 15
 
+/-- An injective §8 effect digest for the workflow steps — the receipt commits to WHICH STEP fired,
+not to the affordance's display name (`Deos.Affordance`, the 2026-08-07 repair). -/
+private def stepDigest : StepKind → Nat
+  | .submit  => 1
+  | .approve => 2
+  | .merge   => 3
+
+/-- The turn context the witnesses fire in: chains onto digest `9`, moves `sc0 → post0`. -/
+private def fc0 : FireCtx StepKind :=
+  { effectDigest := stepDigest, prevDigest := 9, pre := sc0, post := post0 }
+
 -- ══════════ THE GATED BUTTON: authorized ∧ in-phase ⇒ FIRES (the only firing corner per step) ══════════
 
 -- author (0) submits from `init` ⇒ FIRES:
 #guard (fireGated (stepGated .submit) (heldFor 0 .submit) TurnCtx.empty
-          (phaseCell .init) (phaseCell .init) sc0 post0).isSome
+          (phaseCell .init) (phaseCell .init) fc0).isSome
 -- reviewer (1) approves from `submitted` ⇒ FIRES:
 #guard (fireGated (stepGated .approve) (heldFor 1 .approve) TurnCtx.empty
-          (phaseCell .submitted) (phaseCell .submitted) sc0 post0).isSome
+          (phaseCell .submitted) (phaseCell .submitted) fc0).isSome
 -- CI (2) merges from `approved` ⇒ FIRES:
 #guard (fireGated (stepGated .merge) (heldFor 2 .merge) TurnCtx.empty
-          (phaseCell .approved) (phaseCell .approved) sc0 post0).isSome
+          (phaseCell .approved) (phaseCell .approved) fc0).isSome
 
 -- ══════════ THE CAP TOOTH: the WRONG actor's button is DARK (even in the right phase) ══════════
 
 -- reviewer (1) cannot submit (only the author may) — DARK even from `init`:
 #guard (fireGated (stepGated .submit) (heldFor 1 .submit) TurnCtx.empty
-          (phaseCell .init) (phaseCell .init) sc0 post0).isNone
+          (phaseCell .init) (phaseCell .init) fc0).isNone
 -- author (0) cannot approve (only the reviewer may) — DARK even from `submitted`:
 #guard (fireGated (stepGated .approve) (heldFor 0 .approve) TurnCtx.empty
-          (phaseCell .submitted) (phaseCell .submitted) sc0 post0).isNone
+          (phaseCell .submitted) (phaseCell .submitted) fc0).isNone
 -- the author (0) cannot merge (only the CI bot may) — DARK even from `approved`:
 #guard (fireGated (stepGated .merge) (heldFor 0 .merge) TurnCtx.empty
-          (phaseCell .approved) (phaseCell .approved) sc0 post0).isNone
+          (phaseCell .approved) (phaseCell .approved) fc0).isNone
 
 -- ══════════ THE SKIP TOOTH: the right actor's button is DARK in the WRONG phase ══════════
 
 -- the CI bot (2) cannot merge from `init` (no merge before approval) — DARK (the headline):
 #guard (fireGated (stepGated .merge) (heldFor 2 .merge) TurnCtx.empty
-          (phaseCell .init) (phaseCell .init) sc0 post0).isNone
+          (phaseCell .init) (phaseCell .init) fc0).isNone
 -- the CI bot (2) cannot merge from `submitted` either — DARK until `approved`:
 #guard (fireGated (stepGated .merge) (heldFor 2 .merge) TurnCtx.empty
-          (phaseCell .submitted) (phaseCell .submitted) sc0 post0).isNone
+          (phaseCell .submitted) (phaseCell .submitted) fc0).isNone
 -- the reviewer (1) cannot approve from `init` (must wait for submit) — DARK:
 #guard (fireGated (stepGated .approve) (heldFor 1 .approve) TurnCtx.empty
-          (phaseCell .init) (phaseCell .init) sc0 post0).isNone
+          (phaseCell .init) (phaseCell .init) fc0).isNone
 
 -- a committed gated fire carries the REAL step as its effect and binds the new root (110):
 #guard match fireGated (stepGated .submit) (heldFor 0 .submit) TurnCtx.empty
-                (phaseCell .init) (phaseCell .init) sc0 post0 with
+                (phaseCell .init) (phaseCell .init) fc0 with
        | some i => (i.surface.firedEffect == StepKind.submit) && (i.surface.boundRoot == post0)
        | none   => false
 
@@ -462,25 +473,25 @@ private def h0 : Nat := 15
 
 -- author (0): the `init → submitted` move at height 15 ⇒ FIRES:
 #guard (fireReactive (stepReactive .submit) (heldFor 0 .submit) h0
-          (phaseCell .init) (phaseCell .submitted) sc0 post0).isSome
+          (phaseCell .init) (phaseCell .submitted) fc0).isSome
 -- reviewer (1): the `submitted → approved` move ⇒ FIRES:
 #guard (fireReactive (stepReactive .approve) (heldFor 1 .approve) h0
-          (phaseCell .submitted) (phaseCell .approved) sc0 post0).isSome
+          (phaseCell .submitted) (phaseCell .approved) fc0).isSome
 -- CI (2): the `approved → merged` move ⇒ FIRES:
 #guard (fireReactive (stepReactive .merge) (heldFor 2 .merge) h0
-          (phaseCell .approved) (phaseCell .merged) sc0 post0).isSome
+          (phaseCell .approved) (phaseCell .merged) fc0).isSome
 
 -- THE TRANSITION TOOTH: the SAME destination `approved` from the WRONG old phase `init` (not the
 -- `submitted → approved` edge) REFUSES — a property of `new` alone (it IS `approved`) cannot witness it:
 #guard (fireReactive (stepReactive .approve) (heldFor 1 .approve) h0
-          (phaseCell .init) (phaseCell .approved) sc0 post0).isNone
+          (phaseCell .init) (phaseCell .approved) fc0).isNone
 -- and merging to `merged` from `submitted` (skipping `approved`) REFUSES (the choreography edge is checked):
 #guard (fireReactive (stepReactive .merge) (heldFor 2 .merge) h0
-          (phaseCell .submitted) (phaseCell .merged) sc0 post0).isNone
+          (phaseCell .submitted) (phaseCell .merged) fc0).isNone
 
 -- THE REACTIVE CAP TOOTH: the wrong actor cannot fire the advance even on the right edge:
 #guard (fireReactive (stepReactive .approve) (heldFor 0 .approve) h0
-          (phaseCell .submitted) (phaseCell .approved) sc0 post0).isNone
+          (phaseCell .submitted) (phaseCell .approved) fc0).isNone
 
 end Witnesses
 

@@ -31,9 +31,13 @@ TAMPER-EVIDENT (`replayedDeterministic_replays`). This module advances the OPEN 
 
 ## Honesty ledger
 
-  * C1 (`confined_replay_deterministic`, `ambient_breaks_determinism`) — FULLY DISCHARGED, NO oracle
-    (pure structural fact: the fold reads only the witness). This is the POINT — determinism is a
-    weaker dependency than the crown's tamper-evidence payoff.
+  * C1 (`confined_replay_deterministic`, `ambient_replay_env_dependent`) — DISCHARGED, NO oracle.
+    ⚑ **RESTATED 2026-08-07.** The old keystone was literally `replayState … = replayState … := rfl`
+    with the confinement premise underscore-prefixed and unused — true of EVERY trace, so it proved
+    nothing about confinement. Determinism now means what it should: the reconstruction is INDEPENDENT
+    OF THE AMBIENT ENVIRONMENT (`envStep` models the only channel by which an out-of-band value could
+    enter), which is true exactly on confined traces and FALSE otherwise
+    (`ambient_replay_env_dependent`). Still no oracle — the POINT of C1 survives, with a statement.
   * C2 (`negotiated_attenuates`, `deputy_confers_no_unheld_target`, `negotiation_path_independent`,
     `negotiation_refuses_over_ask`) — FULLY DISCHARGED by REUSE of `Dregg2.Exec.attenuate_subset` +
     the `endpoint`-target-preservation of `attenuate`. NO new lattice; the meet IS iterated kernel
@@ -85,17 +89,81 @@ the start state `s₀`. The reconstruction `rehydrate` performs when the live so
 def replayState (step : ReplayStep) (s₀ : ReplayState) (trace : InteractionLog) : ReplayState :=
   trace.foldl step s₀
 
-/-- **`confined_replay_deterministic` (C1 KEYSTONE).** The replay of a confined trace is a FUNCTION of
-`(step, s₀, trace)` — two reconstructions from the same start and the same trace are EQUAL. This is the
-DETERMINISM half of `ReplayedDeterministic`, and it needs NO §8 oracle: `foldl` of a fixed `step` over a
-fixed list is definitionally a function (`rfl`). The CONTENT (the doc's derivation) is *why this is the
-right statement for a confined trace*: a confined trace is all-`.attested` (every `Interaction.isWitnessed`),
-so `step` never needs an ambient input — the fold has no hidden read. Determinism is FORCED by confinement,
-not assumed. -/
-theorem confined_replay_deterministic
-    (step : ReplayStep) (s₀ : ReplayState) (trace : InteractionLog)
-    (_hconf : confined trace = true) :
+/-! ### ⚑ 2026-08-07 — C1's keystone was `X = X`, premise unused. What replaced it.
+
+The previous `confined_replay_deterministic` read, in full,
+
     replayState step s₀ trace = replayState step s₀ trace := rfl
+
+with `_hconf` underscore-prefixed. Its docstring argued — correctly! — that determinism is forced by
+confinement because a confined trace carries no ambient input. **But `foldl` of a fixed `step` over a
+fixed list is a function whether or not the trace is confined**, so the statement was true of every
+trace and the premise was decoration. The prose named the theorem; the theorem did not state it.
+
+To state it, the ambient input must be MODELLED, so that the fold can depend on something the trace
+does not carry. `envStep` is that model: a step that consults an ambient environment `env` **only** on
+`.ambient` interactions. Determinism is then "the reconstruction does not depend on `env`" — false in
+general (`ambient_replay_env_dependent`), true exactly on confined traces. -/
+
+/-- The ambient environment a replay could read outside the witness: scheduling, wall-clock, an agent's
+un-witnessed choice. Opaque — we need only that it VARIES. -/
+abbrev AmbientEnv := Nat
+
+/-- **`envStep base amb env`** — a replay step that reads the WITNESS on an attested interaction
+(`base s ar`, using only data the `AttestedRoot` carries) and falls back to the AMBIENT environment on
+an `.ambient` reach (`amb s env`). This is the faithful model of "the reconstruction may read something
+the trace does not carry": the only channel for an out-of-band input is the `.ambient` arm. -/
+def envStep (base : ReplayState → AttestedRoot → ReplayState)
+    (amb : ReplayState → AmbientEnv → ReplayState) (env : AmbientEnv) : ReplayStep :=
+  fun s i => match i with
+    | .attested ar => base s ar
+    | .ambient     => amb s env
+
+/-- The confined case of the fold, by structural recursion on the trace: on an all-witnessed trace the
+`.ambient` arm is unreachable, so the environment is never read. -/
+private theorem foldl_envStep_env_independent
+    (base : ReplayState → AttestedRoot → ReplayState)
+    (amb : ReplayState → AmbientEnv → ReplayState) (env₁ env₂ : AmbientEnv) :
+    ∀ (trace : InteractionLog) (s₀ : ReplayState), confined trace = true →
+      trace.foldl (envStep base amb env₁) s₀ = trace.foldl (envStep base amb env₂) s₀
+  | [], _, _ => rfl
+  | Interaction.attested ar :: rest, s₀, h => by
+      have hrest : confined rest = true := by
+        unfold confined at h; rw [List.all_cons, Bool.and_eq_true] at h; exact h.2
+      simp only [List.foldl_cons, envStep]
+      exact foldl_envStep_env_independent base amb env₁ env₂ rest (base s₀ ar) hrest
+  | Interaction.ambient :: rest, _, h => by
+      unfold confined at h
+      rw [List.all_cons, Bool.and_eq_true] at h
+      exact absurd h.1 (by decide)
+
+/-- **`confined_replay_deterministic` (C1 KEYSTONE, restated with the premise LOAD-BEARING).** The
+reconstruction of a CONFINED trace is INDEPENDENT OF THE AMBIENT ENVIRONMENT: replaying under `env₁`
+and under `env₂` gives the same scene. That is what "replays deterministically" means — the replay is a
+function of the witnessed trace alone, with no hidden read — and it needs NO §8 oracle, because
+confinement makes the ambient arm unreachable rather than assuming it away.
+
+`hconf` is consumed in the proof term (`foldl_envStep_env_independent` recurses on it and the
+`.ambient` case is closed by contradicting it), and it is NOT droppable:
+`ambient_replay_env_dependent` exhibits a one-interaction unconfined trace whose two replays DIFFER. -/
+theorem confined_replay_deterministic
+    (base : ReplayState → AttestedRoot → ReplayState)
+    (amb : ReplayState → AmbientEnv → ReplayState)
+    (s₀ : ReplayState) (trace : InteractionLog) (hconf : confined trace = true)
+    (env₁ env₂ : AmbientEnv) :
+    replayState (envStep base amb env₁) s₀ trace
+      = replayState (envStep base amb env₂) s₀ trace :=
+  foldl_envStep_env_independent base amb env₁ env₂ trace s₀ hconf
+
+/-- **THE REFUTATION — `ambient_replay_env_dependent`.** A single `.ambient` interaction is enough to
+make the reconstruction depend on the environment: with a step that simply adopts the ambient value,
+replaying `[.ambient]` under `env = 0` and under `env = 1` gives DIFFERENT scenes. So
+`confined_replay_deterministic` is FALSE without its premise — the confinement hypothesis is
+load-bearing, and the `ReconstructedApproximate` rung is honestly named. -/
+theorem ambient_replay_env_dependent :
+    replayState (envStep (fun s _ => s) (fun _ e => e) 0) 0 [Interaction.ambient]
+      ≠ replayState (envStep (fun s _ => s) (fun _ e => e) 1) 0 [Interaction.ambient] := by
+  decide
 
 /-- **`replay_extensional_in_witness` (C1, the derivation made precise).** If two replay steps AGREE on
 every interaction that actually appears in the trace, they produce the SAME reconstruction. This is the
@@ -275,11 +343,26 @@ open Dregg2.Deos.Surface (interactiveSurface)
 /-- A surface on cell 7 with full rights (the granter G holds write/read/grant). -/
 def egHeld : Cap := Cap.endpoint 7 [Auth.write, Auth.read, Auth.grant]
 
--- C1: a confined trace's replay is a function (rfl-deterministic); and an ambient reach is never a
--- witness (the floor), so a trace with one is unconfined.
+-- C1: an ambient reach is never a witness (the floor), so a trace with one is unconfined.
 #guard !(Interaction.isWitnessed Interaction.ambient)
 #guard confined [Interaction.attested goodRoot, Interaction.attested goodRoot]   -- confined → C1 applies
 #guard !confined [Interaction.attested goodRoot, Interaction.ambient]            -- ambient → the floor
+
+/-- **FIRES (`confined_replay_deterministic` non-vacuity).** The premise is SATISFIABLE on a concrete
+non-empty trace, and the conclusion is EXERCISED there NON-TRIVIALLY: the fold actually moves
+(`0 → 42 → 84` over two attested roots) and lands on the same value under both environments. A
+determinism theorem whose fold never moves would be worth nothing; this one moves. -/
+theorem confined_replay_deterministic_satisfiable :
+    confined [Interaction.attested goodRoot, Interaction.attested goodRoot] = true
+      ∧ replayState (envStep (fun s ar => s + ar.root) (fun _ e => e) 0) 0
+          [Interaction.attested goodRoot, Interaction.attested goodRoot]
+        = replayState (envStep (fun s ar => s + ar.root) (fun _ e => e) 1) 0
+          [Interaction.attested goodRoot, Interaction.attested goodRoot]
+      ∧ replayState (envStep (fun s ar => s + ar.root) (fun _ e => e) 0) 0
+          [Interaction.attested goodRoot, Interaction.attested goodRoot] = 84 := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+#assert_all_clean [confined_replay_deterministic_satisfiable, ambient_replay_env_dependent]
 
 -- C2 the meet: R asks for {read} from a {write,read,grant} holder → gets exactly [read] (ceiling∩floor):
 #guard capAuthConferred (negotiate [Auth.read] egHeld) == [Auth.read]
@@ -301,6 +384,7 @@ is a weaker dependency than the crown's tamper-evidence payoff). C3 rides `famil
 
 #assert_all_clean [
   confined_replay_deterministic,
+  ambient_replay_env_dependent,
   replay_extensional_in_witness,
   ambient_trace_unconfined,
   negotiated_attenuates,

@@ -56,7 +56,7 @@ clean-triple pin on anything touching them would correctly fail (see `Claims.lea
 
 ## Machine-checked keystones (PROVED-axiom-clean — pinned in `Dregg2/Claims.lean`)
 
-**165 theorem pins (`#assert_axioms`) + 50 whole-namespace pins (`#assert_namespace_axioms`)**
+**297 theorem pins (`#assert_axioms`) + 51 whole-namespace pins (`#assert_namespace_axioms`)**
 currently build-enforced (plus 20 parked pins, commented out — see *Parked pins* below; recount:
 `grep -c "^#assert_axioms" Dregg2/Claims.lean`). Grouped by subsystem (the `Dregg2/Claims.lean`
 section numbers). Every row is `collectAxioms`-clean as of the last verification. The table
@@ -97,9 +97,82 @@ is the authoritative inventory.
 | 15 | `Dregg2.Exec.Consensus.{quorum_reaches_bft_tier, committedByQuorum_reaches_bft_tier, below_quorum_not_bft, net_no_downgrade(_via_world), finality_monotone_on_net, quorum_grows_preserves_finality, committed_holds_along_rounds, cross_tier_join_on_net, NetCell.tier_eq_bft_iff}` | `Exec.Consensus` | quorum→finality-tier bridge: a reached quorum lands in the BFT tier; finality is monotone on a growing net (Byzantine safety itself is now proved too — `Proof.BFT.bft_safety` + `World.quorum_intersection_safety`, see §19/§21) |
 | 16 | `Dregg2.Upgrade.upgrade_never_bricks`, `…stale_version_falls_back_to_signature` | `Upgrade` | anti-brick `set_program`: a stale AIR_VERSION falls back to owner signature; never bricks |
 | 17 | `Dregg2.Proof.{refine_conservation(_measure), refine_run_conservation, refine_integrity(_intra)}` | `Proof.Refine` | Exec ⊑ Abstract: conservation + intra-vat integrity refine (**full simulation diagram OPEN**) |
+| 39 | `Dregg2.Deos.Surface.{surface_confersEdge_iff_write, surface_confers_no_edge_offtarget, viewSurface_confers_no_edge, notifySurface_confers_no_edge, interactiveSurface_confers_edge, surface_attenuate_no_amplify}` | `Deos.Surface` | target 1: a deos window confers a connectivity edge **iff `write ∈ rights`** (general form; the three instance theorems are corollaries, opposite polarities included), and **no** edge to a cell it does not name; per-viewer projection cannot amplify |
+| 39 | `Dregg2.Deos.Membrane.{reshare_chain_attenuates, reshareN_attenuates, reshare_refuses_amplification, membrane_non_amplifies, sealed_refuses_unheld}` | `Deos.Membrane` | target 2: `reshare A→B→C ⟹ C ⊆ B ⊆ A`, n-hop; the conjunction-forwarder floor `exposed ⊑ a ⊓ b` |
+| 39 | `Dregg2.Deos.Rehydration.{replayedDeterministic_iff_confined, reconstructedApproximate_iff_unconfined, invalidAttestation_not_replayed, confined_chain_covers_log, unconfined_chain_drops_interactions, replayedDeterministic_replays}` | `Deos.Rehydration` | target 3: the classifier `↔` (**a SPEC-MATCH, see the deos note below**) + the world property it was standing in for — a **confined** context replays to a chain with one receipt per interaction, an **unconfined** one replays STRICTLY SHORTER (the ambient reach leaves no receipt) |
+| 39 | `Dregg2.Deos.Affordance.{fireGate_iff_subset, fire_authorized_iff_subset, fire_returns_receipt, firedSurface_binds_attested_root, firedReceipt_commits_to_effect, firedReceipt_anchors, firedReceipt_extends_chain, firedReceipt_determines_effect, unauthorized_fire_no_surface, projectFor_monotone}` | `Deos.Affordance` | target 4: a fire commits iff `required ⊆ held`; the surface binds **the receipt the fire returned**; that receipt commits to the §8 digest of the EFFECT, links onto the well-linked log, and **determines what fired** under a named injectivity obligation |
+| 39 | `Dregg2.Deos.ReplayMembrane.{confined_replay_deterministic, ambient_replay_env_dependent, replay_extensional_in_witness, ambient_trace_unconfined, negotiated_attenuates, negotiation_refuses_over_ask, deputy_confers_no_unheld_target, drift_cannot_recover_dropped_authority}` | `Deos.ReplayMembrane` | C1: a confined replay is **independent of the ambient environment** (false off the confined fragment); C2: the negotiation meet, the confused-deputy impossibility, no attenuation drift |
 
 (Ellipses abbreviate same-module siblings; every name is spelled out and pinned individually in
 `Dregg2/Claims.lean`.)
+
+### ⚑ The deos rows (§39) — read this before citing them
+
+These were added **2026-08-07**, and the reason they were not here before is the finding.
+`docs/deos/DEOS.md` claimed *"four theorems ALL DISCHARGED"* as the basis for calling deos a verified
+desktop OS. A survey read all five names at source: **four were definitional and one was an identity
+carrier**, and **none of them appeared in this file or in `Dregg2/Claims.lean`** — so the honesty
+ledger made no claim about deos at all and no instrument keyed on the rot.
+
+| the old headline | what it actually was | disposition |
+|---|---|---|
+| `surfaceConfersExactly` | `capAuthConferred (Surface c r) = r := rfl`, where `Surface c r := Cap.endpoint c r` — i.e. **`r = r`** | **claim retracted** in `DEOS.md`; kept as a labelled naming lemma, deliberately **not pinned** |
+| `fire_authorized_iff` | `(if c then some _ else none).isSome ↔ c` — the shape of `fire` | **relabelled DEFINITIONAL**, not pinned; replaced by `fire_authorized_iff_subset` |
+| `firedSurface_binds_attested_root` | ⚑ **identity carrier** — `fire`'s receipt was `let _receipt`, **discarded**; `boundRoot := post` came from the caller and the theorem re-derived the same receipt in its own statement: **`post = post`** | **REPAIRED**: `fire` returns the receipt, the surface binds `intent.receipt.newCommit` |
+| `replayedDeterministic_iff_confined` | `(if c then A else B) = A ↔ c` | kept, **relabelled a classifier spec-match**; "the verified-desktop crown" retracted |
+| `replayedDeterministic_replays` | confinement premise **underscore-prefixed and absent from the proof term**, over a free `roots : List Nat` unrelated to `log` | **REPAIRED**: `roots` derived from the log, premise consumed for the coverage conjunct |
+| `ReplayMembrane.confined_replay_deterministic` | literally `replayState … = replayState … := rfl` | **REPAIRED**: ambient-environment independence |
+
+Three defects rode inside that discarded receipt and are fixed with it: `effectsHash` was the
+affordance's **display name** (which collides — see the display-name-is-not-a-key class) instead of a
+commitment to the effect; `prevHash` was hard-coded to `genesisSentinel`, so no fire could ever link
+into the chain `chain_tamper_evident` speaks about; and the attested root was a **free parameter the
+verifier consumed**.
+
+⚠ **On `firedSurface_binds_attested_root` specifically, do not over-read the repair.** It is still a
+structural agreement between two fields of the returned intent, proved by `rfl` once the `some` is
+destructed. What changed is that it became **refutable** — binding `fc.pre`, or a root the receipt did
+not produce, now makes it false, whereas the old statement re-derived its own right-hand side from the
+caller's free `post` and was satisfied by an implementation carrying no receipt at all. The attestation
+content is in its three neighbours: `firedReceipt_commits_to_effect` (what the receipt commits to),
+`firedReceipt_extends_chain` (that it is linked into the append-only log, hence inherits
+`chain_tamper_evident`), and `firedReceipt_determines_effect` (that the receipt pins what fired).
+
+⚠ **`#assert_axioms`-clean was true of all five and told nobody anything.** Axiom hygiene cannot see a
+definitional identity. What it takes is a **registered non-vacuity companion**, which every surviving
+§39 row now has — a NAMED theorem, never a `def`, never a bare `#guard`:
+
+| keystone | fires (premise satisfiable, conclusion exercised) | bites (the guarded property is refutable) |
+|---|---|---|
+| `Surface.surface_confersEdge_iff_write` | `surface_confersEdge_iff_write_satisfiable` (write-carrying surface DOES confer) | same theorem's 2nd/3rd conjuncts: drop `write` → dark; keep `write`, change the cell → dark |
+| `Membrane.reshareN_attenuates` | `reshareN_attenuates_satisfiable` (pre-existing) | `reshare_refuses_amplification` |
+| `Rehydration.replayedDeterministic_replays` | `replayedDeterministic_replays_satisfiable` | `replays_coverage_needs_confinement` (ambient AND forged-attestation routes both drop interactions) |
+| `Affordance.firedSurface_binds_attested_root` | `firedSurface_binds_attested_root_satisfiable` | `firedReceipt_determines_effect_bites` |
+| `Affordance.firedReceipt_determines_effect` | `demoDigest_injective` (the §8 hypothesis is satisfiable) | `determines_effect_needs_injectivity` (**the hypothesis is not droppable** — a constant digest makes the conclusion FALSE) |
+| `Affordance.fire_authorized_iff_subset` | `fire_authorized_iff_subset_satisfiable` | same theorem (the reader is refused the write-gated fire) |
+| `ReplayMembrane.confined_replay_deterministic` | `confined_replay_deterministic_satisfiable` (the fold MOVES: `0 → 42 → 84`) | `ambient_replay_env_dependent` |
+
+**Honest count of the audit — seven theorems read at source:**
+
+* **2 had real content and survive unchanged** — `Membrane.reshare_chain_attenuates` /
+  `reshareN_attenuates` (the only leg with a registered witness beforehand) and
+  `Surface.viewSurface_confers_no_edge` (a real `simp` over the kernel's own `confersEdgeTo`, with an
+  opposite-polarity partner at `interactiveSurface_confers_edge`).
+* **2 were definitional-but-true** — `surfaceConfersExactly` (`rights = rights`) and
+  `fire_authorized_iff` (`(if c then some _ else none).isSome ↔ c`). Both are now **labelled** and
+  **not pinned**; content-bearing replacements are pinned instead.
+* **1 was a spec-match read as a world property** — `replayedDeterministic_iff_confined`, relabelled;
+  "the verified-desktop crown" retracted.
+* **3 were vacuous and are repaired** — `firedSurface_binds_attested_root` (an identity carrier over a
+  discarded receipt), `replayedDeterministic_replays` (confinement premise absent from the proof term,
+  over an unrelated `roots`), and `ReplayMembrane.confined_replay_deterministic` (`X = X`, premise
+  unused). *(That is 8 dispositions across 7 theorems because `viewSurface_confers_no_edge` was cited
+  alongside `surfaceConfersExactly` in the same target-1 line.)*
+
+What deos is: the authority algebra of a window / membrane / replay / affordance, proved
+over the kernel's own lattice and receipt chain. What it is not: a verified desktop OS — the
+compositor, the input path and the rehydration transport are outside these models, and the Rust
+realization is related to them by shared intent only.
 
 ---
 
