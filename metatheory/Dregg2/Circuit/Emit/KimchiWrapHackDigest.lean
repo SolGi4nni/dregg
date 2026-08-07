@@ -190,7 +190,9 @@ def whRealSgs : List (Nat × Nat) :=
 `gates::STEP_RULE_N_PREVIOUS` are the same number from the two Rust sides. Dregg's step rule
 assembles ONE `verify_one`.
 
-⚠ **IT IS NOT `WH_PADDED` AND IT IS NOT `KimchiWrapMainCore.MAX_PROOFS_VERIFIED`.** One name served
+⚠ **IT IS NOT `WH_PADDED` AND IT IS NOT `KimchiWrapMainCore.shapeWrap.maxPrevs`.** (There was a
+third copy of `2` called `MAX_PROOFS_VERIFIED`; it is DELETED — it was `maxPrevs` under another
+name.) One name served
 all three until 2026-08-07, and they agreed only while dregg's step proof was padded where upstream
 is not. -/
 def WH_REAL_SLOTS : Nat := 1
