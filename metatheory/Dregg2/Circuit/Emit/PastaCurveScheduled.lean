@@ -59,15 +59,22 @@ therefore available at every op's own row. **No soundness is relaxed to reach th
   proved permutation of the gadget's order. A transcription slip here would be a different circuit
   that still emitted and still proved.
 
-⚠ **WHAT IS NOT PROVED HERE: the cross-row assignment reconstruction.**
-`PastaCurveSound.RcbSat.apply` chains the 33 op blocks over ONE assignment `a`. On this layout the
-33 blocks live on 33 different rows, so the chain needs one more theorem — *the carried trace
-induces a single assignment on which the unscheduled block is satisfied*, built from the carry
-legs of §3d and `AirColumnAlloc.alloc_disjoint`. **That theorem is NOT in this file and is not
-proved anywhere**; nothing here should be read as establishing the RCB formula on this layout.
-`pallasCompleteAddSound_forces` remains the theorem that does that, and it is about the 3 048-column
-row. Until that bridge lands, this descriptor's status is: **shape and per-leg refinement proved,
-end-to-end forcing NOT transferred.** It is not emitted by name and no VK is rotated for it.
+⚑⚑ **THE CROSS-ROW ASSIGNMENT RECONSTRUCTION IS PROVED — in `Emit.AirCrossRow`, not here.**
+`PastaCurveSound.RcbSat.apply` chains the 33 op blocks over ONE assignment `a`, and on this layout
+they live on 33 different rows. `AirCrossRow.rcbSat_of_rows` is the missing theorem: the carried
+trace induces a single assignment (`gather`) on which the unscheduled block is satisfied, built
+from the carry legs of §3d exactly as this paragraph predicted.
+`AirCrossRow.scheduledRows_force_the_rcb_formula` composes it with
+`PastaCurveSound.pallasCompleteAddSound_forces`, so **this layout forces the RCB formula at the
+real Pallas-base prime**, and `vestaScheduledRows_force_the_rcb_formula` does the Vesta half.
+
+⚠ **Two premises remain, and both are selector plumbing rather than row-crossing.**
+`AirCrossRow.PhaseIndicator` (the phase register reads as the one-hot row indicator — §3c's legs
+are what force it, and the step that needs an argument is booleanity + sum-to-one over a PRIME
+field) and `AirCrossRow.RowsSat` (each row satisfies its own op's core gates — §3a's `gateBy`
+legs, needing the `filter isGate` bookkeeping per kind). So this descriptor's status is: **shape,
+per-leg refinement, AND end-to-end forcing, the last conditional on the selector reading
+honestly.** It is still not emitted by name and no VK is rotated for it.
 
 ## Axiom hygiene
 

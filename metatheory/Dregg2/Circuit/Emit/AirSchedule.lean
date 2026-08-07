@@ -93,12 +93,18 @@ different `wit`, and it inherits this whole file by writing one `RowMachine`.
 
 ## ⚠ WHAT IS **NOT** PROVED HERE
 
-The **cross-row assignment reconstruction**, exactly as `PastaCurveScheduled` flags it:
-`PastaCurveSound.RcbSat.apply` chains the 33 op blocks over ONE assignment, and on any multi-row
-schedule they live on different rows. Reordering does not touch that gap — it is the same gap, at
-the same place, for the same reason. **This file changes which order is cheapest; it does not
-transfer end-to-end forcing, and nothing here should be read as establishing the RCB formula.**
-`pallasCompleteAddSound_forces` remains the theorem that does that, about the 3 048-column row.
+**This file changes which order is cheapest; it transfers no forcing, and nothing here should be
+read as establishing the RCB formula.** That is unchanged.
+
+⚑ What HAS changed is that the gap this section used to name is closed one file over:
+`Emit.AirCrossRow.rcbSat_of_rows` performs the cross-row assignment reconstruction and
+`scheduledRows_force_the_rcb_formula` composes it with `pallasCompleteAddSound_forces`.
+
+⚠ **But it is about `rcbOpsScheduled`, the HAND schedule — the one `PastaCurveScheduled` actually
+emits — and NOT about `rcbOpsOptimal`.** So `1 307` is a width result on an order no descriptor is
+emitted at and no forcing theorem mentions. Re-pointing `AirCrossRow` at the searched order needs a
+new allocation table and a re-`decide` of `live_transitions_are_carry_phases`: ordinary work, not
+done, and named here so the 1 307 is not quoted as if it carried the 1 499's standing.
 
 Nothing is emitted by name; no VK rotates; nothing re-emits.
 
