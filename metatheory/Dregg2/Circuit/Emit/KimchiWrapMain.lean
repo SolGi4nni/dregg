@@ -600,7 +600,7 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      finalizing block's `combined_inner_product`, `b` and `xi` are `FIN_DEFERRED_*`, a memo closed by
      `fin_deferred_words_are_the_derivation` and refused at every emission — but those are DERIVED
      values, and the published statement's words 27, 28 and 37 are not them. They reach `xhatScalar`
-     no longer; `KimchiWrapMainField.the_published_statement_does_not_carry_the_derived_words` names
+     no longer; `KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words` names
      all six words at issue across this rung, `w11_wraphack` and `w9_prev`.
      ⚠ **AND THE `EndoMulScalar` DIVERGENCE IS THIS RUNG'S SHAPE, NOT ITS COUNT.** Mina's blob has
      `EndoMulScalar × 120` twice — `compute_challenges` (`:1012-1013`) lifting all fifteen
@@ -785,7 +785,7 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          -- it ASSERTS both disagreements, so closing either one reds it.
          -- ⚑ RENAMED 2026-08-06 (`…_are_a_fixture_and_a_step_digest`): slot 11's half of that name
          -- was the fixture claim this pass refuted, and a name is a claim.
-         the_two_slots_that_disagree_with_minas_forty_are_both_step_statement_words
+         slot_eleven_agrees_and_slot_twelve_is_an_arity_mismatch
          -- ⚑ Joined 2026-08-06 with slot 11's derivation. The first hands this file's own
          -- `hash_messages_for_next_wrap_proof` Mina's thirty prechallenges and lands on the
          -- marshaller's slot 11 — sixteen Poseidon permutations against a numeral, which is the

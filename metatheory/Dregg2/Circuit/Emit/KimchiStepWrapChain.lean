@@ -1087,10 +1087,16 @@ render; they have no satisfying WITNESS. `KimchiWrapMainField.the_published_stat
 _the_derived_words` names the six and `KimchiWrapMain.finsponge_has_no_witness_on_the_published
 _statement` evaluates the assert that fails.
 
-⚑ **AND IT IS A STEP-SIDE FIXPOINT, WHICH IS THE PRICE AND IS NOT PAID HERE.** Each of the six words
-is an x_hat MSM entry, so writing the derivation into the statement moves `x_hat`, which moves every
-challenge below it, which moves the derivation. Upstream Pickles closes that loop by construction;
-this pipeline has to bake it, in `KimchiStepMain` and its prover, not in this file.
+✅ ⚑⚑ **AND IT WAS PRICED AS A STEP-SIDE FIXPOINT, WHICH IS WHY IT DID NOT HAPPEN FOR A DAY.**
+This paragraph read: *"Each of the six words is an x_hat MSM entry, so writing the derivation into
+the statement moves `x_hat`, which moves every challenge below it, which moves the derivation.
+Upstream Pickles closes that loop by construction; this pipeline has to bake it."* The first clause
+is true and the inference does not follow. `whPrevDigest` reads no packed statement word
+(`KimchiWrapMain.the_wraphack_tape_reads_no_published_statement_entry`), so it is computable before
+the re-prove and unmoved by it — a STRATIFICATION, not a loop. MEASURED on 2026-08-06: the emit moved
+exactly **two of the sixty-seven** entries, the re-prove cost 21.5 s, and 55/56 closed. What is left
+at 27/28/37 and 54 is not this shape of thing; see `KimchiWrapMainField
+.the_published_statement_carries_two_of_the_six_derived_words`.
 
 ⚠ The legs are the CLOSURE first — the statement is a real 57-word packed statement whose expansion
 is the 67 entries — and then the blocker, exhibited on the one word this file owns the value of. -/
@@ -1098,14 +1104,35 @@ theorem the_chain_stops_at_the_statements_derived_words :
     STEP_PUBLIC = XHAT_TERMS_FULL
     ∧ ((List.range XHAT_TERMS_FULL).map xhatWordOf).eraseDups.length = PREV_WORDS
     ∧ PREV_WORDS = 57
-    -- ⚑ …and the blocker: word 55 is not the squeeze `wrap_main.ml:340-348` computes for it.
-    ∧ prevWordVal (PREV_MSG_NEXT_STEP + 1) ≠ whPrevDigest 0
-    ∧ prevWordVal (PREV_MSG_NEXT_STEP + 2) ≠ whPrevDigest 1
+    -- ✅ ⚑ …and the blocker that used to sit here is GONE: words 55 and 56 ARE the two squeezes
+    -- `wrap_main.ml:340-348` computes for them, since `KimchiStepMainCore.stmtWrapMsgVal` and a
+    -- re-prove on 2026-08-06. This conjunct read `≠` for one day; it is the direction this file
+    -- should only ever move in.
+    ∧ prevWordVal (PREV_MSG_NEXT_STEP + 1) = whPrevDigest 0
+    ∧ prevWordVal (PREV_MSG_NEXT_STEP + 2) = whPrevDigest 1
+    -- ⚠ …and what IS left, exhibited rather than described: word 54 is not Mina's slot 12. That is
+    -- the step assembly's own segment-D squeeze against the marshaller's
+    -- `MessagesForNextStepProof::hash()`, and the two hash preimages of different ARITY.
+    ∧ prevWordVal PREV_MSG_NEXT_STEP
+        ≠ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
     ∧ (rungsUpto .prev).contains .split = true
     ∧ (rungsUpto .wraphack).contains .split = true := by
   native_decide
 
 #assert_compiled the_chain_stops_at_the_statements_derived_words
+
+/-! ⚑⚑ **THE AGREEMENT COUNT LIVES IN `KimchiWrapMainPins12`, NOT HERE, AND THIS NOTE IS THE
+DELETION RATHER THAN A SECOND COPY.** A `the_emitted_forty_agree_with_minas_at_every_slot_but_twelve`
+stood here for about an hour on 2026-08-06 — same subject, same `wrapPublicAt (mkWrap shapeWrap)
+.close`, same `WRAP_PUBLIC_INPUT_MEASURED` — written by this lane while a sibling was writing
+`the_forty_disagree_only_at_the_step_statement_words` in §20b⁵. Two lanes measuring one thing in two
+modules is the defect this whole campaign has been deleting, and the sibling's is the better
+statement: it grades the set `{0..39} \ {11, 12}` rather than a total (so a lane CLOSING a slot does
+not red the pin that tracks the closing), it normalises `Int → Fq` before comparing, and its
+anti-vacuity leg counts the NONZERO agreements. **39 of 40; 29 of the 30 `wrap_main` reads or
+checks; the one left is slot 12.** -/
+
+
 
 /-- **`the_combine_and_bullet_families_are_not_what_blocks_them`** — ⚑ the complement, so the row
 above is a DIAGNOSIS and not merely a blocker. Every commitment family W-COMBINE's 47-term fold and

@@ -182,21 +182,29 @@ agree. A disagreement would make `whRows`' tie rows unsatisfiable and every rung
 `w11_wraphack` fail to prove — a red the harness finds, but a red here is cheaper and says which of
 the two moved.
 
-⚠⚑ **AND THE SECOND HALF IS A REFUSAL SINCE 2026-08-06, BECAUSE THE STATEMENT IS PUBLISHED NOW.**
-This theorem used to say the squeeze IS packed statement word `55 + p`. It closed by kernel `rfl`
-and it was **half decoration**: `prevWordVal` had an override arm answering `whPrevDigest p` at
-exactly those two words, so one side of that equation was the other side's definition. With
-`xhatScalar` reading the step proof's own `STEP_PUBLIC_IN`, `prevWordVal` recomposes the PUBLISHED
-entries and the override is gone — so the equation became a real question, and the answer is **no**.
+⚠⚑ **AND THE SECOND HALF WAS A REFUSAL FOR ONE DAY. IT IS AN EQUALITY AGAIN — BUT NOT THE ONE
+IT USED TO BE, AND THE DIFFERENCE IS THE WHOLE POINT.**
 
-⚠ **SAY THE PRICE.** `stepmain_step_r8_finalize`'s public input carries synthetic words at 55 and 56
-(`160000365`, `77001823`), not the two `hash_messages_for_next_wrap_proof` squeezes
-`wrap_main.ml:340-348` computes. So `w11_wraphack`'s tie row has NO satisfying witness on this step
-proof, and neither does slot 11 of Mina's forty. That is UNDONE WORK on the STEP side — the step
-proof must be re-proved with a statement whose words 55/56 are the wrap's own derivation — and it is
-a fixpoint, because those words are x_hat entries 65/66 and moving them moves every challenge below.
-It is not a theorem of this model and it is not priced away here; `w4_bind`'s twenty-two derived
-slots are unaffected, because both words are absorbed nowhere and read only above `w9_prev`.
+Until 2026-08-06 this theorem said the squeeze IS packed statement word `55 + p`, closed by kernel
+`rfl`, and it was **half decoration**: `prevWordVal` had an override arm answering `whPrevDigest p`
+at exactly those two words, so one side of the equation was the other side's definition. When
+`xhatScalar` moved to the step proof's own `STEP_PUBLIC_IN` the override went and the equation became
+a real question, whose answer was **no** — `stepmain_step_r8_finalize` published `160000365` and
+`77001823` there, `w11_wraphack`'s tie row had no satisfying witness, and the rung sat in the
+harness's `STATEMENT_BLOCKED` set. That paragraph also priced the repair as a FIXPOINT ("those words
+are x_hat entries 65/66 and moving them moves every challenge below"); the first clause is true and
+the inference is not, and MEASURED: re-emitting moved exactly two of the sixty-seven entries and left
+every other packed word alone.
+
+⚑ **IT IS YES NOW, AND IT IS A FACT ABOUT AN EMITTED PROOF RATHER THAN ABOUT THIS FILE.**
+`KimchiStepMainCore.stmtWrapMsgVal` is `whPrevDigest`, the step circuit was re-emitted and re-proved,
+and `prevWordVal` still recomposes `STEP_PUBLIC_IN` with **no override at 55/56**. So the two sides
+are: a Poseidon squeeze this file computes, and two entries of a public input that
+`kimchi::verifier::batch_verify` accepted on Vesta. A repair that reintroduced an override would make
+this `rfl`-cheap again and mean nothing — which is what the two `STEP_PUBLIC_IN` conjuncts refuse.
+
+⚠ **WHAT RE-EMITTED:** `stepmain_step_r8_finalize.json` entries 65/66, therefore the step proof,
+therefore `KimchiStepWrapChainFixture` in full and `MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED`.
 
 ⚠ `native_decide`: the kernel `rfl` that used to close leg 1 worked because both sides unfolded to
 ONE term; against a numeral it has to reduce sixteen Poseidon permutations and overflows the stack. -/
@@ -204,9 +212,22 @@ theorem wraphack_digest_is_the_emitted_squeeze :
     whDigestVal (whSpongeP tWh 0) = whPrevDigest 0
     ∧ whDigestVal (whSpongeP tWh 1) = whPrevDigest 1
     ∧ whDigestVal (whSpongeC tWh) = whCloseDigest tWh.sh
-    -- ⚑ …and the published statement does NOT carry them.
-    ∧ whPrevDigest 0 ≠ prevWordVal (PREV_MSG_NEXT_STEP + 1)
-    ∧ whPrevDigest 1 ≠ prevWordVal (PREV_MSG_NEXT_STEP + 2) := by
+    -- ⚑⚑ …and the published statement CARRIES them (2026-08-06). This is the tie `whRows`
+    -- emits at packed words 55 and 56, evaluated against the step proof's own public input.
+    ∧ whPrevDigest 0 = prevWordVal (PREV_MSG_NEXT_STEP + 1)
+    ∧ whPrevDigest 1 = prevWordVal (PREV_MSG_NEXT_STEP + 2)
+    -- ⚠ …and it holds THROUGH THE PUBLISHED ENTRY and not through an override: word `55 + p` is
+    -- entry `65 + p` of `STEP_PUBLIC_IN` verbatim, so a re-added `prevWordVal` arm reds here rather
+    -- than quietly making the two conjuncts above true by construction.
+    ∧ prevWordVal (PREV_MSG_NEXT_STEP + 1)
+        = Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.getD 65 0
+    ∧ prevWordVal (PREV_MSG_NEXT_STEP + 2)
+        = Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.getD 66 0
+    -- ⚠ ⚑ **THE FIELD BOUNDARY, AS A CHECK RATHER THAN A FOOTNOTE.** These digests are **Fq**
+    -- (`Tock_field_sponge`) and a step statement word is **Fp**; `q > p`, so an Fq squeeze can exceed
+    -- the field it must be published in and `Fp::from_str` would reduce it SILENTLY. Both fit.
+    ∧ decide (whPrevDigest 0 < Dregg2.Circuit.Emit.PastaField.pN) = true
+    ∧ decide (whPrevDigest 1 < Dregg2.Circuit.Emit.PastaField.pN) = true := by
   native_decide
 
 #assert_compiled wraphack_digest_is_the_emitted_squeeze

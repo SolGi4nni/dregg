@@ -269,14 +269,74 @@ fn pad_to<F: ark_ff::PrimeField>(
 
 // ───────────────────────── the two proofs ─────────────────────────
 
+/// ⚑⚑⚑ **THE THIRTY PRECHALLENGES `messages_for_next_wrap_proof` HASHES, READ OUT OF THE STEP
+/// PROOF'S OWN PUBLISHED STATEMENT — NOT INVENTED HERE (2026-08-06).**
+///
+/// `wrap_main.ml:421-431` builds `old_bulletproof_challenges` from
+/// `prev_statement.proof_state.unfinalized_proofs.(p).deferred_values.bulletproof_challenges` — the
+/// STEP statement's own fifteen-per-block — and the wrap proof's kimchi-level `prev_challenges` must
+/// be that same vector, which is what [`marshal`]'s `PreChallengeMismatch` refusal already asserts.
+/// **One object.**
+///
+/// ⚠ **IT WAS TWO HERE, AND EVERY INSTRUMENT AGREED WITH ITSELF.** These were
+/// `k·0x9E3779B97F4A7C15 | 1` / `(k+7)·0xBF58476D1CE4E5B9 | 1`, a ladder chosen in this function,
+/// while the step circuit published its own fifteen prechallenges per block. Both sides were
+/// internally consistent — `expand_prechallenge` matched the proof, the accumulator matched the
+/// challenge polynomial, `MessagesForNextWrapProof::hash()` ran on the numbers it was given — so
+/// nothing could go red, and Lean's `whCloseDigest` (which hashes the STEP statement's words, as
+/// upstream does) disagreed with slot 11 in all thirty inputs.
+///
+/// ⚑ **NO ORDERING PROBLEM, WHICH IS WHY THIS IS A READ AND NOT A PLUMBING JOB.** The values are in
+/// the step circuit's `public_input` — an EMITTED artifact — so they exist before either proof does.
+/// `wrap_verifier.ml:542-548` expands packed word `27·p + k` into entry `32·p + (k+5)` for `k ≥ 5`,
+/// so packed word `27·p + 11 + j` is entry `32·p + 16 + j`.
+///
+/// ⚠ **BLOCK 0 IS THE PADDING BLOCK AND ITS FIFTEEN ARE `vStmtDummy` FILLER**, not
+/// `Ro.scalar_chal ()` draws — small structured numerals rather than 128-bit challenges. That is a
+/// FIDELITY gap in `KimchiStepMainCore.stmtDummyVal` and it is stated rather than papered over: what
+/// this function fixes is that the two sides now hash the SAME thirty, not that all thirty are
+/// upstream-shaped.
+fn step_statement_prechallenges(
+    step: &CircuitJson,
+) -> [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED] {
+    assert_eq!(
+        step.public_input.len(),
+        67,
+        "a Types.Step.Statement is 67 entries"
+    );
+    std::array::from_fn(|p| {
+        std::array::from_fn(|j| {
+            let entry = 32 * p + 16 + j;
+            let v = num_bigint::BigUint::parse_bytes(step.public_input[entry].as_bytes(), 10)
+                .expect("packed statement word is a decimal numeral");
+            assert!(
+                v.bits() <= 128,
+                "packed word 27*{p} + {} is {} bits; `spec.ml:374-392` packs a \
+                 Bulletproof_challenge at Challenge.length = 128 and a wider value would not \
+                 round-trip through the two limbs the wire carries",
+                11 + j,
+                v.bits()
+            );
+            let lo = &v & num_bigint::BigUint::from(u64::MAX);
+            let hi = &v >> 64u32;
+            [
+                lo.try_into().expect("low limb"),
+                hi.try_into().expect("high limb"),
+            ]
+        })
+    })
+}
+
 /// The wrap-side proof, on Pallas, at the Tock domain, with two recursion slots.
 ///
-/// The prechallenges are chosen HERE and then endo-expanded with the prover's own
-/// `ScalarChallenge::to_field` before being handed to `create_recursive`; the marshaller later
-/// re-derives that expansion from the statement and refuses if it disagrees with the proof.
-/// That is the whole point of returning both.
+/// The prechallenges come from the step statement (see [`step_statement_prechallenges`]) and are
+/// then endo-expanded with the prover's own `ScalarChallenge::to_field` before being handed to
+/// `create_recursive`; the marshaller later re-derives that expansion from the statement and refuses
+/// if it disagrees with the proof. That is the whole point of returning both.
 #[allow(clippy::type_complexity)]
-fn prove_wrap() -> (
+fn prove_wrap(
+    pre: [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED],
+) -> (
     WrapKimchiProof,
     [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED],
     ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>,
@@ -332,16 +392,8 @@ fn prove_wrap() -> (
     assert_eq!(d1, 1 << WRAP_LOG2, "domain must be the Tock domain");
     assert_eq!(mps, 1 << WRAP_LOG2, "max_poly_size must equal the domain");
 
-    // Deterministic 128-bit prechallenges, then the prover's own endo expansion.
-    let pre: [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED] = std::array::from_fn(|i| {
-        std::array::from_fn(|j| {
-            let k = (i * WRAP_ROUNDS + j) as u64;
-            [
-                k.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
-                (k + 7).wrapping_mul(0xBF58_476D_1CE4_E5B9) | 1,
-            ]
-        })
-    });
+    // ⚑ The prechallenges are the STEP STATEMENT's own, handed in by `main` — see
+    // `step_statement_prechallenges`. Then the prover's own endo expansion.
     // ⚑ The slot's commitment is the commitment to the CHALLENGE POLYNOMIAL of its own challenges,
     // not an arbitrary on-curve point. The IPA folds `b_poly(chals)` into the batch and the
     // verifier combines using this commitment; an unrelated point makes `batch_verify` return
@@ -695,7 +747,20 @@ fn main() {
     let mut failed = 0usize;
 
     println!("== PROOFS WE PRODUCED ==");
-    let (proof, pre, wrap_index) = prove_wrap();
+    // ⚑ The wrap proof's two recursion slots ARE the step statement's `bulletproof_challenges`
+    // (`wrap_main.ml:421-431`), so they are read out of the emitted step circuit before either
+    // proof exists rather than chosen here. See `step_statement_prechallenges`.
+    let step_circuit = load(&sibling(
+        "pickles-stepmain-harness",
+        "stepmain_step_r8_finalize.json",
+    ));
+    let step_pre_wrap = step_statement_prechallenges(&step_circuit);
+    println!(
+        "[wrap] old_bulletproof_challenges = the step statement's packed words 27p+11..25 \
+         (entries 16..30 and 48..62); block 1 round 0 = {:?}",
+        step_pre_wrap[1][0]
+    );
+    let (proof, pre, wrap_index) = prove_wrap(step_pre_wrap);
 
     // ⚑ Mina's own SRS object, not a rebuild of it. `get_srs::<Fp>()` is
     // `SRS::<Vesta>::create(Fq::SRS_DEPTH)` (`verifier/mod.rs:38-46`), and the deferred accumulator

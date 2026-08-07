@@ -193,7 +193,7 @@ use pickles_circuit_driver::{
 /// ⚑ `w6_xhat` is here, and in `public_input_binds_and_is_wired_in`'s sample, since 2026-08-06: the
 /// 67-entry MSM rung carried polarities (1)–(4) through `COMMITTED` and had **no** polarity-(5)
 /// coverage at all, which is the one leg that says its public words are wired rather than free.
-const SMOKE_SWEEP: [&str; 8] = [
+const SMOKE_SWEEP: [&str; 10] = [
     "w1_transcript",
     "w6_xhat",
     "w7_split",
@@ -202,6 +202,11 @@ const SMOKE_SWEEP: [&str; 8] = [
     "w10_finalize",
     "w10_combine",
     "w11_bullet",
+    // ⚑ THE LADDER'S TOP TWO JOINED 2026-08-06, so both carry all five polarities and not just the
+    // four `cargo test` covers. They were named here until 2026-08-06's earlier pass REMOVED them
+    // for panicking rung 5 of 8; they are back because they prove.
+    "w11_wraphack",
+    "w12_close",
 ];
 
 const RUNGS: [&str; 15] = [
@@ -633,7 +638,7 @@ mod wrapmain_tests {
     /// gone, and six of those words are NOT the values the wrap circuit derives for them. So the
     /// three rungs that read them have no satisfying witness, and the prover says so —
     /// `Prover("rest of division by vanishing polynomial")`, measured, not predicted.
-    const COMMITTED: [&str; 10] = [
+    const COMMITTED: [&str; 12] = [
         "w1_transcript",
         "w4_bind",
         "w5_key",
@@ -644,6 +649,9 @@ mod wrapmain_tests {
         "w10_finalize",
         "w10_combine",
         "w11_bullet",
+        // ⚑ THE LADDER'S TOP TWO JOINED 2026-08-06 — see `STATEMENT_BLOCKED` below.
+        "w11_wraphack",
+        "w12_close",
     ];
 
     /// ⚑⚑ **THE THREE RUNGS THE PUBLISHED STEP STATEMENT BLOCKS — ASSERTED AS REFUSALS, NOT
@@ -667,26 +675,31 @@ mod wrapmain_tests {
     /// `KimchiWrapMainField.the_published_statement_does_not_carry_the_derived_words` and
     /// `KimchiWrapMain.finsponge_has_no_witness_on_the_published_statement`.
     ///
-    /// ⚑ **AND THE LIST DID NOT SHRINK ON 2026-08-06 WHEN SLOT 11's DERIVATION LANDED — WHICH IS
-    /// WORTH SAYING, BECAUSE THE OBVIOUS READING IS THAT IT SHOULD HAVE.** `whNewChals` stopped
-    /// being `wrapFixtureQ 42` and became `compute_challenges` of the previous statement's own
-    /// packed words `27·p + 11 … 25`, and `KimchiWrapMain
-    /// .wraphack_closing_sponge_reproduces_minas_slot_eleven` shows this tree's own closing sponge
-    /// landing on the marshaller's slot 11 TO THE DIGIT once it is handed Mina's own thirty
-    /// prechallenges. None of that touches what BLOCKS these rungs. Per rung, measured:
+    /// ✅ ⚑⚑⚑ **IT SHRANK FROM THREE TO ONE ON 2026-08-06, AND `w11_wraphack` AND `w12_close` BOTH
+    /// PROVE.** MEASURED, in this order and with the gate red at each step:
     ///
-    ///   * `w11_finsponge` — the three `Field.equal` legs on the finalizing block, against packed
-    ///     words 27, 28 and 37 (`finsponge_has_no_witness_on_the_published_statement`).
-    ///   * `w11_wraphack` — `whRows`' tie joining each prev-proof squeeze to packed words 55/56,
-    ///     which the step statement carries as `160000365` / `77001823`
-    ///     (`wraphack_digest_is_the_emitted_squeeze`, legs 4 and 5). ⚠ NOT the closing sponge, which
-    ///     is tied only to the rung's own public slot and is satisfiable at any value.
-    ///   * `w12_close` — inherits `w11_wraphack`'s rows by `close_rung_extends_bullet`.
+    ///   1. `KimchiStepMainCore.stmtWrapMsgVal` became `KimchiWrapMain.whPrevDigest`, so the step
+    ///      circuit publishes the two `hash_messages_for_next_wrap_proof` squeezes at packed words
+    ///      55/56 instead of `160000365` / `77001823`. Re-emitted, re-proved: **exactly two of the
+    ///      sixty-seven entries moved.** `whRows`' two tie rows acquired a witness.
+    ///   2. `w11_wraphack` PROVED — this test went red and said so — and `w12_close`, which contains
+    ///      `rungOwn _ .wraphack` by `close_rung_extends_bullet`, proved with it.
     ///
-    /// **A derivation gap and a satisfiability gap are two things.** This pass closed the first at
-    /// slot 11 and left the second exactly where it was; a list that shrank here would have been
-    /// claiming otherwise.
-    const STATEMENT_BLOCKED: [&str; 3] = ["w11_finsponge", "w11_wraphack", "w12_close"];
+    /// ⚠ **AND THE PRICE THIS DOCBLOCK QUOTED FOR STEP 1 WAS A FIXPOINT.** It said each of the six
+    /// words is an x_hat MSM entry, so writing the derivation into the statement moves `x_hat`,
+    /// moves every challenge below it, and moves the derivation.
+    /// `KimchiWrapMain.the_wraphack_tape_reads_no_published_statement_entry` says otherwise over the
+    /// tape: `whPrevDigest` reads no packed word at all, so it is computable BEFORE the re-prove and
+    /// unmoved BY it. The whole repair was one Lean edit, a 97 s emit and a 21 s prove.
+    ///
+    /// ⚑ **WHAT IS LEFT IS `w11_finsponge` AND IT IS A DIFFERENT SHAPE OF THING.** Its three
+    /// `Field.equal` legs are against packed words 27, 28 and 37 — `bpDiv2`/`bpOdd` and `vXiStmt`,
+    /// values the STEP circuit DERIVES — so no statement can carry both sides. That is two
+    /// derivations of one quantity, and it closes on the wrap side, not by re-baking a statement.
+    /// See `KimchiWrapMain.finsponge_has_no_witness_on_the_published_statement` and
+    /// `KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words`.
+    ///
+    const STATEMENT_BLOCKED: [&str; 1] = ["w11_finsponge"];
 
     /// ⚑ The gate that keeps `SMOKE_SWEEP` true. A comment saying "this set may only name rungs in
     /// `COMMITTED`" is not a gate; this is, and it goes red the moment the two lists disagree.

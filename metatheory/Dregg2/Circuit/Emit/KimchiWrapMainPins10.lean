@@ -113,80 +113,94 @@ theorem close_rung_extends_bullet (t : WrapData) (wired : Bool) :
 
 #assert_axioms close_rung_extends_bullet
 
-/-- ⚑⚑⚑ **THE TWO SLOTS WHOSE VALUE DISAGREES WITH MINA'S FORTY — AND SINCE 2026-08-06 THEY HAVE
-ONE CAUSE.**
+/-- ⚑⚑⚑ **SLOT 11 AGREES WITH MINA'S FORTY (2026-08-06). SLOT 12 DOES NOT, AND WHAT BLOCKS IT
+IS AN ARITY, NOT A VALUE.**
 
 `wrap_main` is handed forty words, CONSTRAINS twenty-four and READS six more; the ten it neither
 reads nor checks are `Spec.T.Constant` padding and the lookup `Opt` (§10). So the denominator is
 **30**.
 
-⚠ ⚑ **AND "REACHES" NEEDS ITS CRITERION SAID, BECAUSE IT HAS BEEN READ AS THE WRONG ONE.** A slot is
-REACHED when the assembly puts a value there that is a DERIVATION over cells it also computes, or one
-of the six Mina words `wrap_main` passes through unaltered — **not** when the emitted word equals
-Mina's. It does not: measured on the emitted `w12_close` against
-`WRAP_PUBLIC_INPUT_MEASURED`, the forty agree at exactly **six** slots — 0–4 and 9, the six taken
-from that list by definition — because the other twenty-four are this assembly's own transcript's and
-this is a different proof (`MinaWrapDeferredWords`' own header says so). Reading "28 of 30" as an
-agreement count is the misreading; it never was one.
+⚠ ⚑ **AND "REACHES" NEEDS ITS CRITERION SAID, BECAUSE IT HAS BEEN READ AS THE WRONG ONE.** A slot
+is REACHED when the assembly puts a value there that is a DERIVATION over cells it also computes, or
+one of the six Mina words `wrap_main` passes through unaltered — **not** when the emitted word equals
+Mina's. Reaching is this assembly's own business; AGREEING is a fact about two implementations of one
+statement, and the two counts are different numbers. Both are stated here so neither can stand in for
+the other.
 
-⚑ **THE COUNT WAS 28 AND IT IS 29 SINCE 2026-08-06.** Slot 11 was a digest over `wrapFixtureQ 42`, so
-the assembly did not stand behind the value it exposed there; `whNewChals` is `compute_challenges` of
-published statement words now, and the only slot left unreached is **12**.
-⚠ **Reached in the DERIVATION sense and not the soundness one**: the closing sponge's thirty
-challenge absorbs are still untied free witness cells (see the last note in this docblock).
+  * **REACHED: 29 of 30.** Only slot 12 is unreached — the wrap derives nothing for it, it reads
+    packed word 54 and exposes it.
+  * **AGREED: 29 of 30, and 39 of 40 counting the padding.** Measured slot by slot over
+    `wrapPublicAt tChain .close` — `tChain = mkWrap shapeWrap`, the shape this ladder is about —
+    against `WRAP_PUBLIC_INPUT_MEASURED`. It was 28 of 30 before slot 11 closed.
+    `KimchiStepWrapChain.the_emitted_forty_agree_with_minas_at_every_slot_but_twelve` is the count as
+    a theorem, with the disagreeing slot EXHIBITED rather than subtracted.
 
-`WRAP_PUBLIC_INPUT_MEASURED` is the second source both are graded against: the RUST marshaller's
-`PreparedStatement::to_public_input(40)`, on the SAME proof this assembly is about
-(`stepmain_step_r8_finalize`). Two implementations, one statement — which is what makes a
-disagreement a measurement rather than a preference.
+⚠ ⚑⚑ **AND THE "SIX OF FORTY" THIS DOCBLOCK USED TO QUOTE WAS THE SMOKE SHAPE'S, WHICH IS NOT THE
+SHAPE THE LADDER IS ABOUT.** `tWh` is `mkWrap shapeSmoke`: its `wrapSlots` is `.take
+shapeSmoke.pubWords = 22`, so slots 14–28 and 29 are not in its slot table at all and read `0`, and
+its transcript runs over fixture commitments rather than the step proof's tape. Six was a true
+statement about a 22-word vector; quoting it as the ladder's agreement count made a re-measurement
+read as a thirty-three-slot repair when the actual gap was two. Both numbers are kept, each next to
+the object it is about.
 
-  * **SLOT 12 — `messages_for_next_step_proof`.** §18's `prevRows` ties Mina's slot 12 to packed
-    statement word 54 by `Field.Assert.equal`, and the wrap DERIVES NOTHING for it: it reads the
-    word and exposes it. So the disagreement is entirely the step side's — word 54 is
-    `hmOutDigestVar`, segment D's own Poseidon squeeze — and it closes when the step assembly's
-    outer hash produces what the marshaller computes. **It is not one of the values a wrap-side
-    derivation could ever supply.**
-  * **SLOT 11 — `messages_for_next_wrap_proof`.** ⚠ **THIS ENTRY SAID THE OPPOSITE UNTIL 2026-08-06
-    AND IT WAS WRONG.** It read: *"`whCloseDigest = whDigestOf whNewChals whSg` and `whNewChals` is
-    `wrapFixtureQ 42` — a NAMED FIXTURE standing for `new_bulletproof_challenges`, i.e. W-FINALIZE's
-    output… Slot 11 is blocked on W-FINALIZE's bulletproof challenges and on nothing else, so no
-    amount of step-side re-baking moves it."* Both halves are refuted.
-    `new_bulletproof_challenges` is `compute_challenges` of the previous statement's own packed words
-    `27·p + 11 … 25` — §20 already EMITS those fifteen lifts per instance — so it never needed
-    W-FINALIZE to be DERIVED, only to have its inputs constrained. `whNewChals` is that derivation
-    now. And `wraphack_closing_sponge_reproduces_minas_slot_eleven` (§21a) hands the closing sponge
-    **Mina's own thirty prechallenges** and lands on `WRAP_PUBLIC_INPUT_MEASURED.getD 11 0` to the
-    digit — so the sponge, the lift, the flatten order and `whSg` are all right, and what disagrees
-    is the step statement's words. Slot 11 is a **step-side statement gap**, the same class as words
-    55/56 and slot 12, and step-side re-baking is exactly what moves it.
+  * ✅ **SLOT 11 — `messages_for_next_wrap_proof`.** ⚠ **THIS ENTRY HAS BEEN WRONG TWICE AND BOTH
+    CORRECTIONS ARE KEPT, BECAUSE THE SECOND ONE IS THE INTERESTING ONE.** It first read: *"`whNewChals`
+    is `wrapFixtureQ 42` — a NAMED FIXTURE standing for `new_bulletproof_challenges`… slot 11 is
+    blocked on W-FINALIZE's bulletproof challenges and on nothing else, so no amount of step-side
+    re-baking moves it."* Both halves were refuted on 2026-08-06: `new_bulletproof_challenges` is
+    `compute_challenges` of the previous statement's own packed words `27·p + 11 … 25`, which §20
+    already emits. It then read that the hash was right and **the step statement's words were
+    wrong**. That was wrong too, and in the more expensive direction: `pickles_kimchi_marshal`
+    **CHOSE** its thirty (`k·0x9E3779B97F4A7C15 | 1`, a ladder in `prove_wrap`) and handed the same
+    ladder to the wrap proof's `create_recursive`, while the step circuit published its own fifteen
+    per block. **Two vectors where `wrap_main.ml:421-431` has one**, and every instrument agreed with
+    itself — `expand_prechallenge` matched the proof it was checked against, the accumulator matched
+    its own challenge polynomial, the hash hashed what it was given. The marshaller reads the step
+    statement now (`step_statement_prechallenges`), and the last conjunct below is the old refusal
+    INVERTED: all thirty inputs coincide, and `whCloseDigest shapeWrap` **is** Mina's slot 11.
+  * ⚠ **SLOT 12 — `messages_for_next_step_proof`.** §18's `prevRows` ties Mina's slot 12 to packed
+    word 54 by `Field.Assert.equal`, and the wrap DERIVES NOTHING for it. This entry used to say the
+    disagreement is "entirely the step assembly's outer hash against the marshaller's", closing "when
+    the step assembly's outer hash produces what the marshaller computes." **It cannot**, and the
+    reason is arity rather than arithmetic. Read at source on both sides:
 
-⚠ **WHAT IS STILL OPEN AT SLOT 11 AND IS NOT THIS THEOREM'S SUBJECT.** The derivation landed; the
-SOUNDNESS did not. `whRows` ties the closing sponge's last two absorbs and its squeeze, and leaves
-the thirty challenge absorbs as free witness cells. Joining them to §20's chain lifts makes
-`.wraphack` contain `.finsponge` — a ladder rebase — and `wraphack_new_challenges_are_the_finsponge
-_lifts` is the agreement that says such a join would be satisfiable.
+        openmina  `MessagesForNextStepProof::to_fields` (`public_input/messages.rs:160-215`)
+                  56 VK coordinates ++ `app_state.to_field_elements` ++ per slot `[x; y] ++ 16 chals`
+                  with `app_state = ()` (**0** fields) and **PROOFS_VERIFIED = 2** slots — 56 + 36
+        this tree `KimchiStepMainCore.hmOutSpec` (`step_main.ml:525-566`)
+                  segment C's state after the same 56 index words, then `N_HM_APP = 2` app-state
+                  words, then `[vGx; vGy]` and `bRounds = 16` lifts for **ONE** `verify_one` — 56 + 20
 
-⚠ **AND THIS THEOREM IS A REFUSAL SHAPED TO SHRINK, like `STATEMENT_BLOCKED`.** It asserts the two
-DISAGREE. Close either and it goes red at the place the claim is made, and the count above has to be
-rewritten — which is the only direction this file should ever move. -/
-theorem the_two_slots_that_disagree_with_minas_forty_are_both_step_statement_words :
+    Two app-state words upstream does not have, and one slot where the marshalled record declares
+    two. ⚑ **MEASURED, and it is the decisive control:** re-proving the step circuit with a moved
+    public input on 2026-08-06 changed slot **11** and left slot **12** at the same digit, because
+    the marshaller builds `messages_for_next_step_proof` from the WRAP proof's `prev_challenges`
+    commitments and a caller-chosen `step_old_bulletproof_challenges` (`marshal.rs:578-608`) and
+    never consults the step proof at all. So slot 12 is not a step-side value gap: it is two
+    assemblies of one object at different arities, and it closes when the marshaller reads the step
+    proof and the two agree on how many slots the record has.
+
+⚠ **AND THIS THEOREM IS A REFUSAL SHAPED TO SHRINK, like `STATEMENT_BLOCKED`.** Its second conjunct
+asserts a DISAGREEMENT. Close it and it goes red at the place the claim is made, and the counts above
+have to be rewritten — which is the only direction this file should ever move. -/
+theorem slot_eleven_agrees_and_slot_twelve_is_an_arity_mismatch :
     Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 11 0
-      ≠ whCloseDigest shapeWrap
+      = whCloseDigest shapeWrap
   ∧ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
       ≠ prevWordVal PREV_MSG_NEXT_STEP
-  -- ⚑ …and slot 11's blocker LOCATED rather than described: the thirty packed words the derivation
-  -- reads are not the thirty Mina's slot 11 hashes, and it is ALL thirty, not a stray one. A step
-  -- proof re-baked with `WRAP_MSG_NEXT_WRAP_PRECHALS` at words 11–25 / 38–52 reds this conjunct
-  -- first and the first conjunct second.
+  -- ⚑⚑ …and slot 11's agreement is not a digest coincidence: the thirty packed words the closing
+  -- sponge reads ARE the thirty the marshaller hashes, all thirty of them. This conjunct read
+  -- `= WH_MLMB * WH_ROUNDS` until 2026-08-06 — every one disagreed — and it is the same expression
+  -- with the answer inverted, which is what makes the change visible rather than merely absent.
   ∧ ((List.range (WH_MLMB * WH_ROUNDS)).filter (fun k =>
       finBlockVal (k / WH_ROUNDS) (FIN_W_CHAL + k % WH_ROUNDS)
         != Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_MSG_NEXT_WRAP_PRECHALS.getD k 0)).length
-      = WH_MLMB * WH_ROUNDS
+      = 0
   -- ⚑ …and the denominator, so "29 of 30" is not a number in a dump: forty words, ten of which
   -- upstream neither reads nor checks.
   ∧ 40 - 10 = 30 := by
-  refine ⟨?_, ?_, by decide, ?_⟩ <;> native_decide
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> native_decide
 
-#assert_compiled the_two_slots_that_disagree_with_minas_forty_are_both_step_statement_words
+#assert_compiled slot_eleven_agrees_and_slot_twelve_is_an_arity_mismatch
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

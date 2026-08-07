@@ -24,6 +24,10 @@ import Dregg2.Bridge.TickShifts
 import Dregg2.Bridge.MinaStepPrevCommitments
 import Dregg2.Circuit.Emit.KimchiStepMainField
 import Dregg2.Circuit.Emit.PicklesStepStatement
+-- ⚑ `whPrevDigest` — packed statement words 55/56. `wrap_main.ml:340-348` COMPUTES them and
+-- `step_main.ml:364-366` requests them, so they are ONE object across two circuits; §2c's value
+-- side imports the derivation rather than transcribing its output.
+import Dregg2.Circuit.Emit.KimchiWrapHackDigest
 
 namespace Dregg2.Circuit.Emit.KimchiStepMain
 
@@ -5466,9 +5470,43 @@ structure StepData where
 
 /-! ### ⚑ §2c's VALUE side — the packed Wrap statement, word by word. -/
 
-/-- ⚠ Wrap statement word 11's VALUE. `vStmtWrapMsgs` has no in-circuit source — and neither does
-upstream's (`step_main.ml:364-366` `exists`-es it) — so this is a deterministic fixture. -/
-def STMT_WRAPMSG_VAL : Nat := (41 + 7000019 * 11 + 13 * 121) % pN
+/-- ⚑⚑⚑ **`messages_for_next_wrap_proof.(p)`'S VALUE — THE WRAP CIRCUIT'S OWN SQUEEZE, NOT A
+FIXTURE (2026-08-06).**
+
+These two words have **no in-circuit source on either side** — `step_main.ml:364-366` `exists`-es
+them as `Req.Messages_for_next_wrap_proof` here, and `wrap_main.ml:340-348` does not witness them at
+all: it **COMPUTES** them, as `Wrap_hack.Checked.hash_messages_for_next_wrap_proof` over
+`prev_step_accs.(p)` and `old_bp_chals.(p)`, and substitutes the result into the previous statement
+it packs. So "requested witness" does not mean "free": it means the step prover is TOLD what to put
+there, and what it is told is the wrap circuit's squeeze.
+
+⚠ **UNTIL 2026-08-06 BOTH SIDES WROTE THEIR OWN NUMBER AND NEITHER LOOKED.** This was
+`(41 + 7000019·11 + 13·121) % pN` and word 55's was `(13 + 5000011·PP_WORDS) % pN`, while
+`KimchiWrapMain.whPrevDigest` computed the squeeze — so `whRows`' two `Field.Assert.equal` rows tied
+a derived cell to a synthetic one and had **no satisfying witness on dregg's own step proof**. That
+is why `w11_wraphack` was in `pickles-wrapmain-harness`'s `STATEMENT_BLOCKED` set, and
+`KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words` named 55 and 56 as
+two of its six. Two constructions of one object, agreeing about nothing.
+
+⚑ **AND THE CYCLE IS NOT ONE.** `whPrevDigest p` reads `whOldChals p` (a `wrapFixtureQ`, which is
+what upstream's untyped `old_bp_chals` honestly is) and `STEP_PREVCOMM_XY`, the step proof's
+`prev_challenges[p].comm` — an ARGUMENT to `ProverProof::create_recursive`, built by
+`pickles_kimchi_marshal` from its own deterministic `step_pre` ladder and therefore unmoved when
+this circuit is re-proved with a different public input. `KimchiWrapMain.the_wraphack_tape_reads_no
+_published_statement_entry` is that disjointness as a theorem. One edit, one re-prove.
+
+⚠ **WHAT RE-EMITS.** `stepmain_step_r8_finalize.json` (entries 65 and 66 of `public_input`),
+therefore the step proof, therefore `KimchiStepWrapChainFixture` in full — `STEP_PUBLIC_IN`,
+`STEP_PUBCOMM_XY`, `STEP_WCOMM_XY`, every challenge, `STEP_LAGRANGE_XY`'s companions — and therefore
+`MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED`. The old step JSON refuses to load: the
+marshaller now asserts `name == "stepmain_step_r8_finalize"` and `public_input_size == 67`. -/
+def stmtWrapMsgVal (p : Nat) : Nat := Dregg2.Circuit.Emit.KimchiWrapMain.whPrevDigest p
+/-- Wrap statement word 11 — the REAL block's `messages_for_next_wrap_proof`, i.e. instance 1's.
+⚑ `step_main.ml:85` substitutes the digest `verify_one` receives for the real block into the WRAP
+statement, and `realBlocks 1 = [1]`, so word 11 and step-statement slot 66 are ONE cell holding
+instance 1's digest — which is why there is no cell for `.msgNextWrap 1` and why this value is
+`whPrevDigest 1` rather than `0`. -/
+def STMT_WRAPMSG_VAL : Nat := stmtWrapMsgVal 1
 /-- ⚑ **Wrap statement word 39's VALUE — UPSTREAM'S OWN DUMMY, not a fixture (2026-08-03).** It was
 `(53 + 7000019·39 + 13·1521) % 2¹²⁸`, an arbitrary `Challenge`-width number. Read at source: the
 lookup `Opt`'s inner scalar-challenge dummy is `Sc.create lookup_parameters.zero.var.challenge`
@@ -5862,7 +5900,10 @@ def circuitEnv (t : StepData) : VarEnv :=
   -- step statement does not exist in a shape that publishes no statement.
   ++ (if !carriesStatement s then [] else
         (List.range PP_WORDS).map (fun j => (vStmtDummy s j, (stmtDummyVal j : Int)))
-        ++ [ (vStmtWrapMsg0 s, ((13 + 5000011 * PP_WORDS) % pN : Int)) ])
+        -- ⚑ …and `messages_for_next_wrap_proof.(0)` — the PADDING block's — is instance 0's
+        -- `hash_messages_for_next_wrap_proof` squeeze, for the same reason word 11 is instance 1's.
+        -- It was `(13 + 5000011 * PP_WORDS) % pN` until 2026-08-06; see `stmtWrapMsgVal`.
+        ++ [ (vStmtWrapMsg0 s, (stmtWrapMsgVal 0 : Int)) ])
   ++ aEnvOf (baseFin s t.ft) t.fin.fp.prog t.fin.vals
 
 /-- The full environment: the circuit's variables, then the `pubWords` public words, whose values
