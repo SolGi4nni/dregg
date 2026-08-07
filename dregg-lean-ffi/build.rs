@@ -1052,6 +1052,38 @@ fn build_dregg2_archive(
         );
     }
 
+    // ── ⚑ KEY-MATCHED SEED: THERE IS NOTHING TO DERIVE ───────────────────────────────────────
+    // The seed's published content key still equals this checkout's (platform · toolchain ·
+    // mathlib rev · the `Dregg2.FFI` boundary-closure SOURCES on disk), and its digest still
+    // matches the archive — see `seed_key_evidence`, which checks all three and fails closed.
+    // The archive therefore already IS the compiled image of the very sources `lake build
+    // Dregg2.FFI` would elaborate below, so the build can only reproduce them. Skip it.
+    //
+    // ⚠ THIS ARM IS LOAD-BEARING FOR CI AND WAS ALMOST MISSED. Simply not panicking when the
+    // toolchain is absent is not enough, because the provisioning that makes the LINK possible
+    // (elan, for the Lean runtime/stdlib the archive links against) also puts `lake` on PATH.
+    // `lake build` would then genuinely RUN on a fresh clone with no `metatheory/.lake/packages`,
+    // try to resolve and compile the whole mathlib closure, and fail — landing on the "a module
+    // failed to elaborate" panic, which is deliberately NOT relaxed because it is a real check.
+    // The correct answer is not to relax that check; it is to not ask a question whose answer we
+    // already hold.
+    //
+    // Any edit to a closure module moves the key on the NEXT build.rs run (the caller emits
+    // `rerun-if-changed` for the whole `Dregg2` tree), so this cannot pin a stale archive over
+    // live source — it can only skip work that would produce the same bytes.
+    if seed_is_current_source {
+        println!(
+            "cargo:warning=dregg-lean-ffi: the seed IS this checkout's compiled Dregg2.FFI closure \
+             (content key matched, digest verified) — skipping `lake build`, which could only \
+             re-derive the same objects. This is NOT a provenance downgrade."
+        );
+        let _ = seed_build_archive(seed, archive);
+        // Still complete the initializer closure: the splice is skipped, not the archive's
+        // link-closure obligation. A seed that is short of it must fail here exactly as ever.
+        complete_initializer_closure(meta, sysroot, archive, out_dir, require_current_source);
+        return false;
+    }
+
     // (1) Refresh the Lean `:c` facets. `lake build` is incremental; building the FFI module pulls
     // in (and emits `:c` for) its whole Dregg2 transitive closure.
     let inc = sysroot.join("include");
