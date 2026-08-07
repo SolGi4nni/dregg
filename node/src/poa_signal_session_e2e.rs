@@ -78,6 +78,7 @@ async fn signal_session_node() -> (
     [u8; 32],
     dregg_sdk::AgentCipherclerk,
     dregg_sdk::AgentCipherclerk,
+    dregg_sdk::AgentCipherclerk,
     tempfile::TempDir,
 ) {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -103,6 +104,10 @@ async fn signal_session_node() -> (
 
     let solver = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0xC8; 32]));
     let loser = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0xC9; 32]));
+    // The blind claimant: funded, hybrid-enrolled, able to pay the fee — and it
+    // never opens a session. Everything about it is right except that it did not
+    // play, so a refusal can only be about that.
+    let stranger = dregg_sdk::AgentCipherclerk::from_key_bytes(Zeroizing::new([0xCA; 32]));
 
     let federation_id;
     {
@@ -115,7 +120,7 @@ async fn signal_session_node() -> (
         s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(node_seed));
         federation_id = crate::executor_setup::federation_id_for_executor(&s);
 
-        for player in [&solver, &loser] {
+        for player in [&solver, &loser, &stranger] {
             s.ledger
                 .insert_cell(
                     dregg_cell::Cell::with_hybrid_balance(
@@ -177,7 +182,7 @@ async fn signal_session_node() -> (
 
     let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
     let app = crate::api::router(state.clone(), true, recorder.handle());
-    (state, app, federation_id, solver, loser, tmp)
+    (state, app, federation_id, solver, loser, stranger, tmp)
 }
 
 /// The instance THIS slot draws for THIS player.
@@ -194,12 +199,89 @@ fn harness_target(federation_id: [u8; 32], player_key: [u8; 32]) -> SignalCodeWi
         player_key,
         [0u8; 32],
     );
-    let code = claim.code();
+    let code = claim.final_code();
     SignalCodeWireV1 {
         low: code.low(),
         mid: code.mid(),
         high: code.high(),
     }
+}
+
+/// The one place a claim is built in this file: from a list of `SignalCodeWireV1`
+/// rounds, in order.
+fn claim_over(
+    mission_id: u64,
+    transcript: &[SignalCodeWireV1],
+) -> dregg_sdk::poa_signal::SignalClaimV1 {
+    let codes: Vec<dregg_sdk::poa_signal::SignalCode> = transcript
+        .iter()
+        .map(|wire| {
+            dregg_sdk::poa_signal::SignalCode::new(
+                u64::from(wire.low),
+                u64::from(wire.mid),
+                u64::from(wire.high),
+            )
+            .expect("a bounded code")
+        })
+        .collect();
+    dregg_sdk::poa_signal::SignalClaimV1::new(mission_id, &codes).expect("a legal claim")
+}
+
+/// Read a `settlement.transcript` array back into wire codes.
+fn settlement_transcript(settlement: &Value) -> Vec<SignalCodeWireV1> {
+    settlement["transcript"]
+        .as_array()
+        .expect("a settlement names the transcript it settles")
+        .iter()
+        .map(|entry| SignalCodeWireV1 {
+            low: entry["low"].as_u64().unwrap() as u8,
+            mid: entry["mid"].as_u64().unwrap() as u8,
+            high: entry["high"].as_u64().unwrap() as u8,
+        })
+        .collect()
+}
+
+/// POST a carrier to the GENERIC signed-turn ingress, bypassing the claims route
+/// and its courtesy check entirely.
+///
+/// ⚠ This is how the blind pole reaches CONSENSUS. The claims route refuses an
+/// unplayed transcript at the door, which is good for a player and useless as
+/// evidence about the gate that actually binds: a carrier gossiped in from a peer
+/// never touches that handler. `/turns/submit` does not know Signal exists, so a
+/// claim posted here is admitted, ordered, finalized — and refused by the
+/// finalization gate or not at all.
+async fn post_generic_turn(
+    app: &axum::Router,
+    signed: &dregg_sdk::SignedTurn,
+) -> (StatusCode, Value) {
+    let addr: SocketAddr = LOOPBACK.parse().unwrap();
+    let wire = postcard::to_stdvec(signed).expect("encode SignedTurn");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/turns/submit")
+                .header("content-type", "application/octet-stream")
+                .extension(ConnectInfo(addr))
+                .body(Body::from(wire))
+                .expect("generic submit request"),
+        )
+        .await
+        .expect("generic submit response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
+    (status, json)
 }
 
 async fn post_json(app: &axum::Router, from: &str, uri: &str, body: Value) -> (StatusCode, Value) {
@@ -421,7 +503,7 @@ fn assert_no_leak(document: &Value) {
 /// code the SESSION hands back settles — `latest_height` 0 → 1.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
-    let (state, app, federation_id, solver, _loser, _tmp) = signal_session_node().await;
+    let (state, app, federation_id, solver, _loser, _stranger, _tmp) = signal_session_node().await;
     let authority = hex_encode(&federation_id);
 
     assert_eq!(
@@ -565,7 +647,7 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
     assert_no_leak(&solved);
 
     // ⚑ ONLY A SOLVED TRANSCRIPT SETTLES. `settlement` exists now and not before, and
-    // its code is the guess THIS PLAYER submitted, read back out of the transcript.
+    // it names the guesses THIS PLAYER submitted, read back out of the transcript.
     let settlement = &solved["settlement"];
     assert_ne!(*settlement, Value::Null, "a solved session must settle");
     assert_eq!(settlement["mission_id"], MISSION_ID);
@@ -576,23 +658,45 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
         settlement["code"], solved["transcript"][2]["guess"],
         "the settling code IS the player's own solving guess"
     );
+    let played = settlement_transcript(settlement);
+    assert_eq!(
+        played,
+        vec![blank, rotated, target],
+        "the settlement names EVERY burst that was spent, in order — that is what a \
+         claim carries now, and it is what the node compares against"
+    );
 
     // A further burst on a solved run refuses by name rather than wedging.
     let (over, over_body) = guess(&app, &authority, federation_id, &solver, 3, blank).await;
     assert_eq!(over, StatusCode::CONFLICT);
     assert_eq!(over_body["reason"], "session-already-solved");
 
-    // ── SETTLE with the code the SESSION handed back — not with a derivation. ────
-    let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
-        settlement["mission_id"].as_u64().unwrap(),
-        dregg_sdk::poa_signal::SignalCode::new(
-            settlement["code"]["low"].as_u64().unwrap(),
-            settlement["code"]["mid"].as_u64().unwrap(),
-            settlement["code"]["high"].as_u64().unwrap(),
-        )
-        .expect("the session's settling code is a bounded code"),
-    )
-    .expect("the session's settlement names a legal claim");
+    // ── A CLAIM NAMING ONLY THE SOLVING CODE IS REFUSED, even though the code is
+    //    right and this player really did deduce it. The game the node served was
+    //    three rounds long; a one-round claim is not that game. ─────────────────
+    let truncated = crate::poa_signal_slot_claim::signed_signal_claim_turn(
+        &solver,
+        federation_id,
+        0,
+        None,
+        claim_over(MISSION_ID, &[target]),
+    );
+    let (status, body) = post_claim(&app, &authority, &truncated).await;
+    assert_eq!(status, StatusCode::OK, "the route answers: {body}");
+    assert_eq!(
+        body["accepted"], false,
+        "a claim that drops the rounds it was deduced from must refuse: {body}"
+    );
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("poa-signal-transcript-length-mismatch"),
+        "the refusal must name the real cause: {body}"
+    );
+
+    // ── SETTLE with the TRANSCRIPT the SESSION handed back — not a derivation. ───
+    let claim = claim_over(settlement["mission_id"].as_u64().unwrap(), &played);
     let signed = crate::poa_signal_slot_claim::signed_signal_claim_turn(
         &solver,
         federation_id,
@@ -606,7 +710,7 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
         StatusCode::OK,
         "the claims route must admit it: {body}"
     );
-    assert_eq!(body["accepted"], true);
+    assert_eq!(body["accepted"], true, "{body}");
 
     let height = await_latest_height(&app, 1, Duration::from_secs(45)).await;
     let after = get_json(&app, "/status").await;
@@ -637,7 +741,7 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
 /// than wedging the node.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_losing_session_exhausts_its_budget_and_settles_nothing() {
-    let (state, app, federation_id, _solver, loser, _tmp) = signal_session_node().await;
+    let (state, app, federation_id, _solver, loser, _stranger, _tmp) = signal_session_node().await;
     let authority = hex_encode(&federation_id);
     let player_hex = hex_encode(&loser.public_key().0);
 
@@ -704,30 +808,43 @@ async fn a_losing_session_exhausts_its_budget_and_settles_nothing() {
     assert_eq!(read_back["settlement"], Value::Null);
     assert_no_leak(&read_back);
 
-    // ── The blind fallback: submit a losing claim anyway. It is REFUSED cleanly. ─
-    let losing = dregg_sdk::poa_signal::SignalClaimV1::new(
-        MISSION_ID,
-        dregg_sdk::poa_signal::SignalCode::new(
-            u64::from(wrong[0].low),
-            u64::from(wrong[0].mid),
-            u64::from(wrong[0].high),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let signed = crate::poa_signal_slot_claim::signed_signal_claim_turn(
+    // ── The losing run's own transcript, submitted anyway. It is REFUSED cleanly,
+    //    and by the JUDGE rather than by the transcript gate: these five rounds ARE
+    //    the ones the node served, in order. What they are not is solved. ────────
+    let losing = crate::poa_signal_slot_claim::signed_signal_claim_turn(
         &loser,
         federation_id,
         0,
         None,
-        losing,
+        claim_over(MISSION_ID, &wrong),
     );
-    let (status, body) = post_claim(&app, &authority, &signed).await;
+    let (status, body) = post_claim(&app, &authority, &losing).await;
+    assert_eq!(status, StatusCode::OK, "the route answers: {body}");
     assert_eq!(
-        status,
-        StatusCode::OK,
-        "admission staging accepts a losing claim too; it settles nothing: {body}"
+        body["accepted"], false,
+        "an unsolved run has nothing to settle: {body}"
     );
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("poa-signal-transcript-not-solved"),
+        "the refusal must name the real cause — the node never scored the last \
+         round as locking: {body}"
+    );
+
+    // …and the blind fallback that used to exist: a single code, no matching
+    // session shape. Also refused, also cleanly.
+    let blind = crate::poa_signal_slot_claim::signed_signal_claim_turn(
+        &loser,
+        federation_id,
+        0,
+        None,
+        claim_over(MISSION_ID, &wrong[..1]),
+    );
+    let (status, body) = post_claim(&app, &authority, &blind).await;
+    assert_eq!(status, StatusCode::OK, "the route answers: {body}");
+    assert_eq!(body["accepted"], false, "{body}");
 
     // `latest_height` must STAY 0. `await_latest_height` polls to its deadline and
     // returns what it saw, so a spurious settle would be caught rather than raced past.
@@ -761,4 +878,197 @@ async fn a_losing_session_exhausts_its_budget_and_settles_nothing() {
         status["latest_height"].is_number(),
         "the node still answers"
     );
+}
+
+/// ⚑ THE BLIND POLE. A GENUINELY SOLVING CODE, WITH NO SESSION, NEVER SETTLES.
+///
+/// # Why this test is the one that matters
+///
+/// The judged session landed and made deduction POSSIBLE. Nothing made it
+/// NECESSARY: `POST …/claims` still admitted a bare code, so a stranger who guessed
+/// right — 1 in 216 — settled a turn with no session, no feedback and no deduction
+/// anywhere in the causal history of the block. A settled turn was evidence of a
+/// lucky guess OR a played game, and the chain could not tell which.
+///
+/// # ⚠ THE MUTATION, AND WHY IT CANNOT SILENTLY DIE HERE
+///
+/// A "refused" that is really "the guess was wrong" would pass just as green
+/// against a node with no gate at all, so the code submitted here has to be the
+/// REAL answer and that has to be checked rather than believed.
+///
+/// It is checked twice, both times by the NODE:
+///
+/// * **§2** plays the very same code through the judged session and requires the
+///   Lean oracle to answer `exact: 3` — which
+///   `SignalTriangulation.accepted_solved_iff_target` proves is equivalent to the
+///   guess BEING the target;
+/// * **§3** resubmits the BYTE-IDENTICAL carrier and requires `latest_height` to
+///   move.
+///
+/// Both run AFTER the refusal, and they have to: the thing being tested is the
+/// absence of a session, so anything that creates one has to come later. That
+/// ordering costs nothing, because if the code were not the solving one, §2 and §3
+/// both go RED — the refusal in §1 can never be quietly vacuous while this test is
+/// green. What §3 pins that nothing else can is that the refused bytes and the
+/// settling bytes are the SAME BYTES: the only difference between them is whether
+/// the game had been played.
+///
+/// # Both doors
+///
+/// * `POST …/claims` — the courtesy check, which tells the player by name.
+/// * `POST /turns/submit` — the GENERIC ingress, which knows nothing about Signal.
+///   A carrier posted there is admitted, ordered and finalized, so it reaches the
+///   gate that actually binds. This is the door a gossiped claim comes through, and
+///   a check that only lived in the claims handler would be decoration.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_solving_code_with_no_session_never_settles() {
+    let (state, app, federation_id, _solver, _loser, stranger, _tmp) = signal_session_node().await;
+    let authority = hex_encode(&federation_id);
+    let stranger_key = stranger.public_key().0;
+    let player_hex = hex_encode(&stranger_key);
+
+    assert_eq!(
+        get_json(&app, "/status").await["latest_height"].as_u64(),
+        Some(0)
+    );
+
+    // The answer for THIS player, from the operator derivation — the same Lean
+    // export the judge re-derives with. Available only because the harness holds
+    // the slot secret, said out loud exactly as the sibling tests say it.
+    let answer = harness_target(federation_id, stranger_key);
+    eprintln!("BLIND harness-derived target for the stranger: {answer:?}");
+
+    // The precondition, asserted rather than assumed: this player has no session.
+    let (status, absent) = get_json_from(
+        &app,
+        LOOPBACK,
+        &format!("/api/poa/signal/{authority}/session/{player_hex}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{absent}");
+    assert_eq!(absent["reason"], "session-not-open", "{absent}");
+
+    let signed = crate::poa_signal_slot_claim::signed_signal_claim_turn(
+        &stranger,
+        federation_id,
+        0,
+        None,
+        claim_over(MISSION_ID, &[answer]),
+    );
+
+    // ── §1a. DOOR ONE: the public claims route refuses BY NAME. ─────────────────
+    let (status, body) = post_claim(&app, &authority, &signed).await;
+    assert_eq!(status, StatusCode::OK, "the route answers cleanly: {body}");
+    assert_eq!(
+        body["accepted"], false,
+        "a correct code with no game behind it must not be admitted: {body}"
+    );
+    let named = body["error"].as_str().unwrap_or_default().to_owned();
+    assert!(
+        named.starts_with("poa-signal-transcript-no-session"),
+        "the refusal must name the real cause: {body}"
+    );
+    // …and it must not leak the target, nor say anything about how close it was.
+    assert!(
+        !named.contains(&format!("{},{},{}", answer.low, answer.mid, answer.high))
+            && !named.to_ascii_lowercase().contains("exact")
+            && !named.to_ascii_lowercase().contains("target"),
+        "a refusal may not leak the target or the distance to it: {named}"
+    );
+
+    // ── §1b. DOOR TWO: the GENERIC ingress, which knows nothing about Signal. This
+    //    is the one that reaches consensus, and therefore the gate that binds. ───
+    let (status, staged) = post_generic_turn(&app, &signed).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the generic ingress must answer: {staged}"
+    );
+    eprintln!("BLIND generic-ingress staging: {staged}");
+
+    // `latest_height` must STAY 0. The poller runs to its deadline and returns what
+    // it saw, so a spurious settle is caught rather than raced past.
+    let height = await_latest_height(&app, 1, Duration::from_secs(20)).await;
+    assert_eq!(
+        height, 0,
+        "A BLIND CLAIM SETTLED. The code was right and no game was played; if the \
+         height moved, `latest_height` is still evidence of luck rather than of \
+         deduction and the whole judged session is optional decoration."
+    );
+
+    {
+        let s = state.read().await;
+        let head = s
+            .store
+            .load_poa_signal_head(federation_id)
+            .expect("PoA head read")
+            .expect("PoA head");
+        assert_eq!(
+            head.transition_count(),
+            0,
+            "no transition may be recorded for a claim with no game behind it"
+        );
+        s.store
+            .audit_poa_signal_sessions_v1()
+            .expect("the durable session store must audit clean");
+    }
+
+    // ── AND THE NODE IS STILL ANSWERING. A refused claim must fail CLEANLY, not
+    //    wedge: `blocklace_sync` routes it to `persist_finalized_payload_rejection`
+    //    with no transition, and the consensus loop keeps running. ───────────────
+    let after = get_json(&app, "/status").await;
+    assert!(
+        after["latest_height"].is_number(),
+        "the node still answers after refusing a blind claim: {after}"
+    );
+
+    // ── §2. THE MUTATION, EXHIBITED BY THE NODE'S OWN ORACLE. ──────────────────
+    let (status, session) = open_session(&app, &authority, federation_id, &stranger).await;
+    assert_eq!(status, StatusCode::OK, "open must succeed: {session}");
+    assert_eq!(
+        session["rounds_used"], 0,
+        "the refused claim spent no burst: {session}"
+    );
+    let (status, solved) = guess(&app, &authority, federation_id, &stranger, 0, answer).await;
+    assert_eq!(status, StatusCode::OK, "the burst must be served: {solved}");
+    assert_eq!(
+        solved["transcript"][0]["exact"], 3,
+        "THE MUTATION MUST BE PRESENT: the node's own Lean oracle has to call the \
+         refused code the solving one, or §1 refused a wrong answer and proves \
+         nothing about the gate: {solved}"
+    );
+    assert_eq!(solved["solved"], true, "{solved}");
+    assert_eq!(
+        settlement_transcript(&solved["settlement"]),
+        vec![answer],
+        "the session's settlement names exactly the round that was played"
+    );
+    assert_no_leak(&solved);
+
+    // ── §3. THE CONVERSE: the BYTE-IDENTICAL carrier now settles. ──────────────
+    let (status, body) = post_claim(&app, &authority, &signed).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["accepted"], true,
+        "the very same carrier must be admitted once the game behind it exists: {body}"
+    );
+    let height = await_latest_height(&app, 1, Duration::from_secs(45)).await;
+    assert_eq!(
+        height, 1,
+        "the played claim must settle. If it does not, the gate is refusing \
+         everything and the blind pole above is measuring a node that cannot settle \
+         at all rather than one that refuses unplayed claims."
+    );
+    {
+        let s = state.read().await;
+        assert_eq!(
+            s.store
+                .load_poa_signal_head(federation_id)
+                .expect("PoA head read")
+                .expect("PoA head")
+                .transition_count(),
+            1,
+            "exactly one judged transition — the played one"
+        );
+    }
 }

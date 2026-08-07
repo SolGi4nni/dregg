@@ -42,7 +42,7 @@
 //! | `slot` / `mission_id` | public coordinates; they name a slot, not a run |
 //! | `slot_commitment` | already PUBLISHED, curator-signed, by `GET /api/poa/signal/{authority}/slot`. It is `HiddenInstance.commit secret slot` — a function of the secret and the slot ALONE, taking no player and no mission. It is echoed so a client can check it matches the signed opening it fetched, which is how a client tells a judged session from a practice one |
 //! | `rounds_used` / `rounds_remaining` / `solved` | derivable from `transcript` |
-//! | `settlement` | present only once solved, and it names the player's OWN solving guess plus the route to submit it on. It tells a solver nothing they did not just discover |
+//! | `settlement` | present only once solved, and it names the player's OWN transcript — every guess they typed, in the order they typed it — plus the route to submit it on. It tells a solver nothing they did not just discover |
 //!
 //! And what it never carries:
 //!
@@ -75,19 +75,30 @@
 //!
 //! # Two poles
 //!
-//! * **Solved** → `settlement` names the code, the player builds the ordinary signed
-//!   `poa-signal` carrier (`dregg-node poa-signal-submit-claim`), and `latest_height`
-//!   moves. Settlement is unchanged and this module has no authority over it.
+//! * **Solved** → `settlement` names the TRANSCRIPT, the player builds the ordinary
+//!   signed `poa-signal` carrier over it (`dregg-node poa-signal-submit-claim`), and
+//!   `latest_height` moves.
 //! * **Wrong, incomplete, or over budget** → the session REFUSES, and the refusal names
 //!   the real cause: `session-not-open`, `session-already-solved`,
 //!   `session-budget-exhausted`, `session-signature`, `session-round-mismatch`. None of
 //!   them is a wedge; a losing session is simply a session with five spent bursts and
 //!   no settlement, and the player's cell has spent nothing on chain.
 //!
-//! ⚠ This module does NOT gate the public claims route. A player may still submit a
-//! blind claim and get the 1-in-216 they always had; a losing one is routed to
-//! `persist_finalized_payload_rejection` with no transition and no height, which is a
-//! clean refusal rather than a wedge. What changed is that there is now a way to PLAY.
+//! # ⚑ This IS now the only way in (2026-08-07)
+//!
+//! A paragraph here used to say "this module does NOT gate the public claims route. A
+//! player may still submit a blind claim and get the 1-in-216 they always had", and
+//! that was the whole remaining wound: judged Signal was a deduction game for anyone
+//! who chose to play it as one, and NOTHING REQUIRED IT. A stranger who guessed the
+//! code settled a turn with no session, no feedback and no deduction anywhere in the
+//! causal history of the block.
+//!
+//! A claim now carries the played transcript, and
+//! `poa_signal_adapter::verify_claim_transcript_was_played` — run at FINALIZATION, and
+//! again as a courtesy at the claims route — refuses one whose rounds this node did not
+//! itself classify. So the sessions this module records are not merely available; they
+//! are the only thing a settled turn can be made of. The blind path refuses as
+//! `poa-signal-transcript-no-session`, with no transition and no height.
 
 use std::net::SocketAddr;
 
@@ -192,12 +203,23 @@ pub struct PoaSignalSessionRoundViewV1 {
 
 /// What a solved session tells the player to do next.
 ///
-/// ⚠ `code` is the player's OWN last guess, read out of the stored transcript, and this
-/// block exists only when that guess already returned `exact: 3`. It is not a
-/// disclosure; it is a receipt.
+/// ⚠ `code` and `transcript` are the player's OWN guesses, read out of the stored
+/// transcript, and this block exists only when the last of them already returned
+/// `exact: 3`. It is not a disclosure; it is a receipt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PoaSignalSessionSettlementV1 {
     pub mission_id: u64,
+    /// ⚑ THE THING A CLAIM MUST CARRY: every round this session played, in the
+    /// order it was played, ending in the solving guess.
+    ///
+    /// A claim that named only `code` is refused by
+    /// `poa_signal_adapter::verify_claim_transcript_was_played` — the node settles
+    /// the game it served, not a code that happens to be right. This is served so a
+    /// client does not have to reassemble it from `transcript` above and guess at
+    /// the ordering.
+    pub transcript: Vec<SignalCodeWireV1>,
+    /// The solving guess — the last entry of `transcript`, named separately because
+    /// it is the one a player wants to see.
     pub code: SignalCodeWireV1,
     /// The method of the one-action carrier the player must sign.
     pub method: &'static str,
@@ -487,7 +509,7 @@ fn session_view(
     record: &PoaSignalSessionV1,
     claims_route: String,
 ) -> PoaSignalSessionResponseV1 {
-    let transcript = record
+    let transcript: Vec<PoaSignalSessionRoundViewV1> = record
         .rounds()
         .iter()
         .map(|round| PoaSignalSessionRoundViewV1 {
@@ -504,13 +526,20 @@ fn session_view(
         .solving_guess()
         .map(|guess| PoaSignalSessionSettlementV1 {
             mission_id: record.mission_id(),
+            transcript: record
+                .rounds()
+                .iter()
+                .map(|round| SignalCodeWireV1::from_stored(round.guess))
+                .collect(),
             code: SignalCodeWireV1::from_stored(guess),
             method: SIGNAL_CLAIM_METHOD_V1,
             claims_route: claims_route.clone(),
-            note: "sign the one-action poa-signal carrier with this player key and POST it \
-                   to claims_route. `accepted: true` from that route is admission staging \
-                   and settles nothing; the number that bites is `latest_height` off \
-                   GET /status AFTER finalization",
+            note: "sign the one-action poa-signal carrier over this exact TRANSCRIPT with \
+                   this player key and POST it to claims_route. A carrier naming only the \
+                   solving code is refused: the node settles the game it served. \
+                   `accepted: true` from that route is admission staging and settles \
+                   nothing; the number that bites is `latest_height` off GET /status AFTER \
+                   finalization",
         });
     PoaSignalSessionResponseV1 {
         format: POA_SIGNAL_SESSION_FORMAT_V1,
@@ -897,6 +926,16 @@ mod tests {
             .clone()
             .expect("a solved session must settle");
         assert_eq!(settlement.code, code(5, 0, 5));
+        assert_eq!(
+            settlement.transcript,
+            vec![code(0, 1, 2), code(5, 0, 5)],
+            "the settlement names EVERY round, in order — that is what a claim carries"
+        );
+        assert_eq!(
+            settlement.transcript.last().copied(),
+            Some(settlement.code),
+            "the solving guess is the last round, never a separate value"
+        );
         assert_eq!(settlement.method, SIGNAL_CLAIM_METHOD_V1);
         assert!(settlement.claims_route.ends_with("/claims"));
         assert!(

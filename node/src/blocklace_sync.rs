@@ -7916,6 +7916,70 @@ async fn execute_finalized_turn(
         None
     };
 
+    // ⚑ THE TRANSCRIPT-PROVENANCE GATE — a judged settlement is evidence a game
+    // was PLAYED, and this is where that becomes true.
+    //
+    // `SignalTriangulation.judge` scores whatever transcript it is handed and is
+    // right to; provenance is the node's job. Until this gate a public claim
+    // carried one code, the adapter wrapped it as a one-round game, and a blind
+    // 1-in-216 guess settled a turn with no session and no feedback anywhere in its
+    // causal history. Here the claim's rounds are checked against the durable
+    // session THIS NODE served for this (authority, slot, signer).
+    //
+    // It sits BEFORE the executor and before any Lean judgment because a claim with
+    // no game behind it should cost the chain nothing to refuse, and it routes to
+    // `persist_finalized_payload_rejection` — a deterministic refusal with no
+    // transition and no height, the same clean disposition a LOSING claim gets. It
+    // is NOT a `FatalIntegrity`: a stranger submitting a code is ordinary traffic,
+    // not a corrupted node.
+    //
+    // ⚠ The refusal reason is a function of (stored session, submitted claim) only.
+    // It never reads the target, so it cannot tell a submitter how close they were
+    // — `poa_signal_adapter::the_refusal_never_depends_on_whether_the_code_is_right`.
+    if let (Some(slot), Some(claim)) = (signal_slot_snapshot.as_ref(), signal_claim.as_ref()) {
+        let session = match s.store.load_poa_signal_session_v1(
+            s.federation_id,
+            slot.slot(),
+            signed_turn.signer.0,
+        ) {
+            Ok(found) => found,
+            Err(dregg_persist::StoreError::Database(error)) => {
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: format!("could not load the judged PoA Signal session: {error}"),
+                };
+            }
+            Err(error) => {
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: format!("PoA Signal session record malformed: {error}"),
+                };
+            }
+        };
+        if let Err(refusal) = crate::poa_signal_adapter::verify_claim_transcript_was_played(
+            session.as_ref(),
+            slot,
+            claim,
+        ) {
+            let outcome = persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                refusal.code(),
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                reason_code = refusal.code(),
+                reason = %refusal,
+                "PoA Signal claim carries a transcript this node never classified; refused \
+                 before any judgment or mutation"
+            );
+            return outcome;
+        }
+    }
+
     // EXACT FNSP-v3 is a disjoint finalized-turn route.  Classification happens after the full
     // SignedTurn perimeter but before the legacy FNSP decoder and every generic charge/mutation.
     // Once an `FNSP || version=3` carrier selects this branch, every refusal returns from here: it
@@ -10693,7 +10757,7 @@ mod tests {
         fn signal(cell: u8) -> dregg_turn::Effect {
             let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
                 1,
-                dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).unwrap(),
+                &[dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).unwrap()],
             )
             .unwrap();
             dregg_turn::Effect::EmitEvent {
@@ -12492,7 +12556,8 @@ mod tests {
             cclerk.public_key().0,
             [0u8; 32],
         );
-        let claim = dregg_sdk::poa_signal::SignalClaimV1::new(mission_id, solving.code()).unwrap();
+        let claim =
+            dregg_sdk::poa_signal::SignalClaimV1::new(mission_id, solving.transcript()).unwrap();
         let mut turn =
             dregg_sdk::poa_signal::signal_claim_turn(&cclerk.public_key().0, nonce, None, claim);
         assert_eq!(turn.agent, actor, "fixture actor is the signing identity");
@@ -12690,6 +12755,40 @@ mod tests {
                         ),
                     )
                     .expect("open a PoA Signal slot for the test deployment");
+                // …AND A PLAYED SESSION. Since the transcript-provenance gate landed
+                // (`poa_signal_adapter::verify_claim_transcript_was_played`), a
+                // finalized claim must name rounds THIS NODE classified, so a
+                // finality fixture that only installs a head and a slot is a fixture
+                // whose claim can never be judged: it dies at the gate as
+                // `poa-signal-transcript-no-session` and every downstream assertion
+                // about the weld measures nothing.
+                //
+                // The rounds are played through the REAL Lean oracle
+                // (`play_session_for_test`), not written by hand, so this fixture
+                // cannot pass the gate while disagreeing with the rule.
+                let head =
+                    crate::poa_signal_adapter::fixture_signal_head_for_finality_test(federation_id);
+                let slot =
+                    crate::poa_signal_adapter::fixture_signal_slot_for_finality_test(federation_id);
+                if dregg_lean_ffi::poa_slot_derive_ffi::poa_slot_derive_available()
+                    && dregg_lean_ffi::poa_signal_feedback_ffi::poa_signal_feedback_available()
+                {
+                    let solving = crate::poa_signal_adapter::solving_claim_for_finality_test(
+                        &head,
+                        &slot,
+                        federation_id,
+                        actor_cclerk.public_key().0,
+                        [0u8; 32],
+                    );
+                    crate::poa_signal_adapter::play_session_for_test(
+                        &s.store,
+                        &head,
+                        &slot,
+                        federation_id,
+                        actor_cclerk.public_key().0,
+                        solving.transcript(),
+                    );
+                }
             }
         }
         (state, actor_cclerk, actor, federation_id)
@@ -13906,7 +14005,7 @@ mod tests {
 
         let mixed_claim = dregg_sdk::poa_signal::SignalClaimV1::new(
             1,
-            dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).expect("bounded Signal code"),
+            &[dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).expect("bounded Signal code")],
         )
         .expect("bounded mission");
         let mixed = signed_signal_effects_turn(

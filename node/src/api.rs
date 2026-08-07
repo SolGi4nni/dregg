@@ -4860,7 +4860,7 @@ async fn post_poa_signal_claim(
         .try_acquire_owned()
         .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
 
-    {
+    let authority_id = {
         let s = state.read().await;
         let authority_id =
             select_local_poa_signal_authority(requested, s.federation_configured, s.federation_id)?;
@@ -4872,7 +4872,8 @@ async fn post_poa_signal_claim(
         if !installed {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
-    }
+        authority_id
+    };
 
     let signed = crate::signed_turn_validation::decode_signed_turn(&body)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -4882,6 +4883,45 @@ async fn post_poa_signal_claim(
         || dregg_sdk::poa_signal::signal_player_cell(&signed.signer.0) != signed.turn.agent
     {
         return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // The claim names a played transcript; say so now if this node never served it.
+    //
+    // ⚠ With NO OPEN SLOT this declines to guess rather than refusing. There is no
+    // instance to compare a session against, so any verdict here would be about the
+    // absence of a curator ceremony rather than about the player — and the claim
+    // cannot settle regardless: `execute_finalized_turn` has no slot snapshot to
+    // judge with and holds the turn as retryable. Declining weakens nothing, because
+    // the binding gate runs there and runs AFTER the slot snapshot.
+    {
+        let s = state.read().await;
+        let slot = s
+            .store
+            .load_poa_signal_open_slot_v1(authority_id)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some(slot) = slot {
+            let session = s
+                .store
+                .load_poa_signal_session_v1(authority_id, slot.slot(), signed.signer.0)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            if let Err(refusal) = crate::poa_signal_adapter::verify_claim_transcript_was_played(
+                session.as_ref(),
+                &slot,
+                &claim,
+            ) {
+                drop(s);
+                return Ok(Json(SubmitSignedTurnResponse {
+                    accepted: false,
+                    turn_hash: Some(hex_encode(&signed.turn.hash())),
+                    signer: Some(hex_encode(&signed.signer.0)),
+                    action_count: signed.turn.call_forest.action_count(),
+                    proof_status: ActivityProofStatus::NotCommitted,
+                    has_witness: false,
+                    witness_count: 0,
+                    error: Some(format!("{}: {refusal}", refusal.code())),
+                }));
+            }
+        }
     }
 
     submit_signed_turn(state, signed).await
@@ -10489,7 +10529,7 @@ mod tests {
     ) -> SignedTurn {
         let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
             mission_id,
-            dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).expect("bounded code"),
+            &[dregg_sdk::poa_signal::SignalCode::new(5, 0, 5).expect("bounded code")],
         )
         .expect("bounded mission");
         let mut turn =
