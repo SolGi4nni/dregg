@@ -20,20 +20,32 @@ import { ArtifactRefusal } from "./poag1.js";
  * and the whole point of a judged session is that the node's Lean classification
  * is the only one. The browser authors identity and intent; nothing else.
  *
- * ⚠ AND IT STILL CANNOT PLAY — but for ONE fewer reason than it could on
- * 2026-08-07. Of the three things that were missing, the first has LANDED: the
- * extension now exposes `signSignalSession`, a scoped, schema-pinned signer for
- * exactly the two documented session statements (`extension/src/signal-session.ts`).
- * The two that remain are node-side and are named in `CUSTODY_BLOCKERS`;
- * [`judgedCustody`] reports whichever bites first and the panel renders the
- * action DISABLED rather than inventing a way around it.
+ * ⚑ AND IT CAN NOW PLAY. All three things that were missing on the morning of
+ * 2026-08-07 have landed, and the two that fell today are kept by name in
+ * [`FALLEN_WALLS`] rather than deleted:
  *
- * ⚑ The remaining walls are MEASURED, not assumed. `routesReachable` comes out
- * of an actual response — a 401 says the bearer wall stands, a served or
- * 404-ing document says it does not — so the day a bearer reaches this origin,
- * the button enables with no change here. That is deliberate: a hardcoded
- * `canPlay: false` would be a wall this file believes in rather than one it
- * observed.
+ * 1. **The signer** — `signSignalSession`, scoped and schema-pinned to exactly
+ *    the two documented statements (`extension/src/signal-session.ts`), now with
+ *    a SESSION-SCOPED GRANT so a whole judged run is one consent rather than six
+ *    popups. The grant is bound to `(authorityId, slot, playerKey, origin)`,
+ *    bounded to 1 open + 5 guesses, and expires.
+ * 2. **The routes** — `poa_signal_session::routes()` moved into `public_routes`.
+ *    The bearer never authorized anything: a session write is authorized by an
+ *    Ed25519 signature under the player key over a statement the node re-derives.
+ *    A page holds no bearer and now needs none.
+ * 3. What is LEFT is `claim-carrier-unbuildable`, and it is about SETTLING, not
+ *    playing. A browser can open a run, spend all five bursts and read its own
+ *    transcript back; it cannot build the hybrid-signed postcard that settles.
+ *
+ * So `canPlay` is now routinely `true`, and the settle action stays disabled with
+ * a named reason. That is not a downgrade of honesty: it is the same rule as
+ * before, applied to a world with two fewer walls in it.
+ *
+ * ⚑ EVERY REMAINING CONDITION IS MEASURED, not assumed. `routesReachable` comes
+ * out of an actual response, and its `false` branch no longer means "the code
+ * gates this" — it means THIS NODE is running a build from before the move
+ * (`NODE_BEHIND`). A hardcoded `canPlay: false` would be a wall this file
+ * believes in rather than one it observed, and that stays forbidden here.
  */
 
 const SESSION_FORMAT = "POA-SIGNAL-SESSION-1";
@@ -266,6 +278,42 @@ export const SESSION_SIGNER_METHOD = "signSignalSession";
  * thing to tell that player is "update the extension", not "the platform cannot
  * do this".
  */
+/**
+ * ⚑ WHAT THE NODE ON THIS ORIGIN MUST SERVE, per DEPLOYMENT.
+ *
+ * These are NOT walls in `CUSTODY_BLOCKERS` — they are not facts about source
+ * that this repo would have to change, they are facts about the node answering
+ * right now. The session routes are public in this repo as of 2026-08-07; a
+ * deployment still answering `401` is running a build from before that, and the
+ * honest thing to tell that player is "this node is behind", not "the platform
+ * cannot do this".
+ *
+ * Keeping them distinct is the point. `session-routes-authenticated` used to
+ * mean "the code gates this"; it now means "this particular node still does",
+ * and those two sentences call for opposite actions.
+ */
+export const NODE_BEHIND = Object.freeze({
+  code: "session-routes-authenticated",
+  what: "This node still gates the judged session routes behind a bearer token.",
+  detail:
+    "`poa_signal_session::routes()` is mounted in `public_routes` as of 2026-08-07 — the bearer was " +
+    "never the authorization, since every session write is an Ed25519 signature by the player key over " +
+    "a statement the node re-derives. This deployment answered 401/403 anyway, so it is running a build " +
+    "from before that move. The signature this page produced is correct and was refused before it was " +
+    "ever checked.",
+  needs: "this authority redeployed from a build at or after 2026-08-07",
+});
+
+export const NODE_SILENT = Object.freeze({
+  code: "session-routes-unanswered",
+  what: "Nothing on this origin answered the judged session routes.",
+  detail:
+    "Not a refusal and not a wall — no answer at all. A judged run is never begun on an assumption " +
+    "that a route exists, so this page reports the silence rather than enabling a button that would " +
+    "fail on click.",
+  needs: "a reachable PoA authority on this origin",
+});
+
 export const SIGNER_ABSENT = Object.freeze({
   code: "signer-not-installed",
   what: `The installed extension exposes no \`${SESSION_SIGNER_METHOD}\`.`,
@@ -278,47 +326,81 @@ export const SIGNER_ABSENT = Object.freeze({
 });
 
 /**
- * ⚑ WHY THIS BROWSER STILL CANNOT PLAY A JUDGED SESSION, in the order the
- * attempt hits them. Each entry is a fact about the node, measured 2026-08-07
- * and re-checked when the signer landed, NOT a policy choice made here — and
- * each names the thing that would have to land for the surface below to light up
- * unchanged.
+ * ⚑ THE WALLS THAT HAVE FALLEN, kept by name rather than deleted.
  *
- * ⚑ ONE WALL FELL. `no-player-message-signer` used to lead this list: "the
- * extension holds the player key but will not sign a session statement with
- * it." It does now. What landed is deliberately NOT the `signMessage(bytes)`
- * that entry could have been read as asking for — a page that can ask for a
- * signature over caller-chosen bytes can ask for a signature over a transfer.
- * What landed takes `{kind, authorityId, slot, round, guess}` and re-derives the
- * statement inside the extension, over a fixed allowlist of the two session
- * kinds, with `player_key` supplied by custody rather than by the page.
+ * A wall that is simply removed from `CUSTODY_BLOCKERS` leaves no trace that it
+ * was ever load-bearing, and the next reader cannot tell a wall that fell from
+ * one that was never noticed. So each fallen wall keeps its `code` — the same
+ * string the panel used to render — plus what actually landed. The tests INVERT
+ * against these entries rather than dropping their assertions.
+ */
+export const FALLEN_WALLS = Object.freeze([
+  Object.freeze({
+    code: "no-player-message-signer",
+    fell: "2026-08-07",
+    was: "The extension holds the player key but will not sign a session statement with it.",
+    landed:
+      "A scoped, schema-pinned signer (`extension/src/signal-session.ts`). Deliberately NOT the " +
+      "`signMessage(bytes)` that entry could have been read as asking for — a page that can ask for a " +
+      "signature over caller-chosen bytes can ask for a signature over a transfer. What landed takes " +
+      "`{kind, authorityId, slot, round, guess}` and re-derives the statement inside the extension, over " +
+      "a frozen allowlist of the two session kinds, with `player_key` supplied by custody. A " +
+      "session-scoped GRANT now covers one whole run — 1 open + 5 guesses, one slot, one identity, one " +
+      "origin, with an expiry — so a judged run is ONE consent instead of six popups, and the grant " +
+      "relaxes none of the signer's structural properties.",
+  }),
+  Object.freeze({
+    code: "session-routes-authenticated",
+    fell: "2026-08-07",
+    was: "The three session routes are behind the node's bearer layer; this page carries no bearer.",
+    landed:
+      "`poa_signal_session::routes()` moved from `protected_routes` into `public_routes` in " +
+      "`node/src/api.rs`. The bearer was never the authorization: every session WRITE is an Ed25519 " +
+      "signature by the player key over a statement the node RE-DERIVES, and the guess statement covers " +
+      "`round`, so a replay refuses rather than spending a burst. What the bearer incidentally supplied " +
+      "— abuse resistance — was replaced explicitly by `SessionAdmission`: a per-IP window, a " +
+      "per-player-key window charged only AFTER the signature verifies, and a global in-flight ceiling. " +
+      "The read-back is public too, which is what makes a lost response recoverable instead of a lost " +
+      "burst.",
+  }),
+]);
+
+/**
+ * ⚑ WHY THIS BROWSER STILL CANNOT SETTLE A JUDGED RUN. Each entry is a fact
+ * about the node, NOT a policy choice made here — and each names the thing that
+ * would have to land for the surface below to light up unchanged.
  *
- * Neither of the two below is worked around. Generating a keypair in page memory
- * would be a player key with no cell, no funds and no ML-DSA half, i.e.
- * inventing custody to make a button clickable.
+ * ⚑ TWO WALLS FELL AND ONE REMAINS. Both fallen ones are in [`FALLEN_WALLS`]
+ * above, by name. What is left is not about PLAYING at all: a browser can now
+ * open a judged run, spend all five bursts and read its own transcript back. It
+ * cannot build the SETTLING CARRIER, and that is a different act.
+ *
+ * The one below is not worked around. Generating a keypair in page memory would
+ * be a player key with no cell, no funds and no ML-DSA half, i.e. inventing
+ * custody to make a button clickable.
  */
 export const CUSTODY_BLOCKERS = Object.freeze([
   Object.freeze({
-    code: "session-routes-authenticated",
-    what: "The three session routes are behind the node's bearer layer; this page carries no bearer.",
-    detail:
-      "`poa_signal_session::routes()` is merged into `protected_routes` in `node/src/api.rs`, unlike " +
-      "the slot publication, which is public and which this terminal does read and verify. Even the " +
-      "read-back `GET …/session/{player}` is authenticated, so a transcript cannot be recovered here. " +
-      "The signature this page can now produce is refused before it is ever checked.",
-    needs: "a public, player-signed read-back and open/guess, or a bearer this origin is entitled to hold",
-  }),
-  Object.freeze({
     code: "claim-carrier-unbuildable",
-    what: "The settling carrier cannot be built in a browser, and the one extension path that could submit is the closed blind one.",
+    what: "The settling carrier cannot be built by this PAGE.",
     detail:
       "A claim is a postcard-encoded `SignedTurn` whose action authorization is a HYBRID Ed25519 + " +
       "ML-DSA-65 signature over the federation-bound message, priced against its own post-signing " +
       "shape. There is no `prepare` route for Signal the way `poa_galley_api` has `/command`, so " +
-      "nothing hands this page unsigned bytes to pass to `signTurnV3`. And " +
-      "`dregg.submitPoaSignalClaim` takes exactly `{schema, missionId, code}` with no transcript, " +
-      "which `verify_claim_transcript_was_played` now refuses as `poa-signal-transcript-no-session`.",
-    needs: "a node-side Signal prepare route returning unsigned postcard bytes, as the Galley already has",
+      "nothing hands this page unsigned bytes to pass to `signTurnV3`, and no page-side builder can " +
+      "produce the ML-DSA half.\n\n" +
+      "⚠ CORRECTED 2026-08-07: this used to add \"and `dregg.submitPoaSignalClaim` takes exactly " +
+      "`{schema, missionId, code}` with no transcript\". That is FALSE at HEAD — the extension's claim " +
+      "path was cut over to `{schema, missionId, transcript}` (`extension/src/poa-signal.ts`, commit " +
+      "86786886d), and `poa-web/tests/judged-session.test.mjs` was still asserting the old shape, so " +
+      "this wall's second reason had rotted into a lie and its source check was RED at HEAD. What " +
+      "remains true is only the first reason, and it is narrower than it reads: the PAGE cannot build " +
+      "a carrier. Whether the EXTENSION can now settle a judged run end to end — it takes a transcript " +
+      "and this page has one in `settlement.transcript` — is a live question owned by that cutover, " +
+      "not answered here. If it can, this wall falls too and belongs in FALLEN_WALLS.",
+    needs:
+      "a node-side Signal prepare route returning unsigned postcard bytes (as the Galley already has), " +
+      "OR a verified end-to-end pass of the extension's transcript-carrying claim path",
   }),
 ]);
 
@@ -327,8 +409,9 @@ export const CUSTODY_BLOCKERS = Object.freeze([
  * belief.
  *
  * `true` — a document was served, refused on its contents, or 404'd; either way
- * the route answered this origin, so the bearer wall is not standing here.
- * `false` — 401/403: the bearer wall is standing, measured.
+ * the route answered this origin.
+ * `false` — 401/403: this NODE is still gating them, measured. Since the move on
+ * 2026-08-07 that means a stale deployment, not a wall in the code — `NODE_BEHIND`.
  * `null` — nothing was asked, or nothing answered at all; unknown, and unknown
  * is not "reachable".
  */
@@ -345,17 +428,24 @@ export function routesReachableFrom(session) {
  * Never throws and never invents: it reports the FIRST blocker that bites, so the
  * panel's honest reason is the one a player would hit first rather than a list.
  *
- * `session` is the result of [`loadJudgedSession`], and it is what turns the
- * bearer wall from an assumption into a measurement — see `routesReachableFrom`.
+ * `session` is the result of [`loadJudgedSession`], and it is what turns route
+ * reachability from an assumption into a measurement — see `routesReachableFrom`.
  * Called with one argument (nothing measured yet), `canPlay` is `false` and the
- * blocker is the bearer wall, which is the safe direction.
+ * blocker is `NODE_SILENT`, which is the safe direction.
+ *
+ * ⚑ `canPlay` NOW MEANS PLAY, not settle. The bearer wall it used to be gated on
+ * fell on 2026-08-07 (`FALLEN_WALLS`), so on a current deployment with the signer
+ * installed and an identity bound, this returns `true` and the button is live.
+ * The remaining `CUSTODY_BLOCKERS` entry is about SETTLING, which is a separate
+ * act and stays disabled regardless.
  */
 export function judgedCustody(provider = globalThis.window?.dregg ?? null, session = null) {
   const identityAvailable = Boolean(provider && typeof provider.getActiveIdentity === "function");
   const signerAvailable = Boolean(provider && typeof provider[SESSION_SIGNER_METHOD] === "function");
   const routesReachable = routesReachableFrom(session);
   const blocker = !signerAvailable ? SIGNER_ABSENT
-    : routesReachable !== true ? CUSTODY_BLOCKERS[0]
+    : routesReachable === false ? NODE_BEHIND
+    : routesReachable !== true ? NODE_SILENT
     : null;
   return Object.freeze({
     // ⚑ EVERY conjunct is observed. `canPlay` never asserts a wall this file
@@ -365,8 +455,11 @@ export function judgedCustody(provider = globalThis.window?.dregg ?? null, sessi
     identityAvailable,
     signerAvailable,
     routesReachable,
-    blocker: blocker ?? CUSTODY_BLOCKERS[1],
+    // A settled deployment with everything present still names the SETTLING wall,
+    // because that is the next thing this page cannot do.
+    blocker: blocker ?? CUSTODY_BLOCKERS[0],
     blockers: CUSTODY_BLOCKERS,
+    fellAlready: FALLEN_WALLS,
   });
 }
 
@@ -441,8 +534,8 @@ async function postSession({ path, body, authorityId, commitment, baseUrl, fetch
     });
     if (response?.status === 401 || response?.status === 403) {
       return Object.freeze({
-        state: "unauthenticated", code: "session-routes-authenticated",
-        reason: "The session routes are authenticated and this page holds no bearer",
+        state: "unauthenticated", code: NODE_BEHIND.code,
+        reason: NODE_BEHIND.what,
       });
     }
     const text = await response.text();
@@ -476,10 +569,11 @@ async function postSession({ path, body, authorityId, commitment, baseUrl, fetch
  * Open or resume a judged run: sign the open statement, POST it, parse what
  * comes back against the slot this terminal verified.
  *
- * ⚠ On this deployment the POST lands as `unauthenticated` — the bearer wall of
- * `CUSTODY_BLOCKERS[0]`. That is the honest state, and it is why this function
- * exists now rather than the day the wall falls: the signature half is real and
- * exercised, so the wall is the ONLY thing left between here and a played run.
+ * ⚑ As of 2026-08-07 this POST is expected to be SERVED: the route is public and
+ * the player's signature is the whole authorization. An `unauthenticated` result
+ * is no longer the ordinary state — it means the node answering here predates
+ * the move (`NODE_BEHIND`), and the page says so rather than blaming the wall
+ * that used to be here.
  */
 export async function openJudgedSession({
   provider, authorityId, commitment, slot, baseUrl,
@@ -559,8 +653,8 @@ export async function loadJudgedSession({
     if (response?.status === 401 || response?.status === 403) {
       return Object.freeze({
         state: "unauthenticated",
-        code: "session-routes-authenticated",
-        reason: "The session routes are authenticated and this page holds no bearer",
+        code: NODE_BEHIND.code,
+        reason: NODE_BEHIND.what,
       });
     }
     if (response?.status === 404) {
@@ -593,9 +687,9 @@ function codeText(code) {
   return `${code.low}-${code.mid}-${code.high}`;
 }
 
-/** The bearer wall and the carrier wall, by name rather than by index. */
-const ROUTES_WALL = CUSTODY_BLOCKERS[0];
-const CARRIER_WALL = CUSTODY_BLOCKERS[1];
+/** The one remaining wall, by name rather than by index. The bearer wall that
+ * used to sit beside it is in `FALLEN_WALLS`. */
+const CARRIER_WALL = CUSTODY_BLOCKERS[0];
 
 /**
  * The judged panel: one state, one honest sentence about what a player may do.
@@ -604,12 +698,13 @@ const CARRIER_WALL = CUSTODY_BLOCKERS[1];
  * DISABLED with a reason, and the reason names a node or extension fact rather
  * than saying "coming soon".
  *
- * ⚑ THE PLAY ACTION IS NO LONGER DISABLED BY CONSTRUCTION. It follows
- * `custody.canPlay`, which is identity + signer detected on the provider and a
- * route that ACTUALLY ANSWERED. On this deployment the route answers 401, so it
- * is still disabled — but by a measurement, and the day the bearer question is
- * settled the same code enables it. Settling remains disabled regardless: that
- * is `CARRIER_WALL`, and it is a separate wall from playing.
+ * ⚑ THE PLAY ACTION IS LIVE. It follows `custody.canPlay` — identity + signer
+ * detected on the provider and a route that ACTUALLY ANSWERED — and since the
+ * session routes went public on 2026-08-07 that conjunction is the ordinary case
+ * rather than the aspirational one. A 401 here now means the node predates the
+ * move (`NODE_BEHIND`), and the copy says that instead of blaming a wall that is
+ * gone. Settling remains disabled regardless: that is `CARRIER_WALL`, and it was
+ * always a separate wall from playing.
  */
 export function buildJudgedPanel({ slot = null, custody = null, session = null } = {}) {
   const seal = (headline, detail, code) => Object.freeze({
@@ -675,7 +770,7 @@ export function buildJudgedPanel({ slot = null, custody = null, session = null }
     }
     const spent = `${s.roundsUsed} of ${s.maxRounds} bursts spent, ${s.roundsRemaining} left.`;
     const canSpend = s.open && custody?.canPlay === true;
-    const spendBlocker = custody?.blocker ?? ROUTES_WALL;
+    const spendBlocker = custody?.blocker ?? NODE_SILENT;
     return Object.freeze({
       state: s.open ? "playing" : "spent", eyebrow: "JUDGED SIGNAL",
       headline: s.open ? `${s.roundsRemaining} burst${s.roundsRemaining === 1 ? "" : "s"} left` : "Out of bursts",
@@ -699,7 +794,7 @@ export function buildJudgedPanel({ slot = null, custody = null, session = null }
     });
   }
 
-  const blocker = custody?.blocker ?? ROUTES_WALL;
+  const blocker = custody?.blocker ?? NODE_SILENT;
   if (session?.state === "refused") {
     return seal("Judged session refused",
       `A session document was served and this terminal would not accept it (${session.code}). ${session.reason}. ` +

@@ -19,16 +19,89 @@
 //!
 //! # The routes
 //!
-//! All three are **AUTHENTICATED** (mounted in `protected_routes`), which is deliberate
-//! and is stated here because the sibling `poa_signal_slot_api` is deliberately the
-//! opposite. That module publishes a curator-signed commitment every reader needs; this
-//! one spends a scarce per-player budget against a live secret.
-//!
 //! ```text
 //! POST /api/poa/signal/{authority}/session/open      → open or resume
 //! POST /api/poa/signal/{authority}/session/guess     → spend one burst, get LOCKED/DRIFT
 //! GET  /api/poa/signal/{authority}/session/{player}  → read the transcript back
 //! ```
+//!
+//! # ⚑ ALL THREE ARE PUBLIC, 2026-08-07 — and why the bearer was never the check
+//!
+//! These routes were mounted in `protected_routes` until today, on the reasoning that a
+//! surface spending a scarce budget against a live secret should be authenticated while
+//! the sibling `poa_signal_slot_api` publishes. That reasoning survived a step it should
+//! not have: **the bearer says "a client of this node", not "this player"**, and this
+//! module already knew that — it is the first sentence of "Why every request is
+//! player-SIGNED" below, and it is the reason the player signature exists at all.
+//!
+//! So the bearer was never the authorization for a session write. Every write is
+//! authorized by an Ed25519 signature under the player key, over a statement this node
+//! RE-DERIVES from the structured fields (`verify_player_signature`) and never accepts
+//! pre-encoded; the guess statement covers `round`, so a captured request refuses as
+//! `session-round-mismatch` rather than spending a second burst. Removing the bearer
+//! removes a credential that no player holds and no check consumed — and it is the whole
+//! reason the browser terminal could not play: a route whose entire purpose is
+//! player-facing play cannot require an operator secret.
+//!
+//! What the bearer DID provide, incidentally, was abuse resistance. That is not dropped,
+//! it is replaced explicitly and named: see [`SessionAdmission`].
+//!
+//! ## ⚑ THE BLAST RADIUS, stated rather than assumed
+//!
+//! An unauthenticated caller **can**:
+//!
+//! * **open or resume a session for a key it controls.** `open` is idempotent — the
+//!   persist layer returns the existing record rather than replacing it
+//!   (`open_poa_signal_session_v1`), so a re-open is a resume and can never restore a
+//!   spent budget. Without the matching secret key it cannot open one at all.
+//! * **spend that key's own bursts**, at most `POA_SIGNAL_SESSION_MAX_ROUNDS`, one
+//!   signature per round, each classified by Lean against the judged target.
+//! * **read back a transcript whose full coordinates it already knows** — authority,
+//!   installed slot, and the player's 32-byte key, exact. See "the read-back" below.
+//!
+//! It **cannot**:
+//!
+//! * **spend another player's bursts.** The player key is INSIDE the signed statement, so
+//!   a request naming a victim's key must carry a signature that verifies under it.
+//!   ⚑ And the per-player-key budget is charged only AFTER that verification, so an
+//!   unverified flood cannot exhaust a victim's budget either — griefing a player by
+//!   burning their rate allowance would otherwise be exactly the abuse an anonymous
+//!   surface invites. `only_the_player_key_can_spend_that_players_budget` is the pole.
+//! * **replay anything.** `round` is inside the guess statement.
+//! * **learn the target, the slot secret or the run seed.** No session document carries
+//!   them (`a_session_document_never_carries_a_secret_a_seed_or_an_unearned_code` builds
+//!   the responses from the live encoder with a known secret installed and fails if those
+//!   bytes appear), and Lean's `served_transcript_cannot_separate_feedback_equivalent_
+//!   targets` says a whole session's bytes are IDENTICAL for any two targets consistent
+//!   with the guesses played.
+//! * **settle without the transcript.** A claim is checked at FINALIZATION by
+//!   `poa_signal_adapter::verify_claim_transcript_was_played` against the rounds this
+//!   node itself classified; a code with no session refuses as
+//!   `poa-signal-transcript-no-session`, with no transition and no height.
+//!
+//! ## ⚑ THE READ-BACK CANNOT ENUMERATE ANOTHER PLAYER'S SESSION
+//!
+//! Three independent reasons, and the third is the one that matters:
+//!
+//! 1. **There is no listing.** No route in this module returns a set of players, slots or
+//!    sessions. `GET …/session/{player}` takes ONE fully-specified 32-byte key as a path
+//!    segment (`parse_hex32`: exactly 64 lowercase hex, no prefix match, no wildcard) and
+//!    answers about that key alone. There is no cursor to walk and no index to scan.
+//! 2. **A wrong key is indistinguishable from an unplayed one.** Both answer 404
+//!    `session-not-open`, so probing tells a caller nothing it did not already have.
+//! 3. ⚑ **A foreign transcript is about a DIFFERENT target.** `HiddenInstance.runSeedFor`
+//!    takes `playerKey` as an input to the seed (`NightWatchCampaign.lean`, the
+//!    `seed_derived` field of a judged `Activation`), so two players in one slot draw
+//!    different targets. Reading a transcript belonging to a key you do not control gives
+//!    you the LOCKED/DRIFT history of somebody else's target — which is worth exactly
+//!    nothing against your own. The read-back is not a partial oracle on your run; it is
+//!    an oracle on a run that is not yours.
+//!
+//! ⚠ Stated at the resolution it deserves: what a caller who ALREADY KNOWS a player's
+//! public key can read is that player's own guesses and their own answers. That was true
+//! of every bearer holder before today and is unchanged; the honest claim is that the
+//! surface cannot be ENUMERATED and that what it yields is useless for the reader's own
+//! run, not that a known key's transcript is private. Player keys are public on chain.
 //!
 //! # ⚑ What a session reveals, field by field
 //!
@@ -57,13 +130,18 @@
 //! responses from the live encoder with a known secret installed and fails if those
 //! bytes appear anywhere in them.
 //!
-//! # Why every request is player-SIGNED, on top of the bearer token
+//! # Why every request is player-SIGNED — the ONLY authorization there is
 //!
-//! The bearer token says "a client of this node". It does not say "this player". And
+//! (Until 2026-08-07 this said "on top of the bearer token". The bearer is gone; nothing
+//! below changed, because nothing below ever depended on it.)
+//!
+//! The bearer token said "a client of this node". It did not say "this player". And
 //! the budget is per (authority, slot, player) — it has to be, because
 //! `HiddenInstance.runSeedFor` takes the player key, so two players in one slot draw
-//! DIFFERENT targets. Without proof of possession, any authenticated client could burn
-//! any player's five bursts against a target it cannot settle: pure griefing, no gain.
+//! DIFFERENT targets. Without proof of possession, ANY caller could burn any player's
+//! five bursts against a target it cannot settle: pure griefing, no gain. That was true
+//! of an authenticated client and it is true of an anonymous one; the signature is what
+//! stops it, in both worlds, and it is why removing the bearer weakens no check.
 //!
 //! So `open` and `guess` each carry an Ed25519 signature by the player key over a
 //! canonical statement. The guess statement includes `round` — the number of bursts
@@ -100,7 +178,10 @@
 //! are the only thing a settled turn can be made of. The blind path refuses as
 //! `poa-signal-transcript-no-session`, with no transition and no height.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -114,6 +195,7 @@ use dregg_sdk::poa_signal::{SIGNAL_CLAIM_METHOD_V1, SignalCode};
 use dregg_types::hex_encode;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 
 use crate::api::RateLimiter;
 use crate::poa_signal_adapter::classify_session_guess;
@@ -128,10 +210,31 @@ pub const POA_SIGNAL_SESSION_OPEN_STATEMENT_V1: &str = "POA-SIGNAL-SESSION-OPEN-
 /// Schema of the statement a player signs to spend one burst.
 pub const POA_SIGNAL_SESSION_GUESS_STATEMENT_V1: &str = "POA-SIGNAL-SESSION-GUESS-STATEMENT-1";
 
-/// Sessions are cheap to serve and expensive to abuse; this is a shape guard on the
-/// authenticated surface, not the game's budget. The game's budget is
-/// [`POA_SIGNAL_SESSION_MAX_ROUNDS`], and it is durable.
+/// Per-IP write budget (`open` + `guess`), proxy-aware. Not the game's budget — the
+/// game's budget is [`POA_SIGNAL_SESSION_MAX_ROUNDS`] and it is durable. This is the
+/// ceiling on how fast one network origin may make this node do Ed25519 work.
 const SESSION_REQUESTS_PER_MINUTE: u32 = 60;
+
+/// Per-IP read budget for the transcript read-back. Higher than the write budget because
+/// a read classifies nothing and spends nothing — but not unbounded, because it is now
+/// anonymous and it does open the store.
+const SESSION_READS_PER_MINUTE: u32 = 180;
+
+/// ⚑ Per-PLAYER-KEY write budget, and it is charged only after a signature verified.
+///
+/// A whole judged run is `1 + POA_SIGNAL_SESSION_MAX_ROUNDS` = six writes, ever. Twelve
+/// per minute is two complete runs' worth — far above any human hand and far below what
+/// automation would want — so a key that exceeds it is not playing, and a key that is
+/// playing never sees it.
+pub(crate) const SESSION_WRITES_PER_PLAYER_PER_MINUTE: u32 = 12;
+
+/// Concurrent session requests in flight across the whole surface. Bounds the work an
+/// anonymous flood can hold open at once, independently of any per-key or per-IP window.
+const SESSION_MAX_IN_FLIGHT: usize = 32;
+
+/// Prune the per-key window map once it exceeds this many live keys. See
+/// [`PlayerKeyBudget`] for why this bound is generous rather than tight.
+const PLAYER_BUDGET_PRUNE_AT: usize = 4096;
 
 /// One three-band code, as it appears on every session wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,25 +406,191 @@ impl SessionRefusal {
 
 type SessionResult<T> = Result<T, (StatusCode, Json<PoaSignalSessionRefusalBodyV1>)>;
 
+/// A fixed-window request budget keyed by the **player key**, charged only once a
+/// signature has proved possession of that key.
+///
+/// ⚑ THE ORDERING IS THE WHOLE DESIGN. A per-key budget charged BEFORE verification is a
+/// griefing primitive, not a defence: anyone could name a victim's public key — they are
+/// public on chain — send garbage, and lock that player out of their own run. So
+/// [`SessionAdmission::charge_player`] runs after `verify_player_signature`, and the only
+/// caller who can move a counter in this map is the holder of the corresponding secret.
+///
+/// That also settles the memory question this map would otherwise raise on an anonymous
+/// surface: an attacker cannot grow it at all without holding secret keys, so
+/// [`PLAYER_BUDGET_PRUNE_AT`] is a generous housekeeping bound rather than a defence.
+#[derive(Clone)]
+struct PlayerKeyBudget {
+    state: Arc<Mutex<HashMap<[u8; 32], (u32, Instant)>>>,
+    max_requests: u32,
+    window: Duration,
+}
+
+impl PlayerKeyBudget {
+    fn new(max_requests: u32, window_secs: u64) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(HashMap::new())),
+            max_requests,
+            window: Duration::from_secs(window_secs),
+        }
+    }
+
+    /// `true` if this key may proceed. Fixed window, same shape as `api::RateLimiter`.
+    async fn charge(&self, player_key: [u8; 32]) -> bool {
+        let mut map = self.state.lock().await;
+        let now = Instant::now();
+        if map.len() > PLAYER_BUDGET_PRUNE_AT {
+            let window = self.window;
+            map.retain(|_, (_, started)| now.duration_since(*started) < window);
+        }
+        let entry = map.entry(player_key).or_insert((0, now));
+        if now.duration_since(entry.1) >= self.window {
+            *entry = (0, now);
+        }
+        entry.0 += 1;
+        entry.0 <= self.max_requests
+    }
+}
+
+/// ⚑ THE ABUSE BUDGET THAT REPLACES THE BEARER TOKEN, 2026-08-07.
+///
+/// When these routes moved into `public_routes`, the bearer stopped being the thing that
+/// kept a stranger from hammering them. It was never the thing that AUTHORIZED a write —
+/// the player signature is, and always was — but it was, incidentally, the thing that
+/// made abuse require a credential. Dropping it without replacing that is how a
+/// player-facing route becomes a free CPU faucet, so it is replaced here, explicitly,
+/// with three budgets that bind different resources:
+///
+/// | budget | keyed on | what it bounds |
+/// |---|---|---|
+/// | [`SESSION_REQUESTS_PER_MINUTE`] | client IP (proxy-aware) | how fast one network origin can make this node verify Ed25519 |
+/// | [`SESSION_WRITES_PER_PLAYER_PER_MINUTE`] | player key, POST-verification | how fast one identity can drive the store, regardless of how many IPs it has |
+/// | [`SESSION_MAX_IN_FLIGHT`] | nothing — global | how much work can be held open at once, regardless of windows |
+///
+/// The per-IP one alone is not enough (one identity behind many addresses walks past it);
+/// the per-key one alone is not enough (an unsigned flood never reaches it); and neither
+/// bounds concurrency, which is what a slow-loris style flood actually consumes. Hence
+/// three, and hence in this order:
+///
+/// 1. **concurrency permit** — refused as `session-busy`, before any parsing,
+/// 2. **per-IP window** — refused as `session-rate-limit`, before any crypto,
+/// 3. **signature verification** — `session-signature`,
+/// 4. **per-key window** — refused as `session-player-rate-limit`, and ONLY here, because
+///    a key's budget must not be spendable by someone who cannot sign for it.
+///
+/// The read-back takes 1 and 2 with a larger window ([`SESSION_READS_PER_MINUTE`]) and
+/// deliberately NOT 4: charging a read against the named player's key would hand anyone
+/// who knows a public key a way to exhaust that player's allowance, which is the exact
+/// griefing this ordering exists to refuse.
+#[derive(Clone)]
+struct SessionAdmission {
+    per_ip_writes: RateLimiter,
+    per_ip_reads: RateLimiter,
+    per_player_writes: PlayerKeyBudget,
+    in_flight: Arc<Semaphore>,
+}
+
+impl SessionAdmission {
+    fn new() -> Self {
+        Self {
+            per_ip_writes: RateLimiter::new(SESSION_REQUESTS_PER_MINUTE, 60),
+            per_ip_reads: RateLimiter::new(SESSION_READS_PER_MINUTE, 60),
+            per_player_writes: PlayerKeyBudget::new(SESSION_WRITES_PER_PLAYER_PER_MINUTE, 60),
+            in_flight: Arc::new(Semaphore::new(SESSION_MAX_IN_FLIGHT)),
+        }
+    }
+
+    /// Step 1. Held for the life of the request; dropping the permit returns it.
+    fn enter(&self) -> Result<OwnedSemaphorePermit, SessionRefusal> {
+        self.in_flight.clone().try_acquire_owned().map_err(|_| {
+            SessionRefusal::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "session-busy",
+                format!(
+                    "this node is already serving {SESSION_MAX_IN_FLIGHT} judged session requests; \
+                     nothing was spent, retry"
+                ),
+            )
+        })
+    }
+
+    /// Step 2, write side.
+    async fn admit_write(
+        &self,
+        addr: SocketAddr,
+        headers: &HeaderMap,
+    ) -> Result<(), SessionRefusal> {
+        if self.per_ip_writes.check_request(addr.ip(), headers).await {
+            return Ok(());
+        }
+        Err(SessionRefusal::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "session-rate-limit",
+            format!(
+                "more than {SESSION_REQUESTS_PER_MINUTE} judged session writes from this address in \
+                 one minute. No burst was spent — a whole run is six writes"
+            ),
+        ))
+    }
+
+    /// Step 2, read side.
+    async fn admit_read(
+        &self,
+        addr: SocketAddr,
+        headers: &HeaderMap,
+    ) -> Result<(), SessionRefusal> {
+        if self.per_ip_reads.check_request(addr.ip(), headers).await {
+            return Ok(());
+        }
+        Err(SessionRefusal::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "session-rate-limit",
+            format!(
+                "more than {SESSION_READS_PER_MINUTE} judged session reads from this address in one \
+                 minute. A read spends nothing; slow down"
+            ),
+        ))
+    }
+
+    /// Step 4. ⚠ Call this only after [`verify_player_signature`] has returned `Ok`.
+    async fn charge_player(&self, player_key: [u8; 32]) -> Result<(), SessionRefusal> {
+        if self.per_player_writes.charge(player_key).await {
+            return Ok(());
+        }
+        Err(SessionRefusal::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "session-player-rate-limit",
+            format!(
+                "this player key has made more than {SESSION_WRITES_PER_PLAYER_PER_MINUTE} judged \
+                 session writes in one minute, and a whole run is six. No burst was spent. This \
+                 budget is charged only against a signature that verified, so nobody else can \
+                 exhaust it for you"
+            ),
+        ))
+    }
+}
+
 pub(crate) fn routes() -> Router<NodeState> {
-    let open_limiter = RateLimiter::new(SESSION_REQUESTS_PER_MINUTE, 60);
-    let guess_limiter = RateLimiter::new(SESSION_REQUESTS_PER_MINUTE, 60);
+    let admission = SessionAdmission::new();
+    let open_admission = admission.clone();
+    let guess_admission = admission.clone();
     Router::new()
         .route(
             "/api/poa/signal/{authority}/session/open",
             post(move |connect, headers, path, state, body| {
-                post_session_open(connect, headers, path, state, body, open_limiter.clone())
+                post_session_open(connect, headers, path, state, body, open_admission.clone())
             }),
         )
         .route(
             "/api/poa/signal/{authority}/session/guess",
             post(move |connect, headers, path, state, body| {
-                post_session_guess(connect, headers, path, state, body, guess_limiter.clone())
+                post_session_guess(connect, headers, path, state, body, guess_admission.clone())
             }),
         )
         .route(
             "/api/poa/signal/{authority}/session/{player}",
-            get(get_session),
+            get(move |connect, headers, path, state| {
+                get_session(connect, headers, path, state, admission.clone())
+            }),
         )
 }
 
@@ -569,9 +838,9 @@ async fn post_session_open(
     Path(authority): Path<String>,
     State(state): State<NodeState>,
     Json(request): Json<PoaSignalSessionOpenRequestV1>,
-    limiter: RateLimiter,
+    admission: SessionAdmission,
 ) -> SessionResult<Json<PoaSignalSessionResponseV1>> {
-    open_session(addr, headers, authority, state, request, limiter)
+    open_session(addr, headers, authority, state, request, admission)
         .await
         .map_err(SessionRefusal::into_response)
 }
@@ -582,22 +851,22 @@ async fn open_session(
     authority: String,
     state: NodeState,
     request: PoaSignalSessionOpenRequestV1,
-    limiter: RateLimiter,
+    admission: SessionAdmission,
 ) -> Result<Json<PoaSignalSessionResponseV1>, SessionRefusal> {
-    if !limiter.check_request(addr.ip(), &headers).await {
-        return Err(SessionRefusal::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "session-rate-limit",
-            "too many session requests",
-        ));
-    }
+    // (1) concurrency, (2) per-IP — both BEFORE any crypto. See `SessionAdmission`.
+    let _permit = admission.enter()?;
+    admission.admit_write(addr, &headers).await?;
     let (authority_id, slot, _head) = resolve_slot(&state, &authority).await?;
     let player_key = parse_hex32("player_key", &request.player_key)?;
+    // (3) the only AUTHORIZATION there is, then (4) the per-key budget. Never (4) first:
+    // a per-key budget charged before verification is a way to lock a player out of
+    // their own run using nothing but their public key.
     verify_player_signature(
         player_key,
         &request.signature,
         &open_statement_message(authority_id, slot.slot(), player_key),
     )?;
+    admission.charge_player(player_key).await?;
 
     let record = {
         let s = state.read().await;
@@ -630,9 +899,9 @@ async fn post_session_guess(
     Path(authority): Path<String>,
     State(state): State<NodeState>,
     Json(request): Json<PoaSignalSessionGuessRequestV1>,
-    limiter: RateLimiter,
+    admission: SessionAdmission,
 ) -> SessionResult<Json<PoaSignalSessionResponseV1>> {
-    submit_guess(addr, headers, authority, state, request, limiter)
+    submit_guess(addr, headers, authority, state, request, admission)
         .await
         .map_err(SessionRefusal::into_response)
 }
@@ -655,18 +924,15 @@ async fn submit_guess(
     authority: String,
     state: NodeState,
     request: PoaSignalSessionGuessRequestV1,
-    limiter: RateLimiter,
+    admission: SessionAdmission,
 ) -> Result<Json<PoaSignalSessionResponseV1>, SessionRefusal> {
-    if !limiter.check_request(addr.ip(), &headers).await {
-        return Err(SessionRefusal::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "session-rate-limit",
-            "too many session requests",
-        ));
-    }
+    // (1) concurrency, (2) per-IP — both BEFORE any crypto. See `SessionAdmission`.
+    let _permit = admission.enter()?;
+    admission.admit_write(addr, &headers).await?;
     let (authority_id, slot, head) = resolve_slot(&state, &authority).await?;
     let player_key = parse_hex32("player_key", &request.player_key)?;
     let guess = request.guess.parse()?;
+    // (3) authorization, then (4) the per-key budget — in that order, always.
     verify_player_signature(
         player_key,
         &request.signature,
@@ -678,6 +944,7 @@ async fn submit_guess(
             request.guess,
         ),
     )?;
+    admission.charge_player(player_key).await?;
 
     let existing = {
         let s = state.read().await;
@@ -791,20 +1058,34 @@ async fn submit_guess(
 /// This carries no signature requirement because it discloses only what the named
 /// player has already been served. It is what makes a lost response recoverable instead
 /// of a lost burst.
+///
+/// ⚑ It is charged against the CALLER'S IP and never against the named player's key —
+/// see [`SessionAdmission`]. Charging a read to the key in the path would let anyone who
+/// knows a public key (they are public on chain) spend that player's allowance without
+/// signing anything. Why the read cannot be walked at all is the "THE READ-BACK CANNOT
+/// ENUMERATE ANOTHER PLAYER'S SESSION" section of the module header.
 async fn get_session(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path((authority, player)): Path<(String, String)>,
     State(state): State<NodeState>,
+    admission: SessionAdmission,
 ) -> SessionResult<Json<PoaSignalSessionResponseV1>> {
-    read_session(authority, player, state)
+    read_session(addr, headers, authority, player, state, admission)
         .await
         .map_err(SessionRefusal::into_response)
 }
 
 async fn read_session(
+    addr: SocketAddr,
+    headers: HeaderMap,
     authority: String,
     player: String,
     state: NodeState,
+    admission: SessionAdmission,
 ) -> Result<Json<PoaSignalSessionResponseV1>, SessionRefusal> {
+    let _permit = admission.enter()?;
+    admission.admit_read(addr, &headers).await?;
     let (authority_id, slot, _head) = resolve_slot(&state, &authority).await?;
     let player_key = parse_hex32("player", &player)?;
     let record = {
@@ -1155,5 +1436,96 @@ mod tests {
     #[test]
     fn the_session_budget_is_the_rules_budget() {
         assert_eq!(POA_SIGNAL_SESSION_MAX_ROUNDS, 5);
+    }
+
+    /// The abuse budget that replaced the bearer token admits a whole judged run and
+    /// then some, and refuses well before anything a human would do.
+    ///
+    /// A run is `1 + MAX_ROUNDS` writes, ever. If the per-key allowance were ever set at
+    /// or below that, a player who lost a response and re-opened would be refused
+    /// mid-game by the very budget meant to protect them.
+    #[test]
+    fn the_per_player_allowance_admits_a_whole_run_with_room_to_resume() {
+        let whole_run = 1 + POA_SIGNAL_SESSION_MAX_ROUNDS;
+        assert!(
+            usize::try_from(SESSION_WRITES_PER_PLAYER_PER_MINUTE).unwrap() > whole_run,
+            "a per-key budget that cannot fit one run plus a resume would refuse honest \
+             play: {SESSION_WRITES_PER_PLAYER_PER_MINUTE} against {whole_run}"
+        );
+        // And it is not so loose as to be decorative: it must be under what the shared
+        // per-IP window already permits, or it bounds nothing the per-IP one did not.
+        assert!(SESSION_WRITES_PER_PLAYER_PER_MINUTE < SESSION_REQUESTS_PER_MINUTE);
+    }
+
+    /// ⚑ ONE KEY'S BUDGET IS ONE KEY'S. Exhausting one leaves every other untouched —
+    /// the same separation `budgets_do_not_cross_players` asserts for the durable game
+    /// budget, now for the rate budget, because a shared counter would be a way to grief
+    /// every player at once.
+    #[tokio::test]
+    async fn a_player_key_budget_is_exhausted_alone() {
+        let budget = PlayerKeyBudget::new(3, 60);
+        let mine = [0x11u8; 32];
+        let yours = [0x22u8; 32];
+        for attempt in 1..=3 {
+            assert!(
+                budget.charge(mine).await,
+                "charge {attempt} must be admitted"
+            );
+        }
+        assert!(
+            !budget.charge(mine).await,
+            "the fourth charge against a budget of three must be refused"
+        );
+        assert!(
+            budget.charge(yours).await,
+            "another key's budget must be untouched by mine"
+        );
+    }
+
+    /// A fresh window admits again. The budget is a rate, not a lifetime cap — the
+    /// lifetime cap is `POA_SIGNAL_SESSION_MAX_ROUNDS` and it is durable.
+    #[tokio::test]
+    async fn a_player_key_budget_is_a_window_not_a_lifetime() {
+        let budget = PlayerKeyBudget::new(1, 60);
+        let key = [0x33u8; 32];
+        assert!(budget.charge(key).await);
+        assert!(!budget.charge(key).await);
+        // Reach in and age the window rather than sleeping a minute in a unit test.
+        {
+            let mut map = budget.state.lock().await;
+            let entry = map.get_mut(&key).expect("the key was charged");
+            entry.1 = Instant::now() - Duration::from_secs(61);
+        }
+        assert!(
+            budget.charge(key).await,
+            "a new window must admit the same key again"
+        );
+    }
+
+    /// The in-flight ceiling refuses BY NAME rather than queueing, and the permit is
+    /// returned when it drops — a ceiling that leaked permits would wedge the surface
+    /// closed after `SESSION_MAX_IN_FLIGHT` requests, forever.
+    // ⚠ `#[tokio::test]`, not `#[test]`: `SessionAdmission::new` builds two
+    // `RateLimiter`s and each spawns its own prune task, so constructing one
+    // outside a runtime panics with "there is no reactor running".
+    #[tokio::test]
+    async fn the_in_flight_ceiling_refuses_by_name_and_returns_its_permits() {
+        let admission = SessionAdmission::new();
+        let held: Vec<_> = (0..SESSION_MAX_IN_FLIGHT)
+            .map(|index| {
+                admission
+                    .enter()
+                    .unwrap_or_else(|_| panic!("permit {index} must be available"))
+            })
+            .collect();
+        let refusal = admission
+            .enter()
+            .expect_err("the ceiling must refuse rather than queue");
+        assert_eq!(refusal.reason, "session-busy");
+        assert_eq!(refusal.status, StatusCode::SERVICE_UNAVAILABLE);
+        drop(held);
+        let _returned = admission
+            .enter()
+            .expect("permits must come back when the requests holding them finish");
     }
 }

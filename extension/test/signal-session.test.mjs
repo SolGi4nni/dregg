@@ -27,16 +27,24 @@ import { createPrivateKey, createPublicKey, sign as edSign, verify as edVerify }
 import {
   MIN_STATEMENT_BYTES,
   SIGNAL_BAND_MAX,
+  SIGNAL_SESSION_GRANT_BUDGET,
+  SIGNAL_SESSION_GRANT_TTL_MS,
   SIGNAL_SESSION_GUESS_SCHEMA,
   SIGNAL_SESSION_KINDS,
+  SIGNAL_SESSION_MAX_ROUNDS,
   SIGNAL_SESSION_OPEN_SCHEMA,
   SIGNAL_SESSION_SCHEMAS,
+  SignalSessionGrantBook,
   U32_MAX,
   U64_MAX,
   bytesToHex,
+  createSignalSessionGrant,
+  describeSignalSessionGrant,
+  grantCovers,
   parseSignalSessionRequest,
   signalSessionStatement,
   slotWire,
+  spendSignalSessionGrant,
 } from "./.build/signal-session.mjs";
 
 // The Rust pin's vector: AUTHORITY = [0x41; 32], PLAYER = [0x55; 32], slot 9.
@@ -438,4 +446,256 @@ test("a turn preimage cannot be signed through this path at all", () => {
     assert.ok(statement.text.startsWith('{"schema":"POA-SIGNAL-SESSION-'));
     assert.ok(!statement.text.startsWith("A"), "the digest is quoted as a field, never emitted raw");
   }
+});
+
+// ---------------------------------------------------------------------------
+// 4. THE SESSION-SCOPED GRANT — and the proof it widens nothing.
+// ---------------------------------------------------------------------------
+//
+// A judged run is 1 open + 5 guesses. Six popups is a usability failure that
+// makes nobody play, AND a security failure: a player trained to click through
+// six identical dialogs cannot see the seventh. So consent moves to "play this
+// judged run", once.
+//
+// The whole risk of that move is one sentence: DOES THE GRANT WIDEN THE SIGNER
+// INTO AN ORACLE? Every structural property of this module is therefore
+// re-asserted here UNDER A LIVE GRANT, not merely in its absence.
+
+const ORIGIN = "https://pathofangels.example";
+const T0 = 1_770_000_000_000;
+
+const parseOrThrow = (request) => {
+  const parsed = parseSignalSessionRequest(request);
+  assert.ok(parsed.ok, `fixture must parse: ${parsed.error ?? ""}`);
+  return parsed.request;
+};
+
+const openReq = (slot = 9) => parseOrThrow({ kind: "open", authorityId: AUTHORITY, slot });
+const guessReq = (round = 0, slot = 9, band = 3) =>
+  parseOrThrow({ kind: "guess", authorityId: AUTHORITY, slot, round, guess: { low: band, mid: band, high: band } });
+
+const freshGrant = (over = {}) =>
+  createSignalSessionGrant({
+    authorityId: AUTHORITY,
+    slot: 9,
+    playerKeyHex: PLAYER,
+    origin: ORIGIN,
+    nowMs: T0,
+    ...over,
+  });
+
+test("a grant is exactly one judged run: 1 open + MAX_ROUNDS guesses, and not one more", () => {
+  assert.equal(SIGNAL_SESSION_MAX_ROUNDS, 5, "the node's POA_SIGNAL_SESSION_MAX_ROUNDS");
+  assert.deepEqual({ ...SIGNAL_SESSION_GRANT_BUDGET }, { open: 1, guess: 5 });
+  // The budget is keyed by the FROZEN allowlist and by nothing else: a grant
+  // cannot acquire a third kind because there is no third kind.
+  assert.deepEqual(Object.keys(SIGNAL_SESSION_GRANT_BUDGET).sort(), [...SIGNAL_SESSION_KINDS].sort());
+  assert.ok(Object.isFrozen(SIGNAL_SESSION_GRANT_BUDGET));
+
+  let grant = freshGrant();
+  assert.ok(Object.isFrozen(grant));
+  // The open.
+  let spend = spendSignalSessionGrant(grant, openReq(), PLAYER, ORIGIN, T0);
+  assert.ok(spend.ok);
+  grant = spend.grant;
+  assert.equal(grant.remaining.open, 0);
+  // A SECOND open is refused — a grant is one run, not a standing permission to
+  // re-open at will.
+  const secondOpen = grantCovers(grant, openReq(), PLAYER, ORIGIN, T0);
+  assert.equal(secondOpen.ok, false);
+  assert.equal(secondOpen.code, "grant-exhausted");
+
+  // Five guesses.
+  for (let round = 0; round < SIGNAL_SESSION_MAX_ROUNDS; round++) {
+    const step = spendSignalSessionGrant(grant, guessReq(round), PLAYER, ORIGIN, T0);
+    assert.ok(step.ok, `guess ${round} must be covered`);
+    grant = step.grant;
+    assert.equal(grant.remaining.guess, SIGNAL_SESSION_MAX_ROUNDS - round - 1);
+  }
+  // ⚑ THE SIXTH IS FRESH CONSENT. There is no renewal verb anywhere in the API.
+  const sixth = grantCovers(grant, guessReq(5), PLAYER, ORIGIN, T0);
+  assert.equal(sixth.ok, false);
+  assert.equal(sixth.code, "grant-exhausted");
+  assert.match(sixth.error, /fresh consent/);
+});
+
+test("a grant for slot N is USELESS at slot N+1", () => {
+  const grant = freshGrant({ slot: 9 });
+  // The mutation asserted present before the verdict: these really are different slots.
+  const here = guessReq(0, 9);
+  const next = guessReq(0, 10);
+  assert.notEqual(here.slot, next.slot);
+  assert.equal(grantCovers(grant, here, PLAYER, ORIGIN, T0).ok, true);
+
+  const refused = grantCovers(grant, next, PLAYER, ORIGIN, T0);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, "grant-scope-slot");
+  // And spending cannot get around covering: the successor grant is not produced.
+  const spend = spendSignalSessionGrant(grant, next, PLAYER, ORIGIN, T0);
+  assert.equal(spend.ok, false);
+  assert.equal(spend.code, "grant-scope-slot");
+  // The `open` for the next slot is refused too — a new run needs a new consent.
+  assert.equal(grantCovers(grant, openReq(10), PLAYER, ORIGIN, T0).code, "grant-scope-slot");
+});
+
+test("every scope field is compared for EQUALITY, and each mismatch is named", () => {
+  const grant = freshGrant();
+  const other = "be".repeat(32);
+  assert.notEqual(other, AUTHORITY);
+  assert.notEqual(other, PLAYER);
+
+  assert.equal(
+    grantCovers(grant, parseOrThrow({ kind: "open", authorityId: other, slot: 9 }), PLAYER, ORIGIN, T0).code,
+    "grant-scope-authority",
+  );
+  assert.equal(grantCovers(grant, openReq(), other, ORIGIN, T0).code, "grant-scope-player");
+  assert.equal(grantCovers(grant, openReq(), PLAYER, "https://evil.example", T0).code, "grant-scope-origin");
+  // No grant at all is not an accept.
+  assert.equal(grantCovers(null, openReq(), PLAYER, ORIGIN, T0).ok, false);
+  assert.equal(grantCovers(undefined, openReq(), PLAYER, ORIGIN, T0).ok, false);
+});
+
+test("a grant expires, and expiry is fresh consent", () => {
+  const grant = freshGrant();
+  assert.equal(grant.expiresAtMs, T0 + SIGNAL_SESSION_GRANT_TTL_MS);
+  assert.equal(grantCovers(grant, openReq(), PLAYER, ORIGIN, grant.expiresAtMs - 1).ok, true);
+  // Exactly AT the expiry is already too late — the comparison is strict.
+  const atExpiry = grantCovers(grant, openReq(), PLAYER, ORIGIN, grant.expiresAtMs);
+  assert.equal(atExpiry.ok, false);
+  assert.equal(atExpiry.code, "grant-expired");
+  assert.equal(grantCovers(grant, openReq(), PLAYER, ORIGIN, grant.expiresAtMs + 1e9).code, "grant-expired");
+  // A caller cannot ask for a longer one than the policy.
+  const greedy = freshGrant({ ttlMs: SIGNAL_SESSION_GRANT_TTL_MS * 1000 });
+  assert.equal(greedy.expiresAtMs, T0 + SIGNAL_SESSION_GRANT_TTL_MS);
+});
+
+test("⚑ a grant relaxes NONE of the signer's structural properties", () => {
+  // Property 1 — NO BYTES PARAMETER. A grant is checked against a PARSED
+  // request, and a payload carrying bytes never becomes one.
+  const smuggled = parseSignalSessionRequest({
+    kind: "open",
+    authorityId: AUTHORITY,
+    slot: 9,
+    message: Array.from(Buffer.alloc(32, 0x41)),
+  });
+  assert.equal(smuggled.ok, false, "a bytes field must not survive parsing, grant or no grant");
+  assert.match(smuggled.error, /exactly/);
+
+  // Property 2 — EXACT KEY SETS still hold; the grant is downstream of them.
+  for (const hostile of [
+    { kind: "open", authorityId: AUTHORITY, slot: 9, statement: "x" },
+    { kind: "guess", authorityId: AUTHORITY, slot: 9, round: 0, guess: { low: 0, mid: 0, high: 0 }, bytes: [1] },
+    { kind: "transfer", authorityId: AUTHORITY, slot: 9 },
+  ]) {
+    assert.equal(parseSignalSessionRequest(hostile).ok, false, `must refuse: ${JSON.stringify(hostile)}`);
+  }
+
+  // Property 3 — THE KIND ALLOWLIST IS STILL EXACTLY TWO, and a grant's own
+  // budget cannot introduce a third.
+  const grant = freshGrant();
+  assert.deepEqual(Object.keys(grant.remaining).sort(), ["guess", "open"]);
+  assert.ok(Object.isFrozen(grant.remaining));
+  assert.equal(grant.remaining.transfer, undefined);
+  // Even if a caller hands a forged grant object naming a third kind, the parse
+  // upstream means no request with that kind can ever be presented to it.
+  const forged = Object.freeze({ ...grant, remaining: Object.freeze({ open: 1, guess: 5, transfer: 99 }) });
+  assert.equal(parseSignalSessionRequest({ kind: "transfer", authorityId: AUTHORITY, slot: 9 }).ok, false);
+  assert.equal(grantCovers(forged, openReq(), PLAYER, ORIGIN, T0).ok, true, "the real kinds still work");
+
+  // Property 4 — THE PLAYER KEY IS SUPPLIED BY CUSTODY. The grant takes it as a
+  // separate argument and refuses a different one; the statement builder still
+  // takes it separately too, so a grant cannot make the page name a subject.
+  assert.equal(grantCovers(grant, openReq(), keyFromSeed(8).pubkeyHex, ORIGIN, T0).code, "grant-scope-player");
+  const statement = signalSessionStatement(openReq(), PLAYER);
+  assert.ok(statement.text.includes(`"player_key":"${PLAYER}"`));
+
+  // Property 5 — THE LENGTH FLOOR. Every statement reachable while a grant is
+  // live is the SAME statement, and the image is unchanged: 219 bytes minimum,
+  // never 32. (⚠ 219, not the 148 this has been quoted as.)
+  assert.equal(MIN_STATEMENT_BYTES, 219);
+  let live = grant;
+  let covered = 0;
+  for (const request of [openReq(), guessReq(0), guessReq(1), guessReq(2), guessReq(3), guessReq(4)]) {
+    const spend = spendSignalSessionGrant(live, request, PLAYER, ORIGIN, T0);
+    assert.ok(spend.ok, "the whole run must be covered by one grant");
+    live = spend.grant;
+    covered += 1;
+    const text = signalSessionStatement(request, PLAYER);
+    assert.ok(text.bytes.length >= MIN_STATEMENT_BYTES);
+    assert.notEqual(text.bytes.length, 32);
+    assert.ok(text.text.startsWith('{"schema":"POA-SIGNAL-SESSION-'));
+  }
+  assert.equal(covered, 6, "one open plus five guesses");
+
+  // And the a-priori image sweep is byte-identical with a grant held: the grant
+  // is not on the statement-building path at all.
+  for (const s of everyReachableStatement()) {
+    assert.ok(s.bytes.length >= MIN_STATEMENT_BYTES);
+    assert.notEqual(s.bytes.length, 32);
+  }
+});
+
+test("a grant is immutable — spending returns a successor and never mutates the original", () => {
+  const grant = freshGrant();
+  const spend = spendSignalSessionGrant(grant, guessReq(0), PLAYER, ORIGIN, T0);
+  assert.ok(spend.ok);
+  assert.equal(grant.remaining.guess, 5, "the original grant is untouched");
+  assert.equal(spend.grant.remaining.guess, 4);
+  assert.notEqual(spend.grant, grant);
+  // Frozen for real: a write throws in module (strict) code rather than silently
+  // widening the budget.
+  assert.throws(() => {
+    grant.remaining.guess = 99;
+  }, TypeError);
+});
+
+test("the grant book holds ONE grant, applies expiry on read, and clears", () => {
+  const book = new SignalSessionGrantBook();
+  // With nothing remembered, every request needs consent.
+  assert.equal(book.consume(openReq(), PLAYER, ORIGIN, T0).ok, false);
+
+  book.remember(freshGrant());
+  assert.equal(book.consume(openReq(), PLAYER, ORIGIN, T0).ok, true);
+  assert.equal(book.peek(T0).remaining.open, 0, "consuming spends the stored grant");
+  assert.equal(book.consume(openReq(), PLAYER, ORIGIN, T0).code, "grant-exhausted");
+
+  // A second slot's grant REPLACES the first — there is never a set of standing
+  // authorizations a player cannot see the size of.
+  book.remember(freshGrant({ slot: 10 }));
+  assert.equal(book.consume(guessReq(0, 9), PLAYER, ORIGIN, T0).code, "grant-scope-slot");
+  assert.equal(book.consume(guessReq(0, 10), PLAYER, ORIGIN, T0).ok, true);
+
+  // Expiry is applied on READ, so a stale grant is never handed out.
+  assert.equal(book.peek(T0 + SIGNAL_SESSION_GRANT_TTL_MS), null);
+  book.remember(freshGrant());
+  book.clear();
+  assert.equal(book.peek(T0), null);
+  assert.equal(book.consume(openReq(), PLAYER, ORIGIN, T0).ok, false);
+});
+
+test("a malformed scope is refused at mint rather than becoming a loose grant", () => {
+  const good = { authorityId: AUTHORITY, slot: 9, playerKeyHex: PLAYER, origin: ORIGIN };
+  assert.ok(createSignalSessionGrant(good));
+  for (const [what, over] of [
+    ["an uppercase authority", { authorityId: MIXED_HEX_UPPER }],
+    ["a short authority", { authorityId: "ab" }],
+    ["an uppercase player key", { playerKeyHex: MIXED_HEX_UPPER }],
+    ["a negative slot", { slot: -1 }],
+    ["a slot past u64::MAX", { slot: (U64_MAX + 1n).toString() }],
+    ["an empty origin", { origin: "" }],
+    ["a missing origin", { origin: undefined }],
+  ]) {
+    assert.throws(() => createSignalSessionGrant({ ...good, ...over }), TypeError, what);
+  }
+});
+
+test("the consent surface can say what it is granting, in the grant's own words", () => {
+  const description = describeSignalSessionGrant(freshGrant());
+  // It must name the SLOT, the budget and the origin — a dialog that says
+  // "allow this site to sign" is the thing this whole design refuses.
+  assert.match(description, /slot 9/);
+  assert.match(description, /1 open \+ up to 5 guess signatures/);
+  assert.ok(description.includes(ORIGIN));
+  assert.ok(description.includes(PLAYER.slice(0, 16)));
+  assert.ok(!/sign anything/i.test(description));
 });

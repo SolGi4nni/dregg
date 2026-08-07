@@ -30,6 +30,25 @@
 //! where it belongs: `SignalTriangulation.one_round_never_determines_the_target` and
 //! `SignalFeedbackRuntime.served_transcript_cannot_separate_feedback_equivalent_targets`.
 //!
+//! # ⚑ AND IT IS PLAYED ANONYMOUSLY, 2026-08-07
+//!
+//! Every session request in this file is now sent from [`REMOTE`] — a non-loopback
+//! address carrying no bearer token — because `poa_signal_session::routes()` moved from
+//! `protected_routes` into `public_routes` today. `require_auth` refuses exactly that
+//! caller, so each 200 below is positive evidence the request never reached that layer
+//! and the player signature carried the whole authorization.
+//!
+//! The assertion that used to live here — "the judged session routes must sit behind the
+//! bearer gate" — was INVERTED rather than deleted, into the two poles the move has to
+//! survive:
+//!
+//! * **served** — anonymous + a signature that verifies → `200`, and a full judged run
+//!   plays through to a settlement,
+//! * **refused BY NAME** — anonymous + a wrong, truncated or absent signature →
+//!   `401 session-signature`, three ways, with the forgery exhibited to differ from the
+//!   honest bytes before the verdict is read, and with the read-back afterwards showing
+//!   nothing was opened, resumed or spent.
+//!
 //! ⚠ Requires the linked Lean archive (judge + derivation + feedback exports). It
 //! DEMANDS them rather than skipping.
 
@@ -61,10 +80,21 @@ const MISSION_ID: u64 = 1;
 const SECRET: [u8; 32] = [0x77; 32];
 
 /// Loopback: `require_auth`'s no-bearer-seed branch admits a loopback caller, which is
-/// how these AUTHENTICATED routes are reachable at all in a harness with no passphrase.
+/// how the still-authenticated routes in this file (the settling claim path, `/status`)
+/// are reachable at all in a harness with no passphrase.
 const LOOPBACK: &str = "127.0.0.1:4470";
-/// Not loopback. Used once, to show the session routes really are behind the gate.
+/// ⚑ NOT LOOPBACK, and it is where every SESSION request in this file is now sent from.
+///
+/// Until 2026-08-07 this address appeared exactly once, to assert the session routes
+/// were behind the bearer gate. They are not any more (`poa_signal_session::routes()`
+/// moved into `public_routes`), and the inversion is not "delete that assertion": it is
+/// to drive the WHOLE judged run from here. `require_auth` refuses a non-loopback caller
+/// with no bearer seed, so every 200 below is proof the request never touched that layer
+/// — the player signature is carrying the entire authorization, exactly as claimed.
 const REMOTE: &str = "203.0.113.7:4471";
+/// A second anonymous address, for the poles that must not share a per-IP window with
+/// the run itself.
+const REMOTE_TWO: &str = "198.51.100.9:4472";
 
 fn default_token() -> [u8; 32] {
     crate::executor_setup::default_token_id()
@@ -350,8 +380,20 @@ fn player_ed25519(player: &dregg_sdk::AgentCipherclerk) -> SigningKey {
     SigningKey::from_bytes(&player.gossip_signing_key().to_bytes())
 }
 
+/// Open a session AS AN ANONYMOUS REMOTE CALLER. No bearer, no loopback — nothing but
+/// the player's own signature over the re-derived statement.
 async fn open_session(
     app: &axum::Router,
+    authority: &str,
+    authority_id: [u8; 32],
+    player: &dregg_sdk::AgentCipherclerk,
+) -> (StatusCode, Value) {
+    open_session_from(app, REMOTE, authority, authority_id, player).await
+}
+
+async fn open_session_from(
+    app: &axum::Router,
+    from: &str,
     authority: &str,
     authority_id: [u8; 32],
     player: &dregg_sdk::AgentCipherclerk,
@@ -360,7 +402,7 @@ async fn open_session(
     let signature = player_ed25519(player).sign(&open_statement_message(authority_id, SLOT, key));
     post_json(
         app,
-        LOOPBACK,
+        from,
         &format!("/api/poa/signal/{authority}/session/open"),
         serde_json::json!({
             "player_key": hex_encode(&key),
@@ -388,7 +430,8 @@ async fn guess(
     ));
     post_json(
         app,
-        LOOPBACK,
+        // Anonymous, remote, no bearer — see `REMOTE`.
+        REMOTE,
         &format!("/api/poa/signal/{authority}/session/guess"),
         serde_json::json!({
             "player_key": hex_encode(&key),
@@ -512,20 +555,89 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
         "a fresh node has settled no turns"
     );
 
-    // ── The session routes are AUTHENTICATED. A non-loopback caller with no bearer
-    //    token is refused, while the sibling slot PUBLICATION stays public. ────────
-    let (denied, _) = post_json(
+    // ── ⚑ THE REFUSING POLE, taken FIRST so the serving pole below cannot be read as
+    //    "the gate is simply gone". Anonymous, remote, no bearer — and a signature that
+    //    is NOT the player's. The refusal must be BY NAME and must spend nothing.
+    //
+    //    Mutation asserted present before the verdict: the forged bytes are exhibited
+    //    to differ from the honest ones. A refusal test whose "hostile" input stopped
+    //    being hostile is a green light that checks nothing.
+    let solver_key = solver.public_key().0;
+    let honest_open = player_ed25519(&solver)
+        .sign(&open_statement_message(federation_id, SLOT, solver_key))
+        .to_bytes();
+    let impostor_open = SigningKey::from_bytes(&[0xEE; 32])
+        .sign(&open_statement_message(federation_id, SLOT, solver_key))
+        .to_bytes();
+    assert_ne!(
+        honest_open, impostor_open,
+        "the forged signature must actually differ from the honest one"
+    );
+    //
+    //    ⚑ AND THE COUNT IS DELIBERATE. It is one MORE than
+    //    `SESSION_WRITES_PER_PLAYER_PER_MINUTE`, which makes this the detector for the
+    //    ordering inside `SessionAdmission`: if the per-player-key budget were charged
+    //    BEFORE the signature check, the last of these would come back
+    //    `session-player-rate-limit` and the honest open below would be refused too —
+    //    i.e. a stranger would have locked this player out of their own run using
+    //    nothing but a public key. Every one of them must say `session-signature`.
+    let forgeries = crate::poa_signal_session::SESSION_WRITES_PER_PLAYER_PER_MINUTE + 1;
+    for attempt in 0..forgeries {
+        let (label, signature) = match attempt % 3 {
+            0 => ("a signature by the wrong key", hex_encode(&impostor_open)),
+            1 => ("a truncated signature", "00".to_owned()),
+            _ => ("no signature at all", String::new()),
+        };
+        let (status, body) = post_json(
+            &app,
+            REMOTE_TWO,
+            &format!("/api/poa/signal/{authority}/session/open"),
+            serde_json::json!({ "player_key": hex_encode(&solver_key), "signature": signature }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "attempt {attempt} ({label}) must be refused as unauthorized, not admitted \
+             and not 403'd by a bearer layer that no longer runs: {body}"
+        );
+        assert_eq!(
+            body["reason"], "session-signature",
+            "attempt {attempt} ({label}) must be refused BY NAME, and NEVER as a \
+             per-player rate limit — an unverified request must not be able to spend a \
+             victim's budget: {body}"
+        );
+    }
+    // ⚑ AND NOTHING WAS SPENT. Three refused opens left no session behind at all — the
+    //   read-back 404s exactly as it does for a player who never played.
+    let (after_forgery, _) = get_json_from(
         &app,
-        REMOTE,
-        &format!("/api/poa/signal/{authority}/session/open"),
-        serde_json::json!({ "player_key": hex_encode(&solver.public_key().0), "signature": "00" }),
+        REMOTE_TWO,
+        &format!(
+            "/api/poa/signal/{authority}/session/{}",
+            hex_encode(&solver_key)
+        ),
     )
     .await;
     assert_eq!(
-        denied,
-        StatusCode::FORBIDDEN,
-        "the judged session routes must sit behind the bearer gate"
+        after_forgery,
+        StatusCode::NOT_FOUND,
+        "a refused signature must not have opened, resumed or spent anything"
     );
+
+    // ── ⚑ THE READ-BACK CANNOT BE WALKED. A key nobody played answers the SAME 404 as
+    //    a key that has not played yet, so probing separates nothing. There is no
+    //    listing route to enumerate from in the first place.
+    let (stranger_read, stranger_body) = get_json_from(
+        &app,
+        REMOTE_TWO,
+        &format!("/api/poa/signal/{authority}/session/{}", "ab".repeat(32)),
+    )
+    .await;
+    assert_eq!(stranger_read, StatusCode::NOT_FOUND);
+    assert_eq!(stranger_body["reason"], "session-not-open");
+
+    // ── The sibling slot PUBLICATION was already public and stays public. ─────────
     let (public, opening) =
         get_json_from(&app, REMOTE, &format!("/api/poa/signal/{authority}/slot")).await;
     assert_eq!(
@@ -535,9 +647,17 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
     );
     assert_eq!(opening["open"], true);
 
-    // ── Open. Fresh budget, empty transcript, no settlement. ────────────────────
+    // ── ⚑ THE SERVING POLE. The SAME anonymous, bearerless, non-loopback posture that
+    //    was just refused three times — plus a signature that verifies — is SERVED.
+    //    Everything after this point is a judged run played by a caller holding no
+    //    credential of this node whatsoever.
     let (status, session) = open_session(&app, &authority, federation_id, &solver).await;
-    assert_eq!(status, StatusCode::OK, "open must succeed: {session}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an anonymous caller with a valid player signature must be SERVED — no bearer, \
+         no loopback: {session}"
+    );
     assert_eq!(
         session["judged"], true,
         "a judged session says so: {session}"
@@ -605,25 +725,36 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
         "a replayed guess must refuse by name: {replay}"
     );
     assert_eq!(
-        get_json(
+        get_json_from(
             &app,
+            REMOTE,
             &format!(
                 "/api/poa/signal/{authority}/session/{}",
                 hex_encode(&solver.public_key().0)
             )
         )
-        .await["rounds_used"],
+        .await
+        .1["rounds_used"],
         2,
         "the replay must not have spent a burst"
     );
 
-    // ── An impostor cannot spend this player's budget. ──────────────────────────
+    // ── An impostor cannot spend this player's budget — and now the impostor is
+    //    ANONYMOUS, which is the whole point of the route move. It is refused by the
+    //    signature check, the only check that ever mattered, and the burst survives.
     let impostor = SigningKey::from_bytes(&[0xEE; 32]);
     let key = solver.public_key().0;
     let forged = impostor.sign(&guess_statement_message(federation_id, SLOT, key, 2, blank));
+    assert_ne!(
+        forged.to_bytes(),
+        player_ed25519(&solver)
+            .sign(&guess_statement_message(federation_id, SLOT, key, 2, blank))
+            .to_bytes(),
+        "the forged guess signature must actually differ from the honest one"
+    );
     let (forged_status, forged_body) = post_json(
         &app,
-        LOOPBACK,
+        REMOTE_TWO,
         &format!("/api/poa/signal/{authority}/session/guess"),
         serde_json::json!({
             "player_key": hex_encode(&key),
@@ -635,6 +766,20 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
     .await;
     assert_eq!(forged_status, StatusCode::UNAUTHORIZED);
     assert_eq!(forged_body["reason"], "session-signature");
+    assert_eq!(
+        get_json_from(
+            &app,
+            REMOTE,
+            &format!(
+                "/api/poa/signal/{authority}/session/{}",
+                hex_encode(&solver.public_key().0)
+            )
+        )
+        .await
+        .1["rounds_used"],
+        2,
+        "an anonymous forgery must not have spent this player's burst"
+    );
 
     // ── Burst 3: the answer. ────────────────────────────────────────────────────
     let (status, solved) = guess(&app, &authority, federation_id, &solver, 2, target).await;
@@ -799,11 +944,18 @@ async fn a_losing_session_exhausts_its_budget_and_settles_nothing() {
     assert_eq!(reopened["open"], false);
     assert_eq!(reopened["settlement"], Value::Null);
 
-    let read_back = get_json(
+    let (read_status, read_back) = get_json_from(
         &app,
+        REMOTE,
         &format!("/api/poa/signal/{authority}/session/{player_hex}"),
     )
     .await;
+    assert_eq!(
+        read_status,
+        StatusCode::OK,
+        "the read-back is anonymous now — it is what makes a lost response recoverable \
+         instead of a lost burst, and a browser holds no bearer: {read_back}"
+    );
     assert_eq!(read_back["rounds_used"], 5);
     assert_eq!(read_back["settlement"], Value::Null);
     assert_no_leak(&read_back);

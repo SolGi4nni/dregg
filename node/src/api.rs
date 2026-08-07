@@ -2264,6 +2264,55 @@ pub fn router_with_cors(
         // re-derives instead). The published commitment is `commit secret slot`:
         // no player, no mission, ~2^124 to invert.
         .merge(crate::poa_signal_slot_api::routes())
+        // ⚑ PUBLIC ON PURPOSE, 2026-08-07 — moved OUT of `protected_routes`, where a
+        // docblock dated this same morning called it "AUTHENTICATED ON PURPOSE". That
+        // note reasoned correctly about what a session SPENDS and then drew the wrong
+        // conclusion about what a bearer token PROVES.
+        //
+        // THE BEARER WAS NEVER THE AUTHORIZATION. It says "a client of this node"; it
+        // does not say "this player" — and `poa_signal_session`'s own header says so, in
+        // the paragraph explaining why the player signature exists at all. Every session
+        // WRITE is authorized by an Ed25519 signature under the player key over a
+        // statement the node RE-DERIVES from the structured fields
+        // (`verify_player_signature`, which never accepts a pre-encoded message), and the
+        // guess statement covers `round`, so a captured request replays into
+        // `session-round-mismatch` rather than into a second spent burst. Strip the
+        // bearer and not one check gets weaker: the check that mattered never read it.
+        //
+        // What it DID do is exclude every player. A route whose entire purpose is
+        // player-facing play cannot require a credential no player holds, and the cost
+        // was measured: the browser terminal signed a valid statement, POSTed it, and got
+        // a 401 before the signature was ever looked at — `CUSTODY_BLOCKERS[0]` in
+        // `poa-web/src/judged-session.js`. This is the same class as the slot publication
+        // three entries up, which was mounted protected and silently degraded every
+        // browser game to practice.
+        //
+        // ⚠ THE BEARER'S REAL CONTRIBUTION WAS ABUSE RESISTANCE, AND THAT IS REPLACED,
+        // NOT DROPPED. `poa_signal_session::SessionAdmission` binds three distinct
+        // resources: a proxy-aware per-IP window on writes and (larger) on reads, a
+        // per-PLAYER-KEY window charged only AFTER a signature verifies — before it, a
+        // stranger could lock a player out of their own run using nothing but the public
+        // key — and a global in-flight ceiling. Refusals are named `session-rate-limit`,
+        // `session-player-rate-limit`, `session-busy`.
+        //
+        // The standing question, answered rather than waved at: CAN A READER WHO HAS
+        // NEVER PLAYED RECONSTRUCT THE HIDDEN INSTANCE FROM WHAT THESE ROUTES SERVE? No,
+        // and provably: the only thing a session emits about the target is
+        // `SignalTriangulation.feedback`, and Lean's
+        // `SignalFeedbackRuntime.served_transcript_cannot_separate_feedback_equivalent_
+        // targets` shows a whole session's bytes are IDENTICAL for any two targets
+        // consistent with the guesses played. A reader of a transcript is exactly where
+        // the player who produced it is. The document carries no secret, no run seed and
+        // no target, and its `settlement.code` is the player's own solving guess read
+        // back out of the stored transcript.
+        //
+        // And the read-back cannot be WALKED: no route lists sessions, `GET
+        // …/session/{player}` takes one exact 32-byte key, a wrong key is
+        // indistinguishable from an unplayed one (both 404 `session-not-open`), and —
+        // the reason that matters — `HiddenInstance.runSeedFor` takes the player key, so
+        // somebody else's transcript is a transcript of a DIFFERENT target and is worth
+        // nothing against your own run. Full blast radius: the module header.
+        .merge(crate::poa_signal_session::routes())
         .merge(crate::poa_station_api::routes())
         .route(
             "/cipherclerk/unlock",
@@ -2478,23 +2527,9 @@ pub fn router_with_cors(
         // the bearer layer below and applies its own proxy-aware rate/concurrency
         // budget; it is neither anonymous nor a finality/provenance surface.
         .merge(crate::poa_signal_authority_export::routes())
-        // ⚑ AUTHENTICATED ON PURPOSE, 2026-08-07. The judged Signal session spends a
-        // scarce per-player action budget against a LIVE slot secret; its sibling
-        // `poa_signal_slot_api` is deliberately public because it publishes a
-        // curator-signed commitment every reader needs. These are opposite postures and
-        // the split is the point.
-        //
-        // The standing question, answered rather than waved at: CAN A READER WHO HAS
-        // NEVER PLAYED RECONSTRUCT THE HIDDEN INSTANCE FROM WHAT THESE ROUTES SERVE? No,
-        // and provably: the only thing a session emits about the target is
-        // `SignalTriangulation.feedback`, and Lean's
-        // `SignalFeedbackRuntime.served_transcript_cannot_separate_feedback_equivalent_
-        // targets` shows a whole session's bytes are IDENTICAL for any two targets
-        // consistent with the guesses played. A reader of a transcript is exactly where
-        // the player who produced it is. The document carries no secret, no run seed and
-        // no target, and its `settlement.code` is the player's own solving guess read
-        // back out of the stored transcript.
-        .merge(crate::poa_signal_session::routes())
+        // ⚑ `poa_signal_session` USED TO BE MOUNTED HERE and moved to `public_routes` on
+        // 2026-08-07 — see the long note at its new home for why the bearer was never
+        // the check, and what replaced the abuse resistance it incidentally provided.
         // THE DAILY SALVAGE CRATE'S ONE WRITE. Authenticated because opening is an authorized
         // act against a curator-authored roster; the document it returns is still communal
         // (`ShipInstrumentPanel.State` has no per-player field), so mounting it here rather than
@@ -10494,6 +10529,32 @@ mod tests {
             "poa_galley_api",
             "poa_holding_api",
             "poa_records_api",
+            // ⚑ ADDED DELIBERATELY 2026-08-07 — the judged Signal SESSION, the one
+            // module on this list that WRITES. It is here because the bearer it used
+            // to sit behind proved "a client of this node" and never "this player",
+            // while the check that authorizes a session write — an Ed25519 signature
+            // under the player key over a RE-DERIVED statement, `round` inside the
+            // guess statement — is unchanged and unweakened by the move. What the
+            // bearer incidentally supplied, abuse resistance, is replaced explicitly
+            // by `SessionAdmission` (per-IP window, per-player-key window charged
+            // only after verification, global in-flight ceiling).
+            //
+            // The standing question, answered: a reader who has never played cannot
+            // reconstruct a hidden instance from anything these three routes serve.
+            // `SignalFeedbackRuntime.served_transcript_cannot_separate_feedback_
+            // equivalent_targets` proves a whole session's served bytes are IDENTICAL
+            // across every target consistent with the guesses played, and
+            // `a_session_document_never_carries_a_secret_a_seed_or_an_unearned_code`
+            // asserts the same over the live encoder with a known secret installed.
+            // The read-back names one exact 32-byte key, has no listing to walk, and
+            // — because `HiddenInstance.runSeedFor` takes the player key — yields a
+            // DIFFERENT target's transcript, which is worthless against your own run.
+            //
+            // ⚠ Standing condition: this stays sound only while every WRITE here is
+            // player-signature-authorized. If a session route is ever added that
+            // mutates on the strength of the request alone, it does not belong on
+            // this list.
+            "poa_signal_session",
             // Deliberate, 2026-08-06: the curator-signed slot opening is PUBLISHED.
             // It carries statement + curator key + signature and no secret, seed,
             // target or pre-encoded signing message. Mounted protected, it made

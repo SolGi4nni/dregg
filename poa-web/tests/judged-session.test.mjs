@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
   CUSTODY_BLOCKERS,
+  FALLEN_WALLS,
   MAX_ROUNDS,
+  NODE_BEHIND,
+  NODE_SILENT,
   SESSION_SIGNER_METHOD,
   SIGNER_ABSENT,
   buildJudgedPanel,
@@ -375,8 +378,9 @@ test("custody detects the scoped signer, and says what still bites", () => {
   assert.equal(oldExtension.signerAvailable, false);
   assert.equal(oldExtension.blocker.code, "signer-not-installed");
 
-  // ⚑ THE WALL THAT FELL. With the signer installed, the FIRST blocker is no
-  // longer signing — it is the node's bearer layer.
+  // ⚑ THE WALLS THAT FELL. With the signer installed and nothing measured, the
+  // blocker is no longer "the code gates this" — it is `NODE_SILENT`, an honest
+  // "nothing answered yet". The bearer wall is gone from the code entirely.
   const provider = {
     getActiveIdentity: async () => ({}),
     signTurnV3: async () => ({}),
@@ -384,12 +388,19 @@ test("custody detects the scoped signer, and says what still bites", () => {
   };
   const withSigner = judgedCustody(provider);
   assert.equal(withSigner.signerAvailable, true);
-  assert.equal(withSigner.blocker.code, "session-routes-authenticated");
+  assert.equal(withSigner.blocker.code, NODE_SILENT.code);
   assert.equal(withSigner.canPlay, false, "nothing was measured yet, so canPlay stays false");
   assert.equal(withSigner.routesReachable, null);
 
-  // The bearer wall is MEASURED, never assumed: a 401 says it stands, a served
-  // or 404-ing document says it does not, and canPlay follows the measurement.
+  // ⚑ A 401 IS NOW A STALE NODE, NOT A WALL. The distinction is the whole point:
+  // "the code gates this" and "this deployment still does" call for opposite
+  // actions, and the second one is fixed by a redeploy.
+  const stale = judgedCustody(provider, { state: "unauthenticated" });
+  assert.equal(stale.blocker.code, NODE_BEHIND.code);
+  assert.match(stale.blocker.needs, /redeployed/);
+  assert.match(stale.blocker.detail, /public_routes/);
+
+  // Reachability is MEASURED, never assumed, and canPlay follows the measurement.
   assert.equal(routesReachableFrom({ state: "unauthenticated" }), false);
   assert.equal(routesReachableFrom({ state: "ready" }), true);
   assert.equal(routesReachableFrom({ state: "none" }), true);
@@ -402,11 +413,22 @@ test("custody detects the scoped signer, and says what still bites", () => {
 });
 
 test("each custody blocker is a checkable fact about the node", async () => {
+  // ⚑ ONE WALL LEFT, AND IT IS ABOUT SETTLING. `session-routes-authenticated`
+  // was here this morning; it is now in FALLEN_WALLS, by name, so a reader can
+  // tell a wall that fell from one nobody ever noticed.
   assert.deepEqual(
     CUSTODY_BLOCKERS.map((blocker) => blocker.code),
-    ["session-routes-authenticated", "claim-carrier-unbuildable"],
+    ["claim-carrier-unbuildable"],
   );
-  for (const blocker of [...CUSTODY_BLOCKERS, SIGNER_ABSENT]) {
+  assert.deepEqual(
+    FALLEN_WALLS.map((wall) => wall.code),
+    ["no-player-message-signer", "session-routes-authenticated"],
+  );
+  for (const wall of FALLEN_WALLS) {
+    assert.ok(wall.was.length > 0 && wall.landed.length > 0, `${wall.code} must say what it was and what landed`);
+    assert.equal(wall.fell, "2026-08-07");
+  }
+  for (const blocker of [...CUSTODY_BLOCKERS, SIGNER_ABSENT, NODE_BEHIND, NODE_SILENT]) {
     assert.ok(blocker.needs.length > 0, `${blocker.code} must name what would unblock it`);
   }
   // ⚠ BOTH DIRECTIONS, the discipline `today-board.js` uses for the crate routes:
@@ -434,24 +456,57 @@ test("each custody blocker is a checkable fact about the node", async () => {
   assert.match(page, /getActiveIdentity\(\): Promise<ActiveDreggIdentity>/);
   assert.match(page, /no secret key, mnemonic, holding\s+\*\s+receipt, wallet-provider object, or signing capability is returned/);
 
-  // 1. The session routes are protected and the slot publication is not.
+  // ⚑ 1. INVERTED 2026-08-07. This assertion used to read `sessionAt >
+  // protectedAt` — "the session routes are behind the bearer layer" — and it was
+  // the source fact `CUSTODY_BLOCKERS[0]` stood on. The routes moved into
+  // `public_routes`, so it now asserts the OPPOSITE, in the same place, with the
+  // same both-directions discipline: if they are ever mounted protected again,
+  // this reds and the copy that tells a player "you can play" has to change back.
   const api = await readFile(new URL("../../node/src/api.rs", import.meta.url), "utf8");
   const publicAt = api.indexOf("let mut public_routes = Router::new()");
   const protectedAt = api.indexOf("let protected_routes = Router::new()");
-  const sessionAt = api.indexOf("poa_signal_session::routes()");
+  const sessionAt = api.indexOf(".merge(crate::poa_signal_session::routes())");
   const slotAt = api.indexOf("poa_signal_slot_api::routes()");
   assert.ok(publicAt > 0 && protectedAt > publicAt, "route blocks moved; re-anchor this test");
-  assert.ok(sessionAt > protectedAt, "the session routes are no longer protected — this page may now read them");
+  assert.ok(
+    sessionAt > publicAt && sessionAt < protectedAt,
+    "the session routes are no longer PUBLIC — a browser holds no bearer, so this page cannot play",
+  );
   assert.ok(slotAt > publicAt && slotAt < protectedAt, "the slot publication is no longer public");
+  // The abuse budget that replaced the bearer is not optional: a public write
+  // surface with no explicit budget is the thing the move must never become.
+  const sessionRs = await readFile(new URL("../../node/src/poa_signal_session.rs", import.meta.url), "utf8");
+  assert.match(sessionRs, /struct SessionAdmission/, "the abuse budget left the session module");
+  assert.match(sessionRs, /session-player-rate-limit/, "the per-player-key budget is gone");
+  assert.match(sessionRs, /session-busy/, "the in-flight ceiling is gone");
+  // And the ORDER: the per-key budget is charged only after verification. The
+  // opposite order is a way to lock a player out of their own run with a public key.
+  const verifyAt = sessionRs.indexOf("verify_player_signature(");
+  const chargeAt = sessionRs.indexOf("admission.charge_player(player_key)");
+  assert.ok(verifyAt > 0 && chargeAt > verifyAt, "the per-key budget must be charged AFTER the signature verifies");
 
-  // 2. No Signal prepare route, and the one extension claim path carries no transcript.
-  const signal = await readFile(new URL("../../extension/src/poa-signal.ts", import.meta.url), "utf8");
-  assert.match(signal, /keys\.join\(","\) !== "code,missionId,schema"/);
-  assert.doesNotMatch(signal, /transcript/);
+  // ⚑ 2. CORRECTED 2026-08-07, AND THE CORRECTION IS THE FINDING. These two lines
+  // used to read:
+  //     assert.match(signal, /keys\.join\(","\) !== "code,missionId,schema"/);
+  //     assert.doesNotMatch(signal, /transcript/);
+  // Both are FALSE at HEAD. `extension/src/poa-signal.ts` was cut over to
+  // `{schema, missionId, transcript}` in 86786886d and this file was not, so the
+  // carrier wall's second reason had rotted into a lie AND this test was RED at
+  // HEAD — a caller-committed/callee-not split, found while moving the session
+  // routes, not caused by it.
+  //
+  // What is asserted now is only what is TRUE: there is no Signal prepare route,
+  // so nothing hands this PAGE unsigned bytes. Whether the EXTENSION can settle
+  // a judged run end to end is a live question owned by that cutover; if it can,
+  // this wall belongs in FALLEN_WALLS.
   const galley = await readFile(new URL("../../node/src/poa_galley_api.rs", import.meta.url), "utf8");
-  assert.match(galley, /GALLEY_API_PATH\}\/command/);
-  const session = await readFile(new URL("../../node/src/poa_signal_session.rs", import.meta.url), "utf8");
-  assert.doesNotMatch(session, /session\/prepare/);
+  assert.match(galley, /GALLEY_API_PATH\}\/command/, "the Galley's prepare route is the shape Signal lacks");
+  assert.doesNotMatch(sessionRs, /session\/prepare/);
+  const slotApi = await readFile(new URL("../../node/src/poa_signal_slot_api.rs", import.meta.url), "utf8");
+  assert.doesNotMatch(slotApi, /\/prepare/, "a Signal prepare route appeared — this wall may have fallen");
+  // And the wall says so about itself, rather than repeating the dead reason.
+  assert.match(CUSTODY_BLOCKERS[0].detail, /CORRECTED 2026-08-07/);
+  assert.doesNotMatch(CUSTODY_BLOCKERS[0].detail, /takes exactly `\{schema, missionId, code\}`(?! with)/);
 });
 
 // ── Signing, now that there is a signer ───────────────────────────────────────
@@ -545,13 +600,15 @@ test("opening posts the signed open statement, and a 401 is the honest bearer wa
   assert.match(sent[0].url, /\/session\/open$/);
   assert.deepEqual(sent[0].body, { player_key: SIGNER_PLAYER, signature: "ab".repeat(64) });
 
-  // The live deployment: the route refuses this origin before it checks anything.
-  const walled = await openJudgedSession({
+  // A node that predates the 2026-08-07 route move still 401s. That is a STALE
+  // DEPLOYMENT, not a wall, and the state keeps its name so the copy can say so.
+  const stale = await openJudgedSession({
     provider: fakeSigner(), authorityId: AUTHORITY, commitment: COMMITMENT, slot: 9,
     baseUrl: "https://example.test/", fetchImpl: async () => ({ ok: false, status: 401, text: async () => "" }),
   });
-  assert.equal(walled.state, "unauthenticated");
-  assert.equal(walled.code, "session-routes-authenticated");
+  assert.equal(stale.state, "unauthenticated");
+  assert.equal(stale.code, NODE_BEHIND.code);
+  assert.equal(stale.reason, NODE_BEHIND.what);
 
   // A NAMED node refusal keeps its name — a replayed burst is not an outage.
   const replayed = await spendJudgedBurst({
@@ -596,12 +653,20 @@ test("every way of not reading a session lands as a state, never as a judged boa
   assert.equal(ready.session.playerKey, PLAYER);
 });
 
-test("this deployment's authenticated route is the honest 401 path", async () => {
+test("a 401 read-back is reported as a node behind this build, not as a wall", async () => {
   const state = await loadJudgedSession({
     authorityId: AUTHORITY, commitment: COMMITMENT, playerKey: PLAYER,
     baseUrl: "https://example.test/", fetchImpl: jsonFetch({}, 401),
   });
-  assert.equal(state.code, "session-routes-authenticated");
+  assert.equal(state.code, NODE_BEHIND.code);
+  assert.equal(state.reason, NODE_BEHIND.what);
+  // ⚑ AND THE ORDINARY PATH IS SERVED. The read-back is public now, which is what
+  // makes a lost response recoverable instead of a lost burst.
+  const served = await loadJudgedSession({
+    authorityId: AUTHORITY, commitment: COMMITMENT, playerKey: PLAYER,
+    baseUrl: "https://example.test/", fetchImpl: jsonFetch(sessionDocument()),
+  });
+  assert.equal(served.state, "ready");
 });
 
 // ── The panel, in the four states a player can be in ──────────────────────────
@@ -643,15 +708,19 @@ test("slot open + bound identity, no signer installed: the reason says so, and n
   assert.match(panel.action.reason, /Needs: /);
 });
 
-test("slot open + signer installed, bearer wall standing: the reason is the WALL, not the signer", () => {
+test("slot open + signer installed, node behind: the reason is the DEPLOYMENT, not a wall", () => {
   const panel = buildJudgedPanel({
     slot: openSlot,
     custody: judgedCustody(fakeSigner(), { state: "unauthenticated" }),
   });
   assert.equal(panel.state, "unplayable");
   assert.equal(panel.action.enabled, false);
-  assert.equal(panel.action.code, "session-routes-authenticated");
-  assert.doesNotMatch(panel.detail, /will not sign/, "the fallen wall must not be re-asserted as copy");
+  assert.equal(panel.action.code, NODE_BEHIND.code);
+  assert.doesNotMatch(panel.detail, /will not sign/, "a fallen wall must not be re-asserted as copy");
+  // ⚑ The copy must not claim the platform gates this. It does not, since today.
+  assert.doesNotMatch(panel.action.reason, /behind the node's bearer layer/);
+  assert.match(panel.action.reason, /still gates/, "the sentence is about THIS node, not the code");
+  assert.match(panel.action.reason, /redeployed/);
 });
 
 test("⚑ THE POSITIVE POLE: signer installed and the route answered, the action is LIVE", () => {
