@@ -568,11 +568,22 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- and `bridge/src/mina_accumulator_discharge.rs` performs NATIVELY. The pair is the
     -- OLD-ADMITS/NEW-REJECTS exhibit: a chain that does not vanish proves under `-seg` and is
     -- refused under `-final`. `MinaAccumulatorAir.accumulator_discharge_forced` is what the
-    -- emitted constraints force; the ADDEND ROUTING is the named residual (§4 prices it).
+    -- emitted constraints force.
+    -- ⚑ 2026-08-06 — AND THE ADDEND ROUTING IS NO LONGER A RESIDUAL. `-routed` is `-final` plus a
+    -- threaded row-index column and ONE exact-public lookup per row, tuple `(index + 1) ‖ the 96
+    -- addend limbs` = 97 wide. That needed `MAX_EXACT_PUBLIC_ARITY` raised `64 → 97`, which cost a
+    -- JSON re-emit and a re-pin and NO resource: §4's price was retracted at source and the cap
+    -- turned out to be the member count of `dregg-ir2-exact-public-v1.json`. The new pair: a chain
+    -- of honest Vesta points that are NOT this block's addends proves under `-final` and is
+    -- REFUSED under `-routed`, by the balance of `mina_accumulator_addends`.
+    -- `MinaAccumulatorAir.accumulator_discharge_forced_on_declared_addends` concludes over a fold
+    -- in which the trace's addend columns do not occur.
   , ("mina-accumulator-seg.json",
       Dregg2.Circuit.Emit.MinaAccumulatorAir.accSegDesc)
   , ("mina-accumulator-final.json",
       Dregg2.Circuit.Emit.MinaAccumulatorAir.accFinalDesc)
+  , ("mina-accumulator-routed.json",
+      Dregg2.Circuit.Emit.MinaAccumulatorAir.accRoutedDemoDesc)
     -- ⚑ 2026-08-05 — THE CONJUNCTION, THREADED, AND ITS UNTHREADED TWIN. The row withheld below
     -- lands here: the b-polynomial's 15 rounds are 15 ROWS carried by 448 `.transition` legs, so
     -- the width is 2 536 at every round count and the artifact is 4 157 constraints instead of
@@ -662,7 +673,7 @@ Both directions are gated outside Lean:
 -- lean --run EmitByName.lean` dies, and the WHOLE by-name surface is unemittable for every lane
 -- at once. That outage is what produced the eleven private one-off emitters this file spent
 -- 2026-08-05 absorbing. Rows and pin are one atom.
-theorem byNameDescriptors_length : byNameDescriptors.length = 122 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 123 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

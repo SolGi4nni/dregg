@@ -1003,7 +1003,8 @@ pub const CHIP_STATE16_TABLE_AIR_JSON: &str =
 /// them. `Ir2Air` is now `Main | LeanTable`.
 ///
 /// It is a FAMILY rather than a table because the arm was a schema: element `i` is arity `i + 1`,
-/// up to `MAX_EXACT_PUBLIC_ARITY`, and one descriptor may declare tables at several arities at once.
+/// up to `MAX_EXACT_PUBLIC_ARITY` (`97` since 2026-08-06; it was `64`), and one descriptor may
+/// declare tables at several arities at once.
 ///
 /// ⚑ **And the bus name moved out of the string and into the tuple**, which is what made a
 /// per-arity family expressible at all. The deployed shape spent one bus `ir2_exact_public_{id}`
@@ -1978,7 +1979,11 @@ mod tests {
     #[test]
     fn the_exact_public_family_decodes_at_every_arity() {
         let family = exact_public_table_air_family();
-        assert_eq!(family.len(), 64);
+        // ⚑ RAISED 64 -> 97 on 2026-08-06 for `MinaAccumulatorAir`'s 97-wide addend routing tuple
+        // (a key plus a projective Pasta point's 3 x 32 limbs). The cap was the member count of
+        // this artifact and bounded no resource; `descriptor_ir2::MAX_EXACT_PUBLIC_ARITY` pins the
+        // two sides against each other.
+        assert_eq!(family.len(), 97);
         for (i, t) in family.iter().enumerate() {
             let arity = i + 1;
             assert_eq!(t.name, format!("dregg-ir2-exact-public-a{arity}-v1"));

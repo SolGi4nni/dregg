@@ -92,7 +92,36 @@ def traceText (rows : List (List ℤ)) : String :=
 needs for the base trace height. -/
 def N_ADDS : Nat := 7
 
-/-- ⚑ The two descriptors' JSON, for the same reason `EmitPastaBucketed.lean` prints its own: the
+/-- ⚑ `k` honestly threaded rows over an EXPLICIT ADDEND LIST. The routed descriptor needs this
+shape rather than `rowsAdding`'s "same addend every row", because the declared manifest and the
+trace's addend columns must be the SAME list or the exact-public balance refuses. -/
+def rowsFromAddends (M b3 : Nat) (pl : Nat → ℤ) :
+    (Nat × Nat × Nat) → List (Nat × Nat × Nat) → List (List ℤ)
+  | _, [] => []
+  | P, (A :: rest) =>
+      rcbSoundRow M b3 pl P.1 P.2.1 P.2.2 A.1 A.2.1 A.2.2
+        :: rowsFromAddends M b3 pl (rcbAddM M b3 P A) rest
+
+/-- Widen every row to the routed descriptor's `3 049` columns by appending the ROW INDEX, which is
+column `RIDX = 3 048`. -/
+def withRowIndex (rows : List (List ℤ)) : List (List ℤ) :=
+  rows.mapIdx (fun i r => r ++ [(i : ℤ)])
+
+/-- ⚑ **THE SHARP FORGERY'S ADDENDS: `2G` seven times, then the closing negation.**
+
+Every addend is a REAL Vesta point, every row is a genuine `rcbSoundRow`, every thread holds, every
+cell is a legal 8-bit limb, the chain starts at the SAME published `acc_in` (`G`) and ends at the
+SAME published `acc_out` (`O`) — so `PI[0..191]` is byte-identical to the honest trace's. **The only
+thing wrong with it is that the addends are not the ones the descriptor declares.**
+
+That is exactly the case `accumulator_discharge_forced` admits: it proves under `-final` and must be
+REFUSED under `-routed`, by the balance of `mina_accumulator_addends` and by nothing else. -/
+def Q2 : Nat × Nat × Nat := rcbAddM qN curveB3 Gvesta Gvesta
+
+def substitutedAddends : List (Nat × Nat × Nat) :=
+  List.replicate N_ADDS Q2 ++ [negP qN (walk qN curveB3 Q2 Gvesta N_ADDS)]
+
+/-- ⚑ The three descriptors' JSON, for the same reason `EmitPastaBucketed.lean` prints its own: the
 by-name ROUTER (`EmitByName.lean`, where these are registered and where the drift gate reads them)
 imports the whole wrap-verifier cone, so a sibling lane rebuilding that cone makes the router
 unrunnable for reasons that have nothing to do with this artifact. This mode prints
@@ -105,6 +134,9 @@ def descJson (which : String) : Option String :=
   else if which = "final" then
     some (Dregg2.Circuit.DescriptorIR2.emitVmJson2
       Dregg2.Circuit.Emit.MinaAccumulatorAir.accFinalDesc)
+  else if which = "routed" then
+    some (Dregg2.Circuit.DescriptorIR2.emitVmJson2
+      Dregg2.Circuit.Emit.MinaAccumulatorAir.accRoutedDemoDesc)
   else none
 
 def main (args : List String) : IO Unit :=
@@ -112,11 +144,23 @@ def main (args : List String) : IO Unit :=
   | ["desc", w] =>
       match descJson w with
       | some s => IO.println s
-      | none => IO.eprintln "usage: EmitMinaAccumulator.lean desc (seg|final)"
+      | none => IO.eprintln "usage: EmitMinaAccumulator.lean desc (seg|final|routed)"
   | ["discharging"] =>
       IO.print (traceText (dischargingRows qN curveB3 qLimb Gvesta Gvesta N_ADDS))
   | ["open"] =>
       IO.print (traceText (openRows qN curveB3 qLimb Gvesta Gvesta N_ADDS))
   | ["unchained"] =>
       IO.print (traceText (unchainedRows qN curveB3 qLimb Gvesta Gvesta N_ADDS))
-  | _ => IO.eprintln "usage: EmitMinaAccumulator.lean (discharging|open|unchained)"
+  -- ⚑ The ROUTED pair. Both are 3 049 columns wide (the row index in column 3 048); the narrow
+  -- rendering of the SAME substituted chain is what proves under `-final`, which is the
+  -- OLD-ADMITS pole. `demoAddends` is the descriptor's own manifest — one source, not two.
+  | ["routed"] =>
+      IO.print (traceText (withRowIndex (rowsFromAddends qN curveB3 qLimb Gvesta
+        Dregg2.Circuit.Emit.MinaAccumulatorAir.demoAddends)))
+  | ["substituted"] =>
+      IO.print (traceText (withRowIndex (rowsFromAddends qN curveB3 qLimb Gvesta
+        substitutedAddends)))
+  | ["substituted-narrow"] =>
+      IO.print (traceText (rowsFromAddends qN curveB3 qLimb Gvesta substitutedAddends))
+  | _ => IO.eprintln
+      "usage: EmitMinaAccumulator.lean (discharging|open|unchained|routed|substituted|substituted-narrow)"

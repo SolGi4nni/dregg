@@ -1179,7 +1179,8 @@ inside a burn-down of transcriptions would have been the wrong shape.
    indexed by the declared tuple ARITY, and a single descriptor may declare tables at several
    arities at once. So the emitted object is a SCHEMA and the artifact is a JSON ARRAY
    (`emitTableAirFamilyJson`, §4) of the same object the singleton path already decodes — element
-   `i` is arity `i + 1`, up to `MAX_EXACT_PUBLIC_ARITY = 64`.
+   `i` is arity `i + 1`, up to `ExactPublicTableEmit.EP_MAX_ARITY` (`97` since 2026-08-06;
+   it was `64`, and the raise cost a JSON re-emit and no resource).
 
    ⚑ **AND THE BUS NAME MOVED INTO THE TUPLE, which is what made a per-arity family possible at
    all.** This section previously read *"emitting 64 fixed artifacts is not a way out — the bus name

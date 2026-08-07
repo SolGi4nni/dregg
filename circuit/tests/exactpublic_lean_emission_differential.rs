@@ -143,7 +143,7 @@ fn honest_trace() -> Vec<Vec<BabyBear>> {
 #[test]
 fn the_emitted_family_has_the_deleted_arms_shape_at_every_arity() {
     let family = dregg_circuit::table_air::exact_public_table_air_family();
-    assert_eq!(family.len(), 64, "one member per admissible arity");
+    assert_eq!(family.len(), 97, "one member per admissible arity");
 
     for (i, t) in family.iter().enumerate() {
         let arity = i + 1;
@@ -174,10 +174,16 @@ fn the_emitted_family_has_the_deleted_arms_shape_at_every_arity() {
         assert_eq!(leg.mult, TableExpr::Loc(0));
     }
 
-    // The arity ceiling is fail-closed in both directions.
+    // The arity ceiling is fail-closed in both directions. ⚑ MOVED 64 -> 97 on 2026-08-06: this
+    // boundary pin is the thing that went red when the family was widened, which is what a pin is
+    // for. `descriptor_ir2::MAX_EXACT_PUBLIC_ARITY` is the other side.
     assert!(exact_public_table_air_for(0).is_err(), "arity 0");
-    assert!(exact_public_table_air_for(65).is_err(), "past the family");
-    assert!(exact_public_table_air_for(64).is_ok(), "the last member");
+    assert!(exact_public_table_air_for(98).is_err(), "past the family");
+    assert!(exact_public_table_air_for(97).is_ok(), "the last member");
+    assert!(
+        exact_public_table_air_for(64).is_ok(),
+        "and the OLD ceiling is still served — the raise widened, it did not move"
+    );
 }
 
 // -------------------------------------------------------------------------------------------

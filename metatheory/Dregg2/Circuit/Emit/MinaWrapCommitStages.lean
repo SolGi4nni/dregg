@@ -188,7 +188,8 @@ theorem chord_law_stays_on_pallas :
 /-! ## §2 — THE REGISTER ALLOCATION.
 
 Twelve registers, and every one of them is live in the ladder's inner loop — which is what
-`MinaWrapCommitMachine.one_hot_word_is_refused_at_this_register_count` prices. -/
+`MinaWrapCommitMachine.the_one_hot_word_fits_the_raised_cap_and_the_index_word_still_wins`
+prices — ⚠ and whose refusal half is now HISTORICAL: the cap was raised `64 → 97` on 2026-08-06. -/
 
 def ZERO : Nat := 0   -- the constant 0, forced by instruction 0
 def TX : Nat := 1     -- running total, x

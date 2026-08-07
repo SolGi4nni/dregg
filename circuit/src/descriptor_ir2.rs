@@ -7300,6 +7300,45 @@ pub fn prove_vm_descriptor2(
     )
 }
 
+/// [`prove_vm_descriptor2`] with the producer-side PRE-FLIGHT REPLAY bypassed — the single-
+/// descriptor twin of [`prove_vm_descriptors2_batch_inner`]'s `check: false`, and it exists for the
+/// same reason.
+///
+/// ⚑ **WHY A TOOTH NEEDS THIS.** `build_traces`'s `check` block replays every exact-public lookup
+/// (and the memory/map witnesses) IN RUST and refuses eagerly — before the constraint system sees
+/// anything. That is a real fail-closed producer check and it is worth having, **and it proves
+/// nothing about an adversary, who does not run the producer.** A falsifier that stops at the
+/// pre-flight has measured a Rust `assert`, not a circuit. This entry gets the forged witness past
+/// the producer and in front of the DEPLOYED VERIFIER, which is the verdict that matters.
+///
+/// The BATCH rail already offered exactly this knob, but it carries MAIN and EXACT-PUBLIC instances
+/// only ([`require_main_or_exact_public`]), so any descriptor with a range/byte table — which is
+/// every Pasta row — could not reach the circuit adversarially at all until this existed.
+///
+/// ⚠ Never `false` on a production path. [`prove_vm_descriptor2`] is unchanged and still replays.
+///
+/// # Errors
+/// The prover's or the self-verify's own verdict, whichever refuses first.
+#[doc(hidden)]
+pub fn prove_vm_descriptor2_unchecked(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    mem_boundary: &MemBoundaryWitness,
+    map_heaps: &[Vec<HeapLeaf>],
+) -> Result<BatchProof<DreggStarkConfig>, String> {
+    prove_vm_descriptor2_inner(
+        desc,
+        &trace_with_chip_lanes(desc, base_trace)?,
+        public_inputs,
+        mem_boundary,
+        map_heaps,
+        &UMemBoundaryWitness::default(),
+        false,
+        &ir2_config(),
+    )
+}
+
 /// **`prove_vm_descriptor2_umem`** — [`prove_vm_descriptor2`] for descriptors that declare
 /// UNIVERSAL memory ops: takes the declared `(domain, key)` boundary + initial `Option` image
 /// (`UMemBoundaryWitness`, Lean's `(uinit, ufin, uaddrs)` with `ufin` replayed). Everything

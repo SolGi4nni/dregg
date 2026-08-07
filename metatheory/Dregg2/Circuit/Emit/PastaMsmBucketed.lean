@@ -1017,7 +1017,8 @@ theorem coverManifest_digits_are_c_bit (scal : List Nat) (nbits c w i : Nat) :
 
 /-! ## §6 — THE CELL BUDGET, and the one place a deployed cap really does bind.
 
-`MAX_EXACT_PUBLIC_ROWS = 2^21`, `MAX_EXACT_PUBLIC_ARITY = 64`, `MAX_EXACT_PUBLIC_CELLS = 2^25`
+`MAX_EXACT_PUBLIC_ROWS = 2^21`, `MAX_EXACT_PUBLIC_ARITY = 97` (was `64`; raised 2026-08-06),
+`MAX_EXACT_PUBLIC_CELLS = 2^25`
 (`circuit/src/descriptor_ir2.rs`). The cap is documented there as an ALLOCATION bound on the
 verifier — *"a workload decision rather than a correctness one"* — not geometry. -/
 

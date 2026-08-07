@@ -313,7 +313,10 @@ fn the_commitment_machine_has_the_shape_lean_emitted() {
     }
     // ⚑ THE ENCODING FINDING, on the wire: the instruction word is 40 cells and INDEPENDENT of the
     // register count. `MinaWrapVerifierProgram`'s one-hot word would be 1+4+3*12+32 = 73 against the
-    // deployed MAX_EXACT_PUBLIC_ARITY = 64 — REFUSED at this register file, which is why the ROM
+    // MAX_EXACT_PUBLIC_ARITY OF THE DAY (64) — REFUSED at this register file, which is why the ROM
+    // ⚠ that cap is now 97 and the one-hot word FITS; the index encoding stands on the OTHER
+    // reason (`indexWord` is constant in the register count, `oneHotWord` is not). See
+    // `MinaWrapCommitMachine.the_one_hot_word_fits_the_raised_cap_and_the_index_word_still_wins`.
     // carries indices and three decode gates carry the one-hot vectors.
     assert_eq!(ROM_ARITY, 40);
     assert!(1 + 4 + 3 * NREG + SK > 64, "the one-hot word does not fit");

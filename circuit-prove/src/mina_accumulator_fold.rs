@@ -149,6 +149,11 @@
 //! and `MinaAccumulatorAir.the_routing_tuple_does_not_fit_one_table` prices the one deployed
 //! constant in its way (`MAX_EXACT_PUBLIC_ARITY = 64` against a 97-wide point tuple).
 //!
+//! ⚑ **CLOSED 2026-08-06.** That cap was the member count of `dregg-ir2-exact-public-v1.json` and
+//! bounded no resource; it was raised to 97, the artifact re-emitted and the constant re-pinned.
+//! `dregg-mina-accumulator-routed::v1` declares the 97-wide tuple and
+//! `MinaAccumulatorAir.addend_is_its_declared_addend` forces it.
+//!
 //! **And not that the claim is this block's.** The chain's entry accumulator IS the claim
 //! commitment `C` and it is published at `PI[0..95]` at full 256-bit width, elementwise, with no
 //! digest — but no gate here relates it to a light client's `TIP_STATE`. That comparison is the

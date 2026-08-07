@@ -76,6 +76,7 @@ a theorem or a measurement rather than a caveat:
 `native_decide`. Facts are NAMED THEOREMS — this file adds zero `#guard`s.
 -/
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
+import Dregg2.Circuit.Emit.ExactPublicTableEmit
 import Dregg2.Circuit.Emit.EffectLowerCertified
 import Dregg2.Circuit.GateExpr
 
@@ -364,14 +365,16 @@ deployed parser refuses (`≤ TID_P2_STATE16 = 9`). -/
 def ROM_TID : TableId := .custom 96
 
 /-- The instruction word: `pc + 1` · four opcode selectors · `3·NREG` operand selectors · `SK`
-immediate limbs. **`55 ≤ MAX_EXACT_PUBLIC_ARITY = 64`**, with room for nine more cells. -/
+immediate limbs. **`55 ≤ MAX_EXACT_PUBLIC_ARITY`**, which was `64` when this was written (room
+for nine more cells) and is `97` since 2026-08-06 (room for forty-two). -/
 def ROM_ARITY : Nat := 1 + 4 + 3 * NREG + SK
 
 theorem ROM_ARITY_eq : ROM_ARITY = 55 := rfl
 
 /-- ⚑ **THE ARITY FITS THE DEPLOYED CAP**, and by how much — a `decide`, because the cap is the
 thing that decides whether the immediate can be inlined at all. -/
-theorem rom_arity_fits : ROM_ARITY ≤ 64 := by decide
+theorem rom_arity_fits : ROM_ARITY ≤ 64 ∧ ROM_ARITY ≤ Dregg2.Circuit.Emit.ExactPublicTableEmit.EP_MAX_ARITY := by
+  refine ⟨by decide, by decide⟩
 
 /-- The queried tuple, read off the row's own cells. ⚑ The key is `pc + 1`, never `pc`: a manifest
 whose live key space includes `0` cannot be distinguished from an all-zero tuple, which is the trap

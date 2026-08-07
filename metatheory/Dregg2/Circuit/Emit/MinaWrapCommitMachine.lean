@@ -19,10 +19,12 @@ none is taste.
 
   1. ⚑ **THE ROM ENCODES OPERAND INDICES, NOT ONE-HOT VECTORS.** The program machine spends
      `3 · NREG` manifest cells on one-hot operand selectors, so its instruction word is
-     `1 + 4 + 3·NREG + 32` and the deployed `MAX_EXACT_PUBLIC_ARITY = 64`
-     (`circuit/src/descriptor_ir2.rs`) caps it at `NREG = 9`. A chord-and-tangent addition needs
-     twelve live values (§5), so the one-hot word is not merely wasteful, it is **REFUSED**:
-     `one_hot_word_is_refused_at_this_register_count` is that as a `decide`. The index word is
+     `1 + 4 + 3·NREG + 32`, and the `MAX_EXACT_PUBLIC_ARITY = 64` of the day
+     (`circuit/src/descriptor_ir2.rs`) capped it at `NREG = 9`. A chord-and-tangent addition needs
+     twelve live values (§5), so the one-hot word was not merely wasteful, it was **REFUSED**.
+     ⚠ **THAT PREMISE IS DEAD (2026-08-06): the cap is now `97` and the one-hot word FITS** —
+     `the_one_hot_word_fits_the_raised_cap_and_the_index_word_still_wins` states both halves, and
+     the encoding stands on the OTHER reason, not on the cap. The index word is
      `1 + 3 + 3 + 1 + 32 = 40` cells and is **independent of `NREG`**, which is what makes the
      register file a free parameter rather than the thing the arity cap decides.
      The one-hot columns stay in the TRACE; three gates (`booleanity`, `Σ sel = 1`,
@@ -56,6 +58,7 @@ and the sound-arithmetic floor is inherited rather than re-derived. Everything e
 `native_decide`. Facts are NAMED THEOREMS — this file adds zero `#guard`s.
 -/
 import Dregg2.Circuit.Emit.MinaWrapVerifierAir
+import Dregg2.Circuit.Emit.ExactPublicTableEmit
 import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.MinaWrapCommitMachine
@@ -143,8 +146,10 @@ theorem esub_eval (a : Assignment) (u v : Expr) : (esub u v).eval a = u.eval a -
 ⚑ The deployed exact-public arity cap is the thing that decides this, so it is a `decide` and not a
 sentence. -/
 
-/-- The deployed cap (`circuit/src/descriptor_ir2.rs`, `MAX_EXACT_PUBLIC_ARITY`). -/
-def MAX_ARITY : Nat := 64
+/-- The deployed cap. ⚑ **READ FROM THE EMITTER, NOT TRANSCRIBED (2026-08-06).** It used to be a
+literal `64` sitting next to a citation, which is `a-pin-against-its-own-definition-is-decoration`:
+the raise below moved the real cap and a transcription would have kept proving a dead fact. -/
+def MAX_ARITY : Nat := Dregg2.Circuit.Emit.ExactPublicTableEmit.EP_MAX_ARITY
 /-- The deployed CELL cap on an exact-public manifest. -/
 def MAX_ROM_CELLS : Nat := 2 ^ 25
 /-- The deployed ROW cap. -/
@@ -159,25 +164,48 @@ theorem ROM_ARITY_eq : ROM_ARITY = 40 := rfl
 /-- `MinaWrapVerifierProgram`'s one-hot word at this register count. -/
 def ONEHOT_ARITY : Nat := 1 + 4 + 3 * NREG + SK
 
-/-- ⚑ **THE ONE-HOT WORD IS REFUSED AT TWELVE REGISTERS, AND THE INDEX WORD FITS AT ANY.** `73 > 64`
-against `40 ≤ 64`, and the largest register file a one-hot word admits is **nine** — two short of
-the chord-and-tangent addition's twelve. This is why the encoding changed. -/
-theorem one_hot_word_is_refused_at_this_register_count :
-    ONEHOT_ARITY = 73 ∧ MAX_ARITY < ONEHOT_ARITY ∧ ROM_ARITY ≤ MAX_ARITY
-      ∧ (1 + 4 + 3 * 9 + SK) = MAX_ARITY ∧ MAX_ARITY < (1 + 4 + 3 * 10 + SK) := by decide
+/-- ⚑⚑ **THE PREMISE THIS ENCODING WAS PICKED ON IS DEAD, AND THE ENCODING STANDS ANYWAY.**
+
+This theorem used to be `one_hot_word_is_refused_at_this_register_count` and read
+`MAX_ARITY < ONEHOT_ARITY` against a transcribed `64`. `EP_MAX_ARITY` was raised to `97` on
+2026-08-06 (`ExactPublicTableEmit`, for `MinaAccumulatorAir`'s 97-wide addend routing), so **the
+one-hot word now FITS** and the refusal that justified the index encoding no longer exists.
+
+Both halves are stated: `73 > 64` was true of the cap of the day, and `73 ≤ 97` is true of the cap
+today. Neither is deleted, because deleting the first would hide why the encoding is what it is and
+keeping only the first would be a false sentence about the deployed checker.
+
+⚠ **The encoding does NOT revert.** Its surviving reason is the one proved separately below —
+`indexWord` does not mention `nr` and `oneHotWord` does — so a one-hot word re-imposes an arity
+ceiling ON THE REGISTER FILE at every future raise (at `97` it is `NREG ≤ 20`) while the index word
+imposes none. A cap that moved is not an argument for a design; a function that is constant in the
+parameter is. `a-cost-verdict-outlives-its-premise`. -/
+theorem the_one_hot_word_fits_the_raised_cap_and_the_index_word_still_wins :
+    ONEHOT_ARITY = 73 ∧ ROM_ARITY = 40
+      ∧ 64 < ONEHOT_ARITY ∧ (1 + 4 + 3 * 9 + SK) = 64
+      ∧ ONEHOT_ARITY ≤ MAX_ARITY ∧ ROM_ARITY ≤ MAX_ARITY := by decide
 
 /-- ⚑ **THE INDEX WORD'S ARITY DOES NOT DEPEND ON `NREG`, AND THE ONE-HOT WORD DOES** — stated as
 a comparison of the two WORD FUNCTIONS at varying register counts, which is the property that
 matters. ⚠ An earlier draft of this stated `(1+3+3+1+SK) = ROM_ARITY` with `nr` free: that is
-`X = X` under a name it did not earn, and `#assert_axioms` cannot see the difference. -/
+`X = X` under a name it did not earn, and `#assert_axioms` cannot see the difference.
+
+⚑ **AND THE 2026-08-06 CAP RAISE PROVED THE POINT ON ITSELF.** This theorem's middle two clauses
+used to read `oneHotWord 9 = MAX_ARITY ∧ MAX_ARITY < oneHotWord 10` — a REGISTER-FILE ceiling
+smuggled into a theorem named for register-count INDEPENDENCE. `EP_MAX_ARITY` went `64 → 97` and
+the kernel refused both clauses: the ceiling moved to **twenty**. That is exactly the asymmetry the
+theorem is about — the one-hot word's register ceiling is a function of a cap somebody else owns,
+and the index word has none — so the clauses are kept and re-pointed at `MAX_ARITY` rather than
+deleted. -/
 def oneHotWord (nr : Nat) : Nat := 1 + 4 + 3 * nr + SK
 def indexWord (_nr : Nat) : Nat := 1 + 3 + 3 + 1 + SK
 
 theorem index_word_is_register_count_independent :
     (∀ nr, indexWord nr = ROM_ARITY)
-      ∧ oneHotWord 9 = MAX_ARITY ∧ MAX_ARITY < oneHotWord 10
+      ∧ oneHotWord 20 = MAX_ARITY ∧ MAX_ARITY < oneHotWord 21
+      ∧ oneHotWord 9 = 64 ∧ 64 < oneHotWord 10
       ∧ oneHotWord 12 ≠ oneHotWord 9 := by
-  refine ⟨fun nr => rfl, by decide, by decide, by decide⟩
+  refine ⟨fun nr => rfl, by decide, by decide, by decide, by decide, by decide⟩
 
 /-- ⚑ **THE LONGEST PROGRAM ONE INSTANCE CAN HOLD IS 838 860 INSTRUCTIONS** at this word, against
 `MinaWrapVerifierProgram`'s 610 080 — the narrower word buys **1.37×**, and it is still the CELL cap
@@ -1027,7 +1055,7 @@ theorem zeroVec_length : zeroVec.length = NREG := by unfold zeroVec; simp
 #assert_axioms reg_hold_forces_preservation
 #assert_axioms reg_window_leaves_nothing_free
 #assert_axioms pc_thread_forces_successor
-#assert_axioms one_hot_word_is_refused_at_this_register_count
+#assert_axioms the_one_hot_word_fits_the_raised_cap_and_the_index_word_still_wins
 #assert_axioms index_word_is_register_count_independent
 #assert_axioms rom_capacity
 #assert_axioms romTuple_length

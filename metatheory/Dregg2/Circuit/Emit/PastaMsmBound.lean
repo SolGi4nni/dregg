@@ -62,6 +62,7 @@ parameter choice and not a wall.** §7.1 prices the residual that is actually re
 `import Dregg2.Circuit.Emit.PastaMsmBound`
 -/
 import Dregg2.Circuit.Emit.PastaMsmSliced
+import Dregg2.Circuit.Emit.ExactPublicTableEmit
 import Dregg2.Circuit.GateExpr
 
 namespace Dregg2.Circuit.Emit.PastaMsmBound
@@ -297,9 +298,10 @@ theorem boundRowDesc_pi_indices_in_bounds :
 #guard TUP == 30
 #guard PTLIMBS == 27
 
--- ⚑ The DEPLOYED exact-public bound, discharged here so a re-parameterisation cannot silently
--- exceed it: `MAX_EXACT_PUBLIC_ROWS = 128`, `MAX_EXACT_PUBLIC_ARITY = 64`,
--- `MAX_EXACT_PUBLIC_CELLS = 4096` (`circuit/src/descriptor_ir2.rs:403-405`).
+-- ⚑ The DEPLOYED exact-public bound of the day this was written, kept as a HISTORICAL record:
+-- `MAX_EXACT_PUBLIC_ROWS = 128`, `MAX_EXACT_PUBLIC_ARITY = 64`, `MAX_EXACT_PUBLIC_CELLS = 4096`.
+-- ⚠ All three have since moved (`2^21` / `97` / `2^25`); the LIVE discharge against the current
+-- caps is §7's `MAX_ROWS`/`MAX_ARITY`/`MAX_CELLS`, which read the emitter rather than a literal.
 #guard 4 * (31 + 1) == 128
 #guard 4 * (31 + 1) * TUP == 3840
 #guard 4 * (31 + 1) ≤ 128 && TUP ≤ 64 && 4 * (31 + 1) * TUP ≤ 4096
@@ -868,9 +870,13 @@ the way this one did. -/
 /-- The exact-public row cap — `MAX_EXACT_PUBLIC_ROWS = 1 << 21` (`circuit/src/descriptor_ir2.rs:471`).
 ⚠ A MIRROR of a Rust constant, not a second source. -/
 def MAX_ROWS : Nat := 2 ^ 21
-/-- The exact-public arity cap — `MAX_EXACT_PUBLIC_ARITY = 64` (`circuit/src/descriptor_ir2.rs:472`).
-The one cap `2fb3ff01f` did not move. -/
-def MAX_ARITY : Nat := 64
+/-- The exact-public arity cap. ⚑ **READ FROM THE EMITTER, NOT TRANSCRIBED (2026-08-06).** This was
+a literal `64` under a comment reading *"the one cap `2fb3ff01f` did not move"* — and the very next
+paragraph of this section promises *"the next cap raise cannot silently leave a false sentence
+behind the way this one did."* The raise came (`64 → 97`, `ExactPublicTableEmit.EP_MAX_ARITY`, for
+the 97-wide addend routing), so the promise is kept STRUCTURALLY: there is nothing here to go
+stale. -/
+def MAX_ARITY : Nat := Dregg2.Circuit.Emit.ExactPublicTableEmit.EP_MAX_ARITY
 /-- The exact-public cell cap — `MAX_EXACT_PUBLIC_CELLS = 1 << 25`
 (`circuit/src/descriptor_ir2.rs:473`). ⚑ At this manifest's tuple width THIS is the binding one. -/
 def MAX_CELLS : Nat := 2 ^ 25

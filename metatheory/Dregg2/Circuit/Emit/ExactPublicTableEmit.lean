@@ -111,15 +111,49 @@ set_option autoImplicit false
 
 /-! ## §1 — The schema. -/
 
-/-- ⚑ `MAX_EXACT_PUBLIC_ARITY` — the declared tuple-width ceiling, mirrored from
-`descriptor_ir2.rs`. The family carries one table per arity in `1 … EP_MAX_ARITY`.
+/-- ⚑ `MAX_EXACT_PUBLIC_ARITY` — the declared tuple-width ceiling. **This `def` is the SOURCE**;
+`descriptor_ir2.rs`'s constant is the mirror, and every other Lean file that used to transcribe the
+number now reads it from here.
+
+The family carries one table per arity in `1 … EP_MAX_ARITY`.
 
 ⚠ The two sides are pinned against each other where it bites: `descriptor_ir2::check_descriptor2`
 admits an arity against ITS constant, and `exact_public_lean_instance` REFUSES if the emitted
 family's length is not that same number. Without that check a drift would let a descriptor pass
 admission and then find no member — a dropped LogUp server, which is an unsatisfiable bus rather
-than a loud failure. -/
-def EP_MAX_ARITY : Nat := 64
+than a loud failure.
+
+## ⚑ FLAG DAY 2026-08-06: `64 → 97`, AND WHAT THE CAP TURNED OUT TO BOUND
+
+Read at source before the raise, because the earlier draft of `MinaAccumulatorAir` §4 called 64 a
+PRICE and it is not one. The constant has exactly **two** functional readers, and neither is a
+resource:
+
+* `check_descriptor2` (`descriptor_ir2.rs:2195`) — the admission refusal, and
+* `exact_public_lean_instance` (`:6799`) — a DRIFT GUARD comparing it to
+  `exact_public_table_air_family().len()`, i.e. **the member count of this file's own artifact**,
+  whose message already names the remedy: *"re-emit `dregg-ir2-exact-public-v1.json` or re-pin the
+  cap"*.
+
+What actually bounds the verifier's allocation is `MAX_EXACT_PUBLIC_CELLS` (`rows · arity ≤ 2^25`)
+and `MAX_EXACT_PUBLIC_ROWS` (`2^21`), and NEITHER moves with this ceiling — the committed
+preprocessed matrix is `next_pow2(distinct) × (arity + 2)` and is priced by those two. So raising
+this number costs the artifact's bytes and nothing else; `the_raise_costs_bytes_and_no_allocation`
+states that as arithmetic rather than as a sentence.
+
+⚑ `97 = 1 + 3 · 32` is the routing tuple of a PROJECTIVE PASTA POINT in the sound 8-bit encoding —
+a key plus `3 × 32` limbs — which `MinaAccumulatorAir.the_routing_tuple_does_not_fit_one_table`
+priced and `MinaAccumulatorAir.addendTable` now declares. The cap is set to exactly the widest
+tuple any deployed descriptor needs, so the next descriptor that outgrows it moves this number
+VISIBLY instead of finding room.
+
+⚠ **AND THE RAISE INVALIDATES A DESIGN VERDICT, WHICH IS SAID HERE RATHER THAN LEFT TO ROT.**
+`MinaWrapCommitMachine.one_hot_word_is_refused_at_this_register_count` justified an encoding change
+with `73 > 64`. At 97 the one-hot word FITS, so that premise is dead; the theorem is restated there
+against this `def` (not a transcription) and the encoding's surviving reason is the separate one it
+already proves — `indexWord` is constant in the register count and `oneHotWord` is not.
+`a-cost-verdict-outlives-its-premise`. -/
+def EP_MAX_ARITY : Nat := 97
 
 /-- The bus an arity-`a` exact-public table sits on. ⚑ A function of the ARITY, not of the table id:
 the id rides in the tuple (§0). -/
@@ -180,6 +214,37 @@ def exactPublicFamily : List TableAir :=
 
 theorem the_family_has_one_member_per_arity :
     exactPublicFamily.length = EP_MAX_ARITY := by decide
+
+/-! ### ⚑ §2a — WHAT THE RAISE COSTS, as arithmetic.
+
+The two deployed caps that DO bound an allocation, mirrored, plus the fact that the widest manifest
+the raise newly admits still sits under both. Written as a theorem because "the cap bounds no
+resource" is exactly the kind of sentence that survives its premise. -/
+
+/-- `MAX_EXACT_PUBLIC_ROWS` (`descriptor_ir2.rs:590`). ⚠ A MIRROR of a Rust constant. -/
+def EP_MAX_ROWS : Nat := 2 ^ 21
+/-- `MAX_EXACT_PUBLIC_CELLS` (`descriptor_ir2.rs:592`). ⚠ A MIRROR of a Rust constant. -/
+def EP_MAX_CELLS : Nat := 2 ^ 25
+/-- The Step/Tick SRS width — the largest DISTINCT row count anything in this cone declares. -/
+def EP_STEP_SRS : Nat := 2 ^ 16
+
+/-- ⚑ **THE RAISE COSTS ARTIFACT BYTES AND NO ALLOCATION.**
+
+`check_descriptor2`'s allocation refusal is `rows ≤ 2^21 ∧ rows · arity ≤ 2^25`, and the committed
+preprocessed matrix is `next_pow2(distinct) · (arity + 2)`. At the widest thing this raise newly
+admits — a `2^16`-row manifest at the full `EP_MAX_ARITY` — BOTH deployed bounds still hold with
+room, and the committed matrix is `6 488 064` cells (26 MB at four bytes, ONE instance).
+
+⚠ Note which comparison is doing the work: the cell cap is `19.4%` spent, so the arity ceiling was
+never the binding constraint on this shape and moving it does not make the cell cap binding either.
+The number that DOES move is the artifact's byte count, pinned below. -/
+theorem the_raise_costs_bytes_and_no_allocation :
+    EP_MAX_ARITY = 97
+    ∧ EP_STEP_SRS ≤ EP_MAX_ROWS
+    ∧ EP_STEP_SRS * EP_MAX_ARITY ≤ EP_MAX_CELLS
+    ∧ EP_STEP_SRS * epPrepWidth EP_MAX_ARITY = 6488064
+    ∧ 5 * (EP_STEP_SRS * EP_MAX_ARITY) < EP_MAX_CELLS := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide⟩
 
 /-- The layout AS RENDERED at a deployed arity — the two column indices and the two names the
 artifact and the descriptor have to agree on. Point-valued on purpose: `toString` is the part that
@@ -249,9 +314,14 @@ theorem the_arity_3_member_emits_golden : emitTableAirJson (exactPublicTable 3) 
 def EXACT_PUBLIC_FAMILY_JSON : String := emitTableAirFamilyJson exactPublicFamily
 
 /-- The artifact is an ARRAY of exactly this many bytes, opening and closing as one. The length is
-the number a re-emission has to reproduce, so it is the load-bearing half. -/
-theorem the_family_artifact_is_a_json_array_of_63428_bytes :
-    (EXACT_PUBLIC_FAMILY_JSON.length == 63428) &&
+the number a re-emission has to reproduce, so it is the load-bearing half.
+
+⚑ **MOVED BY THE 2026-08-06 RAISE: `63 428 → 128 141` characters (`+102.0%`).** That doubling is the
+WHOLE price of `64 → 97` — the artifact is `O(EP_MAX_ARITY²)` because member `a` renders `a + 1`
+tuple entries — and it is the only number the raise moves that anyone pays. `128 142` bytes on disk
+(the driver appends one newline). -/
+theorem the_family_artifact_is_a_json_array_of_128141_bytes :
+    (EXACT_PUBLIC_FAMILY_JSON.length == 128141) &&
       (EXACT_PUBLIC_FAMILY_JSON.take 1).endsWith "[" &&
       (EXACT_PUBLIC_FAMILY_JSON.drop (EXACT_PUBLIC_FAMILY_JSON.length - 1)) == "]" := by
   native_decide
@@ -388,6 +458,7 @@ theorem ep2_has_one_gate_and_one_bus_leg :
   refine ⟨by decide, by decide⟩
 
 #assert_axioms the_family_has_one_member_per_arity
+#assert_axioms the_raise_costs_bytes_and_no_allocation
 #assert_axioms the_deployed_arity_17_member_renders
 #assert_axioms every_member_has_the_deleted_arms_shape
 #assert_axioms every_member_serves_its_bus_and_never_queries_it
@@ -395,7 +466,7 @@ theorem ep2_has_one_gate_and_one_bus_leg :
 #assert_axioms the_one_gate_reads_the_committed_capacity
 #assert_axioms the_arity_1_member_emits_golden
 #assert_axioms the_arity_3_member_emits_golden
-#assert_compiled the_family_artifact_is_a_json_array_of_63428_bytes
+#assert_compiled the_family_artifact_is_a_json_array_of_128141_bytes
 #assert_axioms no_gate_reads_the_id_or_any_manifest_value
 #assert_axioms the_pinned_multiplicity_column_is_read_at_every_arity
 #assert_axioms ep2_has_one_gate_and_one_bus_leg

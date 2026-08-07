@@ -3,8 +3,9 @@
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
-**This is Lean-authored AIR.** Every column index, every pin, every window body and both emitted
-descriptors are authored here and go through `EffectLower.lowerAir` of an `EffectAirIR.EffectAir`.
+**This is Lean-authored AIR.** Every column index, every pin, every window body, the routing tuple,
+the declared manifest and all three emitted descriptors are authored here and go through
+`EffectLower.lowerAir` of an `EffectAirIR.EffectAir`.
 There is no hand-written `VmConstraint2` in this file. Rust PROVES the artifact, FOLDS it, and
 authors no constraint. House Law #1.
 
@@ -59,7 +60,7 @@ outgoing limbs to the right child's 96 incoming ones. The 96 is not a coincidenc
 Pasta point in the sound 8-bit encoding is `3 × 32 = 96` felts, exactly the width the phase-2 chain
 already carries its sponge state on.
 
-## ⚑ TWO DESCRIPTORS, AND THE PAIR IS THE POINT
+## ⚑ THREE DESCRIPTORS, AND EACH PAIR IS AN EXHIBIT
 
 * `dregg-mina-accumulator-seg::v1` — a SEGMENT of the chain. Publishes its two endpoints. Says
   nothing about vanishing, because an intermediate segment must not.
@@ -67,9 +68,16 @@ already carries its sponge state on.
   window gates forcing every limb of the terminal `X` and `Z` blocks to **zero**. That is
   `pasta_msm::is_identity` (`z == 0 && x == 0`) as a constraint, and it is the accumulator check.
 
-The pair is an OLD-ADMITS / NEW-REJECTS exhibit that cannot rot into agreement: a chain that does
+* ⚑ `dregg-mina-accumulator-routed::v1` (§8) — the final segment PLUS the ROUTING: a threaded
+  row-index column, and one exact-public lookup per row whose 97-wide tuple is
+  `(row index + 1) ‖ the row's 96 addend limbs`, against a manifest the descriptor DECLARES.
+  `3 049` columns, `4 831` constraints.
+
+Each pair is an OLD-ADMITS / NEW-REJECTS exhibit that cannot rot into agreement. A chain that does
 not vanish PROVES under `-seg` and is REFUSED under `-final`, and the refusing constraint is a
-`.last` window gate on an `OUT_Z` limb — not a range lookup, not a bus.
+`.last` window gate on an `OUT_Z` limb — not a range lookup, not a bus. A chain of honest Vesta
+points that are NOT this block's addends PROVES under `-final` and is REFUSED under `-routed`, and
+the refusing constraint is the exact-public balance of `mina_accumulator_addends`.
 
 ## What is proved here
 
@@ -84,25 +92,48 @@ not vanish PROVES under `-seg` and is REFUSED under `-final`, and the refusing c
   the accumulator check, as a consequence of the emitted constraints.
 * `the_discharge_gate_is_refutable` — a trace satisfying every ROW and every THREAD whose terminal
   accumulator is NOT the identity, so `accumulator_discharge_forced`'s last hypothesis is doing work.
+* ⚑⚑ `addend_is_its_declared_addend` — **the routing.** On a trace whose emitted lookup balances and
+  whose index column is threaded, row `i`'s addend cells ARE the descriptor's declared addend `i`.
+  Pure membership: no counting, no pigeonhole, and `i`/`As.length` occur in no bound.
+* ⚑⚑ `accumulator_discharge_forced_on_declared_addends` — the discharge over `declaredChain`, a fold
+  in which the trace's addend columns **do not occur**.
+* `the_balance_forces_the_row_count` — the trace height is the declared addend count, FORCED by the
+  permutation, so the chain cannot be padded with unrouted rows nor shortened by dropping one.
 
-## ⚠ WHAT THIS DOES **NOT** ESTABLISH — the addends are the caller's
+## ⚠ WHAT THIS DOES **NOT** ESTABLISH — and the residual MOVED on 2026-08-06
 
-`threadedLadder_forces` names it and it is inherited verbatim: **nothing here forces the ADDENDS to
-be anything in particular.** The chain is forced to be the `n+1`-fold sum of whatever `ADD_X/Y/Z`
-the trace supplies. Forcing `A_r` to be the `r`-th scaled SRS generator is the ROUTING half, it
-lives in `PastaMsmBucketed`'s three exact-public lookups, and porting those to the sound row's
-32-limb encoding is real work this file does not do (§4 prices it, including the one deployed
-constant — `MAX_EXACT_PUBLIC_ARITY = 64` — that a 96-limb point tuple exceeds).
+It used to read: *"nothing here forces the ADDENDS to be anything in particular … porting the
+routing to the sound row's 32-limb encoding is real work this file does not do (§4 prices it,
+including the one deployed constant — `MAX_EXACT_PUBLIC_ARITY = 64` — that a 96-limb point tuple
+exceeds)."* **That work is done** (§8). The cap was the member count of a JSON artifact; it was
+raised `64 → 97`, the artifact re-emitted, the constant re-pinned, and the 97-wide tuple is now
+DECLARED and FORCED.
 
-So what the emitted object checks is the **SUMMATION half** of the accumulator check, in a circuit,
-soundly, at full 256-bit width. The scaling and the routing are named residuals with numbers, not
-hidden assumptions.
+⚠ **THE RESIDUAL THAT REMAINS IS ONE OBJECT OUT, AND IT IS A DIFFERENT KIND.** The routing forces
+row `i`'s addend to be the addend THIS DESCRIPTOR DECLARES. Whether the descriptor a node verified
+against is the one for the block in hand is a DESCRIPTOR-SELECTION question — the same class as the
+accumulator's two other trusted items, both of which are still open:
+
+  1. **No gate ties the claim to a head.** `root_entry_binds_claim` is a CONSUMER refusal, not a
+     constraint; nothing in any of the three descriptors says the accumulator entering row 0 is the
+     commitment of the block whose head is being accepted.
+  2. **A claim rebuilt around tampered challenges is accepted** — in-circuit exactly as natively.
+     The challenges `u⃗` are not bound to a transcript by anything here.
+
+And the SCALING is still not routed: forcing `A_r` to be `−s_r · G_r` for the `s` a real IPA
+challenge vector produces needs the scalars, which are per-block and not descriptor-known. What the
+declared manifest pins is the ADDENDS, not their provenance as scaled generators.
+
+So the emitted object checks the **SUMMATION half at full 256-bit width, over addends the VERIFIER
+rebuilds from the descriptor rather than accepts from the prover.** That is strictly more than
+before and strictly less than `Ipa.Step.accumulator_check`.
 
 ## Axiom hygiene
 
 `#assert_axioms`-clean; no `sorry`/`admit`/`native_decide`; zero `#guard`s.
 -/
 import Dregg2.Circuit.Emit.PastaLadderThread
+import Dregg2.Circuit.Emit.ExactPublicTableEmit
 
 namespace Dregg2.Circuit.Emit.MinaAccumulatorAir
 
@@ -272,8 +303,10 @@ here. -/
 
 /-- The deployed base-trace ceiling (`MAX_EXACT_PUBLIC_ROWS`, `circuit/src/descriptor_ir2.rs`). -/
 def DREGG_MAX_ROWS : Nat := 2097152
-/-- The deployed exact-public ARITY cap. -/
-def MAX_EP_ARITY : Nat := 64
+/-- The deployed exact-public ARITY cap. ⚑ **READ FROM THE EMITTER, NOT TRANSCRIBED.** It was a
+literal `64` here, and this file's own §4 is where the retraction that moved it was written; a
+transcription would have gone on proving a dead fact one paragraph below its own refutation. -/
+def MAX_EP_ARITY : Nat := Dregg2.Circuit.Emit.ExactPublicTableEmit.EP_MAX_ARITY
 /-- The Step/Tick SRS width, `2^16`. -/
 def STEP_SRS : Nat := 65536
 
@@ -316,12 +349,21 @@ instance count, and arity does not scale instance count. Its two siblings in tha
 moved by `2^14×` and `2^13×`; 64 has never been touched. `a-cost-verdict-outlives-its-premise`.
 
 ⚠ **AND THE REMEDY THIS DOCBLOCK USED TO PRESCRIBE IS THE MORE EXPENSIVE ONE** —
-see `the_split_remedy_costs_more_than_the_wide_table`. -/
-theorem the_routing_tuple_does_not_fit_one_table :
-    MAX_EP_ARITY < 1 + 3 * SK
-    ∧ 1 + (3 * SK) / 2 < MAX_EP_ARITY
-    ∧ 1 + 3 * SK = 97 := by
-  refine ⟨by decide, by decide, by decide⟩
+see `the_split_remedy_costs_more_than_the_wide_table`.
+
+## ⚑⚑ CLOSED 2026-08-06 — THE CAP WAS RAISED AND THE TUPLE IS DECLARED
+
+`EP_MAX_ARITY` went `64 → 97` (`ExactPublicTableEmit`, `descriptor_ir2.rs:591`), the family artifact
+was re-emitted at `128 142` bytes, and `MAX_EXACT_PUBLIC_ARITY` was re-pinned on the Rust side. §8
+now DECLARES the 97-wide tuple (`addendTable`) and §8b FORCES it
+(`addend_is_its_declared_addend`). Neither the split remedy nor the wide-table cost estimate was
+needed: the cap bounded a JSON member count, not a resource. -/
+theorem the_routing_tuple_used_to_not_fit_and_now_does :
+    64 < 1 + 3 * SK
+    ∧ 1 + 3 * SK = 97
+    ∧ 1 + 3 * SK ≤ MAX_EP_ARITY
+    ∧ MAX_EP_ARITY = 1 + 3 * SK := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
 
 /-- The preprocessed width an exact-public table of arity `a` commits: the table id, `a` value
 columns, and the pinned multiplicity (`ExactPublicManifest::prep_width`, `descriptor_ir2.rs:3386`).
@@ -532,8 +574,17 @@ theorem discharged_is_the_identity (tr : Trace) (n : Nat) (h : Discharged tr n) 
 Read against the relation this file exists for: with `acc_0 = C` and the addends the scaled
 generators, this says `C − ⟨s(u⃗), G⟩ = O`, which is `Ipa.Step.accumulator_check`.
 
-⚠ It says nothing about WHAT the addends are. That hypothesis-free half is the routing, priced in
-§4, and calling this the whole check would be the substitution this repo keeps finding. -/
+⚠ **IT SAYS NOTHING ABOUT WHAT THE ADDENDS ARE.** The limit is not softened: on THIS descriptor
+(`-final`, which declares no manifest and emits no routing lookup) the chain is still the fold of
+whatever `ADD_X/Y/Z` the trace supplies, and calling this the whole check would be the substitution
+this repo keeps finding.
+
+⚑ **WHAT CHANGED IS THAT A DESCRIPTOR EXISTS FOR WHICH THE STRONGER STATEMENT IS TRUE.** §8's
+`dregg-mina-accumulator-routed::v1` routes the addends against a declared exact-public manifest and
+`accumulator_discharge_forced_on_declared_addends` concludes over `declaredChain` — a fold in which
+the trace's addend columns do not occur. `-final` is KEPT as the OLD-ADMITS pole of that pair: a
+chain whose addends are honest Vesta points that are not this block's proves here and is refused
+there. -/
 theorem accumulator_discharge_forced (tr : Trace) (n : Nat)
     (hrow : ∀ r, r ≤ n → RowSoundV tr r) (hthread : ∀ r, r < n → Threaded tr r)
     (hd : Discharged tr n) :
@@ -605,6 +656,617 @@ theorem the_two_exhibits_differ_in_one_cell :
   intro c hc
   simp only [oneTrace, zeroTrace, if_neg hc]
 
+/-! ## §8 — ⚑⚑ THE ROUTING: THE ADDENDS ARE THE DESCRIPTOR'S, NOT THE PROVER'S.
+
+§4 priced this and the price was retracted at source: `MAX_EXACT_PUBLIC_ARITY` is the member count
+of a checked-in JSON artifact and bounds no resource. It went `64 → 97` on 2026-08-06
+(`ExactPublicTableEmit.EP_MAX_ARITY`, `descriptor_ir2.rs:591`, the artifact re-emitted at
+`128 142` bytes), so the 97-wide routing tuple this section needs is admissible and the section
+exists.
+
+**The mechanism, and it is the SAME one `PastaMsmBound` used one rail down.** A THREADED row-index
+column, and ONE exact-public lookup per row whose tuple is `(row index + 1) ‖ the row's 96 addend
+limbs`. `TableSem.exactPublicRows` is a PERMUTATION, not a containment
+(`DescriptorIR2.PublicLookupBalanced`), so the declaration says *these addends and no others* — no
+omission, no duplication, no substitution.
+
+⚑ **WHAT THAT BUYS, EXACTLY.** `accumulator_discharge_forced` forces the chain of the TRACE'S OWN
+addends to vanish. `accumulator_discharge_forced_on_declared_addends` forces the chain of the
+DESCRIPTOR'S DECLARED addends to vanish — a statement in which the trace's addend columns do not
+appear at all. The verifier REBUILDS the declared manifest from the descriptor bytes (it is a
+preprocessed matrix, `ExactPublicManifest::preprocessed`), so those addends are VK-pinned, not
+prover-supplied.
+
+⚠ **AND WHAT IT DOES NOT BUY, said at the resolution it is at.** It moves the trust ONE OBJECT
+OUT: from *"the addends the prover wrote"* to *"the addends this descriptor declares"*. Whether the
+descriptor a node verified against is the one for the block in hand is a DESCRIPTOR-SELECTION
+question, the same class as the accumulator's other two trusted items (§9), and it is not closed
+here. What is closed is that a prover holding a fixed descriptor can no longer choose them.
+
+⚑ **THE UNROUTED DESCRIPTOR IS KEPT, AND IT IS NOT COMPATIBILITY.** `-final` is the OLD-ADMITS pole
+of the routing falsifier: a trace whose addends are honest points that are NOT this block's PROVES
+under `-final` and is REFUSED under `-routed`. A pair that cannot rot into agreement is the whole
+exhibit, exactly as `-seg`/`-final` is for the discharge. -/
+
+/-- A projective point over ℕ — the shape a manifest row carries. -/
+abbrev Pt3 : Type := Nat × Nat × Nat
+
+/-- The `j`-th of a point's `3 · SK` limb cells, in `ADD_X ‖ ADD_Y ‖ ADD_Z` order — the SAME order
+the trace's addend blocks sit in, which is why the tuple is one contiguous `List.range`. -/
+def coordLimb (P : Pt3) (j : Nat) : Nat :=
+  if j < SK then (P.1 / 2 ^ (Dregg2.Circuit.Emit.PastaFieldSound.SB * j))
+                   % 2 ^ Dregg2.Circuit.Emit.PastaFieldSound.SB
+  else if j < 2 * SK then (P.2.1 / 2 ^ (Dregg2.Circuit.Emit.PastaFieldSound.SB * (j - SK)))
+                             % 2 ^ Dregg2.Circuit.Emit.PastaFieldSound.SB
+  else (P.2.2 / 2 ^ (Dregg2.Circuit.Emit.PastaFieldSound.SB * (j - 2 * SK)))
+         % 2 ^ Dregg2.Circuit.Emit.PastaFieldSound.SB
+
+/-- ⚑ **THE ROW-INDEX COLUMN** — one column past the RCB row. It is the ONLY thing the routing adds
+to the committed width: `3 048 → 3 049`, `+0.033%`. -/
+def RIDX : Nat := RCB_WIDTH
+/-- The routed descriptor's declared trace width. -/
+def ROUTED_WIDTH : Nat := RCB_WIDTH + 1
+
+theorem the_routing_costs_one_column :
+    ROUTED_WIDTH = 3049 ∧ RIDX = 3048 ∧ ROUTED_WIDTH = RCB_WIDTH + 1 := by
+  refine ⟨by decide, by decide, rfl⟩
+
+/-- The row index starts at zero. `.first` lowers to a `VmConstraint.boundary`, whose body reads
+`env.loc` alone — which is why the body may not mention `nxt`. -/
+def ridxStartLeg : AirLeg := .window ⟨RowSel.first, WindowExpr.loc RIDX⟩
+
+/-- …and advances by exactly one. `.transition` is the only selector under which `nxt` is the
+genuine successor; under `.all` the last row's `nxt` is p3's WRAP row and this would say something
+else exactly where padding hides. -/
+def ridxThreadLeg : AirLeg :=
+  .window ⟨RowSel.transition,
+    WindowExpr.add (.nxt RIDX) (.mul (.const (-1)) (.add (.loc RIDX) (.const 1)))⟩
+
+/-- The routing tuple's width: the key plus a projective point's `3 · 32` limbs. ⚑ This is the `97`
+`the_routing_tuple_does_not_fit_one_table` priced, and it is now what the emitted object declares
+rather than what it is blocked by. -/
+def ADDEND_TUP : Nat := 1 + 3 * SK
+
+theorem the_declared_tuple_is_the_priced_one : ADDEND_TUP = 97 ∧ ADDEND_TUP = 1 + 3 * SK := by
+  refine ⟨by decide, rfl⟩
+
+/-- The addend manifest's wire id. ⚑ `.custom 128 ⇒ wireId 133`: clear of `main` and of the three
+`rangeTidW` tables this row already declares (`.custom (64 + bits)`, `bits ≤ 16 ⇒ at most
+.custom 80`), and far above the reserved ids the deployed parser refuses (`≤ TID_P2_STATE16 = 9`).
+`routedTables_ids_are_distinct` is the check; `reference-a-display-name-is-not-a-key`. -/
+def ADDEND_TID : Dregg2.Circuit.DescriptorIR2.TableId := .custom 128
+
+/-- ⚑ **THE QUERIED TUPLE.** The key is `RIDX + 1`, never `RIDX`: a manifest whose live key space
+includes `0` cannot be distinguished from an all-zero tuple, which is the trap `PastaMsmBound` and
+`MinaWrapVerifierProgram` both document and avoid the same way. The 96 limb cells are `ADD_X + j`
+for `j < 3·SK`, which is contiguous exactly because `ADD_X/ADD_Y/ADD_Z = 3·SK/4·SK/5·SK`. -/
+def addendTuple : List Dregg2.Circuit.Expr :=
+  Dregg2.Circuit.Expr.add (.var RIDX) (.const 1)
+    :: (List.range (3 * SK)).map (fun j => Dregg2.Circuit.Expr.var (ADD_X + j))
+
+theorem addendTuple_length : addendTuple.length = ADDEND_TUP := by decide
+
+/-- ⚑ **THE ONE LOOKUP.** `.query` at multiplicity 1 — the only shape `Ir2Air::Main` implements, and
+`LookupLeg.mainRailOk` REFUSES anything else rather than lowering a leg the deployed rail cannot
+serve. -/
+def addendLookupLeg : AirLeg :=
+  .lookup { table := ADDEND_TID, tuple := addendTuple, mult := .const 1, op := .query }
+
+/-- The manifest row for INDEX `i`: the key, then the declared addend's 96 limbs. -/
+def addendRow (As : List Pt3) (i : Nat) : List Nat :=
+  (i + 1) :: (List.range (3 * SK)).map (coordLimb (As.getD i (0, 0, 0)))
+
+/-- ⚑ **THE DECLARED ADDENDS**, one manifest row per trace row. Its LENGTH is the trace height —
+forced, not assumed, because the exact-public semantics is a PERMUTATION
+(`the_balance_forces_the_row_count`). -/
+def addendManifest (As : List Pt3) : List (List Nat) :=
+  (List.range As.length).map (addendRow As)
+
+/-- The declared table. -/
+def addendTable (As : List Pt3) : Dregg2.Circuit.DescriptorIR2.TableDef :=
+  ⟨ADDEND_TID, "mina_accumulator_addends", ADDEND_TUP, .exactPublicRows (addendManifest As)⟩
+
+/-- The routed block's tables: the RCB row's four with the MAIN table re-declared at the widened
+trace width, plus the addend manifest. -/
+def routedTables (As : List Pt3) : List Dregg2.Circuit.DescriptorIR2.TableDef :=
+  Dregg2.Circuit.DescriptorIR2.mainTableDef ROUTED_WIDTH
+    :: (rcbTables.drop 1 ++ [addendTable As])
+
+/-- ⚑ **THE FIVE TABLE IDS ARE DISTINCT**, so the addend manifest gets its own LogUp bus and cannot
+pool with the three range tables. A collision here would make the routing balance against a range
+table's rows, which is a refusal nobody would read as a routing failure. -/
+theorem routedTables_ids_are_distinct (As : List Pt3) :
+    ((routedTables As).map (·.id)).dedup.length = 5
+    ∧ (routedTables As).length = 5 := by
+  have hid : (routedTables As).map (·.id) = (routedTables []).map (·.id) := rfl
+  have hlen : (routedTables As).length = (routedTables []).length := rfl
+  rw [hid, hlen]
+  refine ⟨by decide, by decide⟩
+
+/-- **THE ROUTED BLOCK.** `accFinalAir`'s legs verbatim — the sound Vesta row, the 96 threads, the
+192 endpoint pins, the 64 discharge gates — plus the index origin, the index thread and the one
+lookup. Nothing is re-authored. -/
+def accRoutedAir : EffectAir :=
+  { tables := routedTables []
+  , legs := accFinalAir.legs ++ [ridxStartLeg, ridxThreadLeg, addendLookupLeg] }
+
+/-- …and the same block over a DECLARED addend list. The legs do not depend on it; only the manifest
+does, which is what makes the descriptor per-block and the ALGEBRA fixed. -/
+def accRoutedAirOn (As : List Pt3) : EffectAir :=
+  { accRoutedAir with tables := routedTables As }
+
+/-- ⚑ **THE FINAL BLOCK'S LEGS ARE A PREFIX OF THE ROUTED ONE'S.** Every forcing statement in §5–§7
+applies to the routed descriptor unchanged — the routing APPENDS. -/
+theorem accRoutedAir_extends_accFinalAir (As : List Pt3) :
+    accFinalAir.legs <+: (accRoutedAirOn As).legs :=
+  ⟨[ridxStartLeg, ridxThreadLeg, addendLookupLeg], rfl⟩
+
+/-- ⚑ **THE DECLARED MANIFEST TOUCHES NOTHING BUT THE MANIFEST.** The legs — and therefore every
+emitted constraint, every selector count and the whole algebra — are the SAME object at every `As`.
+This is what makes `-routed` one AIR with a per-block preprocessed matrix rather than a new circuit
+per block, and it is what lets every shape theorem below be `decide`d at one instance. -/
+theorem the_legs_do_not_depend_on_the_declared_addends (As : List Pt3) :
+    (accRoutedAirOn As).legs = accRoutedAir.legs := rfl
+
+/-- ⚑ **THE COMPILER ACCEPTS THE ROUTED BLOCK.** The index origin is `.first` with no `nxt` read,
+the index thread is `.transition`, and the lookup is a `.query` at multiplicity 1. A `.all` origin,
+a `.first` thread or a `.provide` lookup each lower to `refuseConstraints` and this would be false. -/
+theorem accRoutedAir_mainRailOk (As : List Pt3) : (accRoutedAirOn As).mainRailOk = true := by
+  show accRoutedAir.mainRailOk = true
+  decide
+
+/-- The emitted ROUTED descriptor. -/
+def accRoutedDesc (As : List Pt3) : EffectVmDescriptor2 :=
+  Dregg2.Circuit.Emit.EffectLower.lowerAir
+    "dregg-mina-accumulator-routed::v1" ROUTED_WIDTH ACC_PI_COUNT [] (accRoutedAirOn As)
+
+/-- The emitted constraints are the same list at every `As` — the corollary of
+`the_legs_do_not_depend_on_the_declared_addends` that the shape pins are stated through. -/
+theorem accRoutedDesc_constraints_eq (As : List Pt3) :
+    (accRoutedDesc As).constraints = (accRoutedDesc []).constraints := rfl
+
+theorem accRoutedDesc_name (As : List Pt3) :
+    (accRoutedDesc As).name = "dregg-mina-accumulator-routed::v1" := rfl
+
+/-- `4 476 + 96 + 192 + 64` from `-final`, plus the index origin, the index thread and the lookup. -/
+theorem accRoutedDesc_constraint_count (As : List Pt3) :
+    (accRoutedDesc As).constraints.length = 4476 + 96 + 192 + 64 + 3 := by
+  rw [accRoutedDesc_constraints_eq]; decide
+
+theorem accRoutedDesc_width (As : List Pt3) : (accRoutedDesc As).traceWidth = 3049 := rfl
+theorem accRoutedDesc_piCount (As : List Pt3) : (accRoutedDesc As).piCount = 192 := rfl
+
+/-- ⚑ **THREE NAMES, THREE OBJECTS.** A registry lookup that resolved `-routed` to `-final` would
+serve a descriptor with no routing at all and every shape pin would still pass. -/
+theorem the_three_descriptors_do_not_share_a_name (As : List Pt3) :
+    accSegDesc.name ≠ accFinalDesc.name
+    ∧ accFinalDesc.name ≠ (accRoutedDesc As).name
+    ∧ accSegDesc.name ≠ (accRoutedDesc As).name := by
+  rw [accRoutedDesc_name]
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- ⚑ **THE SELECTOR CENSUS, ROUTED.** One more `.transition` (the index thread) and the file's
+FIRST `.first` gate (the index origin); the 64 `.last` discharge gates and the 96 accumulator
+threads are untouched. A `.first → .all` re-scope on the origin would pin EVERY row's index to zero
+— a descriptor accepting only one-row traces — and it moves this number. -/
+theorem the_routed_selector_census (As : List Pt3) :
+    (accRoutedAirOn As).windowCountSel RowSel.transition = 97
+    ∧ (accRoutedAirOn As).windowCountSel RowSel.last = 64
+    ∧ (accRoutedAirOn As).windowCountSel RowSel.first = 1
+    ∧ (accRoutedAirOn As).windowCountSel RowSel.all = 0
+    ∧ (accRoutedAirOn As).lookupCount = 1 := by
+  show accRoutedAir.windowCountSel RowSel.transition = 97
+    ∧ accRoutedAir.windowCountSel RowSel.last = 64
+    ∧ accRoutedAir.windowCountSel RowSel.first = 1
+    ∧ accRoutedAir.windowCountSel RowSel.all = 0
+    ∧ accRoutedAir.lookupCount = 1
+  refine ⟨by decide, by decide, by decide, by decide, by decide⟩
+
+
+/-! ### §8a — THE DEMONSTRATION'S DECLARED ADDENDS.
+
+⚠ These are a PARAMETER CHOICE, not AIR: `accRoutedDesc` is stated over an arbitrary `As` and every
+theorem in §8b–§8d quantifies over it. What lives here is the ONE list the checked-in artifact and
+the checked-in trace fixtures both derive from, so the descriptor's manifest and the trace's addend
+columns cannot drift apart the way two transcriptions would. -/
+
+/-- The Vesta generator, projective. -/
+def Gv3 : Pt3 := (Dregg2.Circuit.Emit.PastaCurve.Gv.1, Dregg2.Circuit.Emit.PastaCurve.Gv.2, 1)
+
+/-- `−P = (X : −Y : Z)`, reduced at the Vesta base prime. The additive inverse a complete addition
+sends to `O`. -/
+def negV (P : Pt3) : Pt3 := (P.1, (qN - P.2.1 % qN) % qN, P.2.2)
+
+/-- The accumulator after `k` additions of `Q`, by the same complete formula the row computes. -/
+def walkV (Q : Pt3) : Pt3 → Nat → Pt3
+  | P, 0 => P
+  | P, (k + 1) =>
+      walkV Q (Dregg2.Circuit.Emit.PastaCurveComplete.rcbAddM qN curveB3 P Q) k
+
+/-- ⚑ **THE DEMONSTRATION'S DECLARED ADDENDS** — seven generator adds, then the negation of the
+running accumulator, which is what closes the chain at the point at infinity. Eight rows: a power of
+two, which the deployed prover requires of a base trace. -/
+def demoAddends : List Pt3 :=
+  List.replicate 7 Gv3 ++ [negV (walkV Gv3 Gv3 7)]
+
+/-- The emitted ROUTED descriptor at the demonstration's manifest — the checked-in artifact. -/
+def accRoutedDemoDesc : EffectVmDescriptor2 := accRoutedDesc demoAddends
+
+/-! ### §8b — ⚑⚑ THE ROUTING, FORCED.
+
+Three moves, and none of them is new: the index column is threaded (the shape §5 uses for the
+accumulator), the balance is read against `DescriptorIR2.PublicLookupBalanced` (the IR's OWN
+exact-public denotation), and the key pins the row (`PastaMsmBound.row_tuple_is_its_manifest_row`,
+one rail down, minus the doubling-row case this chain does not have). -/
+
+open Dregg2.Circuit.DescriptorIR2 (VmTrace zeroAsg lookupLog exactPublicTable PublicLookupBalanced)
+open Dregg2.Circuit.Emit.EffectLower (lowerAirLegs lowerLeg)
+
+/-- The row index starts at zero — `ridxStartLeg`'s body read as a fact about the trace. -/
+def IdxStarted (tr : Trace) : Prop := tr 0 RIDX = 0
+
+/-- …and advances by exactly one — `ridxThreadLeg`'s body read as a fact about the trace. -/
+def IdxThreaded (tr : Trace) (r : Nat) : Prop := tr (r + 1) RIDX = tr r RIDX + 1
+
+/-- ⚑ **THE INDEX COLUMN IS THE ROW'S OWN INDEX.** The emitted origin plus the emitted thread, for
+every row below the height. `H` is universally quantified and occurs only as the induction bound:
+the statement at `H = 8` is the statement at `H = 65 536`. -/
+theorem ridx_is_the_row_index (tr : Trace) (H : Nat)
+    (h0 : IdxStarted tr) (h : ∀ r, r + 1 < H → IdxThreaded tr r) :
+    ∀ i, i < H → tr i RIDX = (i : ℤ) := by
+  intro i
+  induction i with
+  | zero => intro _; simpa using h0
+  | succ m ih =>
+    intro hm
+    have hstep : tr (m + 1) RIDX = tr m RIDX + 1 := h m hm
+    rw [hstep, ih (by omega)]
+    push_cast
+    ring
+
+/-- Trace row `j`, with the deployed off-the-end default. -/
+def rowAt (t : VmTrace) (j : Nat) : Assignment := t.rows.getD j zeroAsg
+
+/-- ⚑ A `VmTrace` READ AS A `Trace`. Not a bridge, an identity: the two views are the same function,
+so every §5–§7 theorem applies to a `VmTrace` verbatim and no hypothesis relates them. -/
+def traceOf (t : VmTrace) : Trace := rowAt t
+
+theorem traceOf_apply (t : VmTrace) (j : Nat) : traceOf t j = rowAt t j := rfl
+
+/-- Trace row `j` is a row of the trace. -/
+theorem rowAt_mem (t : VmTrace) (j : Nat) (hj : j < t.rows.length) : rowAt t j ∈ t.rows := by
+  have : rowAt t j = t.rows[j] := by simp [rowAt, List.getD, List.getElem?_eq_getElem hj]
+  rw [this]
+  exact List.getElem_mem hj
+
+/-- The emitted routing tuple, evaluated on a row. -/
+def addTupleOf (a : Assignment) : List ℤ :=
+  (addendTuple.map Dregg2.Exec.CircuitEmit.emitExpr).map
+    (fun e => Dregg2.Exec.CircuitEmit.EmittedExpr.eval e a)
+
+/-- The tuple in explicit form: the key, then the row's own 96 addend cells. -/
+theorem addTupleOf_cons (a : Assignment) :
+    addTupleOf a = (a RIDX + 1) :: (List.range (3 * SK)).map (fun j => a (ADD_X + j)) := by
+  simp [addTupleOf, addendTuple, Dregg2.Exec.CircuitEmit.emitExpr,
+    Dregg2.Exec.CircuitEmit.EmittedExpr.eval, List.map_map, Function.comp_def]
+
+theorem addTupleOf_head (a : Assignment) : (addTupleOf a).head? = some (a RIDX + 1) := by
+  rw [addTupleOf_cons]; rfl
+
+/-- The manifest row's KEY. ⚑ It is `i + 1`, never `i`: a live key space containing `0` cannot be
+told from an all-zero tuple, the trap `PastaMsmBound` and `MinaWrapVerifierProgram` both avoid. -/
+theorem addendRow_head (As : List Pt3) (i : Nat) : (addendRow As i).head? = some (i + 1) := rfl
+
+/-- …and the same key in the INTEGER denotation the lookup log speaks. -/
+theorem addendRow_map_head (As : List Pt3) (i : Nat) :
+    ((addendRow As i).map Int.ofNat).head? = some (((i + 1 : Nat) : ℤ)) := rfl
+
+/-- ⚑ **TWO MANIFEST ROWS WITH THE SAME KEY ARE THE SAME ROW** — what turns a multiset membership
+into a POINTWISE statement. Proved from the manifest's `def`, so it holds at every declared length
+rather than at the demonstration's. -/
+theorem addend_manifest_key_unique (As : List Pt3) {r s : List Nat}
+    (hr : r ∈ addendManifest As) (hs : s ∈ addendManifest As)
+    (hk : r.head? = s.head?) : r = s := by
+  obtain ⟨i, _, rfl⟩ := List.mem_map.mp hr
+  obtain ⟨j, _, rfl⟩ := List.mem_map.mp hs
+  rw [addendRow_head, addendRow_head] at hk
+  have hij : i = j := by simpa using hk
+  rw [hij]
+
+/-- A constraint that is not a lookup AT THE ADDEND TABLE. -/
+def notAddendLookup : VmConstraint2 → Bool
+  | .lookup l => !(l.table == ADDEND_TID)
+  | _         => true
+
+/-- ⚑ **ONLY THE ROUTING LEG TARGETS THE ADDEND TABLE.** This is a real check and not a restatement
+of "there is one lookup leg": the row's six `AirLeg.limbs` legs lower to 192 `.lookup` constraints
+of their own, at the three `rangeTidW` tables. A second lookup reaching this table would make the
+log below a `flatMap` of PAIRS and every pointwise conclusion false. -/
+theorem only_the_routing_leg_targets_the_addend_table :
+    accFinalDesc.constraints.all notAddendLookup = true := by decide
+
+/-- The routed descriptor's constraints are the final descriptor's, then the three routing ones. -/
+theorem routed_constraints_split (As : List Pt3) :
+    (accRoutedDesc As).constraints
+      = accFinalDesc.constraints
+          ++ [ridxStartLeg, ridxThreadLeg, addendLookupLeg].flatMap lowerLeg := by
+  have hr : (accRoutedDesc As).constraints = lowerAirLegs (accRoutedAirOn As) :=
+    List.append_nil _
+  have hf : accFinalDesc.constraints = lowerAirLegs accFinalAir := List.append_nil _
+  rw [hr, hf]
+  show (accFinalAir.legs ++ [ridxStartLeg, ridxThreadLeg, addendLookupLeg]).flatMap lowerLeg
+      = accFinalAir.legs.flatMap lowerLeg ++ _
+  simp [List.flatMap_append]
+
+/-- A `flatMap` of singletons IS a `map`. -/
+theorem flatMap_singleton_map {α β : Type} (f : α → List β) (g : α → β) (l : List α)
+    (h : ∀ x, f x = [g x]) : l.flatMap f = l.map g := by
+  induction l with
+  | nil => rfl
+  | cons _ rest ih => simp [h, ih]
+
+/-- A constraint list with no addend lookup contributes nothing to the addend log. Stated over an
+ABSTRACT `f` so it applies to `lookupLog`'s own anonymous matcher. -/
+theorem filterMap_of_noAddendLookup {β : Type} (f : VmConstraint2 → Option β)
+    (l : List VmConstraint2) (hnl : ∀ c, notAddendLookup c = true → f c = none)
+    (h : l.all notAddendLookup = true) : l.filterMap f = [] := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    simp [hnl a h.1, ih h.2]
+
+/-- The three routing constraints contribute EXACTLY the row's own tuple to the addend log: the two
+index legs are a boundary and a window (neither is a lookup), and the routing leg lowers to one
+`.lookup` at `ADDEND_TID` whose evaluated tuple IS `addTupleOf`. -/
+theorem routing_leg_filterMap (row : Assignment) :
+    (([ridxStartLeg, ridxThreadLeg, addendLookupLeg].flatMap lowerLeg).filterMap
+      (fun c => match c with
+        | .lookup l => if l.table = ADDEND_TID then some (l.tuple.map (·.eval row)) else none
+        | _ => none))
+      = [addTupleOf row] := rfl
+
+/-- ⚑ **THE ADDEND LOG IS THE PER-ROW TUPLE MAP.** Exactly one emitted lookup targets the addend
+table, it fires on every row, and the 192 range lookups are filtered out by table id. -/
+theorem addend_lookupLog_is_rowMap (As : List Pt3) (t : VmTrace) :
+    lookupLog (accRoutedDesc As) t ADDEND_TID = t.rows.map addTupleOf := by
+  unfold lookupLog
+  refine flatMap_singleton_map _ addTupleOf t.rows (fun row => ?_)
+  rw [routed_constraints_split As, List.filterMap_append,
+    filterMap_of_noAddendLookup _ accFinalDesc.constraints
+      (fun c hc => by cases c <;> simp_all [notAddendLookup])
+      only_the_routing_leg_targets_the_addend_table]
+  exact routing_leg_filterMap row
+
+/-- The exact-public balance the declaration demands, unfolded at THIS table. -/
+theorem addend_balance (As : List Pt3) (t : VmTrace)
+    (hbal : PublicLookupBalanced (accRoutedDesc As) t) :
+    (t.rows.map addTupleOf).Perm (exactPublicTable (addendManifest As)) := by
+  have hmem : addendTable As ∈ (accRoutedDesc As).tables := by
+    show addendTable As ∈ routedTables As
+    simp [routedTables]
+  have h := hbal (addendTable As) hmem
+  simpa [addendTable, ← addend_lookupLog_is_rowMap As t] using h
+
+/-- ⚑ **THE BALANCE FORCES THE ROW COUNT** — the trace has exactly as many rows as the descriptor
+declares addends. `exactPublicRows` is a PERMUTATION, so this is not assumed anywhere below: a
+prover cannot pad the chain with unrouted rows, and cannot drop a declared addend either. -/
+theorem the_balance_forces_the_row_count (As : List Pt3) (t : VmTrace)
+    (hbal : PublicLookupBalanced (accRoutedDesc As) t) : t.rows.length = As.length := by
+  have h := (addend_balance As t hbal).length_eq
+  simpa [exactPublicTable, addendManifest] using h
+
+/-- ⚑⚑ **THE DELIVERABLE — ROW `i`'S TUPLE IS THE MANIFEST'S ROW `i`.**
+
+On a trace whose emitted routing lookup balances against the emitted manifest and whose index column
+is the threaded row index, row `i`'s addend cells ARE the descriptor's declared addend `i`. `i` and
+`As.length` are universally quantified and occur in no bound: the statement at eight rows is the
+statement at `2^16`.
+
+⚠ The argument is pure MEMBERSHIP — no counting, no pigeonhole. The manifest's row `i` is IN the
+manifest, so by the permutation it is SOME trace row's tuple; the key `RIDX + 1` plus
+`addend_manifest_key_unique` pins that row to be row `i`. -/
+theorem addend_is_its_declared_addend (As : List Pt3) (t : VmTrace) (i : Nat)
+    (hbal : PublicLookupBalanced (accRoutedDesc As) t)
+    (hridx : ∀ j, j < t.rows.length → rowAt t j RIDX = (j : ℤ))
+    (hi : i < As.length) :
+    addTupleOf (rowAt t i) = (addendRow As i).map Int.ofNat := by
+  have hperm := addend_balance As t hbal
+  have hlen : t.rows.length = As.length := the_balance_forces_the_row_count As t hbal
+  have hmiM : addendRow As i ∈ addendManifest As :=
+    List.mem_map_of_mem (List.mem_range.mpr hi)
+  have hmiL : (addendRow As i).map Int.ofNat ∈ t.rows.map addTupleOf :=
+    hperm.mem_iff.mpr (List.mem_map_of_mem hmiM)
+  obtain ⟨r, hr, hrEq⟩ := List.mem_map.mp hmiL
+  obtain ⟨j, hj, hjr⟩ : ∃ j, j < t.rows.length ∧ rowAt t j = r := by
+    obtain ⟨j, hj, hje⟩ := List.mem_iff_getElem.mp hr
+    exact ⟨j, hj, by simp [rowAt, List.getD, List.getElem?_eq_getElem hj, hje]⟩
+  have hkey : some (((i + 1 : Nat) : ℤ)) = some ((j : ℤ) + 1) := by
+    have h1 : (addTupleOf (rowAt t j)).head? = some (rowAt t j RIDX + 1) := addTupleOf_head _
+    have hrj : rowAt t j RIDX = (j : ℤ) := hridx j hj
+    rw [hjr, hrEq, ← hjr, hrj, addendRow_map_head] at h1
+    exact h1
+  have hji : j = i := by
+    have hz : (i : ℤ) = (j : ℤ) := by
+      have := Option.some.inj hkey
+      push_cast at this
+      linarith
+    exact_mod_cast hz.symm
+  rw [← hjr, hji] at hrEq
+  exact hrEq
+
+/-! ### §8c — from the tuple to the VALUE the chain folds. -/
+
+/-- Two `map`s over the same `List.range` agree pointwise. -/
+theorem range_map_pointwise {α : Type} (n : Nat) (f g : Nat → α)
+    (h : (List.range n).map f = (List.range n).map g) : ∀ i, i < n → f i = g i := by
+  intro i hi
+  have hlt : i < ((List.range n).map f).length := by simp [hi]
+  have h2 := congrArg (fun l => l[i]?) h
+  simp only [List.getElem?_map, List.getElem?_range hi] at h2
+  simpa using h2
+
+/-- ⚑ **AND LIMBWISE.** Row `i`'s addend CELL `ADD_X + j` is the declared point's `j`-th limb — the
+form the chain's `sVal` reads, rather than a statement about a tuple. -/
+theorem addend_limbs_are_declared (As : List Pt3) (t : VmTrace) (i : Nat)
+    (hbal : PublicLookupBalanced (accRoutedDesc As) t)
+    (hridx : ∀ j, j < t.rows.length → rowAt t j RIDX = (j : ℤ))
+    (hi : i < As.length) :
+    ∀ j, j < 3 * SK →
+      rowAt t i (ADD_X + j) = ((coordLimb (As.getD i (0, 0, 0)) j : Nat) : ℤ) := by
+  have h := addend_is_its_declared_addend As t i hbal hridx hi
+  rw [addTupleOf_cons, addendRow] at h
+  simp only [List.map_cons, List.map_map, Function.comp_def] at h
+  have htail := (List.cons.inj h).2
+  exact range_map_pointwise (3 * SK) _ _ htail
+
+/-- Pointwise congruence for the limb sum `sVal` is built from. -/
+theorem sumL_congr {α : Type} (l : List α) (f g : α → ℤ) (h : ∀ x ∈ l, f x = g x) :
+    Dregg2.Circuit.Emit.PastaFieldSound.sumL l f
+      = Dregg2.Circuit.Emit.PastaFieldSound.sumL l g := by
+  unfold Dregg2.Circuit.Emit.PastaFieldSound.sumL
+  exact congrArg List.sum (List.map_congr_left h)
+
+/-- The DECLARED coordinate value at limb OFFSET `off`: the recomposition of the declared point's
+limbs, in exactly the form `sVal` computes on the row. The three coordinates sit at offsets
+`0 / SK / 2·SK`, which is the same layout the row's `ADD_X/ADD_Y/ADD_Z` blocks sit in. -/
+def declVal (P : Pt3) (off : Nat) : ℤ :=
+  Dregg2.Circuit.Emit.PastaFieldSound.sumL (List.range SK)
+    (fun i => ((2 : ℤ) ^ Dregg2.Circuit.Emit.PastaFieldSound.SB) ^ i
+                * ((coordLimb P (off + i) : Nat) : ℤ))
+
+/-- The declared addend of index `r`, as the projective triple the chain folds. -/
+def declAddend (As : List Pt3) (r : Nat) : ℤ × ℤ × ℤ :=
+  (declVal (As.getD r (0, 0, 0)) 0, declVal (As.getD r (0, 0, 0)) SK,
+   declVal (As.getD r (0, 0, 0)) (2 * SK))
+
+/-- One coordinate: a block whose every cell is the declared limb recomposes to the declared value.
+⚠ No range hypothesis and no bound on the coordinate is needed — this is an identity between two
+sums over the SAME limb cells, not a claim that the recomposition is the point's integer. -/
+theorem sVal_is_declVal (P : Pt3) (a : Assignment) (base off : Nat)
+    (hb : base = ADD_X + off) (hoff : off + SK ≤ 3 * SK)
+    (h : ∀ j, j < 3 * SK → a (ADD_X + j) = ((coordLimb P j : Nat) : ℤ)) :
+    sVal a base = declVal P off := by
+  subst hb
+  unfold sVal declVal
+  refine sumL_congr _ _ _ (fun x hx => ?_)
+  have hxr : x < SK := List.mem_range.mp hx
+  rw [show ADD_X + off + x = ADD_X + (off + x) from by omega, h (off + x) (by omega)]
+
+/-- ⚑⚑ **THE ROW'S ADDEND VALUE IS THE DECLARED ONE** — the three `sVal`s `chainRef` reads are the
+three declared recompositions. This is the rung that carries the routing out of the lookup tuple and
+into the chain's own vocabulary. -/
+theorem addend_value_is_declared (As : List Pt3) (t : VmTrace) (i : Nat)
+    (hbal : PublicLookupBalanced (accRoutedDesc As) t)
+    (hridx : ∀ j, j < t.rows.length → rowAt t j RIDX = (j : ℤ))
+    (hi : i < As.length) :
+    addend (traceOf t) i = declAddend As i := by
+  have hl := addend_limbs_are_declared As t i hbal hridx hi
+  have e0 : sVal (rowAt t i) ADD_X = declVal (As.getD i (0, 0, 0)) 0 :=
+    sVal_is_declVal _ _ ADD_X 0 rfl (by decide) hl
+  have e1 : sVal (rowAt t i) ADD_Y = declVal (As.getD i (0, 0, 0)) SK :=
+    sVal_is_declVal _ _ ADD_Y SK rfl (by decide) hl
+  have e2 : sVal (rowAt t i) ADD_Z = declVal (As.getD i (0, 0, 0)) (2 * SK) :=
+    sVal_is_declVal _ _ ADD_Z (2 * SK) rfl (by decide) hl
+  show (sVal (rowAt t i) ADD_X, sVal (rowAt t i) ADD_Y, sVal (rowAt t i) ADD_Z) = _
+  rw [e0, e1, e2]
+  rfl
+
+/-! ### §8d — ⚑⚑ THE STRENGTHENED DISCHARGE. -/
+
+/-- ⚑ **THE DECLARED CHAIN** — the RCB fold over the addends the DESCRIPTOR declares, from the
+accumulator the trace carries into row 0 (which is the published `PI[0..95]`). ⚠ The trace's addend
+columns do not occur in this definition at all; that absence is the point. -/
+def declaredChain (As : List Pt3) (tr : Trace) : Nat → ℤ × ℤ × ℤ
+  | 0 => accIn tr 0
+  | n + 1 =>
+      let P := declaredChain As tr n
+      rcbOutZ (curveB3 : ℤ) P.1 P.2.1 P.2.2
+        (declAddend As n).1 (declAddend As n).2.1 (declAddend As n).2.2
+
+/-- The trace's chain IS the declared chain, once every addend is routed. -/
+theorem chain_is_the_declared_chain (As : List Pt3) (t : VmTrace) (m : Nat)
+    (hm : ∀ r, r < m → addend (traceOf t) r = declAddend As r) :
+    chainRef (traceOf t) m = declaredChain As (traceOf t) m := by
+  induction m with
+  | zero => rfl
+  | succ k ih =>
+    simp only [chainRef, declaredChain, ih (fun r hr => hm r (Nat.lt_succ_of_lt hr)),
+      hm k (Nat.lt_succ_self k)]
+
+/-- ⚑⚑⚑ **THE ACCUMULATOR CHECK OVER THE DESCRIPTOR'S OWN ADDENDS.**
+
+`n+1` rows of deployed satisfaction, `n` held accumulator threads, the 64 discharge gates, the
+emitted index origin and index thread, and the emitted routing balance force the `n+1`-fold RCB
+chain **of the addends this descriptor DECLARES** — starting from the accumulator published at
+`PI[0..95]` — to be the point at infinity mod the real Vesta-base prime.
+
+⚑ **READ THE CONCLUSION AGAINST `accumulator_discharge_forced`'S.** That one says
+`chainRef tr (n+1) ≡ O`: a fold over `sVal (tr r) ADD_X/Y/Z`, i.e. over columns the prover fills.
+This one says `declaredChain As (traceOf t) (n+1) ≡ O`: a fold over `declAddend As r`, in which the
+trace's addend columns **do not occur**. The verifier rebuilds `As` from the descriptor bytes
+(`ExactPublicManifest::preprocessed`), so those addends are VK-pinned.
+
+⚠ The row count is FORCED, not assumed: `the_balance_forces_the_row_count` derives
+`t.rows.length = As.length` from the permutation, so a prover can neither pad the chain with
+unrouted rows nor drop a declared addend. `hheight` only names `n` for the discharge's `.last`. -/
+theorem accumulator_discharge_forced_on_declared_addends
+    (As : List Pt3) (t : VmTrace) (n : Nat)
+    (hrow : ∀ r, r ≤ n → RowSoundV (traceOf t) r)
+    (hthread : ∀ r, r < n → Threaded (traceOf t) r)
+    (hd : Discharged (traceOf t) n)
+    (hbal : PublicLookupBalanced (accRoutedDesc As) t)
+    (h0 : IdxStarted (traceOf t))
+    (hidx : ∀ r, r + 1 < t.rows.length → IdxThreaded (traceOf t) r)
+    (hheight : t.rows.length = n + 1) :
+    CZm (qN : ℤ) (declaredChain As (traceOf t) (n + 1)).1 0
+    ∧ CZm (qN : ℤ) (declaredChain As (traceOf t) (n + 1)).2.2 0 := by
+  have hridx : ∀ j, j < t.rows.length → rowAt t j RIDX = (j : ℤ) :=
+    ridx_is_the_row_index (traceOf t) t.rows.length h0 hidx
+  have hlen : t.rows.length = As.length := the_balance_forces_the_row_count As t hbal
+  have hchain : chainRef (traceOf t) (n + 1) = declaredChain As (traceOf t) (n + 1) :=
+    chain_is_the_declared_chain As t (n + 1) (fun r hr =>
+      addend_value_is_declared As t r hbal hridx (by omega))
+  have hcore := accumulator_discharge_forced (traceOf t) n hrow hthread hd
+  rw [hchain] at hcore
+  exact hcore
+
+/-! ### §8e — ⚠ AND THE ROUTING KEY IS DOING WORK.
+
+The Rust side carries the deployed polarity (`circuit/tests/mina_accumulator_routing_proves.rs`: an
+honest chain PROVES and a chain whose addends are real Vesta points that are NOT the declared ones
+is REFUSED). What is exhibited here is the KEY's separating power, because a routing whose key
+collapsed would make `addend_manifest_key_unique` vacuous while every shape pin still passed. -/
+
+/-- A row that is zero everywhere except the index column. -/
+def idxRow (k : ℤ) : Assignment := fun c => if c = RIDX then k else 0
+
+/-- ⚑ **THE KEY SEPARATES TWO ROWS WITH IDENTICAL ADDEND CELLS.** `idxRow 0` and `idxRow 1` agree on
+every one of the 96 addend columns — all zero — and their tuples still differ, in the KEY field. So
+a prover cannot serve row `i`'s declared addend from row `j`, and the pointwise conclusion of
+`addend_is_its_declared_addend` is not an artifact of the addends happening to be distinct.
+
+⚠ The moved value is `1`: NONZERO, and inside the declared 8-bit limb width, so nothing here is a
+falsifier that moved a zero into a zero. -/
+theorem the_routing_key_separates_rows :
+    (addTupleOf (idxRow 0)).head? = some 1
+    ∧ (addTupleOf (idxRow 1)).head? = some 2
+    ∧ (∀ j, j < 3 * SK → idxRow 0 (ADD_X + j) = idxRow 1 (ADD_X + j))
+    ∧ addTupleOf (idxRow 0) ≠ addTupleOf (idxRow 1) := by
+  have h0 : (addTupleOf (idxRow 0)).head? = some 1 := by
+    rw [addTupleOf_head]; norm_num [idxRow]
+  have h1 : (addTupleOf (idxRow 1)).head? = some 2 := by
+    rw [addTupleOf_head]; norm_num [idxRow]
+  refine ⟨h0, h1, ?_, ?_⟩
+  · intro j hj
+    have hne : ADD_X + j ≠ RIDX := by
+      simp only [ADD_X, RIDX, RCB_WIDTH, IN_BASE] at *
+      omega
+    simp [idxRow, hne]
+  · intro h
+    rw [h, h1] at h0
+    exact absurd (Option.some.inj h0) (by decide)
+
 #assert_axioms acc_pi_layout
 #assert_axioms pin_leg_counts
 #assert_axioms dischargeLegs_length
@@ -617,7 +1279,7 @@ theorem the_two_exhibits_differ_in_one_cell :
 #assert_axioms the_two_descriptors_do_not_share_a_name
 #assert_axioms the_two_descriptors_differ
 #assert_axioms the_full_width_sum_needs_the_fold
-#assert_axioms the_routing_tuple_does_not_fit_one_table
+#assert_axioms the_routing_tuple_used_to_not_fit_and_now_does
 #assert_axioms the_split_remedy_costs_more_than_the_wide_table
 #assert_axioms the_column_census
 #assert_axioms the_multiply_carries_are_seven_hundred_forty_four
@@ -631,5 +1293,32 @@ theorem the_two_exhibits_differ_in_one_cell :
 #assert_axioms accumulator_discharge_forced
 #assert_axioms the_discharge_gate_is_refutable
 #assert_axioms the_two_exhibits_differ_in_one_cell
+#assert_axioms the_routing_costs_one_column
+#assert_axioms the_declared_tuple_is_the_priced_one
+#assert_axioms addendTuple_length
+#assert_axioms routedTables_ids_are_distinct
+#assert_axioms accRoutedAir_extends_accFinalAir
+#assert_axioms the_legs_do_not_depend_on_the_declared_addends
+#assert_axioms accRoutedAir_mainRailOk
+#assert_axioms accRoutedDesc_constraint_count
+#assert_axioms the_three_descriptors_do_not_share_a_name
+#assert_axioms the_routed_selector_census
+#assert_axioms ridx_is_the_row_index
+#assert_axioms addTupleOf_cons
+#assert_axioms addend_manifest_key_unique
+#assert_axioms only_the_routing_leg_targets_the_addend_table
+#assert_axioms routed_constraints_split
+#assert_axioms routing_leg_filterMap
+#assert_axioms addend_lookupLog_is_rowMap
+#assert_axioms addend_balance
+#assert_axioms the_balance_forces_the_row_count
+#assert_axioms addend_is_its_declared_addend
+#assert_axioms range_map_pointwise
+#assert_axioms addend_limbs_are_declared
+#assert_axioms sVal_is_declVal
+#assert_axioms addend_value_is_declared
+#assert_axioms chain_is_the_declared_chain
+#assert_axioms accumulator_discharge_forced_on_declared_addends
+#assert_axioms the_routing_key_separates_rows
 
 end Dregg2.Circuit.Emit.MinaAccumulatorAir
