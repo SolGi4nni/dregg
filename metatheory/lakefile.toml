@@ -459,6 +459,8 @@ globs = [
   # (direct-glob mechanism, same as the Pickles drivers). Sponge-bearing pins: budget ~1 min.
   "Dregg2.Games.PathOfAngels.NightWatchCampaignContent",  # 15 comp
   "Dregg2.Games.PathOfAngels.NightWatchCampaignContentEmitMain",  # compile coverage (emit driver)
+  "Dregg2.Games.PathOfAngels.AngelsEpoch2World",  # 2 ax, 11 comp
+  "Dregg2.Games.PathOfAngels.AngelsEpoch2WorldEmitMain",  # compile coverage (emit driver)
   # (`NightWatchLoop`, `…Examples`, `…Runtime`, `…Wire`, `…WireExamples` stood here until
   # 2026-08-07: 36 `#assert_axioms` + 42 `#assert_compiled`, every one of them ABOUT the deleted
   # cone. See the ⚑ 2026-08-07 note at the head of this list.)
