@@ -3453,6 +3453,26 @@ async function observePoaSignalTransition(
  * pinned deployment, extension custody, and the live node, then re-read from
  * the signed bytes before consent.
  */
+/**
+ * Exact round-for-round comparison of two Signal transcripts.
+ *
+ * ⚠ LENGTH FIRST, and it is not defensive noise: the post-signing substitution
+ * check exists to catch a carrier that says something other than what consent
+ * was painted for, and a transcript that agrees on every round it HAS while
+ * carrying a different number of them is exactly such a carrier. A per-index
+ * comparison alone would pass a truncated run.
+ */
+function sameSignalTranscript(
+  built: readonly (readonly number[])[],
+  claimed: readonly (readonly number[])[],
+): boolean {
+  if (built.length !== claimed.length) return false;
+  return built.every((round, index) =>
+    round.length === 3
+    && claimed[index]?.length === 3
+    && round.every((band, i) => band === claimed[index][i]));
+}
+
 async function submitPoaSignalClaim(
   claimInput: unknown,
   origin: string,
@@ -3533,13 +3553,16 @@ async function submitPoaSignalClaim(
       nonce,
       previous_receipt_hash_hex: previousReceiptHash,
       mission_id: parsed.claim.missionId,
-      code: parsed.claim.code,
+      // ⚑ THE PLAYED TRANSCRIPT, not the solving code. The wasm `Spec` is
+      // `deny_unknown_fields`, so the old `code:` key is a refusal here rather
+      // than a carrier the node would reject later.
+      transcript: parsed.claim.transcript,
     }));
     if (built.agent_cell_id !== agentCellId
         || built.nonce !== nonce
         || (built.previous_receipt_hash_hex ?? null) !== previousReceiptHash
         || built.mission_id !== POA_SIGNAL_MISSION_ID
-        || built.code.some((band, i) => band !== parsed.claim.code[i])) {
+        || !sameSignalTranscript(built.transcript, parsed.claim.transcript)) {
       return poaSignalRefused("PoA Signal builder output does not match the live player claim");
     }
     signed = w.sign_turn_v3(
@@ -3561,7 +3584,7 @@ async function submitPoaSignalClaim(
       || inspected.nonce !== nonce
       || inspectedPrevious !== previousReceiptHash
       || inspected.mission_id !== parsed.claim.missionId
-      || inspected.code.some((band, i) => band !== parsed.claim.code[i])
+      || !sameSignalTranscript(inspected.transcript, parsed.claim.transcript)
       || inspected.turn_hash !== signed.turn_id
       || inspected.fee !== built.fee) {
     return poaSignalRefused("signed PoA Signal bytes failed the exact post-signing substitution check");
@@ -3569,7 +3592,7 @@ async function submitPoaSignalClaim(
 
   const explanation = explainPoASignalClaim({
     missionId: inspected.mission_id,
-    code: inspected.code,
+    transcript: inspected.transcript,
     signerPublicKeyHex: publicKeyHex,
     agentCellId,
     nonce,
@@ -3601,7 +3624,7 @@ async function submitPoaSignalClaim(
       application: "poa-signal-v1",
       federationDomainHex: POA_SIGNAL_FEDERATION_HEX,
       missionId: POA_SIGNAL_MISSION_ID,
-      code: [...parsed.claim.code],
+      transcript: parsed.claim.transcript.map((code) => [...code]),
       agentCellId,
       nonce,
       previousReceiptHash,
