@@ -10,13 +10,19 @@
 # `workspace = true` deps (p3-*, dregg-* locals, etc.) resolve against the root
 # manifest they live under — not this one.
 #
-# `[patch]` replicates only the root patch THIS graph consumes: the `ark-serialize`
-# `serde_with` fork (pulled by the proof tree via dregg-circuit/dregg-sdk). The
-# root's gpui/servo/stylo/pathfinder path-patches are intentionally NOT copied —
-# none of those crates are in discord-bot's dependency graph (it has no gpui/servo
+# `[patch]` replicates the root patches THIS graph consumes. The root's
+# gpui/servo/stylo/pathfinder path-patches are intentionally NOT copied — none of
+# those crates are in discord-bot's dependency graph (it has no gpui/servo
 # surface), so the patches would be inert. The plonky3-recursion deps are direct
 # git deps in the root `[workspace.dependencies]` (no patch), and resolve via the
 # path-dep'd circuit crate's root-workspace membership.
+#
+# ⚑ A ROOT PATCH IS NOT INHERITED, so every root patch this graph touches must be
+# mirrored here BY HAND. `[patch]` is honoured only from the root manifest OF THE
+# WORKSPACE BEING BUILT; a path-dep whose crate is a member of the ROOT workspace
+# still resolves its git deps through THIS table. When the root grows a patch and
+# this file does not, the failure is not subtle-but-late — it is a hard resolver
+# refusal or a stock-upstream crate that will not compile.
 [workspace]
 members = ["."]
 resolver = "2"
@@ -40,8 +46,30 @@ unexpected_cfgs = "allow"
 # separate workspace resolves `p3-fri` to stock upstream (5-generic, no fold) and
 # circuit-prove fails to compile. All other p3 crates stay on the same git rev (no source
 # split), exactly as the root's patch comment describes.
+#
+# p3-challenger fork — the same `82cfad73` source with the five PoW `grind` sites on
+# rayon's ORDERED finders, which is what makes emitted proof bytes reproducible. Mirrored
+# for the same reason: taking the challenger from a different source than the root would
+# split the type AND make this bot's proofs non-reproducible against the node's.
 [patch."https://github.com/Plonky3/Plonky3"]
 p3-fri = { path = "../vendor/plonky3-fri-82cfad73" }
+p3-challenger = { path = "../vendor/plonky3-challenger-82cfad73" }
+
+# o1-labs/proof-systems fork (emberian/proof-systems@relax-rayon-pin, rev c5305e63) —
+# byte-identical to upstream rev 36a8b510 except that the workspace's `rayon = "=1.10.0"`
+# EXACT pin is relaxed to `rayon = "1"`. Without this mirror the resolution is
+# UNSATISFIABLE and the leg dies before compiling a line:
+#
+#   error: failed to select a version for `rayon`
+#     `p3-maybe-rayon 0.5.1 @ Plonky3 82cfad73` requires `^1.11.0`
+#     `poly-commitment 0.7.0 @ o1-labs 36a8b510` requires `=1.10.0`
+#
+# Same three crates the root patches — patching only some of them would put
+# `mina-curves`'s field types on two sources at once.
+[patch."https://github.com/o1-labs/proof-systems"]
+poly-commitment = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
+mina-poseidon = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
+mina-curves = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
 
 [patch.crates-io]
 # ark-serialize fork — the `serde_with` feature the proof tree (dregg-hints via
