@@ -268,6 +268,27 @@ pub fn prove_accumulator_segment(
     public_inputs: &[BabyBear],
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    prove_accumulator_segment_split(rung, trace, public_inputs, config, config)
+}
+
+/// ⚑⚑ **THE LEAF WITH ITS TWO FRI ROLES NAMED SEPARATELY** — and they were never one.
+///
+/// * `inner_config` mints the IR-v2 descriptor batch AND supplies the in-circuit verifier params
+///   that check it. These two must agree: they are the same proof, minted then verified.
+/// * `wrap_config` mints the WRAP's own output proof. Its `FriVerifierParams` must still describe
+///   the child (`inner_config`'s minting knobs), but its PCS `log_blowup` — the number that
+///   multiplies every committed cell of the verification circuit — is a **free choice**.
+///
+/// [`prove_accumulator_segment`] passes one config for both, which is how `ir2_config`'s
+/// `log_blowup = 6` became the whole recursion tower's blowup. See
+/// [`dregg_recursion_verify::config::ir2_leaf_wrap_split_config`].
+pub fn prove_accumulator_segment_split(
+    rung: Rung,
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    inner_config: &DreggRecursionConfig,
+    wrap_config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     if public_inputs.len() != ACC_PI_COUNT {
         return Err(format!(
             "an accumulator segment carries exactly {ACC_PI_COUNT} public inputs, got {}",
@@ -283,12 +304,12 @@ pub fn prove_accumulator_segment(
         &MemBoundaryWitness::default(),
         &[],
         &UMemBoundaryWitness::default(),
-        config,
+        inner_config,
     )
     .map_err(|e| format!("accumulator segment inner IR-v2 prove failed: {e}"))?;
 
     let (airs, table_public_inputs, common) =
-        ir2_airs_and_common_for_config(&desc, &inner, public_inputs, config)
+        ir2_airs_and_common_for_config(&desc, &inner, public_inputs, inner_config)
             .map_err(|e| format!("accumulator verify-triple build failed: {e}"))?;
 
     let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
@@ -314,7 +335,7 @@ pub fn prove_accumulator_segment(
         cb.expose_as_public_output(&claim);
     };
 
-    prove_recursion_layer_auto_with_expose(&input, config, Some(&expose))
+    prove_recursion_layer_auto_with_expose(&input, wrap_config, Some(&expose))
         .map_err(|e| format!("accumulator segment leaf wrap failed: {e}"))
 }
 

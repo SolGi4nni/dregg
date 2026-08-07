@@ -43,7 +43,8 @@ pub mod recursive {
         RECURSION_FRI_COMMIT_POW_BITS, RECURSION_FRI_LOG_BLOWUP, RECURSION_FRI_LOG_FINAL_POLY_LEN,
         RECURSION_FRI_MAX_LOG_ARITY, RECURSION_FRI_NUM_QUERIES, RECURSION_FRI_QUERY_POW_BITS,
         RecursionCompatibleProof, WIDTH, create_recursion_config,
-        create_recursion_config_for_inner_fri, create_recursion_config_with_fri,
+        create_recursion_config_for_inner_fri, create_recursion_config_split_fri,
+        create_recursion_config_with_fri, ir2_leaf_wrap_split_config,
     };
     pub use dregg_recursion_verify::verify::{
         RecursionVk, decode_recursive_batch_proof, recursion_vk_fingerprint,

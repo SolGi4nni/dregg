@@ -146,6 +146,42 @@ pub type InnerFri = p3_recursion::pcs::FriProofTargets<
 pub struct DreggRecursionConfig {
     config: Arc<InnerStarkConfig>,
     fri_verifier_params: FriVerifierParams,
+    mint: MintKnobs,
+}
+
+/// ⚑ The FRI knobs this config's PCS MINTS at, recorded so a gate or a measurement can READ what
+/// the deployed prover runs rather than reconstruct it from constants that may not be the ones the
+/// builder took. `p3_fri::TwoAdicFriPcs::fri` is `pub(crate)`, so without this the knobs are
+/// unreadable from outside the crate that built them — and a soundness knob no gate can read is not
+/// gated (the same hole `IR2_INNER_*` was made `pub` to close).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MintKnobs {
+    /// LDE rate exponent. Multiplies EVERY committed cell of this layer's own trace.
+    pub log_blowup: usize,
+    /// Final-polynomial length exponent.
+    pub log_final_poly_len: usize,
+    /// Fold arity exponent (`1` = fold by 2).
+    pub max_log_arity: usize,
+    /// FRI query count.
+    pub num_queries: usize,
+    /// Commit-phase grinding bits.
+    pub commit_pow_bits: usize,
+    /// Query-phase grinding bits.
+    pub query_pow_bits: usize,
+}
+
+impl MintKnobs {
+    /// The capacity ledger this config is gated against: `log_blowup · num_queries + query_pow`.
+    pub const fn capacity_bits(&self) -> usize {
+        self.log_blowup * self.num_queries + self.query_pow_bits
+    }
+}
+
+impl DreggRecursionConfig {
+    /// The knobs this config's PCS mints at — this layer's OWN proof, not its child's.
+    pub const fn mint_knobs(&self) -> &MintKnobs {
+        &self.mint
+    }
 }
 
 impl core::ops::Deref for DreggRecursionConfig {
@@ -331,6 +367,60 @@ pub fn create_recursion_config_with_fri(
     commit_pow_bits: usize,
     query_pow_bits: usize,
 ) -> DreggRecursionConfig {
+    create_recursion_config_split_fri(
+        log_blowup,
+        log_final_poly_len,
+        max_log_arity,
+        num_queries,
+        commit_pow_bits,
+        query_pow_bits,
+        log_blowup,
+        log_final_poly_len,
+        commit_pow_bits,
+        query_pow_bits,
+    )
+}
+
+/// ⚑⚑ **THE TWO ROLES, SEPARATED — they were never one knob set.**
+///
+/// A recursion layer holds TWO FRI engines and [`create_recursion_config_with_fri`] set both from
+/// one argument list:
+///
+/// * the **MINT** engine — `StarkConfig`'s PCS, which LDEs and commits *this* layer's own trace.
+///   `two_adic_pcs.rs:317` calls `coset_lde_batch(evals, self.fri.log_blowup, shift)`, so this
+///   `log_blowup` multiplies every committed cell of the verification circuit.
+/// * the **VERIFY** engine — `FriVerifierParams`, which the in-circuit verifier checks the CHILD's
+///   proof against. This one is not a choice: it must equal the knobs the child was minted at.
+///
+/// Only the second is constrained. Tying the first to it makes the child's blowup the whole tower's
+/// blowup: `ir2_config` mints the innermost descriptor batch at `log_blowup = 6`, and that 64×
+/// propagated up through every leaf wrap and every fold, blowing up traces two orders of magnitude
+/// larger than the descriptor's own. The child's engine is a fact about a proof that already
+/// exists; the layer's own engine is a free choice, and its only real constraint is that the
+/// PARENT's verify engine matches it.
+///
+/// ⚠ `mint_num_queries` and `mint_max_log_arity` have no verify-side twin here on purpose: the
+/// in-circuit verifier reads the child's query count and folding arity from the child's proof
+/// STRUCTURE, so only blowup / final-poly-len / the two PoW knobs need matching.
+#[allow(clippy::too_many_arguments)]
+pub fn create_recursion_config_split_fri(
+    mint_log_blowup: usize,
+    mint_log_final_poly_len: usize,
+    mint_max_log_arity: usize,
+    mint_num_queries: usize,
+    mint_commit_pow_bits: usize,
+    mint_query_pow_bits: usize,
+    verify_log_blowup: usize,
+    verify_log_final_poly_len: usize,
+    verify_commit_pow_bits: usize,
+    verify_query_pow_bits: usize,
+) -> DreggRecursionConfig {
+    let log_blowup = mint_log_blowup;
+    let log_final_poly_len = mint_log_final_poly_len;
+    let max_log_arity = mint_max_log_arity;
+    let num_queries = mint_num_queries;
+    let commit_pow_bits = mint_commit_pow_bits;
+    let query_pow_bits = mint_query_pow_bits;
     let perm = default_babybear_poseidon2_16();
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
@@ -352,20 +442,28 @@ pub fn create_recursion_config_with_fri(
     let config = StarkConfig::new(pcs, challenger);
 
     use p3_circuit::ops::PermConfig;
-    // ⚑ THE IN-CIRCUIT VERIFIER PARAMS READ THE SAME ARGUMENTS THE PROVER'S `FriParameters` DID.
-    // They were inline literals once, matching by coincidence; a knob move would have left the
-    // in-circuit verifier checking a config the prover does not run.
+    // ⚑ THE IN-CIRCUIT VERIFIER PARAMS DESCRIBE THE CHILD, NOT THIS LAYER. They were inline
+    // literals once, matching by coincidence; then they were tied to the minting knobs, which made
+    // the child's engine this layer's engine. They are the child's engine and nothing else.
     let fri_verifier_params = FriVerifierParams::with_mmcs(
-        log_blowup,
-        log_final_poly_len,
-        commit_pow_bits,
-        query_pow_bits,
+        verify_log_blowup,
+        verify_log_final_poly_len,
+        verify_commit_pow_bits,
+        verify_query_pow_bits,
         PermConfig::poseidon2(Poseidon2Config::BABY_BEAR_D4_W16),
     );
 
     DreggRecursionConfig {
         config: Arc::new(config),
         fri_verifier_params,
+        mint: MintKnobs {
+            log_blowup,
+            log_final_poly_len,
+            max_log_arity,
+            num_queries,
+            commit_pow_bits,
+            query_pow_bits,
+        },
     }
 }
 
@@ -384,4 +482,37 @@ pub fn ir2_leaf_wrap_config() -> DreggRecursionConfig {
         );
     }
     LEAF_WRAP_CONFIG.with(|c| c.clone())
+}
+
+/// ⚑⚑ **THE SAME LEAF WRAP, MINTING AT ITS OWN BLOWUP INSTEAD OF ITS CHILD'S.**
+///
+/// In-circuit VERIFY engine: the IR-v2 descriptor batch's (`log_blowup 6`, `query_pow 16`) — an
+/// unchanged fact about the child proof, so the same `Ir2BatchProof` verifies with no re-mint.
+/// MINT engine: [`create_recursion_config`]'s (`log_blowup 3`, arity 2, 38 queries, `query_pow`
+/// 14) — the knob set every non-IR-v2 recursion layer in the workspace already runs at, whose
+/// capacity ledger is `3·38 + 14 = 128`, against `ir2_leaf_wrap_config`'s `6·19 + 16 = 130`.
+///
+/// So the wrap's own committed LDE falls **8×** with no soundness knob moved down, and the child's
+/// in-circuit verification is bit-for-bit the one that runs today.
+///
+/// ⚠ Its OUTPUT proof is at `log_blowup 3 / 38 queries`, so a parent that folds it must VERIFY at
+/// those knobs — i.e. [`create_recursion_config`], not `ir2_leaf_wrap_config`. That is a VK/epoch
+/// rotation of the recursion tree, not a descriptor re-emit: no AIR, trace or descriptor JSON
+/// changes.
+pub fn ir2_leaf_wrap_split_config() -> DreggRecursionConfig {
+    thread_local! {
+        static SPLIT_WRAP_CONFIG: DreggRecursionConfig = create_recursion_config_split_fri(
+            RECURSION_FRI_LOG_BLOWUP,
+            RECURSION_FRI_LOG_FINAL_POLY_LEN,
+            RECURSION_FRI_MAX_LOG_ARITY,
+            RECURSION_FRI_NUM_QUERIES,
+            RECURSION_FRI_COMMIT_POW_BITS,
+            RECURSION_FRI_QUERY_POW_BITS,
+            IR2_INNER_LOG_BLOWUP,
+            IR2_INNER_LOG_FINAL_POLY_LEN,
+            IR2_INNER_COMMIT_POW_BITS,
+            IR2_INNER_QUERY_POW_BITS,
+        );
+    }
+    SPLIT_WRAP_CONFIG.with(|c| c.clone())
 }
