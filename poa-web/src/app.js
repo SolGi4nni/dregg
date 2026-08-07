@@ -19,6 +19,7 @@ import {
   judgedCustody,
   loadJudgedSession,
   mountJudgedPanel,
+  settleJudgedRun,
 } from "./judged-session.js";
 import {
   buildCrateOpenAction,
@@ -60,17 +61,28 @@ const state = {
   /**
    * What custody this page has for JUDGED Signal, and the judged session itself.
    *
-   * ⚑ THE SIGNER WALL FELL (2026-08-07). `window.dregg.signSignalSession` now
-   * signs exactly the two documented session statements with the player key —
-   * scoped and schema-pinned, deliberately not a signing oracle. What is left
-   * is node-side: the session routes are in `protected_routes` and this origin
-   * holds no bearer, so the POST lands 401 and `judgedCustody` — which takes the
-   * MEASURED session result, not a belief — reports `canPlay: false` naming that
-   * wall. The panel renders the action DISABLED against a measurement, and
-   * enables itself the day the route answers, with no change here.
+   * ⚑ THREE WALLS FELL ON 2026-08-07 and they are kept by name in
+   * `FALLEN_WALLS`, not deleted: the scoped signer landed, the session routes
+   * moved into `public_routes` (the bearer was never the authorization — a
+   * player signature is), and the extension's wasm bundle is BUILT now, so the
+   * claim carrier actually ships. `judgedCustody` takes the MEASURED session
+   * result, not a belief, so `canPlay` is routinely `true` on a current
+   * deployment and the play action is live.
+   *
+   * ⚠ Settling still stops, one wall on: `claim-cell-underivable`. The panel
+   * does NOT predict that — `canSettle` follows the provider, the click submits,
+   * and the extension's named refusal is what gets rendered.
    */
   judgedCustody: null,
   judgedSession: null,
+  /**
+   * The last settle attempt, as a STATE — or `null` before one is made.
+   *
+   * ⚠ It is never collapsed into a boolean. `settleJudgedRun` returns admission,
+   * transition and `latest_height` as three separate answers because only the
+   * third settles anything, and the panel copy names which one happened.
+   */
+  judgedSettle: null,
   /**
    * The crew identity the crate open is authorized under, or `null`.
    *
@@ -322,11 +334,39 @@ function renderToday() {
 function renderJudged() {
   const root = byId("judged-panel");
   if (!root) return;
-  mountJudgedPanel(root, buildJudgedPanel({
+  const panel = buildJudgedPanel({
     slot: state.slot,
     custody: state.judgedCustody,
     session: state.judgedSession,
-  }));
+    settle: state.judgedSettle,
+  });
+  mountJudgedPanel(root, panel);
+  if (panel.action.code === "settle-claim" && panel.action.enabled) {
+    root.querySelector(".judged-panel__action")?.addEventListener("click", settleJudgedClaim, { once: true });
+  }
+}
+
+/**
+ * SUBMIT THE SOLVED RUN. One click, and everything it sends came off the
+ * document the node served.
+ *
+ * ⚠ The panel is RE-READ from the settle result rather than patched: the same
+ * discipline the crate open follows below, and for the stronger reason here —
+ * `admission: "admitted"` is staging, and a panel that flipped to "settled" on
+ * the write reply would be telling a player their run landed on a chain that has
+ * not recorded it. `settleJudgedRun` reports admission, transition and
+ * `latest_height` separately, and the panel says which of the three happened.
+ */
+async function settleJudgedClaim() {
+  if (state.judgedSession?.state !== "ready") return;
+  state.judgedSettle = Object.freeze({ state: "submitted", admission: "pending", transition: "not_observed", heightBefore: null, heightAfter: null, finalized: false });
+  renderJudged();
+  state.judgedSettle = await settleJudgedRun({
+    provider: window.dregg ?? null,
+    session: state.judgedSession.session,
+    baseUrl: location.href,
+  });
+  renderJudged();
 }
 
 /**

@@ -2349,6 +2349,42 @@ pub fn sign_turn_v3(
 // Path of Angels Signal claim carrier
 // ============================================================================
 
+/// The canonical cell a public key owns in `domain` — `derive_raw(pk, H(domain))`.
+///
+/// ⚑ THIS BINDING WAS MISSING FOR AS LONG AS THE CALLER HAS EXISTED, and its
+/// absence refused every PoA Signal claim ever submitted. `extension/src/
+/// background.ts::clientCellIdHex` has called `wasm.cell_id_for_pubkey(pubkeyHex,
+/// "default")` since `3d6519be4`, behind a `typeof … === "function"` probe that
+/// falls through to `return null`. The function was never added to this file, so
+/// the probe was false on every build there has ever been, and
+/// `submitPoaSignalClaim` refused at "Could not derive the active player's
+/// canonical cell" before it ever reached the node — on live beta as much as
+/// locally. `queryBalance` failed the same way one function up.
+///
+/// It was invisible because the probe is SILENT: an absent binding is
+/// indistinguishable from a derivation that legitimately returned nothing, so
+/// nothing anywhere said a function had been looked for and not found. And it sat
+/// behind the stale-wasm wall — until `84907fcf4` made this bundle BUILT, every
+/// claim refused earlier and this refusal was unreachable. It was found by
+/// DRIVING the page↔extension seam, not by reading either side.
+///
+/// The derivation is not new and is not chosen here. It is exactly
+/// `Cipherclerk::cell_id` (`sdk/src/cipherclerk.rs`) and, at `domain = "default"`,
+/// exactly `poa_signal::signal_player_cell` — the cell the node's signed-turn
+/// perimeter credits, and the cell `build_poa_signal_claim_turn` independently
+/// derives inside `signal_claim_turn`. That the two agree is what makes the
+/// extension's `built.agent_cell_id !== agentCellId` check a real cross-check of
+/// the plumbing rather than a tautology: two call sites, one primitive.
+#[wasm_bindgen]
+pub fn cell_id_for_pubkey(public_key_hex: &str, domain: &str) -> Result<String, JsError> {
+    let public_key =
+        hex_decode_32(public_key_hex).map_err(|e| JsError::new(&format!("public_key_hex: {e}")))?;
+    let token_id = *blake3::hash(domain.as_bytes()).as_bytes();
+    Ok(hex_encode(
+        &dregg_types::CellId::derive_raw(&public_key, &token_id).0,
+    ))
+}
+
 /// Build the canonical *unsigned* PoA Signal claim carrier from public state.
 ///
 /// This deliberately accepts no secret, federation, target cell, method,

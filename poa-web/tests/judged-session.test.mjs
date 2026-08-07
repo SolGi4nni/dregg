@@ -17,9 +17,12 @@ import {
   openJudgedSession,
   openStatementMessage,
   parseSessionDocument,
+  readLatestHeight,
   readingLabels,
   requestSessionSignature,
   routesReachableFrom,
+  settleJudgedRun,
+  settlementClaim,
   spendJudgedBurst,
 } from "../src/judged-session.js";
 
@@ -413,16 +416,22 @@ test("custody detects the scoped signer, and says what still bites", () => {
 });
 
 test("each custody blocker is a checkable fact about the node", async () => {
-  // ⚑ ONE WALL LEFT, AND IT IS ABOUT SETTLING. `session-routes-authenticated`
-  // was here this morning; it is now in FALLEN_WALLS, by name, so a reader can
-  // tell a wall that fell from one nobody ever noticed.
+  // ⚑ ONE WALL LEFT, AND IT MOVED ONE STEP FURTHER IN. `claim-carrier-unbuildable`
+  // led this list this morning; it is now in FALLEN_WALLS — not because settling
+  // works, but because it named the WRONG obstacle. What stands is the wall that
+  // was hiding behind the wasm one, and it was found by DRIVING, not by reading.
   assert.deepEqual(
     CUSTODY_BLOCKERS.map((blocker) => blocker.code),
-    ["claim-carrier-unbuildable"],
+    ["claim-cell-underivable"],
   );
   assert.deepEqual(
     FALLEN_WALLS.map((wall) => wall.code),
-    ["no-player-message-signer", "session-routes-authenticated"],
+    [
+      "no-player-message-signer",
+      "claim-carrier-unbuildable",
+      "wasm-carrier-absent",
+      "session-routes-authenticated",
+    ],
   );
   for (const wall of FALLEN_WALLS) {
     assert.ok(wall.was.length > 0 && wall.landed.length > 0, `${wall.code} must say what it was and what landed`);
@@ -485,28 +494,58 @@ test("each custody blocker is a checkable fact about the node", async () => {
   const chargeAt = sessionRs.indexOf("admission.charge_player(player_key)");
   assert.ok(verifyAt > 0 && chargeAt > verifyAt, "the per-key budget must be charged AFTER the signature verifies");
 
-  // ⚑ 2. CORRECTED 2026-08-07, AND THE CORRECTION IS THE FINDING. These two lines
-  // used to read:
-  //     assert.match(signal, /keys\.join\(","\) !== "code,missionId,schema"/);
-  //     assert.doesNotMatch(signal, /transcript/);
-  // Both are FALSE at HEAD. `extension/src/poa-signal.ts` was cut over to
-  // `{schema, missionId, transcript}` in 86786886d and this file was not, so the
-  // carrier wall's second reason had rotted into a lie AND this test was RED at
-  // HEAD — a caller-committed/callee-not split, found while moving the session
-  // routes, not caused by it.
+  // ⚑ 2. THE WALL THAT ACTUALLY BITES, ASSERTED IN THE ARTIFACT — and it REPLACED
+  // a wall that fell. This block used to check that no Signal `prepare` route
+  // exists, which was the source fact under `claim-carrier-unbuildable`. That
+  // fact is still true and it stopped MATTERING: a prepare route is what the PAGE
+  // would need to build a carrier, and the page does not build carriers — the
+  // extension does, from `{schema, missionId, transcript}`.
   //
-  // What is asserted now is only what is TRUE: there is no Signal prepare route,
-  // so nothing hands this PAGE unsigned bytes. Whether the EXTENSION can settle
-  // a judged run end to end is a live question owned by that cutover; if it can,
-  // this wall belongs in FALLEN_WALLS.
-  const galley = await readFile(new URL("../../node/src/poa_galley_api.rs", import.meta.url), "utf8");
-  assert.match(galley, /GALLEY_API_PATH\}\/command/, "the Galley's prepare route is the shape Signal lacks");
-  assert.doesNotMatch(sessionRs, /session\/prepare/);
-  const slotApi = await readFile(new URL("../../node/src/poa_signal_slot_api.rs", import.meta.url), "utf8");
-  assert.doesNotMatch(slotApi, /\/prepare/, "a Signal prepare route appeared — this wall may have fallen");
-  // And the wall says so about itself, rather than repeating the dead reason.
-  assert.match(CUSTODY_BLOCKERS[0].detail, /CORRECTED 2026-08-07/);
-  assert.doesNotMatch(CUSTODY_BLOCKERS[0].detail, /takes exactly `\{schema, missionId, code\}`(?! with)/);
+  // What stands is one step further in. `background.ts` derives the player cell
+  // through `wasm.cell_id_for_pubkey`, and that function has never existed: not
+  // in `wasm/src/lib.rs`, not in the shipped glue, not in any commit. So every
+  // claim refuses at "Could not derive the active player's canonical cell",
+  // before the node is ever asked — on live beta too.
+  const background = await readFile(new URL("../../extension/src/background.ts", import.meta.url), "utf8");
+  assert.match(background, /w\.cell_id_for_pubkey === "function"/,
+    "the cell derivation moved; re-anchor this wall against what background.ts now calls");
+  assert.match(background, /Could not derive the active player's canonical cell/,
+    "the refusal this wall is named for left background.ts");
+
+  // ⚑ SOURCE AND ARTIFACT ARE ASKED SEPARATELY, and that separation IS the
+  // lesson of `84907fcf4`: the question to ask a gate is not "is this check
+  // correct" but "is it looking at the artifact a user receives". The binding is
+  // in the source; the bundle a player loads does not carry it; the wall stands
+  // on the ARTIFACT, because that is what refuses their claim.
+  const wasmSource = await readFile(new URL("../../wasm/src/lib.rs", import.meta.url), "utf8");
+  assert.match(wasmSource, /pub fn cell_id_for_pubkey/,
+    "the cell binding left wasm/src/lib.rs — this wall's fix regressed");
+  const glue = await readFile(new URL("../../extension/dregg_wasm.js", import.meta.url), "utf8");
+  assert.ok(!glue.includes("cell_id_for_pubkey"),
+    "the shipped glue exports cell_id_for_pubkey now — claim-cell-underivable has FALLEN, move it to FALLEN_WALLS");
+
+  // ⚠ THE GUARD MUST BE ABLE TO GO RED. The assertion above is negative, and a
+  // negative over a file that failed to load passes vacuously forever. The
+  // carrier the bundle gained today (`wasm-carrier-absent`, in FALLEN_WALLS) is
+  // the positive control: the same read has to FIND something.
+  assert.ok(glue.includes("build_poa_signal_claim_turn"),
+    "the shipped glue did not load, or the carrier is missing again");
+  assert.match(wasmSource, /pub fn build_poa_signal_claim_turn/,
+    "wasm/src/lib.rs did not load — the negative above is vacuous");
+
+  // And the wall says WHICH of the two it stands on, so nobody reads "the fix is
+  // in the source" as "the path works".
+  assert.match(CUSTODY_BLOCKERS[0].what, /SHIPPED/);
+  assert.match(CUSTODY_BLOCKERS[0].detail, /THE ARTIFACT DOES NOT CARRY IT/);
+
+  // And the wall says so about itself, rather than repeating a dead reason.
+  assert.match(CUSTODY_BLOCKERS[0].detail, /HAD NEVER EXISTED/);
+  assert.match(CUSTODY_BLOCKERS[0].detail, /MEASURED BY DRIVING/);
+  // The fallen carrier wall must say WHY it fell, and it must not claim the path
+  // now works — the distinction the whole FALLEN_WALLS list exists to keep.
+  const carrier = FALLEN_WALLS.find((wall) => wall.code === "claim-carrier-unbuildable");
+  assert.match(carrier.landed, /wrong obstacle/i);
+  assert.match(carrier.landed, /A wall that fell is not a leg that runs/);
 });
 
 // ── Signing, now that there is a signer ───────────────────────────────────────
@@ -790,7 +829,12 @@ test("a settled win shows the transcript a claim must carry, and says who can po
       },
     }), EXPECTED),
   };
-  const panel = buildJudgedPanel({ slot: openSlot, custody: judgedCustody({ getActiveIdentity: async () => ({}) }), session });
+  // ⚑ THE SETTLE ACTION IS LIVE when the provider carries the method. It used to
+  // be hardcoded disabled against `claim-carrier-unbuildable`; that wall fell,
+  // and the one that replaced it lives INSIDE the extension where no page can
+  // look — so this page acts and renders the refusal by name rather than
+  // predicting it. A `false` here would be a wall this file believes in.
+  const panel = buildJudgedPanel({ slot: openSlot, custody: judgedCustody(fakeSettler()), session });
   assert.equal(panel.state, "settled");
   assert.equal(panel.headline, "Solved in 2 bursts");
   assert.match(panel.detail, /3-3-3 came back 3 LOCKED/);
@@ -798,10 +842,262 @@ test("a settled win shows the transcript a claim must carry, and says who can po
   // The note is restated: `accepted: true` is not a settlement.
   assert.match(panel.detail, /admission staging/);
   assert.equal(panel.action.label, "Submit this claim");
-  assert.equal(panel.action.enabled, false);
-  assert.equal(panel.action.code, "claim-carrier-unbuildable");
-  assert.match(panel.action.reason, /ML-DSA-65/);
+  assert.equal(panel.action.enabled, true);
+  assert.equal(panel.action.code, "settle-claim");
+  assert.match(panel.action.reason, /never builds the carrier/);
   assert.equal(panel.settlement.transcript.length, 2);
+
+  // And the other pole: an install with no settler names THAT, not a node fact.
+  const old = buildJudgedPanel({
+    slot: openSlot, custody: judgedCustody({ getActiveIdentity: async () => ({}) }), session,
+  });
+  assert.equal(old.action.enabled, false);
+  assert.equal(old.action.code, "settler-not-installed");
+});
+
+// ── Settling ──────────────────────────────────────────────────────────────────
+
+/** A provider that carries the claim path, recording exactly what it was handed. */
+function fakeSettler({ result = { turnId: "aa".repeat(32), admission: "admitted", transition: "observed", transitionSequence: 7 }, throws = null } = {}) {
+  const calls = [];
+  return {
+    calls,
+    getActiveIdentity: async () => ({ publicKeyHex: SIGNER_PLAYER }),
+    async submitPoaSignalClaim(claim) {
+      calls.push(claim);
+      if (throws) throw throws;
+      return result;
+    },
+  };
+}
+
+function solvedSession(rounds = [
+  { guess: code(0, 1, 2), exact: 1, present: 1 },
+  { guess: code(3, 3, 3), exact: 3, present: 0 },
+]) {
+  return parseSessionDocument(sessionDocument({
+    rounds,
+    settlement: {
+      mission_id: 1,
+      transcript: rounds.map((round) => round.guess),
+      code: rounds.at(-1).guess,
+      method: "poa-signal",
+      claims_route: `/api/poa/signal/${AUTHORITY}/claims`,
+      note: "`accepted` is admission staging; latest_height off GET /status is the number that bites.",
+    },
+  }), EXPECTED);
+}
+
+/** A fetch whose `/status` answers a scripted sequence of `latest_height`s. */
+function heightFetch(sequence) {
+  let index = 0;
+  const seen = [];
+  const impl = async (url) => {
+    seen.push(String(url));
+    const height = sequence[Math.min(index, sequence.length - 1)];
+    index += 1;
+    if (height === null) return { ok: false, status: 503, text: async () => "" };
+    return { ok: true, status: 200, text: async () => JSON.stringify({ latest_height: height, dag_height: 9999 }) };
+  };
+  impl.seen = seen;
+  return impl;
+}
+
+test("the claim is a re-shaping of the served settlement, and carries nothing else", () => {
+  const session = solvedSession();
+  const claim = settlementClaim(session.settlement);
+  // EXACTLY the three keys the extension's `parsePoASignalClaim` accepts. A
+  // fourth would be refused there, but the point is that this page never had a
+  // fourth to offer — no authority, no destination, no reward, no memo.
+  assert.deepEqual(Object.keys(claim).sort(), ["missionId", "schema", "transcript"]);
+  assert.equal(claim.schema, "poa-signal-claim/v1");
+  assert.equal(claim.missionId, 1);
+  // `{low, mid, high}` → `[low, mid, high]`, the extension's wire order.
+  assert.deepEqual(claim.transcript.map((round) => [...round]), [[0, 1, 2], [3, 3, 3]]);
+  // It is the WHOLE run, in order — not the solving code alone. A claim naming
+  // only the winner is what the node refuses as `poa-signal-transcript-length-mismatch`.
+  assert.equal(claim.transcript.length, session.transcript.length);
+  assert.deepEqual([...claim.transcript.at(-1)], [3, 3, 3]);
+});
+
+test("⚑ a page cannot submit a code it did not play: there is no parameter for one", async () => {
+  const source = await readFile(new URL("../src/judged-session.js", import.meta.url), "utf8");
+  // The structural pole. `settleJudgedRun` takes `{provider, session, …}` and
+  // `settlementClaim` takes the served settlement — neither has a `transcript`
+  // or `code` parameter, so a caller has no way to name rounds of its own. This
+  // is a stronger property than a validation, because there is nothing to validate.
+  const settle = source.slice(source.indexOf("export async function settleJudgedRun"));
+  const signature = settle.slice(0, settle.indexOf("} = {}) {") + 9);
+  assert.doesNotMatch(signature, /\btranscript\b/, "settleJudgedRun grew a caller-supplied transcript");
+  assert.doesNotMatch(signature, /\bcode\b/, "settleJudgedRun grew a caller-supplied code");
+
+  // And the behavioural pole: a settlement whose transcript is not the played
+  // one never reaches this function at all — `parseSessionDocument` refuses the
+  // DOCUMENT, by name, so no claim can be built from it.
+  const rounds = [{ guess: code(3, 3, 3), exact: 3, present: 0 }];
+  assert.throws(
+    () => parseSessionDocument(sessionDocument({
+      rounds,
+      settlement: {
+        mission_id: 1,
+        transcript: [code(5, 5, 5)], // a code the player never played
+        code: code(5, 5, 5),
+        method: "poa-signal", claims_route: `/api/poa/signal/${AUTHORITY}/claims`, note: "x",
+      },
+    }), EXPECTED),
+    (error) => error.code === "session-settlement" && /not the round that was played/.test(error.message),
+  );
+});
+
+test("settling submits the served transcript and reports admission, transition and height apart", async () => {
+  const provider = fakeSettler();
+  const fetchImpl = heightFetch([41, 41, 42]);
+  const outcome = await settleJudgedRun({
+    provider, session: solvedSession(), baseUrl: "https://beta.pathofangels.network/", fetchImpl,
+  });
+
+  assert.equal(outcome.state, "submitted");
+  // What crossed the seam is the claim, and nothing but the claim.
+  assert.equal(provider.calls.length, 1);
+  assert.deepEqual(provider.calls[0].transcript.map((round) => [...round]), [[0, 1, 2], [3, 3, 3]]);
+  // ⚑ THE THREE ANSWERS STAY APART. Admission is staging, a transition is the
+  // authority's fold, and only `latest_height` moving is finalization.
+  assert.equal(outcome.admission, "admitted");
+  assert.equal(outcome.transition, "observed");
+  assert.equal(outcome.transitionSequence, 7);
+  assert.equal(outcome.heightBefore, 41);
+  assert.equal(outcome.heightAfter, 42);
+  assert.equal(outcome.finalized, true);
+  // The baseline is read BEFORE the submit, off `/status` — the route the node's
+  // own settlement note names.
+  assert.match(fetchImpl.seen[0], /\/node\/status$/);
+});
+
+test("⚑ admitted is NOT settled: a height that never moves is reported as not finalized", async () => {
+  const outcome = await settleJudgedRun({
+    provider: fakeSettler(),
+    session: solvedSession(),
+    baseUrl: "https://beta.pathofangels.network/",
+    // The node admits the bytes and the chain records nothing. This is the exact
+    // case `settlement.note` exists to forbid collapsing into a success.
+    fetchImpl: heightFetch([41]),
+    // The real deadline is 20s of watching a height that will not move. The
+    // BEHAVIOUR under test is "gave up and said so", not how long it waited.
+    pollMs: 1, deadlineMs: 20,
+  });
+  assert.equal(outcome.state, "submitted");
+  assert.equal(outcome.admission, "admitted");
+  assert.equal(outcome.finalized, false, "admission staging must never read as settled");
+
+  const panel = buildJudgedPanel({
+    slot: openSlot, custody: judgedCustody(fakeSettler()),
+    session: { state: "ready", session: solvedSession() }, settle: outcome,
+  });
+  assert.equal(panel.state, "settling");
+  assert.equal(panel.headline, "Submitted, not yet finalized");
+  assert.match(panel.detail, /has not moved off 41/);
+  assert.equal(panel.action.enabled, false, "a settle in flight must not be re-submittable");
+});
+
+test("an unreadable status is unknown, never zero, and never claims the chain moved", async () => {
+  const outcome = await settleJudgedRun({
+    provider: fakeSettler(), session: solvedSession(),
+    baseUrl: "https://beta.pathofangels.network/", fetchImpl: heightFetch([null]),
+  });
+  assert.equal(outcome.heightBefore, null);
+  assert.equal(outcome.heightAfter, null);
+  assert.equal(outcome.finalized, false);
+  assert.equal(await readLatestHeight({ baseUrl: "https://x.invalid/", fetchImpl: heightFetch([null]) }), null);
+  // `dag_height` is NOT it: a node producing heartbeat blocks moves that while
+  // nothing settles, and reading the wrong one of the pair is how "the chain is
+  // running" gets said about a chain that has recorded no turn.
+  const height = await readLatestHeight({
+    baseUrl: "https://x.invalid/", fetchImpl: heightFetch([7]),
+  });
+  assert.equal(height, 7, "latest_height is the attested-root height, not dag_height 9999");
+});
+
+test("⚑ an unsolved run never reaches the provider at all", async () => {
+  const provider = fakeSettler();
+  const unsolved = parseSessionDocument(sessionDocument({
+    rounds: [{ guess: code(0, 1, 2), exact: 1, present: 1 }],
+  }), EXPECTED);
+  const outcome = await settleJudgedRun({ provider, session: unsolved, fetchImpl: heightFetch([1]) });
+  assert.equal(outcome.state, "unsettleable");
+  assert.equal(outcome.code, "settle-unsolved");
+  // The strong form: not "it refused", but "it never asked". A run with no
+  // settlement has no transcript the node classified as solving, and offering
+  // one anyway would buy a rejected turn at the player's expense.
+  assert.equal(provider.calls.length, 0, "an unsolved run must not reach the claim path");
+  assert.throws(() => settlementClaim(null), (error) => error.code === "settle-unsolved");
+});
+
+test("an install with no claim path says so, and the refusal is not re-worded", async () => {
+  const absent = await settleJudgedRun({ provider: { getActiveIdentity: async () => ({}) }, session: solvedSession() });
+  assert.equal(absent.state, "unsettleable");
+  assert.equal(absent.code, "settler-not-installed");
+
+  // ⚑ VERBATIM. This is the exact string a player meets on live beta today, and
+  // it names the artifact fact that bit. A paraphrase turns a diagnosis into a
+  // shrug — and this refusal is the whole reason `claim-cell-underivable` is a
+  // wall this repo can see rather than one it guesses at.
+  const refusal = "Could not derive the active player's canonical cell";
+  const refused = await settleJudgedRun({
+    provider: fakeSettler({ result: { admission: "refused", transition: "not_observed", error: refusal } }),
+    session: solvedSession(),
+    baseUrl: "https://beta.pathofangels.network/", fetchImpl: heightFetch([41]),
+  });
+  assert.equal(refused.state, "refused");
+  assert.equal(refused.reason, refusal);
+
+  const panel = buildJudgedPanel({
+    slot: openSlot, custody: judgedCustody(fakeSettler()),
+    session: { state: "ready", session: solvedSession() }, settle: refused,
+  });
+  assert.equal(panel.headline, "The claim was refused");
+  assert.match(panel.detail, new RegExp(refusal.replace(/'/g, "'")));
+
+  // A provider that THROWS is a refusal too, not an unhandled rejection: every
+  // failure in this module is a state.
+  const threw = await settleJudgedRun({
+    provider: fakeSettler({ throws: Object.assign(new Error("user declined"), { code: "user-declined" }) }),
+    session: solvedSession(), baseUrl: "https://beta.pathofangels.network/", fetchImpl: heightFetch([41]),
+  });
+  assert.equal(threw.state, "refused");
+  assert.equal(threw.code, "user-declined");
+});
+
+test("the page still contains no carrier builder: it names a schema and forwards", async () => {
+  const source = await readFile(new URL("../src/judged-session.js", import.meta.url), "utf8");
+  // ⚑ SCOPED TO THE SETTLE BLOCK, deliberately. The whole file legitimately
+  // contains `requestSessionSignature` and `signatureHex` — a session statement
+  // signature is the page's business. What must never appear is CARRIER logic,
+  // and that would appear here, between the claim method and the render helpers.
+  const start = source.indexOf("export const CLAIM_SUBMIT_METHOD");
+  const end = source.indexOf("/** `${exact} LOCKED`");
+  assert.ok(start > 0 && end > start, "the settle block moved; re-anchor this test");
+  const code = source.slice(start, end)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/`(?:[^`\\]|\\.)*`/g, '""')
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\]|\\.)*'/g, '""');
+  // No signing, no cell derivation, no nonce, no fee, no postcard. Every one of
+  // those is a thing the extension owns and re-reads off the SIGNED bytes before
+  // consent; a second copy here would be a second answer waiting to disagree.
+  for (const forbidden of [/\bsign\w*\s*\(/i, /\bnonce\b/i, /\bderive\b/i, /\bml[-_]?dsa\b/i, /\bpostcard\b/i, /\bfee\b/i, /\bsecretKey\b/i]) {
+    assert.doesNotMatch(code, forbidden, `the settle path grew carrier logic matching ${forbidden}`);
+  }
+  // ⚑ THE GUARD MUST BE ABLE TO GO RED. Slicing and stripping is exactly the
+  // step that can quietly reduce to erasing the region, at which point every
+  // `doesNotMatch` above passes vacuously forever.
+  assert.match(code, /export async function settleJudgedRun/);
+  assert.match(code, /provider\[CLAIM_SUBMIT_METHOD\]\(claim\)/);
+  assert.match(code, /export async function readLatestHeight/);
+  const planted = "const fee = estimateFee(turn); const sig = signTurn(secretKey, nonce);";
+  assert.match(planted, /\bnonce\b/i);
+  assert.match(planted, /\bfee\b/i);
+  assert.match(planted, /\bsign\w*\s*\(/i);
 });
 
 test("a refused session document is shown as refused, never as a judged board", () => {

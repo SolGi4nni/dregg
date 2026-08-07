@@ -33,13 +33,28 @@ import { ArtifactRefusal } from "./poag1.js";
  *    The bearer never authorized anything: a session write is authorized by an
  *    Ed25519 signature under the player key over a statement the node re-derives.
  *    A page holds no bearer and now needs none.
- * 3. What is LEFT is `claim-carrier-unbuildable`, and it is about SETTLING, not
- *    playing. A browser can open a run, spend all five bursts and read its own
- *    transcript back; it cannot build the hybrid-signed postcard that settles.
+ * 3. **The carrier** — the extension's bundle is BUILT now rather than found in
+ *    the tree, so `build_poa_signal_claim_turn` actually ships. Both of those are
+ *    in [`FALLEN_WALLS`] with what landed.
  *
- * So `canPlay` is now routinely `true`, and the settle action stays disabled with
- * a named reason. That is not a downgrade of honesty: it is the same rule as
- * before, applied to a world with two fewer walls in it.
+ * ⚑ AND IT CAN NOW ASK TO SETTLE. [`settleJudgedRun`] submits the transcript the
+ * node served back to it through `dregg.submitPoaSignalClaim` and then watches
+ * `latest_height` — the number `settlement.note` itself names. The page's whole
+ * contribution is `{schema, missionId, transcript}`: it builds no carrier, signs
+ * nothing, derives no cell, chooses no nonce. `claim-carrier-unbuildable` is in
+ * FALLEN_WALLS not because the path runs but because it named the WRONG
+ * obstacle — the page was never supposed to build a carrier.
+ *
+ * ⚠ THE PATH DOES NOT RUN. One wall further on, `claim-cell-underivable` stands:
+ * the extension derives the player cell through `wasm.cell_id_for_pubkey`, and
+ * that function has never existed in any build of the wasm. Every claim refuses
+ * there, on live beta as much as here. It was MEASURED by driving the seam once
+ * the carrier wall fell — it sat behind that one and was unreachable until it
+ * went. See `CUSTODY_BLOCKERS`.
+ *
+ * So `canPlay` is routinely `true`, `canSettle` follows the provider rather than
+ * this file's beliefs, and the refusal a player actually meets is rendered BY
+ * NAME instead of predicted here.
  *
  * ⚑ EVERY REMAINING CONDITION IS MEASURED, not assumed. `routesReachable` comes
  * out of an actual response, and its `false` branch no longer means "the code
@@ -52,6 +67,12 @@ const SESSION_FORMAT = "POA-SIGNAL-SESSION-1";
 const OPEN_STATEMENT_SCHEMA = "POA-SIGNAL-SESSION-OPEN-STATEMENT-1";
 const GUESS_STATEMENT_SCHEMA = "POA-SIGNAL-SESSION-GUESS-STATEMENT-1";
 const SIGNAL_CLAIM_METHOD = "poa-signal";
+
+/**
+ * `POA_SIGNAL_SCHEMA` in `extension/src/poa-signal.ts`. The page names the
+ * schema and nothing else about the carrier.
+ */
+const CLAIM_SCHEMA = "poa-signal-claim/v1";
 
 /** `POA_SIGNAL_SESSION_MAX_ROUNDS` in `persist/src/poa_signal_session.rs`. */
 export const MAX_ROUNDS = 5;
@@ -350,6 +371,35 @@ export const FALLEN_WALLS = Object.freeze([
       "relaxes none of the signer's structural properties.",
   }),
   Object.freeze({
+    code: "claim-carrier-unbuildable",
+    fell: "2026-08-07",
+    was: "The settling carrier cannot be built by this PAGE, so a solved run cannot be posted from a browser.",
+    landed:
+      "Nothing, in the node — and that is the finding. The wall was TRUE and NOT LOAD-BEARING: the page was " +
+      "never supposed to build the carrier. `dregg.submitPoaSignalClaim` takes `{schema, missionId, " +
+      "transcript}` and the EXTENSION derives the cell, nonce, receipt head, federation domain, action and " +
+      "fee, paints them for consent and re-reads them off the signed bytes. The wall priced a prepare route " +
+      "the page would have needed IF it built carriers; it does not. What landed is `settleJudgedRun` in " +
+      "this module — the page authors identity and intent, the extension authors the carrier, and the seam " +
+      "between them was already the right shape.\n\n" +
+      "⚠ IT DID NOT FALL BECAUSE THE PATH WORKS. It fell because it named the wrong obstacle. The path is " +
+      "still stopped, one wall further on, and that wall is `claim-cell-underivable` below — MEASURED by " +
+      "driving the seam, not read off source. A wall that fell is not a leg that runs.",
+  }),
+  Object.freeze({
+    code: "wasm-carrier-absent",
+    fell: "2026-08-07",
+    was:
+      "The shipped `extension/dregg_wasm.js` carried 160 exports and neither `build_poa_signal_claim_turn` " +
+      "nor `inspect_poa_signal_claim_turn`, so the extension refused every claim by name — on live beta too.",
+    landed:
+      "`84907fcf4` made the extension's bundle BUILT rather than found in the tree, plus a freshness gate " +
+      "and a self-test that watch the artifact that actually ships. Measured here, not read: the in-tree " +
+      "glue and the packaged zip each carry the builder 3 times, and driving " +
+      "`dregg.submitPoaSignalClaim` from the beta origin no longer returns 'installed dregg WASM does not " +
+      "include the PoA Signal carrier' — it now reaches three steps further into the same function.",
+  }),
+  Object.freeze({
     code: "session-routes-authenticated",
     fell: "2026-08-07",
     was: "The three session routes are behind the node's bearer layer; this page carries no bearer.",
@@ -381,26 +431,37 @@ export const FALLEN_WALLS = Object.freeze([
  */
 export const CUSTODY_BLOCKERS = Object.freeze([
   Object.freeze({
-    code: "claim-carrier-unbuildable",
-    what: "The settling carrier cannot be built by this PAGE.",
+    code: "claim-cell-underivable",
+    what: "The SHIPPED extension cannot derive the player's canonical cell, so every claim refuses before the node is asked.",
     detail:
-      "A claim is a postcard-encoded `SignedTurn` whose action authorization is a HYBRID Ed25519 + " +
-      "ML-DSA-65 signature over the federation-bound message, priced against its own post-signing " +
-      "shape. There is no `prepare` route for Signal the way `poa_galley_api` has `/command`, so " +
-      "nothing hands this page unsigned bytes to pass to `signTurnV3`, and no page-side builder can " +
-      "produce the ML-DSA half.\n\n" +
-      "⚠ CORRECTED 2026-08-07: this used to add \"and `dregg.submitPoaSignalClaim` takes exactly " +
-      "`{schema, missionId, code}` with no transcript\". That is FALSE at HEAD — the extension's claim " +
-      "path was cut over to `{schema, missionId, transcript}` (`extension/src/poa-signal.ts`, commit " +
-      "86786886d), and `poa-web/tests/judged-session.test.mjs` was still asserting the old shape, so " +
-      "this wall's second reason had rotted into a lie and its source check was RED at HEAD. What " +
-      "remains true is only the first reason, and it is narrower than it reads: the PAGE cannot build " +
-      "a carrier. Whether the EXTENSION can now settle a judged run end to end — it takes a transcript " +
-      "and this page has one in `settlement.transcript` — is a live question owned by that cutover, " +
-      "not answered here. If it can, this wall falls too and belongs in FALLEN_WALLS.",
+      "`background.ts::clientCellIdHex` derives the player cell by calling `wasm.cell_id_for_pubkey(pubkeyHex, " +
+      "\"default\")`, behind a `typeof … === \"function\"` probe that falls through to `return null`. THAT " +
+      "FUNCTION HAD NEVER EXISTED — not in `wasm/src/lib.rs`, not in the glue, not in any commit: `git log -S` " +
+      "over `wasm/` returned nothing, and the shipped bundle's 171 exports did not include it. So the probe " +
+      "was false on every build there has ever been, `submitPoaSignalClaim` refused at `Could not derive the " +
+      "active player's canonical cell` on EVERY call — live beta as much as here — and `queryBalance` failed " +
+      "the same way one function up.\n\n" +
+      "⚑ THE BINDING IS IN THE SOURCE NOW AND THE ARTIFACT DOES NOT CARRY IT, which is why this wall still " +
+      "stands. `wasm/src/lib.rs` exports `cell_id_for_pubkey` over the same primitive the rest of the system " +
+      "uses (`CellId::derive_raw(pk, blake3(domain))` — exactly `Cipherclerk::cell_id`, and at `\"default\"` " +
+      "exactly `poa_signal::signal_player_cell`). The extension bundle has NOT been rebuilt against it, and a " +
+      "player runs the bundle, not the source. `scripts/check-wasm-freshness.sh extension --kind no-modules` " +
+      "is RED on exactly this and names the two fingerprints.\n\n" +
+      "⚠ THE REBUILD IS BLOCKED, and not by anything in this path: the wasm32 workspace does not compile. A " +
+      "concurrent lane's `Effect::Deshield` variant is in `turn/src/action.rs` in the working tree (13 " +
+      "occurrences; ZERO in HEAD) and six `match` sites in `turn/src/executor/` and `turn/src/` have not been " +
+      "extended for it. Until that lands, `cargo build --target wasm32-unknown-unknown` fails before it " +
+      "reaches this crate.\n\n" +
+      "⚑ MEASURED BY DRIVING, and it could not have been found any other way: it sits BEHIND the wasm-carrier " +
+      "wall, so until that one fell every claim refused earlier and this refusal was unreachable. " +
+      "`extension/tests/e2e/judged-signal-session.spec.ts` drives the seam and asserts the refusal by name.\n\n" +
+      "⚠ A silent capability probe is what made it survivable. `clientCellIdHex` returns `null` rather than " +
+      "throwing, so an absent binding reads as an ordinary negative result all the way up; nothing anywhere " +
+      "says a function was looked for and not found. The binding closes this instance; the PROBE is still " +
+      "silent and will hide the next one.",
     needs:
-      "a node-side Signal prepare route returning unsigned postcard bytes (as the Galley already has), " +
-      "OR a verified end-to-end pass of the extension's transcript-carrying claim path",
+      "the extension bundle rebuilt against the `cell_id_for_pubkey` now in `wasm/src/lib.rs` " +
+      "(`cd extension && ./build.sh wasm`), which needs the wasm32 workspace to compile again",
   }),
 ]);
 
@@ -442,6 +503,7 @@ export function routesReachableFrom(session) {
 export function judgedCustody(provider = globalThis.window?.dregg ?? null, session = null) {
   const identityAvailable = Boolean(provider && typeof provider.getActiveIdentity === "function");
   const signerAvailable = Boolean(provider && typeof provider[SESSION_SIGNER_METHOD] === "function");
+  const settlerAvailable = Boolean(provider && typeof provider[CLAIM_SUBMIT_METHOD] === "function");
   const routesReachable = routesReachableFrom(session);
   const blocker = !signerAvailable ? SIGNER_ABSENT
     : routesReachable === false ? NODE_BEHIND
@@ -452,12 +514,24 @@ export function judgedCustody(provider = globalThis.window?.dregg ?? null, sessi
     // merely believes in: it is identity + signer detected on the provider, and
     // a route that actually answered.
     canPlay: identityAvailable && signerAvailable && routesReachable === true,
+    // ⚑ AND SO IS `canSettle`, WHICH IS WHY IT IS NOT `false`. This page knows
+    // `claim-cell-underivable` stands and STILL enables the action, because what
+    // it can observe is that the provider exposes the method — and the wall lives
+    // inside the extension, where no page can look. Hardcoding `false` here would
+    // be the exact sin the play path already refuses: a wall this file BELIEVES in
+    // rather than one it OBSERVED, and it would go on believing it for a week
+    // after the wasm export lands. The click submits, the extension's refusal
+    // comes back BY NAME, and the panel renders that name. A wall a player meets
+    // is a wall someone fixes; a wall a docblock asserts is one that rots.
+    canSettle: identityAvailable && settlerAvailable,
     identityAvailable,
     signerAvailable,
+    settlerAvailable,
     routesReachable,
     // A settled deployment with everything present still names the SETTLING wall,
     // because that is the next thing this page cannot do.
     blocker: blocker ?? CUSTODY_BLOCKERS[0],
+    settleBlocker: settlerAvailable ? CUSTODY_BLOCKERS[0] : SETTLER_ABSENT,
     blockers: CUSTODY_BLOCKERS,
     fellAlready: FALLEN_WALLS,
   });
@@ -678,6 +752,195 @@ export async function loadJudgedSession({
   }
 }
 
+/**
+ * The provider method that SETTLES a solved run, and the only one this page will
+ * use for it.
+ *
+ * ⚑ THE PAGE DOES NOT BUILD THE CARRIER AND MUST NOT. A claim is a
+ * postcard-encoded `SignedTurn` under a hybrid Ed25519 + ML-DSA-65
+ * authorization; the extension derives the player cell, the live nonce, the
+ * receipt head, the federation domain, the action and the fee itself, paints
+ * them for consent, and re-reads them off the SIGNED bytes before submitting
+ * (`extension/src/background.ts::submitPoaSignalClaim`). What crosses this seam
+ * is `{schema, missionId, transcript}` — the bounded public intent — and every
+ * field of it is copied off the document the NODE served.
+ */
+export const CLAIM_SUBMIT_METHOD = "submitPoaSignalClaim";
+
+export const SETTLER_ABSENT = Object.freeze({
+  code: "settler-not-installed",
+  what: `The installed extension exposes no \`${CLAIM_SUBMIT_METHOD}\`.`,
+  detail:
+    "Settling a solved run is a signed turn against the PoA federation, and the carrier is built inside " +
+    "the extension by the shipped wasm. This install predates that method, so there is nothing to submit " +
+    "through — and no page-side builder is a substitute, because the ML-DSA half cannot be produced here.",
+  needs: "an extension build exposing the transcript-carrying claim path",
+});
+
+/**
+ * ⚑ THE CLAIM IS A RE-SHAPING OF SERVED BYTES, NOT A CONSTRUCTION.
+ *
+ * Every field comes off `settlement`, which `parseSettlement` already checked
+ * round-for-round against the transcript the player actually played. There is no
+ * parameter here for a caller-chosen transcript, and that absence is the point:
+ * a page cannot submit a code it did not play through the session, because this
+ * function has no way to be told one. A claim assembled from anything else is a
+ * claim the node refuses (`verify_claim_transcript_was_played`), and the refusal
+ * would read like a judge failure rather than a client bug.
+ *
+ * The `{low, mid, high}` → `[low, mid, high]` turn is the extension's wire order
+ * (`PoASignalCode` in `extension/src/poa-signal.ts`), pinned by test.
+ */
+export function settlementClaim(settlement) {
+  refuse(object(settlement), "settle-unsolved",
+    "there is no settlement to submit; an unsolved run has nothing to claim");
+  return Object.freeze({
+    schema: CLAIM_SCHEMA,
+    missionId: settlement.missionId,
+    transcript: Object.freeze(settlement.transcript.map((code) => Object.freeze([code.low, code.mid, code.high]))),
+  });
+}
+
+/**
+ * `latest_height` off `GET /status` — THE NUMBER THE NODE ITSELF NAMES.
+ *
+ * Not a number this page chose. `poa_signal_session.rs` writes it into every
+ * settlement it serves: "`accepted: true` from that route is admission staging
+ * and settles nothing; the number that bites is `latest_height` off GET /status
+ * AFTER finalization". So the page reads exactly that, and `settlement.note`
+ * carrying the same sentence is what a player is shown.
+ *
+ * ⚠ `latest_height` is the attested-root height, NOT `dag_height`. A node
+ * producing heartbeat blocks moves `dag_height` while nothing settles; reading
+ * the wrong one of that pair is how "the chain is running" gets said about a
+ * chain that has recorded no turn.
+ *
+ * Never throws: an unreadable status is `null`, which is "unknown", never zero.
+ */
+export async function readLatestHeight({ baseUrl, fetchImpl = globalThis.fetch, prefix = "/node" } = {}) {
+  if (typeof fetchImpl !== "function") return null;
+  try {
+    const url = new URL(`${prefix}/status`, baseUrl ?? globalThis.location?.href ?? "https://invalid.local/");
+    const response = await fetchImpl(url, { cache: "no-store", credentials: "same-origin" });
+    if (!response?.ok) return null;
+    const body = JSON.parse(await response.text());
+    const height = body?.latest_height;
+    return Number.isSafeInteger(height) && height >= 0 ? height : null;
+  } catch {
+    return null;
+  }
+}
+
+/** How long the page waits for `latest_height` to move, and how often it looks. */
+const SETTLE_POLL_MS = 750;
+const SETTLE_DEADLINE_MS = 20_000;
+
+/**
+ * SETTLE A SOLVED JUDGED RUN: submit the transcript the node served back to it,
+ * through the extension, then watch the one number that says it stuck.
+ *
+ * The page's whole contribution is `{schema, missionId, transcript}` and the
+ * decision to send it. It signs nothing, derives no cell, chooses no nonce, and
+ * never scores a guess.
+ *
+ * ⚑ TWO MEASUREMENTS, AND THEY ANSWER DIFFERENT QUESTIONS. The extension returns
+ * `admission` (did the node's ingress accept the signed bytes) and `transition`
+ * (did the Signal head grow a transition for this turn). This page adds the
+ * third and last one: did `latest_height` MOVE. Admission is staging and can be
+ * rolled back; a transition is the authority's own fold; only the attested root
+ * moving is finalization. Reporting the first as if it were the third is exactly
+ * what `settlement.note` exists to forbid, so all three are reported separately
+ * and none is collapsed into the others.
+ *
+ * Never throws: every failure is a STATE, the discipline the rest of this module
+ * follows. The extension's named refusal is carried through VERBATIM rather than
+ * re-worded — "the installed dregg WASM does not include the PoA Signal carrier"
+ * is a fact about the artifact a player has, and a paraphrase loses it.
+ */
+export async function settleJudgedRun({
+  provider, session, baseUrl, fetchImpl = globalThis.fetch, prefix = "/node",
+  pollMs = SETTLE_POLL_MS, deadlineMs = SETTLE_DEADLINE_MS,
+} = {}) {
+  if (!provider || typeof provider[CLAIM_SUBMIT_METHOD] !== "function") {
+    return Object.freeze({ state: "unsettleable", code: SETTLER_ABSENT.code, reason: SETTLER_ABSENT.what });
+  }
+  if (!object(session) || session.settlement === null || session.settlement === undefined) {
+    return Object.freeze({
+      state: "unsettleable", code: "settle-unsolved",
+      reason: "this run carries no settlement, so there is nothing to claim",
+    });
+  }
+  let claim;
+  try {
+    claim = settlementClaim(session.settlement);
+  } catch (error) {
+    return Object.freeze({
+      state: "unsettleable", code: error?.code ?? "settle-unsolved",
+      reason: error?.message ?? "this run cannot be turned into a claim",
+    });
+  }
+
+  // BEFORE the submit, so the comparison afterwards is against a height this
+  // page actually observed rather than against zero. A `null` baseline means the
+  // status was unreadable, and then no movement can be claimed either way.
+  const heightBefore = await readLatestHeight({ baseUrl, fetchImpl, prefix });
+
+  let result;
+  try {
+    result = await provider[CLAIM_SUBMIT_METHOD](claim);
+  } catch (error) {
+    return Object.freeze({
+      state: "refused",
+      code: error?.code ?? "settle-failed",
+      reason: error?.message ?? "the extension refused to submit this claim",
+      claim,
+    });
+  }
+  if (!object(result) || result.admission === "refused") {
+    return Object.freeze({
+      state: "refused",
+      code: "settle-refused",
+      // VERBATIM. The extension's refusals name the exact artifact or node fact
+      // that bit; re-wording one turns a diagnosis into a shrug.
+      reason: result?.error ?? "the extension refused this claim without saying why",
+      claim,
+    });
+  }
+
+  const heightAfter = heightBefore === null
+    ? null
+    : await pollForHeightAbove(heightBefore, { baseUrl, fetchImpl, prefix }, pollMs, deadlineMs);
+
+  return Object.freeze({
+    state: "submitted",
+    claim,
+    turnId: result.turnId ?? null,
+    admission: result.admission,
+    transition: result.transition,
+    transitionSequence: result.transitionSequence ?? null,
+    heightBefore,
+    heightAfter,
+    // ⚑ THE ONLY CONJUNCT THAT MEANS SETTLED. `admission: "admitted"` is staging,
+    // and a page that rendered it as a result would be telling a player their run
+    // landed on a chain that has not recorded it.
+    finalized: heightBefore !== null && heightAfter !== null && heightAfter > heightBefore,
+  });
+}
+
+async function pollForHeightAbove(baseline, options, pollMs, deadlineMs) {
+  const deadline = Date.now() + deadlineMs;
+  let latest = baseline;
+  for (;;) {
+    const height = await readLatestHeight(options);
+    if (height !== null) {
+      latest = height;
+      if (height > baseline) return height;
+    }
+    if (Date.now() >= deadline) return latest;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
 /** `${exact} LOCKED` / `${present} DRIFT`, the spelling `app.js` already uses. */
 export function readingLabels(round) {
   return Object.freeze({ locked: `${round.exact} LOCKED`, drift: `${round.present} DRIFT` });
@@ -687,9 +950,38 @@ function codeText(code) {
   return `${code.low}-${code.mid}-${code.high}`;
 }
 
-/** The one remaining wall, by name rather than by index. The bearer wall that
- * used to sit beside it is in `FALLEN_WALLS`. */
-const CARRIER_WALL = CUSTODY_BLOCKERS[0];
+/**
+ * What a finished settle attempt says, in one line each.
+ *
+ * ⚑ THE THREE ANSWERS ARE KEPT APART. `admission` is the node's ingress taking
+ * the bytes, `transition` is the Signal head folding them, `finalized` is
+ * `latest_height` moving — and only the last one settles anything. Collapsing
+ * them into "submitted ✓" is precisely what the node's own settlement note
+ * forbids, so the copy names which of the three actually happened.
+ */
+function settleOutcomeHeadline(settle) {
+  if (settle.state === "submitted") {
+    return settle.finalized ? "Settled on chain" : "Submitted, not yet finalized";
+  }
+  return settle.state === "refused" ? "The claim was refused" : "This run cannot be submitted";
+}
+
+function settleOutcomeDetail(settle) {
+  if (settle.state !== "submitted") {
+    // VERBATIM, never re-worded: the extension's refusals name the exact artifact
+    // or node fact that bit, and that name is the whole diagnostic value.
+    return `${settle.reason} (${settle.code})`;
+  }
+  const height = settle.heightBefore === null
+    ? "`latest_height` could not be read, so nothing here claims the chain moved"
+    : settle.finalized
+      ? `\`latest_height\` moved ${settle.heightBefore} → ${settle.heightAfter}, which is the number that settles it`
+      : `\`latest_height\` has not moved off ${settle.heightBefore} yet — admission is staging and settles nothing`;
+  const transition = settle.transition === "observed"
+    ? `the authority folded it as transition ${settle.transitionSequence}`
+    : "the authority has not folded a transition for it yet";
+  return `The node admitted the signed carrier (${settle.admission}), ${transition}, and ${height}.`;
+}
 
 /**
  * The judged panel: one state, one honest sentence about what a player may do.
@@ -706,7 +998,7 @@ const CARRIER_WALL = CUSTODY_BLOCKERS[0];
  * gone. Settling remains disabled regardless: that is `CARRIER_WALL`, and it was
  * always a separate wall from playing.
  */
-export function buildJudgedPanel({ slot = null, custody = null, session = null } = {}) {
+export function buildJudgedPanel({ slot = null, custody = null, session = null, settle = null } = {}) {
   const seal = (headline, detail, code) => Object.freeze({
     state: "sealed", eyebrow: "JUDGED SIGNAL", headline, detail,
     action: Object.freeze({ label: "Play a judged run", enabled: false, reason: detail, code }),
@@ -750,22 +1042,34 @@ export function buildJudgedPanel({ slot = null, custody = null, session = null }
       index: index + 1, code: codeText(round.guess), ...readingLabels(round),
     }));
     if (s.solved && s.settlement) {
+      const canSettle = custody?.canSettle === true;
+      const settleBlocker = custody?.settleBlocker ?? SETTLER_ABSENT;
       return Object.freeze({
-        state: "settled", eyebrow: "JUDGED SIGNAL",
-        headline: `Solved in ${s.roundsUsed} burst${s.roundsUsed === 1 ? "" : "s"}`,
+        state: settle ? "settling" : "settled", eyebrow: "JUDGED SIGNAL",
+        headline: settle
+          ? settleOutcomeHeadline(settle)
+          : `Solved in ${s.roundsUsed} burst${s.roundsUsed === 1 ? "" : "s"}`,
         detail:
           `${codeText(s.settlement.code)} came back 3 LOCKED against the judged target. ${instance} ` +
           `This is the transcript a claim must be made of — the node settles the game it served, not a ` +
-          `code that happens to be right. ${s.settlement.note}`,
+          `code that happens to be right. ${s.settlement.note}` +
+          (settle ? ` ${settleOutcomeDetail(settle)}` : ""),
         action: Object.freeze({
           label: "Submit this claim",
-          enabled: false,
-          reason:
-            `Solved, and this page cannot post it. ${CARRIER_WALL.what} ${CARRIER_WALL.detail} ` +
-            `The transcript above is durable on the node and is what a claim built elsewhere must carry.`,
-          code: CARRIER_WALL.code,
+          // ⚑ LIVE when the provider carries the method. What this page sends is
+          // `{schema, missionId, transcript}` off the document above; the
+          // extension builds, prices, paints and signs the carrier.
+          enabled: canSettle && !settle,
+          reason: !canSettle
+            ? `${settleBlocker.what} ${settleBlocker.detail}`
+            : settle
+              ? settleOutcomeDetail(settle)
+              : "Submits the transcript the node served back to it, through your extension: it derives your " +
+                "cell, nonce and receipt head, shows you the whole run before signing, and posts the signed " +
+                "carrier. This page never scores a guess and never builds the carrier.",
+          code: !canSettle ? settleBlocker.code : settle ? (settle.code ?? "settle-submitted") : "settle-claim",
         }),
-        rounds: Object.freeze(rounds), settlement: s.settlement,
+        rounds: Object.freeze(rounds), settlement: s.settlement, settle: settle ?? null,
       });
     }
     const spent = `${s.roundsUsed} of ${s.maxRounds} bursts spent, ${s.roundsRemaining} left.`;

@@ -31,63 +31,65 @@
  *     the run is covered where it already is: `node/src/poa_signal_session_e2e.rs`
  *     drives it in-process through the real router, both poles.
  *
- * # ⚑ THE HEADLINE, and it was found by DRIVING and by nothing else
+ * # ⚑ WHERE THE CHAIN STOPS TODAY, and every step of it was found by DRIVING
  *
- * **A judged run cannot be PLAYED from a browser at all** — never mind settled.
- * `dregg:signSignalSession` is missing from `PAGE_ALLOWED_METHODS` in
- * `background.ts`, so every page call is refused with
- * `"dregg:signSignalSession" is not available from page context.` The signer
- * `bff85f1fc` wired — grant book, scoped popup, budget, the lot — is unreachable
- * from any page. `dregg:signOfferingTurn` is dead at the same gate.
+ * Three walls this file used to assert have FALLEN, and each is now asserted as
+ * the INVARIANT rather than as the bug — so the fix made them green instead of
+ * making them deletable, and they keep catching a regression:
  *
- * Reading the two sides could not find this: `page.ts` exposes the method,
- * `content.ts` restricts it, `background.ts` implements it. Every side is right.
- * The *third* list is the one that decides, and nobody was on it. Measured: with
- * that ONE Set entry added to a COPY of the extension, the five seam tests below
- * go from red to green and the whole run signs — 9/9 against the patched copy,
- * 3/9 against this tree, and that delta IS the defect.
+ * FELL — **the page allowlist.** `dregg:signSignalSession` was missing from
+ *   `PAGE_ALLOWED_METHODS`, so the scoped signer `bff85f1fc` wired was
+ *   unreachable from any page and a judged run could not be PLAYED at all.
+ *   Reading the two sides could not find it: `page.ts` exposes the method,
+ *   `content.ts` restricts it, `background.ts` implements it — every side right,
+ *   and the *third* list is the one that decides. `30576afde`. The invariant
+ *   form is `the page-surface gates agree with each other` below.
  *
- * See `the page-surface gates agree with each other` below, which asserts the
- * INVARIANT rather than the bug: it names both dead methods today and keeps
- * catching the class after the fix.
+ * FELL — **the session routes.** They are in `public_routes` now; a player's
+ *   Ed25519 signature over a statement the node re-derives was always the
+ *   authorization, and the bearer never was.
  *
- * # The three walls beyond it, each proved BEHAVIOURALLY below rather than asserted
+ * FELL — **the shipped wasm carrier.** `extension/dregg_wasm.js` carried 160
+ *   exports and neither `build_poa_signal_claim_turn` nor its inspector, so the
+ *   background refused every claim by name — on live beta too. `84907fcf4` made
+ *   the bundle BUILT rather than found in the tree; it carries the pair now.
  *
- * Even with the signer reachable, a judged run cannot be SETTLED from a browser,
- * and the reason is not one missing wire — it is three independent stops, any one
- * of which is terminal:
+ * ⚑ AND THE ABSENCE IS CLOSED. This note used to end "`poa-web` never calls
+ * `dregg.submitPoaSignalClaim` anywhere; the only occurrence of that name in the
+ * whole web tree is inside a comment." It does now: `judged-session.js` exports
+ * `settleJudgedRun`, and `the settle leg, driven through the real poa-web caller`
+ * below drives THAT — the shipped page function, served off disk — rather than
+ * `window.dregg` directly.
  *
- * WALL 0 — **the node cannot be stood up for a browser.** The Signal head and the
- *   curator pin are installed in-process only: `poa_signal_adapter::
- *   fixture_signal_head_for_finality_test` is `pub(crate)`, and the one CLI that
- *   installs a head — `dregg-node init-poa-signal` — demands the POAG1 catalog,
- *   which NAMES the live federation id and so refuses a locally minted one
- *   (`Poag1Bundle::bind_deployment_scope`, and the deviation stated in
- *   `poa_signal_slot_first_turn_rehearsal.rs`). Not asserted here: it is an
- *   absence, and this file cannot make an absence go red.
+ * # The two walls that STAND, and what each one actually is
  *
- * WALL 1 — **the claim leg is pinned to the live deployment.** `POA_SIGNAL_
+ * WALL A — **the extension cannot derive the player's cell.** THIS IS THE ONE THE
+ *   CHAIN HITS. `background.ts::clientCellIdHex` calls
+ *   `wasm.cell_id_for_pubkey(pubkeyHex, "default")` behind a `typeof …` probe
+ *   that falls through to `return null`, and that function had never existed in
+ *   any build — not in `wasm/src/lib.rs`, not in the glue, not in any commit. So
+ *   every claim ever submitted refused at `Could not derive the active player's
+ *   canonical cell`, on live beta too, and nothing said a function had been
+ *   looked for and not found. It was INVISIBLE until the carrier wall fell,
+ *   because it sits behind it. The binding is in `wasm/src/lib.rs` now; the
+ *   BUNDLE has not been rebuilt against it, and a player runs the bundle. Both
+ *   poles are asserted below, source and artifact separately.
+ *
+ * WALL B — **the node hop is pinned to the live deployment.** `POA_SIGNAL_
  *   FEDERATION_HEX` (`extension/src/poa-signal.ts`) is the live federation id and
  *   `background.ts` refuses any `/status` that does not report it, while
  *   `POA_SIGNAL_NODE_URL` is a FROZEN `NodeConfig` the user's node settings
  *   cannot swap. A locally genesised federation derives a different id from its
  *   own committee, so it can never satisfy the pin. The origin half of the same
  *   policy IS reachable, and is driven: see `refuses a claim off the beta origin`.
+ *   ⚠ Not reached today — WALL A refuses first, four steps earlier.
  *
- * WALL 2 — **the shipped wasm has no PoA Signal carrier at all.** `wasm/src/lib.rs`
- *   defines `build_poa_signal_claim_turn` / `inspect_poa_signal_claim_turn`, but
- *   the artifact the extension actually loads — `extension/dregg_wasm.js` +
- *   `dregg_wasm_bg.wasm` — carries 160 exports and NOT ONE of them is either. So
- *   `background.ts` refuses every claim by name, on the live beta too, not merely
- *   here. That is driven end to end below and it is the load-bearing test in this
- *   file: it is the wall that is invisible to reading both sides, because both
- *   sides are correct — it is the BUILD between them that is stale.
- *
- * ⚠ And a fourth, which is not a wall so much as an absence: `poa-web` never
- * calls `dregg.submitPoaSignalClaim` anywhere. The only occurrence of that name
- * in the whole web tree is inside a comment in `judged-session.js`. There is no
- * page-side caller of the settle path to drive, which is why the claim poles in
- * this file call `window.dregg` directly and say so.
+ * ⚠ STILL NOT DRIVEN AND STILL NOT FAKED: the node hop. There is no judged node
+ * in this run. A hand-written JS "node" that classified LOCKED/DRIFT would be a
+ * second copy of the Lean feedback oracle — the exact twin this repo spends its
+ * time deleting. The node side is covered where it already is:
+ * `node/src/poa_signal_session_e2e.rs` drives it in-process through the real
+ * router, both poles.
  */
 import { test, expect } from '../fixtures/extension';
 import type { BrowserContext, Page } from '@playwright/test';
@@ -514,7 +516,7 @@ test.describe('the settle leg: both refusal poles, by name', () => {
     await page.close();
   });
 
-  test('WALL 2 — at the beta origin, the SHIPPED wasm carries no PoA Signal builder', async ({ context }) => {
+  test('WALL 2 FELL, and the wall BEHIND it is what the seam now reports', async ({ context }) => {
     const page = await openJudgedPage(context, BETA);
 
     await page.evaluate(([schema, missionId]) => {
@@ -533,31 +535,173 @@ test.describe('the settle leg: both refusal poles, by name', () => {
     await page.waitForFunction(() => (window as any).__claim !== undefined, null, { timeout: 30000 });
     const claim = await page.evaluate(() => (window as any).__claim as Record<string, unknown>);
 
-    // ⚑ THE LOAD-BEARING ASSERTION OF THIS FILE. Both sides are correct and the
-    // BUILD between them is stale: `wasm/src/lib.rs` exports
-    // `build_poa_signal_claim_turn`, the artifact under `extension/` does not.
-    // This refusal is what a player on the LIVE beta gets today.
-    expect(String(claim.error), JSON.stringify(claim)).toContain(
+    // ⚑ THE CARRIER WALL IS GONE. This assertion used to require exactly this
+    // string; `84907fcf4` made the bundle BUILT and it stopped being reachable.
+    // Asserted as the INVARIANT, so it keeps catching a regression to a stale
+    // bundle instead of having to be deleted by the fix.
+    expect(String(claim.error), JSON.stringify(claim)).not.toContain(
       'installed dregg WASM does not include the PoA Signal carrier',
+    );
+
+    // ⚑ AND THE WALL BEHIND IT, WHICH ONLY DRIVING COULD REACH. The claim now
+    // passes the origin gate, the parse, the wasm-carrier check and the custody
+    // unlock, and dies three steps further in: `clientCellIdHex` calls
+    // `wasm.cell_id_for_pubkey`, a function that had never existed in any build,
+    // behind a probe that returns `null` instead of saying so. Every claim ever
+    // submitted refused here — on live beta too.
+    expect(String(claim.error), JSON.stringify(claim)).toContain(
+      "Could not derive the active player's canonical cell",
     );
     await page.close();
   });
 
-  test('WALL 2, read off the artifact itself — the carrier is absent from the shipped glue', async () => {
+  test('WALL 2, read off the artifact itself — the carrier SHIPS, and the cell derivation does not', async () => {
     const glue = readFileSync(
       path.resolve(__dirname, '..', '..', 'dregg_wasm.js'),
       'utf8',
     );
-    // The behavioural pole above says the extension refuses; this says WHY, in
-    // the artifact, so a rebuild that fixes one fixes both and neither can go
-    // green while the other is red.
-    expect(glue).not.toContain('build_poa_signal_claim_turn');
-    expect(glue).not.toContain('inspect_poa_signal_claim_turn');
-    // …and it is a stale BUILD, not a missing feature: the source defines them.
     const source = readFileSync(
       path.resolve(__dirname, '..', '..', '..', 'wasm', 'src', 'lib.rs'),
       'utf8',
     );
+
+    // The behavioural pole above says the extension no longer refuses for want of
+    // a carrier; this says WHY, in the artifact, so a regression to a stale
+    // bundle reds both and neither can go green while the other is red.
+    expect(glue).toContain('build_poa_signal_claim_turn');
+    expect(glue).toContain('inspect_poa_signal_claim_turn');
     expect(source).toContain('pub fn build_poa_signal_claim_turn');
+
+    // ⚑ AND THE ONE THAT STANDS, asked of SOURCE and ARTIFACT SEPARATELY —
+    // which is the whole lesson of the commit that fixed the carrier: the
+    // question is not "is the check correct" but "is it looking at the artifact
+    // a user receives". The binding is in the source; the bundle a player loads
+    // does not carry it; a player runs the bundle.
+    expect(source).toContain('pub fn cell_id_for_pubkey');
+    expect(glue).not.toContain('cell_id_for_pubkey');
+  });
+});
+
+/**
+ * ⚑ THE SETTLE CALLER, DRIVEN — the absence this file called out is closed.
+ *
+ * The note at the top of this file used to end: "`poa-web` never calls
+ * `dregg.submitPoaSignalClaim` anywhere. The only occurrence of that name in the
+ * whole web tree is inside a comment." It does now. `judged-session.js` exports
+ * `settleJudgedRun`, and the tests below drive THAT — the shipped page function,
+ * served off disk at the real beta origin — rather than `window.dregg` directly.
+ *
+ * So the claim poles below are a PAGE → EXTENSION run for real. The node hop is
+ * still not driven and is still not faked: see the stop each test asserts.
+ */
+test.describe('the settle leg, driven through the real poa-web caller', () => {
+  /**
+   * A solved session document, shaped exactly as `poa_signal_session.rs` serves
+   * one. Nothing here classifies anything — `exact`/`present` are written as a
+   * node that already scored them would have written them, which is the only way
+   * this file is allowed to have them at all.
+   */
+  const solvedDocument = (authorityId: string, commitment: string, playerKey: string) => ({
+    format: 'POA-SIGNAL-SESSION-1',
+    judged: true,
+    authority_id: authorityId,
+    mission_id: MISSION_ID,
+    slot: SLOT,
+    slot_commitment: commitment,
+    player_key: playerKey,
+    max_rounds: 5,
+    rounds_used: 2,
+    rounds_remaining: 3,
+    solved: true,
+    open: false,
+    transcript: [
+      { guess: { low: 0, mid: 1, high: 2 }, exact: 1, present: 1 },
+      { guess: { low: 3, mid: 3, high: 3 }, exact: 3, present: 0 },
+    ],
+    settlement: {
+      mission_id: MISSION_ID,
+      transcript: [{ low: 0, mid: 1, high: 2 }, { low: 3, mid: 3, high: 3 }],
+      code: { low: 3, mid: 3, high: 3 },
+      method: 'poa-signal',
+      claims_route: `/api/poa/signal/${authorityId}/claims`,
+      note: '`accepted: true` is admission staging and settles nothing; the number that bites is '
+        + '`latest_height` off GET /status AFTER finalization',
+    },
+  });
+
+  test('the page BUILDS the claim off the served settlement and submits it through the extension', async ({ context }) => {
+    const page = await openJudgedPage(context, BETA);
+    const commitment = 'c7'.repeat(32);
+
+    await page.evaluate(([authorityId, commitmentHex, document]) => {
+      const w = window as unknown as Record<string, any>;
+      w.__settle = undefined;
+      // The REAL parser and the REAL settle caller, both off disk.
+      const session = w.__judged.parseSessionDocument(document, { authorityId, commitment: commitmentHex });
+      // ⚑ What the page hands the extension, recorded before it goes — so the
+      // assertion below is about the bytes that actually crossed the seam.
+      w.__claimSent = w.__judged.settlementClaim(session.settlement);
+      w.__judged
+        .settleJudgedRun({ provider: w.dregg, session, deadlineMs: 1, pollMs: 1 })
+        .then((r: unknown) => { w.__settle = r; })
+        .catch((e: Error) => { w.__settle = { state: 'threw', reason: String(e && e.message) }; });
+    }, [AUTHORITY, commitment, solvedDocument(AUTHORITY, commitment, 'd4'.repeat(32))] as const);
+
+    await approveIfPrompted(context, 15000);
+    await page.waitForFunction(() => (window as any).__settle !== undefined, null, { timeout: 40000 });
+    const settle = await page.evaluate(() => (window as any).__settle as Record<string, unknown>);
+    const sent = await page.evaluate(() => (window as any).__claimSent as Record<string, unknown>);
+
+    // ⚑ THE PAGE'S WHOLE CONTRIBUTION, and it is exactly three keys off the
+    // document the node served. No authority, no destination, no reward, no memo,
+    // no nonce, no cell, no signature — those are the extension's, and a page
+    // that offered them would be authoring custody.
+    expect(Object.keys(sent).sort()).toEqual(['missionId', 'schema', 'transcript']);
+    expect(sent.schema).toBe(CLAIM_SCHEMA);
+    expect(sent.missionId).toBe(MISSION_ID);
+    // The WHOLE run in order, not the solving code alone.
+    expect(sent.transcript).toEqual([[0, 1, 2], [3, 3, 3]]);
+
+    // ⚑ AND THE EXACT STOP. The claim reached the extension, passed the origin
+    // gate, the parse, the wasm carrier and custody — and died at the cell
+    // derivation. This is a PAGE → EXTENSION run that gets three steps further
+    // than any previous one; the node was never asked, and this file does not
+    // pretend it was.
+    expect(settle.state, JSON.stringify(settle)).toBe('refused');
+    expect(String(settle.reason)).toContain("Could not derive the active player's canonical cell");
+    await page.close();
+  });
+
+  test('⚑ a code the player did not play is refused BY NAME, before any provider call', async ({ context }) => {
+    const page = await openJudgedPage(context, BETA);
+    const commitment = 'c7'.repeat(32);
+    const popups: string[] = [];
+    context.on('page', (p) => popups.push(p.url()));
+
+    const outcome = await page.evaluate(([authorityId, commitmentHex, document]) => {
+      const w = window as unknown as Record<string, any>;
+      // A settlement naming a code this transcript never contains — the exact
+      // shape a page would send if it wanted to claim a win it did not earn.
+      const forged = JSON.parse(JSON.stringify(document));
+      forged.settlement.transcript = [{ low: 5, mid: 5, high: 5 }, { low: 5, mid: 5, high: 5 }];
+      forged.settlement.code = { low: 5, mid: 5, high: 5 };
+      try {
+        w.__judged.parseSessionDocument(forged, { authorityId, commitment: commitmentHex });
+        return { refused: false, code: '', message: '' };
+      } catch (e: any) {
+        return { refused: true, code: String(e && e.code), message: String(e && e.message) };
+      }
+    }, [AUTHORITY, commitment, solvedDocument(AUTHORITY, commitment, 'd4'.repeat(32))] as const);
+
+    // ⚑ REFUSED AT THE DOCUMENT, by name, so no claim can be built from it at
+    // all. This is stronger than validating a claim: `settleJudgedRun` has no
+    // transcript parameter, so the only way to name rounds is to forge the
+    // SESSION — and the session is what refuses.
+    expect(outcome.refused, 'a settlement naming unplayed rounds must be refused').toBe(true);
+    expect(outcome.code).toBe('session-settlement');
+    expect(outcome.message).toContain('not the round that was played');
+    // And it never got as far as asking custody for anything.
+    expect(popups.filter((u) => u.includes('.html'))).toHaveLength(0);
+    await page.close();
   });
 });
