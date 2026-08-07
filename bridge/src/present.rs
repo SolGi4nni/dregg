@@ -1935,20 +1935,70 @@ pub const DEFAULT_MAX_PROOF_AGE_SECS: i64 = 300;
 ///   revealed(8), verifier_nonce]`.
 /// * `blinded_pis` — the blinded ring-membership `[blinded_leaf, root]`.
 ///
-/// Fail-closed: an unknown predicate, malformed vk, bad blob, or a failed/paniced verify on
-/// EITHER descriptor yields `None` — never a silent accept.
+/// Fail-closed: a wire naming the WRONG descriptor for its slot, an unknown predicate, malformed
+/// vk, bad blob, or a failed/paniced verify on EITHER descriptor yields `None` — never a silent
+/// accept.
 fn verify_presentation_descriptor_wires(
     real: &RealPresentationProof,
 ) -> Option<(Vec<BabyBear>, Vec<BabyBear>)> {
-    let bound = verify_descriptor_wire(&real.bound_presentation)?;
-    let blinded = verify_descriptor_wire(&real.blinded_membership)?;
+    let bound = verify_wire_typed(&real.bound_presentation, WireSlot::BoundPresentation).ok()?;
+    let blinded = verify_wire_typed(&real.blinded_membership, WireSlot::BlindedMembership).ok()?;
     Some((bound, blinded))
 }
 
-/// Verify one committed descriptor wire with a TYPED outcome (for [`verify_proof_complete`]):
-/// an unknown predicate is [`VerifyError::UnknownAir`] (the fail-closed contract preserved from
-/// the retired air-name dispatch); a malformed/failed proof is [`VerifyError::StarkInvalid`].
-fn verify_wire_typed(wire: &DescriptorProofWire) -> Result<Vec<BabyBear>, VerifyError> {
+/// Which of the two presentation wires a [`DescriptorProofWire`] is being consumed as.
+///
+/// ⚑ **A WIRE'S `predicate` IS ATTACKER-SUPPLIED AND `descriptor_by_name` SERVES THE WHOLE
+/// REGISTRY**, so "it resolves to some descriptor" is not a check — it is a `HashMap` hit. The
+/// resolved descriptor is then verified against the wire's OWN `vk` felts, and the caller reads
+/// FIXED PI INDICES out of the result (`FEDERATION_ROOT`, `REQUEST_PREDICATE_BASE + i`,
+/// `PI_ROOT_4ARY`). So ANY registered descriptor with enough PI slots and no semantic content
+/// substitutes for the intended one, and the index reads then hold by construction.
+///
+/// `bridge-action-leaf::bridge_action_air_v1` is precisely that gadget: 26 public inputs whose
+/// only constraints are `row0[c] == pi[c]` and per-column constancy — satisfiable for ANY 26-felt
+/// vector by a constant trace, with no table, no hash site and no range. A forger names it in both
+/// slots, places the verifier's own `federation_root` at index 0 and 8 and its own
+/// `compute_action_binding(action, resource)` at indices 1..9, and every downstream check in
+/// [`verify_proof_complete`] passes: steps 5-7 read only plaintext fields of the same
+/// attacker-supplied struct. Exhibited by `descriptor_substitution_forgery_is_refused`.
+///
+/// This enum makes the slot's identity a REQUIRED argument, so a new call site cannot forget it.
+/// It is the bridge-side twin of `sdk::verify::check_bundle_predicates`, which has pinned both
+/// names since the descriptor flip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WireSlot {
+    /// The bound-presentation summary — exactly `BOUND_PRESENTATION_NAME`.
+    BoundPresentation,
+    /// The blinded ring-membership — any depth under `BLINDED_4ARY_NAME_PREFIX`.
+    BlindedMembership,
+}
+
+impl WireSlot {
+    /// Does `predicate` name the descriptor this slot is allowed to be?
+    fn accepts(self, predicate: &str) -> bool {
+        use dregg_circuit::blinded_membership_witness::BLINDED_4ARY_NAME_PREFIX;
+        use dregg_circuit::bound_presentation_witness::BOUND_PRESENTATION_NAME;
+        match self {
+            WireSlot::BoundPresentation => predicate == BOUND_PRESENTATION_NAME,
+            WireSlot::BlindedMembership => predicate.starts_with(BLINDED_4ARY_NAME_PREFIX),
+        }
+    }
+}
+
+/// Verify one committed descriptor wire with a TYPED outcome (for [`verify_proof_complete`]).
+///
+/// The wire must name the descriptor its SLOT expects — see [`WireSlot`] for why resolving in the
+/// registry is not enough. A wrong or unknown predicate is [`VerifyError::UnknownAir`] (the
+/// fail-closed contract preserved from the retired air-name dispatch); a malformed/failed proof is
+/// [`VerifyError::StarkInvalid`].
+fn verify_wire_typed(
+    wire: &DescriptorProofWire,
+    slot: WireSlot,
+) -> Result<Vec<BabyBear>, VerifyError> {
+    if !slot.accepts(&wire.predicate) {
+        return Err(VerifyError::UnknownAir(wire.predicate.clone()));
+    }
     if dregg_circuit::descriptor_by_name::descriptor_by_name(&wire.predicate).is_none() {
         return Err(VerifyError::UnknownAir(wire.predicate.clone()));
     }
@@ -2154,8 +2204,8 @@ pub fn verify_proof_complete(
     use dregg_circuit::bound_presentation_witness::{
         FEDERATION_ROOT as BOUND_FED_ROOT, REQUEST_PREDICATE_BASE,
     };
-    let bound_pis = verify_wire_typed(&real.bound_presentation)?;
-    let blinded_pis = verify_wire_typed(&real.blinded_membership)?;
+    let bound_pis = verify_wire_typed(&real.bound_presentation, WireSlot::BoundPresentation)?;
+    let blinded_pis = verify_wire_typed(&real.blinded_membership, WireSlot::BlindedMembership)?;
 
     // 4. Federation root binding: the blinded ring-membership root AND the bound-presentation
     //    summary federation_root must both equal the expected root.
@@ -3543,6 +3593,163 @@ mod tests {
             complete.is_ok(),
             "known AIR must continue to verify via verify_proof_complete, got {:?}",
             complete.err()
+        );
+    }
+
+    /// The descriptor name of the substitution gadget: a table-free, hash-free, range-free
+    /// 26-slot identity binding whose only constraints are `row0[c] == pi[c]` and column
+    /// constancy. Resolved by KEY out of the production dispatch table, never re-typed as prose.
+    const SUBSTITUTION_GADGET: &str = "bridge-action-leaf::bridge_action_air_v1";
+
+    /// ⚑ **THE DESCRIPTOR-SUBSTITUTION FORGERY, AND THE PIN THAT REFUSES IT.**
+    ///
+    /// `verify_proof_complete` used to accept a wire whose `predicate` resolved ANYWHERE in the
+    /// `descriptor_by_name` registry, verify it against the wire's OWN `vk` felts, and then read
+    /// fixed PI indices out of the result. That is not a check: it lets a forger name a
+    /// semantically empty descriptor in BOTH slots and place the verifier's own trusted values at
+    /// exactly the indices that get read.
+    ///
+    /// The wire's `predicate` reaches this function from a public HTTP header
+    /// (`app-framework/src/middleware.rs` → `sdk::embed::verify_presentation_bytes` →
+    /// `present::verify_proof_complete`), so the forged bytes are attacker-authored end to end.
+    ///
+    /// ⚠ **NON-VACUITY WITHOUT DISARMING ANYTHING.** The test asserts, POSITIVELY, that the forged
+    /// wires pass every condition the pre-pin code actually tested — the registry hit, a genuinely
+    /// VERIFYING `Ir2BatchProof` under the deployed `verify_vm_descriptor2`, and each of the three
+    /// index reads (`FEDERATION_ROOT`, `REQUEST_PREDICATE_BASE + i`, `PI_ROOT_4ARY`) — and only
+    /// then that `verify_proof_complete` refuses. The refusal is therefore attributable to the
+    /// slot pin alone, with no `if false &&` scaffold and no window in the shared tree.
+    #[test]
+    fn descriptor_substitution_forgery_is_refused() {
+        use dregg_circuit::blinded_membership_witness::PI_ROOT_4ARY;
+        use dregg_circuit::bound_presentation_witness::{
+            FEDERATION_ROOT as BOUND_FED_ROOT, REQUEST_PREDICATE_BASE,
+        };
+
+        let fed_root_bb = BabyBear::new(0x0BAD_F00D);
+
+        // The gadget is in the PRODUCTION dispatch table — that is the whole problem.
+        let gadget = dregg_circuit::descriptor_by_name::descriptor_by_name(SUBSTITUTION_GADGET)
+            .expect("the substitution gadget is a live row of the production dispatch table");
+        let width = gadget.trace_width;
+        assert_eq!(gadget.public_input_count, width);
+        assert!(
+            gadget.tables.is_empty() && gadget.hash_sites.is_empty() && gadget.ranges.is_empty(),
+            "the gadget must be semantically empty for this to be a forgery and not a proof"
+        );
+
+        // Every index the verifier reads is inside the gadget's PI surface — which is why it
+        // substitutes at all.
+        let action_width = dregg_circuit::ACTION_BINDING_WIDTH;
+        assert!(BOUND_FED_ROOT < width && PI_ROOT_4ARY < width);
+        assert!(REQUEST_PREDICATE_BASE + action_width <= width);
+
+        // Forge each slot: a PI vector carrying the verifier's OWN trusted values at exactly the
+        // indices it reads, and a constant trace equal to it (which satisfies both families).
+        let expected_binding = dregg_circuit::compute_action_binding("anything", "");
+        let forge = |pis: Vec<BabyBear>| {
+            let trace = vec![pis.clone(); 4];
+            build_descriptor_wire(&gadget, &trace, &pis).expect("the gadget proves any PI vector")
+        };
+
+        let mut bound_pis = vec![BabyBear::ZERO; width];
+        bound_pis[BOUND_FED_ROOT] = fed_root_bb;
+        for i in 0..action_width {
+            bound_pis[REQUEST_PREDICATE_BASE + i] = expected_binding[i];
+        }
+        let mut blinded_pis = vec![BabyBear::ZERO; width];
+        blinded_pis[PI_ROOT_4ARY] = fed_root_bb;
+
+        let bound_wire = forge(bound_pis.clone());
+        let blinded_wire = forge(blinded_pis.clone());
+        assert_eq!(bound_wire.predicate, SUBSTITUTION_GADGET);
+
+        // --- NON-VACUITY: everything the pre-pin verifier checked, PASSES on these wires. ---
+        for w in [&bound_wire, &blinded_wire] {
+            assert!(
+                dregg_circuit::descriptor_by_name::descriptor_by_name(&w.predicate).is_some(),
+                "the old check (registry hit) accepts the forged predicate"
+            );
+            let verified = verify_descriptor_wire(w)
+                .expect("the forged blob is a GENUINELY VERIFYING Ir2BatchProof, not a broken one");
+            assert_eq!(
+                verified.len(),
+                width,
+                "the deployed verifier returns the forger's own {width} felts"
+            );
+        }
+        let bound_out = verify_descriptor_wire(&bound_wire).unwrap();
+        let blinded_out = verify_descriptor_wire(&blinded_wire).unwrap();
+        assert_eq!(bound_out[BOUND_FED_ROOT], fed_root_bb, "root read passes");
+        assert_eq!(blinded_out[PI_ROOT_4ARY], fed_root_bb, "root read passes");
+        for i in 0..action_width {
+            assert_eq!(
+                bound_out[REQUEST_PREDICATE_BASE + i],
+                expected_binding[i],
+                "action-binding read passes"
+            );
+        }
+
+        // --- THE PIN, at the exact surface it lives on. ---
+        //
+        // ⚠ This asserts against `verify_wire_typed` / `verify_presentation_descriptor_wires`
+        // rather than driving `BridgePresentationBuilder::prove`, because the honest PROVE path is
+        // fail-closed at HEAD for an unrelated reason (the issuer ring-membership leg is blocked on
+        // the federation-root flag day — see `wide_issuer_path`; `test_known_air_still_verifies_
+        // proof_complete` and `test_unknown_air_refused_all_verify_paths` are red at HEAD on the
+        // same `prove` call, both BEFORE any dispatch code runs). The VERIFY side is what an
+        // attacker reaches, and it is what this pin guards.
+        for (slot, name) in [
+            (WireSlot::BoundPresentation, "bound-presentation"),
+            (WireSlot::BlindedMembership, "blinded-membership"),
+        ] {
+            let refused = verify_wire_typed(&bound_wire, slot);
+            assert!(
+                matches!(refused, Err(VerifyError::UnknownAir(ref n)) if n == SUBSTITUTION_GADGET),
+                "the {name} slot must refuse a descriptor that is REGISTERED but is not the one \
+                 this slot means, got {refused:?}"
+            );
+        }
+        let forged_real = RealPresentationProof {
+            bound_presentation: bound_wire,
+            blinded_membership: blinded_wire,
+            fold_step_roots: Vec::new(),
+            derivation_state_root: BabyBear::ZERO,
+        };
+        assert!(
+            verify_presentation_descriptor_wires(&forged_real).is_none(),
+            "the bool path must refuse a substituted descriptor too"
+        );
+
+        // --- COMPLETENESS: the pin ACCEPTS exactly the names the honest prover emits, read from
+        //     the SAME constructors `presentation_descriptor_wires` calls (not re-typed prose). ---
+        let honest_bound = dregg_circuit::descriptor_by_name::descriptor_by_name(
+            dregg_circuit::bound_presentation_witness::BOUND_PRESENTATION_NAME,
+        )
+        .expect("the bound-presentation descriptor is registered");
+        assert!(
+            WireSlot::BoundPresentation.accepts(&honest_bound.name),
+            "the pin must accept the name the honest prover puts on the bound wire"
+        );
+        for depth in [2usize, 4, 8] {
+            let honest_blinded =
+                dregg_circuit::blinded_membership_witness::blinded_membership_descriptor_of_depth_4ary(
+                    depth,
+                );
+            assert!(
+                WireSlot::BlindedMembership.accepts(&honest_blinded.name),
+                "the pin must accept every depth the honest prover emits (depth {depth}: {})",
+                honest_blinded.name
+            );
+        }
+        // …and each slot refuses the OTHER slot's honest name, so the pin is a per-slot identity
+        // and not merely an allowlist of two strings.
+        assert!(!WireSlot::BlindedMembership.accepts(&honest_bound.name));
+        assert!(
+            !WireSlot::BoundPresentation.accepts(
+                &dregg_circuit::blinded_membership_witness::blinded_membership_descriptor_of_depth_4ary(4)
+                    .name
+            )
         );
     }
 
