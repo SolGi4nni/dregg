@@ -1,14 +1,17 @@
 /-
-# Market.CrossChainSettlement — DrEX RUNG 8: CROSS-CHAIN SETTLEMENT (the ladder's capstone).
+# Market.CrossChainSettlement — DrEX RUNG 8: the ACCEPT-PATH MODEL of cross-chain settlement.
 
-**A DrEX fill settles on ANY chain by proof.** This is the frontier of the DrEX rung ladder
-(`docs/deos/DREX-DESIGN.md §4 rung 8, §3 #8`): a proven DrEX clearing produces a settled state root,
-and any target chain's verifier — the LIVE EVM `DreggSettlement.sol`, the DEMONSTRATED CosmWasm
+**What is on this page: a fair DrEX fill's settled root is a valid input to the settlement
+verifier's accept-path — proved against an IN-FILE MODEL of that accept-path (`settleDrex`), over an
+ABSTRACT root type. No statement below mentions a deployed contract, a foreign chain, or a Groth16
+pairing.** The design this models (`docs/deos/DREX-DESIGN.md §4 rung 8, §3 #8`,
+`docs/deos/INTERCHAIN-MODEL.md`): a proven DrEX clearing produces a settled state root, and a target
+chain's verifier — the LIVE EVM `DreggSettlement.sol`, the DEMONSTRATED CosmWasm
 `cosmos-settlement/`, the DEMONSTRATED Solana `solana-settlement/` (alt_bn128) — checks that root and
-advances its own `provenRoot` to include the DrEX fill. No bridge validators, no wrapped tokens, no
-custody: dregg networks *proofs*, not tokens (`docs/deos/INTERCHAIN-MODEL.md`). The clearing itself is
-a machine-checked, proof-carrying executor turn (rungs 1–7); this rung composes that with the
-outbound settlement leg.
+advances its own `provenRoot` to include the DrEX fill; no bridge validators, no wrapped tokens, no
+custody. Those verifiers EXIST, but their correspondence to `settleDrex` is trust-by-reading (the
+HONEST GRADE below names both scope edges). The clearing itself is a machine-checked, proof-carrying
+executor turn (rungs 1–7); this rung composes that with a MODEL of the outbound settlement leg.
 
 ## The model (the clearing → root → settle chain)
 
@@ -35,11 +38,12 @@ A DrEX fill settles cross-chain when three things line up:
 ## What is PROVED here (the composition) vs the honest scope
 
   * `drex_fill_cross_chain_settleable` (THE KEYSTONE) — a proven DrEX fill (`DrexClearing`: fair +
-    conserving + kernel-real) whose pre-state root chains from the target chain's current proven root
-    IS accepted by the settlement verifier: it advances the chain's `provenRoot` to the fill's
-    post-state root (`rootOf post`) and its `provenHeight` by the batch's turn count — while the fill
-    it settles is simultaneously the rung-1 conserving + fair clearing on the REAL executor ledger.
-    So the clearing → root → settle chain is one theorem: a fair DrEX fill IS settle-able cross-chain.
+    conserving + kernel-real) whose pre-state root chains from the register's current proven root IS
+    accepted by `settleDrex`, THE ACCEPT-PATH MODEL: it advances the register's `provenRoot` to the
+    fill's post-state root (`rootOf post`) and its `provenHeight` by the batch's turn count — while
+    the fill it settles is simultaneously the rung-1 conserving + fair clearing on the REAL executor
+    ledger. The clearing → root → settle chain is one theorem AT THAT RESOLUTION: "settle-able"
+    means, exactly, accepted by this file's model of the verifier's accept-path.
 
   * FAIL-CLOSED, both teeth:
       - `settleDrex_continuity_broken` — a fill that does NOT chain from the current proven root is
@@ -156,16 +160,18 @@ def settleDrex {Root : Type} [DecidableEq Root] (rootOf : RecordKernelState → 
   else
     none
 
-/-! ## 4. THE KEYSTONE — a fair DrEX fill IS settle-able cross-chain. -/
+/-! ## 4. THE KEYSTONE — a fair DrEX fill is accepted by the settlement accept-path model. -/
 
-/-- **`drex_fill_cross_chain_settleable` — DrEX RUNG 8, the cross-chain settlement composition.** A
-PROVEN DrEX fill `c` (`DrexClearing`: fair `CycleValid`, conserving, KERNEL-REAL via `settleRing`)
-whose pre-state root chains from the target chain's current proven root (`hcont`) is ACCEPTED by the
-settlement verifier:
+/-- **`drex_fill_cross_chain_settleable` — DrEX RUNG 8, the settlement composition, in the accept-path
+MODEL.** Read the name at its real resolution: "cross-chain settleable" means ACCEPTED BY `settleDrex`
+— this file's model of the verifier's accept-path, over an abstract `rootOf` — and nothing in the
+statement reaches a deployed verifier or another chain (HONEST GRADE, header). A PROVEN DrEX fill `c`
+(`DrexClearing`: fair `CycleValid`, conserving, KERNEL-REAL via `settleRing`) whose pre-state root
+chains from the register's current proven root (`hcont`) is accepted:
 
-  * **(SETTLE)** `settleDrex` advances the chain's proven-root register: its new `provenRoot` is the
+  * **(SETTLE)** `settleDrex` advances the modeled proven-root register: its new `provenRoot` is the
     DrEX fill's post-state root `rootOf c.post` (the settlement proof's `final_root`), and its
-    `provenHeight` grows by the batch's turn count. The fill settles on the target chain.
+    `provenHeight` grows by the batch's turn count.
   * **(CONSERVING, kernel-real)** the settled transition preserves every asset's supply on the REAL
     executor ledger (`settleRing_conserves` — the fill mints/burns nothing);
   * **(FAIR)** the settlement is structurally `RingBalanced` (no phantom value) AND every leg respects
@@ -176,7 +182,8 @@ settlement verifier:
     clearing, the model↔kernel correspondence `Market/LedgerRealizationExt.lean` welds.
 
 The clearing → root → settle chain, as one theorem: a fair DrEX clearing's settled root IS a valid
-input to the settlement verifier, so the fill settles cross-chain (fail-closed — see §5). -/
+input to the accept-path model (fail-closed — see §5). What a DEPLOYED verifier inherits from this is
+conditional on the two named scope edges in the header. -/
 theorem drex_fill_cross_chain_settleable {Root : Type} [DecidableEq Root]
     (rootOf : RecordKernelState → Root) (S : ProvenState Root) (c : DrexClearing)
     (hcont : rootOf c.pre = S.provenRoot) :
@@ -346,20 +353,15 @@ theorem demo_cross_chain_discriminates :
       (fun _ h => h.1),
    demo_fill_refused_wrong_root⟩
 
-/-! ### `#guard` smoke — the concrete fill's settled roots + the advance, computed. -/
-
--- the DrEX fill's matched cycle is the 2-leg validSwapCycle:
-#guard demoFill.nodes.length == 2
--- the pre-anchor root: cell 1 holds 7 of asset 10, cell 2 holds 5 of asset 11:
-#guard demoRoot demoSettlePre == ((7 : ℤ), (5 : ℤ))
--- the settled post root: both holdings moved out (the swap cleared) → (0, 0):
-#guard demoRoot demoSettlePost == ((0 : ℤ), (0 : ℤ))
--- the proven root ADVANCES (pre ≠ post) — settling is a real state change:
-#guard (demoRoot demoSettlePre == demoRoot demoSettlePost) == false
--- ACCEPT from the matching anchor: the register advances to the fill's post root, height +2:
-#guard (settleDrex demoRoot demoProven demoFill).isSome
--- REFUSE from a foreign anchor (ContinuityBroken): fail-closed:
-#guard (settleDrex demoRoot demoProvenBad demoFill).isNone
+/-- The concrete fill's roots, COMPUTED and NAMED: the pre-anchor root is `(7, 5)` (cell 1 holds 7 of
+asset 10, cell 2 holds 5 of asset 11) and the settled post root is `(0, 0)` (both holdings moved —
+the swap cleared). (Retired `#guard`s, named; the other four guards were closed instances of
+`demo_root_advances`, `demo_fill_settles_cross_chain`, `demo_fill_refused_wrong_root`, and the
+2-leg length already pinned by `demo_fill_settles_cross_chain`'s `provenHeight = 2`, and are
+subsumed by those named theorems.) -/
+theorem demo_roots_computed :
+    (demoRoot demoSettlePre, demoRoot demoSettlePost) = (((7 : ℤ), (5 : ℤ)), ((0 : ℤ), (0 : ℤ))) := by
+  decide
 
 /-! ## Axiom hygiene — every cross-chain-settlement keystone pinned kernel-clean (CI hard-gate). -/
 
@@ -367,7 +369,7 @@ theorem demo_cross_chain_discriminates :
   Market.drex_fill_advances_proven_root, Market.settleDrex_continuity_broken,
   Market.unfair_clearing_not_settleable, Market.wrongAsset_clearing_not_settleable,
   Market.minting_post_unsettleable, Market.no_minting_drex_clearing, Market.demoSettle_settles,
-  Market.demo_fill_settles_cross_chain, Market.demo_root_advances,
+  Market.demo_fill_settles_cross_chain, Market.demo_root_advances, Market.demo_roots_computed,
   Market.demo_fill_refused_wrong_root, Market.demo_cross_chain_discriminates]
 
 end Market

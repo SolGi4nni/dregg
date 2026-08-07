@@ -45,6 +45,46 @@
 >
 > Items 2, 4, 5, 6, 7, 8, 9 of the improvement plan are **not** addressed here.
 >
+> **Items 4, 5, 9 and the Lending register are CLOSED — updated 2026-08-06 (market-cleanup lane).**
+> Per keystone, PROVED or RESTATED at source:
+>
+> * **Item 4 (Finding 5) — PROVED.** The perfect-hiding primitive now constrains the deployed view
+>   instead of licensing a prose abstraction. `MpcClearingSecurity` §2b: `MpcFullView` carries the
+>   masked opening CONTENTS (`Fin (maskedOpens K b) → ZMod 2` — the type itself carries the count);
+>   `fullView_reveal_only` proves the FULL view is simulable from `(p*,V*)` + shape via an explicit
+>   pad-space bijection (`padShift`, §1's rebalance algebra per opened coordinate);
+>   `masked_lane_secret_independent` is the pairwise two-book form; and the pair is genuine —
+>   `padless_lane_not_secret_independent` REFUTES the same shape for an opening that skips its pad.
+>   All in `#assert_all_clean`. The `MpcView` docblock now cites the theorem, not "§1 licenses".
+> * **Item 5 — RESTATED (prose stripped to the statements, residuals named).** GraduationPool:
+>   header re-titled "a MODEL of the launchpad-graduation floor guard"; a ⚠ WHAT-IS-NOT-PROVED block
+>   leads; the `.sol ↔ Lean` tie is now the NAMED residual `GraduationPoolSourceBinding` (§2b, the
+>   `FhEggLedgerSourceBinding` pattern: a `Prop` over an abstract `solAdmits`, no implementation
+>   installed). CrossChainSettlement: header and keystone docstring now state "settle-able" means
+>   accepted by `settleDrex`, THIS FILE's accept-path model over an abstract `rootOf` — theorem names
+>   kept (they are anchored to the in-file model), marquee "settles on ANY chain by proof" framing
+>   deleted. Lending: title re-registered to "mark-derived liquidation eligibility … a
+>   design-principle model, NOT an operational guarantee"; `no_bad_debt`'s docstring now states the
+>   `P ∧ ¬P` mechanism FIRST and points at the operational teeth; the duplicate marquee alias
+>   `bad_debt_unconstructable` is DELETED (one fact, one name).
+> * **Item 9 — CLOSED both halves.** `classify_exhaustive` (vacuous constructor-list restatement)
+>   is RETIRED and replaced with content: `classify_liquidatable_iff` — the classifier's
+>   `liquidatable` bucket is EXACTLY the debt-carrying underwater region (sound + complete;
+>   `underwater_classified_liquidatable` re-derived from it). `no_improving_deviation` is RENAMED
+>   `uniform_price_roundtrip_neutral` (def `xyDeviationNet` → `xyRoundTripNet`): the docstring and
+>   the Optimality header now say it is the algebraic identity `a·p·p⁻¹ − a = 0`, and the
+>   game-theoretic no-deviation statement (utilities, deviation space) is a NAMED open sub-rung.
+>   Doc references updated (`docs/deos/DREGG-LAUNCHPAD-DESIGN.md`).
+> * **Finding 4 (RevealNothing) — VERIFIED STILL THE GOLD STANDARD, two drifts fixed.** The floor is
+>   still a bundle FIELD, the HONEST GRADE block intact, the teeth real: no restatement needed. Fixed:
+>   a stale docstring calling `crossing` "the least clearing bucket" (pre-argmax semantics), and the
+>   file's five `#guard`s (four were closed instances of already-named theorems — dropped; the fifth
+>   is now the named `alpha_beta_first_values`). Guard-discipline rows for
+>   RevealNothing/Optimality/Lending/CrossChainSettlement retired via `--update-baseline` (19 guards
+>   → 0 across the four).
+> * Improvement-plan item 2 (`HidingFriPcs` discharge) and the remainder of item 3 are NOT addressed
+>   by this lane.
+>
 > **Item 8 (the CertFDescriptor ε-gap) is CLOSED — updated 2026-08-06 (certf-descriptor lane).**
 > Verified at source: the audited over-named keystone was the 07-14 version (`33636e08d`, where
 > `certFDescriptor_emit_sound` sat at `:558` delivering bare slack nonnegativity, no linking

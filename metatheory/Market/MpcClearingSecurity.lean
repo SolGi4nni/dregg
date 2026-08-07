@@ -19,7 +19,13 @@ PROVEN here:
 
 * additive n-of-n shares are perfectly hiding from every coalition missing one
   party, with full-collusion teeth;
-* the real deterministic view factors exactly through the volume-argmax leakage;
+* the real deterministic view factors exactly through the volume-argmax leakage —
+  and so does the FULL view carrying the masked opening CONTENTS: for every
+  wire-secret vector a pad-space bijection maps the real transcript onto the
+  simulator's output on a uniform sample (`fullView_reveal_only`,
+  `masked_lane_secret_independent`), with the padless opening REFUTED as the
+  other pole — the §1 primitive now constrains the deployed view instead of
+  licensing an abstraction in prose;
 * DATA-OBLIVIOUSNESS: every transcript size is a function of `(K,b)` alone, so
   swapping the private book moves nothing the world can see — this used to be
   the hypothesis `hm` and is now `transcript_sizes_depend_only_on_shape`;
@@ -280,8 +286,9 @@ def CurvesFit (bk : OrderBook) (K b : ℕ) : Prop :=
 
 /-- The deterministic public view of one deployed crossing: every field of
 `mpc.rs::Transcript`, with the one-time-padded opening CONTENTS abstracted to
-their COUNT — §1 is exactly what licenses that abstraction, since each opened bit
-is a fresh pad. -/
+their COUNT.  That abstraction is DISCHARGED, not assumed: §2b's
+`fullView_reveal_only` proves the view WITH the contents is simulable from the
+same leakage, via §1's pad algebra. -/
 structure MpcView where
   pStar : ℕ
   vStar : ℤ
@@ -399,6 +406,100 @@ theorem deployed_transcript_pins :
     (idxBits 4, andGates 4 16, maskedOpens 4 16, crossingRounds 4 16) = (2, 454, 908, 51) ∧
     (idxBits 8, andGates 8 32, maskedOpens 8 32, crossingRounds 8 32) = (3, 1941, 3882, 132) := by
   refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-! ### 2b. The masked opening CONTENTS — §1's pad algebra discharged ON the view.
+
+`MpcView` records only the COUNT of one-time-padded openings, and until now the licence
+for abstracting their CONTENTS lived in prose ("§1 is exactly what licenses that
+abstraction").  This section replaces the prose with theorems.  The FULL view — every
+`MpcView` field PLUS the opened masked bits themselves — is simulable from the leakage
+and the public shape: the deployed opening is `secret ⊕ pad` per bit (`mpc.rs::and_gate`
+pushes `d = x ^ a`, `e = y ^ b`; XOR is `ZMod 2` addition, each Beaver pad fresh), and
+shifting the pad space by the secrets is a BIJECTION that carries the real full view
+onto the simulator's output on a uniform sample (`fullView_reveal_only`).  Pairwise,
+any two wire-secret vectors induce the same masked lane up to a pad bijection
+(`masked_lane_secret_independent`) — the vector form of §1's `rebalanceFn`/`otpMasks`
+algebra.  The pair is genuine, not shape-satisfied: an opening that SKIPS its pad
+supports no such bijection (`padless_lane_not_secret_independent`).
+
+Honest scope: this binds the §1 primitive to the MODEL's masked lane — the same
+transcription of `mpc.rs` the sizes use, pinned by the measured transcript test.  The
+model ↔ `mpc.rs` source correspondence itself remains that transcription, exactly as
+for the sizes above. -/
+
+/-- The masked lane of one deployed crossing: one `ZMod 2` bit per opening — exactly
+`maskedOpens K b` of them, so the type itself carries the count `MpcView.maskedLen`
+reports. -/
+abbrev MaskedLane (K b : ℕ) := Fin (maskedOpens K b) → ZMod 2
+
+/-- The FULL deterministic view: every `MpcView` field PLUS the masked opening contents. -/
+structure MpcFullView (K b : ℕ) where
+  base : MpcView
+  masked : MaskedLane K b
+
+/-- What the deployed circuit opens on the masked lane: each wire secret one-time-padded
+by its fresh Beaver mask (`d = x ^ a` / `e = y ^ b`). -/
+def maskedLane {K b : ℕ} (secrets pads : MaskedLane K b) : MaskedLane K b :=
+  fun i => secrets i + pads i
+
+/-- §1's rebalance applied at every opened coordinate: shifting the pad space by a fixed
+vector is a bijection — the vector form of the `otpMasks` one-time-pad algebra. -/
+def padShift {K b : ℕ} (s : MaskedLane K b) : MaskedLane K b ≃ MaskedLane K b where
+  toFun pads := fun i => s i + pads i
+  invFun opened := fun i => opened i - s i
+  left_inv pads := funext fun i => by show s i + pads i - s i = pads i; ring
+  right_inv opened := funext fun i => by show s i + (opened i - s i) = opened i; ring
+
+/-- The witness-free FULL simulator: `mpcSim` for every deterministic field, and the
+masked lane taken VERBATIM from a uniform sample — it never sees a secret. -/
+def fullSim (K b : ℕ) (q : CrossingLeakage) (sample : MaskedLane K b) : MpcFullView K b :=
+  { base := mpcSim K b q, masked := sample }
+
+/-- The real full view of one clearing at its wire secrets and Beaver pads. -/
+def MpcClearing.fullView (mc : MpcClearing) (secrets pads : MaskedLane mc.K mc.b) :
+    MpcFullView mc.K mc.b :=
+  { base := mc.mpcView, masked := maskedLane secrets pads }
+
+/-- **The full deployed view — masked CONTENTS included — is perfectly simulable from
+`(p*,V*)` plus the public shape.**  For EVERY wire-secret vector there is a bijection
+`φ` of the pad space with `fullView secrets = fullSim ∘ φ` pointwise: fed uniform pads,
+the real transcript INCLUDING the opened masked bits is exactly the simulator's output
+on a uniform sample.  This is the theorem the count-only `MpcView` abstraction was
+resting on as prose.  Say plainly where the content is: the equation itself is
+definitional once `φ` is exhibited — the content is that ONE `φ`, independent of the
+book, works for every pad (perfect simulation as measure-preserving bijection), and
+that the padless opening below admits none. -/
+theorem fullView_reveal_only (mc : MpcClearing) (secrets : MaskedLane mc.K mc.b) :
+    ∃ φ : MaskedLane mc.K mc.b ≃ MaskedLane mc.K mc.b,
+      ∀ pads, mc.fullView secrets pads = fullSim mc.K mc.b mc.leakage (φ pads) :=
+  ⟨padShift secrets, fun _ => rfl⟩
+
+/-- Pairwise secret-independence of the masked lane: any two wire-secret vectors — any
+two private BOOKS, whatever function of the book the wires compute — produce the SAME
+masked openings up to a bijection of the fresh pads.  §1's `perfect_hiding`, lifted to
+the whole opened transcript. -/
+theorem masked_lane_secret_independent {K b : ℕ} (s₁ s₂ : MaskedLane K b) :
+    ∃ φ : MaskedLane K b ≃ MaskedLane K b,
+      ∀ pads, maskedLane s₁ pads = maskedLane s₂ (φ pads) := by
+  refine ⟨padShift (s₁ - s₂), fun pads => funext fun i => ?_⟩
+  simp only [maskedLane, padShift, Equiv.coe_fn_mk, Pi.sub_apply]
+  ring
+
+/-- An opening that skips its pad — publishes the wire secret verbatim. -/
+def padlessLane {K b : ℕ} (secrets _pads : MaskedLane K b) : MaskedLane K b := secrets
+
+/-- RED: the pad is load-bearing.  The padless opening admits NO secret-independent pad
+bijection — the all-zero and all-one secret vectors produce openings no `φ` reconciles.
+So `masked_lane_secret_independent` is met on the deployed opening's merits, not by the
+shape of the statement. -/
+theorem padless_lane_not_secret_independent :
+    ¬ ∃ φ : MaskedLane 3 8 ≃ MaskedLane 3 8,
+      ∀ pads, padlessLane (fun _ => (0 : ZMod 2)) pads
+        = padlessLane (fun _ => (1 : ZMod 2)) (φ pads) := by
+  rintro ⟨φ, h⟩
+  have h0 := congrFun (h 0) ⟨0, by decide⟩
+  simp only [padlessLane] at h0
+  exact absurd h0 (by decide)
 
 /-! ## 3. RED teeth: the old least-crossing/sign-vector semantics are not this leakage. -/
 
@@ -684,6 +785,9 @@ theorem workBook_bookB_demand0_differs : (demand bookA 0, demand bookB 0) = (10,
   Market.MpcClearingSecurity.maskedOpens_factors_through_leakage,
   Market.MpcClearingSecurity.book_reading_size_refutes_factorization,
   Market.MpcClearingSecurity.deployed_transcript_pins,
+  Market.MpcClearingSecurity.fullView_reveal_only,
+  Market.MpcClearingSecurity.masked_lane_secret_independent,
+  Market.MpcClearingSecurity.padless_lane_not_secret_independent,
   Market.MpcClearingSecurity.mcA_transcript_sizes,
   Market.MpcClearingSecurity.workBook_runtime_clearing,
   Market.MpcClearingSecurity.bookB_runtime_clearing,

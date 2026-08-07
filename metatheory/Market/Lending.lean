@@ -1,15 +1,20 @@
 /-
-# Market.Lending — DrEX rung 8: UNDERCOLLATERALIZATION-IMPOSSIBLE lending (the marquee dreggfi money market).
+# Market.Lending — DrEX rung 8: lending with MARK-DERIVED liquidation eligibility (bad debt
+definitionally unrepresentable — a design-principle model, NOT an operational guarantee).
 
-**The Certora canonical bad state has NO CONSTRUCTOR.** Every money-market blow-up of the last cycle
-(Moonwell / Euler / the xUSD bad-debt event) is one shape: a position that is *underwater*
-(`collateralValue < debt · liqRatio`) **and** cannot be liquidated (the liquidation predicate lags the
-mark — a governance flag, a keeper grace-window, a paused market), so the shortfall rots into protocol
-bad debt. This module builds a lending lifecycle where **that state is unrepresentable**: liquidation
-eligibility is not a stored, laggable flag — it is a *pure function of the mark*, DEFINED to be exactly
-"underwater" (via the operational transition, `liquidatable_iff_underwater`). The
-"liquidatable-but-can't-repay" bad state is therefore a contradiction, `no_bad_debt` — a theorem, not a
-monitor. Mirrors `Dregg2/Storage/DealLifecycle.lean`'s "illegal steps have no constructor".
+Every money-market blow-up of the last cycle (Moonwell / Euler / the xUSD bad-debt event) is one
+shape: a position that is *underwater* (`collateralValue < debt · liqRatio`) **and** cannot be
+liquidated (the liquidation predicate lags the mark — a governance flag, a keeper grace-window, a
+paused market), so the shortfall rots into protocol bad debt. This module models a lending lifecycle
+in which liquidation eligibility is not a stored, laggable flag — it is a *pure function of the
+mark*, DEFINED to be exactly "underwater" (via the operational transition,
+`liquidatable_iff_underwater`). In THAT design the "underwater-but-unliquidatable" bad state is a
+contradiction — `no_bad_debt`, a DEFINITIONAL consequence of the eligibility-as-mark-function choice
+(see HONEST SCOPE: it is a faithful encoding of a design principle, not an operational proof about a
+deployed executor). The operational content of the file is elsewhere: liquidation is TOTAL exactly
+when needed (`liquidation_total_when_underwater`), an under-collateralized loan cannot be born
+(`undercollateralized_origination_refused`), and the lifecycle's illegal steps have no constructor
+(mirroring `Dregg2/Storage/DealLifecycle.lean`).
 
 This module **COMPOSES three already-PROVED objects; it re-proves none**:
 
@@ -26,11 +31,12 @@ This module **COMPOSES three already-PROVED objects; it re-proves none**:
 
 ## The keystones
 
-  * **(a) NO-BAD-DEBT** — `no_bad_debt`: `∀ mark r p, ¬ BadDebt mark r p`, where `BadDebt` is the
-    Certora bad state `0 < debt ∧ Underwater ∧ ¬ Liquidatable`. It is uninhabited because
-    liquidatability ≡ underwater-ness (`liquidatable_iff_underwater`, proved through the actual
-    `liquidate` transition being available). The bad state has NO CONSTRUCTOR. Structurally, the health
-    classifier `LoanHealth` has no `badDebt` bucket (`classify_exhaustive`) and `classify` is total.
+  * **(a) NO-BAD-DEBT (definitional)** — `no_bad_debt`: `∀ mark r p, ¬ BadDebt mark r p`, where
+    `BadDebt` is the Certora bad state `0 < debt ∧ Underwater ∧ ¬ Liquidatable`. It is uninhabited
+    BECAUSE liquidatability is DEFINED to coincide with underwater-ness
+    (`liquidatable_iff_underwater`), which makes `BadDebt` a `P ∧ ¬P` — a theorem OF THE DESIGN
+    CHOICE, carrying no operational content beyond it. The classifier's `liquidatable` bucket is
+    exactly the debt-carrying underwater region (`classify_liquidatable_iff`) and `classify` is total.
   * **(b) SOLVENCY** — `lending_pool_solvent_forever` (= `pool_solvent_forever`) + the reused backing
     line: the lending pool stays solvent over ANY schedule; composed into `lending_sound`.
   * **(c) LIQUIDATION IS TOTAL** — `liquidation_total_when_underwater` / `loan_liquidation_total`:
@@ -59,12 +65,12 @@ reused; `lending_sound` conjoins the two (they share no state).
 
 NON-VACUITY both polarities: a healthy position across an adversarial PRICE CRASH stays no-bad-debt and
 the pool stays solvent (`demo_no_bad_debt_across_crash`, `lending_demo_solvent`; the values/marks are
-`#guard`/theorem-pinned) — and the position goes healthy→liquidatable but liquidation is always available
-(never bad debt); AND the teeth — the bad state is unconstructable (`bad_debt_unconstructable`, and the
-only missing piece is the *impossible* unliquidatability, `demo_bad_debt_needs_only_unliquidatable`), an
-under-collateralized origination is REFUSED (`undercollateralized_origination_refused`,
-`demo_undercollateralized_refused`), and a healthy position cannot be liquidated
-(`liquidate_none_when_healthy`). Mirrors the rung teeth.
+theorem-pinned, `lendPos_mark_arithmetic`) — and the position goes healthy→liquidatable but liquidation
+is always available (never bad debt); AND the teeth — two of the three bad-debt conjuncts genuinely
+hold at the crash and only the *impossible* unliquidatability is missing
+(`demo_bad_debt_needs_only_unliquidatable`), an under-collateralized origination is REFUSED
+(`undercollateralized_origination_refused`, `demo_undercollateralized_refused`), and a healthy position
+cannot be liquidated (`liquidate_none_when_healthy`). Mirrors the rung teeth.
 
 Pure.
 -/
@@ -156,18 +162,19 @@ Moonwell / Euler / xUSD. Below (`no_bad_debt`) it is proved UNINHABITED. -/
 def BadDebt (m : Mark) (r : ℚ) (p : Position) : Prop :=
   0 < p.debt ∧ Underwater m r p ∧ ¬ Liquidatable m r p
 
-/-- **`no_bad_debt` (THE KEYSTONE):** for EVERY mark, ratio, and position, the Certora bad state is
-UNINHABITED — there is no underwater-and-unliquidatable position. Bad debt is unconstructable, not
-monitored. The proof: `¬ Liquidatable` is (`liquidatable_iff_underwater`) exactly `¬ Underwater`, which
-contradicts the `Underwater` conjunct. The state has no constructor. -/
+/-- **`no_bad_debt` (DEFINITIONAL):** for EVERY mark, ratio, and position, the Certora bad state is
+uninhabited in THIS MODEL. Say exactly why: `Liquidatable` is DEFINED as the mark condition
+(`liquidatable_iff_underwater`), so `BadDebt`'s last two conjuncts are `P ∧ ¬P` — the theorem is a
+consequence of the eligibility-as-pure-function design choice, with no operational content beyond it.
+It does NOT say a deployed executor carrying a stored eligibility flag cannot desync from an oracle;
+that operational statement needs the executor weld + the oracle weld (`Market/OracleWeld.lean` grades
+the mark; the executor weld is the named open rung in HONEST SCOPE). The operational teeth of this
+file are `liquidation_total_when_underwater` and `undercollateralized_origination_refused`.
+(A former alias `bad_debt_unconstructable` — the same statement re-announced as a marquee tooth — is
+deleted; one fact, one name.) -/
 theorem no_bad_debt (m : Mark) (r : ℚ) (p : Position) : ¬ BadDebt m r p := by
   rintro ⟨_, hu, hnl⟩
   exact hnl ((liquidatable_iff_underwater m r p).2 hu)
-
-/-- **`bad_debt_unconstructable` (TOOTH, the marquee):** restated as the refusal — the bad-debt state is
-never inhabited, at any mark. This is the undercollateralization-impossible claim: given the mark, a
-position that is underwater but cannot be liquidated simply does not exist in the state space. -/
-theorem bad_debt_unconstructable : ∀ (m : Mark) (r : ℚ) (p : Position), ¬ BadDebt m r p := no_bad_debt
 
 /-! ### The structural face — the health classifier has NO bad-debt bucket. -/
 
@@ -188,19 +195,26 @@ def classify (m : Mark) (r : ℚ) (p : Position) : LoanHealth :=
   else if p.debt * r ≤ p.value m then .healthy
   else .liquidatable
 
-/-- **`classify_exhaustive`** — the classifier's codomain is exactly `{clear, healthy, liquidatable}`;
-there is no fourth (bad-debt) case. -/
-theorem classify_exhaustive (h : LoanHealth) :
-    h = .clear ∨ h = .healthy ∨ h = .liquidatable := by
-  cases h <;> simp
+/-- **`classify_liquidatable_iff`** — the classifier's `liquidatable` bucket is EXACTLY the
+debt-carrying underwater region: sound (nothing lands there without debt and a genuine ratio break)
+AND complete (every debt-carrying underwater position lands there — never silently filed elsewhere).
+This is the fact with content about `classify`; it replaces the retired `classify_exhaustive`, which
+restated that a 3-constructor inductive has 3 constructors and constrained nothing. Both poles are
+witnessed below: `demoPos_classify_liquidatable_at_crash` (satisfied) and `demoPos_classify_healthy`
+(refused — a healthy position is NOT in the bucket). -/
+theorem classify_liquidatable_iff (m : Mark) (r : ℚ) (p : Position) :
+    classify m r p = .liquidatable ↔ (0 < p.debt ∧ Underwater m r p) := by
+  unfold classify Underwater
+  split_ifs with hd hh
+  · exact ⟨fun h => absurd h (by decide), fun ⟨hpos, _⟩ => absurd hpos (not_lt.2 hd)⟩
+  · exact ⟨fun h => absurd h (by decide), fun ⟨_, hu⟩ => absurd hu (not_lt.2 hh)⟩
+  · exact ⟨fun _ => ⟨not_le.1 hd, not_le.1 hh⟩, fun _ => rfl⟩
 
-/-- **`underwater_classified_liquidatable`** — a position with debt that is underwater is ALWAYS
-classified `liquidatable`; it can never be silently filed elsewhere. The classifier routes the entire
-underwater region to the one liquidation bucket. -/
+/-- **`underwater_classified_liquidatable`** — the completeness direction, kept under its
+long-standing name: a position with debt that is underwater is ALWAYS classified `liquidatable`. -/
 theorem underwater_classified_liquidatable (m : Mark) (r : ℚ) (p : Position)
-    (hd : 0 < p.debt) (h : Underwater m r p) : classify m r p = .liquidatable := by
-  unfold classify; unfold Underwater at h
-  rw [if_neg (not_le.2 hd), if_neg (not_le.2 h)]
+    (hd : 0 < p.debt) (h : Underwater m r p) : classify m r p = .liquidatable :=
+  (classify_liquidatable_iff m r p).2 ⟨hd, h⟩
 
 /-! ## 4. Origination — an under-collateralized loan cannot be born. -/
 
@@ -361,8 +375,8 @@ theorem lending_backing_solvent_forever (R : Nat) (sched : SSched) :
 
 /-! ## 7. THE COMPOSED KEYSTONE — no bad debt AND solvent forever. -/
 
-/-- **`lending_sound` — undercollateralization-impossible lending, in one theorem.** Given the mark, a
-lending system with a solvent reserve and a valid fill schedule is simultaneously:
+/-- **`lending_sound` — the composed model keystone.** Given the mark, a lending system with a solvent
+reserve and a valid fill schedule is simultaneously:
 
   * **(a) NO-BAD-DEBT** — the Certora bad state is unconstructable (`no_bad_debt`);
   * **(b) SOLVENT FOREVER** — the reserve is never negative at any reachable state
@@ -418,7 +432,7 @@ def priceCrash : List Mark := [⟨1⟩, ⟨3 / 4⟩, ⟨1 / 2⟩, ⟨3 / 10⟩]
 /-- **`demo_no_bad_debt_across_crash` (positive polarity):** at EVERY mark of the crash — healthy or
 deep underwater — the demo position is NEVER in the bad-debt state. As the price falls it goes
 healthy → liquidatable, but liquidation is always available, so the shortfall is never an
-underwater-and-unliquidatable one. The undercollateralization-impossible claim, exhibited across an
+underwater-and-unliquidatable one. The design-principle consequence, exhibited across an
 adversarial price path. -/
 theorem demo_no_bad_debt_across_crash : ∀ m ∈ priceCrash, ¬ BadDebt m liqRatio lendPos :=
   fun m _ => no_bad_debt m liqRatio lendPos
@@ -453,12 +467,13 @@ theorem lending_demo_sound :
   lending_sound crashMark liqRatio lendPos demoPool demoPool_solvent demoSched demoSched_valid
     100 demoBacking
 
-/-! ### `#guard` smoke — the mark/value numbers behind the keystones are COMPUTED. -/
-
-#guard lendPos.value healthyMark == (100 : ℚ)   -- collateral value pre-crash
-#guard lendPos.value crashMark == (30 : ℚ)      -- collateral value post-crash (70% down)
-#guard lendPos.debt * liqRatio == (60 : ℚ)      -- the liquidation line (debt · 1.5)
--- healthy: 100 ≥ 60 ; underwater at crash: 30 < 60 — liquidation available exactly there.
+/-- The mark/value arithmetic behind the demo, COMPUTED and NAMED: collateral value 100 pre-crash,
+30 post-crash (a 70% drawdown), against the liquidation line `debt · 1.5 = 60` — healthy exactly
+before (100 ≥ 60), underwater exactly after (30 < 60). (Retired `#guard`s, named.) -/
+theorem lendPos_mark_arithmetic :
+    (lendPos.value healthyMark, lendPos.value crashMark, lendPos.debt * liqRatio)
+      = (100, 30, 60) := by
+  norm_num [Position.value, lendPos, healthyMark, crashMark, liqRatio]
 
 /-! ## 9. NON-VACUITY, negative polarity — the teeth. -/
 
@@ -485,7 +500,8 @@ theorem repaid_loan_is_final (l' : Loan) : ¬ LoanStep repaidLoan l' :=
 
 #assert_all_clean [Market.underwater_iff_not_healthy, Market.liquidatable_iff_underwater,
   Market.liquidation_total_when_underwater, Market.liquidate_none_when_healthy, Market.no_bad_debt,
-  Market.bad_debt_unconstructable, Market.classify_exhaustive, Market.underwater_classified_liquidatable,
+  Market.classify_liquidatable_iff, Market.underwater_classified_liquidatable,
+  Market.lendPos_mark_arithmetic,
   Market.originate_healthy, Market.undercollateralized_origination_refused, Market.loan_terminal_is_final,
   Market.markDown_requires_underwater, Market.liquidate_requires_liquidatable, Market.repay_requires_healthy,
   Market.loan_liquidation_total, Market.lending_pool_solvent_forever, Market.lending_backing_solvent_forever,

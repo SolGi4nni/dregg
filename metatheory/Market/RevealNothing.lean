@@ -119,7 +119,8 @@ public committed tree `root`. This is the object the N-leg ring-clearing apex pr
 structure Clearing where
   /-- The private legs (the trades) — witness-only content. -/
   legs : List LegPrivate
-  /-- The public uniform clearing price (`FhEggClearing.crossing`: the least clearing bucket). -/
+  /-- The public uniform clearing price (`FhEggClearing.crossing`: the lowest bucket maximizing
+  executed volume `min demand supply` — the volume-argmax, NOT the retired least-clearing bucket). -/
   price : ℤ
   /-- The public committed note-tree root (the anonymity set; `RealCrypto.Poseidon2Tree.root`). -/
   root : ℤ
@@ -414,18 +415,13 @@ theorem RevealBundle.perfectZK_reveal_nothing (B : RevealBundle) (q : Leakage) (
     (B.toPerfectZK).view q c₁ = (B.toPerfectZK).view q c₂ :=
   (B.toPerfectZK).view_indep_of_witness q c₁ c₂
 
-/-! ### `#guard` smoke — the leakage, the shell, and the same-leakage collapse are COMPUTED. -/
-
--- α and β share every leakage coordinate (price 7, batch 2, total 8, root 42):
-#guard Q c_alpha == Q c_beta
--- the shell emits exactly 2 lanes for a 2-leg clearing (batch-size faithful to Q):
-#guard (canonicalSim (Q c_alpha)).lanes.length == 2
--- the shell emits the public price 7:
-#guard (canonicalSim (Q c_alpha)).price == (7 : ℤ)
--- the two DIFFERENT clearings collapse to the SAME transcript under the shell bundle:
-#guard (shellBundle.view c_alpha == shellBundle.view c_beta)
--- α and β genuinely differ in their first private value (3 vs 4) — the collapse is non-trivial:
-#guard (firstValue c_alpha, firstValue c_beta) == ((3 : ℤ), (4 : ℤ))
+/-- α and β genuinely differ in their first private value (3 vs 4) — so the same-leakage collapse
+(`shell_indistinguishable`) identifies transcripts of genuinely different books; the discriminating
+value is COMPUTED, not assumed. (This was the one `#guard` here that pinned a fact with no named
+home; the other four were closed instances of `alpha_beta_same_leakage`, `canonicalSim_batchSize`,
+`canonicalSim_price`, and `shell_indistinguishable`, and are subsumed by those named theorems.) -/
+theorem alpha_beta_first_values :
+    (firstValue c_alpha, firstValue c_beta) = ((3 : ℤ), (4 : ℤ)) := rfl
 
 /-! ### Axiom hygiene — the reveal-nothing keystones pinned kernel-clean (the PCS-ZK floor is the
 `RevealBundle.reveal_law` FIELD, an explicit hypothesis, NOT a `sorry`, NOT an axiom these catch). -/
@@ -436,6 +432,7 @@ theorem RevealBundle.perfectZK_reveal_nothing (B : RevealBundle) (q : Leakage) (
   Market.RevealNothing.canonicalSim_batchSize, Market.RevealNothing.canonicalSim_price,
   Market.RevealNothing.alpha_neq_beta, Market.RevealNothing.alpha_beta_same_leakage,
   Market.RevealNothing.shell_indistinguishable, Market.RevealNothing.leaky_no_simulator,
+  Market.RevealNothing.alpha_beta_first_values,
   Market.RevealNothing.HidingValueBinding.value_hidden, Market.RevealNothing.addHVB_hiding_not_binding,
   Market.RevealNothing.leakyVB_not_hiding, Market.RevealNothing.RevealBundle.real_view_eq_perfectZK_floor,
   Market.RevealNothing.RevealBundle.perfectZK_reveal_nothing]

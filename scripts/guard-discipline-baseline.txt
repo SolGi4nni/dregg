@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15328 guards across 1158 modules (2521 .lean files scanned).
+# TOTAL 15322 guards across 1156 modules (2528 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -41,6 +41,7 @@
 # BASELINE-PROVENANCE 615eeb01d-DIRTY 15341→15339 (-2) DECREASED — §24: the step circuit publishes a Types.Step.Statement; two exposedVars-position guards at shapeStep became conjuncts of named theorems in KimchiStepStatementPins (the_public_vector_is_to_datas_order_slot_by_slot, the_statement_slots_are_distinct_except_the_shared_zeta_power)
 # BASELINE-PROVENANCE a4ead8526-DIRTY 15339→15336 (-3) DECREASED — InterchainCustody: 3 gatedRingRelease guards converted to named kernel theorems (demo_gated_ring_releases / demo_gated_ring_refused_wrong_root / demo_gated_ring_aborts_on_one_bad_leg) when the Bool gate was bound to the real DrexClearing+settleDrex proof object
 # BASELINE-PROVENANCE 5b0d26cb6-DIRTY 15336→15328 (-8) DECREASED — EffectActionBindingEmit 16 -> 8: the felt-sized 16-bit-limb re-emit (AMOUNT_LIMBS 2 -> 4) converted the 8 non-vacuity #guards into NAMED theorems (cont_accepts_chained, cont_rejects_stash, forgedBorrow_rejects, brokenSubtraction_rejects, nonBooleanBorrow_rejects, undisclosedBurn_rejects, underflowingBurn_rejects, borrowBurnRow_values) plus the new burn_chain_exact / burn_chain_exact_of_modEq / burn_no_underflow forcing theorems. The 8 that remain are the 2 wire-golden byte pins and the 6 descriptor shape pins.
+# BASELINE-PROVENANCE b3e028e1a-DIRTY 15328→15322 (-6) DECREASED — market-cleanup: 19 guards converted-or-retired to named theorems across Market/{RevealNothing,Optimality,Lending,CrossChainSettlement}; plus rows for 2 shielded Emit modules already at HEAD without rows (other lane's landed files, recorded not authored)
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -507,7 +508,9 @@
 11	Dregg2/Circuit/Emit/Sha256MerkleFold.lean
 24	Dregg2/Circuit/Emit/Sha512Gadget.lean
 6	Dregg2/Circuit/Emit/ShieldedNoteAppendDescriptor.lean
+4	Dregg2/Circuit/Emit/ShieldedShieldDescriptor.lean
 11	Dregg2/Circuit/Emit/ShieldedSpendDescriptor.lean
+9	Dregg2/Circuit/Emit/ShieldedSpendExactMembershipEmit.lean
 13	Dregg2/Circuit/Emit/ShieldedValueLinkDescriptor.lean
 5	Dregg2/Circuit/Emit/ShieldedWholeNoteSwapSubstrateDescriptor.lean
 15	Dregg2/Circuit/Emit/ShieldedWideValueLinkDescriptor.lean
@@ -1121,7 +1124,6 @@
 13	Market/CertQpDescriptor.lean
 6	Market/CertQpRustDenotation.lean
 12	Market/Clearing.lean
-6	Market/CrossChainSettlement.lean
 8	Market/CrossMargin.lean
 14	Market/DarkAmmContextBoundDecision.lean
 5	Market/DarkAmmDecisionReceipt.lean
@@ -1145,10 +1147,8 @@
 8	Market/InterchainCustody.lean
 10	Market/LedgerRealization.lean
 21	Market/LedgerRealizationExt.lean
-3	Market/Lending.lean
 6	Market/Liquidity.lean
 7	Market/MintSafeQuantization.lean
-5	Market/Optimality.lean
 6	Market/PackedBookFamily.lean
 5	Market/PartyMpcTransportBoundary.lean
 6	Market/PrecisionEnvelope.lean
@@ -1165,7 +1165,6 @@
 1	Market/QpApproximateBound.lean
 9	Market/QpExternalProgramBinding.lean
 9	Market/QuantizedConservation.lean
-5	Market/RevealNothing.lean
 5	Market/SddPsd.lean
 11	Market/ShieldedClearing.lean
 13	Market/ShieldedRingEndpointDescriptor.lean

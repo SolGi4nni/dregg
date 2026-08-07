@@ -19,10 +19,11 @@ book satisfies it (`posBook_uniform_price`). This file discharges rung 4 over th
     Budish-FBA / "arbitrage-free ⇔ single price" property (arXiv 2310.09782's *strictly-increasing-
     invariant ⇔ no-arb* shape, here specialized to a one-price batch): a uniform price is *exactly* the
     condition under which no participant can strictly improve their value position.
-  * **No strictly-improving deviation (`no_improving_deviation`).** The numéraire value net of ANY
-    feasible alternative quantity a participant could trade at the uniform price is `0` — never
-    strictly positive. So the uniform-price allocation admits no strictly-improving unilateral
-    deviation (the FBA optimality reading of no-arbitrage).
+  * **Round-trip value-neutrality (`uniform_price_roundtrip_neutral`).** The numéraire value net of
+    trading ANY quantity at the uniform price is `0` — the algebraic identity `a·p·p⁻¹ − a = 0`.
+    This is the VALUE-IDENTITY underlying the informal "no improving deviation" reading; it is NOT a
+    game-theoretic no-deviation theorem (there is no utility model, no strategy space, and no
+    equilibrium notion anywhere in this file — that formalization is a named open sub-rung below).
   * **Envy-freeness (`uniform_price_envy_free`).** Any two same-direction participants clear at the
     IDENTICAL rate `p`. Nobody faces a worse price than anyone else on their side — the envy-free
     reading of "one price for all."
@@ -40,7 +41,8 @@ result *builds on* (IR first, no-improving-deviation second). Nothing below rung
 NON-VACUITY, both polarities (the discipline):
   * **positive** — the worked uniform-price book (`posFills` / `posBook_uniform_price`, rung 5) IS
     no-arbitrage and value-neutral: both legs value exactly `8` in the numéraire, spent = received
-    (`posBook_uniform_price_optimal`; `#guard`-pinned). A concrete optimal, core-neutral clearing.
+    (`posBook_uniform_price_optimal`; values pinned by `posBook_leg_values`). A concrete
+    value-neutral, core-neutral clearing.
   * **the refuse tooth** — a SPLIT-price book (two same-direction legs at DIFFERENT rates, `½` vs `1`)
     is NOT `ClearsAtUniformPrice` (`splitFills_not_uniform`) AND admits a strictly-improving deviation:
     the off-rate leg extracts strict numéraire surplus (`splitFills_admits_arbitrage`, value `16` for
@@ -48,12 +50,18 @@ NON-VACUITY, both polarities (the discipline):
     the same offer (`splitFills_has_envy` — envy exists). Uniform pricing is *what* buys optimality;
     drop it and arbitrage/envy return. Mirrors rung 5's `badPrice_refused` / rung 1's `overdebit_refused`.
 
-NEXT SUB-RUNG (named, not claimed): **full coalition TTC-core stability** — no *coalition* (not just a
-single participant) can re-trade among themselves to make every member weakly and some strictly better
-than the uniform-price clearing gives them (the Shapley-Scarf core over multi-party `CycleValid`). The
-single-participant no-improving-deviation + envy-freeness proved here is the coalition-of-one / pairwise
-core; the general k-coalition argument (a Scarf-balancedness / no-blocking-coalition proof) is the open
-sub-rung above this file.
+NEXT SUB-RUNGS (named, not claimed):
+  * **Game-theoretic no-deviation, even unilateral.** What is proved here is value-neutrality —
+    equalities and identities in a common numéraire. A genuine "no participant can strictly improve by
+    deviating" theorem needs a utility model over allocations and a deviation space; NEITHER exists in
+    this file. `uniform_price_roundtrip_neutral` is the arithmetic such a theorem would rest on, not
+    the theorem.
+  * **Full coalition TTC-core stability** — no *coalition* (not just a single participant) can
+    re-trade among themselves to make every member weakly and some strictly better than the
+    uniform-price clearing gives them (the Shapley-Scarf core over multi-party `CycleValid`). The
+    value-neutrality + envy-freeness proved here is the coalition-of-one / pairwise arithmetic; the
+    general k-coalition argument (a Scarf-balancedness / no-blocking-coalition proof) is the open
+    sub-rung above this file.
 
 Pure.
 -/
@@ -133,16 +141,18 @@ theorem uniform_price_no_arbitrage {fills : List Fill} {x y : AssetId} {p : ℚ}
     ∀ f ∈ fills, recvValue x y p f = spentValue x y p f :=
   fun f hf => fill_value_neutral hxy hp (hpair f hf) (hu f hf).1 (hu f hf).2
 
-/-- **`no_improving_deviation` — no feasible deviation at the uniform price strictly improves.** The
-numéraire value net of spending any amount `a` at the uniform price `p` (receive `a·p` of the wanted
-asset, valued `a·p·p⁻¹ = a`, against the `a` spent) is exactly `0` — for EVERY `a`. So a participant
-cannot, by choosing a different feasible quantity at the one price, obtain positive surplus: the
-uniform-price allocation admits no strictly-improving unilateral deviation. The FBA optimality reading
-of no-arbitrage. -/
-def xyDeviationNet (p a : ℚ) : ℚ := a * p * p⁻¹ - a
+/-- **`uniform_price_roundtrip_neutral` — the round-trip at the uniform price is value-neutral.**
+Spending any amount `a` at the uniform price `p` (receive `a·p` of the wanted asset, valued
+`a·p·p⁻¹ = a` in the numéraire, against the `a` spent) nets exactly `0` — for EVERY `a`.  Say what
+this is: the algebraic identity `a·p·p⁻¹ − a = 0` for `p ≠ 0`, i.e. that valuing back through the
+SAME price no quantity choice creates or destroys numéraire value.  It is NOT a game-theoretic
+no-improving-deviation result — no utilities, no strategy space, no equilibrium (the named open
+sub-rung in the header).  Formerly named `no_improving_deviation`, which claimed the game-theoretic
+reading; renamed 2026-08-06 to what it proves. -/
+def xyRoundTripNet (p a : ℚ) : ℚ := a * p * p⁻¹ - a
 
-theorem no_improving_deviation (p : ℚ) (hp : p ≠ 0) (a : ℚ) : xyDeviationNet p a = 0 := by
-  unfold xyDeviationNet; rw [mul_assoc, mul_inv_cancel₀ hp, mul_one, sub_self]
+theorem uniform_price_roundtrip_neutral (p : ℚ) (hp : p ≠ 0) (a : ℚ) : xyRoundTripNet p a = 0 := by
+  unfold xyRoundTripNet; rw [mul_assoc, mul_inv_cancel₀ hp, mul_one, sub_self]
 
 /-- **`uniform_price_envy_free` — same-direction participants clear at the IDENTICAL rate.** Any two
 `x → y` legs of a uniform-price book execute at the same `p`. Nobody on a side faces a worse price than
@@ -165,12 +175,15 @@ that `ClearsAtUniformPrice` on the `(x, y)` pair is, all at once:
     `offerAmount`, executes at or above its `limitPrice`, and thereby delivers `≥` its pro-rata minimum
     (the rung-1 `cycle_individuallyRational` floor, lifted to priced partial fills);
   * **(optimal, rung 4 — NEW)** no-arbitrage / value-neutral — every leg's numéraire value received
-    equals value spent (`uniform_price_no_arbitrage`), so no participant can strictly improve by a
-    feasible deviation at the uniform price (`no_improving_deviation`).
+    equals value spent (`uniform_price_no_arbitrage`), and any feasible round-trip at the uniform
+    price nets zero numéraire value (`uniform_price_roundtrip_neutral`) — the value-identities behind
+    the informal "no improving deviation" reading, which as a GAME-THEORETIC statement is NOT
+    formalized here (named open sub-rung).
 
-Individual rationality FIRST (nobody worse than their declaration), then NO IMPROVING DEVIATION at the
-uniform price (nobody can do strictly better) — a uniform-price clearing is sound and optimal as one
-theorem. The design's §7 `uniform_price_optimal`, discharged. -/
+Individual rationality FIRST (nobody worse than their declaration), then VALUE-NEUTRALITY at the
+uniform price (no leg and no feasible round-trip extracts numéraire surplus) — a uniform-price
+clearing is sound and value-neutral as one theorem. The design's §7 `uniform_price_optimal`,
+discharged at that resolution. -/
 theorem uniform_price_optimal {fills : List Fill} {x y : AssetId} {p : ℚ}
     (hxy : x ≠ y) (hp : p ≠ 0)
     (hbook : BookValid fills) (hcons : Conserves fills)
@@ -204,16 +217,15 @@ theorem posBook_uniform_price_optimal :
   uniform_price_optimal (by decide) (by norm_num) posFills_valid posFills_conserves
     posBook_uniform_price posFills_onPair
 
-/-! ### `#guard` smoke — value-neutrality is COMPUTED (both legs value exactly 8, spent = received). -/
-
--- gold→art leg (pf0): spends 8 gold (value 8), receives 4 art (value 4·(½)⁻¹ = 8) — NEUTRAL:
-#guard spentValue 0 1 (1/2) pf0 == (8 : ℚ)
-#guard recvValue  0 1 (1/2) pf0 == (8 : ℚ)
--- art→gold leg (pf1): spends 4 art (value 4·(½)⁻¹ = 8), receives 8 gold (value 8) — NEUTRAL:
-#guard spentValue 0 1 (1/2) pf1 == (8 : ℚ)
-#guard recvValue  0 1 (1/2) pf1 == (8 : ℚ)
--- any feasible deviation at the uniform price nets zero value (spend 100 of x → recv 100·p worth 100):
-#guard xyDeviationNet (1/2) 100 == (0 : ℚ)
+/-- The worked legs' numéraire values, COMPUTED: the gold→art leg (`pf0`) spends 8 gold (value 8)
+and receives 4 art (value `4·(½)⁻¹ = 8`); the art→gold leg (`pf1`) spends 4 art (value 8) and
+receives 8 gold (value 8).  Value-neutrality on the worked book is not an artifact of zero values.
+(Retired `#guard`s, named; the fifth guard — a closed instance of
+`uniform_price_roundtrip_neutral` — is subsumed by the general theorem and simply dropped.) -/
+theorem posBook_leg_values :
+    (spentValue 0 1 (1/2) pf0, recvValue 0 1 (1/2) pf0,
+      spentValue 0 1 (1/2) pf1, recvValue 0 1 (1/2) pf1) = (8, 8, 8, 8) := by
+  norm_num [spentValue, recvValue, numeraireValue, pf0, pf1, o0, o1, Fill.filledOut]
 
 /-! ## 6. NON-VACUITY, negative polarity — the teeth (split price ⇒ arbitrage + envy). -/
 
@@ -259,8 +271,9 @@ theorem splitFills_has_envy : fairLeg.filledIn = arbLeg.filledIn ∧ fairLeg.fil
 /-! ### Axiom hygiene — the rung-4 keystones pinned kernel-clean. -/
 
 #assert_all_clean [Market.fill_value_neutral, Market.uniform_price_no_arbitrage,
-  Market.no_improving_deviation, Market.uniform_price_envy_free, Market.uniform_price_optimal,
-  Market.posFills_onPair, Market.posBook_uniform_price_optimal, Market.splitFills_not_uniform,
+  Market.uniform_price_roundtrip_neutral, Market.uniform_price_envy_free,
+  Market.uniform_price_optimal, Market.posFills_onPair, Market.posBook_uniform_price_optimal,
+  Market.posBook_leg_values, Market.splitFills_not_uniform,
   Market.splitFills_admits_arbitrage, Market.splitFills_has_envy]
 
 end Market

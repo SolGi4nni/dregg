@@ -1,27 +1,34 @@
 /-
-# Market.GraduationPool — the LAUNCHPAD GRADUATION tie: the on-chain solvent pool ↔ `pool_solvent_forever`.
+# Market.GraduationPool — a MODEL of the launchpad-graduation floor guard, realizing
+`pool_solvent_forever` — with the `.sol ↔ Lean` tie a NAMED, UNDISCHARGED residual.
 
 When a fair-launch raise clears (`chain/contracts/launchpad/DreggLaunchpad.sol`: commit → reveal →
 uniform-price clear → settle), the token GRADUATES into a standing liquid market — a
 `DreggSolventPool` seeded with a DISCLOSED fraction of the raise proceeds (the quote reserve) and a
-reserved token allocation (the token reserve). Unlike a pump.fun bonding curve (drainable) or a
-Raydium pool (no solvency theorem), the graduated pool is the DrEX **rung-6** never-insolvent pool of
-`Market/Liquidity.lean`: a trade that would drive a reserve below its disclosed floor REVERTS
-(`DreggSolventPool.PoolFloorBreached`).
+reserved token allocation (the token reserve), whose swap path reverts
+(`DreggSolventPool.PoolFloorBreached`) any trade that would drive a reserve below its disclosed floor.
 
-This file is the **tie**: the on-chain floor guard `require(reserveOut - output ≥ floor)` is exactly a
-`PoolFillValidFloor` discipline, and — because the floor is nonnegative — it REFINES rung-6's
-`PoolFillValid`, so the deployed pool realizes `pool_solvent_forever` (`Market/Liquidity.lean:145`,
-REUSED here, not re-proved). rung-6's guarantee is the **floor-0 special case** (never negative); the
-launchpad graduates with a positive disclosed floor and this file proves the reserve stays **at or
-above that floor forever**, which is strictly stronger and implies solvency.
+This file proves the tie AT MODEL LEVEL: `PoolFillValidFloor` TRANSCRIBES the on-chain floor guard
+`require(reserveOut - output ≥ floor)`, and — because the floor is nonnegative — it REFINES rung-6's
+`PoolFillValid`, so the MODELED floor discipline realizes `pool_solvent_forever`
+(`Market/Liquidity.lean:145`, REUSED here, not re-proved). rung-6's guarantee is the **floor-0
+special case** (never negative); a positive disclosed floor keeps the reserve **at or above that
+floor forever**, which is strictly stronger and implies solvency.
 
-Honest scope: this proves the **floor discipline realizes the solvency keystone** (both polarities: a
-floor-respecting schedule stays above floor forever + stays solvent; a floor-breaching fill is REFUSED
-and provably drives a reserve below the floor). The on-chain constant-product `x·y=k` PRICING is BUILT
-in `DreggSolventPool.sol` (a swap keeps `x·y` non-decreasing under the fee); it is the pricing policy
-ABOVE this solvency floor — the load-bearing guarantee tied here is the never-insolvent floor, exactly
-as `Market/Liquidity.lean` frames it.
+⚠ WHAT IS NOT PROVED — say it before the theorems, not after: NO statement in this file mentions the
+deployed Solidity. "The deployed pool realizes the keystone" holds only under
+`GraduationPoolSourceBinding` — the NAMED residual that the `DreggSolventPool.sol` swap guard
+admits exactly the fills `PoolFillValidFloor` admits (§2b). That correspondence is
+trust-by-human-reading of the contract; discharging it takes an EVM-level semantics. Every
+"on-chain"/"deployed" phrase
+below therefore describes what a guard-faithful contract WOULD inherit, conditional on that residual.
+
+Honest scope, within the model: both polarities are proved (a floor-respecting schedule stays above
+floor forever + stays solvent; a floor-breaching fill is REFUSED and provably drives a reserve below
+the floor). The on-chain constant-product `x·y=k` PRICING is BUILT in `DreggSolventPool.sol` (a swap
+keeps `x·y` non-decreasing under the fee); it is the pricing policy ABOVE this solvency floor — the
+load-bearing guarantee modeled here is the never-insolvent floor, exactly as `Market/Liquidity.lean`
+frames it.
 -/
 import Market.Liquidity
 
@@ -71,6 +78,22 @@ theorem poolFillValidFloor_refines
   have := hfl f.order.wantAsset
   linarith
 
+/-! ### 2b. The `.sol ↔ Lean` source binding — the NAMED, UNDISCHARGED residual.
+
+The pattern of `FhEggLedgerSourceBinding`: state the exact remaining deployed-source obligation as a
+`Prop` over an abstract stand-in for the deployed code, install no implementation, and let every
+"deployed pool" claim be read as conditional on it. -/
+
+/-- The exact remaining `.sol ↔ Lean` obligation. `solAdmits` abstracts the deployed
+`DreggSolventPool` swap path — `true` exactly when the contract would execute the fill rather than
+revert (`PoolFloorBreached` or a term violation). The residual demands the deployed guard admit
+PRECISELY the fills `PoolFillValidFloor` admits: only under it do the theorems below govern the
+contract instead of the model. Discharging it takes an EVM-level semantics of
+`DreggSolventPool.sol`; nothing in this repository proves it, and NO implementation is installed by
+this definition. -/
+def GraduationPoolSourceBinding (solAdmits : Floor → Pool → Fill → Bool) : Prop :=
+  ∀ fl p f, solAdmits fl p f = true ↔ PoolFillValidFloor fl p f
+
 /-! ## 3. The floor invariant STEP — a floor-valid fill leaves the pool above the floor. -/
 
 /-- **`poolStep_aboveFloor`:** clearing a floor-valid fill against an above-floor pool leaves it
@@ -113,11 +136,13 @@ theorem pool_above_floor_forever (fl : Floor) (p₀ : Pool)
   | zero => exact hinit
   | succ k ih => exact poolStep_aboveFloor fl ih (hs k)
 
-/-- **`graduated_pool_solvent_forever` (THE TIE):** the graduated pool — governed by the on-chain floor
-guard (`FloorScheduleValid`, a well-formed floor) — is SOLVENT at every reachable state, by rung-6's
-`pool_solvent_forever` REUSED. The deployed `DreggSolventPool.PoolFloorBreached` refusal is exactly the
-hypothesis that discharges the keystone: what the pool admits refines `PoolFillValid`, so the pool can
-never be driven insolvent. This is the launchpad graduation realizing `Market/Liquidity.lean`. -/
+/-- **`graduated_pool_solvent_forever` (THE MODEL-LEVEL TIE):** a pool governed by the MODELED floor
+guard (`FloorScheduleValid`, a well-formed floor) is SOLVENT at every reachable state, by rung-6's
+`pool_solvent_forever` REUSED: what the floor discipline admits refines `PoolFillValid`, so such a
+pool can never be driven insolvent. The DEPLOYED `DreggSolventPool` inherits this exactly when its
+`PoolFloorBreached` refusal admits what `PoolFillValidFloor` admits — which is
+`GraduationPoolSourceBinding` (§2b), the named undischarged residual, NOT a fact this theorem
+touches. -/
 theorem graduated_pool_solvent_forever
     (fl : Floor) (hfl : Floor.wf fl) (p₀ : Pool) (hinit : Pool.solvent p₀)
     (s : PoolSched) (hs : FloorScheduleValid fl p₀ s) :
