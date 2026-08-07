@@ -831,9 +831,14 @@ jobs:
   #                                (all three of this job's commands, all three present)
   #   ratchet-darkness             ratchet-darkness
   #   no-degraded-felt             no-degraded-felt
-  #   descriptor-by-name-routing   descriptor-drift — `check-descriptor-drift.sh:67` runs
+  #   descriptor-by-name-routing   descriptor-drift — `check-descriptor-drift.sh:169` runs
   #                                `emit_descriptors.py --verify-by-name-routing` as its own
-  #                                static preflight, i.e. the identical invocation
+  #                                static preflight, i.e. the identical invocation.
+  #                                ⚑ 2026-08-06: that preflight no longer ABORTS the drift run
+  #                                (it used to `exit 1` and hide the byte comparison behind a
+  #                                question that is not drift). It still runs, still fails the
+  #                                gate — so this coverage claim is unchanged — it just no
+  #                                longer suppresses the other leg's verdict.
   #   opentheory-importer          opentheory-importer + opentheory-importer-red. This job ran
   #                                ONLY `--self-test`; that flag is checked at
   #                                check-opentheory-importer.sh:108, AFTER the headline run, so
