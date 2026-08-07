@@ -74,33 +74,6 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 DESC_DIR = REPO / "circuit" / "descriptors" / "by-name"
 BASELINE = REPO / "scripts" / "descriptor-anchor-inertness-baseline.txt"
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
-SCOPE_ANSWERS = (
-    "for every `ir == 2` descriptor JSON under circuit/descriptors/by-name/, does its count "
-    "of DECORATIVE public inputs — `pi_binding` columns that are a SINGLETON in the "
-    "co-occurrence graph over gate/boundary/window-gate bodies, arity>1 lookup tuples, hash "
-    "sites, transitions and mem/map/umem/proof_bind operands, with an arity-1 range lookup "
-    "counted as a READ that joins the column to nothing — exactly equal its row in "
-    "scripts/descriptor-anchor-inertness-baseline.txt?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether an anchor BINDS anything. This is a ratchet over a recorded number: green means "
-    "no by-name descriptor gained a decorative anchor and none silently lost one, NOT that the "
-    "baselined anchors are load-bearing. Co-occurrence is not derivation — a chain of witnessed "
-    "lanes joined by equality scores zero — and any descriptor outside by-name/ (the rotation "
-    "registry TSVs, table-airs/, the top-level descriptors) is never opened."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "do three synthetic four-column descriptors get the decorative verdicts they were built to "
-    "have (pinned-and-never-named, read-by-an-arity-1-range-lookup-only, joined-by-a-window-gate), "
-    "and does a count above a baseline row get collected as red?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "anything about the descriptors on disk, and nothing about main()'s ratchet either: the "
-    "fourth case re-implements the baseline comparison in three lines rather than calling "
-    "main() or read_baseline(), so a broken comparison THERE stays invisible here."
-)
-
 # `var v` is a row-local column; `loc c` / `nxt c` are the SAME column read in two rows.
 EXPR_COL_KEY = {"var": "v", "loc": "c", "nxt": "c"}
 
@@ -374,12 +347,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
-
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     try:
         found = load_all(args.only)

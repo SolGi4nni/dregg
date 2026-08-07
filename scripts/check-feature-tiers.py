@@ -110,44 +110,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "scripts" / "feature-tiers.tsv"
-
-# ── SCOPE ─ this set is the ONLY copy; one pair prints on every run, pass or fail, because
-# the misreads this convention exists to stop happened to people reading RESULTS, not source.
-# The verdict modes, --self-test, and the data modes answer different questions. ────────────
-SCOPE_ANSWERS = (
-    "does scripts/feature-tiers.tsv carry a row for every (crate, feature) pair a tomllib walk of "
-    "the non-vendored Cargo.toml files enumerates and no row for a pair that is gone, are the rows "
-    "well-formed (tier in T1..T4, non-empty `why`, a T4 reason opening with a named exemption "
-    "class, no NEVER_EXEMPT name in T4, every T1 tracing to `default@<push-built workspace>` or to "
-    "PUSH_TRIGGERED_EXPLICIT), do the `#!` counts match the rows, and do the hardcoded floors hold?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether ANY feature compiles or is ever exercised. No cargo runs unless --verify-enumeration "
-    "or --verify-t1 is passed, and a T3 row records only that scripts/feature-t3-sweep.sh is "
-    "SUPPOSED to `cargo check` that pair in a different job. The per-push coverage claims are "
-    "checked against HARDCODED tables in this script, never against the workflows — so a "
-    "`--features` flag deleted from ci.yml leaves its T1 rows green here."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "can this gate go RED — do the synthetic ledgers (untiered pair, stale row, bad tier name, "
-    "empty reason, unclassed and `cost:` exemptions, a NEVER_EXEMPT name in T4, an over-ceiling T4, "
-    "an under-floor T3, a miscounted directive, two false T1 claims, an empty enumeration, a stale "
-    "known-red row, the shard partition, and cargo's implicit-optional-dep rule) behave as specified?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "anything about this tree: the fixtures are two invented crates, scripts/feature-tiers.tsv is "
-    "never read, and the self-test runs BEFORE every other mode, so its green line is never the "
-    "run's verdict."
-)
-SCOPE_ANSWERS_DATA = (
-    "what the T3 compile plan contains, or what a regenerated ledger would say — data, emitted "
-    "from the ledger, with no verdict rendered?"
-)
-SCOPE_DOES_NOT_ANSWER_DATA = (
-    "whether the ledger covers the tree: --emit-t3-plan exits 0 without running the ledger checks "
-    "at all, and --regen REWRITES scripts/feature-tiers.tsv so that newly enumerated pairs land as "
-    "T3 REVIEW-ME instead of reding the gate."
-)
 # The sweep's recorded-broken set. Read here too, because it is a second ledger and rots the same
 # way — see S3e. scripts/feature-t3-sweep.sh owns the cargo-side half of enforcing it.
 KNOWN_RED = ROOT / "scripts" / "feature-t3-known-red.tsv"
@@ -1106,16 +1068,6 @@ def main() -> int:
 
     print(f"{BOLD}check-feature-tiers.py — is any cargo feature silently uncovered?{OFF}", file=_LOG)
     print(f"{DIM}  a #[cfg(feature)] is a subtraction that emits no line; this is the line{OFF}", file=_LOG)
-
-    # _LOG is already stderr under --emit-t3-plan, whose stdout a caller consumes.
-    if "--self-test" in argv:
-        _a, _n = SCOPE_ANSWERS_SELFTEST, SCOPE_DOES_NOT_ANSWER_SELFTEST
-    elif "--emit-t3-plan" in argv or "--regen" in argv:
-        _a, _n = SCOPE_ANSWERS_DATA, SCOPE_DOES_NOT_ANSWER_DATA
-    else:
-        _a, _n = SCOPE_ANSWERS, SCOPE_DOES_NOT_ANSWER
-    print(f"ANSWERS:         {_a}", file=_LOG, flush=True)
-    print(f"DOES NOT ANSWER: {_n}", file=_LOG, flush=True)
 
     if not self_test():
         print(

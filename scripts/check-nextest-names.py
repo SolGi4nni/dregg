@@ -70,31 +70,6 @@ MIN_PACKAGES = 100
 # so an unusable index is ONE floor failure, never 20 findings.
 MIN_FNS = 1000
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
-SCOPE_ANSWERS = (
-    "does every SIMPLE `binary(N)` / `package(N)` / `test(~N)` name this file's regex can "
-    "lift out of .config/nextest.toml resolve — binary and package EXACTLY against `cargo "
-    "metadata --no-deps` target and package names, `test` by SUBSTRING against every `fn` "
-    "declared anywhere in the tree?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether any profile RUNS the test it names. The `test(/regex/)` form is not extracted "
-    "at all — 11 of the 46 test selectors in that file, the whole leaf-adapters profile — a "
-    "`test(~N)` counts as resolved when its name is a SUBSTRING of ANY `fn` in the tree, "
-    "needing neither a `#[test]` attribute nor membership in the profile's own "
-    "package/binary scope, and `binary(N)` is matched against every cargo TARGET name, lib "
-    "and example included, not just test binaries."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "can this gate go red — do a dead binary(), a dead package() and the SILENT dead "
-    "test(~…) each get caught when injected into a LIVE (non-comment) line, does an empty "
-    "config trip a floor, and is the real config green right now?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "anything nextest itself decides at run time, and nothing about the `test(/regex/)` "
-    "form — no injected case exercises it, because the extractor cannot see it."
-)
-
 
 def strip_comments(text):
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
@@ -284,11 +259,7 @@ def self_test():
 
 def main():
     if "--self-test" in sys.argv:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         sys.exit(self_test())
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
     if not os.path.exists(CONFIG):
         print(f"check-nextest-names: {CONFIG} does not exist")
         sys.exit(2)

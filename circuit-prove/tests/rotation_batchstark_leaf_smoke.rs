@@ -96,7 +96,7 @@ fn rotated_transfer_leaf_folds_as_batchstark() {
         desc.trace_width, GRAD_ROT_WIDTH,
         "graduated rotated width 608"
     );
-    assert_eq!(desc.public_input_count, 39, "35 v1 PIs + 4 appended");
+    assert_eq!(desc.public_input_count, 46, "42 v1 PIs + 4 appended");
 
     // -- a real transfer-out (the validated v1 reference witness). --
     let before_balance: i64 = 100_000;

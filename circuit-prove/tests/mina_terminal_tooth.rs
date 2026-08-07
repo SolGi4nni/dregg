@@ -26,9 +26,6 @@
 //!
 //! Real folds + two hash-heavy proving runs take minutes; `#[ignore]`, run with:
 //!   cargo test -p dregg-circuit-prove --release --test mina_terminal_tooth -- --ignored --nocapture
-//!
-//! ANSWERS:         does the fixed 2-turn apex terminate under DreggMinaConfig to a proof whose Merkle roots are Pasta elements above 31 bits, verify, share degree_bits, instance count and ext_degree with the BN254 shrink of the SAME apex, commit to a DIFFERENT root than it, and get REJECTED with one opened value incremented by ONE?
-//! DOES NOT ANSWER: whether anything on Mina verifies this. No o1js, Kimchi or on-chain check runs here and the o1js verifier still hashes Poseidon2-BabyBear. The printed Mina/BN254 ratios are ONE cold in-process sample in which the first config pays warmup the second does not, so they are an order of magnitude, not a benchmark.
 
 use std::time::Instant;
 
@@ -49,18 +46,6 @@ use p3_field::{PrimeCharacteristicRing, PrimeField};
 use p3_pasta::PastaFp;
 use p3_symmetric::MerkleCap;
 use p3_uni_stark::StarkGenericConfig;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         does the fixed 2-turn apex terminate under DreggMinaConfig to a proof whose Merkle roots are Pasta elements above 31 bits, verify, share degree_bits, instance count and ext_degree with the BN254 shrink of the SAME apex, commit to a DIFFERENT root than it, and get REJECTED with one opened value incremented by ONE?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether anything on Mina verifies this. No o1js, Kimchi or on-chain check runs here and the o1js verifier still hashes Poseidon2-BabyBear. The printed Mina/BN254 ratios are ONE cold in-process sample in which the first config pays warmup the second does not, so they are an order of magnitude, not a benchmark."
-    );
-}
 
 /// OPEN permissions so the rotated producer-witness path admits the actor cell
 /// without auth gating (the audited Bucket-F mint fixture).
@@ -120,7 +105,6 @@ fn the_chain() -> Vec<FinalizedTurn> {
 #[test]
 #[ignore = "SLOW: one real 2-turn fold + TWO hash-heavy shrink proves (~minutes); run with --ignored — THE Mina terminal tooth"]
 fn real_apex_terminates_mina_native_and_verifies() {
-    scope();
     // ---- 1. the REAL apex -------------------------------------------------
     let t0 = Instant::now();
     let whole = prove_turn_chain_recursive(&the_chain()).expect("the fixed 2-turn chain folds");

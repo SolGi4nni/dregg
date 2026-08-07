@@ -122,34 +122,6 @@ C_PATTERNS = ["dregg-lean-ffi/**/*.c", "dregg-lean-ffi/**/*.h"]
 # Stripped before matching so a declared-and-never-called export still reads as uncalled.
 C_EXTERN_DECL = re.compile(r"\bextern\b[^;{]*;", re.DOTALL)
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
-SCOPE_ANSWERS = (
-    "for every `@[export NAME]` in a git-TRACKED metatheory/**.lean whose module is in the import "
-    "closure of metatheory/Dregg2/FFI.lean, does NAME or NAME_str appear as a plain SUBSTRING in some "
-    "tracked .rs other than dregg-lean-ffi/build.rs, or in a tracked dregg-lean-ffi C/H file with its "
-    "`extern …;` prototypes stripped — and is every row of .github/uncalled-exports.txt still a "
-    "shipped export that nothing names?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether that mention is a CALL, or is reached. It is a substring hit: the name in a comment, a "
-    "string literal, a `#[cfg(...)]`-dead wrapper or a test fixture all read as bound, and the "
-    "stronger `binding-only` column (shipped, bound, but by nothing outside dregg-lean-ffi) is printed "
-    "and deliberately NOT gated. It also sweeps the git INDEX, so a caller you have written but not "
-    "`git add`ed is invisible and its export reads as dark."
-)
-
-SCOPE_ANSWERS_SELFTEST = (
-    "can this INSTRUMENT still fire? Both poles of each matcher: a canary name no tracked file contains "
-    "reads as UNNAMED, dregg_mina_lc_verify reads as named, a synthetic C `extern` prototype is stripped "
-    "while a real lean_init.c call site survives it, and an `@[export]` spelled only in Lean prose is not "
-    "a shipped export while a real attribute is."
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "the census itself. This mode never runs survey(), never computes the shipped-export set and never "
-    "reads .github/uncalled-exports.txt, so a SELF-TEST PASS says the matchers are not blind — never "
-    "that any export in this tree is wired."
-)
-
 
 def tracked(patterns: list[str]) -> list[str]:
     out = subprocess.run(
@@ -278,8 +250,6 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         # A name no `.rs` in this tree contains, checked against the same matcher.
         canary = "dregg_selftest_export_no_caller_zzz"
         found = binder_mentions({canary, canary + "_str"})
@@ -350,9 +320,6 @@ def main() -> int:
             f"and an `@[export]` spelled in Lean prose is not a shipped export while a real one is."
         )
         return 0
-
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     rows, allow = survey(args.list)
     uncalled = [(n, m, c) for (n, m, f, c) in rows if not f]

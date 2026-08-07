@@ -15,9 +15,6 @@
 //! fold DISTINGUISHES them. An equivocating chain that the retired 1-felt commit would fold (vacuous
 //! `0 == 0` continuity) is now REJECTED at the 8-felt continuity tooth (`ChainBreak`). CI-cheap: the
 //! rejection surfaces at the host continuity pre-check, before any recursion proving.
-//!
-//! ANSWERS:         on two deployed rotated transfer legs of DIFFERENT states, is the retired single-felt commit ZERO on both while the genuine 8-felt wide anchors differ and carry per-lane entropy, does prove_turn_chain_recursive reject the equivocating pair with ChainBreak at index 1, and do two honestly successive legs link 8-felt lane-for-lane?
-//! DOES NOT ANSWER: whether the RECURSION binds the 8-felt continuity. The rejection is the HOST pre-check inside prove_turn_chain_recursive, reached before any proving, so this constrains what an honest prover will assemble and says nothing about what a verifier would accept from a hostile one that skips the host and folds directly.
 
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
@@ -26,18 +23,6 @@ use dregg_circuit_prove::ivc_turn_chain::{
 };
 use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
 use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         on two deployed rotated transfer legs of DIFFERENT states, is the retired single-felt commit ZERO on both while the genuine 8-felt wide anchors differ and carry per-lane entropy, does prove_turn_chain_recursive reject the equivocating pair with ChainBreak at index 1, and do two honestly successive legs link 8-felt lane-for-lane?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether the RECURSION binds the 8-felt continuity. The rejection is the HOST pre-check inside prove_turn_chain_recursive, reached before any proving, so this constrains what an honest prover will assemble and says nothing about what a verifier would accept from a hostile one that skips the host and folds directly."
-    );
-}
 
 fn open_permissions() -> dregg_cell::Permissions {
     use dregg_cell::AuthRequired;
@@ -91,7 +76,6 @@ fn deployed_leg(balance: u64, nonce: u32, amount: u64) -> RotatedParticipantLeg 
 /// genuine 8-felt anchor, and an equivocating chain is rejected at the 8-felt continuity tooth.
 #[test]
 fn h0_wide_anchor_distinguishes_what_the_one_felt_commit_collides() {
-    scope();
     // Two genuinely DIFFERENT cell states.
     let leg_a = deployed_leg(1000, 0, 7); // after ≈ (993, …)
     let leg_b = deployed_leg(2000, 5, 11); // a different state entirely
@@ -174,7 +158,6 @@ fn h0_wide_anchor_distinguishes_what_the_one_felt_commit_collides() {
 /// wide continuity is real (not vacuously satisfied). Cheap: anchor comparison only, no fold.
 #[test]
 fn h0_honest_continuous_pair_links_at_the_wide_anchor() {
-    scope();
     let leg0 = deployed_leg(1000, 0, 7); // (1000,0) --7--> (993, …)
     let leg1 = deployed_leg(993, 1, 7); // continues turn 0's after-state
     let new8_0 = leg0.wide_new_root8().expect("wide");

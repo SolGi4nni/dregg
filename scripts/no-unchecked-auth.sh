@@ -178,12 +178,6 @@ ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 cd "$ROOT"
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-# (The forbidden literal is deliberately NOT spelled here — see NEEDLE below.)
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'does the forbidden unchecked-authorization literal appear as a SUBSTRING on a line of a tracked .rs file that is not test-shaped by path or basename, not inside a top-level cfg(test) mod, not a comment, match arm, bare variant, or defensive matches/assert line, and not covered by an entry in ALLOWLIST_FILE_PATTERNS?' \
-  'whether any action in this repo is unauthenticated. It is a substring scan for ONE spelling in files outside a hand-maintained allowlist of roughly sixty paths — which includes node/src/api.rs, node/src/mcp, the sdk raw and remote plumbing, every bridging surface, and an explicit grandfathered migration baseline — so the same unchecked authorization can be constructed inside any of them with nothing red, and an alias, a re-export, or a variable already holding the variant is invisible everywhere. A PASS means no NET-NEW site outside the list.'
-
 # Substring we are scanning for, assembled at runtime so this script
 # itself does not contain the literal token.
 NEEDLE=$(printf 'Authorization%s%s' '::' 'Unchecked')

@@ -73,29 +73,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_LIST = REPO / ".github" / "dark-targets.txt"
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
-# misreads this convention exists to stop happened to people reading RESULTS, not source. ──
-SCOPE_ANSWERS = (
-    "is every tracked .rs file that is present on disk named somewhere in its own crate — as a "
-    "cargo target root, an explicit Cargo.toml `path =`, a `#[path]`/`include!`, or by a bare "
-    "`mod <stem>` token appearing ANYWHERE in that crate — and does the set that is not match the "
-    "`file ` rows of .github/dark-targets.txt exactly, in both directions?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether rustc ever compiles the file. The mod test is a per-CRATE token scan, not module "
-    "resolution: a `mod` line in an unrelated directory, inside a comment or a string, or behind a "
-    "`#[cfg]` nothing enables, clears this gate. The corpus is the git INDEX, so an untracked file "
-    "is invisible. And green means NO NEW dark file — the listed rows are required to STAY dark, "
-    "so a green run is a run in which files are still dark."
-)
-SCOPE_ANSWERS_DUMP = (
-    "which tracked .rs files this scan currently finds unreferenced, listed on stdout?"
-)
-SCOPE_DOES_NOT_ANSWER_DUMP = (
-    "whether the tree is clean: --print-dark renders NO verdict, never opens the allowlist, and "
-    "always exits 0."
-)
-
 # `mod foo;`, `pub mod foo;`, `pub(crate) mod foo {`, `#[cfg(x)] mod foo;` — the
 # leading-context-agnostic form. `\bmod\s+(ident)\s*[;{]` also matches inside a
 # string or a comment, which is fine and intentional: a name MENTIONED as a module
@@ -252,15 +229,6 @@ def main() -> int:
     ap.add_argument("--list", type=Path, default=DEFAULT_LIST)
     ap.add_argument("--print-dark", action="store_true", help="print the dark set and exit 0")
     args = ap.parse_args()
-
-    # --print-dark writes a machine-readable path list on stdout, so its banner goes to
-    # stderr: a mode whose output another program consumes must not carry prose.
-    if args.print_dark:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_DUMP}", file=sys.stderr, flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_DUMP}", file=sys.stderr, flush=True)
-    else:
-        print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     dark = {str(p) for p in dark_files()}
 

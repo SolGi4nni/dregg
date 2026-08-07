@@ -2,7 +2,7 @@
 //! that actually ships?
 //!
 //! The suspicion this file settles: `check_receipt_pi_binding` short-circuits on
-//! `pi_len < pi::ACTIVE_BASE_COUNT` while a real rotated leg carries ~39-60
+//! `pi_len < pi::ACTIVE_BASE_COUNT` (213) while a real rotated leg carries ~46-67
 //! felts, so the TURN_HASH / PREVIOUS_RECEIPT_HASH binding would never examine a
 //! live proof. `m3` settles it: it mints a REAL wide rotated EffectVM STARK through
 //! the production-shared producer (`dregg_turn_prover::mint_transfer_proven_receipt`)
@@ -23,27 +23,12 @@
 //! chain leg, through `verify_rotated_replay_chain`).
 //!
 //! Every assertion here is a MEASUREMENT of head, not a specification of it.
-//!
-//! ANSWERS:         for ONE real wide rotated leg minted by mint_transfer_proven_receipt, is the PI vector SHORTER than ACTIVE_BASE_COUNT yet at least RECEIPT_PI_BINDING_MIN_LEN, does a direct call to check_receipt_pi_binding ADMIT the bound receipt and REFUSE a relabelled one naming TURN_HASH_BASE, and are the four felts at PREVIOUS_RECEIPT_HASH_BASE something OTHER than the previous-receipt hash?
-//! DOES NOT ANSWER: whether a node ever calls check_receipt_pi_binding on a shipping proof. The call here is direct, in a test process; the two poles that measured real callers were deleted with m1 and m2 when their surfaces went. It also does not answer whether the previous-receipt hash is bound anywhere — it MEASURES that the slot is lost to the four rotated pins and pins that loss.
 
 use dregg_circuit::effect_vm::pi;
 use dregg_circuit::effect_vm::trace_rotated::{ROT_PI_COUNT, V1_PI_COUNT};
 use dregg_commit::typed::canonical_32_to_felts_4;
 use dregg_turn::TurnReceipt;
 use dregg_turn_prover::mint_transfer_proven_receipt;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         for ONE real wide rotated leg minted by mint_transfer_proven_receipt, is the PI vector SHORTER than ACTIVE_BASE_COUNT yet at least RECEIPT_PI_BINDING_MIN_LEN, does a direct call to check_receipt_pi_binding ADMIT the bound receipt and REFUSE a relabelled one naming TURN_HASH_BASE, and are the four felts at PREVIOUS_RECEIPT_HASH_BASE something OTHER than the previous-receipt hash?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether a node ever calls check_receipt_pi_binding on a shipping proof. The call here is direct, in a test process; the two poles that measured real callers were deleted with m1 and m2 when their surfaces went. It also does not answer whether the previous-receipt hash is bound anywhere — it MEASURES that the slot is lost to the four rotated pins and pins that loss."
-    );
-}
 
 /// A receipt naming `turn_hash` at chain position `prev`.
 fn receipt_at(turn_hash: [u8; 32], prev: Option<[u8; 32]>) -> TurnReceipt {
@@ -63,20 +48,16 @@ fn receipt_at(turn_hash: [u8; 32], prev: Option<[u8; 32]>) -> TurnReceipt {
 ///      from the offsets the body reads) and against the OLD `ACTIVE_BASE_COUNT` gate
 ///      of 213, which refused every real leg,
 ///   2. `PI[TURN_HASH_BASE..+4]` — inside the published v1 window (`V1_PI_COUNT` =
-///      35 > 30), so it IS carried, and the binding ADMITS the bound receipt while
+///      42 > 37), so it IS carried, and the binding ADMITS the bound receipt while
 ///      REFUSING a relabelled one,
 ///   3. `PI[PREVIOUS_RECEIPT_HASH_BASE..+4]` — the window slices at EXACTLY
-///      `PREVIOUS_RECEIPT_HASH_BASE` (both are 35), so those four indices carry the
+///      `PREVIOUS_RECEIPT_HASH_BASE` (both are 42), so those four indices carry the
 ///      four appended ROTATED pins (OLD commit / NEW commit / height / caveat), not
-///      the previous-receipt hash. The slot is not on the wire at all. (Those two
-///      numbers were 42 until the 2026-08-07 seven-slot PI compaction; the
-///      coincidence they name is structural — `V1_PI_COUNT = ACTOR_NONCE + 1` and
-///      `PREVIOUS_RECEIPT_HASH_BASE = ACTOR_NONCE + 1` — so it survived the shift.)
+///      the previous-receipt hash. The slot is not on the wire at all.
 ///
 /// Heavy: mints one real wide rotated proof.
 #[test]
 fn m3_real_rotated_proof_pi_vector_measured() {
-    scope();
     let turn_hash = [0x5Au8; 32];
     let prev = [0x33u8; 32];
     let proven = mint_transfer_proven_receipt(turn_hash, 7);
@@ -113,7 +94,7 @@ fn m3_real_rotated_proof_pi_vector_measured() {
         piv.len()
     );
 
-    // (2) BOTH POLES on the real WIDE vector (the deployed shape; the narrow-V3
+    // (2) BOTH POLES on the real 68-felt WIDE vector (the deployed shape; the narrow-V3
     //     chain poles live in `verifier/tests/integration_rotated_replay_chain.rs`).
     //     Supply the matching prior hash so the receipt-side chain walk passes and the
     //     PI comparison is what decides.

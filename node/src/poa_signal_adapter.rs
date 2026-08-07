@@ -32,10 +32,7 @@ const WORLD_RELIC_LIMIT: usize = 4096;
 const ARTIFACT_LIMIT: usize = 4096;
 const RECEIPT_LIMIT: usize = 16_384;
 const COUNTER_LIMIT: usize = 16_384;
-/// One judged run plays at most `SignalTriangulation.MAX_TURNS` bursts. Taken from
-/// the SDK rather than restated, because a claim longer than the judge's `replay`
-/// will score must be refused at the carrier, not here.
-const SIGNAL_ACTION_LIMIT: usize = dregg_sdk::poa_signal::SIGNAL_MAX_TRANSCRIPT_ROUNDS;
+const SIGNAL_ACTION_LIMIT: usize = 5;
 
 /// Node-side routing result.  A malformed reserved event is returned as an
 /// error and can never be reconsidered as ordinary event traffic.
@@ -164,7 +161,7 @@ impl EvaluatedSignalCandidate {
 
 /// Build the canonical Lean input while deriving every authority-bearing
 /// request field from the host context.  The public claim contributes exactly
-/// `mission_id` and the played transcript.
+/// `mission_id` and one code.
 ///
 /// # The live instance
 ///
@@ -188,17 +185,7 @@ pub fn prepare_signal_input(
             active: context.config.mission.mission_id,
         });
     }
-    // ⚑ THE WHOLE TRANSCRIPT, in submission order. `SignalTriangulation.judge`
-    // `replay`s exactly this list from `initialState`, so a claim that named only
-    // its solving guess asked the judge to score a one-round game — which is what
-    // made a blind 1-in-216 settle. The judge is unchanged; what it is handed is
-    // now the game that was played.
-    let actions: Vec<SignalCodeDto> = claim
-        .transcript()
-        .iter()
-        .copied()
-        .map(SignalCodeDto::from)
-        .collect();
+    let code = claim.code();
     let instance = derive_live_instance(context)?;
     let mut config = context.config.clone();
     config.mission.run_seed = instance.run_seed;
@@ -224,7 +211,7 @@ pub fn prepare_signal_input(
             previous_player_counter: context.carrier.current_player_counter,
             expected_world_sequence: context.world.sequence,
             expected_canon_revision: context.canon.revision,
-            actions,
+            actions: vec![SignalCodeDto::from(code)],
         },
     };
     validate_input(&dto)?;
@@ -534,147 +521,6 @@ pub fn classify_session_guess(
         exact: reply.exact,
         present: reply.present,
     })
-}
-
-/// Why a submitted claim is not evidence that the game was played.
-///
-/// ⚠ EVERY VARIANT IS A FUNCTION OF (stored session, submitted claim) AND NOTHING
-/// ELSE. It never reads the target, the run seed or the slot secret, so a refusal
-/// cannot tell a submitter anything about the answer — including how close their
-/// code was. `the_refusal_never_depends_on_whether_the_code_is_right` drives that
-/// on both a solving and a losing code against one session and requires the same
-/// refusal, which is the only way to check it that a target-reading implementation
-/// could not also pass.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnplayedTranscriptV1 {
-    /// ⚑ THE BLIND CLAIM. No judged session exists for this (authority, slot,
-    /// player) at all: the node never classified a single one of these rounds, so
-    /// whatever the code is, it was not deduced here.
-    NoSession,
-    /// A session exists but was opened against a different mission or a different
-    /// slot commitment — a different instance, and therefore a different answer.
-    InstanceMismatch,
-    /// The claim names more or fewer rounds than the node served.
-    LengthMismatch,
-    /// A round in the claim is not the round the node classified at that index.
-    RoundMismatch,
-    /// The node never classified this run's last guess as locking all three bands.
-    NotSolved,
-}
-
-impl UnplayedTranscriptV1 {
-    /// The stable machine token recorded on the finalized rejection and returned
-    /// by the ingress route.
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::NoSession => "poa-signal-transcript-no-session",
-            Self::InstanceMismatch => "poa-signal-transcript-instance-mismatch",
-            Self::LengthMismatch => "poa-signal-transcript-length-mismatch",
-            Self::RoundMismatch => "poa-signal-transcript-round-mismatch",
-            Self::NotSolved => "poa-signal-transcript-not-solved",
-        }
-    }
-}
-
-impl fmt::Display for UnplayedTranscriptV1 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoSession => write!(
-                f,
-                "no judged Signal session is open for this player against this slot, so this \
-                 node classified none of the rounds this claim carries. Open a session and \
-                 play it; a code with no game behind it settles nothing"
-            ),
-            Self::InstanceMismatch => write!(
-                f,
-                "the judged session for this player and slot was opened against a different \
-                 mission or slot commitment; a transcript scored against one instance is not \
-                 evidence about another"
-            ),
-            Self::LengthMismatch => write!(
-                f,
-                "the claim names a different number of rounds than this node served for this \
-                 run"
-            ),
-            Self::RoundMismatch => write!(
-                f,
-                "a round in the claim is not the guess this node classified at that position"
-            ),
-            Self::NotSolved => write!(
-                f,
-                "this node never classified the last round of this run as locking all three \
-                 bands, so the run is not solved here"
-            ),
-        }
-    }
-}
-
-/// ⚑ THE GATE THAT MAKES A SETTLEMENT EVIDENCE THAT A GAME WAS PLAYED.
-///
-/// # What it closes
-///
-/// `SignalTriangulation.judge` scores whatever transcript it is handed, and it is
-/// right to: it is the RULE, and a rule has no opinion about where a transcript
-/// came from. Provenance is the node's job and until now the node had none. The
-/// public claims route admitted a bare code, the adapter wrapped it as a one-round
-/// game, the judge scored it, and a 1-in-216 blind guess settled a turn with no
-/// session, no feedback and no deduction anywhere in its causal history. The
-/// judged session that landed in `47cf23360` made deduction POSSIBLE; nothing made
-/// it NECESSARY.
-///
-/// This function is the necessity. A claim must name the rounds the node ITSELF
-/// classified, in the order it classified them, ending in the guess it itself
-/// scored as locking — so the transcript on the chain is the transcript that was
-/// served, and a judged settlement is evidence a game was played.
-///
-/// # What it deliberately does NOT do
-///
-/// It does not decide whether the transcript SOLVES. That is
-/// `SignalTriangulation.replay`/`terminalOutput`, invoked through
-/// [`evaluate_persisted_signal_claim`], and re-deciding it here would be a second
-/// copy of the rule in Rust — the twin this repo spends its time deleting. This
-/// checks only that the node issued these classifications; a transcript that
-/// passes here and does not solve is refused by Lean, as before.
-///
-/// It also does not authenticate the player. `player_key` is the outer
-/// `SignedTurn.signer`, and a session is keyed by it, so a claim signed by one key
-/// cannot present another player's session.
-pub fn verify_claim_transcript_was_played(
-    session: Option<&dregg_persist::PoaSignalSessionV1>,
-    slot: &dregg_persist::PoaInstalledSlotV1,
-    claim: &SignalClaimV1,
-) -> Result<(), UnplayedTranscriptV1> {
-    let Some(session) = session else {
-        return Err(UnplayedTranscriptV1::NoSession);
-    };
-    // ⚠ THE CLAIM'S MISSION IS DELIBERATELY NOT COMPARED HERE. It is compared
-    // against the head's ACTIVE mission by [`prepare_signal_input`], which refuses
-    // as `MissionMismatch { claimed, active }` and names both numbers — a strictly
-    // better refusal than "instance mismatch" for the same fact. Repeating it here
-    // would only SHADOW that one, and a check whose whole effect is to hide a more
-    // specific sibling is a check that costs a diagnosis. What this compares is the
-    // INSTANCE the session was played against: same slot, same published
-    // commitment, and therefore the same secret and the same target.
-    if session.slot() != slot.slot() || session.commitment() != slot.commitment() {
-        return Err(UnplayedTranscriptV1::InstanceMismatch);
-    }
-    let played = session.rounds();
-    let claimed = claim.transcript();
-    if played.len() != claimed.len() {
-        return Err(UnplayedTranscriptV1::LengthMismatch);
-    }
-    for (served, submitted) in played.iter().zip(claimed) {
-        if served.guess != [submitted.low(), submitted.mid(), submitted.high()] {
-            return Err(UnplayedTranscriptV1::RoundMismatch);
-        }
-    }
-    // The solved bit AND the transcript it is supposed to summarize. They agree by
-    // the store's own audit, and checking both costs nothing and means a record
-    // that ever disagreed cannot settle on the strength of the cheaper field.
-    if !session.solved() || played.last().map(|round| round.exact) != Some(3) {
-        return Err(UnplayedTranscriptV1::NotSolved);
-    }
-    Ok(())
 }
 
 /// Invoke the existing Lean FFI and strictly parse its exact reply.
@@ -1913,12 +1759,6 @@ pub(crate) fn fixture_signal_slot_for_finality_test(
 /// This is [`derive_operator_instance`] with its refusals turned into panics — ONE
 /// derivation, so the operator command an operator will actually run and the test
 /// that proved the milestone cannot draw different answers.
-///
-/// ⚠ The claim it returns is a ONE-ROUND transcript, and since the transcript gate
-/// landed that is not by itself settleable: the caller must also have PLAYED that
-/// one round through `session/guess`, or the node refuses it as
-/// [`UnplayedTranscriptV1::NoSession`]. A test that derives the answer and submits
-/// it without playing is exactly the blind path, and it is now supposed to fail.
 pub(crate) fn solving_claim_for_finality_test(
     head: &dregg_persist::PoaSignalHeadV1,
     slot: &dregg_persist::PoaInstalledSlotV1,
@@ -1929,58 +1769,8 @@ pub(crate) fn solving_claim_for_finality_test(
     let instance =
         derive_operator_instance(head, slot, active_federation_id, player_key, actor_root)
             .expect("Lean must derive the fixture instance");
-    SignalClaimV1::new(instance.mission_id, &[instance.target])
+    SignalClaimV1::new(instance.mission_id, instance.target)
         .expect("a derived claim is a legal claim")
-}
-
-/// PLAY a judged session against the real store, through the real Lean oracle.
-///
-/// ⚠ THE CLASSIFICATIONS ARE THE NODE'S OWN. This calls
-/// [`classify_session_guess`] — the same function `POST …/session/guess` calls —
-/// and commits each round with [`dregg_persist::PersistentStore::record_poa_signal_session_round_v1`],
-/// so a fixture built here is indistinguishable from one a player produced over
-/// HTTP. It skips exactly one thing: the Ed25519 proof of possession, which is
-/// transport authentication and has its own tests.
-///
-/// A fabricated session — rounds inserted with hand-written `exact`/`present` —
-/// would let a finality fixture pass the transcript gate while disagreeing with
-/// the rule, which is the one thing this gate exists to notice.
-#[cfg(test)]
-pub(crate) fn play_session_for_test(
-    store: &dregg_persist::PersistentStore,
-    head: &dregg_persist::PoaSignalHeadV1,
-    slot: &dregg_persist::PoaInstalledSlotV1,
-    active_federation_id: [u8; 32],
-    player_key: [u8; 32],
-    transcript: &[SignalCode],
-) {
-    store
-        .open_poa_signal_session_v1(
-            head.authority_id(),
-            slot.slot(),
-            slot.mission_id(),
-            player_key,
-            slot.commitment(),
-        )
-        .expect("a judged session opens");
-    for guess in transcript {
-        let classification =
-            classify_session_guess(head, slot, active_federation_id, player_key, *guess)
-                .expect("the Lean feedback oracle must classify a fixture guess");
-        store
-            .record_poa_signal_session_round_v1(
-                head.authority_id(),
-                slot.slot(),
-                player_key,
-                dregg_persist::PoaSignalSessionRoundV1 {
-                    guess: [guess.low(), guess.mid(), guess.high()],
-                    exact: classification.exact,
-                    present: classification.present,
-                },
-            )
-            .expect("the round commits")
-            .expect("the round is within budget");
-    }
 }
 
 pub(crate) fn fixture_signal_head_for_finality_test(
@@ -2045,7 +1835,7 @@ mod tests {
     /// property the split preserves, and exactly why no real slot secret may ever be
     /// checked in.
     fn claim() -> SignalClaimV1 {
-        SignalClaimV1::new(1, &[SignalCode::new(5, 0, 5).unwrap()]).unwrap()
+        SignalClaimV1::new(1, SignalCode::new(5, 0, 5).unwrap()).unwrap()
     }
 
     fn hex32(value: &str) -> [u8; 32] {
@@ -2515,16 +2305,7 @@ mod tests {
         assert_eq!(request.slot_commitment, context.slot_state.commitment);
         assert_eq!(request.expected_world_sequence, context.world.sequence);
         assert_eq!(request.expected_canon_revision, context.canon.revision);
-        assert_eq!(
-            request.actions,
-            claim()
-                .transcript()
-                .iter()
-                .copied()
-                .map(SignalCodeDto::from)
-                .collect::<Vec<_>>(),
-            "the judge is handed the WHOLE played transcript, not the solving code alone"
-        );
+        assert_eq!(request.actions, vec![SignalCodeDto::from(claim().code())]);
         assert_eq!(prepared.as_str(), fixture(INPUT_FILE));
     }
 
@@ -2586,7 +2367,7 @@ mod tests {
     fn substituted_mission_refuses_before_ffi() {
         let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
         let context = parsed.authority_context();
-        let other = SignalClaimV1::new(2, claim().transcript()).unwrap();
+        let other = SignalClaimV1::new(2, claim().code()).unwrap();
         assert!(matches!(
             prepare_signal_input(&context, other),
             Err(SignalAdapterError::MissionMismatch {
@@ -2768,334 +2549,5 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("stored successor"), "{error}");
-    }
-
-    /// ⚑ THE JUDGE SCORES A MULTI-ROUND RUN, and its receipt binds the WHOLE
-    /// transcript.
-    ///
-    /// Everything else in this module drives a one-round claim, because that is
-    /// what the fixture holds and what a claim used to be able to carry. A real
-    /// deduced run is two to five rounds, and until this ran there was no evidence
-    /// at all that the linked judge accepts one — the whole gate would have been a
-    /// door onto a wall.
-    ///
-    /// `SignalTriangulation.judge_receipt_binds_transcript` is the Lean statement;
-    /// this is it observed on the served bytes, against the live export.
-    #[test]
-    fn the_linked_judge_scores_a_multi_round_transcript() {
-        if !dregg_lean_ffi::demand_lean(
-            dregg_lean_ffi::poa_ffi::poa_signal_judge_available(),
-            "the internal PoA Signal judge export",
-        ) {
-            return;
-        }
-        let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
-        let context = parsed.authority_context();
-
-        let solving = SignalCode::new(5, 0, 5).unwrap();
-        let three = [
-            SignalCode::new(1, 1, 1).unwrap(),
-            SignalCode::new(0, 0, 5).unwrap(),
-            solving,
-        ];
-        let judged = evaluate_signal_claim(&context, SignalClaimV1::new(1, &three).unwrap())
-            .expect("a three-round run ending in the solving guess must be judged");
-        assert_eq!(judged.input().dto.request.actions.len(), 3);
-
-        // The one-round claim of the same code is a DIFFERENT run and the receipt
-        // says so: `transcriptDigest` commits to the whole list, so the two cannot
-        // be confused after the fact.
-        let one = evaluate_signal_claim(&context, SignalClaimV1::new(1, &[solving]).unwrap())
-            .expect("the one-round run is still judged");
-        assert_ne!(
-            judged.output().dto.receipt.transcript_digest,
-            one.output().dto.receipt.transcript_digest,
-            "the receipt must bind the transcript, not only its last code"
-        );
-
-        // A run whose LAST round does not lock is refused by the rule, not by us.
-        let unsolved = [three[0], three[1]];
-        assert!(
-            matches!(
-                evaluate_signal_claim(&context, SignalClaimV1::new(1, &unsolved).unwrap()),
-                Err(SignalAdapterError::LeanRejected)
-            ),
-            "an unsolved transcript must be refused by the judge"
-        );
-
-        // …and a run that keeps guessing AFTER it solved is refused too:
-        // `SignalTriangulation.solved_refuses` says `step` returns none on a solved
-        // state, so `replay` is fail-stop on the extra action.
-        let past_the_end = [three[0], three[1], solving, three[0]];
-        assert!(
-            matches!(
-                evaluate_signal_claim(&context, SignalClaimV1::new(1, &past_the_end).unwrap()),
-                Err(SignalAdapterError::LeanRejected)
-            ),
-            "a transcript that continues past its solving round must be refused"
-        );
-    }
-
-    // ── THE TRANSCRIPT-PROVENANCE GATE ──────────────────────────────────────────
-
-    const GATE_PLAYER: [u8; 32] = [0x55; 32];
-
-    fn code_of(bands: [u8; 3]) -> SignalCode {
-        SignalCode::new(
-            u64::from(bands[0]),
-            u64::from(bands[1]),
-            u64::from(bands[2]),
-        )
-        .expect("base-six bands")
-    }
-
-    /// A store holding one judged session for the fixture slot, with exactly the
-    /// rounds and classifications given.
-    fn gate_session(
-        slot: &dregg_persist::PoaInstalledSlotV1,
-        authority: [u8; 32],
-        rounds: &[([u8; 3], u8, u8)],
-    ) -> (tempfile::TempDir, dregg_persist::PoaSignalSessionV1) {
-        let dir = tempfile::tempdir().unwrap();
-        let store = PersistentStore::open(&dir.path().join("dregg.redb")).unwrap();
-        let mut record = store
-            .open_poa_signal_session_v1(
-                authority,
-                slot.slot(),
-                slot.mission_id(),
-                GATE_PLAYER,
-                slot.commitment(),
-            )
-            .unwrap();
-        for (guess, exact, present) in rounds {
-            record = store
-                .record_poa_signal_session_round_v1(
-                    authority,
-                    slot.slot(),
-                    GATE_PLAYER,
-                    dregg_persist::PoaSignalSessionRoundV1 {
-                        guess: *guess,
-                        exact: *exact,
-                        present: *present,
-                    },
-                )
-                .unwrap()
-                .unwrap();
-        }
-        (dir, record)
-    }
-
-    /// ⚑ THE BLIND POLE, AT THE GATE ITSELF: a genuinely solving code with no
-    /// session is refused, by name.
-    ///
-    /// The code here is the fixture's real answer — `(5, 0, 5)`, the same claim
-    /// every settling test in this module uses — so the refusal is BECAUSE THE GAME
-    /// WAS NOT PLAYED, not because the answer was wrong.
-    #[test]
-    fn a_solving_code_with_no_session_is_refused_by_name() {
-        let authority = hex32(
-            &CanonicalSignalInput::parse(fixture(INPUT_FILE))
-                .unwrap()
-                .dto
-                .canon
-                .federation_id,
-        );
-        let slot = fixture_slot(authority);
-        let solving = claim();
-        assert_eq!(
-            solving.final_code(),
-            SignalCode::new(5, 0, 5).unwrap(),
-            "the mutation must be PRESENT: this is the fixture's genuine answer"
-        );
-        assert_eq!(
-            verify_claim_transcript_was_played(None, &slot, &solving),
-            Err(UnplayedTranscriptV1::NoSession)
-        );
-        assert_eq!(
-            UnplayedTranscriptV1::NoSession.code(),
-            "poa-signal-transcript-no-session"
-        );
-    }
-
-    /// ⚑ NO REFUSAL IS AN ORACLE. Against ONE session state, a solving code and a
-    /// losing code must draw the SAME refusal — otherwise the gate itself leaks
-    /// whether a guess was right, faster than playing.
-    ///
-    /// An implementation that consulted the target could not pass this, which is
-    /// what makes it a check rather than a restatement of the doc comment.
-    #[test]
-    fn the_refusal_never_depends_on_whether_the_code_is_right() {
-        let authority = hex32(
-            &CanonicalSignalInput::parse(fixture(INPUT_FILE))
-                .unwrap()
-                .dto
-                .canon
-                .federation_id,
-        );
-        let slot = fixture_slot(authority);
-        let solving = code_of([5, 0, 5]);
-        let losing = code_of([1, 1, 1]);
-        assert_ne!(solving, losing);
-
-        // No session at all.
-        for code in [solving, losing] {
-            let claim = SignalClaimV1::new(1, &[code]).unwrap();
-            assert_eq!(
-                verify_claim_transcript_was_played(None, &slot, &claim),
-                Err(UnplayedTranscriptV1::NoSession)
-            );
-        }
-
-        // An OPEN session with nothing played: both refuse on LENGTH, not content.
-        let (_dir, empty) = gate_session(&slot, authority, &[]);
-        for code in [solving, losing] {
-            let claim = SignalClaimV1::new(1, &[code]).unwrap();
-            assert_eq!(
-                verify_claim_transcript_was_played(Some(&empty), &slot, &claim),
-                Err(UnplayedTranscriptV1::LengthMismatch)
-            );
-        }
-
-        // One round played, and it was neither of these codes.
-        let (_dir2, one) = gate_session(&slot, authority, &[([0, 1, 2], 0, 2)]);
-        for code in [solving, losing] {
-            let claim = SignalClaimV1::new(1, &[code]).unwrap();
-            assert_eq!(
-                verify_claim_transcript_was_played(Some(&one), &slot, &claim),
-                Err(UnplayedTranscriptV1::RoundMismatch)
-            );
-        }
-    }
-
-    /// The played pole at the gate: the exact rounds the node classified, in order,
-    /// ending in the one it scored as locking, PASS — and every perturbation of that
-    /// transcript refuses.
-    #[test]
-    fn only_the_transcript_this_node_classified_passes() {
-        let authority = hex32(
-            &CanonicalSignalInput::parse(fixture(INPUT_FILE))
-                .unwrap()
-                .dto
-                .canon
-                .federation_id,
-        );
-        let slot = fixture_slot(authority);
-        let (_dir, solved) = gate_session(
-            &slot,
-            authority,
-            &[([0, 1, 2], 0, 2), ([3, 3, 3], 1, 0), ([5, 0, 5], 3, 0)],
-        );
-        let played = [code_of([0, 1, 2]), code_of([3, 3, 3]), code_of([5, 0, 5])];
-
-        verify_claim_transcript_was_played(
-            Some(&solved),
-            &slot,
-            &SignalClaimV1::new(1, &played).unwrap(),
-        )
-        .expect("the transcript this node served must settle");
-
-        // The solving code ALONE — the old carrier's whole content — refuses: the
-        // node classified three rounds and this claim names one.
-        assert_eq!(
-            verify_claim_transcript_was_played(
-                Some(&solved),
-                &slot,
-                &SignalClaimV1::new(1, &played[2..]).unwrap()
-            ),
-            Err(UnplayedTranscriptV1::LengthMismatch)
-        );
-
-        // Right rounds, wrong ORDER.
-        let shuffled = [played[1], played[0], played[2]];
-        assert_eq!(
-            verify_claim_transcript_was_played(
-                Some(&solved),
-                &slot,
-                &SignalClaimV1::new(1, &shuffled).unwrap()
-            ),
-            Err(UnplayedTranscriptV1::RoundMismatch)
-        );
-
-        // Right length, one substituted round.
-        let substituted = [played[0], code_of([4, 4, 4]), played[2]];
-        assert_eq!(
-            verify_claim_transcript_was_played(
-                Some(&solved),
-                &slot,
-                &SignalClaimV1::new(1, &substituted).unwrap()
-            ),
-            Err(UnplayedTranscriptV1::RoundMismatch)
-        );
-
-        // Another mission's claim over this session PASSES here, on purpose: the
-        // mission is decided one layer down against the head's ACTIVE mission, and
-        // `prepare_signal_input` names both numbers when it refuses. This assertion
-        // exists so that arrangement is stated rather than assumed — if a mission
-        // check is ever added back here, this goes red and the reader is sent to the
-        // comment on `verify_claim_transcript_was_played` that says why not.
-        verify_claim_transcript_was_played(
-            Some(&solved),
-            &slot,
-            &SignalClaimV1::new(2, &played).unwrap(),
-        )
-        .expect("the mission is not this gate's question");
-        assert!(matches!(
-            prepare_signal_input(
-                &CanonicalSignalInput::parse(fixture(INPUT_FILE))
-                    .unwrap()
-                    .authority_context(),
-                SignalClaimV1::new(2, &played).unwrap()
-            ),
-            Err(SignalAdapterError::MissionMismatch {
-                claimed: 2,
-                active: 1
-            })
-        ));
-
-        // A session the node served but never scored as locking.
-        let (_dir2, unsolved) = gate_session(
-            &slot,
-            authority,
-            &[([0, 1, 2], 0, 2), ([3, 3, 3], 1, 0), ([5, 0, 4], 2, 0)],
-        );
-        let unsolved_played = [played[0], played[1], code_of([5, 0, 4])];
-        assert_eq!(
-            verify_claim_transcript_was_played(
-                Some(&unsolved),
-                &slot,
-                &SignalClaimV1::new(1, &unsolved_played).unwrap()
-            ),
-            Err(UnplayedTranscriptV1::NotSolved)
-        );
-    }
-
-    /// A session opened against a DIFFERENT slot commitment is a different secret
-    /// and therefore a different answer; its transcript cannot settle here.
-    #[test]
-    fn a_transcript_played_against_another_instance_is_refused() {
-        let authority = hex32(
-            &CanonicalSignalInput::parse(fixture(INPUT_FILE))
-                .unwrap()
-                .dto
-                .canon
-                .federation_id,
-        );
-        let slot = fixture_slot(authority);
-        let dir = tempfile::tempdir().unwrap();
-        let store = PersistentStore::open(&dir.path().join("dregg.redb")).unwrap();
-        let record = store
-            .open_poa_signal_session_v1(
-                authority,
-                slot.slot(),
-                slot.mission_id(),
-                GATE_PLAYER,
-                [0xAB; 32],
-            )
-            .unwrap();
-        assert_ne!(record.commitment(), slot.commitment());
-        assert_eq!(
-            verify_claim_transcript_was_played(Some(&record), &slot, &claim()),
-            Err(UnplayedTranscriptV1::InstanceMismatch)
-        );
     }
 }

@@ -40,23 +40,8 @@
 //! trait) OR appear on `ALLOWLIST` with a reviewed justification. The allowlist is
 //! an HONEST DEBT LEDGER, not a blessing: `GRANDFATHERED` entries are un-audited
 //! non-strict sites that still owe an attacker-key-reachability review.
-//!
-//! ANSWERS:         does a column-0 TEXT scan of every WORKING-TREE first-party file under a /src/ path find a `use ed25519_dalek::` or `use signature::` line naming the Verifier trait that is not on the ALLOWLIST, is any ALLOWLIST entry now stale, and does the line matcher still fire on the forbidden shape while sparing VerifyingKey and indented imports?
-//! DOES NOT ANSWER: whether any ed25519 verify in this tree is strict. It matches IMPORT LINES, never call sites: a fully-qualified Verifier::verify, an import inside a fn or a test module, or a verify reached through a re-export all pass unseen. The allowlist itself names node/src/api.rs:6789 as a live attacker-key cofactored verify that this scan is GREEN over.
 
 use std::path::{Path, PathBuf};
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         does a column-0 TEXT scan of every WORKING-TREE first-party file under a /src/ path find a `use ed25519_dalek::` or `use signature::` line naming the Verifier trait that is not on the ALLOWLIST, is any ALLOWLIST entry now stale, and does the line matcher still fire on the forbidden shape while sparing VerifyingKey and indented imports?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether any ed25519 verify in this tree is strict. It matches IMPORT LINES, never call sites: a fully-qualified Verifier::verify, an import inside a fn or a test module, or a verify reached through a re-export all pass unseen. The allowlist itself names node/src/api.rs:6789 as a live attacker-key cofactored verify that this scan is GREEN over."
-    );
-}
 
 /// Workspace root = the parent of this `tests` crate's manifest dir.
 fn workspace_root() -> PathBuf {
@@ -259,7 +244,6 @@ fn collect_src_rs(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn no_unallowlisted_module_top_nonstrict_ed25519_verify_import() {
-    scope();
     let root = workspace_root();
     let mut files = Vec::new();
     collect_src_rs(&root, &mut files);
@@ -338,7 +322,6 @@ fn no_unallowlisted_module_top_nonstrict_ed25519_verify_import() {
 /// Without this, a detector that silently matched nothing would pass forever.
 #[test]
 fn detector_is_non_vacuous() {
-    scope();
     // POSITIVE: the module-top non-strict trait import the guard forbids.
     assert!(is_module_top_verifier_import(
         "use ed25519_dalek::{Signature, Verifier, VerifyingKey};"

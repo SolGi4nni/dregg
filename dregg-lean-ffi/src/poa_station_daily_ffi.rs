@@ -16,44 +16,19 @@
 //! sealed authority — a caller could post a contribution the crate never authorized and move the
 //! communal gauges.
 //!
-//! # This seam is READ-ONLY because it RETURNS A DOCUMENT, not because it cannot reach the write
+//! # This seam is READ-ONLY by TYPE, not by policy
 //!
-//! ⚠ CORRECTED. The three bullets here used to say `SalvageCrate.openCrate` demanded a
-//! `CurrentStateCapability` "declared `opaque` with no producer anywhere in the tree". That is
-//! false at HEAD: the capability is a sealed structure rooted in `genesis`, `openCrate` is
-//! reachable, and this read reaches it once per log row while replaying. What keeps the seam
-//! read-only is narrower and still sufficient:
+//! Nothing here needs to *decline* to write, because there is nothing to decline:
 //!
-//! * every `OpenResult` the replay produces is consumed by the fold and dropped — the export
-//!   returns a projection and nothing else;
-//! * NO ROW IS APPENDED HERE. Only `node/src/poa_crate_api.rs` appends, and only after Lean
-//!   reports an accepted open;
 //! * `SalvageCrate.openCore` is `private`, so no module outside the crate can call it;
-//! * `ShipInstrumentPanel.Receipt` has a private `mk` whose only producer consumes an accepted
-//!   `OpenReceipt`, so no wire can decode a receipt into existence.
+//! * `SalvageCrate.openCrate` demands a `CurrentStateCapability`, declared `opaque` with no
+//!   producer anywhere in the tree — no Lean term constructs one, so no `@[export]` can either;
+//! * `SalvageCrate.State` has a private `mk` and deliberately no public empty-state producer.
 //!
-//! A log a caller did not earn buys nothing: a row the crate would not have accepted in that
-//! position makes the whole replay `none` and the reply the `""` refusal.
-//!
-//! # ⚑ THIS SEAM CARRIES THE NODE'S DURABLE OPEN LOG
-//!
-//! ⚠ CORRECTED. This docblock used to say the panel served was `ShipInstrumentPanel.initial` —
-//! "the ship exactly as installed" — and cited `the_served_ship_has_not_been_moved` as "the
-//! assertion that goes RED the day a judged opening can be folded in, which is when this seam must
-//! grow a second input". That day came, the assertion did NOT go red (it was about the request
-//! type, not about reachability), and **this is that second input**.
-//!
-//! `station_daily_request` now takes the node's durable open log. Lean replays it through
-//! `SalvageCrate.openCrate` — the same fold the crate-open write path uses, which lives in
-//! `StationDailyRuntime` precisely so there is only one — and serves the ship it folds to. The
-//! retired assertion is replaced by `the_served_ship_moves_when_the_log_records_an_opening`, a pair
-//! whose halves differ by one log row, and by
-//! `StationCrateOpenRuntime.the_station_read_serves_the_ship_this_write_published`, which equates
-//! this read's communal fields with the panel the write published.
-//!
-//! ⚠ A log that does not replay is Lean's `""` refusal, NOT a ship at zero. The caller must
-//! surface that as a refusal — rendering it as an unmoved ship is indistinguishable, to a player,
-//! from "nobody has opened the crate yet".
+//! So the panel this read serves is `ShipInstrumentPanel.initial`: the ship exactly as installed.
+//! Lean's `the_served_ship_has_not_been_moved` asserts that in the object language — every gauge
+//! zero, nothing observed, nothing admitted — and it is the assertion that goes RED the day a
+//! judged opening can be folded in, which is when this seam must grow a second input.
 //!
 //! ⚠ `StationDailyRuntime.decodeRequest` is `canonicalDecode parseRequestJson Request.toJson` —
 //! Lean re-encodes what it parsed and compares BYTES. The request key order at
@@ -61,34 +36,21 @@
 //! refused with the `""` sentinel. Callers must build this wire from a type whose field order is
 //! fixed, never from a map whose order depends on a cargo feature.
 
-use crate::poa_crate_open_ffi::{crate_open_log_rows_json, CrateOpenLogRow};
 use crate::{ensure_lean_init, lean_init_once};
 
 /// Host-transport ceiling for the request and the emitted document. Lean independently refuses a
-/// request above its own 1 MiB pre-parser fuse and a log above 4096 rows; this only prevents
-/// unbounded host allocation.
-///
-/// ⚠ Lean's fuse was 16 KiB until this request grew `history`, and this comment said so. A full
-/// 4096-row log spells to about 390 KB, so the old fuse would have refused every station read on
-/// a busy node — a fail-closed refusal indistinguishable from a corrupt log.
+/// request above its own 16 KiB pre-parser fuse; this only prevents unbounded host allocation.
 pub const MAX_POA_STATION_DAILY_WIRE_BYTES: usize = 1024 * 1024;
 
 /// The canonical request format this seam sends to Lean.
 ///
 /// ```text
-/// {"format":"POA-STATION-DAILY-1","crew":null,"history":[]}
-/// {"format":"POA-STATION-DAILY-1","crew":"<64 lowercase hex>",
-///  "history":[{"player":"<64 lowercase hex>","period":n},…]}
+/// {"format":"POA-STATION-DAILY-1","crew":null}
+/// {"format":"POA-STATION-DAILY-1","crew":"<64 lowercase hex>"}
 /// ```
 ///
 /// `null` and a 64-digit lowercase hex string are the only accepted spellings of the `crew`
 /// field, and each has exactly one, so "absent" has no second encoding.
-///
-/// ⚠ THE PRE-`history` SHAPE NO LONGER LOADS. `{"format":…,"crew":null}` is a MISSING FIELD to
-/// Lean's exact-key parser, not a request with an implicitly empty log — deliberately, because a
-/// defaulted history would serve the installed ship to every caller of the old shape, which is the
-/// silent zero this input exists to remove. Lean pins it:
-/// `StationDailyRuntime.the_pre_history_request_shape_refuses`.
 pub const STATION_DAILY_INPUT_FORMAT: &str = "POA-STATION-DAILY-1";
 
 /// The canonical document format Lean emits.
@@ -133,20 +95,11 @@ pub enum PoaStationDailyVerdict {
 /// Build the exact canonical request wire. The key order here is the one Lean re-encodes and
 /// compares against, so this function — not a serializer whose order is incidental — is the only
 /// place the request is spelled.
-///
-/// `history` is the node's durable open log. The rows are spelled by
-/// [`crate::poa_crate_open_ffi::crate_open_log_rows_json`], the same function the crate-open write
-/// wire uses, because the node must not spell its own log two ways on two wires.
-pub fn station_daily_request(crew_hex: Option<&str>, history: &[CrateOpenLogRow]) -> String {
-    let rows = crate_open_log_rows_json(history);
+pub fn station_daily_request(crew_hex: Option<&str>) -> String {
     match crew_hex {
-        None => {
-            format!("{{\"format\":\"{STATION_DAILY_INPUT_FORMAT}\",\"crew\":null,\"history\":[{rows}]}}")
-        }
+        None => format!("{{\"format\":\"{STATION_DAILY_INPUT_FORMAT}\",\"crew\":null}}"),
         Some(hex) => {
-            format!(
-                "{{\"format\":\"{STATION_DAILY_INPUT_FORMAT}\",\"crew\":\"{hex}\",\"history\":[{rows}]}}"
-            )
+            format!("{{\"format\":\"{STATION_DAILY_INPUT_FORMAT}\",\"crew\":\"{hex}\"}}")
         }
     }
 }
@@ -304,49 +257,15 @@ mod tests {
     #[test]
     fn the_request_wire_is_spelled_exactly_once() {
         assert_eq!(
-            station_daily_request(None, &[]),
-            r#"{"format":"POA-STATION-DAILY-1","crew":null,"history":[]}"#
+            station_daily_request(None),
+            r#"{"format":"POA-STATION-DAILY-1","crew":null}"#
         );
         assert_eq!(
-            station_daily_request(Some(&"aa".repeat(32)), &[]),
+            station_daily_request(Some(&"aa".repeat(32))),
             format!(
-                r#"{{"format":"POA-STATION-DAILY-1","crew":"{}","history":[]}}"#,
+                r#"{{"format":"POA-STATION-DAILY-1","crew":"{}"}}"#,
                 "aa".repeat(32)
             )
         );
-    }
-
-    /// ⚑ THE LOG IS SPELLED BY ONE FUNCTION, ON BOTH WIRES. The `history` array this read sends
-    /// must be byte-identical to the one the crate-open write sends for the same log, because Lean
-    /// parses both with the same exact-key row parser and folds both with the same replay. A
-    /// second spelling here is how the read and the write come to report different ships.
-    #[test]
-    fn the_read_and_the_write_spell_the_node_log_identically() {
-        let rows = [
-            CrateOpenLogRow {
-                player: [0x29; 32],
-                period: 31,
-            },
-            CrateOpenLogRow {
-                player: [0x28; 32],
-                period: 31,
-            },
-        ];
-        let read = station_daily_request(None, &rows);
-        let write = crate::poa_crate_open_ffi::crate_open_request(&[0x2a; 32], &rows);
-
-        let body = crate_open_log_rows_json(&rows);
-        assert_eq!(
-            body,
-            format!(
-                r#"{{"player":"{}","period":31}},{{"player":"{}","period":31}}"#,
-                "29".repeat(32),
-                "28".repeat(32)
-            )
-        );
-        // The identical substring is the point: neither wire re-spells the log.
-        assert!(read.contains(&format!("\"history\":[{body}]")));
-        assert!(write.contains(&format!("\"history\":[{body}]")));
-        assert!(!read.contains(' '));
     }
 }

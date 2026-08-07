@@ -292,6 +292,7 @@ mod tests {
     use axum::http::Request;
     use dregg_blocklace::finality::{Block, Payload};
     use dregg_persist::{CommitRecord, PersistentStore, PoaSignalHeadV1};
+    use dregg_sdk::poa_signal::{SignalClaimV1, SignalCode};
     use dregg_turn::{Finality, TurnReceipt};
     use poa_curator::PoaDeploymentScope;
     use poa_curator::authority_export::{PoaSignalAuthorityExportV1, verify_authority_export};

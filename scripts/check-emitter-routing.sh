@@ -63,11 +63,6 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'is every TRACKED metatheory Emit*.lean either named in the EMITTERS list this script parses out of scripts/emit_descriptors.py, or listed in UNROUTED_OK below under one of four classes, three of which are re-checked right now: no-main (the file still has no line beginning `def main`), covered (the named covering emitter is in EMITTERS and its source still word-matches the named Lean def), regen (the named script exists and greps for this file basename) — and no-artifact, which is checked for NOTHING?' \
-  'whether any artifact is FRESH, CORRECT, or read by anybody. Routing means a flag day re-runs the emitter; it is not a claim that the committed bytes equal what a re-run would produce, nor that a covering emitter renders the SAME object (EmitDischargeVaultSat is excused as covered while emitting bytes the routed pipeline does not). The class checks are greps for a name in a file, and untracked emitters are counted and NOT scanned.'
-
 # ── Emitters deliberately NOT in the driver. Each carries a CHECKED class (see header). ──────────
 declare -A UNROUTED_OK=(
   # ---- no-main: filename starts with `Emit`, but there is no emitter here at all. ---------------

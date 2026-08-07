@@ -85,18 +85,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# ── SCOPE ─ these printfs are the ONLY copy; one prints on every run, pass or fail.
-# `--self-test` answers a DIFFERENT question from a scan, so it carries its own pair. ─
-if [ "$SELF_TEST" -eq 1 ]; then
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'can this instrument still fire — does it red on the measured eval.rs shape and on a marker comment, stay green on doc-comment prose quoting that same shape, and exit 2 when the scan is blinded, all on synthetic single-file git repos built for the run?' \
-    'anything about this repository. Every leg scans a temporary repo, never this tree, so 4/4 legs passing is fully compatible with a disarmed guard sitting in HEAD right now. It also depends on git being able to COMMIT in a fresh repo, so a signing failure surfaces here as a leg that cannot bite.'
-else
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'does a line grep over tracked .rs/.lean/.py/.sh/.ts sources — minus this script, AGENTS.md, CLAUDE.md, HORIZONLOG.md, GOAL*.md, docs/, .github/ and any path under vendor/ — find a non-comment `if false &&` or `if true {` short-circuit, or one of the three scaffold marker strings anywhere including comments, having read at least MIN_FILES files; over a git-archive extract under --rev, and over the index file list with WORKING-TREE content otherwise?' \
-    'whether a guard is disarmed. It knows three literal spellings of ONE convention, so every other way to neuter a check — a flipped comparison, an early return, a widened match arm, a commented-out assertion, or a mutation nobody marked — is invisible; and it never asks whether a marker it found is a live mutation or the record of a restored one.'
-fi
-
 if [ "$SELF_TEST" -eq 1 ]; then
   # ═══ RED-PROOF ═══════════════════════════════════════════════════════════════════════
   # Four legs, on synthetic trees, each committed so the `--rev` path is what gets exercised:

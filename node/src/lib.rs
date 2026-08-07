@@ -618,22 +618,13 @@ pub enum Command {
         /// A `POA-SIGNAL-INSTANCE-PREVIEW-V1` document from step 4.
         #[arg(long)]
         claim_file: Option<PathBuf>,
-        /// The transcript to PLAY: `low,mid,high` triples in base six separated by
-        /// `;`, in submission order, at most five of them (what a stranger with no
-        /// slot secret deduces). Mutually exclusive with `--claim-file`.
-        ///
-        /// ⚠ These are bursts to SPEND, not a claim to post. The command plays them
-        /// through the judged session and settles only if the last one locks all
-        /// three bands — a code with no game behind it is refused on chain.
+        /// A hand-typed guess as `low,mid,high` in base six (what a stranger with
+        /// no slot secret plays). Mutually exclusive with `--claim-file`.
         #[arg(long)]
         code: Option<String>,
-        /// Mission the hand-typed transcript claims. Ignored with `--claim-file`.
+        /// Mission the hand-typed code claims. Ignored with `--claim-file`.
         #[arg(long, default_value = "1")]
         mission_id: u64,
-        /// Bearer token for the AUTHENTICATED judged-session routes. Omit when
-        /// connecting over loopback to a node with no passphrase set.
-        #[arg(long)]
-        bearer: Option<String>,
         /// The turn nonce (`agent.state.nonce()`); 0 for a player's first turn.
         #[arg(long, default_value = "0")]
         nonce: u64,
@@ -1438,7 +1429,6 @@ pub async fn run(cli: Cli) {
             claim_file,
             code,
             mission_id,
-            bearer,
             nonce,
             previous_receipt_hash,
             identity_only,
@@ -1452,7 +1442,6 @@ pub async fn run(cli: Cli) {
                 claim_file,
                 code,
                 mission_id,
-                bearer,
                 nonce,
                 previous_receipt_hash,
                 identity_only,

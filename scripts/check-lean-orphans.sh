@@ -96,11 +96,6 @@
 set -euo pipefail
 export LC_ALL=C
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'is every metatheory/Dregg2/**.lean file ON DISK either reachable by an import-line BFS from the seeds metatheory/lakefile.toml declares as defaultTargets, or named in scripts/lean-orphans-allow.txt — and is every allowlist entry still a real, still-unreachable file under Dregg2/?' \
-  'whether an allowlisted orphan is checked ANYWHERE. The list records only that the exclusion is deliberate: measured 2026-07-24, of 136 orphans just 58 were built by any CI target and 79 by none. Nor does reachability mean a module COMPILES, that its own guards ran, or that any CI job built it — this is a pure text scan of import lines, with no Lean toolchain in the loop.'
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mt_dir="${METATHEORY_DIR:-$repo_root/metatheory}"
 allowlist="${ORPHAN_ALLOWLIST:-$repo_root/scripts/lean-orphans-allow.txt}"

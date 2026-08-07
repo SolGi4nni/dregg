@@ -149,48 +149,6 @@ MIN_IGNORES = 200
 MIN_DOC_FENCES = 500
 FENCE_BASELINE = REPO / "scripts" / "doctest-ignore-baseline.tsv"
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. Two
-# invocations, two DIFFERENT questions, so each carries its own pair. ────────────────
-SCOPE_ANSWERS = (
-    "in every .rs file found by walking the WORKING TREE (rglob from the repo root, minus "
-    "target/.lake/node_modules/metatheory and six more; UNTRACKED files included), with comments "
-    "and string literals blanked, is the next character after every `#[ignore]` and every "
-    "`ignore` inside a `#[cfg_attr(...)]` an `=` rather than a `]`, and did the walk see at least "
-    f"MIN_IGNORES={MIN_IGNORES} of them? (a default run then also runs the --fences contract)"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether any reason string is true, current, or says anything at all - the presence of the "
-    "`=` is the entire test, so a one-character reason passes; nor whether a test is switched off "
-    "some other way (a cfg, a feature, an early return - that is check-silent-skip.py); nor "
-    "whether an ignored test ought to be running again."
-)
-
-SCOPE_ANSWERS_FENCES = (
-    "over that same working-tree .rs walk, lexing ONLY doc comments (`///`, `//!`, `/** */`, "
-    "`/*! */`): does every fence whose info-string carries ignore or no_run open its body with a "
-    "rustdoc-VISIBLE `// IGNORED:` or `// NO_RUN:` line, does every fence carrying a behaviour "
-    "attribute avoid mixing in a token rustdoc does not know, is every row of "
-    f"{FENCE_BASELINE.name} still matching a live fence, and did the walk see at least "
-    f"MIN_DOC_FENCES={MIN_DOC_FENCES} fences?"
-)
-SCOPE_DOES_NOT_ANSWER_FENCES = (
-    "whether a reason is TRUE or the silenced example still compiles - nothing here runs rustdoc "
-    "or a doctest. And it is a RATCHET: a fence keyed (path, body-hash) in the baseline is exempt "
-    "and never re-read, so green means no NEW reasonless fence, not that every ignore fence in "
-    "the tree says why. Fences in .md files, or in non-doc comments, are never looked at."
-)
-
-SCOPE_ANSWERS_SELFTEST = (
-    "can the attribute classifier and the doc-comment fence reader fire on this script's own "
-    "MUST_CATCH fixtures and stay quiet on the MUST_NOT_CATCH prose shapes, does a baseline key "
-    "move with the fence BODY and not with its line, and does apply_baseline exempt a listed row "
-    "while failing a stale one?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "anything at all about this repository - this path reads NO tree file; every input is a "
-    "literal in this script. PASSED means the instrument can bite, never that the tree is clean."
-)
-
 IGNORE_ATTR = re.compile(r"#\s*\[\s*ignore\b")
 CFG_ATTR = re.compile(r"#\s*\[\s*cfg_attr\s*\(")
 
@@ -768,18 +726,6 @@ def main() -> int:
     ap.add_argument("--fences", action="store_true", help="run only the doctest-fence contract")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
-
-    # The scope pair, on stdout — except in the two REPORT modes, whose stdout is
-    # tab-separated rows a reader pipes, where it goes to stderr instead.
-    if args.self_test:
-        _answers, _not = SCOPE_ANSWERS_SELFTEST, SCOPE_DOES_NOT_ANSWER_SELFTEST
-    elif args.fences or args.report_fences:
-        _answers, _not = SCOPE_ANSWERS_FENCES, SCOPE_DOES_NOT_ANSWER_FENCES
-    else:
-        _answers, _not = SCOPE_ANSWERS, SCOPE_DOES_NOT_ANSWER
-    _out = sys.stderr if (args.report or args.report_fences) else sys.stdout
-    print(f"ANSWERS:         {_answers}", file=_out, flush=True)
-    print(f"DOES NOT ANSWER: {_not}", file=_out, flush=True)
 
     if args.report_fences:
         return report_fences()

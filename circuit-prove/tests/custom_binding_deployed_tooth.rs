@@ -34,9 +34,6 @@
 //! DEPLOYED path, and closes the `custom_state_binding` "tooth 2" remainder. The folds are real
 //! recursions (minutes), so those poles are `#[ignore]`. Run with:
 //!   cargo test -p dregg-circuit-prove --test custom_binding_deployed_tooth -- --ignored --nocapture
-//!
-//! ANSWERS:         over a real 2-turn deployed customVmDescriptor2R24 chain, does the honest pair fold and light-client-verify; is a commitment with lane 0 perturbed by ONE refused by the state-binding custom-binding node; is a sub-proof declaring roots 900/950 instead of the leg REAL rotated roots refused by that same node while the PRE-flip commitment-only node still accepts it; and is a 2-PI sub-program refused fail-closed at the leaf mint?
-//! DOES NOT ANSWER: whether the custom sub-program MEANS anything. The relation re-proved is a 4-column toy conservation polynomial built in this file, so what the fold binds is that SOME verifying sub-proof exists over the declared roots — never that those roots are the ones a node executor would compute, nor that the program is the one a cell installed.
 
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
@@ -68,18 +65,6 @@ use dregg_circuit_prove::joint_turn_aggregation::{
     CustomWitnessBundle, DescriptorParticipant, RotatedParticipantLeg,
 };
 use dregg_turn::rotation_witness as rw;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         over a real 2-turn deployed customVmDescriptor2R24 chain, does the honest pair fold and light-client-verify; is a commitment with lane 0 perturbed by ONE refused by the state-binding custom-binding node; is a sub-proof declaring roots 900/950 instead of the leg REAL rotated roots refused by that same node while the PRE-flip commitment-only node still accepts it; and is a 2-PI sub-program refused fail-closed at the leaf mint?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether the custom sub-program MEANS anything. The relation re-proved is a 4-column toy conservation polynomial built in this file, so what the fold binds is that SOME verifying sub-proof exists over the declared roots — never that those roots are the ones a node executor would compute, nor that the program is the one a cell installed."
-    );
-}
 
 // ============================================================================
 // Fixtures
@@ -448,7 +433,6 @@ fn honest_state_chain() -> Vec<FinalizedTurn> {
 #[test]
 #[ignore = "SLOW: real deployed custom-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_custom_turn_honest_accepts() {
-    scope();
     let turns = honest_state_chain();
 
     let whole = prove_turn_chain_recursive(&turns)
@@ -469,7 +453,6 @@ fn deployed_custom_turn_honest_accepts() {
 #[test]
 #[ignore = "SLOW: real deployed custom-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_custom_turn_forged_rejected() {
-    scope();
     let (old8, new8) = leg_real_roots(0);
     let pis = state_pis(&old8, &new8);
     let real = custom_proof_pi_commitment(&pis);
@@ -520,7 +503,6 @@ fn deployed_custom_turn_forged_rejected() {
 #[test]
 #[ignore = "SLOW: real deployed custom-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_custom_turn_forged_root_rejected() {
-    scope();
     // S1 HONEST POLE FIRST — the forged chain differs only in the declared roots.
     must_accept("the HONEST state-bound chain", || {
         prove_turn_chain_recursive(&honest_state_chain())
@@ -570,7 +552,6 @@ fn deployed_custom_turn_forged_root_rejected() {
 #[test]
 #[ignore = "SLOW: folds the same forgery through two deployed-shape node pairs; run with --ignored"]
 fn canary__the_pre_flip_deployed_pair_accepts_the_forged_root_the_state_node_refuses() {
-    scope();
     use dregg_circuit_prove::custom_leaf_adapter::{
         prove_custom_leaf_with_commitment, prove_custom_leaf_with_state_commitment,
     };
@@ -646,7 +627,6 @@ fn canary__the_pre_flip_deployed_pair_accepts_the_forged_root_the_state_node_ref
 #[test]
 #[ignore = "SLOW: mints both node pairs on honest inputs to measure the delta; run with --ignored"]
 fn budget__the_state_weld_costs_this_much() {
-    scope();
     use dregg_circuit_prove::custom_leaf_adapter::{
         prove_custom_leaf_with_commitment, prove_custom_leaf_with_state_commitment,
     };
@@ -727,7 +707,6 @@ fn budget__the_state_weld_costs_this_much() {
 /// FAST: the refusal fires at the sub-proof leaf mint, before any fold.
 #[test]
 fn deployed_custom_turn_with_a_non_abi_program_is_refused() {
-    scope();
     let err = must_refuse(
         "a 2-PI sub-program (too narrow for the state-binding prefix) folded through the deployed \
          prover",

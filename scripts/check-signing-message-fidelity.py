@@ -53,42 +53,6 @@ REPO = Path(__file__).resolve().parent.parent
 
 LEAN_SRC = REPO / "metatheory/Dregg2/Exec/SigningMessage.lean"
 
-# ── SCOPE ─ these two pairs are the ONLY copy; one prints on every run of its mode, pass or
-# fail. The bare gate and `--self-test` answer DIFFERENT questions, so they get separate pairs. ─
-SCOPE_ANSWERS = (
-    "reading the working tree, do TWO INDEPENDENT SOURCES agree on two things: (1) the first "
-    "b\"...\" literal in each of six named Rust builder bodies equals the byte list of its "
-    "matching Lean sep* def, and the retired sepFullV2, if Lean still holds it, is neither "
-    "edited nor live in any of the six; and (2) the ordered hasher.update/extend_from_slice "
-    "arguments of turn/src/executor/authorize.rs::compute_signing_message, mapped through a "
-    "hand-written regex table to eleven field tokens with adjacent duplicates collapsed, are the "
-    "same sequence as the ++ chain of Lean sigMsgFull — an unrecognized argument on either side "
-    "refusing rather than passing?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether the six preimages are BYTE-EQUAL. It is a regex read of Rust source text, never an "
-    "execution: no message is ever built on either side. FIELD ORDER is checked for the Full "
-    "preimage ONLY — Partial, Custom, Bearer, Stealth and Handoff contribute their separator and "
-    "nothing else, so a field added to any of those five is invisible. It also never reads the "
-    "hash function (Rust is blake3; Lean is not consulted on that), any length prefix or "
-    "delimiter between concatenated fields, the encoding of a field beyond the literal token "
-    "text, or whether the three balance_change arms match Lean balByte — all three collapse to "
-    "one BALANCE_CHANGE token. And it says nothing about whether anything CALLS these builders "
-    "or verifies against them."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "can this gate go RED — do three mutations applied to an IN-MEMORY copy of the Lean source "
-    "(the v3 separator rolled back to v2, u64le turnNonce deleted from sigMsgFull, and target "
-    "and method transposed) each make the comparison red or refuse, and did each mutation "
-    "actually change the text?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "whether Lean and Rust currently agree — the unmutated case is never run here, so this mode "
-    "passes on a tree the bare gate reds. It also mutates only the LEAN side, so it proves "
-    "nothing about the Rust readers: a broken rust_fn_body or a stale regex in RUST_FIELD_TOKENS "
-    "would refuse and be scored as a successful red."
-)
-
 # ── (1) domain separators: Lean `sep*` def  ↔  the first `b"..."` in a Rust builder ──────
 # (lean_def, rust_relpath, rust_fn) — the Rust separator is the FIRST byte-string literal
 # appearing in that function's body.
@@ -363,13 +327,6 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--self-test", action="store_true", help="prove the gate reds (mutates a COPY in memory)")
     args = ap.parse_args()
-
-    if args.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
-    else:
-        print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     if not LEAN_SRC.is_file():
         print(f"REFUSED: missing {LEAN_SRC}")

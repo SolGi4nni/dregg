@@ -41,32 +41,6 @@ ROOT = Path(__file__).resolve().parent.parent
 METATHEORY = ROOT / "metatheory"
 BASELINE = ROOT / "scripts" / "forcing-tie-baseline.txt"
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
-SCOPE_ANSWERS = (
-    "under metatheory/, does every .lean whose FILENAME matches Forcing*.lean (or "
-    "Discharge*.lean beneath Circuit/Emit) carry at least one theorem whose signature text "
-    "matches the regex `: acceptB`, and does every theorem named <G>_forces — where <G> is a "
-    "def whose first six lines before `:=` contain the string `List VmConstraint2` — contain "
-    "<G> or `acceptB` as a SUBSTRING somewhere in that signature, with the offenders listed "
-    "in scripts/forcing-tie-baseline.txt excused and required to keep firing?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether a forcing theorem forces anything. Both rules are substring tests over signature "
-    "TEXT: a theorem passes rule B by naming its generator anywhere in the statement, in any "
-    "position, and ONE theorem carrying `: acceptB` satisfies rule A for every other theorem "
-    "in the same file. Nothing here elaborates Lean, reads a proof, or rules out a vacuous, "
-    "hypothesis-free or `sorry`-backed statement — and the baseline makes it a ratchet, so "
-    "green means no NEW untied theorem, not that the tied ones say what their names claim."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "does scan() report both a RULE A and a RULE B violation on one synthetic FakeForcing.lean "
-    "written into a temp dir?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "anything about metatheory/. It shows the two regexes fire on a constructed offender; the "
-    "baseline legs (BASELINE STALE, BASELINE DEAD) are never exercised at all."
-)
-
 # A forcing module: the file's whole purpose is to relate emitted gates to a reference function.
 # `*Forcing*.lean` anywhere, plus `*Discharge*.lean` UNDER THE EMIT DIRECTORY — `Sha256HfoldDischarge`
 # is a forcing module in substance and would otherwise be unscanned, while the ~20 other
@@ -216,12 +190,7 @@ def self_test() -> int:
 
 def main() -> int:
     if "--self-test" in sys.argv[1:]:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
-
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     if not METATHEORY.is_dir():
         print(f"check-forcing-gadget-tie: no {METATHEORY} — nothing to check", file=sys.stderr)

@@ -1,5 +1,5 @@
 import { ArtifactRefusal } from "./poag1.js";
-import { CRATE_OPEN_ROUTE, STATION_CREW_ROUTE, STATION_PANEL_ROUTE } from "./station-panel.js";
+import { STATION_CREW_ROUTE, STATION_PANEL_ROUTE } from "./station-panel.js";
 
 /**
  * WHAT IS TRUE RIGHT NOW — and, where nothing is, the honest shape of the
@@ -185,18 +185,11 @@ export async function loadSlotState({ authorityId, curatorPublicKey, baseUrl, fe
  *
  * `crewRoute` is recorded but never called. It takes a 64-hex crew key and this
  * terminal binds no crew identity, so asking it would mean inventing one.
- *
- * ⚑ AND IT DRIFTED AGAIN, EXACTLY AS DESIGNED. `openRoute` was added when the
- * crate-open WRITE landed and this guard went red naming the route it had never
- * heard of — which is the guard doing its job for the second time. It is
- * recorded here so the both-directions check stays exact; the tile itself still
- * only READS, and `station-panel.js` owns the opening.
  */
 export const CRATE_SURFACE = Object.freeze({
   id: "crate",
   route: STATION_PANEL_ROUTE,
   crewRoute: STATION_CREW_ROUTE,
-  openRoute: CRATE_OPEN_ROUTE,
 });
 
 function slotTile(slot) {

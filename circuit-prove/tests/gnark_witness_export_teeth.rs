@@ -16,9 +16,6 @@
 //! This test is also the fixture EMITTER: it deterministically (re)writes
 //! `chain/gnark/fixtures/transcript_w16.json` and
 //! `chain/gnark/fixtures/gnark_witness_minimal.json`.
-//!
-//! ANSWERS:         does the PURE-SERIALIZATION gnark exporter emit exactly 25 public lanes in the order genesis_root then final_root then num_turns then chain_digest as canonical decimal strings, refuse a non-canonical lane, a num_turns at or above p, a foreign envelope version and an empty root_proof, does the W16 challenger squeeze the 8 pinned KAT challenges popping from the END of the rate, and do the two chain/gnark fixture files rewrite byte-stably?
-//! DOES NOT ANSWER: whether any gnark circuit accepts the output, or whether the exported envelope came from a proof at all. Nothing is proved or verified in this file: root_proof is 64 constant bytes, the KAT is a Rust constant compared against the Rust challenger and never against the Go side, and a board_window envelope is silently under-exported because the exporter never reads that field.
 
 use std::fs;
 use std::path::PathBuf;
@@ -37,18 +34,6 @@ use dregg_circuit_prove::ivc_turn_chain::{
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         does the PURE-SERIALIZATION gnark exporter emit exactly 25 public lanes in the order genesis_root then final_root then num_turns then chain_digest as canonical decimal strings, refuse a non-canonical lane, a num_turns at or above p, a foreign envelope version and an empty root_proof, does the W16 challenger squeeze the 8 pinned KAT challenges popping from the END of the rate, and do the two chain/gnark fixture files rewrite byte-stably?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether any gnark circuit accepts the output, or whether the exported envelope came from a proof at all. Nothing is proved or verified in this file: root_proof is 64 constant bytes, the KAT is a Rust constant compared against the Rust challenger and never against the Go side, and a board_window envelope is silently under-exported because the exporter never reads that field."
-    );
-}
 
 fn test_anchor() -> RecursionVk {
     RecursionVk([0x5a; 32])
@@ -114,7 +99,6 @@ fn fixtures_dir() -> PathBuf {
 /// order — pinned so the fail-closed bound can never drift from the field.
 #[test]
 fn modulus_constant_pins_the_field_order() {
-    scope();
     use p3_field::PrimeField32;
     assert_eq!(BABYBEAR_MODULUS, p3_baby_bear::BabyBear::ORDER_U32);
     assert_eq!(BABYBEAR_MODULUS, 2013265921);
@@ -125,7 +109,6 @@ fn modulus_constant_pins_the_field_order() {
 /// documented key, and its values round-trip the envelope exactly.
 #[test]
 fn accept_minimal_envelope_full_shape() {
-    scope();
     let env = minimal_envelope();
     let anchor = test_anchor();
     let json = export_gnark_witness_json(&env, &anchor).expect("valid envelope must export");
@@ -175,7 +158,6 @@ fn accept_minimal_envelope_full_shape() {
 /// and in the emitted JSON.
 #[test]
 fn public_input_vector_order_is_genesis_final_numturns_digest() {
-    scope();
     let env = minimal_envelope();
     let vector = gnark_public_input_vector(&env).expect("canonical lanes must validate");
     assert_eq!(vector.len(), 25);
@@ -214,7 +196,6 @@ fn public_input_vector_order_is_genesis_final_numturns_digest() {
 /// bound cannot pass both).
 #[test]
 fn accept_boundary_lane_p_minus_1() {
-    scope();
     let mut env = minimal_envelope();
     env.genesis_root[0] = BABYBEAR_MODULUS - 1;
     env.final_root[7] = BABYBEAR_MODULUS - 1;
@@ -236,7 +217,6 @@ fn accept_boundary_lane_p_minus_1() {
 /// public block, with the offending field/index named.
 #[test]
 fn reject_non_canonical_lanes_every_block() {
-    scope();
     for bad in [BABYBEAR_MODULUS, BABYBEAR_MODULUS + 1, u32::MAX] {
         // genesis_root
         let mut env = minimal_envelope();
@@ -286,7 +266,6 @@ fn reject_non_canonical_lanes_every_block() {
 /// still needs a check, is `p <= n <= u32::MAX`.
 #[test]
 fn reject_num_turns_overflow_and_wrap() {
-    scope();
     for bad in [
         BABYBEAR_MODULUS,     // == p: wraps to 0 in the field lane
         BABYBEAR_MODULUS + 5, // > p, still fits u32: wraps
@@ -307,7 +286,6 @@ fn reject_num_turns_overflow_and_wrap() {
 /// A foreign envelope version is refused before any lane is read.
 #[test]
 fn reject_wrong_envelope_version() {
-    scope();
     let mut env = minimal_envelope();
     env.version = WHOLE_CHAIN_PROOF_ENVELOPE_V1 + 1;
     match export_gnark_witness_json(&env, &test_anchor()) {
@@ -323,7 +301,6 @@ fn reject_wrong_envelope_version() {
 /// verify — refused.
 #[test]
 fn reject_empty_root_proof() {
-    scope();
     let mut env = minimal_envelope();
     env.root_proof = Vec::new();
     match export_gnark_witness_json(&env, &test_anchor()) {
@@ -347,7 +324,6 @@ const TRANSCRIPT_W16_CHALLENGE_KAT: [u32; 8] = [
 
 #[test]
 fn transcript_fixture_protocol_and_kat() {
-    scope();
     let fx = transcript_fixture_w16();
 
     // The absorb sequence IS the byte values 0..16.
@@ -392,7 +368,6 @@ fn transcript_fixture_protocol_and_kat() {
 /// matches the struct values exactly.
 #[test]
 fn transcript_fixture_json_matches_struct() {
-    scope();
     let fx = transcript_fixture_w16();
     let json = transcript_fixture_w16_json();
     let v: serde_json::Value = serde_json::from_str(&json).expect("fixture JSON must parse");
@@ -435,7 +410,6 @@ fn transcript_fixture_json_matches_struct() {
 /// diff.
 #[test]
 fn emit_fixture_files() {
-    scope();
     let dir = fixtures_dir();
     fs::create_dir_all(&dir).expect("create chain/gnark/fixtures");
 

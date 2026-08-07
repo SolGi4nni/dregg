@@ -29,9 +29,6 @@
 //!
 //! Both slow poles are `#[ignore]` (real recursion, minutes). Run with:
 //!   cargo test -p dregg-circuit-prove --test bridge_binding_deployed_tooth -- --ignored --nocapture
-//!
-//! ANSWERS:         does the committed mintVmDescriptor2R24 row pin PI 46 to the FIRST-row param0 mint-hash column, do two spends differing only in nullifier carry distinct felt identities, and does a real 2-turn deployed bridge-mint chain fold plus light-client-verify while the SAME chain publishing that identity plus ONE is refused by the segmented bridge mint-hash binding node with a WitnessConflict?
-//! DOES NOT ANSWER: whether the note-spend witness corresponds to any real foreign note (it is a synthetic depth-2 fixture built in this file), whether a node executor would admit the minted turn, or whether double-minting is prevented — set-uniqueness lives in the executor BridgedNullifierSet and is exercised nowhere here.
 
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
@@ -64,18 +61,6 @@ use dregg_circuit_prove::note_spend_leaf_adapter::{
     NOTE_SPEND_MINT_HASH_PI, note_spend_leaf_public_inputs,
 };
 use dregg_turn::rotation_witness as rw;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         does the committed mintVmDescriptor2R24 row pin PI 46 to the FIRST-row param0 mint-hash column, do two spends differing only in nullifier carry distinct felt identities, and does a real 2-turn deployed bridge-mint chain fold plus light-client-verify while the SAME chain publishing that identity plus ONE is refused by the segmented bridge mint-hash binding node with a WitnessConflict?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether the note-spend witness corresponds to any real foreign note (it is a synthetic depth-2 fixture built in this file), whether a node executor would admit the minted turn, or whether double-minting is prevented — set-uniqueness lives in the executor BridgedNullifierSet and is exercised nowhere here."
-    );
-}
 
 // ============================================================================
 // Fixtures
@@ -346,7 +331,6 @@ fn build_chain(leg_mint_hash: BabyBear, bundle: BridgeWitnessBundle) -> Vec<Fina
 /// FIRST-row prmCol-0 pin the fold arm's admission requires (never a free column).
 #[test]
 fn committed_mint_row_carries_the_first_row_mint_hash_pin() {
-    scope();
     let desc = deployed_wide_descriptor("mintVmDescriptor2R24");
     assert_eq!(
         desc.public_input_count,
@@ -376,7 +360,6 @@ fn committed_mint_row_carries_the_first_row_mint_hash_pin() {
 /// through the identity.
 #[test]
 fn mint_identity_binds_the_nullifier() {
-    scope();
     let w = make_note_spend_witness(0x10);
     let pis = note_spend_leaf_public_inputs(&w);
     let honest = pis[NOTE_SPEND_MINT_HASH_PI];
@@ -411,26 +394,9 @@ fn mint_identity_binds_the_nullifier() {
 /// POSITIVE POLE — an honest bridge mint (the leg's published mint identity at PI 46 == the
 /// REAL note-spend leaf's in-AIR-recomputed lane 6) folds through the DEPLOYED chain prover's
 /// Bridge arm and the LIGHT CLIENT ACCEPTS.
-///
-/// ⚑ **HONEST SCOPE — what this green does NOT show (read before citing it, 2026-08-07).**
-/// `honest_identity` is `bundle.public_inputs[NOTE_SPEND_MINT_HASH_PI]` — the backing leaf's OWN
-/// lane 6, copied into the leg. This test sets both sides of the `connect` equal BY CONSTRUCTION.
-/// It never calls `bridge_mint_hash_felt`, `verify_portable_note`, `apply_bridge_mint`, or any
-/// projector, and it never touches a `PortableNoteProof`. So it is evidence that the binding node
-/// WIRES UP — not evidence that a bridge turn can satisfy it.
-///
-/// On a real bridge turn the two sides are computed differently and cannot meet, and the codec is
-/// only the shallowest of the reasons: the AIR's Merkle node function
-/// (`hash_fact(current,[sib0,sib1,sib2,position])`) is not the deployed note tree's
-/// (`hash_4_to_1([c0..c3])`), the live attestation carries a third tree's 8-lane root, no
-/// production code ever constructs a `CarrierWitness::Bridge`, and nothing in the repo produces a
-/// bridge `spending_proof` at all. Full account: `circuit-prove/src/note_spend_leaf_adapter.rs`.
-/// The exhibit that WOULD settle it is this test driven from byte-domain material through the
-/// executor's own projector; that test is red at HEAD and is the campaign's acceptance criterion.
 #[test]
 #[ignore = "SLOW: real deployed bridge-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_bridge_mint_honest_accepts() {
-    scope();
     let w = make_note_spend_witness(0x10);
     let bundle = BridgeWitnessBundle::from_note_spend_witness(&w);
     let honest_identity = bundle.public_inputs[NOTE_SPEND_MINT_HASH_PI];
@@ -454,7 +420,6 @@ fn deployed_bridge_mint_honest_accepts() {
 #[test]
 #[ignore = "SLOW: real deployed bridge-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_bridge_mint_forged_identity_rejected() {
-    scope();
     let w = make_note_spend_witness(0x10);
 
     // ── S1 HONEST POLE FIRST, in THIS test. The forged chain below differs from this one by a

@@ -99,33 +99,6 @@ EM = "—"  # EM DASH
 # browser as a real em-dash while looking like nothing at all in a grep.
 MDASH_ENTITIES = ("&mdash;", "&#8212;", "&#x2014;", "\\u2014", "\\u{2014}", "\\x{2014}")
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ────────
-SCOPE_ANSWERS = (
-    "in TRACKED files only (git ls-files) under the hand-named PLAYER_SURFACES roots - .rs under "
-    "those roots, plus site/**.html outside site/dist - does any Rust string literal, HTML text "
-    "node or reader-visible attribute still carry U+2014 or one of six ways this repo spells it, "
-    "after subtracting comments, `#[cfg(test)]`/`#[test]` item bodies and tests|benches|examples "
-    "paths, operator-sink call chains, whole-unit no-value glyph cells, and the CSS/JS/markup one "
-    "level down inside a literal - and does every row of player-copy-punctuation-allow.tsv still "
-    "match a live string at its path?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether player copy is free of em-dashes. Coverage IS the PLAYER_SURFACES enumeration, and "
-    "this file's own NOT_PLAYER_SURFACES records 244 measured sites in 14 other crates that ship "
-    "to players ungated. It also carries NO population floor - the `swept N player surfaces` line "
-    "is len(PLAYER_SURFACES), a constant, not a count of files read - so an empty git ls-files, "
-    "an untracked new file, or a dead reader all report clean; and a dash composed at RUNTIME is "
-    "never a string literal for it to see."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "can the Rust reader, the HTML reader and the nested-unit router classify this script's own "
-    "fixtures correctly, and is the allowlist both on disk AND tracked by git?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "whether any file in the tree is clean - this path sweeps nothing at all. Its PASSED is "
-    "evidence about the instrument, never about the copy."
-)
-
 # ── SCOPE ──────────────────────────────────────────────────────────────────────────
 # Every root here renders strings to a person. The reason is the load-bearing half:
 # it is what a future reader checks a NEW crate against before adding it.
@@ -1040,12 +1013,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
-
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     hits, skipped = findings()
     allow = read_allowlist(args.list)

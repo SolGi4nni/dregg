@@ -26,27 +26,6 @@
 //! the agent cell id derived from it without signing anything, so the cell can be
 //! funded before the claim is built.
 //!
-//! # ⚑ IT PLAYS THE GAME NOW (2026-08-07)
-//!
-//! A claim carries the played TRANSCRIPT, and the node refuses one whose rounds it
-//! did not itself classify. So this command can no longer take a code and post it:
-//! that is precisely the blind path that was closed. It now
-//!
-//! 1. opens a judged session against the authority's installed slot,
-//! 2. submits each code of `--code` as one burst, reading LOCKED/DRIFT back,
-//! 3. refuses to submit anything if the session did not SOLVE, and
-//! 4. builds the claim out of the transcript **the node reports**, never out of the
-//!    codes typed on the command line.
-//!
-//! Step 4 is not fussiness. If the node's stored transcript and the typed one
-//! disagree — a burst that landed but whose response was lost, a session already
-//! part-played in a browser — the node's copy is the one the gate compares against,
-//! and building from the typed copy would produce a carrier refused for a reason
-//! that reads like a judge failure.
-//!
-//! The session routes are AUTHENTICATED (`--bearer`, or loopback on a node with no
-//! passphrase set), while `…/claims` stays public.
-//!
 //! # What settles, and what does not
 //!
 //! `accepted: true` from the submit is ADMISSION STAGING and settles nothing — a
@@ -59,13 +38,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use dregg_sdk::poa_signal::{SIGNAL_MAX_TRANSCRIPT_ROUNDS, SignalClaimV1, SignalCode};
-use ed25519_dalek::{Signer as _, SigningKey};
+use dregg_sdk::poa_signal::{SignalClaimV1, SignalCode};
 use zeroize::Zeroizing;
 
-use crate::poa_signal_session::{
-    SignalCodeWireV1, guess_statement_message, open_statement_message,
-};
 use crate::poa_signal_slot_instance::{load_claim_document, parse_hex32};
 
 /// THE ONE SIGNAL CARRIER BUILDER.
@@ -115,18 +90,10 @@ pub struct PoaSignalSubmitClaimArgs {
     pub player_key_file: PathBuf,
     /// A `POA-SIGNAL-INSTANCE-PREVIEW-V1` document (step 4's output).
     pub claim_file: Option<PathBuf>,
-    /// The transcript to PLAY: `low,mid,high` triples in base six, separated by
-    /// `;`, in submission order, at most [`SIGNAL_MAX_TRANSCRIPT_ROUNDS`] of them.
-    ///
-    /// ⚠ These are guesses to spend bursts on, not a claim to post. The command
-    /// plays them through the judged session and settles only if the LAST one locks
-    /// all three bands.
+    /// `low,mid,high` in base six, for a claim typed by hand (a stranger's guess).
     pub code: Option<String>,
-    /// Mission the hand-typed transcript claims. Ignored when `--claim-file` is given.
+    /// Mission the hand-typed code claims. Ignored when `--claim-file` is given.
     pub mission_id: u64,
-    /// Bearer token for the AUTHENTICATED session routes. Omit on a node with no
-    /// passphrase set when connecting over loopback.
-    pub bearer: Option<String>,
     /// The turn nonce (`agent.state.nonce()`); 0 for a player's first turn.
     pub nonce: u64,
     /// The player's previous receipt hash, if it has acted before.
@@ -171,32 +138,11 @@ pub async fn submit_poa_signal_claim(args: &PoaSignalSubmitClaimArgs) -> Result<
         return Ok(report);
     }
 
-    let to_play = resolve_transcript(args)?;
+    let claim = resolve_claim(args)?;
     let previous_receipt_hash = match &args.previous_receipt_hash {
         Some(value) => Some(parse_hex32(value, "previous_receipt_hash")?),
         None => None,
     };
-
-    let base = args.endpoint.trim_end_matches('/');
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|error| format!("cannot build an HTTP client: {error}"))?;
-
-    // ── PLAY. The claim is built from what the NODE served, never from `to_play`. ─
-    let (mission_id, played) = play_judged_session(
-        &client,
-        base,
-        args.bearer.as_deref(),
-        authority_id,
-        &player,
-        &to_play,
-        &mut report,
-    )
-    .await?;
-    let claim = SignalClaimV1::new(mission_id, &played)
-        .map_err(|error| format!("the session transcript is not a legal claim: {error}"))?;
-
     let signed = signed_signal_claim_turn(
         &player,
         authority_id,
@@ -207,10 +153,15 @@ pub async fn submit_poa_signal_claim(args: &PoaSignalSubmitClaimArgs) -> Result<
     let wire = postcard::to_stdvec(&signed)
         .map_err(|error| format!("cannot encode the signed Signal carrier: {error}"))?;
 
+    let base = args.endpoint.trim_end_matches('/');
     let url = format!(
         "{base}/api/poa/signal/{}/claims",
         dregg_types::hex_encode(&authority_id)
     );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| format!("cannot build an HTTP client: {error}"))?;
     let response = client
         .post(&url)
         .header("content-type", "application/octet-stream")
@@ -284,217 +235,42 @@ async fn await_latest_height(
     }
 }
 
-/// The codes this invocation will SPEND BURSTS ON, in order.
-///
-/// ⚠ This is not the claim. The claim is assembled later from the transcript the
-/// node reports having served, because that is the copy the settlement gate
-/// compares against.
-fn resolve_transcript(args: &PoaSignalSubmitClaimArgs) -> Result<Vec<SignalCode>, String> {
-    let parse_one = |text: &str| -> Result<SignalCode, String> {
-        let bands: Vec<&str> = text.split(',').collect();
-        let [low, mid, high] = bands.as_slice() else {
-            return Err(
-                "--code must be `low,mid,high` triples in base six, separated by `;`".to_owned(),
-            );
-        };
-        let band = |value: &str, name: &str| {
-            value
-                .trim()
-                .parse::<u64>()
-                .map_err(|_| format!("--code {name} band is not a number"))
-        };
-        SignalCode::new(band(low, "low")?, band(mid, "mid")?, band(high, "high")?)
-            .map_err(|error| format!("illegal code: {error}"))
-    };
-
-    let transcript = match (&args.claim_file, &args.code) {
+fn resolve_claim(args: &PoaSignalSubmitClaimArgs) -> Result<SignalClaimV1, String> {
+    match (&args.claim_file, &args.code) {
         (Some(_), Some(_)) => {
-            return Err(
-                "--claim-file and --code both name the guesses; pass exactly one".to_owned(),
-            );
+            Err("--claim-file and --code both name the claim; pass exactly one".to_owned())
         }
-        // The operator preview holds the derived answer, so it plays as ONE burst.
-        // It is not a shortcut past the game: that burst is spent against the node's
-        // own oracle like any other, and the settlement carries it.
         (Some(path), None) => {
             let document = load_claim_document(path)?;
-            vec![
-                SignalCode::new(
-                    u64::from(document.code.low),
-                    u64::from(document.code.mid),
-                    u64::from(document.code.high),
-                )
-                .map_err(|error| format!("the preview carries an illegal code: {error}"))?,
-            ]
+            let code = SignalCode::new(
+                u64::from(document.code.low),
+                u64::from(document.code.mid),
+                u64::from(document.code.high),
+            )
+            .map_err(|error| format!("the preview carries an illegal code: {error}"))?;
+            SignalClaimV1::new(document.mission_id, code)
+                .map_err(|error| format!("the preview carries an illegal claim: {error}"))
         }
-        (None, Some(codes)) => codes
-            .split(';')
-            .filter(|part| !part.trim().is_empty())
-            .map(parse_one)
-            .collect::<Result<Vec<_>, _>>()?,
-        (None, None) => {
-            return Err(
-                "pass --claim-file (from `poa-signal-instance-preview`) or --code".to_owned(),
-            );
-        }
-    };
-    if transcript.is_empty() || transcript.len() > SIGNAL_MAX_TRANSCRIPT_ROUNDS {
-        return Err(format!(
-            "a judged run plays between 1 and {SIGNAL_MAX_TRANSCRIPT_ROUNDS} bursts; \
-             {} were given",
-            transcript.len()
-        ));
-    }
-    Ok(transcript)
-}
-
-fn wire_code(code: SignalCode) -> SignalCodeWireV1 {
-    SignalCodeWireV1 {
-        low: code.low(),
-        mid: code.mid(),
-        high: code.high(),
-    }
-}
-
-/// Open a judged session, spend one burst per code, and return the mission and the
-/// transcript **as the node reports it**.
-///
-/// Refuses — without submitting anything — if the run does not solve. A losing run
-/// settles nothing, and posting its carrier would buy a rejected turn and nothing
-/// else.
-async fn play_judged_session(
-    client: &reqwest::Client,
-    base: &str,
-    bearer: Option<&str>,
-    authority_id: [u8; 32],
-    player: &dregg_sdk::AgentCipherclerk,
-    to_play: &[SignalCode],
-    report: &mut String,
-) -> Result<(u64, Vec<SignalCode>), String> {
-    let authority_hex = dregg_types::hex_encode(&authority_id);
-    let player_key = player.public_key().0;
-    let signing = SigningKey::from_bytes(&player.gossip_signing_key().to_bytes());
-
-    let post = |path: String, body: serde_json::Value| {
-        let mut request = client
-            .post(format!("{base}{path}"))
-            .header("content-type", "application/json");
-        if let Some(token) = bearer {
-            request = request.bearer_auth(token);
-        }
-        request.json(&body).send()
-    };
-
-    // The slot is the node's, so the signed statements have to name the node's slot.
-    let opening: serde_json::Value = {
-        let response = client
-            .get(format!("{base}/api/poa/signal/{authority_hex}/slot"))
-            .send()
-            .await
-            .map_err(|error| format!("GET the open slot failed: {error}"))?;
-        response
-            .json()
-            .await
-            .map_err(|error| format!("the slot publication is not JSON: {error}"))?
-    };
-    let slot = opening["opening"]["statement"]["slot"]
-        .as_u64()
-        .ok_or_else(|| format!("no curator-signed slot is open on this authority: {opening}"))?;
-
-    let signature = signing.sign(&open_statement_message(authority_id, slot, player_key));
-    let response = post(
-        format!("/api/poa/signal/{authority_hex}/session/open"),
-        serde_json::json!({
-            "player_key": dregg_types::hex_encode(&player_key),
-            "signature": dregg_types::hex_encode(&signature.to_bytes()),
-        }),
-    )
-    .await
-    .map_err(|error| format!("opening a judged session failed: {error}"))?;
-    let status = response.status();
-    let mut session: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|error| format!("the session document is not JSON: {error}"))?;
-    if !status.is_success() {
-        return Err(format!("the node refused to open a session: {session}"));
-    }
-    report.push_str(&format!("session: slot {slot}, opened\n"));
-
-    for code in to_play {
-        if session["solved"].as_bool() == Some(true) {
-            break;
-        }
-        let round = session["rounds_used"]
-            .as_u64()
-            .ok_or_else(|| format!("the session document has no round count: {session}"))?
-            as u32;
-        let wire = wire_code(*code);
-        let signature = signing.sign(&guess_statement_message(
-            authority_id,
-            slot,
-            player_key,
-            round,
-            wire,
-        ));
-        let response = post(
-            format!("/api/poa/signal/{authority_hex}/session/guess"),
-            serde_json::json!({
-                "player_key": dregg_types::hex_encode(&player_key),
-                "round": round,
-                "guess": { "low": wire.low, "mid": wire.mid, "high": wire.high },
-                "signature": dregg_types::hex_encode(&signature.to_bytes()),
-            }),
-        )
-        .await
-        .map_err(|error| format!("spending burst {round} failed: {error}"))?;
-        let status = response.status();
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|error| format!("the guess reply is not JSON: {error}"))?;
-        if !status.is_success() {
-            return Err(format!("burst {round} was refused: {body}"));
-        }
-        session = body;
-        let served = &session["transcript"][round as usize];
-        report.push_str(&format!(
-            "  burst {round}: {},{},{}  LOCKED {} DRIFT {}\n",
-            wire.low, wire.mid, wire.high, served["exact"], served["present"]
-        ));
-    }
-
-    let settlement = &session["settlement"];
-    if settlement.is_null() {
-        return Err(format!(
-            "{report}the run did not solve: {} of {} bursts spent and no settlement. \
-             Nothing was submitted — a losing transcript is refused on chain and buys a \
-             rejected turn.",
-            session["rounds_used"], session["max_rounds"]
-        ));
-    }
-    let mission_id = settlement["mission_id"]
-        .as_u64()
-        .ok_or_else(|| format!("the settlement names no mission: {settlement}"))?;
-    let played = settlement["transcript"]
-        .as_array()
-        .ok_or_else(|| format!("the settlement carries no transcript: {settlement}"))?
-        .iter()
-        .map(|entry| {
-            let band = |name: &str| {
-                entry[name]
-                    .as_u64()
-                    .ok_or_else(|| format!("the settlement transcript has no {name} band"))
+        (None, Some(code)) => {
+            let bands: Vec<&str> = code.split(',').collect();
+            let [low, mid, high] = bands.as_slice() else {
+                return Err("--code must be `low,mid,high` in base six".to_owned());
             };
-            SignalCode::new(band("low")?, band("mid")?, band("high")?)
-                .map_err(|error| format!("the settlement transcript is illegal: {error}"))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    report.push_str(&format!(
-        "  SOLVED in {} bursts; settling with the node's own transcript\n",
-        played.len()
-    ));
-    Ok((mission_id, played))
+            let band = |value: &str, name: &str| {
+                value
+                    .trim()
+                    .parse::<u64>()
+                    .map_err(|_| format!("--code {name} band is not a number"))
+            };
+            let code = SignalCode::new(band(low, "low")?, band(mid, "mid")?, band(high, "high")?)
+                .map_err(|error| format!("illegal code: {error}"))?;
+            SignalClaimV1::new(args.mission_id, code)
+                .map_err(|error| format!("illegal claim: {error}"))
+        }
+        (None, None) => {
+            Err("pass --claim-file (from `poa-signal-instance-preview`) or --code".to_owned())
+        }
+    }
 }
 
 /// Load the player's signing identity from a 64-hex seed file.
@@ -532,14 +308,7 @@ mod tests {
     #[test]
     fn the_built_carrier_satisfies_the_public_route_s_own_predicate() {
         let player = player();
-        let claim = SignalClaimV1::new(
-            1,
-            &[
-                SignalCode::new(0, 0, 0).unwrap(),
-                SignalCode::new(5, 0, 3).unwrap(),
-            ],
-        )
-        .unwrap();
+        let claim = SignalClaimV1::new(1, SignalCode::new(5, 0, 3).unwrap()).unwrap();
         let signed = signed_signal_claim_turn(&player, [0x44; 32], 0, None, claim);
 
         let wire = postcard::to_stdvec(&signed).expect("encode");
@@ -561,9 +330,9 @@ mod tests {
     #[test]
     fn a_substituted_code_breaks_the_envelope_signature() {
         let player = player();
-        let claim = SignalClaimV1::new(1, &[SignalCode::new(5, 0, 3).unwrap()]).unwrap();
+        let claim = SignalClaimV1::new(1, SignalCode::new(5, 0, 3).unwrap()).unwrap();
         let honest = signed_signal_claim_turn(&player, [0x44; 32], 0, None, claim);
-        let other = SignalClaimV1::new(1, &[SignalCode::new(4, 0, 3).unwrap()]).unwrap();
+        let other = SignalClaimV1::new(1, SignalCode::new(4, 0, 3).unwrap()).unwrap();
         let mut forged = signed_signal_claim_turn(&player, [0x44; 32], 0, None, other);
         // Keep the honest signature, swap in the other claim's body.
         forged.signature = honest.signature;
@@ -579,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn a_transcript_is_parsed_as_ordered_base_six_triples() {
+    fn a_code_is_parsed_as_three_base_six_bands() {
         let base = PoaSignalSubmitClaimArgs {
             endpoint: "http://127.0.0.1:1".to_owned(),
             authority_id: "44".repeat(32),
@@ -587,57 +356,39 @@ mod tests {
             claim_file: None,
             code: Some("5,0,3".to_owned()),
             mission_id: 1,
-            bearer: None,
             nonce: 0,
             previous_receipt_hash: None,
             identity_only: false,
             await_latest_height: None,
             await_timeout_secs: 60,
         };
-        let one = resolve_transcript(&base).expect("a legal code");
-        assert_eq!(one.len(), 1);
-        assert_eq!((one[0].low(), one[0].mid(), one[0].high()), (5, 0, 3));
+        let claim = resolve_claim(&base).expect("a legal code");
+        assert_eq!(claim.mission_id(), 1);
+        assert_eq!(
+            (claim.code().low(), claim.code().mid(), claim.code().high()),
+            (5, 0, 3)
+        );
 
-        // The whole point of the flag day: a run is a SEQUENCE of bursts, and its
-        // order is load-bearing (`SignalTriangulation.replay` is fail-stop and
-        // scores them left to right).
-        let many = resolve_transcript(&PoaSignalSubmitClaimArgs {
-            code: Some("0,0,0;3,3,3;5,0,3".to_owned()),
+        let out_of_band = PoaSignalSubmitClaimArgs {
+            code: Some("6,0,0".to_owned()),
             ..base.clone()
-        })
-        .expect("a legal transcript");
-        assert_eq!(many.len(), 3);
-        assert_eq!((many[0].low(), many[0].mid(), many[0].high()), (0, 0, 0));
-        assert_eq!((many[2].low(), many[2].mid(), many[2].high()), (5, 0, 3));
-
+        };
         assert!(
-            resolve_transcript(&PoaSignalSubmitClaimArgs {
-                code: Some("6,0,0".to_owned()),
-                ..base.clone()
-            })
-            .is_err(),
+            resolve_claim(&out_of_band).is_err(),
             "band 6 is not base six"
         );
+
+        let both = PoaSignalSubmitClaimArgs {
+            claim_file: Some(PathBuf::from("/dev/null")),
+            ..base.clone()
+        };
         assert!(
-            resolve_transcript(&PoaSignalSubmitClaimArgs {
-                code: Some("0,0,0;0,0,0;0,0,0;0,0,0;0,0,0;0,0,0".to_owned()),
-                ..base.clone()
-            })
-            .is_err(),
-            "a sixth burst is outside SignalTriangulation.MAX_TURNS"
+            resolve_claim(&both).is_err(),
+            "two claim sources is ambiguous"
         );
-        assert!(
-            resolve_transcript(&PoaSignalSubmitClaimArgs {
-                claim_file: Some(PathBuf::from("/dev/null")),
-                ..base.clone()
-            })
-            .is_err(),
-            "two guess sources is ambiguous"
-        );
-        assert!(
-            resolve_transcript(&PoaSignalSubmitClaimArgs { code: None, ..base }).is_err(),
-            "no guess source at all"
-        );
+
+        let neither = PoaSignalSubmitClaimArgs { code: None, ..base };
+        assert!(resolve_claim(&neither).is_err(), "no claim source at all");
     }
 
     /// A key file is a SEED, not a public key: the printed identity must be the

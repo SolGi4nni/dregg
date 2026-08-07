@@ -22,9 +22,6 @@
 //!
 //! Both poles are `#[ignore]` (real recursion, minutes). Run with:
 //!   cargo test -p dregg-circuit-prove --test hatchery_binding_deployed_tooth -- --ignored --nocapture
-//!
-//! ANSWERS:         does a real 2-turn hatchery-mint chain whose contract_hash8 octet is published at PI 55..62 fold plus light-client-verify, and is an attestation bundle claiming a contract_hash that differs in ONE BIT refused by the segmented hatchery-binding node with a WitnessConflict?
-//! DOES NOT ANSWER: whether the contract hash ATTESTS anything. It is the literal 0xC7 octet threaded through RotationCarrierMaterial and no HpresProof is verified in this file, so the fold binds two copies of one constant. As in the factory tooth, pinned_factory_twin may also be a Rust-side pin transform rather than the committed registry row.
 
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
@@ -58,18 +55,6 @@ use dregg_circuit_prove::joint_turn_aggregation::{
     CarrierWitness, DescriptorParticipant, HatcheryWitnessBundle, RotatedParticipantLeg,
 };
 use dregg_turn::rotation_witness as rw;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         does a real 2-turn hatchery-mint chain whose contract_hash8 octet is published at PI 55..62 fold plus light-client-verify, and is an attestation bundle claiming a contract_hash that differs in ONE BIT refused by the segmented hatchery-binding node with a WitnessConflict?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether the contract hash ATTESTS anything. It is the literal 0xC7 octet threaded through RotationCarrierMaterial and no HpresProof is verified in this file, so the fold binds two copies of one constant. As in the factory tooth, pinned_factory_twin may also be a Rust-side pin transform rather than the committed registry row."
-    );
-}
 
 // ============================================================================
 // Fixtures (the factory-leg fixtures — the hatchery rides the same leg)
@@ -319,7 +304,6 @@ fn build_chain(bundle: HatcheryWitnessBundle) -> Vec<FinalizedTurn> {
 #[test]
 #[ignore = "SLOW: real deployed hatchery-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_hatchery_turn_honest_accepts() {
-    scope();
     let turns = build_chain(attestation_bundle(&[0xC7u8; 32]));
     let whole = prove_turn_chain_recursive(&turns)
         .expect("the honest hatchery-bearing chain must fold through the deployed prover");
@@ -337,7 +321,6 @@ fn deployed_hatchery_turn_honest_accepts() {
 #[test]
 #[ignore = "SLOW: real deployed hatchery-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_hatchery_turn_forged_contract_hash_rejected() {
-    scope();
     // ── S1 HONEST POLE FIRST, in THIS test. The forged chain below differs from this one by a
     //    SINGLE BIT of the contract_hash, so without an accept here the refusal proves nothing: an
     //    arm that refuses every chain of this shape would satisfy the assertion below just as well.

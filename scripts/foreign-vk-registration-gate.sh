@@ -42,18 +42,6 @@ for a in "$@"; do
   esac
 done
 
-# ── SCOPE ─ this block is the ONLY copy; it prints on every run, pass or fail. --self-test
-# is a strict SUPERSET (steps 1-3 run unchanged and step 4 is added), so it gets its own pair
-# rather than replacing the one below. ─────────────────────────────────────────────────
-if [ "$SELFTEST" = 1 ]; then
-  SCOPE_A='everything the bare run asks, with the whole green path running unchanged, plus: does the same gate exit NON-ZERO when the only key it is handed has one byte bent off the Pallas curve, and when the key directory does not exist?'
-  SCOPE_D='whether the gate refuses what a real adversary would send. Two red legs — one bend and one absence — show the INSTRUMENT can fire against the very acceptance path above; neither says that a stored key is the key the Lean emission meant, and no other bend is tried.'
-else
-  SCOPE_A='does pickles-vk-derive turn the Lean-emitted KimchiWrapMain gate list into at least three Side_loaded_verification_key JSON files, does foreign-vk-register-gate.ts exit 0 under ts-node while building the account update, round-tripping it through the o1js codec, applying it on an in-process LocalBlockchain and reading the key back off the account, and does npx tsc --noEmit report no error naming ForeignVerificationKey.ts or foreign-vk-register-gate.ts?'
-  SCOPE_D='whether the key VERIFIES anything, or reaches any network. Acceptance here is that Mina transaction logic STORED the bytes and returned them unchanged; the only chain is an in-process LocalBlockchain, step F prints the devnet submit command and stops, and the typecheck leg is a FILENAME grep over a package-wide tsc run that tolerates every other error in it.'
-fi
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' "$SCOPE_A" "$SCOPE_D"
-
 fails=0
 step() { echo; echo "── $* ──────────────────────────────────────────"; }
 note() { echo "   $*"; }

@@ -172,24 +172,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# ── SCOPE ─ these printfs are the ONLY copy; one prints on every run, pass or fail, because
-# the misreads this convention exists to stop happened to people reading RESULTS, not source.
-# Placed after the argument loop because the three modes answer three DIFFERENT questions,
-# and below the header block that `--help` prints so that output is unchanged. ──────────────
-if [ "$SELF_TEST_ONLY" -eq 1 ]; then
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'can the ratchet go RED - do six synthetic logs plus an over-ceiling known-red file drive judge_against_known_red to the specified exit codes?' \
-    'whether any real crate-feature pair compiles. --self-test runs no cargo, reads neither the real T3 plan nor the real scripts/feature-t3-known-red.tsv, and exits before the sweep.'
-elif [ -n "$JUDGE_LOG" ]; then
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'does the PASS/FAIL column of a sweep log SOMEONE ELSE produced match scripts/feature-t3-known-red.tsv in both directions, with that file under the ceiling in this script?' \
-    'whether that log describes this tree or this commit. No cargo runs in this mode, the log is taken as given, and a pair absent from it is simply not judged.'
-else
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'does cargo check -p CRATE --features FEATURE --all-targets succeed for every T3 pair in the plan emitted by check-feature-tiers.py, and does the resulting PASS/FAIL set match scripts/feature-t3-known-red.tsv in BOTH directions - a new FAIL reds, a recorded-broken pair that now passes reds?' \
-    'whether a feature WORKS, or that one test under it ran. This is cargo check only: nothing is linked and nothing is executed, so a pair can be green here with every test inside it unable to fire. A shard judges only the pairs it ran, and pairs outside T3 are never touched.'
-fi
-
 if [ "$SELF_TEST_ONLY" -eq 1 ]; then
   echo "feature-t3-sweep --self-test: can the ratchet go RED? (synthetic logs; no cargo)"
   self_test; exit $?

@@ -32,11 +32,6 @@ EMPTY_BASELINE="$(mktemp)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP" "$EMPTY_BASELINE"' EXIT
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'can each mirror gate still BARK — is every file under canary/ TRACKED, is the clean fixture GREEN under gates A, D1, D2, D3, G1 and G2 when copied outside the repo, does each reintroduced mirror fixture drive its gate RED naming at least two sites, and does removing that fixture return the gate to GREEN so the bark is attributable to the mirror and not the fixture?' \
-  'whether THIS repository has a mirror. Every verdict here is read off miniature fixtures copied into a temp dir against an EMPTY baseline; the real tree, the real scripts/mirror-gates/baseline.txt and the real allow comments are never consulted. That is check-mirror-gates.sh, which runs this first precisely because its own GREEN carries no information unless the gates are awake.'
-
 pass=0; fail=0
 ok()   { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=$((fail+1)); }

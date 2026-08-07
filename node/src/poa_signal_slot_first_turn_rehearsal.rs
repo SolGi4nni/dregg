@@ -542,14 +542,6 @@ async fn the_first_turn_ceremony_settles_when_driven_by_the_commands() {
     );
 
     // ── STEPS 5-6 — THE NEW COMMAND, over real TCP, waiting on the real number.
-    //
-    // ⚑ `poa-signal-submit-claim` PLAYS before it settles. The preview names the
-    // derived answer, and the command spends one burst on it through the judged
-    // session routes over this same loopback endpoint before building the carrier
-    // — because a claim must carry a transcript the node itself classified. The
-    // operator who holds the slot secret is not exempt from that; deriving the
-    // answer is not the same as having played the game, and the chain only settles
-    // the latter.
     let report = step(
         "poa-signal-submit-claim",
         &node_bin,
@@ -710,7 +702,7 @@ async fn an_underfunded_player_is_refused_with_the_fee_named() {
         .expect("insert the underfunded player");
     let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
         MISSION_ID,
-        &[dregg_sdk::poa_signal::SignalCode::new(1, 2, 3).unwrap()],
+        dregg_sdk::poa_signal::SignalCode::new(1, 2, 3).unwrap(),
     )
     .unwrap();
     let turn = dregg_sdk::poa_signal::signal_claim_turn(&player.public_key().0, 0, None, claim);

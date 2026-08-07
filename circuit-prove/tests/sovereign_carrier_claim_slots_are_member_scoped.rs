@@ -15,10 +15,8 @@
 //! turn-build material into a `CarrierWitness` and attached it to a `RotatedParticipantLeg`; its
 //! own test header called the result *"the ARM-ADMISSIBLE honest shape"*. It was not admissible.
 //! The only leg the SDK could reach is what `dregg_turn_prover::rotation_witness::
-//! mint_rotated_participant_leg` mints for a value cohort — `transferVmDescriptor2R24`, **61
-//! public inputs** — and the deployed fold answered (the message below is the pre-compaction
-//! shape, at 68 PIs and claim `[58..62)`; every number in it moved down by seven on 2026-08-07
-//! and the refusal is unchanged):
+//! mint_rotated_participant_leg` mints for a value cohort — `transferVmDescriptor2R24`, **68
+//! public inputs** — and the deployed fold answered:
 //!
 //! ```text
 //! TurnProofInvalid { index: 0, reason: "carrier 'sovereign': the claim slice [58..62) overlaps
@@ -30,16 +28,15 @@
 //!
 //! The obvious reading of that refusal is "the transfer member does not publish teeth there".
 //! **It does.** Measured on the committed descriptor: `transferVmDescriptor2R24` carries a real
-//! `PiBinding` at every one of the four claim slots — because on a 61-PI leg the last 16 PIs ARE
-//! the two 8-felt wide state anchors, so the sovereign claim slice lands on **before-anchor lanes
-//! 6-7 and after-anchor lanes 0-1**. (The arithmetic is stated symbolically in
-//! `sovereign_claim_admissible` below and cascaded through the 2026-08-07 compaction unchanged.)
+//! `PiBinding` at every one of PIs 58, 59, 60, 61 — because on a 68-PI leg the last 16 PIs
+//! (`52..68`) ARE the two 8-felt wide state anchors, so the sovereign claim slice lands on
+//! **before-anchor lanes 6-7 and after-anchor lanes 0-1**.
 //!
 //! So condition 3 (`a genuine PiBinding at every claim slot`) is satisfied by a value-cohort leg,
 //! and the ONLY thing refusing it is condition 2, the claim/anchor overlap arithmetic. Had the
 //! gate been written as the pin check alone, a sovereign authority tuple would have been folded
 //! against four lanes of the leg's own state commitment read as a key commitment. The deployed
-//! sovereign member is sized to clear this exactly: 71 PIs = `claim.end + 16`, with the
+//! sovereign member is sized to clear this exactly: 78 PIs = `claim.end (62) + 16`, with the
 //! teeth at columns 93..96 — nowhere near its anchor columns.
 //!
 //! ## The anti-vacuity pole is load-bearing too

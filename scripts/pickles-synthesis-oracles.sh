@@ -46,11 +46,6 @@ for a in "$@"; do
   esac
 done
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'does every green-or-bust step listed below exit 0 — the diff-oracle harness engine and the multiblock-conformance red paths, the four .mjs byte-diff oracles against o1js and against the compiled Mina circuit blobs, the wrap and step region- and shape-conformance gates with their self-tests, the emit-provenance freshness floor, the prover-freedom ratchet, the three ts-node statement oracles against devnet block 539508, the VK-derivation and proof-marshal gates, and the Lean-versus-proof-systems cross-implementation differential — with exit 3 named BLOCKED and still counted as a failure?' \
-  'whether any of it VERIFIES. Every step is a BYTE DIFF against one reference (one o1js render, one devnet block, one compiled blob) or a red-path proof of a differ; byte-agreement and successful parsing are not membership, and no proof produced here is verified by a Mina node. ⚠ --no-ts and --no-xi DROP steps while the closing line still reads ALL GREEN and still names the cross-implementation differential.'
-
 # The green-or-bust diffs. `custom-gate-oracle.mjs` is a DUMP (always exit 0), not a gate — omitted.
 MJS_ORACLES=(
   "custom-gate-diff.mjs"               # R2: emitted custom-gate typ+coeffs (poseidon 165 coeffs) vs o1js

@@ -29,11 +29,6 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'does the DREGG_CLOSURE_HASH string recorded in dregg-lean-ffi/lean-seed.pin equal the closure hash scripts/lean-seed-key.sh computes from the Dregg2.FFI closure files ON DISK in this checkout — with an EMPTY pin field treated as maximal drift and failed outright, and any other mismatch reported always but failed only past the --max-days threshold measured from the pin GENERATED_UTC?' \
-  'whether any seed asset EXISTS or is fetchable — nothing here touches the network or a release, it compares two strings, one of them typed into a committed file. It says nothing about what is IN an archive (that is scripts/check-lean-seed-closure.sh), nothing about whether an archive MEMBER is older than the .lean it was compiled from (that is scripts/check-lean-seed-member-freshness.py and dregg-lean-ffi/tests/linked_archive_freshness.rs — its absence is what let deployed_constraint_probe print `8 passed` for a week with six assertions false), and a matching hash never means the ~43 verified-gate tests ran.'
-
 MAX_DAYS="${DREGG_SEED_MAX_DAYS:-14}"
 [ "${1:-}" = "--max-days" ] && { MAX_DAYS="$2"; shift 2; }
 

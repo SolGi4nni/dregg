@@ -33,9 +33,6 @@
 //! This makes the premise of Lean `DslBindingFromFold.dsl_binding_from_fold` TRUE on the
 //! deployed path. The folds are real recursion (minutes), so those poles are `#[ignore]`:
 //!   cargo test -p dregg-circuit-prove --test dsl_binding_deployed_tooth -- --ignored --nocapture
-//!
-//! ANSWERS:         do the committed transfer and makeSovereign rows carry the DFA route-commitment pins at PI 46..49 and 54..57, does a real 2-turn Dfa-gated transfer chain fold plus light-client-verify, is an rc with lane 0 perturbed by ONE refused by the segmented dsl-binding node with a WitnessConflict, and is a Dsl witness attached to a zero-rc leg refused before any fold?
-//! DOES NOT ANSWER: whether the Dfa predicate GATES anything on the deployed turn. It is a PRECONDITION caveat the deployed executor does not enforce, and the re-proven program is a 3-column toy advance DFA written in this file, so a bound rc says a verifying sub-proof of those two wire PIs exists — never that any route was required, taken, or is the one a policy names.
 
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
@@ -66,18 +63,6 @@ use dregg_circuit_prove::joint_turn_aggregation::{
     CarrierWitness, DescriptorParticipant, DslWitnessBundle, RotatedParticipantLeg,
 };
 use dregg_turn::rotation_witness as rw;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         do the committed transfer and makeSovereign rows carry the DFA route-commitment pins at PI 46..49 and 54..57, does a real 2-turn Dfa-gated transfer chain fold plus light-client-verify, is an rc with lane 0 perturbed by ONE refused by the segmented dsl-binding node with a WitnessConflict, and is a Dsl witness attached to a zero-rc leg refused before any fold?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether the Dfa predicate GATES anything on the deployed turn. It is a PRECONDITION caveat the deployed executor does not enforce, and the re-proven program is a 3-column toy advance DFA written in this file, so a bound rc says a verifying sub-proof of those two wire PIs exists — never that any route was required, taken, or is the one a policy names."
-    );
-}
 
 // ============================================================================
 // Fixtures
@@ -381,14 +366,13 @@ fn build_chain(leg_rc: [BabyBear; DFA_RC_LEN]) -> Vec<FinalizedTurn> {
 /// anchors 62..77, 78 PIs).
 #[test]
 fn rc_slot_derivation_is_registry_grounded() {
-    scope();
     let transfer = deployed_wide_descriptor("transferVmDescriptor2R24");
     assert_eq!(
         dsl_rc_claim_pi_lo(&transfer).expect("transfer row carries the rc pins"),
         46,
         "wide transfer publishes rc at PI 46..49"
     );
-    assert_eq!(transfer.public_input_count, 61);
+    assert_eq!(transfer.public_input_count, 68);
 
     let sovereign = deployed_wide_descriptor("makeSovereignVmDescriptor2R24");
     assert_eq!(
@@ -396,7 +380,7 @@ fn rc_slot_derivation_is_registry_grounded() {
         54,
         "wide makeSovereign publishes rc at PI 54..57 (record-pin8 first, teeth after)"
     );
-    assert_eq!(sovereign.public_input_count, 71);
+    assert_eq!(sovereign.public_input_count, 78);
 }
 
 /// POSITIVE POLE — an honest Dfa-gated transfer (published rc ==
@@ -406,7 +390,6 @@ fn rc_slot_derivation_is_registry_grounded() {
 #[test]
 #[ignore = "SLOW: real deployed dsl-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_dfa_turn_honest_accepts() {
-    scope();
     let rc = dfa_route_commitment(&dfa_wire_pis());
     // The proof-bind flag day widened `custom_proof_pi_commitment` to the full 8-felt squeeze;
     // the deployed 4-felt rc carrier stays byte-identical to its FIRST squeeze block (the
@@ -436,7 +419,6 @@ fn deployed_dfa_turn_honest_accepts() {
 #[test]
 #[ignore = "SLOW: real deployed dsl-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_dfa_turn_forged_rc_rejected() {
-    scope();
     let real = dfa_route_commitment(&dfa_wire_pis());
 
     // ── S1 HONEST POLE FIRST, in THIS test. The forged chain below differs from this one by a
@@ -469,7 +451,6 @@ fn deployed_dfa_turn_forged_rc_rejected() {
 #[test]
 #[ignore = "SLOW: mints two real wide legs (~minutes); run with --ignored"]
 fn deployed_dfa_zero_sentinel_witness_refused() {
-    scope();
     let t0_leg = mint_dfa_leg(
         1000,
         7,

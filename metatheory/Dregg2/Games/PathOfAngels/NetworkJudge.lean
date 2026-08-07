@@ -4,14 +4,9 @@
 This is the first complete internal settlement evaluator for a PoA minigame.  The
 node supplies one canonical `NetworkJudgeWire` value.  Lean reconstructs the complete
 world, canon, active configuration, finalized carrier, and request; checks that
-the configuration is the Signal program emitted by `Emit`; replays the submitted
-Signal TRANSCRIPT — one to `SignalTriangulation.MAX_TURNS` actions, in the order
-they were played — through `judgeActive`; applies its closed `GameEffect`; and emits
-a canonical successor plus the semantic receipt.
-
-⚑ It replayed "exactly one Signal action" until 2026-08-07, and that sentence was
-true of the code (`signalActions?`, formerly `oneSignalAction?`, matched a singleton
-and refused everything else).  See that definition for what it cost.
+the configuration is the Signal program emitted by `Emit`; replays exactly one
+Signal action through `judgeActive`; applies its closed `GameEffect`; and emits a
+canonical successor plus the semantic receipt.
 
 There is intentionally no Rust-shaped alternate judge in this module.  This
 function becomes authoritative only when the node adapter replaces caller data
@@ -98,33 +93,13 @@ def claimOf (input : SemanticInput) : RunClaim := {
   claimedPreviousPlayerCounter := input.request.previousPlayerCounter
 }
 
-/-- The submitted transcript, in the order it was played.
-
-⚑ **THIS WAS `oneSignalAction?`, AND IT MATCHED `[wireAction]`.** A request with two
-or more actions returned `none`, so `settle` refused it and the whole node reported
-`LeanRejected`.  `SignalTriangulation.judge` has always taken a `List Action` and
-`replay`ed it, `NetworkJudgeWire.WIRE_ACTION_LIMIT` has always been
-`SignalTriangulation.MAX_TURNS = 5`, and `parseActions` has always parsed up to five
-— but this boundary let exactly one through.  The judged game was therefore a
-ONE-ROUND game: the only transcript the network could score was a single guess, which
-is precisely what made a blind 1-in-216 claim the whole of judged play.
-
-The RULE is untouched.  `replay` is fail-stop, `step` refuses once `solved`, and
-`terminalOutput` refuses an unsolved final state, so a transcript still settles only
-if its LAST round locks all three bands and nothing follows it.  What changed is that
-the boundary now hands `judge` the list it was always written to score.
-
-An EMPTY transcript is refused here rather than one line later: `replay` on `[]`
-returns `initialState`, whose `solved` is false, so `judge` would refuse it anyway —
-but a run with no rounds is not a game and saying so at the boundary is where the
-reason is legible. -/
-def signalActions? (request : SignalRequestWire) :
-    Option (List SignalTriangulation.Action) :=
+def oneSignalAction? (request : SignalRequestWire) :
+    Option SignalTriangulation.Action := do
   match request.actions with
-  | [] => none
-  | actions =>
-      actions.mapM (fun wireAction =>
-        (SignalTriangulation.Action.submit ·) <$> wireAction.toSemantic?)
+  | [wireAction] =>
+      let action ← wireAction.toSemantic?
+      some (.submit action)
+  | _ => none
 
 /-! ## Proof-carrying settlement -/
 
@@ -152,12 +127,12 @@ def Settlement.successorWorld (settlement : Settlement) : WorldState :=
 no accepted no-op and no partial Canon write. -/
 def settle (input : SemanticInput) : Option Settlement :=
   if preStateChecks input then
-    match signalActions? input.request with
+    match oneSignalAction? input.request with
     | none => none
-    | some actions =>
+    | some action =>
         let active := activeOf input
         let claim := claimOf input
-        let submitted : SubmittedRun := .signal actions
+        let submitted : SubmittedRun := .signal [action]
         match hj : judgeActive active input.carrier claim submitted with
         | none => none
         | some judgedRun =>

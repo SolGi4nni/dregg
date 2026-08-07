@@ -67,12 +67,6 @@ while [ $# -gt 0 ]; do
     *) echo "check-p3-rev: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
 done
-
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'does every consumer on the hand-maintained list inside this script — three workflow files scanned for any 40-hex token, wasm/Cargo.toml, two more workflows scanned for REV=<hex>, the root Cargo.toml pin resolved through the full sha Cargo.lock recorded, and the RECURSION_P3_REV constant in circuit-prove — still carry a pin at all, and does each one equal P3_REV as declared in scripts/p3-rev.env?' \
-  'whether the pinned rev is the RIGHT one, or whether anything was built from it. This is a text comparison over a hand-maintained consumer list: a NEW file that pins the fork rev is not on the list and is never read, Cargo.lock records what cargo resolved rather than what any deployed binary or VK was compiled from, and lockstep across the mirrors is no evidence about how the recursive verifier behaves. Under --rev the subject is a git-archive extract of that commit, not the working tree.'
-
 REV_TMP=""
 rev_cleanup() { [ -n "${REV_TMP:-}" ] && rm -rf "$REV_TMP"; return 0; }
 trap rev_cleanup EXIT

@@ -512,29 +512,18 @@ fn verify_judge_bindings(
             "exact Signal claim mission differs from judged mission".into(),
         ));
     }
-    // The judged transcript is the WHOLE played game, round for round, in order —
-    // not the solving code alone. Before 2026-08-07 this required exactly one
-    // action, because a claim carried exactly one code; an export whose judge input
-    // held five rounds would have been refused as "action is absent", which is the
-    // shape of a check that outlives the wire it was written for.
-    let transcript = claim.transcript();
     let actions = value_at(input, &["request", "actions"])
         .and_then(Value::as_array)
-        .filter(|actions| actions.len() == transcript.len())
-        .ok_or_else(|| {
-            AuthorityExportError::Binding(
-                "judged transcript is absent or is a different length than the exact claim".into(),
-            )
-        })?;
-    for (action, code) in actions.iter().zip(transcript) {
-        if action.get("low").and_then(Value::as_u64) != Some(u64::from(code.low()))
-            || action.get("mid").and_then(Value::as_u64) != Some(u64::from(code.mid()))
-            || action.get("high").and_then(Value::as_u64) != Some(u64::from(code.high()))
-        {
-            return Err(AuthorityExportError::Binding(
-                "exact Signal claim transcript differs from the judged actions".into(),
-            ));
-        }
+        .filter(|actions| actions.len() == 1)
+        .ok_or_else(|| AuthorityExportError::Binding("judge request action is absent".into()))?;
+    let code = claim.code();
+    if actions[0].get("low").and_then(Value::as_u64) != Some(u64::from(code.low()))
+        || actions[0].get("mid").and_then(Value::as_u64) != Some(u64::from(code.mid()))
+        || actions[0].get("high").and_then(Value::as_u64) != Some(u64::from(code.high()))
+    {
+        return Err(AuthorityExportError::Binding(
+            "exact Signal claim code differs from judged action".into(),
+        ));
     }
     for (name, expected) in [
         ("federation_id", export.federation_id.as_str()),

@@ -57,11 +57,6 @@ for a in "$@"; do
   esac
 done
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'does every file under bridge/tools/fixtures/mina-bestchain appear in the git INDEX, and does mina-tip, run on that committed bundle, fold each candidate transition-chain proof on the openmina Poseidon from the frontier root of the serving peer to the tip it claims, refuse all seven forgeries of its own --self-test with at least two of them dying on the FOLD rather than a shape check, and print at least six coverage-map lines in which every BOUND region refused every sampled bit flip?' \
-  'whether the anchored tip is the chain the network selected, or the chain this node is on. The bundle is a COMMITTED FIXTURE captured once; without --live nothing is fetched, the GraphQL observer in bridge/src/mina_observer.rs and mina_head are never invoked, and an anchor reaches only the frontier root of the peer that served it — measured at k=290 blocks, not genesis and not the weak-subjectivity pin.'
-
 # ── the binary ────────────────────────────────────────────────────────────────
 MINA_TIP="${MINA_TIP:-}"
 if [ -z "$MINA_TIP" ]; then

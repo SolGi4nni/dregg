@@ -50,11 +50,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'diffing the descriptor subpath at the base ref (DRIFT_TAXONOMY_BASE_REF, else origin/main, else main) against the same subpath in the working tree or in a --rev archive extract, does any member present on BOTH sides change trace_width, change its shared [0..46) PI-prefix binding map, get removed or reordered, or move its fingerprint by anything other than adding a tail PI binding — and if so, was DREGG_ALLOW_REGENESIS=1 set?' \
-  'whether the change is correct, or whether a re-genesis happened. It is a JSON and TSV diff of two descriptor sets on four extracted signals; it never builds, never proves, and never checks that the descriptors match the Lean that emits them (that is check-descriptor-drift.sh). A TAIL-APPEND verdict says the deployed cohort geometry did not move, not that the appended members are sound — and exit 0 under DREGG_ALLOW_REGENESIS=1 records an acknowledgement, not a wipe.'
-
 NEW="$ROOT/$SUBPATH"
 NEW_LABEL="working tree"
 REV_TMP=""

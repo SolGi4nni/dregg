@@ -152,33 +152,6 @@ POLICY_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "recursion-closure-policy.tsv"
 )
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
-SCOPE_ANSWERS = (
-    "do all of scripts/recursion-closure-policy.tsv's rows hold against `cargo metadata`'s "
-    "resolve — no normal/build path from each FORBIDden workspace member to its target "
-    "(`@recursion` expanding to the MARK set), a path for each REQUIRE, a ONE-HOP DECLARED "
-    "edge for each REQUIRE_DIRECT — with every MARK, crate and target naming a package that "
-    "exists, over at least 200 workspace members?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether any crate USES the edge it is allowed, or whether the tree is recursion-free "
-    "anywhere the policy is silent. It is a dependency-GRAPH question about the rows of one "
-    "TSV, read at the DEFAULT feature selection and UNFILTERED BY PLATFORM (1024 resolve "
-    "edges carry a `cfg(...)` target and every one of them counts): 123 of 227 members "
-    "legitimately reach the fork and are never examined, a `[features]`-gated edge is a "
-    "door in a wall this does not watch, and `dregg-turn` clearing every FORBID row says "
-    "nothing about whether it can verify a root."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "can the policy engine fire — is the real resolve green as CONTROL (which is itself the "
-    "proof that DEV edges are excluded), and do five in-memory GRAPH faults, three "
-    "policy-shaped faults and a blinded reader each go red with the expected finding kind?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "whether the policy rows are the RIGHT rows. Faults go into the in-memory graph, never "
-    "the tree; a firewall nobody wrote down is one this cannot fail."
-)
-
 
 def repo_root() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
@@ -757,12 +730,8 @@ def main() -> int:
 
     root = repo_root()
     if args.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return run_self_test(root)
 
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
     print("check-recursion-closure: the recursion firewall, against `cargo metadata`'s resolve")
     pol = read_policy()
     g = load_graph(root)

@@ -141,56 +141,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ALLOW = ROOT / "scripts" / "prose-claims-allow.tsv"
-
-# ── SCOPE ─ these three pairs are the ONLY copy, one per mode, and each prints on every run of
-# ITS mode, pass or fail. The three modes answer three different questions. ─────────────────────
-SCOPE_ANSWERS = (
-    "over the WORKING TREE, walking .rs and .ts files only (never .d.ts, never .lean, .md, .py "
-    "or .sh) minus SKIP_DIRS, do four rules find an unexempted site — R1 a doc making a "
-    "cryptographic-verification claim in a FILE whose blanked code holds no token of that "
-    "mechanism, R2 a backticked identifier a doc says PREVENTS something that is declared and "
-    "written in the file and never read in it, R2b a `can be ...` capability in a class or "
-    "module header that the file declares nothing for, and R3 a Lean `NOT imported by X` "
-    "sentence the real metatheory import graph contradicts — with the allowlist rows keyed by "
-    "claim TEXT, a stale row failing, HARVEST rows capped at 12, and six population floors "
-    "refusing a blind reader?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether a doc is TRUE. Every rule is token presence against vocabulary, never behaviour: a "
-    "file containing `.verify(` anywhere satisfies R1 whether or not the documented function "
-    "reaches it, which is R1 being FILE-scoped by measurement and is why a false claim beside an "
-    "honest sibling reads clean. Only four rules exist; specimens 3, 5 and 6 of the six that "
-    "motivated this file need a reader and specimen 4 is a different gate, all four named in the "
-    "header. R3 is the only rule that reads Lean and it reads exactly one sentence shape. And "
-    "twelve TRUE unrepaired findings sit in the allowlist as HARVEST rows, so GREEN here means "
-    "no NEW finding, not none."
-)
-
-SCOPE_ANSWERS_SELFTEST = (
-    "can this gate go RED — do the fault fixtures written to a temp dir each fire their rule, do "
-    "the honest ones stay quiet, does R3 fire on synthetic direct and transitive stale claims "
-    "while staying quiet on an honest one, is a Lean header past 64 KB still read whole, does "
-    "the allowlist refuse a short reason, an empty text key, a three-field row and a HARVEST "
-    "count over the ceiling, and does a blinded Scan fail its floors?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "whether the tree is clean. Apart from the allowlist path it rebinds and restores, it reads "
-    "no file of this repository — the fixtures are string literals in this script — so it stays "
-    "GREEN on a tree the bare gate reds, and it exercises the rules only on shapes somebody "
-    "already thought of."
-)
-
-SCOPE_ANSWERS_HISTORICAL = (
-    "replayed from git at their pre-repair revisions, do the six specimens still score EXACTLY "
-    "as this file records — 1 and 2 CAUGHT by R1/R2/R2b, and 3, 4, 5, 6 missed — with any "
-    "disagreement in EITHER direction, a rule that regressed or a rule that now catches more "
-    "than its stated scope, failing the run?"
-)
-SCOPE_DOES_NOT_ANSWER_HISTORICAL = (
-    "anything about the tree today: it grades six historical blobs in a temp dir. R3 is not "
-    "replayed at all (it resolves against HEAD import graph), so this mode scores three of the "
-    "four rules. A `missed` here is a DECLARED outcome being confirmed, not a defect found."
-)
 MIN_REASON = 20
 # ⚑ A CEILING ON THE BASELINE, IN REVIEWED CODE. `HARVEST` rows in the allowlist are
 # TRUE findings that are recorded rather than repaired — green on arrival, red on the
@@ -1444,17 +1394,11 @@ def main() -> int:
     ap.add_argument("--root", default=str(ROOT))
     a = ap.parse_args()
     if a.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
     if a.historical:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_HISTORICAL}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_HISTORICAL}", flush=True)
         return historical()
     if a.contradiction_probe:
         return contradiction_probe()
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
     rows, errs = load_allow()
     if errs:
         for e in errs:

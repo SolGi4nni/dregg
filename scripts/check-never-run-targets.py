@@ -100,31 +100,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_LIST = REPO / ".github" / "dark-targets.txt"
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
-# misreads this convention exists to stop happened to people reading RESULTS, not source. ──
-SCOPE_ANSWERS = (
-    "for every workspace test/bench target that carries a FEATURE gate (`required-features` plus "
-    "the feature names in its file-level `#![cfg]`), does SOME SINGLE `cargo test` / `nextest run` "
-    "/ `wasm-pack test` invocation found by regex in .github/workflows/*.yml — plus the "
-    "scripts/*.sh those workflows name — both put the target in scope and activate its whole gate, "
-    "and does the set with no such invocation match the `never-run ` rows exactly, both directions?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "that a listed target would COMPILE or PASS — nothing here builds anything, and a row asserts "
-    "only that nothing runs it. It also cannot see an UNGATED target nothing runs (a target whose "
-    "gate is empty is skipped outright), platform darkness (`#![cfg(target_os)]` against a runner "
-    "OS), a `#[ignore]`d test inside a target that does run, or any invocation not spelled out in "
-    "workflow text. Activation is over-approximated on purpose, so this count is a LOWER BOUND."
-)
-SCOPE_ANSWERS_DUMP = (
-    "which feature-gated test/bench targets no single workflow invocation can execute, listed on "
-    "stdout (with the unmet gate, under --explain)?"
-)
-SCOPE_DOES_NOT_ANSWER_DUMP = (
-    "whether the tree is clean: --print-dark / --explain render NO verdict, never open the "
-    "allowlist, and always exit 0."
-)
-
 # A file-level `#![cfg(...)]`. Only the OUTER attribute matters: it empties the whole
 # crate, which is what turns a test binary into `ok. 0 passed`.
 INNER_CFG = re.compile(r"^\s*#!\[cfg\((.*?)\)\]", re.M | re.S)
@@ -404,15 +379,6 @@ def main() -> int:
         help="also write the full enumeration to $GITHUB_STEP_SUMMARY",
     )
     args = ap.parse_args()
-
-    # --print-dark / --explain write a machine-readable row list on stdout, so their banner
-    # goes to stderr: a mode whose output another program consumes must not carry prose.
-    if args.print_dark or args.explain:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_DUMP}", file=sys.stderr, flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_DUMP}", file=sys.stderr, flush=True)
-    else:
-        print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     rows = never_run()
     found = {key(p, k, n) for p, k, n, _, _, _ in rows}

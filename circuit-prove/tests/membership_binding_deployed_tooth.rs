@@ -27,9 +27,6 @@
 //!
 //! Both poles are `#[ignore]` (real recursion, minutes). Run with:
 //!   cargo test -p dregg-circuit-prove --test membership_binding_deployed_tooth -- --ignored --nocapture
-//!
-//! ANSWERS:         does a real 2-turn deployed transfer chain whose leg publishes the membership pair at PI 50..51 fold plus light-client-verify, and is a bundle whose authorized_root is ONE greater refused by the segmented membership-binding node with a WitnessConflict?
-//! DOES NOT ANSWER: whether the sender is in ANY authorized set. sender_leaf and authorized_root are the literals 0x5E4D and 0xA07; no Merkle path, no pubkey compress and no fields-read is checked anywhere in this file, so the fold binds a leg to a bundle over the SAME two constants. The in-AIR compress and fields-read welds remain the named MembershipAuthRootEdge seams. This file also carries a measured STALE warning: the committed transfer row has no pi_binding at 50 or 51 at all.
 
 // ⚠ STALE AS OF 2026-08-01, IN THE DIRECTION THAT MAKES THE WOUND LOOK CLOSED.
 //
@@ -66,18 +63,6 @@ use dregg_circuit_prove::joint_turn_aggregation::{
 };
 use dregg_circuit_prove::membership_leaf_adapter::SenderMembershipWitness;
 use dregg_turn::rotation_witness as rw;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         does a real 2-turn deployed transfer chain whose leg publishes the membership pair at PI 50..51 fold plus light-client-verify, and is a bundle whose authorized_root is ONE greater refused by the segmented membership-binding node with a WitnessConflict?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether the sender is in ANY authorized set. sender_leaf and authorized_root are the literals 0x5E4D and 0xA07; no Merkle path, no pubkey compress and no fields-read is checked anywhere in this file, so the fold binds a leg to a bundle over the SAME two constants. The in-AIR compress and fields-read welds remain the named MembershipAuthRootEdge seams. This file also carries a measured STALE warning: the committed transfer row has no pi_binding at 50 or 51 at all."
-    );
-}
 
 // ============================================================================
 // Fixtures
@@ -289,7 +274,6 @@ fn build_chain(bundle_tuple: SenderMembershipWitness) -> Vec<FinalizedTurn> {
 #[test]
 #[ignore = "SLOW: real deployed membership-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_membership_turn_honest_accepts() {
-    scope();
     let turns = build_chain(honest_tuple());
     let whole = prove_turn_chain_recursive(&turns)
         .expect("the honest membership-bearing chain must fold through the deployed prover");
@@ -308,7 +292,6 @@ fn deployed_membership_turn_honest_accepts() {
 #[test]
 #[ignore = "SLOW: real deployed membership-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_membership_turn_forged_root_rejected() {
-    scope();
     // ── S1 HONEST POLE FIRST, in THIS test. The forged chain below differs from this one by a
     //    SINGLE FELT, so without an accept here the refusal proves nothing: an arm that refuses
     //    every chain of this shape would satisfy the assertion below just as well.

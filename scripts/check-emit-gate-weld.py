@@ -45,24 +45,6 @@ ROOT = Path(__file__).resolve().parent.parent
 GATES_DIR = ROOT / "circuit-prove" / "tests"
 LEAN_DIRS = [ROOT / "metatheory" / "Dregg2" / "Circuit" / "Emit", ROOT / "metatheory"]
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
-SCOPE_ANSWERS = (
-    "is every r#\"{...}\"# descriptor literal in circuit-prove/tests/*.rs and in every .rs "
-    "under a src/ tree byte-identical to a same-NAMED string literal sitting in a "
-    "metatheory/*.lean or metatheory/Dregg2/Circuit/Emit/*.lean file that contains the word "
-    "#guard (those two directories, NOT recursive), or to a same-named circuit/descriptors "
-    "artifact; is every `\"trace_width\":N` spelled inside a Rust string a width one of those "
-    "pins carries; and is the count of unpinned src/ literals still at or below 66?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether EITHER side matches what Lean actually emits. This runs no lake and no cargo — it "
-    "compares checked-in copies against checked-in copies, and inherits all of its authority "
-    "from check-descriptor-drift.sh, which is the leg that re-derives. The src/ arm is a "
-    "RATCHET, so green there means no NEW unpinned golden, not that the 66 already counted "
-    "reproduce anything; and a golden byte-equal to its pin is still only byte-equal — nothing "
-    "here says the descriptor is sound or that any test using it asserts something."
-)
-
 # ⚑ 2026-08-06 — THE SCAN WAS TEST-ONLY, AND THE COPY THAT WAS ACTUALLY BROKEN WAS IN `src/`.
 # `zkoracle-prove/src/zk_leg.rs` carries an inline `dfa-routing-injection-3state::poseidon2-v1`
 # golden on the PRODUCTION injection-leg path (`injection_descriptor()` -> `.expect(…)`), and the
@@ -426,8 +408,6 @@ def self_test_fragment_leg(
 
 
 def main() -> int:
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
     lean_pins = collect_lean_pins()
     artifact_pins = collect_artifact_pins()
     if (err := self_test_fragment_leg(lean_pins, artifact_pins)) is not None:

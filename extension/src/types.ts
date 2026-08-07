@@ -714,8 +714,7 @@ export interface DreggWasm {
     nonce: number;
     previous_receipt_hash_hex?: string;
     mission_id: number;
-    /** The played rounds, in order — one to five band triples. */
-    transcript: [number, number, number][];
+    code: [number, number, number];
     fee: number;
   };
   /** Revalidate the signed carrier before displaying consent or submitting. */
@@ -725,8 +724,7 @@ export interface DreggWasm {
     nonce: number;
     previous_receipt_hash_hex?: string;
     mission_id: number;
-    /** The played rounds, in order — one to five band triples. */
-    transcript: [number, number, number][];
+    code: [number, number, number];
     fee: number;
     turn_hash: string;
   };

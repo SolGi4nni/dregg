@@ -3364,64 +3364,6 @@ def self_test_provenance() -> int:
     return 1 if bad else 0
 
 
-# ── SCOPE ─ these three pairs are the ONLY copy, one per GATE MODE, and each prints on every
-# run of ITS mode, pass or fail. They are NOT printed by the emit path or by the `--list-*`
-# modes: `scripts/check-descriptor-drift.sh` consumes `--list-emitter-modules` and
-# `--list-guarded-paths` on stdout line-by-line, and a banner there would be parsed as a module
-# name. Three modes, three different questions — hence three pairs and not one. ────────────────
-SCOPE_ANSWERS_VERIFY = (
-    "at the named revision, checked out into a fresh clean detached worktree: does every "
-    "committed file under circuit/descriptors/ (top level, by-name/, and every further "
-    "subdirectory found by DISCOVERY) hash to the sha256 that same revision's PROVENANCE.json "
-    "records for it, in BOTH directions, does the by-name routing table parsed out of "
-    "EmitByName.lean plus every literal include_str/include_bytes target, first-party Lean "
-    "import and workflow-invoked path resolve to a file that exists and is tracked, and does "
-    "the stamp record source_dirty=false?"
-)
-SCOPE_DOES_NOT_ANSWER_VERIFY = (
-    "whether the descriptors are STALE with respect to Lean. This is committed BYTES against "
-    "the committed STAMP — a sha256 comparison, never a re-derivation; re-running the Lean "
-    "emitters and diffing is scripts/check-descriptor-drift.sh, a separate gate. And without "
-    "--strict, which the local-gates row deliberately omits because a Dregg2 tree hash moves on "
-    "any commit to any of ~2300 modules, the ceremony clause never runs: a stamp attesting a "
-    "DIFFERENT Lean source tree PASSES here, and a stale fp_file_sha256 snapshot is printed "
-    "rather than failed."
-)
-
-SCOPE_ANSWERS_SELFTEST_PROV = (
-    "can the provenance checker still FIRE — on scratch copies inside a detached HEAD worktree, "
-    "does each of four injected faults (a mutated descriptor byte, a dropped stamp row, a stamp "
-    "row whose artifact is gone, a source_dirty=true stamp read WITHOUT --strict) add a finding "
-    "that names that artifact and remove none, does restoring it return to EXACTLY the "
-    "baseline, does an all-empty walk REFUSE instead of reporting PASS, and does the full "
-    "doors-on path execute?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST_PROV = (
-    "whether the descriptor set or its stamp is clean. HEAD findings are taken as a BASELINE, "
-    "printed, and never asserted empty — every case is measured as a DELTA against them — so "
-    "this row stays GREEN while circuit/descriptors carries real drift. The `provenance` row is "
-    "what decides that; this one decides only that the instrument is not asleep."
-)
-
-SCOPE_ANSWERS_SELFTEST_WF = (
-    "does _wf_parse compute the expected working-directory for every step of five SYNTHETIC "
-    "workflow YAML fixtures written into a temp dir (a shallower `- ` must not clear the scope, "
-    "a key after `run:` in the same item, a job-level defaults.run reaching every run step and "
-    "stopping at the next job, `uses:` inheriting no cwd, a nested sequence inside a step), and "
-    "did it harvest at least as many steps as each fixture expects?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST_WF = (
-    "anything about THIS repository. It opens no tracked file and not one of "
-    ".github/workflows/*.yml, so it says nothing about whether any workflow-invoked path exists "
-    "or is tracked — that is verify_workflow_refs, which runs inside --verify-provenance."
-)
-
-
-def _print_scope(answers: str, does_not: str) -> None:
-    print(f"ANSWERS:         {answers}", flush=True)
-    print(f"DOES NOT ANSWER: {does_not}", flush=True)
-
-
 def main():
     argv = sys.argv[1:]
     # `--rev` is the one flag that TAKES A VALUE, so it is consumed before the membership check
@@ -3462,13 +3404,10 @@ def main():
         sys.exit(f"emit_descriptors: --rev {rev!r} is only meaningful with --verify-provenance "
                  f"(got {argv!r}); refusing to ignore it.")
     if "--self-test-workflow-scope" in argv:
-        _print_scope(SCOPE_ANSWERS_SELFTEST_WF, SCOPE_DOES_NOT_ANSWER_SELFTEST_WF)
         sys.exit(self_test_workflow_scope())
     if "--self-test-provenance" in argv:
-        _print_scope(SCOPE_ANSWERS_SELFTEST_PROV, SCOPE_DOES_NOT_ANSWER_SELFTEST_PROV)
         sys.exit(self_test_provenance())
     if "--verify-provenance" in argv:
-        _print_scope(SCOPE_ANSWERS_VERIFY, SCOPE_DOES_NOT_ANSWER_VERIFY)
         verify_provenance(strict="--strict" in argv, rev=rev)
         return
     if "--verify-by-name-routing" in argv:

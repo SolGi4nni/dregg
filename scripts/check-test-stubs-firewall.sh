@@ -14,12 +14,6 @@
 # 3.4s, no Lean, no proving. There is no reason for this not to be in the cheap set.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
-
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'do the `tests/tests/test_stubs_firewall.rs` probes still find NO production build graph in which the `dregg-cell/test-stubs` feature unifies — and did at least 2 of them actually run?' \
-  'whether StubVerifier is correct, whether any OTHER feature arms an accept-anything verifier, or whether a stub registry is selected at runtime. It is a cargo-feature REACHABILITY question about one named feature, not a claim about the verifier.'
-
 out="$(cargo test -p dregg-tests --test test_stubs_firewall -- --test-threads=4 2>&1)"; rc=$?
 n=$(printf '%s' "$out" | grep -oE 'test result: ok\. ([0-9]+) passed' | grep -oE '[0-9]+' | head -1)
 if [ "$rc" -ne 0 ]; then printf '%s\n' "$out" | tail -12; echo "test-stubs firewall: FAILED"; exit 1; fi

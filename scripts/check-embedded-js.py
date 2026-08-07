@@ -178,34 +178,6 @@ SHAPE_FLOOR = 8
 SHAPE_MIN_LINES = 3
 SHAPE_DENSITY = 0.75
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ────────
-SCOPE_ANSWERS = (
-    "over TRACKED non-test .rs under the hand-named JS_BEARING_SURFACES: for each string literal "
-    "that D1/D2/D3 SELECT as JavaScript - a complete <script> body, a shape score over the floor "
-    "(or a short dense one), or a binding named *_JS / *_SCRIPT - does `node --check` accept it "
-    "as a script or as a module, does any selected unit have a parameter that shadows a function "
-    f"declared in that same unit and then CALLS it, and were at least MIN_UNITS={MIN_UNITS} units "
-    "selected?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether the page WORKS. `--check` is a PARSE: a wrong selector, a dead handler, a missing "
-    "global, a bad URL and every TypeError but the one shadow shape all parse perfectly. Nor "
-    "whether the right literals were selected - a bundle no detector scores as a program is "
-    "silently never parsed, and the floor only says that many were found. And format! holes are "
-    "substituted with a padded 0 before parsing, so the text checked is not byte-for-byte the "
-    "text shipped."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "does the whole pipeline - Rust reader, unit selection, node, shadow lint - fire on the two "
-    "REAL recorded defects and map them back to the right Rust line, stay quiet on the repaired "
-    "twin, three non-programs and a bundle inside a test body, and does the live sweep still "
-    "select at least MIN_UNITS units?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "whether the JavaScript in this tree parses - this path runs node on FIXTURES; the live sweep "
-    "is called only to COUNT units, never to check one. PASSED is about the instrument."
-)
-
 
 # ══ selection ══════════════════════════════════════════════════════════════════════
 SCRIPT_BLOCK = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.S | re.I)
@@ -869,11 +841,7 @@ def main() -> int:
                     help="syntax only; skip the shadowed-helper lint")
     args = ap.parse_args()
     if args.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
     return run(args.list, not args.no_shadowing)
 
 

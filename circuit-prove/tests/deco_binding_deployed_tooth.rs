@@ -30,9 +30,6 @@
 //!
 //! Both slow poles are `#[ignore]` (real recursion, minutes). Run with:
 //!   cargo test -p dregg-circuit-prove --test deco_binding_deployed_tooth -- --ignored --nocapture
-//!
-//! ANSWERS:         does the committed mintVmDescriptor2R24 row pin PI 46 to the FIRST-row param0 column, does the deployed Stripe money-in producer publish deco_payment_hash_felt there, do two payments differing only in paymentIntentId carry distinct identities, and does a real 2-turn deployed Stripe-mint chain fold plus light-client-verify while the SAME chain publishing that identity plus ONE is refused by the segmented deco payment-binding node with a WitnessConflict?
-//! DOES NOT ANSWER: whether any Stripe payment ever cleared. Every PaymentFacts field here is a literal typed into this file; no notary, TLS transcript, webhook signature or Stripe response is verified anywhere in it. The fold binds the leg to a felt the test itself chose, so a green means the plumbing is consistent, not that money moved.
 
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
@@ -64,18 +61,6 @@ use dregg_circuit_prove::joint_turn_aggregation::{
     CarrierWitness, DecoWitnessBundle, DescriptorParticipant, RotatedParticipantLeg,
 };
 use dregg_turn::rotation_witness as rw;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         does the committed mintVmDescriptor2R24 row pin PI 46 to the FIRST-row param0 column, does the deployed Stripe money-in producer publish deco_payment_hash_felt there, do two payments differing only in paymentIntentId carry distinct identities, and does a real 2-turn deployed Stripe-mint chain fold plus light-client-verify while the SAME chain publishing that identity plus ONE is refused by the segmented deco payment-binding node with a WitnessConflict?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether any Stripe payment ever cleared. Every PaymentFacts field here is a literal typed into this file; no notary, TLS transcript, webhook signature or Stripe response is verified anywhere in it. The fold binds the leg to a felt the test itself chose, so a green means the plumbing is consistent, not that money moved."
-    );
-}
 
 // ============================================================================
 // Fixtures
@@ -360,7 +345,6 @@ fn build_chain(leg_payment_hash: BabyBear, bundle: DecoWitnessBundle) -> Vec<Fin
 /// committed row bridge rides; DECO is distinguished by the witness/leaf, not the descriptor.
 #[test]
 fn committed_mint_row_carries_the_first_row_payment_hash_pin() {
-    scope();
     let desc = deployed_wide_descriptor("mintVmDescriptor2R24");
     assert_eq!(
         desc.public_input_count,
@@ -388,7 +372,6 @@ fn committed_mint_row_carries_the_first_row_payment_hash_pin() {
 /// executor-derivable, leaf-recomputable payment identity.
 #[test]
 fn stripe_producer_publishes_the_felt_payment_identity_at_pi46() {
-    scope();
     let w = stripe_witness(2500, "pi_deco_cheap");
     let expected =
         deco_payment_hash_felt(w.amount_cents, w.currency, w.recipient, w.payment_intent);
@@ -410,7 +393,6 @@ fn stripe_producer_publishes_the_felt_payment_identity_at_pi46() {
 /// light-client-visible through the identity.
 #[test]
 fn payment_identity_binds_the_payment_intent() {
-    scope();
     let a = stripe_witness(2500, "pi_intent_A");
     let b = stripe_witness(2500, "pi_intent_B"); // same amount/currency/recipient, different PI
     assert_ne!(
@@ -430,7 +412,6 @@ fn payment_identity_binds_the_payment_intent() {
 #[test]
 #[ignore = "SLOW: real deployed DECO-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_stripe_mint_honest_accepts() {
-    scope();
     let w = stripe_witness(2500, "pi_deco_honest");
     let bundle = DecoWitnessBundle::from_leaf_witness(&w);
     let honest_identity = w.payment_hash();
@@ -454,7 +435,6 @@ fn deployed_stripe_mint_honest_accepts() {
 #[test]
 #[ignore = "SLOW: real deployed DECO-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_stripe_mint_forged_identity_rejected() {
-    scope();
     let w = stripe_witness(2500, "pi_deco_forged");
 
     // ── S1 HONEST POLE FIRST, in THIS test. The forged chain below differs from this one by a

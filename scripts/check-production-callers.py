@@ -116,35 +116,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "baseline" / "production-callers.tsv"
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
-# ⚠ Printed inside main(), NEVER at module scope: check-silent-skip.py,
-# check-bare-ignore.py and check-identity-as-a-name.py import this file for
-# `strip_noise`, and a module-scope print would land in the middle of their output.
-SCOPE_ANSWERS = (
-    "does the set of GUARD-named `pub fn` DEFINITION SITES that no production call site "
-    "reaches — plus the AMBIGUOUS ones a name-keyed count cannot clear — differ in EITHER "
-    "direction from baseline/production-callers.tsv?"
-)
-SCOPE_DOES_NOT_ANSWER = (
-    "whether this tree is clean, or whether anything is called CORRECTLY. It is a two-way "
-    "ratchet: every baselined row is a hole that is still open and still green, the ~4800 "
-    "uncalled non-guard `pub fn`s are out of scope entirely, call sites are matched "
-    "TEXTUALLY by bare name with no import resolution (a same-named caller in any other "
-    "crate clears the name), dynamic/macro/FFI callers are invisible, and the corpus is "
-    "every .rs file on the WORKING-TREE filesystem outside a fixed skip list — untracked "
-    "directories and a second checkout of this repo included."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "can this scanner still see a call through the `/*`-inside-a-line-comment trap, "
-    "separate test from production call sites, register an unbaselined guard FRESH and a "
-    "departed baseline row STALE, key two same-named guards in different crates apart, and "
-    "REFUSE a retired-format baseline?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "anything about this tree. Every arm runs on one literal source string and two "
-    "hand-built row lists; it proves the instrument can fire, never that the ratchet is green."
-)
-
 # Directories that are not this repo's own source.
 SKIP_DIR_PARTS = {
     ".git", "target", ".lake", "node_modules", "vendor", ".claude",
@@ -603,12 +574,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return self_test()
-
-    print(f"ANSWERS:         {SCOPE_ANSWERS}", flush=True)
-    print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", flush=True)
 
     files = rust_files()
     defs = collect_definitions(files)

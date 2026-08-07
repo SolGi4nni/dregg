@@ -39,11 +39,6 @@ cd "$ROOT" || exit 2
 # is read directly, never through a pipe (a `| tail` exit status is `tail`'s).
 T=(cargo test -p dregg-circuit --release --test chip_absorb_arity_admission_gate --)
 
-# ── SCOPE ─ this printf is the ONLY copy; it prints on every run, pass or fail. ───────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'for every chip lookup in every emitted descriptor on disk, is the requested arity one the DEPLOYED Ir2Air::Chip evaluator admits, and does the DEPLOYED witness generator carry all of its lanes into the preimage rather than silently dropping some?' \
-  'whether the descriptor is SATISFIABLE, sound, or says what its emitter meant. An admitted arity is a necessary condition on one lookup column — every other constraint in the descriptor is out of scope, and so is whether the hash it computes is the one anybody wanted.'
-
 if [ "${1:-}" != "--self-test" ]; then
   "${T[@]}" --test-threads=1 --nocapture
   rc=$?

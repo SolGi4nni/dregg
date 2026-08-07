@@ -2358,15 +2358,9 @@ pub fn sign_turn_v3(
 /// resulting JSON `Turn` is consumed by [`sign_turn_v3`] under the separately
 /// pinned PoA federation domain.
 ///
-/// ⚑ IT CARRIES THE TRANSCRIPT (2026-08-07). `transcript` is every round the
-/// player spent against the judged session, in order, ending in the solving guess
-/// — the node refuses a claim whose rounds it did not itself classify, so a
-/// browser that posts only the winning code buys a rejected turn. Take the list
-/// straight from the session document's `settlement.transcript`.
-///
 /// Input JSON:
 /// `{ schema, signer_public_key_hex, nonce, previous_receipt_hash_hex?,
-///    mission_id, transcript: [[low, mid, high], …] }`.
+///    mission_id, code: [low, mid, high] }`.
 #[wasm_bindgen]
 pub fn build_poa_signal_claim_turn(spec_json: &str) -> Result<JsValue, JsError> {
     const SCHEMA: &str = "poa-signal-claim/v1";
@@ -2380,7 +2374,7 @@ pub fn build_poa_signal_claim_turn(spec_json: &str) -> Result<JsValue, JsError> 
         #[serde(default)]
         previous_receipt_hash_hex: Option<String>,
         mission_id: u64,
-        transcript: Vec<[u64; 3]>,
+        code: [u64; 3],
     }
 
     #[derive(Serialize)]
@@ -2391,7 +2385,7 @@ pub fn build_poa_signal_claim_turn(spec_json: &str) -> Result<JsValue, JsError> 
         nonce: u64,
         previous_receipt_hash_hex: Option<String>,
         mission_id: u32,
-        transcript: Vec<[u8; 3]>,
+        code: [u8; 3],
         fee: u64,
     }
 
@@ -2410,13 +2404,9 @@ pub fn build_poa_signal_claim_turn(spec_json: &str) -> Result<JsValue, JsError> 
         .map(hex_decode_32)
         .transpose()
         .map_err(|e| JsError::new(&format!("previous_receipt_hash_hex: {e}")))?;
-    let transcript = spec
-        .transcript
-        .iter()
-        .map(|bands| dregg_sdk::poa_signal::SignalCode::new(bands[0], bands[1], bands[2]))
-        .collect::<Result<Vec<_>, _>>()
+    let code = dregg_sdk::poa_signal::SignalCode::new(spec.code[0], spec.code[1], spec.code[2])
         .map_err(|e| JsError::new(&e.to_string()))?;
-    let claim = dregg_sdk::poa_signal::SignalClaimV1::new(spec.mission_id, &transcript)
+    let claim = dregg_sdk::poa_signal::SignalClaimV1::new(spec.mission_id, code)
         .map_err(|e| JsError::new(&e.to_string()))?;
     let turn = dregg_sdk::poa_signal::signal_claim_turn(
         &signer_public_key,
@@ -2435,19 +2425,10 @@ pub fn build_poa_signal_claim_turn(spec_json: &str) -> Result<JsValue, JsError> 
         nonce: turn.nonce,
         previous_receipt_hash_hex: turn.previous_receipt_hash.map(|h| hex_encode(&h)),
         mission_id: claim.mission_id(),
-        transcript: transcript_bands(&claim),
+        code: [claim.code().low(), claim.code().mid(), claim.code().high()],
         fee: turn.fee,
     };
     serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
-}
-
-/// The played rounds as plain band triples, for the JS surfaces.
-fn transcript_bands(claim: &dregg_sdk::poa_signal::SignalClaimV1) -> Vec<[u8; 3]> {
-    claim
-        .transcript()
-        .iter()
-        .map(|code| [code.low(), code.mid(), code.high()])
-        .collect()
 }
 
 /// Re-read a signed PoA carrier through the SDK's exact shape gate. This is the
@@ -2461,7 +2442,7 @@ pub fn inspect_poa_signal_claim_turn(turn_bytes_json: &[u8]) -> Result<JsValue, 
         nonce: u64,
         previous_receipt_hash_hex: Option<String>,
         mission_id: u32,
-        transcript: Vec<[u8; 3]>,
+        code: [u8; 3],
         fee: u64,
         turn_hash: String,
     }
@@ -2476,7 +2457,7 @@ pub fn inspect_poa_signal_claim_turn(turn_bytes_json: &[u8]) -> Result<JsValue, 
         nonce: turn.nonce,
         previous_receipt_hash_hex: turn.previous_receipt_hash.map(|h| hex_encode(&h)),
         mission_id: claim.mission_id(),
-        transcript: transcript_bands(&claim),
+        code: [claim.code().low(), claim.code().mid(), claim.code().high()],
         fee: turn.fee,
         turn_hash: hex_encode(&turn.hash()),
     };

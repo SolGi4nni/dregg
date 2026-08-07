@@ -141,46 +141,6 @@ IGNORE_DIRS = {
 
 CARGO_TIMEOUT = 120
 
-# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
-# THREE MODES, THREE DIFFERENT QUESTIONS, so three pairs.  The working tree and a clean
-# extract of a commit are different trees and disagree on exactly the thing this gate is
-# for; the red-proof is about the INSTRUMENT and speaks for neither.
-SCOPE_ANSWERS_WORKTREE = (
-    "in the WORKING TREE right now — every Cargo.toml `git ls-files --cached --others "
-    "--exclude-standard` lists, so uncommitted and untracked manifests included — does "
-    "`cargo metadata --no-deps` succeed at every workspace root and at every package no "
-    "root claimed, does every scripts/local-gates.sh row that names a path name one that "
-    "EXISTS, and were at least 275 packages / 35 roots / 30 gate rows seen?"
-)
-SCOPE_DOES_NOT_ANSWER_WORKTREE = (
-    "whether anything BUILDS, or whether any COMMIT is self-contained. Nothing is "
-    "compiled, so a missing `mod foo;`, an unresolved `use`, a declared `[[bin]]` whose "
-    "source file is absent and every build-script artifact are invisible — and `claimed by "
-    "EXACTLY ONE workspace` is not decided either: a package two roots both claim is "
-    "recorded once, by whichever was walked first, and never reported."
-)
-SCOPE_ANSWERS_REV = (
-    "does a `git archive` extract of the named revision — what a fresh clone gets, with "
-    "nothing from the working tree — pass those same manifest-resolution, gate-row-path and "
-    "population-floor checks, and did every scripts/workspace-closure-allow.tsv carve-out "
-    "row still match a finding somewhere?"
-)
-SCOPE_DOES_NOT_ANSWER_REV = (
-    "whether that revision COMPILES, or whether the working tree resolves. It judges one "
-    "commit's MANIFEST closure and nothing else: the file that exists only on the author's "
-    "disk is caught, the type error and the missing `mod` file are not."
-)
-SCOPE_ANSWERS_SELFTEST = (
-    "can this instrument still fire — is a clean extract of HEAD green (the CONTROL), and "
-    "do six hard-coded fault injections plus a halved reader each go red with the expected "
-    "finding kind, in fresh temp extracts that never touch the working tree?"
-)
-SCOPE_DOES_NOT_ANSWER_SELFTEST = (
-    "anything about the WORKING TREE, and nothing about a fault shape nobody taught it to "
-    "inject. Each injection edits one named path or string in the extract, so this row also "
-    "goes red when the tree merely MOVED the anchor it edits."
-)
-
 
 def repo_root() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
@@ -812,16 +772,7 @@ def main() -> int:
     root = repo_root()
 
     if args.self_test:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", flush=True)
         return run_self_test(root)
-
-    if args.commits or args.rev:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_REV}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_REV}", flush=True)
-    else:
-        print(f"ANSWERS:         {SCOPE_ANSWERS_WORKTREE}", flush=True)
-        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_WORKTREE}", flush=True)
 
     if args.commits:
         revs = subprocess.run(

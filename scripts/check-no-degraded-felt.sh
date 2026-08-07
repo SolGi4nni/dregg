@@ -104,19 +104,6 @@ while [ $# -gt 0 ]; do
     *) echo "check-no-degraded-felt: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
 done
-
-# ── SCOPE ─ these printfs are the ONLY copy; one prints on every run, pass or fail.
-# The two modes decide DIFFERENT questions, so each carries its own pair. ────────────
-if [ "$RATCHET" -eq 1 ]; then
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'did the per-producer count of degrading 32-byte-to-one-felt folds, in exactly the producer files named by the files: lists of .ast-grep/rules/faithful-commitment-felt.yml, move against scripts/degraded-felt-baseline.txt — above a row, below a row, or present with no row at all?' \
-    'whether the tree is clean. A PASS here means only that NOTHING NEW LANDED: the two production wounds the default mode reds on are recorded in the baseline and are still there. It says nothing about any file outside the producer list the rule file names, and nothing about whether a recorded fold is safe.'
-else
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'does ast-grep find a degrading 32-byte-to-one-felt fold, unsuppressed by an ast-grep-ignore directive on its own preceding line, in one of the producer files named by the files: lists of .ast-grep/rules/faithful-commitment-felt.yml — read from a clean git-archive extract under --rev, and from the shared working tree otherwise?' \
-    'whether the deployed commitment binds its source faithfully. The corpus is exactly that hand-named producer list, so a lossy fold in any file not on it is invisible (cell/src/revoked_set.rs was off the list while holding one); the match is syntactic, so a rename or an inlined equivalent passes; and this gate is RED at HEAD ON PURPOSE for two un-allowlisted production wounds, which means its exit code cannot tell you whether a THIRD fold just landed. That is what --ratchet is for.'
-fi
-
 REV_TMP=""
 rev_cleanup() { [ -n "${REV_TMP:-}" ] && rm -rf "$REV_TMP"; return 0; }
 trap rev_cleanup EXIT

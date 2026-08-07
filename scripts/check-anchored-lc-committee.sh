@@ -33,18 +33,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# ── SCOPE ─ these printfs are the ONLY copy; one prints on every run, pass or fail.
-# `--self-test` answers a DIFFERENT question from a scan, so it carries its own pair. ─
-if [ "${1:-}" = "--self-test" ]; then
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'can the ast-grep pattern still fire at all, measured by running it over eth-lightclient/tests, which uses the forbidden shape legitimately?' \
-    'anything about production source. This mode never scans eth-lightclient/src, so it passes just as happily with an un-anchored committee sitting in production.'
-else
-  printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-    'does ast-grep find a TrustedCommittee::new_unchecked call in eth-lightclient/src that is not suppressed by an ast-grep-ignore directive, after confirming the same pattern still matches in eth-lightclient/tests so a green cannot come from a drifted pattern?' \
-    'whether the committee any caller actually verifies against is anchored. It is one syntactic pattern in ONE directory: a committee assembled by a helper, imported from another crate, or reaching verify_finalized_update through a differently-spelled constructor is not seen — and a store-anchored committee is only as good as the weak-subjectivity checkpoint it was pinned from, which this gate never looks at.'
-fi
-
 # The binary ships as both `sg` and `ast-grep`; `sg` is shadowed on some systems,
 # so prefer `ast-grep`.
 SG=""

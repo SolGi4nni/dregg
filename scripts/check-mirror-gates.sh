@@ -30,13 +30,6 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── SCOPE ─ this printf is the ONLY copy of the scope statement; it prints on every run,
-# pass or fail, because the misreads this convention exists to stop happened to people
-# reading RESULTS, not source. Say what the gate decides, and say what it does not. ────
-printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' \
-  'does a static scan find a re-authored mirror (shapes A/D1/D2/D3) that is neither in scripts/mirror-gates/baseline.txt nor carrying a `mirror-gate: allow(<gate>) — <reason>` comment at the site, is any baseline row now STALE, and did the canary prove each gate can still bark?' \
-  'whether the mirrors ALREADY baselined have DRIFTED from their originals. A baselined pair is carried by KEY, never compared for content — the ratchet reds on a NEW mirror and on a row that stopped firing, never on divergence inside a known one.'
-
 echo "── canary: can the gates bark? ───────────────────────────────────────────────"
 if ! "$HERE/mirror-gates/canary.sh"; then
   echo

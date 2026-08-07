@@ -19,9 +19,6 @@
 //! Real folds + a blowup-64 BN254-hash proving run take minutes; `#[ignore]`,
 //! run with:
 //!   cargo test -p dregg-circuit-prove --release --test apex_shrink_bn254_tooth -- --ignored --nocapture
-//!
-//! ANSWERS:         does ONE fixed 2-turn rotated transfer chain fold to an apex that verifies under ir2_leaf_wrap_config, shrink under DreggOuterConfig to a proof whose main and quotient Merkle roots exceed 31 bits, verify through the RUST verify_shrink_proof — and does that same verifier REJECT the proof with one opened trace value incremented by ONE?
-//! DOES NOT ANSWER: whether the gnark BN254 verifier accepts these bytes (step 4 is the Rust twin of that check, never the Go one), whether the apex AIR constrains what the two turns MEAN, or whether any chain other than this one hard-coded fixture shrinks at all.
 
 use std::time::Instant;
 
@@ -38,18 +35,6 @@ use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_bn254::Bn254;
 use p3_field::{PrimeCharacteristicRing, PrimeField};
 use p3_symmetric::MerkleCap;
-
-/// SCOPE — printed by every test in this file. The module doc above and these two
-/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
-/// cheap single-source-of-truth for a doc line that is also runtime output.
-fn scope() {
-    println!(
-        "ANSWERS:         does ONE fixed 2-turn rotated transfer chain fold to an apex that verifies under ir2_leaf_wrap_config, shrink under DreggOuterConfig to a proof whose main and quotient Merkle roots exceed 31 bits, verify through the RUST verify_shrink_proof — and does that same verifier REJECT the proof with one opened trace value incremented by ONE?"
-    );
-    println!(
-        "DOES NOT ANSWER: whether the gnark BN254 verifier accepts these bytes (step 4 is the Rust twin of that check, never the Go one), whether the apex AIR constrains what the two turns MEAN, or whether any chain other than this one hard-coded fixture shrinks at all."
-    );
-}
 
 /// OPEN permissions so the rotated producer-witness path admits the actor cell
 /// without auth gating (the audited Bucket-F mint fixture, as in
@@ -109,7 +94,6 @@ fn the_chain() -> Vec<FinalizedTurn> {
 #[test]
 #[ignore = "SLOW: one real 2-turn fold + one BN254-native-hash shrink prove (~minutes); run with --ignored — THE wrap capstone tooth"]
 fn real_apex_shrinks_bn254_native_and_verifies() {
-    scope();
     // ---- 1. the REAL apex -------------------------------------------------
     let t0 = Instant::now();
     let whole = prove_turn_chain_recursive(&the_chain()).expect("the fixed 2-turn chain folds");
