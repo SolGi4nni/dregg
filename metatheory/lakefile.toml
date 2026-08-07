@@ -423,6 +423,15 @@ globs = [
   # witness for `configValidB`, and the kernel has now been RUN: sixteen commands, four strict
   # watch cycles, an exact terminal state. Unrooted, that witness would prove it in no target.
   "Dregg2.Games.PathOfAngels.NightWatchCampaignExamples",  # 17 ax, 32 comp
+  # ⚑ 2026-08-07 (night-watch-live lane) — the authored epoch-1 CONTENT and its emit driver,
+  # rooted ON ARRIVAL. `NightWatchCampaignContent` closes the vacancy the admission docblock
+  # names ("nothing yet EMITS a poa.night-watch-campaign.config.v1 component"): the authored
+  # devnet campaign, its manifest, and 15 compiled pins that run the WHOLE admission + judge
+  # path — including the exported `judgeJson` — over the authored bytes under a published
+  # rehearsal commitment the driver refuses to ship. The `EmitMain` carries a root `def main`
+  # (direct-glob mechanism, same as the Pickles drivers). Sponge-bearing pins: budget ~1 min.
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignContent",  # 15 comp
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignContentEmitMain",  # compile coverage (emit driver)
   "Dregg2.Games.PathOfAngels.NightWatchLoop",  # 13 ax, 15 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoopExamples",  # 4 ax, 4 comp
   "Dregg2.Games.PathOfAngels.NightWatchLoopRuntime",  # 8 ax
