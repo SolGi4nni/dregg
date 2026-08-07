@@ -49,12 +49,27 @@
 //! Neither direction is free: a phantom reach costs an allowlist entry (and this repo has minted
 //! "add an entry until it is green" as the fail-open move), while an unseen route rots the allowlist
 //! into the actual specification.
+//!
+//! ANSWERS:         for every root-workspace PACKAGE with a binary whose `cargo tree --all-features -e normal` graph reaches one of the 10 VERIFYING crates, does its own src/ contain one of the 5 ROUTE_INSTALL_TOKENS SUBSTRINGS and also an enabled non-dev dep on dregg-lean-ffi, dregg-sdk or dregg-node — or else appear on DELEGATES_VERIFY, and never both?
+//! DOES NOT ANSWER: whether any process installs the verified core at RUNTIME. Nothing is executed: an install token found anywhere under src/ counts, including inside dead code, a cfg(test) block or a comment. The check is PACKAGE-granular, so a package whose one routing bin is required-features-gated reads exactly like one where every bin routes. And an allowlist entry asserts nothing beyond the prose written beside it.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
+
+/// SCOPE — printed by every test in this file. The module doc above and these two
+/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
+/// cheap single-source-of-truth for a doc line that is also runtime output.
+fn scope() {
+    println!(
+        "ANSWERS:         for every root-workspace PACKAGE with a binary whose `cargo tree --all-features -e normal` graph reaches one of the 10 VERIFYING crates, does its own src/ contain one of the 5 ROUTE_INSTALL_TOKENS SUBSTRINGS and also an enabled non-dev dep on dregg-lean-ffi, dregg-sdk or dregg-node — or else appear on DELEGATES_VERIFY, and never both?"
+    );
+    println!(
+        "DOES NOT ANSWER: whether any process installs the verified core at RUNTIME. Nothing is executed: an install token found anywhere under src/ counts, including inside dead code, a cfg(test) block or a comment. The check is PACKAGE-granular, so a package whose one routing bin is required-features-gated reads exactly like one where every bin routes. And an allowlist entry asserts nothing beyond the prose written beside it."
+    );
+}
 
 /// Crates whose presence in a binary's runtime dependency closure means that binary participates in the
 /// dregg verify stack (its process either installs the Lean-verified verify core or falls back to the
@@ -485,6 +500,7 @@ fn read_src_recursive(dir: &Path, out: &mut String) {
 
 #[test]
 fn every_verifying_binary_is_routed_or_allowlisted() {
+    scope();
     let manifest = workspace_root_manifest();
     let output = Command::new(env!("CARGO"))
         .args(["metadata", "--format-version", "1"])

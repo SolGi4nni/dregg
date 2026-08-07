@@ -29,6 +29,9 @@
 //!
 //! The fold is a real recursion (minutes), so both poles are `#[ignore]`. Run with:
 //!   cargo test -p dregg-circuit-prove --test factory_binding_deployed_tooth -- --ignored --nocapture
+//!
+//! ANSWERS:         does a real 2-turn CreateCellFromFactory chain whose child_vk8 octet is published at PI 47..54 fold plus light-client-verify, is a backing bundle claiming a child_vk that differs in ONE BIT refused by the segmented factory-binding node with a WitnessConflict, and is a factory witness on a stand-in leg whose descriptor lacks the octet claim pins refused by the fold arm admission gate?
+//! DOES NOT ANSWER: whether the descriptor under test is the COMMITTED registry row. pinned_factory_twin falls back to a Rust-side insert_tail_claim_pins transform whenever its native-pin lookup misses, so a green can be a green about a locally rebuilt descriptor rather than the emitted bytes. Nor is the child_vk derived from anything: it is the literal 0x9A octet threaded through RotationCarrierMaterial, so the fold binds two copies of one constant.
 
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
@@ -62,6 +65,18 @@ use dregg_circuit_prove::joint_turn_aggregation::{
     CarrierWitness, DescriptorParticipant, FactoryWitnessBundle, RotatedParticipantLeg,
 };
 use dregg_turn::rotation_witness as rw;
+
+/// SCOPE — printed by every test in this file. The module doc above and these two
+/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
+/// cheap single-source-of-truth for a doc line that is also runtime output.
+fn scope() {
+    println!(
+        "ANSWERS:         does a real 2-turn CreateCellFromFactory chain whose child_vk8 octet is published at PI 47..54 fold plus light-client-verify, is a backing bundle claiming a child_vk that differs in ONE BIT refused by the segmented factory-binding node with a WitnessConflict, and is a factory witness on a stand-in leg whose descriptor lacks the octet claim pins refused by the fold arm admission gate?"
+    );
+    println!(
+        "DOES NOT ANSWER: whether the descriptor under test is the COMMITTED registry row. pinned_factory_twin falls back to a Rust-side insert_tail_claim_pins transform whenever its native-pin lookup misses, so a green can be a green about a locally rebuilt descriptor rather than the emitted bytes. Nor is the child_vk derived from anything: it is the literal 0x9A octet threaded through RotationCarrierMaterial, so the fold binds two copies of one constant."
+    );
+}
 
 // ============================================================================
 // Fixtures
@@ -321,6 +336,7 @@ fn build_chain(bundle: FactoryWitnessBundle) -> Vec<FinalizedTurn> {
 #[test]
 #[ignore = "SLOW: real deployed factory-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_factory_turn_honest_accepts() {
+    scope();
     let turns = build_chain(backing_bundle(&[0x9Au8; 32]));
     let whole = prove_turn_chain_recursive(&turns)
         .expect("the honest factory-bearing chain must fold through the deployed prover");
@@ -339,6 +355,7 @@ fn deployed_factory_turn_honest_accepts() {
 #[test]
 #[ignore = "SLOW: real deployed factory-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_factory_turn_forged_child_vk_rejected() {
+    scope();
     // ── S1 HONEST POLE FIRST, in THIS test. The forged chain below differs from this one by a
     //    SINGLE BIT of the child_vk, so without an accept here the refusal proves nothing: an arm
     //    that refuses every chain of this shape would satisfy the assertion below just as well.
@@ -373,6 +390,7 @@ fn deployed_factory_turn_forged_child_vk_rejected() {
 /// admission) is what refuses.
 #[test]
 fn deployed_factory_witness_on_unpinned_leg_is_refused() {
+    scope();
     use dregg_circuit::lean_descriptor_air::VmConstraint;
 
     // The deployed pre-regen factory wide PI shape: 47 narrow + 16 anchors = 63 PIs, NO octet

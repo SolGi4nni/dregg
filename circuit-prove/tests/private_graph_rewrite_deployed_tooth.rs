@@ -20,6 +20,9 @@
 //!
 //! The test is ignored in the everyday profile because it mints real recursion
 //! proofs.  Run it in release mode on the build node.
+//!
+//! ANSWERS:         does ONE honest 2-turn chain, whose first turn carries a real private-graph HidingFri sub-proof over that leg OWN probed rotated roots, fold through prove_turn_chain_recursive and pass verify_turn_chain_recursive?
+//! DOES NOT ANSWER: whether ANY of the four joins named above can REFUSE. There is no forged pole anywhere in this file — no tampered VK8, commitment, graph root or state anchor is ever folded — so a binding welded to nothing would produce exactly this green. The second turn also carries a fabricated proof_commitment with no carrier witness, the shape the custom tooth documents as a hole rather than harmless filler.
 
 use dregg_cell::{Cell, Ledger, field_from_u64};
 use dregg_circuit::descriptor_ir2::{
@@ -49,6 +52,18 @@ const BALANCE: i64 = 1_000;
 const DOMAIN: u32 = 11;
 const SESSION: u32 = 77;
 const STEP_INDEX: u32 = 9;
+
+/// SCOPE — printed by every test in this file. The module doc above and these two
+/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
+/// cheap single-source-of-truth for a doc line that is also runtime output.
+fn scope() {
+    println!(
+        "ANSWERS:         does ONE honest 2-turn chain, whose first turn carries a real private-graph HidingFri sub-proof over that leg OWN probed rotated roots, fold through prove_turn_chain_recursive and pass verify_turn_chain_recursive?"
+    );
+    println!(
+        "DOES NOT ANSWER: whether ANY of the four joins named above can REFUSE. There is no forged pole anywhere in this file — no tampered VK8, commitment, graph root or state anchor is ever folded — so a binding welded to nothing would produce exactly this green. The second turn also carries a fabricated proof_commitment with no carrier witness, the shape the custom tooth documents as a hole rather than harmless filler."
+    );
+}
 
 fn open_permissions() -> dregg_cell::Permissions {
     use dregg_cell::AuthRequired;
@@ -278,6 +293,7 @@ fn honest_chain() -> Vec<FinalizedTurn> {
 #[test]
 #[ignore = "heavy: real private graph HidingFri + deployed direct-IR2 whole-chain recursion"]
 fn deployed_private_graph_rewrite_attests_a_precommitted_cell_root_to_a_light_client() {
+    scope();
     let turns = honest_chain();
     let whole = prove_turn_chain_recursive(&turns)
         .expect("the honest graph-rewrite carrier must fold through the deployed chain prover");

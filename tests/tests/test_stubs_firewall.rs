@@ -58,9 +58,24 @@
 //! * Manifest scan: add `dregg-cell = { path = "../cell", features =
 //!   ["test-stubs"] }` under any crate's `[dependencies]`. The scan names the
 //!   file, the section and the line.
+//!
+//! ANSWERS:         does `cargo tree -e features,no-dev -i dregg-cell` — for the dregg-node plus dregg-tests pair and again for the workspace default-members — print neither test-stubs nor test-stubs-release-test-target while still reaching dregg-cell and dregg-node, is the feature still reachable over DEV edges, and does a bracket-balanced textual scan of every member manifest find either feature named outside a dev-dependencies section?
+//! DOES NOT ANSWER: whether StubVerifier is correct, whether any OTHER feature arms an accept-anything verifier, or whether a stub registry is selected at runtime. It is a cargo-feature REACHABILITY question about two named features of one named crate, decided on the WORKING-TREE manifests, not a claim about the verifier.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// SCOPE — printed by every test in this file. The module doc above and these two
+/// strings are two copies of one statement and MUST stay BYTE-IDENTICAL: Rust has no
+/// cheap single-source-of-truth for a doc line that is also runtime output.
+fn scope() {
+    println!(
+        "ANSWERS:         does `cargo tree -e features,no-dev -i dregg-cell` — for the dregg-node plus dregg-tests pair and again for the workspace default-members — print neither test-stubs nor test-stubs-release-test-target while still reaching dregg-cell and dregg-node, is the feature still reachable over DEV edges, and does a bracket-balanced textual scan of every member manifest find either feature named outside a dev-dependencies section?"
+    );
+    println!(
+        "DOES NOT ANSWER: whether StubVerifier is correct, whether any OTHER feature arms an accept-anything verifier, or whether a stub registry is selected at runtime. It is a cargo-feature REACHABILITY question about two named features of one named crate, decided on the WORKING-TREE manifests, not a claim about the verifier."
+    );
+}
 
 /// Every `dregg-cell` feature that either ARMS the `StubVerifier` accept path
 /// or ATTESTS that arming it is acceptable. Both are disqualified from the
@@ -114,6 +129,7 @@ fn cargo_tree(root: &Path, args: &[&str]) -> String {
 /// makes the probe measure the production graph rather than the test graph.
 #[test]
 fn test_stubs_does_not_unify_into_the_production_node_graph() {
+    scope();
     let root = workspace_root();
 
     // ── HONEST POLE FIRST. The probe must actually be looking at a graph that
@@ -320,6 +336,7 @@ fn walk_manifests(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 /// `[dependencies.dregg-cell]` table spelling of each — is a leak.
 #[test]
 fn test_stubs_is_never_named_by_a_non_dev_dependency_entry() {
+    scope();
     let root = workspace_root();
     let members = member_manifests(&root);
 
