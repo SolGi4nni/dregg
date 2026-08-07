@@ -34,9 +34,10 @@ def forty (name : String) (t : WrapData) (k : Rung) : IO Unit := do
     let b := minaForty.getD i 0
     IO.println s!"   [{i}] {if a == b then "==" else "!="} emitted={a} mina={b}"
 
-/-- §19's program on the RAW real evaluations — the probe environment, i.e. before `finZW0` solves
-`z(ζω)`. This is the reading that should reproduce Mina's own `ft_eval0` if the block really is the
-real Wrap proof and §19 really is `plonk_checks.ml`. -/
+/-- §19's program on the RAW real evaluations — the probe environment. (It read "i.e. before
+`finZW0` solves `z(ζω)`" until 2026-08-07; there is no solve any more, so "raw" and "emitted" name
+one reading.) This is what should reproduce Mina's own `ft_eval0` if the block really is the real
+Wrap proof and §19 really is `plonk_checks.ml`. -/
 def probe (name : String) (t : WrapData) (p : Nat) : IO Unit := do
   let d := finProbeData t.sh t.sp p
   IO.println s!"== §19 PROBE (raw evals): {name} block {p} =="

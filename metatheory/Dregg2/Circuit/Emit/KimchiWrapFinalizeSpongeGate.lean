@@ -221,8 +221,9 @@ nested challenge-digest sponge squeezes the value kimchi's own verifier computed
 `verifier.rs:290-299` rather than a mixer's. Slot **6** closed later the same day, and NOT on this
 side: `KimchiStepMainCore` §1f stopped publishing the live per-proof block's `perm` out of
 `ftcDiv2 0` — §6b's own Fp ft-comm scalar, the WRAP statement's word 4 — and gave it its own cell
-carrying `Shifted_value.Type2.of_field` of the derived `perm`. `finZW0`'s ratio is 1 now, so the
-solve is the identity and the tape it presents the sponge is the block's own. -/
+carrying `Shifted_value.Type2.of_field` of the derived `perm`. That made `finZW0`'s ratio 1, and
+the solve — inert once its ratio was 1 — was DELETED on the same day, so the tape this presents the
+sponge is the block's own because nothing bends it, not because a bend happened to cancel. -/
 
 /-- The 91-element tape §20's rows build at the live block, with the challenge digest the emitter's
 own nested sponge squeezes. -/
@@ -267,7 +268,7 @@ theorem the_emitted_challenge_digest_is_the_accepted_blocks :
 /-- ⚑⚑⚑ **AND THE TAPE ITSELF, LESS ONE BEND, IS MINA'S OWN PHASE-2 TAPE — SO §20's TWO SQUEEZES
 ARE THAT BLOCK'S ξ′ AND r′.**
 
-This is the gate §20 has not had. `unbentFinTape` is built ENTIRELY from the emitter's own value
+This is the gate §20 has not had. `emittedFinTape` is built ENTIRELY from the emitter's own value
 layer — `finBlockVal` (the published step statement), `finChalSponge` (this file's own sponge),
 `finFtEval1Val`, `finPZetaVal`, `finPZetaWVal` and the 43 `finColVal` columns — and it comes out
 EQUAL, element for element, to `MinaRealBlockTranscript.fqTape2`, which was extracted from the
