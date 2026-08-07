@@ -84,6 +84,33 @@ pub enum ProgramError {
     /// named trusted-Rust slot and are unaffected. (wasm32 / the SP1 zkVM guest
     /// cannot link the archive and keep the Rust subset arms, labeled unverified.)
     ConstraintOracleUnavailable { constraint: StateConstraint },
+    /// ⚑ **THE VERIFIED ORACLE COULD NOT READ THE WIRE THIS BINARY SENT IT.**
+    ///
+    /// `Dregg2.Exec.DeployedConstraint.admitsWire` answered with its
+    /// MALFORMED-WIRE code (`"7 <stage>"`), which means the Lean evaluator never
+    /// evaluated anything: the token stream
+    /// `dregg-exec-lean::constraint_oracle::build_wire` produced is not the one
+    /// this archive's `parseE` reads. That is a Rust/Lean GRAMMAR DISAGREEMENT
+    /// inside this binary — a fact about how it was built, not about the
+    /// caller's transition — and it is FAIL-CLOSED: while the mismatch stands,
+    /// every constraint in the Lean-evaluated subset refuses.
+    ///
+    /// It has its own variant because for a week it did NOT have one.
+    /// `admitsWire` used to render a parse failure as `"1"`, the same string a
+    /// violated constraint renders as, so exactly this condition arrived here as
+    /// [`ProgramError::ConstraintViolated`] — a true refusal wearing a false
+    /// diagnosis. The admission header grew 6 → 17 tokens on 2026-07-30/08-01,
+    /// nine assertions of the form "and it refuses" kept passing, and nothing
+    /// was being admitted at all. `Dregg2.Exec.DeployedConstraint`'s
+    /// `admitsWire_eq_violated_iff` / `admitsWire_malformed_iff` are the two
+    /// theorems that now make the two codes distinguishable by value.
+    ConstraintOracleWireMalformed {
+        constraint: StateConstraint,
+        /// The parse STAGE the Lean side stopped at (`DWireFault`) — which half
+        /// of the grammar disagreed, e.g. the 17-token header arity vs an
+        /// unknown constraint tag.
+        stage: &'static str,
+    },
 }
 
 impl core::fmt::Display for ProgramError {
@@ -178,6 +205,16 @@ impl core::fmt::Display for ProgramError {
                     "this world cannot judge a move on this server: the verified rule-checker it needs is not installed, so it refuses every move rather than guess at one. That is a fault in how this server was built, not in what you did — the server log names the missing piece"
                 )
             }
+            // ⚑ PLAYER-FACING, same audience and same rule as the sentinel above: nothing the
+            // caller could have typed avoids this, so the sentence must not describe their move.
+            // It must NOT say "your move breaks a rule" — that is precisely the false diagnosis
+            // this variant exists to stop being given.
+            ProgramError::ConstraintOracleWireMalformed { .. } => {
+                write!(
+                    f,
+                    "this world cannot judge a move on this server: the verified rule-checker is installed but this server speaks to it in a dialect it does not read, so it refuses every move rather than guess at one. That is a fault in how this server was built, not in what you did — the server log names the exact disagreement"
+                )
+            }
         }
     }
 }
@@ -222,6 +259,29 @@ impl ProgramError {
                      linked `libdregg_lean.a` does not export `dregg_constraint_admits` — this \
                      binary was built without a HEAD-matching Lean archive (e.g. \
                      `DREGG_REQUIRE_LEAN=0`) and cannot serve turns"
+                ))
+            }
+            ProgramError::ConstraintOracleWireMalformed { constraint, stage } => {
+                // Same truncation discipline as above, and for the same reason: the constraint is
+                // decoded from untrusted wire bytes and can carry attacker-chosen UTF-8, so it is
+                // truncated by CHARS (a byte-index `String::truncate` PANICS off a char boundary).
+                let full = format!("{constraint:?}");
+                let mut which: String = full.chars().take(200).collect();
+                if which.len() < full.len() {
+                    which.push('…');
+                }
+                Some(format!(
+                    "the verified constraint oracle REFUSED TO PARSE the wire this binary sent it, \
+                     at stage: {stage}. The Lean evaluator never ran, so this refusal says nothing \
+                     about the constraint it names (here: {which}) — it says \
+                     `dregg-exec-lean::constraint_oracle::build_wire` and \
+                     `Dregg2.Exec.DeployedConstraint.parseE` disagree about the admission wire in \
+                     THIS binary. Fail-closed, so every Lean-subset constraint will refuse until \
+                     they are reconciled. Usual cause: a linked `libdregg_lean.a` whose \
+                     `Dregg2_Exec_DeployedConstraint.o` predates the `.lean` (rebuild \
+                     `-p dregg-lean-ffi --features lean-lib` and see \
+                     `dregg-lean-ffi/tests/linked_archive_freshness.rs`), or a header-arity change \
+                     landed on one side only"
                 ))
             }
             _ => None,

@@ -1035,9 +1035,10 @@ def admitsTop (t : DTop) (i : DInput) : DAdmit :=
 
 /-! ## The `@[export]` wire codec (Rust → Lean)
 
-Single-line, space-separated token stream; a malformed wire fails CLOSED
-(`"1"` = refuse). Token order (17 header tokens, 32 register tokens, the resolved
-cell run, then the constraint):
+Single-line, space-separated token stream; a malformed wire fails CLOSED with its
+OWN code (`"7 <fault>"` — NOT `"1"`, which is a genuine `ConstraintViolated`; see
+the `A WIRE THAT COULD NOT BE READ` block above `DWireFault`). Token order (17
+header tokens, 32 register tokens, the resolved cell run, then the constraint):
 
 ```
 oldPresent(0|1)  newNonce(dec)
@@ -1059,7 +1060,9 @@ Field values are hex (the 32-byte `FieldElement`, big-endian); indices / nonce /
 counts / u64 args are decimal; deltas / coefficients / balances are signed
 decimal. Output: `"0"` ok · `"1"` violated · `"2 <idx>"` needsOld ·
 `"3 <idx>"` badIndex · `"4 <code>"` missingContext · `"5"`
-capUniqRequiresExecutor · `"6"` boundDeltaNotWired. -/
+capUniqRequiresExecutor · `"6"` boundDeltaNotWired · `"7 <fault>"` THE WIRE DID
+NOT PARSE — no evaluation happened at all, and no verdict can produce this code
+(`render_ne_malformed` / `admitsWire_malformed_iff`). -/
 
 /-- One hex digit → `Nat`. -/
 @[inline] def hexDigit? (c : Char) : Option Nat :=
@@ -1492,7 +1495,7 @@ def parseCells : Nat → List String → Option (List (Option DField) × List St
   | _ + 1, _ => none
 
 /-- Parse the 17 header tokens into a `DInput` skeleton (the register runs and the
-cell run are filled by [`parse`]). Fails closed on any malformed token. -/
+cell run are filled by [`parseE`]). Fails closed on any malformed token. -/
 def parseHeader (hdr : List String) : Option DInput :=
   match hdr with
   | [op, nn, hop, hov, hnp, hnv, hxp, hxv, obal, nbal, cxp, hgt, sndp, sndv, epp, epv, cnt] =>
@@ -1517,38 +1520,110 @@ def parseHeader (hdr : List String) : Option DInput :=
       | _, _, _, _, _, _, _ => none
   | _ => none
 
-/-- Parse the whole wire into `(constraint, input)`. Fails closed. -/
-def parse (s : String) : Option (DTop × DInput) :=
+/-! ## ⚑ A WIRE THAT COULD NOT BE READ IS NOT A CONSTRAINT VIOLATION
+
+Until 2026-08-07 the wire parser returned a bare `Option` and `admitsWire` rendered `none` as `"1"` — the
+string `render .violated` produces. "Your Rust and my Lean disagree about the wire" and "your
+constraint is violated" therefore reached every reader as the same three bytes. Two consequences,
+both MEASURED, not hypothesised:
+
+* every negative assertion in `dregg-lean-ffi/tests/deployed_constraint_probe.rs` was VACUOUS. The
+  admission header grew 6 → 17 tokens over 07-30/08-01 while that file's builder still emitted six,
+  so every wire it sent failed to parse and nine assertions of the shape `= "1"` passed for a
+  week with nothing being admitted at all — `perf_ffi_admission_cost` was timing a parse failure and
+  printing a plausible admission cost.
+* on the DEPLOYED path `exec-lean/src/constraint_oracle.rs::decode_verdict` mapped that same `"1"`
+  to `ProgramError::ConstraintViolated`. A Rust/Lean wire disagreement would have made the node
+  refuse EVERY turn while naming the player's constraint as the cause: a true refusal wearing a
+  false diagnosis, and nothing anywhere could tell it from the real thing.
+
+The repair is in the TYPE, not in a convention. `parseE` reports WHERE the wire stopped being
+readable ([`DWireFault`]); `admitsOutcome` returns a [`DWireOutcome`] whose `malformed` constructor
+is **not a `DAdmit` at all**, so no evaluation path can construct it and no verdict can be mistaken
+for it; and [`renderOutcome`] gives it tag `"7"` plus the fault code, which
+`constraint_oracle.rs::decode_verdict` turns into `ProgramError::ConstraintOracleWireMalformed`.
+
+Both poles are theorems, not examples: [`admitsWire_eq_violated_iff`] (a `"1"` on the wire means the
+evaluator RAN and returned `violated` — nothing else can produce it) and
+[`admitsWire_malformed_iff`] (a `"7 …"` means it never ran). -/
+
+/-- WHERE the wire stopped being readable. Carried on the malformed code so the deployed refusal
+names the half of the grammar that disagreed — an arity drift in the header reads differently from
+an unknown constraint tag, and both read differently from a violated constraint.
+
+The codes are the `<fault>` token of the `"7 <fault>"` rendering; `constraint_oracle.rs` maps them
+back to `&'static str` stage names. -/
+inductive DWireFault where
+  /-- Fewer than [`headerTokens`] tokens on the wire at all — the arity drift itself. -/
+  | headerArity
+  /-- The header has the right token COUNT and one of its fields does not parse. -/
+  | headerToken
+  /-- The 16-token old-register hex run is short or carries a non-hex token. -/
+  | oldRegs
+  /-- The 16-token new-register hex run is short or carries a non-hex token. -/
+  | newRegs
+  /-- A register run came back the wrong length (the belt-and-braces arity re-check). -/
+  | regArity
+  /-- The resolved cell run's count token is absent or not decimal. -/
+  | cellCount
+  /-- The `present value` pair run is short or carries a bad token. -/
+  | cells
+  /-- The constraint tag is unknown, or its arguments are short / unparseable. -/
+  | constraintTag
+  deriving Repr, DecidableEq
+
+/-- The `<fault>` token of the malformed rendering. Single-digit by construction (there are eight
+faults), which is what keeps `"7 <fault>"` three characters long — see [`renderOutcome`]. -/
+def DWireFault.code : DWireFault → Nat
+  | .headerArity => 0
+  | .headerToken => 1
+  | .oldRegs => 2
+  | .newRegs => 3
+  | .regArity => 4
+  | .cellCount => 5
+  | .cells => 6
+  | .constraintTag => 7
+
+/-- Parse the whole wire into `(constraint, input)`, or report the STAGE that refused it. Fails
+closed at every step; the fault is diagnostic only — no fault admits anything. -/
+def parseE (s : String) : Except DWireFault (DTop × DInput) :=
   let toks := (s.splitOn " ").filter (· ≠ "")
   match popN headerTokens toks with
-  | none => none
+  | none => .error .headerArity
   | some (hdr, rest0) =>
       match parseHeader hdr with
-      | none => none
+      | none => .error .headerToken
       | some skel =>
           match parseHexRun stateSlots rest0 with
-          | none => none
+          | none => .error .oldRegs
           | some (oldRegs, rest1) =>
               match parseHexRun stateSlots rest1 with
-              | none => none
+              | none => .error .newRegs
               | some (newRegs, rest2) =>
-                  if oldRegs.length ≠ stateSlots ∨ newRegs.length ≠ stateSlots then none
+                  if oldRegs.length ≠ stateSlots ∨ newRegs.length ≠ stateSlots then
+                    .error .regArity
                   else
                     match rest2 with
-                    | [] => none
+                    | [] => .error .cellCount
                     | ncell :: rest3 =>
                         match parseNat ncell with
-                        | none => none
+                        | none => .error .cellCount
                         | some k =>
                             match parseCells k rest3 with
-                            | none => none
+                            | none => .error .cells
                             | some (cells, rest4) =>
                                 match parseTop rest4 with
-                                | none => none
+                                | none => .error .constraintTag
                                 | some c =>
-                                    some (c, { skel with oldRegs := oldRegs
-                                                       , newRegs := newRegs
-                                                       , cells := cells })
+                                    .ok (c, { skel with oldRegs := oldRegs
+                                                      , newRegs := newRegs
+                                                      , cells := cells })
+
+/-! ⚑ THERE IS NO `parse : String → Option (DTop × DInput)` ANY MORE, and there is deliberately no
+fault-forgetting `(parseE s).toOption` view left standing in its place. The whole defect was that
+"it did not parse" was representable as something else; a second entry point that throws the fault
+away is the same mistake with a smaller blast radius, and the next reader would reach for the
+shorter name. `parseE` is the only parse. -/
 
 /-- Render a verdict to the wire code. -/
 def render : DAdmit → String
@@ -1560,17 +1635,173 @@ def render : DAdmit → String
   | .capUniqRequiresExecutor => "5"
   | .boundDeltaNotWired => "6"
 
-/-- The whole String → String decision. A malformed wire refuses (`"1"`). -/
-def admitsWire (s : String) : String :=
-  match parse s with
-  | none => "1"
-  | some (c, i) => render (admitsTop c i)
+/-- What one `admitsWire` call decides: EITHER the evaluator ran and returned a verdict, OR the wire
+never became a question. `malformed` is not a `DAdmit`, so [`admits`] / [`admitsTop`] cannot produce
+it and the two can never collide by value. -/
+inductive DWireOutcome where
+  | verdict (v : DAdmit)
+  | malformed (fault : DWireFault)
+  deriving Repr, DecidableEq
+
+/-- The tag reserved for "this wire is not a question I can answer". Disjoint from every verdict
+code `render` emits (`"0"`–`"6"`), and it is a REFUSAL: the deployed decoder maps it to a
+fail-closed `ProgramError`, never to an admission. -/
+def malformedTag : String := "7"
+
+/-- Render a wire outcome. A verdict renders exactly as before; a malformed wire renders
+`"7 <fault>"` — three characters, so it is not even the right LENGTH to be `"0"`/`"1"`/`"5"`/`"6"`,
+and its first character rules out the `"2 …"`/`"3 …"`/`"4 …"` payload codes. -/
+def renderOutcome : DWireOutcome → String
+  | .verdict v => render v
+  | .malformed f => malformedTag ++ " " ++ toString f.code
+
+/-- The whole String → wire-outcome decision. -/
+def admitsOutcome (s : String) : DWireOutcome :=
+  match parseE s with
+  | .error f => .malformed f
+  | .ok (c, i) => .verdict (admitsTop c i)
+
+/-- The whole String → String decision. A wire that did not parse renders `"7 <fault>"`, which no
+successful evaluation can produce — see [`admitsWire_eq_violated_iff`]. -/
+def admitsWire (s : String) : String := renderOutcome (admitsOutcome s)
 
 /-- **`@[export dregg_constraint_admits]`** — the FFI entry Rust calls. Runs the
 verified deployed evaluator over the wire slice; the deployed node's admission
 decision for the Lean-evaluated subset is COMPUTED HERE. -/
 @[export dregg_constraint_admits]
 def admitsFFI (s : String) : String := admitsWire s
+
+/-! ## THE SEPARATION, PROVED BOTH WAYS
+
+The point of the new code is worth nothing as a convention; it is worth something as a pair of
+theorems over EVERY wire and EVERY verdict. Below, in order:
+
+* [`render_ne_malformed`] — no verdict the evaluator can reach renders as a malformed code.
+  Universally quantified over `DAdmit` and `DWireFault`, so it covers arms added later.
+* [`admitsWire_eq_violated_iff`] — `admitsWire s = "1"` **iff** the wire parsed and the evaluator
+  returned `violated`. This is the pole a parse failure used to satisfy for free.
+* [`admitsWire_malformed_iff`] — `admitsWire s = "7 <f>"` **iff** the wire did not parse, with the
+  fault naming the stage.
+
+⚠ No `#assert_axioms` here, and that is deliberate rather than an oversight: it lives in
+`Dregg2.Tactics`, whose elaborator machinery would pull `Lean` meta code into this module's import
+closure, and this module's `.c` has to splice into `libdregg_lean.a` self-contained (see the header).
+The four pre-existing theorems in this file carry the same gap. -/
+
+/-- A rendering that carries a payload token (`"<code> <arg>"`) is at least two characters, so it can
+never equal a single-character code, whatever the payload is. -/
+private theorem payload_ne_short (p t q : String) (hp : 2 ≤ p.length) (hq : q.length = 1) :
+    p ++ t ≠ q := by
+  intro h
+  have hl : (p ++ t).length = q.length := by rw [h]
+  rw [String.length_append] at hl
+  omega
+
+/-- Every fault renders as exactly three characters (`"7"`, a space, one digit). -/
+private theorem renderOutcome_malformed_length (f : DWireFault) :
+    (renderOutcome (.malformed f)).length = 3 := by
+  cases f <;> rfl
+
+/-- The first character of a malformed rendering is `'7'`. -/
+private theorem renderOutcome_malformed_head (f : DWireFault) :
+    (renderOutcome (.malformed f)).toList.head? = some '7' := by
+  cases f <;> rfl
+
+/-- A payload rendering whose first character is not `'7'` is not a malformed code, whatever its
+payload — this is what separates `"2 <idx>"` from `"7 <fault>"`, which have the same LENGTH. -/
+private theorem payload_ne_malformed (p t : String) (f : DWireFault) (c : Char)
+    (hp : p.toList.head? = some c) (hc : c ≠ '7') :
+    p ++ t ≠ renderOutcome (.malformed f) := by
+  intro h
+  have h' := congrArg (fun s : String => s.toList.head?) h
+  simp only [String.toList_append, List.head?_append, hp, Option.some_or,
+    renderOutcome_malformed_head f] at h'
+  exact hc (Option.some.inj h')
+
+/-- **POLE B — NO VERDICT IS EVER A MALFORMED CODE.** For every verdict the deployed evaluator can
+return and every wire fault, the two renderings differ. Quantified, not pinned: an arm added to
+`DAdmit` later must be given a `render` case, and this proof re-checks it. -/
+theorem render_ne_malformed (v : DAdmit) (f : DWireFault) :
+    render v ≠ renderOutcome (.malformed f) := by
+  have hlen := renderOutcome_malformed_length f
+  cases v with
+  | ok => intro h; rw [render] at h; rw [← h] at hlen; exact absurd hlen (by decide)
+  | violated => intro h; rw [render] at h; rw [← h] at hlen; exact absurd hlen (by decide)
+  | capUniqRequiresExecutor =>
+      intro h; rw [render] at h; rw [← h] at hlen; exact absurd hlen (by decide)
+  | boundDeltaNotWired =>
+      intro h; rw [render] at h; rw [← h] at hlen; exact absurd hlen (by decide)
+  | needsOld idx =>
+      rw [render]; exact payload_ne_malformed "2 " (toString idx) f '2' (by rfl) (by decide)
+  | badIndex idx =>
+      rw [render]; exact payload_ne_malformed "3 " (toString idx) f '3' (by rfl) (by decide)
+  | missingContext code =>
+      rw [render]; exact payload_ne_malformed "4 " (toString code) f '4' (by rfl) (by decide)
+
+/-- **THE `"1"` POLE.** `render v = "1"` exactly when `v` is `violated` — the string a deployed
+`ConstraintViolated` is decoded from cannot be reached any other way. -/
+theorem render_eq_violated_iff (v : DAdmit) : render v = "1" ↔ v = .violated := by
+  constructor
+  · intro h
+    cases v with
+    | violated => rfl
+    | ok => exact absurd h (by decide)
+    | capUniqRequiresExecutor => exact absurd h (by decide)
+    | boundDeltaNotWired => exact absurd h (by decide)
+    | needsOld idx =>
+        exact absurd h (payload_ne_short "2 " (toString idx) "1" (by decide) (by decide))
+    | badIndex idx =>
+        exact absurd h (payload_ne_short "3 " (toString idx) "1" (by decide) (by decide))
+    | missingContext code =>
+        exact absurd h (payload_ne_short "4 " (toString code) "1" (by decide) (by decide))
+  · intro h; subst h; rfl
+
+/-- **BOTH POLES, ON THE WIRE.** `admitsWire s = "1"` iff the wire PARSED and the evaluator returned
+`violated`. Before the split this direction was free for any unparseable wire — which is precisely
+why nine assertions of this shape held while nothing was being evaluated. -/
+theorem admitsWire_eq_violated_iff (s : String) :
+    admitsWire s = "1" ↔ ∃ c i, parseE s = .ok (c, i) ∧ admitsTop c i = .violated := by
+  unfold admitsWire admitsOutcome
+  cases hp : parseE s with
+  | error f =>
+      simp only [renderOutcome]
+      constructor
+      · intro h
+        exact absurd (renderOutcome_malformed_length f)
+          (by rw [show renderOutcome (DWireOutcome.malformed f) = "1" from h]; decide)
+      · rintro ⟨c, i, hok, -⟩; exact absurd hok (by simp)
+  | ok p =>
+      obtain ⟨c, i⟩ := p
+      simp only [renderOutcome, render_eq_violated_iff]
+      constructor
+      · intro h; exact ⟨c, i, rfl, h⟩
+      · rintro ⟨c', i', hok, hv⟩
+        simp only [Except.ok.injEq, Prod.mk.injEq] at hok
+        obtain ⟨rfl, rfl⟩ := hok
+        exact hv
+
+/-- **THE OTHER POLE.** `admitsWire s` is a malformed code exactly when the wire did not parse, and
+the fault it carries is the stage that refused it. -/
+theorem admitsWire_malformed_iff (s : String) (f : DWireFault) :
+    admitsWire s = renderOutcome (.malformed f) ↔ parseE s = .error f := by
+  unfold admitsWire admitsOutcome
+  cases hp : parseE s with
+  | error g =>
+      simp only []
+      constructor
+      · intro h
+        have : g = f := by
+          cases g <;> cases f <;> first
+            | rfl
+            | (exfalso; exact absurd h (by decide))
+        simp [this]
+      · intro h; simp only [Except.error.injEq] at h; subst h; rfl
+  | ok p =>
+      obtain ⟨c, i⟩ := p
+      simp only [renderOutcome]
+      constructor
+      · intro h; exact absurd h (render_ne_malformed _ f)
+      · intro h; exact absurd h (by simp)
 
 /-! ## Self-tests — the evaluator agrees with `eval.rs` on the pinned cases,
 including the two reconciled divergence boundaries and the newly-widened arms.
@@ -1949,8 +2180,66 @@ private def cells3 : String := "3 1 5 1 7 1 5"
 -- Same for a missing context under negation.
 #guard admitsWire (wire0 "ALL 1 N1 FGH 0 0") = "4 0"
 
--- A malformed / unknown tag fails CLOSED.
-#guard admitsWire (wire0 "NOPE 1 2") = "1"
-#guard admitsWire "garbage" = "1"
+/-! ## ⚑ THE TWO GUARDS THAT ASSERTED NOTHING
+
+These two read
+
+```lean
+  -- A malformed / unknown tag fails CLOSED.
+  #guard admitsWire (wire0 "NOPE 1 2") = "1"
+  #guard admitsWire "garbage" = "1"
+```
+
+and they were the only thing in this file that looked at an unreadable wire. Both passed for the
+same reason every wire in `deployed_constraint_probe.rs` passed: `"1"` was what a parse failure and
+a constraint violation BOTH rendered as, so neither guard could distinguish "fails closed" from
+"the whole grammar drifted". A guard that cannot tell its subject from its opposite is not evidence
+of the subject.
+
+They are now the concrete corollaries of [`admitsWire_malformed_iff`], asserting the code a
+violation CANNOT produce, and each names the stage that refused. `"garbage"` is one token, so it
+dies on the header arity; `wire0 "NOPE 1 2"` is a well-formed 17-token header with a well-formed
+state and an unknown constraint tag, which is the drift the deployed marshaller would actually
+cause. Both are paired with a CONTROL — a wire that parses and violates, and one that parses and
+admits — so "malformed and violated differ" cannot be satisfied by an evaluator that has started
+calling everything malformed.
+
+⚠ These four are `native_decide`, i.e. the COMPILED evaluator, because `decide` does not reach:
+`admitsWire` runs `String.splitOn` over a ByteArray-backed `String` and kernel reduction gets stuck
+in `String.decEq`'s UTF-8 machinery (measured). That is exactly the trust the 153 `#guard`s beside
+them already take — `#guard` is `unsafe evalExpr` on the same engine — so this is not a new
+dependency, only a NAMED one: these produce terms, carry `Lean.ofReduceBool` in their axiom record,
+and `unknown_tag_is_not_violated` is a kernel proof built ON one of them. The general facts
+([`render_ne_malformed`], [`render_eq_violated_iff`], [`admitsWire_eq_violated_iff`],
+[`admitsWire_malformed_iff`]) are kernel-proved and quantified; these four only pin that THIS
+evaluator lands where those theorems say it must. -/
+
+/-- An unknown constraint tag on an OTHERWISE VALID wire reports the constraint-tag fault — not
+`ConstraintViolated`. This is the shape a Rust/Lean tag drift takes on the deployed path. -/
+theorem unknown_tag_is_malformed :
+    admitsWire (wire0 "NOPE 1 2") = renderOutcome (.malformed .constraintTag) := by
+  native_decide
+
+/-- ...and it is NOT the violated code, which is the whole point. -/
+theorem unknown_tag_is_not_violated : admitsWire (wire0 "NOPE 1 2") ≠ "1" := by
+  rw [unknown_tag_is_malformed]
+  exact fun h => absurd (renderOutcome_malformed_length .constraintTag)
+    (by rw [h]; decide)
+
+/-- A wire with the wrong token COUNT reports the header-arity fault — the 6-vs-17 drift itself. -/
+theorem short_wire_is_malformed :
+    admitsWire "garbage" = renderOutcome (.malformed .headerArity) := by
+  native_decide
+
+/-- THE CONTROL for both of the above: a wire that DOES parse and whose constraint is genuinely
+violated still renders `"1"`. Without this pair the theorems above are satisfied by an evaluator
+that calls everything malformed. -/
+theorem genuine_violation_is_still_violated : admitsWire (wire0 "FE 0 5") = "1" := by
+  native_decide
+
+/-- ...and the same wire with a satisfied constraint still admits — so `"1"` above is the
+constraint's doing, not the wire's. -/
+theorem genuine_admission_is_still_ok : admitsWire (wire0 "FE 0 0") = "0" := by
+  native_decide
 
 end Dregg2.Exec.DeployedConstraint

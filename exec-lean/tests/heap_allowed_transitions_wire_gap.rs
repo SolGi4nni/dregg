@@ -34,6 +34,15 @@
 //! `dreggnet-web/tests/deployed_program_oracle_decidable.rs`: it walks the REAL
 //! `dungeon_program.json` through the REAL marshaller and reports every constraint that declines.
 //!
+//! ⚑ AND SINCE 2026-08-07 THE `Ok("1")` ASSERTIONS BELOW ALSO DISTINGUISH A REFUSAL FROM A
+//! WIRE THAT NEVER PARSED. `admitsWire` used to render both as `"1"`, so the hand-built wires in
+//! [`the_lean_arm_decides_both_poles_and_the_absent_vs_present_zero_discrimination`] would have
+//! passed their REFUSE legs even if this file's `header`/`wire` builders had drifted from
+//! `DeployedConstraint.parseE` — which is exactly what happened to
+//! `dregg-lean-ffi/tests/deployed_constraint_probe.rs` for a week. A parse failure now renders
+//! `"7 <stage>"`, so those legs are load-bearing on the grammar as well as on the atom. (Checked at
+//! landing: all four wires here PARSE — the two `Ok("1")` legs are genuine `violated` verdicts.)
+//!
 //! ⚑ A DECLINE IS NOT A REFUSAL AND THIS TEST DISTINGUISHES THEM. Asking the oracle and getting
 //! `None` proves nothing on its own — an oracle that declined *everything* would look identical.
 //! So the "still declines" case is paired with a sibling heap atom over the SAME key and the SAME

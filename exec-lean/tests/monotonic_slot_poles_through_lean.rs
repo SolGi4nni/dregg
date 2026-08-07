@@ -22,9 +22,12 @@
 //! * **ADMIT** — 100 -> 110 commits. Without it a refusal proves nothing (every leg would be red
 //!   for any reason at all, e.g. a fixture the executor rejects before it ever reaches a program).
 //! * **REFUSE** — 100 -> 90 is rejected, and rejected with `ProgramViolation` naming the cell that
-//!   carries the caveat. A bare `Rejected { .. }` would also be satisfied by
-//!   `ConstraintOracleUnavailable`, by a budget refusal, by a capability refusal — the assertion
-//!   has to name the refusal it wants.
+//!   carries the caveat, and with the `ConstraintViolated` SENTENCE. A bare `Rejected { .. }`
+//!   would also be satisfied by `ConstraintOracleUnavailable`, by a budget refusal, by a
+//!   capability refusal — the assertion has to name the refusal it wants. (⚑ Until 2026-08-07 it
+//!   tried to, with `!reason.contains("oracle")` — against a `reason` that is the PLAYER-FACING
+//!   sentence, which has named no component since the 07-26 copy rewrite. See
+//!   [`assert_program_violation`]: the guard is positive now.)
 //! * **ABLATION** — the SAME decreasing turn, with `Monotonic` deleted from the program and
 //!   nothing else changed, COMMITS. This is the standing red-proof: it is what says the refusal
 //!   above is attributable to the `Monotonic` caveat and not to some other property of the
@@ -189,11 +192,24 @@ fn assert_program_violation(result: &TurnResult, cell: CellId, what: &str) {
                 "{what}: the refusal must name the cell carrying the caveat, got {c} (reason: \
                  {reason})"
             );
+            // ⚑ THIS GUARD READ `!reason.contains("oracle")` AND COULD NOT FIRE. `reason` is
+            // `ProgramError::to_string()` — the PLAYER-FACING sentence — and
+            // `ConstraintOracleUnavailable`'s was rewritten for players on 2026-07-26 into "the
+            // verified rule-checker it needs is not installed", which contains no `oracle` in any
+            // case. So the exact error this line names had been invisible to it ever since, and
+            // `ConstraintOracleWireMalformed` (2026-08-07, the wire-disagreement refusal) would
+            // have been invisible too: its sentence deliberately avoids the word, because
+            // `dreggnet-offerings::refusal` BANS component names in player copy.
+            //
+            // Pinned POSITIVELY instead, which is what the test actually means: the refusal must
+            // be the CAVEAT's. `ConstraintViolated` is the only `ProgramError` whose Display opens
+            // this way, so every server-machinery refusal — absent oracle, unreadable wire, and
+            // whatever the next one is — fails here without anyone having to remember to add it.
             assert!(
-                !reason.contains("oracle"),
-                "{what}: refused by an ABSENT/declining oracle \
-                 (`ConstraintOracleUnavailable`), not by the caveat — this test would be vacuous: \
-                 {reason}"
+                reason.starts_with("program constraint violated"),
+                "{what}: the refusal is not a ConstraintViolated — it is some other ProgramError \
+                 (an absent oracle, an unreadable admission wire, …), so this test would be \
+                 asserting the caveat bit when something else refused: {reason}"
             );
         }
         other => panic!("{what}: expected ProgramViolation, got {other:?}"),

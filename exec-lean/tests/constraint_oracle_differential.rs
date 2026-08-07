@@ -13,9 +13,17 @@
 //! * it names EVERY `StateConstraint` variant (69 at HEAD) — [`corpus_is_exhaustive`] fails if the
 //!   count drifts, so a new variant cannot slide in unexercised;
 //! * every LEAN-ROUTED variant carries BOTH an ADMIT case and a REFUSE case. A drifted tag/arity
-//!   makes the Lean parse fail CLOSED (`"1"` = violated), which contradicts that arm's ADMIT case —
-//!   so ANY divergence in the codec turns this test red. A refuse-only corpus would NOT bite (a
-//!   fail-closed parse looks like a correct refusal).
+//!   makes the Lean parse fail CLOSED, which contradicts that arm's ADMIT case — so ANY divergence
+//!   in the codec turns this test red.
+//!
+//! ⚑ THE PARENTHESIS THAT USED TO STAND HERE — "a refuse-only corpus would NOT bite (a fail-closed
+//! parse looks like a correct refusal)" — WAS TRUE AND IS NOT ANY MORE, as of 2026-08-07.
+//! `admitsWire` rendered a parse failure as `"1"`, the string `ConstraintViolated` is decoded from,
+//! so on a REFUSE case the two were the same bytes. It now renders `"7 <stage>"`, which decodes to
+//! `ProgramError::ConstraintOracleWireMalformed` — a different discriminant from
+//! `ConstraintViolated`, and [`agree`] compares discriminants. So the REFUSE cases bite as well now,
+//! and the ADMIT case is a second tooth rather than the only one. The corpus still carries both,
+//! because a codec drift that happens to keep parsing is caught only by the admit pole.
 //!
 //! NOTE: this test does NOT install the global oracle — so `CellProgram::evaluate` runs the RUST
 //! evaluator, and the Lean side is read by calling `LeanConstraintOracle::admits` directly. That lets
@@ -2283,8 +2291,12 @@ fn lean_and_rust_agree_on_the_whole_corpus() {
 
 #[test]
 fn every_lean_routed_arm_has_an_admit_case() {
-    // ⚑ THE ANTI-MIRROR TOOTH. A drifted wire tag makes the Lean parse fail CLOSED (`"1"` =
-    // violated), which looks like a correct answer on a REFUSE case. Only an ADMIT case catches it.
+    // ⚑ THE ANTI-MIRROR TOOTH. A drifted wire tag makes the Lean parse fail CLOSED, which
+    // contradicts an ADMIT case outright. (Until 2026-08-07 it ALSO looked like a correct answer on
+    // a REFUSE case — a parse failure and a violation rendered the same `"1"`. They no longer do:
+    // a parse failure decodes to `ConstraintOracleWireMalformed`, a different discriminant, so
+    // `agree` fails on both polarities. The ADMIT case is kept because a drift that still PARSES —
+    // a tag collision rather than an arity change — is caught only by the admit pole.)
     // The two EXECUTOR-ONLY sentinels are the honest exceptions: the deployed arm has NO admitting
     // input at all, so their bite is the error-DISCRIMINANT comparison in `agree` instead.
     const NO_ADMIT_CASE_EXISTS: [&str; 2] = ["CapabilityUniqueness", "BoundDelta"];

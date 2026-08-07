@@ -23,29 +23,66 @@
 //! admission header grew from 6 tokens to 17 between 2026-07-30 and 08-01 (`heapOther`, the balance
 //! pair, the four context fields, and a resolved cell run); this file's builder was last touched
 //! 2026-07-27 and still emitted the six-token shape. Six of these eight tests were therefore
-//! asserting against `parse = none`, which `admitsWire` renders as `"1"` — the SAME string as a
-//! genuine refusal. They did not go red at the time because the archive linked on this box carried
+//! asserting against `parse = none`, which `admitsWire` THEN rendered as `"1"` — the SAME string as
+//! a genuine refusal. They did not go red at the time because the archive linked on this box carried
 //! a **2026-07-25** `Dregg2_Exec_DeployedConstraint.o`: the builder and the evaluator were wrong
 //! together, and agreement between two stale things reads exactly like correctness. Re-splicing the
 //! archive refreshed the evaluator alone and the six reds appeared.
 //!
-//! Two things changed so it cannot recur silently: `tests/linked_archive_freshness.rs` refuses an
+//! Three things changed so it cannot recur silently: `tests/linked_archive_freshness.rs` refuses an
 //! archive whose Dregg2 objects predate their `.lean` sources (it names
-//! `Dregg2_Exec_DeployedConstraint.o` on the seed in this checkout), and
+//! `Dregg2_Exec_DeployedConstraint.o` on the seed in this checkout);
 //! `wire_arity_is_the_current_lean_wire` below pins the grammar on verdicts a parse failure
-//! CANNOT produce, instead of on agreement.
+//! CANNOT produce, instead of on agreement; and — the repair for the class rather than the
+//! instance — **an unreadable wire now has its own code.**
+//!
+//! ── THE REPRESENTATION COLLISION IS CLOSED (2026-08-07) ──────────────────────────────────────
+//! `Dregg2.Exec.DeployedConstraint.admitsOutcome` returns a `DWireOutcome`, whose `malformed` arm
+//! is not a `DAdmit` at all, so no evaluation path can produce it. It renders `"7 <stage>"` where
+//! `<stage>` is the `DWireFault` the parse stopped at, and `exec-lean`'s `decode_verdict` maps it
+//! to `ProgramError::ConstraintOracleWireMalformed` — so the DEPLOYED node's diagnosis names the
+//! Rust/Lean wire disagreement instead of naming the player's constraint. The two poles are Lean
+//! theorems over every wire (`admitsWire_eq_violated_iff`, `admitsWire_malformed_iff`), and
+//! [`a_malformed_wire_is_distinguishable_from_a_violation`] below asserts them through the LINKED
+//! ARCHIVE, which is the only place that can tell you what this binary will actually do.
 #![cfg(feature = "lean-lib")]
 
 use dregg_lean_ffi::{constraint_admits_available, shadow_constraint_admits};
 
 const ZERO32: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
-/// The number of HEADER tokens `Dregg2.Exec.DeployedConstraint.parse` pops before the two
+/// The number of HEADER tokens `Dregg2.Exec.DeployedConstraint.parseE` pops before the two
 /// 16-register runs — the Lean side's `headerTokens`. Named here because it is the ONE number a
-/// wire-arity drift moves, and because getting it wrong is INVISIBLE: `admitsWire` renders a
-/// wire it could not parse as `"1"`, the same string it renders a genuine `ConstraintViolated`
-/// as. See `wire_arity_is_the_current_lean_wire` below.
+/// wire-arity drift moves. Getting it wrong used to be INVISIBLE (`admitsWire` rendered an
+/// unparseable wire as `"1"`, the same string as a genuine `ConstraintViolated`); it is now
+/// [`MALFORMED_TAG`]-visible, and `wire_arity_is_the_current_lean_wire` reads it directly.
 const HEADER_TOKENS: usize = 17;
+
+/// The first token of `Dregg2.Exec.DeployedConstraint.renderOutcome (.malformed f)` — the code a
+/// wire that DID NOT PARSE renders as, and which no verdict of a successful evaluation can produce
+/// (`render_ne_malformed`, over every `DAdmit` and every `DWireFault`).
+const MALFORMED_TAG: &str = "7";
+
+/// `DWireFault.headerArity` — fewer than [`HEADER_TOKENS`] tokens on the wire at all.
+const FAULT_HEADER_ARITY: &str = "7 0";
+/// `DWireFault.cellCount` — the resolved-cell-run count token is not decimal.
+///
+/// ⚑ This is where a wire ONE TOKEN SHORT lands, and the reason is worth knowing: the 17 header
+/// tokens are almost all `0` on a neutral wire, so shifting the stream by one still DESTRUCTURES
+/// and still parses — every field is a `0`, and the 64-zero register hex that slides into the
+/// `sender_epoch_count` slot parses as decimal `0` too. Both 16-token register runs then absorb the
+/// shift (a `0` is valid hex), and the drift only surfaces at the cell-count token, where a register
+/// hex or a constraint tag lands. A positional token grammar over a mostly-zero header cannot detect
+/// its own arity locally; the fault code is what makes the failure legible at all.
+const FAULT_CELL_COUNT: &str = "7 5";
+/// `DWireFault.constraintTag` — the header, both register runs and the cell run parsed; the
+/// constraint tag did not. This is where an unknown tag lands, and where a wire one token LONG does.
+const FAULT_CONSTRAINT_TAG: &str = "7 7";
+
+/// True when `out` is the malformed-wire code rather than a verdict.
+fn is_malformed(out: &str) -> bool {
+    out.split_whitespace().next() == Some(MALFORMED_TAG)
+}
 
 /// Build the admission wire — the SAME grammar `exec-lean/src/constraint_oracle.rs::build_wire`
 /// emits on the deployed admission path, and the one
@@ -138,19 +175,15 @@ fn evaluator_is_linked_and_live() {
 /// ⚑ THE WIRE-ARITY TOOTH, and it is not decoration — it is the assertion whose absence let this
 /// whole file report `ok` on a wire the evaluator never parsed, for a week.
 ///
-/// `Dregg2.Exec.DeployedConstraint.admitsWire` renders BOTH "I could not parse this" and
-/// "the constraint is violated" as the string `"1"`, so no negative assertion in this file can
-/// tell a wire-grammar drift from a correct refusal — and `exec-lean`'s `decode_verdict` inherits
-/// that conflation, mapping an unparseable wire to `ProgramError::ConstraintViolated` on the
-/// deployed admission path. (Named, not repaired here: giving `render` a distinct code for a
-/// malformed wire is a Lean edit to the deployed evaluator plus `exec-lean`'s decoder.)
-///
-/// So the tooth is built from the two verdicts a PARSE FAILURE CANNOT PRODUCE:
+/// It was built from the two verdicts a PARSE FAILURE CANNOT PRODUCE, because at the time a parse
+/// failure and a violation were the same string:
 ///   * `"3 16"` — `InvalidFieldIndex 16`, reachable only after the header, both register runs and
 ///     the cell run have been consumed and `FE 16 0` has been read as a constraint;
 ///   * `"2 0"`  — `TransitionCheckRequiresOldState`, which needs `oldPresent`/`nonce` decoded.
-/// Plus the arity itself, counted rather than trusted: drop or add ONE header token and the
-/// `"3 16"` leg collapses to `"1"`.
+///
+/// Both legs are kept — a positive verdict is still the strongest evidence that the whole wire was
+/// consumed — but the short/long legs now assert the MALFORMED CODE by value instead of `"1"`,
+/// which is the repair rather than the workaround.
 #[test]
 fn wire_arity_is_the_current_lean_wire() {
     if !dregg_lean_ffi::demand_lean(
@@ -169,33 +202,130 @@ fn wire_arity_is_the_current_lean_wire() {
         tokens.len()
     );
 
-    // A wire that PARSED — `"3 16"` is unreachable from `parse = none` (which renders `"1"`).
+    // A wire that PARSED — `"3 16"` is unreachable from a parse failure, which renders `"7 …"`.
     assert_eq!(
         admits(&w),
         "3 16",
-        "the evaluator did not reach `InvalidFieldIndex` — this wire did not parse, so every \
-         `\"1\"` this file asserts elsewhere is a PARSE FAILURE wearing a refusal's clothes. \
-         Reconcile this builder with `Dregg2.Exec.DeployedConstraint.parseHeader` (and with \
+        "the evaluator did not reach `InvalidFieldIndex` — this wire did not parse. Reconcile this \
+         builder with `Dregg2.Exec.DeployedConstraint.parseHeader` (and with \
          `exec-lean/src/constraint_oracle.rs::build_wire`, which emits the deployed wire)."
     );
 
-    // ...and the arity is load-bearing in BOTH directions: one token short and one token long
-    // both collapse to the indistinguishable `"1"`.
+    // ...and the arity is load-bearing in BOTH directions. These used to assert `"1"` — the string
+    // a genuine `ConstraintViolated` also renders as — so they held whether or not the evaluator
+    // had a distinct answer for "this is not a wire I can read". They now name the fault STAGE.
     let short = {
         let mut t = tokens.clone();
         t.remove(0);
         t.join(" ")
     };
+    let short_out = admits(&short);
+    assert!(
+        is_malformed(&short_out),
+        "a wire one token SHORT must report the MALFORMED code, not a verdict — it answered \
+         {short_out:?}. This is the drift this test exists to catch, and asserting `\"1\"` here \
+         (which is what it used to do) could not tell the drift from a correct refusal."
+    );
+    assert_eq!(short_out, FAULT_CELL_COUNT);
+    let long = format!("0 {w}");
+    let long_out = admits(&long);
+    assert!(
+        is_malformed(&long_out),
+        "a wire one token LONG must report the MALFORMED code, not a verdict — it answered \
+         {long_out:?}"
+    );
+    assert_eq!(long_out, FAULT_CONSTRAINT_TAG);
+}
+
+/// ⚑ **THE REPAIR, ASSERTED THROUGH THE LINKED ARCHIVE — BOTH POLES.**
+///
+/// The Lean theorems (`admitsWire_eq_violated_iff`, `admitsWire_malformed_iff`) are about the
+/// source. This is about the `.o` this binary linked, which is the thing that decides turns, and
+/// which spent a week being a different program from the source (see this file's header).
+///
+/// Pole 1 — a GENUINE constraint violation still reports `"1"`. Without it, "malformed and
+/// violation differ" is satisfied by an evaluator that calls everything malformed.
+/// Pole 2 — a short, a long and a garbage wire each report the malformed code, never `"1"`.
+///
+/// Each mutation is asserted PRESENT before its verdict is read: a short wire that is not actually
+/// shorter, or a garbage wire that happens to parse, would make the pole below it vacuous in
+/// exactly the way this whole file was vacuous.
+#[test]
+fn a_malformed_wire_is_distinguishable_from_a_violation() {
+    if !dregg_lean_ffi::demand_lean(
+        constraint_admits_available(),
+        "dregg_constraint_admits export (the malformed/violated separation cannot be probed \
+         without it)",
+    ) {
+        return;
+    }
+
+    // ── POLE 1: a wire that PARSES and whose constraint is genuinely violated. new[0] = 0, the
+    // constraint demands 5.
+    let violated = wire(false, 0, None, None, &zeros16(), &zeros16(), "FE 0 5");
+    assert_eq!(
+        admits(&violated),
+        "1",
+        "a genuine ConstraintViolated must still report `\"1\"` — if it does not, the separation \
+         below is meaningless and the deployed decoder's `ConstraintViolated` arm is dead"
+    );
+    // ...and the SAME wire with the constraint satisfied admits, so the `"1"` above is the
+    // constraint's doing and not the wire's.
+    let admitted = wire(false, 0, None, None, &zeros16(), &zeros16(), "FE 0 0");
+    assert_eq!(
+        admits(&admitted),
+        "0",
+        "the control wire must ADMIT — otherwise the `\"1\"` above could be any refusal at all"
+    );
+
+    // ── POLE 2a: ONE TOKEN SHORT. The mutation is asserted present first.
+    let full: Vec<&str> = violated.split_whitespace().collect();
+    let short = full[1..].join(" ");
+    assert_eq!(
+        short.split_whitespace().count(),
+        full.len() - 1,
+        "the SHORT mutation did not remove a token — the assertion below would be about the \
+         unmutated wire, which is exactly how a falsifier stops falsifying"
+    );
     assert_eq!(
         admits(&short),
-        "1",
-        "a wire one token SHORT must not produce a verdict — the drift this test exists to catch"
+        FAULT_CELL_COUNT,
+        "a wire one token short must report a MALFORMED code — see FAULT_CELL_COUNT for why the \
+         stage is the cell-count token and not the header"
     );
-    let long = format!("0 {w}");
+
+    // ── POLE 2b: GARBAGE. One token, so it cannot reach the header at all — the only input here
+    // that fails the arity check itself.
     assert_eq!(
-        admits(&long),
-        "1",
-        "a wire one token LONG must not produce a verdict"
+        admits("garbage"),
+        FAULT_HEADER_ARITY,
+        "a one-token wire must report the header-arity fault"
+    );
+
+    // ── POLE 2c: A WELL-FORMED WIRE WITH AN UNKNOWN CONSTRAINT TAG — the shape a Rust/Lean tag
+    // drift actually takes, and the one a length check cannot see. The header, both register runs
+    // and the cell run all parse; only the tag does not.
+    let bad_tag = wire(false, 0, None, None, &zeros16(), &zeros16(), "NOPE 1 2");
+    assert_eq!(
+        bad_tag.split_whitespace().count(),
+        full.len(),
+        "the bad-tag wire must be the SAME length as the good one, or this leg is just the short \
+         case again"
+    );
+    assert_eq!(
+        admits(&bad_tag),
+        FAULT_CONSTRAINT_TAG,
+        "an unknown constraint tag on an otherwise valid wire must report the constraint-tag \
+         fault — NOT `\"1\"`, which is what a node with a drifted marshaller used to report to \
+         every player for every turn"
+    );
+
+    // ── AND THE POINT, stated as the comparison it is.
+    assert_ne!(
+        admits(&bad_tag),
+        admits(&violated),
+        "a wire the evaluator could not read and a constraint it refused must not be the same \
+         value — that collision is the defect this test exists for"
     );
 }
 

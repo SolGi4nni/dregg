@@ -13,10 +13,35 @@
 //! changed. That is the proof `eval.rs` goes through Lean, end to end.
 
 use dregg_cell::preconditions::EvalContext;
-use dregg_cell::program::{CellProgram, CollPred, ElemPredAtom};
+use dregg_cell::program::{CellProgram, CollPred, ElemPredAtom, ProgramError};
 use dregg_cell::state::CellState;
 use dregg_cell::{StateConstraint, field_from_u64};
 use dregg_exec_lean::register_constraint_oracle;
+
+/// ⚑ **A REFUSAL IS NOT A VERDICT UNTIL YOU SAY WHICH ONE.**
+///
+/// Every refuse leg below used to assert `is_err()`. That is satisfied by the caveat refusing —
+/// and equally by `ConstraintOracleUnavailable` (no oracle), by
+/// `ConstraintOracleWireMalformed` (the Lean side could not read the admission wire this binary
+/// built), and by anything else `eval.rs` can return. Which matters concretely here: for a week
+/// this whole seam was answering on wires the evaluator never parsed, and `is_err()` would have
+/// stayed green through all of it.
+///
+/// So each refuse leg names the `ProgramError` it means. `ConstraintViolated` is the caveat's own
+/// refusal; everything else is the machinery's, and the machinery's must never read as the
+/// caveat's.
+#[track_caller]
+fn refused_by_the_caveat(r: Result<(), ProgramError>, what: &str) {
+    match r {
+        Err(ProgramError::ConstraintViolated { .. }) => {}
+        Err(other) => panic!(
+            "{what}: refused, but NOT by the constraint — {other:?}. A machinery refusal (absent \
+             oracle, unreadable admission wire) passing as a caveat refusal is exactly the \
+             vacuity this file exists to avoid."
+        ),
+        Ok(()) => panic!("{what}: ADMITTED, and it must refuse"),
+    }
+}
 
 /// Install once for this test binary (`OnceLock`; the whole file shares one process).
 ///
@@ -83,10 +108,10 @@ fn field_gte_below_refuses_through_lean() {
         index: 0,
         value: field_from_u64(5),
     }]);
-    // 3 >= 5 is false ⇒ refuse (through Lean).
-    assert!(
-        prog.evaluate(&new, None, None).is_err(),
-        "FieldGte(3,5) must REFUSE through the Lean evaluator"
+    // 3 >= 5 is false ⇒ refuse (through Lean), and refuse AS A CONSTRAINT VIOLATION.
+    refused_by_the_caveat(
+        prog.evaluate(&new, None, None),
+        "FieldGte(3,5) must REFUSE through the Lean evaluator",
     );
 }
 
@@ -107,10 +132,7 @@ fn sum_equals_routes_through_lean() {
         indices: vec![0, 1],
         value: field_from_u64(8),
     }]);
-    assert!(
-        bad.evaluate(&new, None, None).is_err(),
-        "sum(3,4)!=8 refuses"
-    );
+    refused_by_the_caveat(bad.evaluate(&new, None, None), "sum(3,4)!=8 refuses");
 }
 
 /// ── THE NEWLY-COVERED-ARM CANARY ────────────────────────────────────────────────────────────────
@@ -155,11 +177,13 @@ fn collection_aggregate_council_routes_through_lean() {
         "two distinct approving keys satisfy the 2-of-N council"
     );
     // THE DUPLICATE-PADDED FORGE: three approvals, ONE identity ⇒ refuse (the distinctness tooth).
-    assert!(
-        CellProgram::Predicate(vec![council])
-            .evaluate(&coll(&[(7, 1), (7, 1), (7, 1)]), None, None)
-            .is_err(),
-        "the duplicate-padded forge collapses to one distinct key and REFUSES"
+    refused_by_the_caveat(
+        CellProgram::Predicate(vec![council]).evaluate(
+            &coll(&[(7, 1), (7, 1), (7, 1)]),
+            None,
+            None,
+        ),
+        "the duplicate-padded forge collapses to one distinct key and REFUSES",
     );
 }
 
@@ -191,17 +215,20 @@ fn rate_limit_routes_through_lean() {
             .is_ok(),
         "2 mutations under a cap of 3 admits"
     );
-    assert!(
-        CellProgram::Predicate(vec![rl.clone()])
-            .evaluate(&new, None, Some(&ctx(3)))
-            .is_err(),
-        "3 mutations at the cap refuses (>=)"
+    refused_by_the_caveat(
+        CellProgram::Predicate(vec![rl.clone()]).evaluate(&new, None, Some(&ctx(3))),
+        "3 mutations at the cap refuses (>=)",
     );
     // ⚑ FAIL-CLOSED: no context ⇒ the count is executor-held, so a refusal, never a silent admit.
-    assert!(
-        CellProgram::Predicate(vec![rl])
-            .evaluate(&new, None, None)
-            .is_err(),
-        "an absent context fails closed"
-    );
+    // Pinned to the verdict it MEANS: `MissingContextField`, the Lean `missingContext 3` arm. An
+    // `is_err()` here would also have been satisfied by the wire never parsing.
+    match CellProgram::Predicate(vec![rl]).evaluate(&new, None, None) {
+        Err(ProgramError::MissingContextField { field }) => assert_eq!(
+            field, "sender_epoch_count",
+            "the fail-closed refusal must name the context field the executor holds"
+        ),
+        other => panic!(
+            "an absent context must fail closed as MissingContextField(sender_epoch_count), got              {other:?}"
+        ),
+    }
 }

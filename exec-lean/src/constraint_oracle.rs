@@ -25,9 +25,15 @@
 //! names EVERY `StateConstraint` variant (`VARIANT_NAMES`, count-pinned) and asserts, for EVERY
 //! Lean-routed arm, both an ADMIT case and a REFUSE case agreeing with the Rust evaluator, PLUS a
 //! ROUTING LEDGER (`LEAN_ROUTED`) equality so a silently-narrowed subset fails too. A drifted tag
-//! makes the Lean parse fail closed (`"1"` = violated), which contradicts the arm's ADMIT case — so
-//! any tag/arity divergence turns that test red. (The two executor-only sentinels have no admitting
-//! input at all; for those the bite is the error-DISCRIMINANT comparison.)
+//! makes the Lean parse fail closed, which contradicts the arm's ADMIT case — so any tag/arity
+//! divergence turns that test red. (The two executor-only sentinels have no admitting input at
+//! all; for those the bite is the error-DISCRIMINANT comparison.)
+//!
+//! ⚑ AND SINCE 2026-08-07 THE REFUSE CASES BITE TOO. A parse failure used to render `"1"` — the
+//! same string as `ConstraintViolated` — so on a REFUSE case a drifted tag was indistinguishable
+//! from a correct refusal, and only the ADMIT case could catch it. It now renders `"7 <stage>"` and
+//! decodes to [`ProgramError::ConstraintOracleWireMalformed`], a different discriminant, so the
+//! differential's `agree` (which compares error discriminants) fails on either polarity.
 //!
 //! ## What crosses the wire, and what does NOT
 //!
@@ -864,8 +870,41 @@ fn ctx_field_name(code: &str) -> Option<&'static str> {
     }
 }
 
-/// Parse the Lean verdict (`"0"`/`"1"`/`"2 <idx>"`/`"3 <idx>"`/`"4 <code>"`) into a deployed
-/// `ProgramError`.
+/// The `&'static str` behind each Lean `DWireFault.code`
+/// (`DeployedConstraint.DWireFault`, the `<stage>` token of the `"7 <stage>"` malformed code).
+///
+/// These name WHICH HALF OF THE GRAMMAR disagreed, which is the whole reason the malformed code
+/// carries a payload: "the header has fewer than 17 tokens" and "the constraint tag is unknown"
+/// are different bugs in different files, and a refusal that says only "unparseable" sends the
+/// reader looking in both.
+///
+/// `None` for a code this table does not carry — which is a NAMING gap, not a decoding one. The
+/// call site substitutes [`WIRE_FAULT_UNNAMED`] and still REFUSES: the `"7"` tag alone already
+/// says the Lean side could not read the wire, and losing the stage must not lose that. The unit
+/// test below is what keeps the table complete, by asserting every `DWireFault` code the Lean
+/// enum can emit resolves to a name here.
+fn wire_fault_name(code: &str) -> Option<&'static str> {
+    match code {
+        "0" => Some("header arity — the wire carries fewer than the 17 header tokens"),
+        "1" => Some("header token — 17 tokens present, one of them does not parse"),
+        "2" => Some("old-register run — the 16 hex tokens are short or malformed"),
+        "3" => Some("new-register run — the 16 hex tokens are short or malformed"),
+        "4" => Some("register-run length"),
+        "5" => Some("resolved-cell-run count token"),
+        "6" => Some("resolved-cell run — the `present value` pairs"),
+        "7" => Some("constraint tag — unknown tag, or its arguments are short/unparseable"),
+        _ => None,
+    }
+}
+
+/// The stage a malformed-wire refusal carries when the Lean side named a fault THIS binary has no
+/// name for — a newer `DWireFault` against an older decoder. It says so, because "unknown stage"
+/// and "no stage" are different facts about the two halves and an operator needs to know which.
+const WIRE_FAULT_UNNAMED: &str = "unnamed stage — the linked Lean evaluator reported a DWireFault code this binary's decoder \
+     has no name for, so the two halves are of different vintages";
+
+/// Parse the Lean verdict (`"0"`/`"1"`/`"2 <idx>"`/`"3 <idx>"`/`"4 <code>"`/`"5"`/`"6"`, or the
+/// MALFORMED-WIRE code `"7 <stage>"`) into a deployed `ProgramError`.
 fn decode_verdict(out: &str, c: &StateConstraint) -> Option<Result<(), ProgramError>> {
     let mut it = out.split_whitespace();
     match it.next()? {
@@ -909,8 +948,34 @@ fn decode_verdict(out: &str, c: &StateConstraint) -> Option<Result<(), ProgramEr
             }
             _ => None,
         },
-        // A malformed verdict (never expected from the linked, `#guard`-teethed evaluator) falls
-        // through to the Rust guest-path evaluator — sound because it is differentially equal.
+        // ⚑ THE WIRE, NOT THE CONSTRAINT. The Lean side could not READ what this binary sent, so it
+        // never evaluated anything — `admitsWire_malformed_iff` is the theorem that `"7 …"` is
+        // reachable only from `parseE s = .error f`. This used to arrive as `"1"` and was decoded
+        // one arm up as `ConstraintViolated`: a node whose wire had drifted would have refused
+        // every turn while naming the player's constraint as the cause.
+        //
+        // Surfaced as ITSELF, and as a REFUSAL. Returning `None` here would be the wrong shape:
+        // `undecided_subset_disposition` would turn it into `ConstraintOracleUnavailable` ("no
+        // oracle installed"), which is FALSE — the oracle answered, and what it said is the most
+        // actionable thing anyone gets. `None` is this seam's "I have nothing"; here we have
+        // something.
+        //
+        // ⚠ An UNRECOGNISED or ABSENT stage token still refuses. The `"7"` tag alone carries the
+        // whole load-bearing fact; the stage is detail. A decoder older than the Lean enum must
+        // not turn "could not read your wire" back into "no verdict" — that is how a repaired
+        // collision would grow a new leak.
+        "7" => Some(Err(ProgramError::ConstraintOracleWireMalformed {
+            constraint: c.clone(),
+            stage: it
+                .next()
+                .and_then(wire_fault_name)
+                .unwrap_or(WIRE_FAULT_UNNAMED),
+        })),
+        // A verdict this decoder does not recognise at all (never expected from the linked
+        // evaluator) falls through to the Rust guest-path evaluator — sound because it is
+        // differentially equal on the subset. ⚠ Note the asymmetry with `"7"` above and keep it:
+        // "the Lean side told me it could not read my wire" is INFORMATION, and must not be
+        // laundered into "I did not understand the Lean side".
         _ => None,
     }
 }
@@ -945,4 +1010,134 @@ pub fn register_constraint_oracle() -> bool {
         return false;
     }
     dregg_cell::program::install_constraint_oracle(Box::new(LeanConstraintOracle)).is_ok()
+}
+
+/// ⚑ THE DECODER'S HALF OF THE MALFORMED/VIOLATED SEPARATION.
+///
+/// The Lean half is proved in `Dregg2.Exec.DeployedConstraint`
+/// (`admitsWire_eq_violated_iff` / `admitsWire_malformed_iff`) and probed against the LINKED
+/// ARCHIVE by `dregg-lean-ffi/tests/deployed_constraint_probe.rs`. This is the seam between them:
+/// [`decode_verdict`] is private, so an integration test cannot reach it, and it is the exact
+/// function that turned an unreadable wire into `ProgramError::ConstraintViolated` for a week.
+///
+/// It is driven on VERDICT STRINGS rather than on a live FFI call on purpose — a wire the Lean
+/// side cannot read is, by construction, one [`build_wire`] does not produce, so the only way to
+/// exercise this arm before the next grammar drift is to hand it the string.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn subject() -> StateConstraint {
+        StateConstraint::FieldEquals {
+            index: 0,
+            value: [0u8; 32],
+        }
+    }
+
+    /// POLE 1 — a genuine `ConstraintViolated` still decodes as itself. Without this, "the two
+    /// differ" is satisfied by a decoder that calls everything malformed.
+    #[test]
+    fn a_violated_verdict_still_decodes_to_constraint_violated() {
+        let c = subject();
+        assert!(matches!(
+            decode_verdict("1", &c),
+            Some(Err(ProgramError::ConstraintViolated { .. }))
+        ));
+        assert!(matches!(decode_verdict("0", &c), Some(Ok(()))));
+    }
+
+    /// POLE 2 — the malformed code decodes to its OWN variant, carrying the stage, and never to
+    /// `ConstraintViolated`.
+    ///
+    /// The loop is over ALL EIGHT `DWireFault` codes and it asserts each resolves to a NAMED
+    /// stage, so a fault added on the Lean side without a name here fails this test. (At runtime
+    /// it would still refuse, with `WIRE_FAULT_UNNAMED` — the fail-closed floor is not what this
+    /// test is guarding; the naming table is.)
+    #[test]
+    fn a_malformed_wire_decodes_to_its_own_variant_with_a_stage() {
+        let c = subject();
+        for code in 0..=7u8 {
+            let out = format!("7 {code}");
+            match decode_verdict(&out, &c) {
+                Some(Err(ProgramError::ConstraintOracleWireMalformed { stage, .. })) => {
+                    assert_ne!(
+                        stage, WIRE_FAULT_UNNAMED,
+                        "DWireFault code {code} has no name in `wire_fault_name` — the refusal \
+                         still fires, but its operator diagnostic cannot say which half of the \
+                         grammar disagreed, which is the only reason the stage is on the wire"
+                    );
+                    assert!(!stage.is_empty());
+                }
+                other => panic!(
+                    "verdict {out:?} must decode to ConstraintOracleWireMalformed; got {other:?}"
+                ),
+            }
+        }
+    }
+
+    /// ⚑ A DECODER OLDER THAN THE LEAN ENUM STILL REFUSES. An unrecognised or absent stage token
+    /// loses the DETAIL, never the FACT: `"7"` already says the evaluator could not read the wire.
+    /// Falling back to `None` here would route that back through
+    /// `undecided_subset_disposition` as `ConstraintOracleUnavailable` — the wrong diagnosis for
+    /// an oracle that answered.
+    #[test]
+    fn an_unnamed_fault_stage_still_refuses_as_a_malformed_wire() {
+        let c = subject();
+        for out in ["7 99", "7", "7 not-a-number"] {
+            match decode_verdict(out, &c) {
+                Some(Err(ProgramError::ConstraintOracleWireMalformed { stage, .. })) => {
+                    assert_eq!(
+                        stage, WIRE_FAULT_UNNAMED,
+                        "an unknown stage must SAY it is unknown, not borrow another stage's name"
+                    );
+                }
+                other => panic!("{out:?} must still refuse as a malformed wire; got {other:?}"),
+            }
+        }
+    }
+
+    /// ⚑ THE POINT, as the comparison it is: the two are different by DISCRIMINANT, which is what
+    /// `constraint_oracle_differential.rs::agree` compares and what a caller matching on
+    /// `ConstraintViolated` sees. Before 2026-08-07 both of these strings were `"1"`.
+    #[test]
+    fn malformed_and_violated_are_not_the_same_refusal() {
+        let c = subject();
+        let violated = decode_verdict("1", &c)
+            .expect("violated decodes")
+            .unwrap_err();
+        let malformed = decode_verdict("7 0", &c)
+            .expect("malformed decodes")
+            .unwrap_err();
+        assert_ne!(
+            std::mem::discriminant(&violated),
+            std::mem::discriminant(&malformed),
+            "an unreadable wire and a violated constraint must not be the same ProgramError"
+        );
+        // ...and the player-facing sentences differ too, because the wrong one is a LIE about the
+        // caller's move.
+        assert_ne!(violated.to_string(), malformed.to_string());
+        // ...and only the malformed one carries an operator diagnostic, because only it is a fact
+        // about how this binary was built.
+        assert!(violated.operator_diagnostic().is_none());
+        let diag = malformed
+            .operator_diagnostic()
+            .expect("a wire disagreement is a build fault and must reach the operator log");
+        assert!(
+            diag.contains("build_wire") && diag.contains("parseE"),
+            "the operator diagnostic must name BOTH sides of the disagreement: {diag}"
+        );
+    }
+
+    /// A verdict TAG this decoder does not know at all still falls through (`None`), which
+    /// `undecided_subset_disposition` turns into a fail-closed refusal for a subset constraint.
+    /// Pinned so the `"7"` arm's refuse-anyway behaviour is visibly deliberate rather than a
+    /// side effect: `"7"` is information about the wire; `"9"` is a decoder that does not
+    /// understand the evaluator, which is a different thing to be honest about.
+    #[test]
+    fn an_unrecognised_verdict_tag_still_falls_through() {
+        let c = subject();
+        assert!(decode_verdict("9", &c).is_none());
+        assert!(decode_verdict("", &c).is_none());
+        assert!(decode_verdict("nonsense", &c).is_none());
+    }
 }
