@@ -41,7 +41,6 @@
 Dregg2.Circuit.Emit.AdjacencyMembershipRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AdjacencyMembershipRefineAudit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AdjacencyMembershipRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.AttestedFactMembershipEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AvailWideMembersNarrow  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BoundPresentationRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BoundPresentationRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
@@ -77,7 +76,6 @@ Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2  # GREEN self-checked (#as
 Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2Full  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.QuantifiedAbsenceEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.QuantifiedAbsenceRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.TemporalPredicateEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.TemporalPredicateRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 
 # --- circuit-soundness WIP (FRI/STARK proximity-gap, AlgoStark fanout, kernel-config, wrap-safety) ---
@@ -144,7 +142,6 @@ Dregg2.Claims  # GREEN self-checked (#assert clean), REGISTERABLE — Claims axi
 # reason a non-rooted home is acceptable: scripts/check-ratchet-darkness.sh RULE 1 reds the moment
 # that changes.
 Dregg2.Crypto.MlKemKeygenRefine  # MEASURED 1882s (31 min) on one fresh `lake env lean`, and a TIMEOUT at 2400s on another — the `VerifyCoreEqSpecW` (44 min) class. The default build and the `metatheory-no-sorry` Orphan-gate step share a job that was already CANCELLED once for length (315.6 min vs `timeout-minutes: 330`); 31 min there is not a rounding error. Rides `metatheory-pq-apex` instead. Its ML-DSA sibling (MlDsaKeygenRefine, 38s) and both *KeygenAcvp modules ARE rooted.
-Dregg2.Circuit.Emit.AutomataflNGenGolden  # A 2.98 MB byte-pinned WIRE GOLDEN (117 "lines", one of them enormous). The "keep the golden a separate leaf so the refinement surface does not pay for it on every build" posture is this tree's own, documented at `Dregg2.lean`'s `ParamComposeGolden` import — which cites THIS module by name as the precedent. Green at 6-26s; also named by `metatheory-pq-apex` now, so the golden is compiled somewhere.
 
 # --- co-tenant lanes' modules that landed DURING the B5 sweep (2026-07-25), recorded not rooted ---
 # These four were committed by other terminals between this sweep's HEAD snapshot (16f7719341) and
@@ -233,6 +230,24 @@ Dregg2.Bridge.MinaWrapSgWeld
 # claim. `gen-mina-step-srs.py --check` regenerates into memory and diffs, so a drifted blob or an
 # edited Lean file is findable without a commit. That script is the gate this entry defers to.
 Dregg2.Circuit.Emit.MinaStepSrsG
+#
+# `MinaAccumulatorSrsDemo` — ADDED 2026-08-07. It IS compiled: `metatheory/EmitByName.lean` (the
+# routing table) and `metatheory/EmitMinaAccumulator.lean` (the standalone printer) both import it,
+# which is exactly the two-routes-need-one-term reason its own header gives for being a module at
+# all. Neither of those roots is a `defaultTarget`, so a plain `lake build` does not reach it.
+# ⚠ SO ITS FIVE THEOREMS + `#assert_axioms the_demonstration_is_eight_rows` RUN IN NO DEFAULT
+# TARGET, and this entry records that residual rather than hiding it — allowlisted means the
+# exclusion is deliberate, never that the module is checked (this file's own header, ⚠ block).
+# WHY NOT ROOTED, priced rather than asserted: it imports `MinaStepSrsG` directly (line 27), the
+# entry immediately above — 10.7 MB of Lean, a **289 MB olean**, ~143 s alone. Rooting the demo
+# pays that on every default build, which is the posture `mina_sg_bench` states in
+# `metatheory/lakefile.toml` ("DELIBERATELY NOT IN defaultTargets: it drags MinaWrapSrsG through
+# C codegen") and the one `AutomataflNGenGolden` was kept under until it got a home in
+# `metatheory-pq-apex`. THE SAME MOVE CLOSES THIS ONE: name it in a CI target that already pays
+# for a large fixture, or give the accumulator cluster its own `lean_lib` the way
+# `PicklesEmitDrivers`/`MinaBridgeGuards` did. OWNER: the live Mina-accumulator lane (`3b73d8e94`,
+# 2026-08-07) — the cone is theirs to price, and this row is not a verdict that it should stay out.
+Dregg2.Circuit.Emit.MinaAccumulatorSrsDemo
 #
 # `PastaMsmBucketed` — the bucketed/fused MSM AIR. Excluded per house practice for GATE modules
 # (the same reason `PastaMsmLayouts` was, before it was rooted): its emitted descriptors are

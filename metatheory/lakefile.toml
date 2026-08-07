@@ -238,6 +238,21 @@ globs = [
   # repair the memo that `d6683dd54` left at three zeros, which made every wrap emission
   # REFUSE. A bootstrap nothing builds is a bootstrap nobody can run.
   "Dregg2.Circuit.Emit.EmitWrapFinDeferred",
+  # ⚑ JOINED 2026-08-07, from `check-lean-orphans` — both were UNLISTED orphans, i.e. compiled by
+  # no default target AND not recorded as a deliberate exclusion, which is the one state this tree
+  # refuses. Same class as every row above (`def main : IO Unit`, `lake env lean --run` drivers,
+  # zero theorems), so this buys COMPILE COVERAGE against the render/pins modules they call:
+  #   * `EmitPreimageJson` writes `preimage.json` / `unbound.json` / `preimage_ae.json` over
+  #     `KimchiPreimageCircuit` + `KimchiAssertEqual`.
+  #   * `EmitWrapFortyAgreement` re-derives the per-slot agreement count that
+  #     `KimchiWrapMainPins10`/`Pins12` are graded on — `Pins12`'s own docblock cites it by name
+  #     for the 2026-08-06 measurement. A driver a gate's docblock quotes, that nothing compiles,
+  #     is a number nobody can reproduce.
+  # ⚠ Its olean on disk was STALE when this landed (source 08-07 07:02, olean 08-06 20:27) — the
+  # `TurnAuthLamportEmit` shape one more time. Both were elaborated clean under `lake env lean`
+  # before being rooted here, so this adds coverage, not redness.
+  "Dregg2.Circuit.Emit.EmitPreimageJson",
+  "Dregg2.Circuit.Emit.EmitWrapFortyAgreement",
 ]
 
 # DivergenceToothGuards — the first-divergence / tooth-combinator statement cone plus the Mina
