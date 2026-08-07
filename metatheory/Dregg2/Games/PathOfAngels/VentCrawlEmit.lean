@@ -4,7 +4,7 @@
 Substrate note: this module renders bytes.  It authors no game semantics.  Every
 verdict, successor, refusal reason and hazard numerator below is read out of
 `Dregg2.Games.PathOfAngels.VentCrawl`, and `ventCrawlTableRefinesKernel` parses
-the RENDERED bytes back and compares all 86 rows against `VentCrawl.rowFor`.
+the RENDERED bytes back and compares all 102 rows against `VentCrawl.rowFor`.
 There is no second model of the crawl in this repository.
 
 ## Why this is not `Emit.lean`
@@ -16,14 +16,14 @@ another lane is editing.  The handover is at the bottom of this file.
 
 ## What the descriptor carries, and what it cannot
 
-The day's vein is TWO hidden bits and the descriptor names neither.  What it
+The day's vein is THREE hidden bits and the descriptor names none of them.  What it
 names instead is:
 
 * the **hazard, in full** — `flood_below` per rung against `faces`, so a client
   can print the exact odds of the rung a crawler is about to enter and the exact
   odds of the one after it.  There is nothing hidden on the risk side and the
   descriptor is where that becomes checkable;
-* the **whole vein family** — all four yield ladders, so a client can show what
+* the **whole vein family** — all eight yield ladders, so a client can show what
   each still-possible day would pay for the next rung;
 * a **wager row per crawl** naming the flood successor and ONE SUCCESSOR PER
   STILL-POSSIBLE VEIN (`VentCrawl.step_lands_in_the_named_successors`).
@@ -33,7 +33,7 @@ names instead is:
 and those two keys route to the deduction and descent backends respectively.
 
 ⚑ It also must not become a place to put the day.  Everything in it is true on
-all four veins.
+all eight veins.
 -/
 import Lean.Data.Json
 import Dregg2.Games.PathOfAngels.VentCrawl
@@ -125,7 +125,7 @@ private def transitionJson (t : VentRow) : String :=
         jsonString (VentCrawl.stateId onFlood) ++ ",\"hauls\":" ++
         jsonArray (hauls.map haulJson) ++ "}"
 
-/-! ### The vent — the public rules, true on all four veins -/
+/-! ### The vent — the public rules, true on all eight veins -/
 
 private def floodLadderJson : String :=
   jsonArray ((List.range VentCrawl.DEPTH_CAP).map fun i =>
@@ -138,7 +138,22 @@ private def veinJson (v : VentCrawl.Vein) : String :=
     ",\"carry\":" ++ jsonArray ((List.range (VentCrawl.DEPTH_CAP + 1)).map fun i =>
       toString (v.carriedAt i)) ++ "}"
 
-private def ventJson : String :=
+/-- ⚑ The MAP ladders, as numbers rather than as the word `"depth"`.
+
+A descriptor that says `{"drowned":{"intel":"depth"}}` has told a reader the
+shape of the consolation and told a TOOL nothing: `scripts/poa-design-gate.py`
+rebuilds every posture's payoff from the emitted bytes, and a posture that values
+the map had to be given the rule in the gate's own source — which is a second
+model of this payout and exactly the thing this file exists not to have.  So the
+ladders are rendered from `VentCrawl.mapBanked` and `VentCrawl.mapDrowned`,
+indexed by depth `0 … DEPTH_CAP`, and the gate reads them.
+
+The discount is what makes the crawl a wager for a crawler who is paid in map;
+`VentCrawl.the_map_that_drowns_is_never_worth_more` is the kernel side of it. -/
+private def mapLadderJson (f : Nat → Nat) : String :=
+  jsonArray ((List.range (VentCrawl.DEPTH_CAP + 1)).map fun i => toString (f i))
+
+private def ventJson (mapBanked mapDrowned : Nat → Nat) : String :=
   "{\"depth_cap\":" ++ toString VentCrawl.DEPTH_CAP ++
   ",\"faces\":" ++ toString VentCrawl.FACES ++
   ",\"mouth_salvage\":" ++ toString VentCrawl.MOUTH_SALVAGE ++
@@ -150,8 +165,10 @@ private def ventJson : String :=
   ",\"bank_rule\":\"a live run may always bank; a crawl is refused at the depth cap\"" ++
   ",\"flood_effect\":{\"carried\":0,\"depth\":\"+1\",\"outcome\":\"drowned\"}" ++
   ",\"payout\":{\"banked\":{\"supplies\":\"carried\",\"score\":\"carried\"," ++
-    "\"relic_at_depth_cap\":true}," ++
-    "\"drowned\":{\"intel\":\"depth\"}}" ++
+    "\"intel\":\"map_banked[depth]\",\"relic_at_depth_cap\":true}," ++
+    "\"drowned\":{\"intel\":\"map_drowned[depth]\"}," ++
+    "\"map_banked\":" ++ mapLadderJson mapBanked ++
+    ",\"map_drowned\":" ++ mapLadderJson mapDrowned ++ "}" ++
   ",\"refusal_vocabulary\":" ++
     jsonArray (VentCrawl.declaredReasons.map jsonString) ++
   ",\"reserve\":\"none — the shaft is the clock: every accepted action goes one \
@@ -160,10 +177,11 @@ actions long\"}"
 
 /-! ## The descriptor -/
 
-/-- The whole document, parameterised by the state list and the row list so that
-a HOSTILE variant goes through the SAME renderer as the honest one.  A falsifier
-built any other way tests a second encoder. -/
-def descriptorFrom (states : List VentCrawl.State) (rows : List VentRow) : String :=
+/-- The whole document, parameterised by the state list, the row list AND the two
+map ladders so that a HOSTILE variant goes through the SAME renderer as the
+honest one.  A falsifier built any other way tests a second encoder. -/
+def descriptorFrom (states : List VentCrawl.State) (rows : List VentRow)
+    (mapBanked mapDrowned : Nat → Nat) : String :=
   "{\n" ++
   "  \"format\":\"POAG1-GAME\",\n" ++
   "  \"schema_version\":1,\n" ++
@@ -175,7 +193,7 @@ def descriptorFrom (states : List VentCrawl.State) (rows : List VentRow) : Strin
     "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
   "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
-  "  \"vent\":" ++ ventJson ++ ",\n" ++
+  "  \"vent\":" ++ ventJson mapBanked mapDrowned ++ ",\n" ++
   "  \"state_machine\":{\n" ++
   "    \"initial_state\":" ++ jsonString (VentCrawl.stateId VentCrawl.initialState) ++ ",\n" ++
   "    \"states\":" ++ jsonPrettyArray (states.map stateJson) ++ ",\n" ++
@@ -186,7 +204,8 @@ def descriptorFrom (states : List VentCrawl.State) (rows : List VentRow) : Strin
     "\"artifact\":\"mission_artifact\"}\n" ++
   "}\n"
 
-def ventCrawlDescriptorJson : String := descriptorFrom ventStates ventRows
+def ventCrawlDescriptorJson : String :=
+  descriptorFrom ventStates ventRows VentCrawl.mapBanked VentCrawl.mapDrowned
 
 /-! ## Validation — the key set, exactly -/
 
@@ -207,6 +226,13 @@ def validateVentCrawlDescriptor (bytes : String) : Except String Unit := do
 {VentCrawl.allVeins.length}"
   for vein in veins do
     exactKeys vein ["id", "yields", "carry"]
+  let payout ← vent.getObjVal? "payout"
+  exactKeys payout ["banked", "drowned", "map_banked", "map_drowned"]
+  for key in ["map_banked", "map_drowned"] do
+    let ladder ← (payout.getObjVal? key) >>= Json.getArr?
+    if ladder.size != VentCrawl.DEPTH_CAP + 1 then
+      throw s!"POAG1 vent-crawl {key} covers {ladder.size} depths, expected \
+{VentCrawl.DEPTH_CAP + 1}"
   let machine ← document.getObjVal? "state_machine"
   exactKeys machine ["initial_state", "states", "actions", "transitions"]
   let states ← (machine.getObjVal? "states") >>= Json.getArr?
@@ -368,6 +394,36 @@ veins, kernel has {mine.length}"
           vi := vi + 1
     index := index + 1
 
+/-- One map ladder, against the kernel function that renders it. -/
+private def checkMapLadder (payout : Json) (key : String) (f : Nat → Nat) :
+    Except String Unit := do
+  let arr ← (payout.getObjVal? key) >>= Json.getArr?
+  if arr.size != VentCrawl.DEPTH_CAP + 1 then
+    throw s!"POAG1 vent-crawl {key} covers {arr.size} depths, kernel has \
+{VentCrawl.DEPTH_CAP + 1}"
+  for i in List.range (VentCrawl.DEPTH_CAP + 1) do
+    match arr[i]? with
+    | none => throw s!"POAG1 vent-crawl {key} has no entry for depth {i}"
+    | some entry =>
+        if (← entry.getNat?) != f i then
+          throw s!"POAG1 vent-crawl {key} pays a map at depth {i} the kernel does not"
+
+/-- ⚑ **The consolation on the wire IS the consolation the kernel pays.**  This is
+the half `ventCrawlTableRefinesKernel` cannot see: the map ladders are not rows,
+they are the payout, and `scripts/poa-design-gate.py` derives a whole risk
+posture from them.  A descriptor whose `map_drowned` said `depth` where the
+kernel pays `depth / 2` would carry a table that is right in every row and a
+consolation that makes the deepest crawl a free roll — which is the exact defect
+the pricing fixed.  `unpriced_map_is_caught` is that mutation, rendered by this
+file's own encoder and refused here. -/
+def ventCrawlPayoutRefinesKernel (bytes : String) : Except String Unit := do
+  let document ← Json.parse bytes
+  let vent ← document.getObjVal? "vent"
+  let payout ← vent.getObjVal? "payout"
+  exactKeys payout ["banked", "drowned", "map_banked", "map_drowned"]
+  checkMapLadder payout "map_banked" VentCrawl.mapBanked
+  checkMapLadder payout "map_drowned" VentCrawl.mapDrowned
+
 /-! ## ⚠ The falsifiers, built constructively from the live encoder
 
 Each mutant is rendered by `descriptorFrom` — the SAME function that renders the
@@ -389,7 +445,8 @@ def flattenedWagerRows : List VentRow :=
   | none => ventRows
   | some i => ventRows.modify i flatten
 
-def flattenedWagerDescriptor : String := descriptorFrom ventStates flattenedWagerRows
+def flattenedWagerDescriptor : String :=
+  descriptorFrom ventStates flattenedWagerRows VentCrawl.mapBanked VentCrawl.mapDrowned
 
 /-- ⚠ A row whose PUBLISHED ODDS are softened while its successors stay right.
 This is the mutation the whole design is exposed to: the hazard is the one thing
@@ -406,7 +463,8 @@ def softenedOddsRows : List VentRow :=
   | none => ventRows
   | some i => ventRows.modify i soften
 
-def softenedOddsDescriptor : String := descriptorFrom ventStates softenedOddsRows
+def softenedOddsDescriptor : String :=
+  descriptorFrom ventStates softenedOddsRows VentCrawl.mapBanked VentCrawl.mapDrowned
 
 /-- ⚠ A wager that drops one of its hauls — a descriptor that has quietly ruled
 out a day that is still on the table.  It is the mutation that would let a
@@ -421,10 +479,22 @@ def prunedHaulRows : List VentRow :=
   | none => ventRows
   | some i => ventRows.modify i prune
 
-def prunedHaulDescriptor : String := descriptorFrom ventStates prunedHaulRows
+def prunedHaulDescriptor : String :=
+  descriptorFrom ventStates prunedHaulRows VentCrawl.mapBanked VentCrawl.mapDrowned
 
 /-- One row short.  Catches a table that is no longer total. -/
-def truncatedDescriptor : String := descriptorFrom ventStates ventRows.tail
+def truncatedDescriptor : String :=
+  descriptorFrom ventStates ventRows.tail VentCrawl.mapBanked VentCrawl.mapDrowned
+
+/-- ⚠ **The consolation, unpriced** — a descriptor that pays a drowned run the
+WHOLE map instead of half of it.  Every row is right, every state view is right,
+the schema is exact, and the game it describes has a free roll in it: a crawler
+paid in map is never punished for going deeper, so one of the two verbs is
+strictly better everywhere and there is no wager.  This is the mutation the
+design gate's `posture-with-no-tradeoff` found in the real descriptor, rendered
+here so the check that catches it cannot quietly stop catching it. -/
+def unpricedMapDescriptor : String :=
+  descriptorFrom ventStates ventRows VentCrawl.mapBanked VentCrawl.mapBanked
 
 /-! ## The pins -/
 
@@ -439,6 +509,28 @@ theorem ventCrawlDescriptor_table_is_the_kernel :
 theorem ventCrawlDescriptor_views_are_the_kernel :
     ventCrawlViewsRefineKernel ventCrawlDescriptorJson = .ok () := by
   native_decide
+
+theorem ventCrawlDescriptor_payout_is_the_kernel :
+    ventCrawlPayoutRefinesKernel ventCrawlDescriptorJson = .ok () := by
+  native_decide
+
+/-- ⚠ **The unpriced consolation is caught, and every other check passes it.**
+The three conjuncts in the middle are the point: the mutation is schema-legal and
+its table and views are byte-identical to the honest ones, so nothing but the
+payout check can see it.  A wire that carried it would hand the design gate a
+posture with no tradeoff and hand a player a crawl with no downside. -/
+theorem unpriced_map_is_caught :
+    unpricedMapDescriptor ≠ ventCrawlDescriptorJson ∧
+    validateVentCrawlDescriptor unpricedMapDescriptor = .ok () ∧
+    ventCrawlTableRefinesKernel unpricedMapDescriptor = .ok () ∧
+    ventCrawlViewsRefineKernel unpricedMapDescriptor = .ok () ∧
+    ventCrawlPayoutRefinesKernel unpricedMapDescriptor ≠ .ok () := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · native_decide
+  · native_decide
+  · native_decide
+  · native_decide
+  · native_decide
 
 /-- ⚠ The mutation happened, and it is caught.  The first conjunct is the guard
 against a falsifier that stopped falsifying: without it, a `flattenedWagerRows`
@@ -481,10 +573,12 @@ theorem truncated_table_is_caught :
 #assert_compiled ventCrawlDescriptor_exact_schema
 #assert_compiled ventCrawlDescriptor_table_is_the_kernel
 #assert_compiled ventCrawlDescriptor_views_are_the_kernel
+#assert_compiled ventCrawlDescriptor_payout_is_the_kernel
 #assert_compiled flattened_wager_is_caught
 #assert_compiled softened_odds_are_caught
 #assert_compiled pruned_haul_is_caught
 #assert_compiled truncated_table_is_caught
+#assert_compiled unpriced_map_is_caught
 
 /-! ## Handover — what has to be spliced, and by whom
 

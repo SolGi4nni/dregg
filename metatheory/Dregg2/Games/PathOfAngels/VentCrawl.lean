@@ -26,7 +26,7 @@ arithmetic live here is that the reward is drawn and the risk is not.
   made: 1/8 into rung 2, rising to 5/8 into rung 6.  A player who wants to know
   the odds of the next rung is told the odds of the next rung.  There is no
   hidden die feel, because the die is not hidden — only its result is.
-* **The reward is HIDDEN and SHARED.**  Which of four `Vein`s the shaft is
+* **The reward is HIDDEN and SHARED.**  Which of eight `Vein`s the shaft is
   running today is drawn once per slot from the curator's slot secret, and it is
   the same vein for every crawler in that slot.  A run reads it the only way
   there is: by going down and looking at what the rungs pay.
@@ -34,20 +34,51 @@ arithmetic live here is that the reward is drawn and the risk is not.
 That split is what this game is for.  The risk you can price exactly; the prize
 you have to pay risk to learn.
 
+## Two hidden things in the reward, and the second one is never free
+
+The eight veins are four SEAMS crossed with what the bottom does.  A seam —
+`barren`, `patchy`, `layered`, `lode` — is what rungs 2 to 5 pay, and it is
+readable: the carries separate the four seams at rung 3.  The BOTTOM is the
+second bit, and no rung before the bottom pays differently for it: the shaft
+either PINCHES (`barren`, `patchy`, `layered`, `fools-lode`) or opens into a
+POCKET (`barren-pocket`, `patchy-pocket`, `layered-pocket`, `motherlode`).
+
+⚑ So there is no state in this game with nothing left to learn.  A crawler who
+has read the seam is standing in front of the last rung holding exactly one
+undecided bit, and it is the bit that pays the most — `the_bottom_rung_is_a_coin_flip_on_every_seam`
+says the two veins still standing at every deepest decision WANT OPPOSITE MOVES.
+`fools-lode` is what that costs: five rungs indistinguishable from the
+motherlode, and then the seam closes to one.
+
 ## What the shared table buys, socially
 
 Because the vein is one draw for the whole slot, a banked total is EVIDENCE.
-`carriedAt 3` separates all four veins (`the_day_is_unreadable_until_the_third_rung`),
-so the first crew to bank out of rung 3 has told the whole ship what kind of day
-it is.  Nobody had to be given a channel for that; it falls out of the shape.
+`carriedAt 3` separates the four seams (`the_day_is_read_in_two_instalments`), so
+the first crew to bank out of rung 3 has told the whole ship what kind of day it
+is.  Nobody had to be given a channel for that; it falls out of the shape.  What
+that crew CANNOT tell them is the bottom: only a transcript that reached rung 6
+carries that, so the last rung is the one piece of news the wardroom board has to
+buy at full price.
 
 ⚠ Two residuals, named rather than smoothed over:
 
 * **A drowned run is under-reported.**  Nothing compels a crawler to submit a
-  flooded transcript.  The consolation payout (`intel`, one per rung reached — you
-  mapped the shaft even if the water took the sling) exists so that submitting a
+  flooded transcript.  The consolation payout — the map, `intel`, because you
+  mapped the shaft even if the water took the sling — exists so that submitting a
   drowning is worth the carrying turn, but it is an incentive and not a
   guarantee, and the public record therefore skews upward.
+
+  ⚑ The map is PRICED, and this is the fix for a real defect: a consolation that
+  paid a full rung of `intel` per rung reached and subtracted nothing made
+  drowning STRICTLY BETTER than banking for anyone who wanted the map, so the
+  deepest crawl was a free roll and there was no wager in the game at all for
+  that player.  A run that comes home keeps its whole map (`mapBanked d = d`); a
+  run the water takes keeps half of it (`mapDrowned d = d / 2`).  Half is still
+  worth the carrying turn at every reachable drowning
+  (`a_drowned_run_is_always_worth_submitting`) and it is never worth more than
+  climbing out from where you stood (`the_map_that_drowns_is_never_worth_more`),
+  which is exactly the property "the loss is a loss" the design gate rebuilds
+  from the emitted ladders.
 * **The late crawler free-rides.**  Whoever banks out of rung 3 first paid two
   rungs of hazard for the information; whoever reads the wardroom board gets it
   for nothing.  That is a real asymmetry and the deepening that closes it is a
@@ -80,8 +111,8 @@ the size is not.
 | parameter        | v1 | what deepening buys |
 | ---------------- | -- | ------------------- |
 | `DEPTH_CAP`      | 6  | more rungs = a longer tail and a finer stopping curve; the hazard formula already extends, but `floodBelow 9 = 8 = FACES` is certain death, so past rung 8 the ladder needs a second face count |
-| `FACES`          | 8  | a wider die makes the hazard curve smoother and the near-misses finer-grained; 8 is chosen because it divides 256, so `SeedDraw.drawBelow?` never rejects a byte (`draw_below_eight_never_rejects`) |
-| veins            | 4  | more veins = more bits to learn and a slower collapse to certainty; four is the smallest family that separates in TWO stages (rung 2 halves it, rung 3 splits it), which is the minimum that makes rung 2 a real bet |
+| `FACES`          | 8  | a wider die makes the hazard curve smoother and the near-misses finer-grained; 8 is chosen because it divides 256, so `SeedDraw.drawBelow?` never rejects a byte (`draw_below_eight_never_rejects`, an instance of `a_full_ceiling_never_rejects`) |
+| veins            | 8  | more veins = more bits to learn and a slower collapse to certainty.  Eight is four seams times what the bottom does, which is the smallest family that keeps SOME question open at EVERY decision — and, like `FACES`, 8 divides 256 so the vein draw never rejects either.  The next size that keeps that is 16 |
 | yield tables     | authored | the first thing to make drawn rather than authored: a per-rung yield draw would stop `carried` from being a function of `(depth, vein)` and would decouple two crawlers on one vein |
 | the mouth cache  | 2  | a bigger mouth cache raises the stake of the very first crawl |
 
@@ -153,46 +184,102 @@ theorem the_mouth_is_not_entered_by_a_crawl : floodBelow 1 = 0 := by decide
 
 /-! ## The vein — the shared daily table
 
-Four veins.  They agree at the mouth, split in two at rung 2, and separate
-completely at rung 3.  That ladder is the whole information design: rung 2 is a
-bet made blind, rung 3 buys the answer, and rungs 4 to 6 are priced. -/
+Eight veins: four SEAMS by two BOTTOMS.  They agree at the mouth, split in two at
+rung 2, separate into the four seams at rung 3 — and then hold there.  A seam's
+two veins pay the SAME thing on rungs 2 through 5 and different things at rung 6,
+so no carry short of the bottom can tell them apart.
+
+That is the whole information design.  Rung 2 is a bet made blind; rung 3 buys
+the seam; rungs 4 and 5 are priced against a seam that is known and a bottom that
+is not; and rung 6 is the bit the crawler has to pay the deepest hazard to
+collect.  ⚑ `VEINS = 8` is exactly the number of leaves that arrangement has, and
+it divides 256 for the same reason `FACES` does. -/
 
 inductive Vein where
+  /-- A bust day, and the bottom is a bust too. -/
   | barren
+  /-- A bust day with one plate at the bottom. -/
+  | barrenPocket
+  /-- Thin and honest, closing at the bottom. -/
   | patchy
+  /-- Thin and honest, opening at the bottom. -/
+  | patchyPocket
+  /-- Real seams, pinching at the bottom. -/
   | layered
+  /-- Real seams, opening at the bottom. -/
+  | layeredPocket
+  /-- ⚑ The fool's lode: five rungs of motherlode and then the seam closes to
+  one.  This is the vein that makes the last rung a wager rather than a sum. -/
+  | foolsLode
+  /-- The one everybody is down there for. -/
   | motherlode
 deriving Repr, DecidableEq
 
-def allVeins : List Vein := [.barren, .patchy, .layered, .motherlode]
+/-- ⚑ Order matters on the wire: `still_possible` and the haul list of every
+wager row are rendered in THIS order, so it is part of the descriptor.  Seams run
+shallow to deep, and within a seam the pinch comes before the pocket. -/
+def allVeins : List Vein :=
+  [.barren, .barrenPocket, .patchy, .patchyPocket,
+   .layered, .layeredPocket, .foolsLode, .motherlode]
+
+/-- How many veins the day is drawn from.  ⚠ Not a second constant: `VEINS_is_the_family`
+is the check that it is `allVeins.length`, and the draw below uses THIS one. -/
+abbrev VEINS : Nat := 8
 
 theorem allVeins_complete (v : Vein) : v ∈ allVeins := by
   cases v <;> simp [allVeins]
 
-theorem allVeins_length : allVeins.length = 4 := rfl
+theorem allVeins_length : allVeins.length = VEINS := rfl
+
+theorem VEINS_is_the_family : VEINS = allVeins.length := rfl
 
 theorem allVeins_nodup : allVeins.Nodup := by decide
 
-def veinAt (i : Fin 4) : Vein := allVeins.get (Fin.cast allVeins_length.symm i)
+def veinAt (i : Fin VEINS) : Vein := allVeins.get (Fin.cast allVeins_length.symm i)
 
-theorem veinAt_injective : ∀ i j : Fin 4, veinAt i = veinAt j → i = j := by decide
+theorem veinAt_injective : ∀ i j : Fin VEINS, veinAt i = veinAt j → i = j := by decide
 
 def Vein.tag : Vein → String
   | .barren => "barren"
+  | .barrenPocket => "barren-pocket"
   | .patchy => "patchy"
+  | .patchyPocket => "patchy-pocket"
   | .layered => "layered"
+  | .layeredPocket => "layered-pocket"
+  | .foolsLode => "fools-lode"
   | .motherlode => "motherlode"
 
 theorem vein_tags_are_distinct :
     (allVeins.map Vein.tag).eraseDups = allVeins.map Vein.tag := by decide
 
 /-- What rungs 2 through `DEPTH_CAP` pay, per vein.  Rung 1 is `MOUTH_SALVAGE`
-for every vein and is therefore not in these lists. -/
+for every vein and is therefore not in these lists.
+
+⚑ Read them in pairs: the two veins of a seam agree on the first FOUR entries and
+differ only on the last.  That is what makes the bottom a hidden bit rather than
+a bigger number.
+
+⚑ The four POCKET carries are not free numbers either: each sits just above its
+seam's break-even at the last rung, `c₆ > (8/3)·c₅`, which is what makes
+`the_bottom_rung_is_a_coin_flip_on_every_seam` true rather than decorative.  A
+pocket one unit smaller would make the last rung a plain refusal on both veins of
+that seam and the bottom would stop being a decision.
+
+⚑ And read `motherlode`'s 139 as a PRICE, not a jackpot.  When the seam and the
+bottom were the same draw, a crawler standing on rung 5 of a known motherlode
+crawled into a 3-in-8 shot at 108, worth 40.5.  Hiding the bottom put a fool's
+lode on the other side of that wager; 139 is the number that makes the
+BELIEF-AVERAGED last rung worth 40.5 again — `(3/8) · (177 + 39)/2 = (3/8) · 108`.
+The deepest wager is worth exactly what it was worth when it could be seen. -/
 def Vein.deepYields : Vein → List Nat
-  | .barren     => [2, 1, 1, 1, 1]
-  | .patchy     => [2, 3, 4, 5, 6]
-  | .layered    => [3, 4, 6, 8, 12]
-  | .motherlode => [3, 5, 8, 20, 70]
+  | .barren        => [2, 1, 1, 1, 1]
+  | .barrenPocket  => [2, 1, 1, 1, 12]
+  | .patchy        => [2, 3, 4, 5, 6]
+  | .patchyPocket  => [2, 3, 4, 5, 27]
+  | .layered       => [3, 4, 6, 8, 12]
+  | .layeredPocket => [3, 4, 6, 8, 39]
+  | .foolsLode     => [3, 5, 8, 20, 1]
+  | .motherlode    => [3, 5, 8, 20, 139]
 
 theorem deepYields_are_full_length :
     allVeins.all (fun v => decide (v.deepYields.length = DEPTH_CAP - 1)) = true := by
@@ -222,23 +309,47 @@ theorem the_carry_rises_with_the_rung :
         decide (v.carriedAt i < v.carriedAt (i + 1)))) = true := by
   decide
 
-/-- ⚑ **The day is unreadable until the third rung.**  One value at the mouth,
-two at rung 2, four at rung 3: information arrives in exactly two instalments and
-the second one costs the rung-3 hazard to collect. -/
-theorem the_day_is_unreadable_until_the_third_rung :
-    (allVeins.map (fun v => v.carriedAt 1)).eraseDups.length = 1 ∧
-    (allVeins.map (fun v => v.carriedAt 2)).eraseDups.length = 2 ∧
-    (allVeins.map (fun v => v.carriedAt 3)).eraseDups.length = 4 := by
+/-- ⚑ **The day is read in two instalments and the second one is the bottom.**
+One carry at the mouth, two at rung 2, four from rung 3 on — the four seams — and
+eight only at rung 6.  The seam is settled in the middle of the shaft; the rest
+of the day is not settled anywhere a crawler can bank from.
+
+⚠ The four in the middle is the point.  It does NOT rise at rungs 4 and 5: those
+rungs pay the same on both veins of a seam, so a crawler who has read the seam is
+still holding one live bit at every decision they meet. -/
+theorem the_day_is_read_in_two_instalments :
+    (List.range DEPTH_CAP).map (fun i =>
+      (allVeins.map (fun v => v.carriedAt (i + 1))).eraseDups.length)
+      = [1, 2, 4, 4, 4, 8] := by
   decide
 
 /-- The measured carry ladder, so the numbers in the docblock are checked rather
-than asserted. -/
+than asserted.  Seam-mates are adjacent rows and differ in the last column
+only. -/
 theorem the_carry_ladder_is_measured :
     allVeins.map (fun v => (List.range (DEPTH_CAP + 1)).map v.carriedAt) =
       [ [0, 2, 4, 5, 6, 7, 8]
+      , [0, 2, 4, 5, 6, 7, 19]
       , [0, 2, 4, 7, 11, 16, 22]
+      , [0, 2, 4, 7, 11, 16, 43]
       , [0, 2, 5, 9, 15, 23, 35]
-      , [0, 2, 5, 10, 18, 38, 108] ] := by
+      , [0, 2, 5, 9, 15, 23, 62]
+      , [0, 2, 5, 10, 18, 38, 39]
+      , [0, 2, 5, 10, 18, 38, 177] ] := by
+  decide
+
+/-- ⚑ **The state IS the posterior, and this is why.**  Two veins that agree at a
+depth agree at every shallower one, so a carry names the whole path that produced
+it: there is nothing a crawler saw on the way down that `(depth, carried)` has
+forgotten.  Without this, `consistentVeins` would over-report — the emitted
+`still_possible` would name days the crawler had already ruled out on an earlier
+rung — and the design gate's backward induction over the emitted state would be
+solving a different game from the one being played. -/
+theorem the_carry_path_is_its_endpoint :
+    allVeins.all (fun v => allVeins.all (fun w =>
+      (List.range (DEPTH_CAP + 1)).all (fun d =>
+        !decide (v.carriedAt d = w.carriedAt d) ||
+          (List.range d).all (fun e => decide (v.carriedAt e = w.carriedAt e))))) = true := by
   decide
 
 /-- Which veins are still consistent with standing at `depth` holding `carried`.
@@ -272,21 +383,44 @@ def oneStepBankDepth (v : Vein) : Nat :=
   ((List.range DEPTH_CAP).filter (fun d =>
     decide (0 < d) && decide (crawlValueScaled v d ≤ bankValueScaled v d))).headD DEPTH_CAP
 
-/-- ⚑ **The four veins want four different depths.**  This is the single fact
-that makes the game a game: there is no rung `k` such that "bank at `k`" is
-right, because the right `k` is 2, 3, 4 or 6 and which one it is is exactly what
-is hidden. -/
-theorem the_four_veins_want_four_different_depths :
-    allVeins.map oneStepBankDepth = [2, 3, 4, 6] := by decide
+/-- ⚑ **The veins want five different depths.**  This is the single fact that
+makes the game a game: there is no rung `k` such that "bank at `k`" is right,
+because the right `k` is 2, 3, 4, 5 or 6 and which one it is is exactly what is
+hidden.  ⚠ Seam-mates share the first four comparisons, so a seam can only split
+its own answer at the LAST rung — and the lode seam does: `fools-lode` wants 5 and
+`motherlode` wants 6, at a state where the crawler cannot tell which they are
+on. -/
+theorem the_veins_want_five_different_depths :
+    allVeins.map oneStepBankDepth = [2, 2, 3, 3, 4, 4, 5, 6] ∧
+    (allVeins.map oneStepBankDepth).eraseDups.length = 5 := by decide
 
 /-- ⚑ **The same state wants opposite moves.**  Standing on rung 2 with 4 in the
-sling, the two veins still consistent with that disagree: on `barren` crawling is
-a loss and on `patchy` it is a gain.  The crawler cannot tell them apart — that is
+sling, the veins still consistent with that disagree: on `barren` crawling is a
+loss and on `patchy` it is a gain.  The crawler cannot tell them apart — that is
 the bet, and it is a bet a coin could not settle for them. -/
 theorem the_second_rung_is_a_coin_flip :
-    consistentVeins 2 4 = [Vein.barren, Vein.patchy] ∧
+    consistentVeins 2 4 =
+      [Vein.barren, Vein.barrenPocket, Vein.patchy, Vein.patchyPocket] ∧
     crawlValueScaled Vein.barren 2 < bankValueScaled Vein.barren 2 ∧
     bankValueScaled Vein.patchy 2 < crawlValueScaled Vein.patchy 2 := by
+  decide
+
+/-- ⚑ **And so does the last one, on every seam.**  At the deepest decision the
+crawler has read the seam and is holding exactly two candidate days — and those
+two want OPPOSITE verbs, on all four seams.  This is the fact the eight-vein
+family exists to produce: the tensest rung in the shaft, the one with 5-in-8
+water, is also a rung with news in it.
+
+⚠ Stated over `consistentVeins` — the posterior a client is actually handed — and
+not over a hand-listed pair, so it is a claim about every deepest decision state
+in the emitted table rather than about four rows someone chose. -/
+theorem the_bottom_rung_is_a_coin_flip_on_every_seam :
+    allVeins.all (fun v =>
+      let d := DEPTH_CAP - 1
+      let cs := consistentVeins d (v.carriedAt d)
+      decide (cs.length = 2) &&
+      cs.any (fun w => decide (crawlValueScaled w d < bankValueScaled w d)) &&
+      cs.any (fun w => decide (bankValueScaled w d < crawlValueScaled w d))) = true := by
   decide
 
 /-- The same, one stage earlier: rung 2 is entered blind by everyone, because the
@@ -297,13 +431,22 @@ theorem the_first_crawl_is_made_blind :
       decide (bankValueScaled v 1 < crawlValueScaled v 1)) = true := by
   decide
 
-/-- ⚑ **Three of the five calls are thin.**  A margin of one part in fifty-six,
-one in seventy-two and one in seventeen: these are the rungs where the crawler
-who is right and the crawler who is wrong made the same choice. -/
+/-- ⚑ **The three thinnest calls, measured.**  One part in fifty-six the wrong
+way, one part in fifty-six the right way, and two parts in a hundred and
+eighty-four: these are the rungs where the crawler who is right and the crawler
+who is wrong made the same choice.
+
+⚠ Two of the three are at the BOTTOM, which is new and is the point of the
+pockets: each pocket carry sits just over its seam's break-even, so the last rung
+is a hair's-breadth call in one direction and a plain refusal in the other, and
+the crawler cannot see which.  And a thin call at rung 3 is thin for BOTH veins
+of a seam at once, because the comparison there cannot see the bottom. -/
 theorem the_thin_calls_are_thin :
     (bankValueScaled Vein.patchy 3, crawlValueScaled Vein.patchy 3) = (56, 55) ∧
-    (bankValueScaled Vein.layered 3, crawlValueScaled Vein.layered 3) = (72, 75) ∧
-    (bankValueScaled Vein.motherlode 5, crawlValueScaled Vein.motherlode 5) = (304, 324) := by
+    (bankValueScaled Vein.barrenPocket 5, crawlValueScaled Vein.barrenPocket 5)
+      = (56, 57) ∧
+    (bankValueScaled Vein.layeredPocket 5, crawlValueScaled Vein.layeredPocket 5)
+      = (184, 186) := by
   decide
 
 /-- ⚑ **Neither verb is dominated.**  Each of the two is strictly right somewhere
@@ -341,20 +484,32 @@ def FloodTape.rung (t : FloodTape) : Nat → Fin FACES
   | 6 => t.r6
   | _ => ⟨0, by decide⟩
 
+/-- ⚑ **A bound whose ceiling is the whole byte range never rejects.**  The
+general fact, stated once: `drawBelow?` rejects exactly the bytes at or above
+`ceilingFor bound`, so a bound that divides 256 leaves nothing to reject and the
+draw is a single consuming read.  Both draws this module makes are instances —
+the hazard at `FACES` and the day at `VEINS` — and stating it generally is what
+stops the second one from being a second proof of the same arithmetic. -/
+theorem a_full_ceiling_never_rejects (bound : Nat) (hb : 0 < bound)
+    (hceil : SeedDraw.ceilingFor bound = 256) (b : Fin 256) (rest : List (Fin 256)) :
+    SeedDraw.drawBelow? bound hb (b :: rest)
+      = some (⟨b.val % bound, Nat.mod_lt _ hb⟩, rest) := by
+  simp [SeedDraw.drawBelow?, hceil, b.isLt]
+
 /-- A bound of 8 divides 256, so `ceilingFor 8 = 256` and no byte is ever
 rejected: the whole tape comes off the first six bytes of a 32-byte seed. -/
 theorem draw_below_eight_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
     SeedDraw.drawBelow? FACES (by decide) (b :: rest)
-      = some (⟨b.val % FACES, Nat.mod_lt _ (by decide)⟩, rest) := by
-  have hceil : SeedDraw.ceilingFor FACES = 256 := by decide
-  simp [SeedDraw.drawBelow?, hceil, b.isLt]
+      = some (⟨b.val % FACES, Nat.mod_lt _ (by decide)⟩, rest) :=
+  a_full_ceiling_never_rejects FACES (by decide) (by decide) b rest
 
-/-- And a bound of 4 likewise, so the vein draw never rejects either. -/
-theorem draw_below_four_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
-    SeedDraw.drawBelow? 4 (by decide) (b :: rest)
-      = some (⟨b.val % 4, Nat.mod_lt _ (by decide)⟩, rest) := by
-  have hceil : SeedDraw.ceilingFor 4 = 256 := by decide
-  simp [SeedDraw.drawBelow?, hceil, b.isLt]
+/-- And the day's draw likewise: `VEINS = 8` divides 256, so the vein comes off
+the first byte of the day seed and the `getD` below is dead code for this
+bound. -/
+theorem draw_below_the_vein_count_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
+    SeedDraw.drawBelow? VEINS (by decide) (b :: rest)
+      = some (⟨b.val % VEINS, Nat.mod_lt _ (by decide)⟩, rest) :=
+  a_full_ceiling_never_rejects VEINS (by decide) (by decide) b rest
 
 /-- `none` only if the seed runs out of acceptable bytes, which
 `draw_below_eight_never_rejects` says cannot happen for a 32-byte seed.
@@ -373,7 +528,7 @@ def floodTapeFromRunSeed (runSeed : Digest32) : FloodTape :=
   (floodTapeFromRunSeed? runSeed).getD calmTape
 
 def veinFromDaySeed? (daySeed : Digest32) : Option Vein := do
-  let (i, _) ← SeedDraw.drawBelow? 4 (by decide) daySeed.bytes
+  let (i, _) ← SeedDraw.drawBelow? VEINS (by decide) daySeed.bytes
   some (veinAt i)
 
 def veinFromDaySeed (daySeed : Digest32) : Vein :=
@@ -849,10 +1004,10 @@ theorem initial_state_is_declared : parametricStates.contains initialState = tru
   native_decide
 
 /-- The emitted shape, so the descriptor's size is a number a reader has before
-they open the file.  ⚠ 43 states is SMALL and it is meant to be — see the
+they open the file.  ⚠ 51 states is SMALL and it is meant to be — see the
 parameter table in the docblock for what each axis buys. -/
 theorem parametric_shape_is_measured :
-    parametricStates.length = 43 ∧ allActions.length = 2 ∧ parametricRowCount = 86 := by
+    parametricStates.length = 51 ∧ allActions.length = 2 ∧ parametricRowCount = 102 := by
   refine ⟨by native_decide, by decide, by native_decide⟩
 
 /-- ⚑ **The table really consults the day.**  Some rows are wagers with more than
@@ -892,7 +1047,7 @@ theorem no_undeclared_reason_fires :
 /-! ### The per-vein census
 
 The tape is the crawler's dice, not the day: enumerating 8^6 tapes would be
-enumerating luck.  What IS the instance family is the four veins, and the census
+enumerating luck.  What IS the instance family is the eight veins, and the census
 below walks the real transition on each of them following BOTH outcomes of every
 rung — which is exactly the set of positions a crawler on that vein can occupy. -/
 
@@ -928,9 +1083,9 @@ def familyTotal (f : Vein → Nat) : Nat :=
 emitted descriptor; they are stated here so a disagreement is loud.  A pin
 against its own definition is decoration — this is one of two sources. -/
 theorem family_shape_is_measured :
-    familyTotal (fun v => (veinReachable v).length) = 68 ∧
-    familyTotal veinDecisionCount = 20 ∧
-    familyTotal veinDrownCount = 20 := by
+    familyTotal (fun v => (veinReachable v).length) = 136 ∧
+    familyTotal veinDecisionCount = 40 ∧
+    familyTotal veinDrownCount = 40 := by
   native_decide
 
 /-- ⚑ **Every vein can be crawled to the bottom and every vein can drown you.**
@@ -940,12 +1095,13 @@ theorem every_vein_forks :
     allVeins.all (fun v => decide (0 < veinDrownCount v)) = true := by
   native_decide
 
-/-- ⚑ **The veins are not relabellings of each other.**  The four hidden draws
-produce four DIFFERENT deepest carries, so the bits that distinguish them buy a
-crawler something.  (The reachable COUNTS coincide — the shaft is the same shaft —
+/-- ⚑ **The veins are not relabellings of each other.**  The eight hidden draws
+produce eight DIFFERENT deepest carries, so the bits that distinguish them buy a
+crawler something — including the last bit, which no rung but the bottom pays
+differently for.  (The reachable COUNTS coincide — the shaft is the same shaft —
 which is why this is stated over the carries and not over the state census.) -/
 theorem the_family_does_not_collapse :
-    (allVeins.map (fun v => v.carriedAt DEPTH_CAP)).eraseDups.length = 4 := by
+    (allVeins.map (fun v => v.carriedAt DEPTH_CAP)).eraseDups.length = VEINS := by
   decide
 
 /-! ### Lines through the shaft, played out -/
@@ -1074,23 +1230,80 @@ structure Config where
 theorem judged_tape_is_the_drawn_tape (cfg : Config) :
     cfg.floods = floodTapeFromRunSeed cfg.mission.runSeed := cfg.floods_eq
 
+/-! ### The map, and what the water does to it
+
+⚑ The `intel` a run pays is the MAP: which rungs of this shaft were seen and what
+they held.  Both outcomes pay it, because both outcomes saw the same rungs — and
+that is the whole of the fix.  A consolation paid ONLY to a drowned run, or paid
+at full rate to one, makes drowning the better outcome for anyone who wants the
+map, and a crawler with an unpriced downside is not making a wager: the deepest
+rung is a free roll and the game has no second verb for them.
+
+So the map is paid on both and DISCOUNTED by the water.  A run that climbs out
+brings its notes with it; a run the water takes leaves half of them in the shaft.
+Half is still worth carrying home — that is the residual the consolation exists
+for, and `a_drowned_run_is_always_worth_submitting` is the check — and it is
+never worth more than climbing out from where you stood, which is
+`the_map_that_drowns_is_never_worth_more`. -/
+
+/-- What a run that comes home is paid for the shaft it mapped: one per rung
+reached, all of it. -/
+def mapBanked (depth : Nat) : Nat := depth
+
+/-- And what survives a drowning: half the notes, rounded down. -/
+def mapDrowned (depth : Nat) : Nat := depth / 2
+
+/-- ⚑ **The map that drowns is never worth more than the map that climbs out.**
+At every rung a crawler can stand on, drowning into the next one pays strictly
+less map than banking right here — so the loss branch of every wager is a loss on
+the map exactly as it is on the sling, and no posture is handed a free roll. -/
+theorem the_map_that_drowns_is_never_worth_more :
+    (List.range DEPTH_CAP).all (fun i =>
+      decide (mapDrowned (i + 2) ≤ mapBanked (i + 1))) = true := by decide
+
+/-- And strictly less from the second rung on, where a crawler has anything to
+weigh: the tie at the mouth is the one place a drowning costs no map, because
+there is no shallower rung to have come home from. -/
+theorem the_map_discount_bites_below_the_mouth :
+    (List.range (DEPTH_CAP - 1)).all (fun i =>
+      decide (mapDrowned (i + 3) < mapBanked (i + 2))) = true := by decide
+
 /-- The wire-shaped payout.  A banked run pays its sling in `supplies` and
-`score`, and the bottom rung pays the deep relic on top.  A DROWNED run pays
-`intel` — one per rung reached — because a crawler who did not come back still
-mapped the shaft, and because a payout of exactly nothing is a reason not to
-submit the transcript at all. -/
+`score` and its map in `intel`, and the bottom rung pays the deep relic on top.
+A DROWNED run pays the discounted map and nothing else: the sling is gone, and
+what is left is what the crawler had already learnt. -/
 def Config.rawPayout (cfg : Config) (s : State) : RawContribution :=
   match s.outcome with
   | .banked =>
-      { intel := 0, supplies := s.carried, cohesion := 0, influence := 0
+      { intel := mapBanked s.depth, supplies := s.carried, cohesion := 0
+        influence := 0
         score := s.carried
         relics := if s.depth = DEPTH_CAP then [cfg.deepRelic] else [] }
   | .drowned =>
-      { intel := s.depth, supplies := 0, cohesion := 0, influence := 0, score := 0
+      { intel := mapDrowned s.depth, supplies := 0, cohesion := 0, influence := 0
+        score := 0
         relics := [] }
   | .crawling =>
       { intel := 0, supplies := 0, cohesion := 0, influence := 0, score := 0
         relics := [] }
+
+/-- ⚑ **A drowned run is always worth submitting.**  Every drowning a run can
+actually reach — the shallowest is rung 2 — pays at least one `intel`, so the
+carrying turn is never spent for nothing.  This is the residual the consolation
+exists for and it survives the discount; a pricing that took it to zero would
+have bought the tradeoff by making the public record blind to drownings. -/
+theorem a_drowned_run_is_always_worth_submitting :
+    parametricStates.all (fun s =>
+      !decide (s.outcome = Outcome.drowned) ||
+        decide (0 < mapDrowned s.depth)) = true := by
+  native_decide
+
+/-- The payout reads the map through the two named ladders and nowhere else, so
+the numbers `VentCrawlEmit` renders into `vent.payout` are these ones. -/
+theorem the_payout_is_the_map (cfg : Config) (s : State) :
+    ((s.outcome = Outcome.banked → (cfg.rawPayout s).intel = mapBanked s.depth) ∧
+     (s.outcome = Outcome.drowned → (cfg.rawPayout s).intel = mapDrowned s.depth)) := by
+  constructor <;> intro h <;> simp [Config.rawPayout, h]
 
 /-- Fail closed, twice: the payout must validate into the bounded type at all, and
 the mission itself must accept it.  There is no branch that widens the
@@ -1347,22 +1560,27 @@ theorem two_crawlers_share_a_vein_and_not_a_tape :
 #assert_axioms allVeins_nodup
 #assert_axioms veinAt_injective
 #assert_axioms vein_tags_are_distinct
+#assert_axioms allVeins_length
+#assert_axioms VEINS_is_the_family
 #assert_axioms deepYields_are_full_length
 #assert_axioms the_hazard_escalates
 #assert_axioms the_hazard_is_never_certain
 #assert_axioms the_mouth_is_not_entered_by_a_crawl
 #assert_axioms the_carry_rises_with_the_rung
-#assert_axioms the_day_is_unreadable_until_the_third_rung
+#assert_axioms the_day_is_read_in_two_instalments
 #assert_axioms the_carry_ladder_is_measured
+#assert_axioms the_carry_path_is_its_endpoint
 #assert_axioms consistentVeins_at_the_mouth
-#assert_axioms the_four_veins_want_four_different_depths
+#assert_axioms the_veins_want_five_different_depths
 #assert_axioms the_second_rung_is_a_coin_flip
+#assert_axioms the_bottom_rung_is_a_coin_flip_on_every_seam
 #assert_axioms the_first_crawl_is_made_blind
 #assert_axioms the_thin_calls_are_thin
 #assert_axioms neither_verb_is_dominated
 #assert_axioms the_family_does_not_collapse
+#assert_axioms a_full_ceiling_never_rejects
 #assert_axioms draw_below_eight_never_rejects
-#assert_axioms draw_below_four_never_rejects
+#assert_axioms draw_below_the_vein_count_never_rejects
 #assert_axioms initialState_is_consistent
 #assert_axioms allActions_complete
 #assert_axioms action_tags_are_distinct
@@ -1390,6 +1608,9 @@ theorem two_crawlers_share_a_vein_and_not_a_tape :
 #assert_axioms the_wager_publishes_the_real_odds
 #assert_axioms the_greed_line_is_the_whole_budget
 #assert_axioms judged_tape_is_the_drawn_tape
+#assert_axioms the_map_that_drowns_is_never_worth_more
+#assert_axioms the_map_discount_bites_below_the_mouth
+#assert_axioms the_payout_is_the_map
 #assert_axioms terminalOutput_none_while_crawling
 #assert_axioms terminalOutput_is_mission_accepted
 #assert_axioms terminalOutput_names_exact_artifact
@@ -1410,6 +1631,7 @@ theorem two_crawlers_share_a_vein_and_not_a_tape :
 #assert_compiled every_declared_reason_fires
 #assert_compiled no_undeclared_reason_fires
 #assert_compiled family_shape_is_measured
+#assert_compiled a_drowned_run_is_always_worth_submitting
 #assert_compiled every_vein_forks
 #assert_compiled state_ids_are_distinct
 #assert_compiled a_calm_tape_rewards_the_deep_line

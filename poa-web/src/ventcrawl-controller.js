@@ -34,10 +34,18 @@ import {
  * roll is local and visible and the transcript says so.
  */
 
+// Display names only, and `veinName` falls back to the raw id, so this map can
+// never refuse a day the descriptor declares — it is a nicety, not a schema.
+// The eight veins are four SEAMS by what the bottom rung does: the seam is
+// readable by rung 3 and the bottom is not readable at all until you are on it.
 const VEIN_TITLE = new Map([
   ["barren", "Barren"],
+  ["barren-pocket", "Barren, pocket at the bottom"],
   ["patchy", "Patchy"],
+  ["patchy-pocket", "Patchy, pocket at the bottom"],
   ["layered", "Layered"],
+  ["layered-pocket", "Layered, pocket at the bottom"],
+  ["fools-lode", "Fool's lode"],
   ["motherlode", "Motherlode"],
 ]);
 

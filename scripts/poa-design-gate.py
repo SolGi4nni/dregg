@@ -652,13 +652,55 @@ class DeductionGame:
 
         if not bias["uniform"]:
             lo, hi = min(mods.values()), max(mods.values())
-            rep.find(self.name, "seed-modulo-bias", INFO,
-                     "the seed-to-band map is not uniform",
+            # ⚑ THE TRIGGER THIS FINDING NAMED HAS FIRED, AND IT IS READ FROM THE
+            # ARTIFACT.  This was an INFO whose own text said "immaterial for a
+            # public-target demo; it is a real bias the moment the target is hidden
+            # and a reward rides on it".  Both halves of that condition are now
+            # DECLARED in the bytes — the instance is `oracle-only` under a
+            # `committed-hidden-instance` classification, and `output` pays a
+            # mission reward — so the caveat is spent and the severity follows the
+            # descriptor rather than a reader's memory of when it was written.
+            hidden = (self.doc.get("security", {}).get("instance_visibility")
+                      == "oracle-only")
+            rewarded = self.doc.get("output", {}).get("contribution") is not None
+            live = hidden and rewarded
+            # exact per-target and per-class figures, over the whole 216-code domain
+            weight = {}
+            for code in self.codes:
+                p = 1.0
+                for band in code:
+                    p *= mods[band] / 256
+                weight[code] = p
+            worst = max(weight.values()) / min(weight.values())
+            tv = sum(abs(p - 1 / self.n) for p in weight.values()) / 2
+            rep.find(self.name, "seed-modulo-bias", WARN if live else INFO,
+                     "the hidden instance is not drawn uniformly"
+                     if live else "the seed-to-band map is not uniform",
                      f"a byte mod {self.alphabet} yields symbol counts {lo}..{hi} out of "
                      f"256, so band symbols 0..{255 % self.alphabet} are "
                      f"{round(100 * (hi - lo) / lo, 2)}% more likely than the rest.  "
-                     f"Immaterial for a public-target demo; it is a real bias the moment "
-                     f"the target is hidden and a reward rides on it.")
+                     f"Over the whole {self.n}-target domain that is a "
+                     f"{worst:.4f}x spread between the most and least likely target "
+                     f"and {tv:.4f} in total variation from uniform.  " +
+                     (f"⚠ ESCALATED FROM INFO: `security.instance_visibility` is "
+                      f"'oracle-only' and `output.contribution` is "
+                      f"{self.doc['output']['contribution']!r}, so the target is "
+                      f"HIDDEN and a reward rides on it — the exact condition this "
+                      f"finding was written to fire on.  The repo already owns the "
+                      f"fix and does not use it here: `SeedDraw.drawBelow?` is "
+                      f"rejection-sampled with `draw_is_uniform_on_every_bound` "
+                      f"proved over every bound, `HiddenInstance` rejects a whole "
+                      f"lane value to keep the byte stream uniform, and its docblock "
+                      f"claims `drawBelow?` is the only draw used — then "
+                      f"`SignalTriangulation.targetFromSeed` folds with `% "
+                      f"{self.alphabet}`.  The repair is `targetFromSeed? : Digest32 "
+                      f"→ Option Code` and `target_eq : some target = …`, the shape "
+                      f"`BlackBoxReconstruction.orderFromRunSeed?` already has; it is "
+                      f"a flag day through the fixture layer and it is NOT a design "
+                      f"fork.  Do not baseline this."
+                      if live else
+                      "Immaterial for a public-target demo; it is a real bias the "
+                      "moment the target is hidden and a reward rides on it."))
 
         return {
             "game": self.name,
@@ -3211,6 +3253,165 @@ class ProbeOracleGame:
         if len(self.rows) != self.space:
             raise Refusal(f"oracle.table has {len(self.rows)} rows for a space of {self.space}")
 
+        # ⚑ THE SETTLING RULE IS A DECLARED STRING, AND AN UNKNOWN ONE REFUSES.
+        #
+        # Refusal reachability below is derived from `settles` — which pairs a MATCH
+        # retires — and that derivation is only sound for a rule this tool has an
+        # exact reading of.  A kernel that changes what settling means has to change
+        # this string, and an unrecognised string stops the analysis rather than
+        # letting it silently measure the wrong game.  Same discipline as refusing an
+        # organ whose row is not a sufficient statistic.
+        self.settles = oracle.get("settles")
+        if self.settles != "slot-and-fragment":
+            raise Refusal(
+                f"oracle.settles = {self.settles!r}; this backend derives refusal "
+                f"reachability only for 'slot-and-fragment' and refuses to guess")
+        self.slot_of = {p["id"]: p["slot"] for p in oracle["probes"]}
+        self.fragment_of = {p["id"]: p["fragment"] for p in oracle["probes"]}
+        self.declared_reasons = list(doc.get("refusals") or [])
+        self.witnesses = doc.get("refusal_witnesses")
+        self.precedence = doc.get("refusal_precedence")
+
+    # -- refusal reachability, derived from the artifact -----------------------
+    #
+    # Nothing below reads the kernel.  The state a transcript reaches is the set of
+    # probes played; which of them MATCHED is a cell of the emitted oracle table; and
+    # `settles = "slot-and-fragment"` says a match retires both the position probed
+    # and the fragment named.  Those three facts are the whole refusal vocabulary.
+
+    def _settled(self, live: int, played: list):
+        """Positions and fragments retired by the matches in `played`, on instance
+        `live`.  Read off the emitted table, not off a rule model."""
+        slots, frags = set(), set()
+        for p in played:
+            if p in self.hits[live]:
+                slots.add(self.slot_of[p])
+                frags.add(self.fragment_of[p])
+        return slots, frags
+
+    def _applicable(self, live: int, played: list, probe: str) -> set:
+        """Every declared refusal whose OWN condition holds at this state."""
+        slots, frags = self._settled(live, played)
+        out = set()
+        if len(slots) >= self.required:
+            out.add("solved")
+        if len(played) >= self.budget:
+            out.add("turn-limit")
+        if probe in played:
+            out.add("repeated-probe")
+        if self.slot_of[probe] in slots:
+            out.add("settled-slot")
+        if self.fragment_of[probe] in frags:
+            out.add("settled-fragment")
+        return out
+
+    def _fires(self, live: int, played: list, probe: str):
+        """The reason a client renders: the FIRST applicable one in the order the
+        descriptor declares.  Precedence is semantics — `settled-slot` holds at every
+        `solved` state — so it is read from the artifact, never assumed."""
+        applicable = self._applicable(live, played, probe)
+        for reason in self.declared_reasons:
+            if reason in applicable:
+                return reason, applicable
+        return None, applicable
+
+    def check_refusal_witnesses(self) -> dict:
+        """Replay every emitted witness against the emitted ORACLE TABLE and re-derive
+        the reason.  The kernel already asserted these (`BlackBoxReconstruction.
+        every_refusal_is_witnessed`, and `Emit.blackBox_witnesses_are_the_kernel` reads
+        them back out of the rendered bytes); this is the second source."""
+        rep = self.rep
+        if not isinstance(self.witnesses, list) or not self.witnesses:
+            rep.find(self.name, "refusals-are-not-witnessed", WARN,
+                     f"{len(self.declared_reasons)} refusal reason(s) are declared and "
+                     f"this descriptor carries no witness for any of them",
+                     f"the machine backends read refusal reachability off a total "
+                     f"transition table; an oracle descriptor has none (the state space "
+                     f"is a subset lattice, 2^{len(self.probes)} states), so the "
+                     f"evidence has to travel IN the artifact.  The emitter now writes "
+                     f"`refusal_witnesses` — a legal prefix and one further probe per "
+                     f"reason — and this backend replays them.  These bytes predate "
+                     f"that: RE-EMIT.  Declared and unwitnessed: "
+                     f"{self.declared_reasons}.")
+            return {"witnessed": False}
+
+        if self.precedence != "first-applicable-in-declared-order":
+            raise Refusal(
+                f"refusal_precedence = {self.precedence!r}; this backend replays "
+                f"witnesses only under 'first-applicable-in-declared-order'")
+
+        disagreements, seen = [], []
+        for w in self.witnesses:
+            claimed = w["reason"]
+            live = w["instance"]
+            if claimed not in self.declared_reasons:
+                disagreements.append(f"witness names undeclared reason {claimed!r}")
+                continue
+            if not 0 <= live < self.space:
+                disagreements.append(f"{claimed}: instance {live} is outside the space")
+                continue
+            played, illegal = [], None
+            for step in w["history"]:
+                if step not in self.slot_of:
+                    illegal = f"unknown probe {step!r}"
+                    break
+                fired, _ = self._fires(live, played, step)
+                if fired is not None:
+                    illegal = f"prefix probe {step} is itself refused ({fired})"
+                    break
+                played.append(step)
+            if illegal:
+                disagreements.append(f"{claimed}: {illegal}")
+                continue
+            probe = w["probe"]
+            if probe not in self.slot_of:
+                disagreements.append(f"{claimed}: unknown probe {probe!r}")
+                continue
+            fired, applicable = self._fires(live, played, probe)
+            if fired is None:
+                disagreements.append(
+                    f"{claimed}: the probe is ACCEPTED here — no declared condition holds")
+            elif fired != claimed:
+                disagreements.append(
+                    f"{claimed}: this tool derives {fired!r} (applicable: "
+                    f"{sorted(applicable)})")
+            else:
+                seen.append(claimed)
+
+        never = [r for r in self.declared_reasons if r not in seen]
+        if disagreements:
+            rep.find(self.name, "refusal-witness-disagreement", FAIL,
+                     f"{len(disagreements)} emitted refusal witness(es) do not replay "
+                     f"the way this tool reads the artifact",
+                     "; ".join(disagreements) +
+                     ".  These are independent — the kernel evaluated its own "
+                     "`refusal?` and this tool replayed the transcript against the "
+                     "emitted oracle table under the declared `settles` rule — so a "
+                     "disagreement means the descriptor and the engine are not the "
+                     "same game.")
+        if never:
+            rep.find(self.name, "declared-reason-never-fires", FAIL,
+                     f"{never} is declared and witnessed by nothing",
+                     f"a client carries a string for it and a reader believes it is a "
+                     f"rule.  A refusal that cannot fire is a rule that does not exist.")
+        if not disagreements and not never:
+            rep.find(self.name, "every-declared-reason-fires", INFO,
+                     f"all {len(self.declared_reasons)} declared refusal reasons fire, "
+                     f"on a transcript that is legal up to the refused probe",
+                     f"{self.declared_reasons}, each replayed from the emitted witness "
+                     f"against the emitted oracle table: every prefix probe is accepted "
+                     f"and the further probe is refused with exactly the declared "
+                     f"reason, under `settles = {self.settles!r}` and "
+                     f"`{self.precedence}`.  ⚠ Precedence is load-bearing here and is "
+                     f"read from the artifact, not assumed: `settled-slot` holds at "
+                     f"EVERY `solved` state, so `solved` is only ever reported because "
+                     f"it is declared first.  Arrived at twice — "
+                     f"`BlackBoxReconstruction.every_refusal_is_witnessed` is the "
+                     f"kernel's compiled evaluation of its own `refusal?`, and this is "
+                     f"a simulation of the bytes a client downloads.")
+        return {"witnessed": True, "reasons_fired": sorted(seen),
+                "reasons_never_fired": never, "witness_disagreements": disagreements}
+
     def build(self) -> None:
         """Decode every row into the set of probes that SOLVE for that instance."""
         self.hits = []
@@ -3461,17 +3662,10 @@ class ProbeOracleGame:
                  f"{self.budget}).  Lower bound {floor} and upper bound {self.budget} "
                  f"coincide, so the worst case is exactly {floor}.")
 
-        rep.find(self.name, "refusals-declared-not-checked", WARN,
-                 f"{len(self.doc.get('refusals', []))} refusal reason(s) are declared "
-                 f"and this backend does not check that any of them can fire",
-                 f"the machine backends read refusal reachability off a total "
-                 f"transition table; an oracle descriptor has none (the state space is "
-                 f"a subset lattice, 2^{len(self.probes)} states).  Reachability of "
-                 f"{self.doc.get('refusals')} is proved in the kernel instead — one "
-                 f"theorem per reason — but it is NOT measured from the artifact, and "
-                 f"that is a real gap in this gate rather than a property of the game.")
+        refusals = self.check_refusal_witnesses()
 
         return {
+            "refusal_witness_check": refusals,
             "game": self.name,
             "kind": "probe-oracle",
             "engine_module": self.doc["engine_module"],
@@ -4413,10 +4607,10 @@ class PushYourLuckGame:
     # the census is complete before this dict is consulted, and consulting it can only
     # produce a finding.
     KERNEL_SHAPE = {
-        "parametric_states": 43,
-        "family_reachable": 68,
-        "family_decisions": 20,
-        "family_drowned": 20,
+        "parametric_states": 51,
+        "family_reachable": 136,
+        "family_decisions": 40,
+        "family_drowned": 40,
         "source": "VentCrawl.parametric_shape_is_measured + "
                   "VentCrawl.family_shape_is_measured (native_decide)",
     }
@@ -4425,6 +4619,14 @@ class PushYourLuckGame:
     # posture is a player who needs a number tonight, and it is the commonest real
     # posture in a daily game.  A game whose verb choice is the same under all eight
     # has one answer and is a ritual.
+    #
+    # ⚑ `cartographer` is the posture that is paid in MAP rather than salvage, and its
+    # payoff is READ OFF THE DESCRIPTOR (`vent.payout.map_banked` / `map_drowned`), not
+    # modelled here.  It used to be modelled here — as "value = depth reached" — and
+    # that made this backend the second copy of a payout rule the kernel already owns:
+    # a re-priced consolation could not have moved it, and the posture would have gone
+    # on reporting a defect the game had fixed (or missing one it had introduced).  The
+    # rule is the emitted one or the descriptor is refused.
     POSTURES = [
         ("risk-neutral", "salvage", _u_identity),
         ("sqrt-averse", "salvage", _u_sqrt),
@@ -4433,7 +4635,7 @@ class PushYourLuckGame:
         ("quota-12", "salvage", _u_quota(12)),
         ("quota-24", "salvage", _u_quota(24)),
         ("quota-40", "salvage", _u_quota(40)),
-        ("cartographer", "depth", None),
+        ("cartographer", "map", None),
     ]
 
     def __init__(self, doc: dict, rep: Report) -> None:
@@ -4504,6 +4706,32 @@ class PushYourLuckGame:
             raise Refusal(
                 "the veins do not agree at the opening depth, so a run's starting "
                 "sling already names the day and the table is not hidden at all")
+
+        # ⚑ THE CONSOLATION, AS NUMBERS.  `vent.payout.map_*` gives, per depth, what a
+        # run that came home and a run the water took are paid for the shaft they
+        # mapped.  The `cartographer` posture is built from THESE and from nothing this
+        # file knows, so the question "is the losing branch actually a loss?" is asked
+        # of the descriptor rather than of a rule written here.  ⚠ No fallback: a
+        # descriptor that does not carry the ladders is REFUSED, because the alternative
+        # is a posture quietly reverting to this file's own guess at the payout.
+        payout = vent.get("payout")
+        if not isinstance(payout, dict):
+            raise Refusal("the vent carries no `payout` block, so what a run is paid "
+                          "for reaching a rung is not in the descriptor at all")
+        ladders = {}
+        for key in ("map_banked", "map_drowned"):
+            ladder = payout.get(key)
+            if not isinstance(ladder, list) or len(ladder) != self.depth_cap + 1:
+                raise Refusal(
+                    f"`vent.payout.{key}` is not a ladder over depths 0..{self.depth_cap}; "
+                    f"a posture that is paid in map cannot be rebuilt from the bytes and "
+                    f"this backend will not model one from its own source")
+            if not all(isinstance(x, int) and x >= 0 for x in ladder):
+                raise Refusal(f"`vent.payout.{key}` carries something that is not a "
+                              f"count of rungs mapped")
+            ladders[key] = [int(x) for x in ladder]
+        self.map_banked = ladders["map_banked"]
+        self.map_drowned = ladders["map_drowned"]
 
     # -- the alphabet, derived rather than named ----------------------------
 
@@ -4768,6 +4996,20 @@ class PushYourLuckGame:
 
     # -- ⚑ the stopping rules ------------------------------------------------
 
+    def payoff_for(self, kind, u, outcome, depth, carried):
+        """What a posture is worth at a terminal outcome.  ⚠ ONE function, used by the
+        induction AND by the findings below: a second copy of this arithmetic is how a
+        finding ends up describing a posture the induction never ran.
+
+        The `map` kind indexes the EMITTED consolation ladders by depth, so a game that
+        re-prices what a losing run is paid moves this posture without a line changing
+        here — and a game that stops pricing it moves this posture too, which is what
+        `posture-with-no-tradeoff` reads."""
+        if kind == "map":
+            ladder = self.map_banked if outcome == self.banked else self.map_drowned
+            return float(ladder[depth])
+        return u(carried if outcome == self.banked else 0)
+
     def stopping_rules(self) -> dict:
         """Exact backward induction over the BELIEF state, under every posture.
 
@@ -4782,9 +5024,7 @@ class PushYourLuckGame:
         results = {}
         for pname, kind, u in self.POSTURES:
             def payoff(outcome, depth, carried, kind=kind, u=u):
-                if kind == "depth":
-                    return float(depth)
-                return u(carried if outcome == self.banked else 0)
+                return self.payoff_for(kind, u, outcome, depth, carried)
 
             value, choice = {}, {}
             for st in live:
@@ -4850,11 +5090,12 @@ class PushYourLuckGame:
                                     if self.bank_action in choice[st]
                                     and len(choice[st]) == 1}),
             }
-        # ⚠ The split is computed over the SALVAGE postures only.  `cartographer`
-        # optimises a different quantity (how deep the shaft got mapped), so it always
-        # crawls; counting its disagreement as evidence that the salvage arithmetic is
-        # live would make this finding true of ANY game with a consolation payout,
-        # including one whose salvage numbers were flat.
+        # ⚠ The split is computed over the SALVAGE postures only.  `cartographer` is
+        # paid in MAP rather than in salvage, so counting its disagreement as evidence
+        # that the salvage arithmetic is live would make this finding true of ANY game
+        # with a consolation payout, including one whose salvage numbers were flat.  It
+        # is not excluded from `posture-with-no-tradeoff`, which is the finding that
+        # asks whether ITS payout is priced.
         salvage_postures = [p for p, kind, _ in self.POSTURES if kind == "salvage"]
         for st in self.state_of.values():
             if st[2] != self.crawling or not self.is_open(st, self.crawl_action):
@@ -4966,36 +5207,72 @@ class PushYourLuckGame:
                      f"would inflate this number: a posture that VALUES BOTH VERBS "
                      f"EQUALLY is indifferent, not disagreeing (a quota out of reach "
                      f"from here is worth zero either way), and `cartographer` is "
-                     f"excluded entirely because it optimises depth rather than salvage "
-                     f"and would therefore disagree in a game whose salvage numbers were "
-                     f"flat.  The induction is exact, over the BELIEF state, with a "
-                     f"uniform prior over veins.")
+                     f"excluded entirely because it is paid in the emitted MAP ladders "
+                     f"rather than in salvage and would therefore disagree in a game "
+                     f"whose salvage numbers were flat.  The induction is exact, over "
+                     f"the BELIEF state, with a uniform prior over veins.")
 
-        no_tradeoff = [p for p, v in stop["per_posture"].items()
-                       if len({stop["strict"][p].get(st)
-                               for st in stop["choices"][p]
-                               if self.is_open(st, self.crawl_action)} - {None}) < 2]
+        # ⚑ A POSTURE WITH NO TRADEOFF — and the one exclusion that is not a weakening.
+        #
+        # Two different causes used to land in this finding, and it said so itself in
+        # the same breath as raising a WARN for both.  A gate that reports a cause it
+        # declares is not a defect is a gate that has to be read past, so the causes are
+        # now SEPARATED BY A TEST rather than by prose:
+        #
+        #   (a) THE LOSS IS NOT A LOSS.  The posture's payout is not priced against the
+        #       risk — the drowned branch of a wager is worth as much as climbing out
+        #       from where the crawler stood — so crawling is a free roll and there is
+        #       no wager in this game for that player.  A DEFECT IN THE GAME.  This is
+        #       what the finding is for and it still fires.
+        #   (b) THE POSTURE CANNOT TELL TWO BANKS APART.  A quota above every carry a
+        #       decision state can bank scores EVERY bank at zero.  Its preference is
+        #       then a fact about the TARGET, not about the ladder, and no change to the
+        #       game would give it a decision short of lowering the target.
+        #
+        # ⚠ The test for (b) is deliberately NARROW: the posture's BANK payoff is
+        # CONSTANT over every decision state.  A posture that can rank two banks stays
+        # inside the check however mute it is elsewhere — an always-crawling
+        # risk-neutral player is still caught here — so this exempts a posture that
+        # cannot see the game, never one the game has flattened.
+        decision_states = [st for st in self.state_of.values()
+                           if st[2] == self.crawling
+                           and self.is_open(st, self.crawl_action)]
+        no_tradeoff, blind_to_the_bank = [], []
+        for pname, kind, u in self.POSTURES:
+            verbs = {stop["strict"][pname].get(st) for st in decision_states} - {None}
+            if len(verbs) >= 2:
+                continue
+            banks = {self.payoff_for(kind, u, self.banked, st[0], st[1])
+                     for st in decision_states}
+            (blind_to_the_bank if len(banks) < 2 else no_tradeoff).append(pname)
         if no_tradeoff:
             rep.find(name, "posture-with-no-tradeoff", WARN,
                      f"{no_tradeoff} never faces a decision: one verb is strictly better "
-                     f"everywhere",
+                     f"everywhere, and it CAN tell two banks apart",
                      f"a posture that always crawls (or always banks) wherever it has "
                      f"any preference at all is not playing this game; it is executing "
-                     f"a constant.  Two DIFFERENT causes look the same here and they "
-                     f"want different repairs.  (a) A posture whose payout is not PRICED "
-                     f"against the risk — here `cartographer`, which is a real design "
-                     f"residual: the drowned-run consolation pays `intel` per rung "
-                     f"reached and nothing subtracts from it, so a crawler who wants "
-                     f"only intel goes to the bottom every time and is never punished.  "
-                     f"The consolation exists so a drowned transcript is worth "
-                     f"submitting — which is what makes the day's public record "
-                     f"informative — so the fix is to PRICE it (cap it, or scale it by "
-                     f"the sling that was lost), NOT to delete it.  (b) A quota so far "
-                     f"out of reach that the posture is INDIFFERENT nearly everywhere "
-                     f"and strictly prefers a verb only in the handful of states that "
-                     f"can still reach it — see `posture-is-mostly-mute`.  That is not a "
-                     f"defect in the game; it is a target set too high, and it is "
-                     f"reported so the two are not confused.")
+                     f"a constant.  This posture ranks the bankable outcomes — it is not "
+                     f"blind to the ladder — so the constant is the GAME's, not the "
+                     f"posture's.  The usual cause is a payout that is not PRICED "
+                     f"against the risk: if the losing branch of a wager is worth as "
+                     f"much as climbing out from where the crawler stood, the crawl is a "
+                     f"free roll and the second verb is decoration.  Price the loss "
+                     f"(discount it, cap it, or scale it by what was lost) rather than "
+                     f"deleting it, if it is a consolation that exists to make a losing "
+                     f"transcript worth submitting.")
+
+        if blind_to_the_bank:
+            rep.find(name, "posture-cannot-be-banked-into", INFO,
+                     f"{blind_to_the_bank} scores every reachable bank the same, so it "
+                     f"has no decision to face",
+                     f"a quota above every carry a decision state can bank is worth zero "
+                     f"whatever the crawler does short of the bottom, so this posture "
+                     f"strictly prefers the same verb everywhere by arithmetic on its "
+                     f"TARGET and not by anything the ladder does.  That is not a defect "
+                     f"in the game — it is what a player with an impossible number "
+                     f"actually faces — and it is reported here, separately from "
+                     f"`posture-with-no-tradeoff`, so a target set too high is never "
+                     f"read as a game with one answer.")
 
         mostly_mute = [p for p, sts in stop["indifferent"].items()
                        if decisions and len(sts) > decisions // 2]
