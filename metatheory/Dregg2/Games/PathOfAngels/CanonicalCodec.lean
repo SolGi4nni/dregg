@@ -8,7 +8,8 @@ plumbing written by hand once per type: an encoder that concatenates JSON text i
 key order, a strict `Except String T` parser that re-lists the same keys, and one roundtrip
 theorem. Measured 2026-08-05: **33 `_reencodes` theorems across 8 modules, and 8 separate
 copies of the same generic `canonicalDecode_reencodes` lemma** — one per module, each proved
-again. `NightWatchLoopWire.lean` alone is 124 defs against 15 theorems in 1,638 lines.
+again. (`NightWatchLoopWire`, deleted 2026-08-07 with the unreachable `NightWatchLoop` cone,
+was 124 defs against 15 theorems in 1,638 lines — one module's share of that hand-work.)
 
 Coverage is uneven by ACCIDENT, because each module's author chose which facts to name.
 
@@ -70,8 +71,8 @@ derived strict reader talk to this, so a per-type roundtrip proof never has to r
 `Std.TreeMap.Raw`. Order is significant — it is the byte order the renderer emits. -/
 abbrev Row := List (String × Lean.Json)
 
-/-- The wire integer ceiling PoA uses everywhere (`WIRE_U64_MAX` in `NightWatchLoopWire`,
-`WIRE_U64_LIMIT` in `ActivatedContentRuntime`). Restated here so the derived `Nat` codec
+/-- The wire integer ceiling PoA uses everywhere (`WIRE_U64_MAX` in
+`NightWatchCampaignAdmission`, `WIRE_U64_LIMIT` in `ActivatedContentRuntime`). Restated here so the derived `Nat` codec
 carries the SAME refusal the hand-written `objectNat` carries, not a laxer one. -/
 abbrev WIRE_U64_MAX : Nat := 2 ^ 64 - 1
 
@@ -263,8 +264,9 @@ def ParserAdequate (render : String) (j : Lean.Json) : Prop :=
 
 `canonicalDecode`/`canonicalDecode_reencodes` is written out separately in
 `BazaarGameRuntime`, `CrewFieldMissionRuntime`, `DarkBazaarJudgeWire`, `EventBatchRuntime`,
-`GalleyMaintenanceDailyRuntime`, `NetworkGenesisWire`, `NetworkJudgeWire` and
-`NightWatchLoopWire` — eight proofs of one fact. This is that fact, once. -/
+`GalleyMaintenanceDailyRuntime`, `NetworkGenesisWire`, `NetworkJudgeWire` and (until its
+cone was deleted on 2026-08-07) `NightWatchLoopWire` — eight proofs of one fact, seven now.
+This is that fact, once. -/
 
 def canonicalDecode {T : Type} (keys : List String) (readRow : Row → Except String T)
     (render : T → String) (byteLimit : Nat) (bytes : String) : Option T :=
@@ -390,7 +392,7 @@ def deriveCanonicalFor (structName : Name) : CommandElabM Unit := do
   -- renderCanon : LEFT-nested `++`, because `++` IS `infixl:65` in Lean 4 and every
   -- hand-written PoA encoder therefore associates LEFT.
   -- ⚠ FIXED 2026-08-05.  This was built right-nested under a comment asserting the
-  -- opposite, and `CanonicalCodecDayWire.renderCanon_eq_toJson` — the whole point of the
+  -- opposite, and `CanonicalCodecHealthWire.renderCanon_eq_healthViewJson` — the whole point of the
   -- handler, the theorem that makes the encoder swap a no-op on the BYTES — could not be
   -- closed by `rfl`.  `String.append` is not definitionally associative over VARIABLE
   -- fields, so the nesting has to MATCH the shipped encoder; agreeing with it up to
@@ -450,10 +452,10 @@ checker, the same discipline `Dregg2/Tactics.lean` applies to `#assert_compiled`
 
 | command | rejects | its positive control (what makes blindness a RED) |
 |---|---|---|
-| `#assert_derive_refuses` | a derivable type | the real `deriving instance` in `CanonicalCodecDayWire`, which runs this same `deriveCanonicalFor` |
+| `#assert_derive_refuses` | a derivable type | the real `deriving instance` in `CanonicalCodecHealthWire`, which runs this same `deriveCanonicalFor` |
 | `#assert_term_refused` | a term that elaborates | `#assert_term_elaborates`, sharing `runProbe` |
 | `#assert_term_elaborates` | a term that does not | `#assert_term_refused`, sharing `runProbe` |
-| `#assert_codec_nonvacuous` | the `_reencodes` shape, a missing witness, a non-clean pin | the derived `DayWire` codec, which must PASS it |
+| `#assert_codec_nonvacuous` | the `_reencodes` shape, a missing witness, a non-clean pin | the derived `HealthViewWire` codec, which must PASS it |
 -/
 
 open Lean Elab Command in

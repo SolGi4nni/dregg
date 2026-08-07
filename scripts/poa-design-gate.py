@@ -28,7 +28,9 @@ reconstruction.
 ⚑ A COST ROW IS NOT A TRANSITION.  Read this before adding a "dominated action"
 or "dead action" analysis to any organ.
 
-Measured 2026-08-05 on `Dregg2.Games.PathOfAngels.NightWatchLoop`, whose 21 authored
+Measured 2026-08-05 on `Dregg2.Games.PathOfAngels.NightWatchLoop` (deleted 2026-08-07 as
+unreachable content — the MEASUREMENT stands, and the lesson is why this section exists;
+only its source module is gone), whose 21 authored
 choices each carry a `ChoiceDelta` cost row (turn, operational, supply, clueIntel,
 artifacts, causesInjury).  Two choices are strictly dominated ON THAT ROW and are
 nevertheless LIVE:
@@ -47,9 +49,10 @@ in one session, once by an author and once by an analysis lane whose first budge
 probe reported a clue-intel binding that was actually `expectedTerminalId?`
 re-selecting a terminal.  Plausible, and false.
 
-The Lean-side statement of this is a named theorem,
-`cost_row_domination_does_not_survive_the_real_transition` in `NightWatchLoop.lean`,
-proved over the ACTUAL reducer.  Its consequence for this tool: dominance and
+The Lean-side statement of this was a named theorem,
+`cost_row_domination_does_not_survive_the_real_transition`, proved over that reducer and
+deleted with it.  Its consequence for this tool is unchanged and does not depend on the
+theorem still existing: dominance and
 liveness are properties of the TRANSITION (flags, phase/index advance, accumulated
 evidence, downstream gates), so an organ whose per-action consequence is not fully
 carried by its emitted row CANNOT be analysed from the row.  Either model the
@@ -1420,7 +1423,7 @@ class DescentRules:
     ⚑ A COST ROW IS NOT A TRANSITION — and this backend does not compute one.  The
     tool's own header records the nightwatch measurement
     (`cost_row_domination_does_not_survive_the_real_transition`): two NightWatchLoop
-    choices are dominated on every axis of their delta row and are nevertheless live.
+    choices were dominated on every axis of their delta row and were nevertheless live.
     So nothing below ranks an action by what it spends.  Every number this class
     reports comes from walking the REAL transition — the same one the emitted table
     names — over the real state space.

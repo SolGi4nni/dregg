@@ -14,12 +14,24 @@ semantic command; it cannot affect score, resources, safety, mastery, or canon.
 
 ## ⚑ STATUS 2026-08-05 — this is the shipped night watch
 
-Two Path-of-Angels state machines carry "Night Watch" in the name and share **no
-type, no relation and no theorem**.  `NightWatchLoop` (4,400 lines: rotations, a
-commons serving economy, encounters, routes, extraction terminals) is a different
-game for the same fiction, and it is unreachable by construction — its `Policy`
-needs a `ContentMembershipAdmission` that has no public producer.  See its docblock
-for the disposition question.
+Two Path-of-Angels state machines carried "Night Watch" in the name and shared **no
+type, no relation and no theorem**.  `NightWatchLoop` (5 modules, 4,717 lines:
+rotations, a commons serving economy, encounters, routes, extraction terminals) was a
+different game for the same fiction, and it was unreachable by construction — its
+`Policy` needed a `ContentMembershipAdmission` that had no public producer, so no value
+of it existed and no player could reach it.  Its docblock asked for a disposition.
+
+## ⚑ DISPOSITION 2026-08-07 — the Loop was CUT
+
+Deleted outright, with its five coverage roots.  Nothing outside the cone referenced a
+`NightWatchLoop` type, relation, theorem, `@[export]` or emit path; the sole external
+consumer was `CanonicalCodecDayWire`, which used `NightWatchLoopWire.DayWire` as a derived
+codec DEMONSTRATION type and now demonstrates over this module's own shipped
+`NightWatchCampaignWire.HealthViewWire` (renamed `CanonicalCodecHealthWire`).  What went
+with it: 36 `#assert_axioms` + 42 `#assert_compiled`, all of them assertions ABOUT the Loop,
+and a 741-state closure/liveness analysis of content no player could ever play.  If that
+game is ever wanted, it rebuilds on the Campaign-era hidden-instance seams rather than on a
+sealed twin.
 
 **This module is the one connected to a player.**  Its boundary is
 `NightWatchCampaignWire` (canonical JSON + `@[export

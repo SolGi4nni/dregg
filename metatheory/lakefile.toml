@@ -373,14 +373,26 @@ globs = [
   # both is a duplicate `main`, the same reason recorded for the Pickles drivers above. A `globs`
   # entry compiles each as its OWN module, so the `main`s never meet.
   #
-  # ⚠ CORRECTED 2026-08-05. This line read "FIVE OF THEM", naming `ArchiveLabDemonstrator`,
-  # `NightWatchLoop` and `NightWatchLoopWire` as well. None of those three has a `def main`. The
+  # ⚠ CORRECTED 2026-08-05. This line read "FIVE OF THEM", naming `ArchiveLabDemonstrator` and
+  # two now-deleted `NightWatchLoop*` modules as well. None of those three had a `def main`. The
   # miscount came from a `grep "def main"` matching `def maintenanceProcedure`,
   # `def maintenanceContribution` and `def maintenanceOfCode?` — a substring, not the declaration.
   # Verified at HEAD with `grep -lE '^\s*def main\b' *.lean` over the whole PathOfAngels directory:
   # exactly three modules carry one, and the third is `EmitMain`, rooted in the block above.
   # The `globs` shape was and remains correct; only its stated justification was wrong. A false
   # comment that justifies a structural choice is how the next reader inherits the error.
+  #
+  # ⚑ 2026-08-07 — FIVE ROOTS REMOVED WITH THEIR FILES (nightwatch-loop-cut lane). The
+  # `NightWatchLoop` cone — `NightWatchLoop`, `NightWatchLoopExamples`, `NightWatchLoopRuntime`,
+  # `NightWatchLoopWire`, `NightWatchLoopWireExamples`, 4,717 lines — was DELETED. It was a second
+  # Path-of-Angels state machine for the same fiction, sharing no type, no relation and no theorem
+  # with the shipped `NightWatchCampaign`, and unreachable by construction: its `Policy` required a
+  # `ContentMembershipAdmission` with no public producer, so no value of it existed and no player
+  # could reach it. Its own docblock had been asking for a disposition decision; this is the answer.
+  # The 36 `#assert_axioms` + 42 `#assert_compiled` that left the coverage table were ALL about
+  # the Loop itself — verified by grepping every `NightWatchLoop*` symbol tree-wide, whose only
+  # consumer outside the cone was `CanonicalCodecDayWire`, re-pointed onto the SHIPPED
+  # `NightWatchCampaignWire.HealthViewWire` and renamed `CanonicalCodecHealthWire`.
   "Dregg2.Games.PathOfAngels.ActivatedContentExamples",  # 15 comp
   "Dregg2.Games.PathOfAngels.ArchiveLab",  # 17 ax
   "Dregg2.Games.PathOfAngels.ArchiveLabDemonstrator",  # 20 comp
@@ -388,7 +400,7 @@ globs = [
   "Dregg2.Games.PathOfAngels.AttendantContinuityAggregate",  # 18 ax, 19 comp
   "Dregg2.Games.PathOfAngels.BazaarGameExamples",  # 3 ax, 68 comp
   "Dregg2.Games.PathOfAngels.CanonicalCodec",  # 1 ax
-  "Dregg2.Games.PathOfAngels.CanonicalCodecDayWire",  # 5 ax, 4 comp
+  "Dregg2.Games.PathOfAngels.CanonicalCodecHealthWire",  # 5 ax, 6 comp
   "Dregg2.Games.PathOfAngels.CanonicalCodecFalsifier",  # 3 ax
   "Dregg2.Games.PathOfAngels.ContentContract",  # 17 ax, 8 comp
   "Dregg2.Games.PathOfAngels.CrewExpeditionAuthority",  # 14 ax, 18 comp
@@ -432,11 +444,9 @@ globs = [
   # (direct-glob mechanism, same as the Pickles drivers). Sponge-bearing pins: budget ~1 min.
   "Dregg2.Games.PathOfAngels.NightWatchCampaignContent",  # 15 comp
   "Dregg2.Games.PathOfAngels.NightWatchCampaignContentEmitMain",  # compile coverage (emit driver)
-  "Dregg2.Games.PathOfAngels.NightWatchLoop",  # 13 ax, 15 comp
-  "Dregg2.Games.PathOfAngels.NightWatchLoopExamples",  # 4 ax, 4 comp
-  "Dregg2.Games.PathOfAngels.NightWatchLoopRuntime",  # 8 ax
-  "Dregg2.Games.PathOfAngels.NightWatchLoopWire",  # compile coverage only
-  "Dregg2.Games.PathOfAngels.NightWatchLoopWireExamples",  # 11 ax, 23 comp
+  # (`NightWatchLoop`, `…Examples`, `…Runtime`, `…Wire`, `…WireExamples` stood here until
+  # 2026-08-07: 36 `#assert_axioms` + 42 `#assert_compiled`, every one of them ABOUT the deleted
+  # cone. See the ⚑ 2026-08-07 note at the head of this list.)
   "Dregg2.Games.PathOfAngels.OfficerLogbook",  # 10 comp
   "Dregg2.Games.PathOfAngels.OrdinarySalvageExchange",  # 14 ax
   "Dregg2.Games.PathOfAngels.OrdinarySalvageExchangeBoundary",  # 13 ax
