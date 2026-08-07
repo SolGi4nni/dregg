@@ -41,6 +41,27 @@
 //! leaf peaks around 15 GB RSS (`mina_wrap_finalize_fold.rs`, 2026-08-06), and two of those
 //! concurrently on a shared box is an OOM kill, which reads as a test failure and is an environment
 //! fault.
+//!
+//! ## ⚑⚑ AND THAT 15 GB FIGURE IS LOW — MEASURED HERE 2026-08-07, ON A 96 GB M2 MAX
+//!
+//! §3 was run under an RSS watchdog (30 GiB self-cap, yield if system free drops under 8 GiB). The
+//! endo leaf wrapped in **14.0 s**. Then, building the conjunction leaf, the watchdog **killed the
+//! run**: system free went from **41.2 GiB to 3 GiB**, and snapped back to **39.6 GiB the instant
+//! the process died**, with no other process on the box above 2.6 GB. So ONE 2 536-column
+//! conjunction leaf wrap was responsible for roughly **38 GiB** of pressure — about **2.5× the
+//! recorded 15 GB**.
+//!
+//! ⚠ **The sampled figure was 26.05 GiB / 27.97 GB and that is a FLOOR, not a peak** — the watchdog
+//! samples every 2 s and a spike between samples is invisible. **A killed run bounds nothing from
+//! above.** Both numbers are reported because quoting only the sampled one would be quoting the
+//! flattering half of a pair.
+//!
+//! ⚑ **This cost is INHERITED, not introduced here.** The conjunction leaf wrap is
+//! `mina_wrap_finalize_fold`'s, and this gadget's own contribution is 128 `connect`s in an
+//! aggregation circuit. But it means **§3 and §4 are not safely runnable on a loaded shared box**,
+//! and the honest statement is that neither has completed: §1 and §2 pass, §3 was killed by its own
+//! watchdog, and §4 has never been attempted. Give it a quiet box, or a cgroup
+//! (`swarm-build`, hbox-only — the mac has no containment at all).
 
 use std::path::PathBuf;
 use std::time::Instant;
