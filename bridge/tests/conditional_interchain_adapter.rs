@@ -2,18 +2,17 @@ use std::cell::Cell;
 
 use dregg_bridge::{
     AdapterError, ChainAttestation, ConditionalAdapterError, ConditionalInterchainAdapter,
-    DialAdapter, ExpectedCredit, InterchainAdapter, LockProofTrust, PortableActionBinding,
+    DialAdapter, ExpectedCredit, ForeignCreditStatement, InterchainAdapter, LockProofTrust,
     TrustRung,
 };
 use dregg_cell::CellId;
 
-fn binding(recipient: CellId, destination: [u8; 32]) -> PortableActionBinding {
-    PortableActionBinding {
+fn statement(recipient: CellId, destination: [u8; 32]) -> ForeignCreditStatement {
+    ForeignCreditStatement {
         nullifier: [0x11; 32],
         recipient: recipient.0,
         destination_federation: destination,
         amount: 73,
-        proof_bytes: vec![],
     }
 }
 
@@ -30,7 +29,7 @@ fn conditional_adapter_refuses_recipient_substitution() {
     let bound_recipient = CellId([0x22; 32]);
     let substituted_recipient = CellId([0x44; 32]);
     let attestation = ChainAttestation {
-        binding: binding(bound_recipient, [0x33; 32]),
+        statement: statement(bound_recipient, [0x33; 32]),
         dial: LockProofTrust::StructureOnly,
     };
     let adapter =
@@ -51,7 +50,7 @@ fn conditional_adapter_refuses_recipient_substitution() {
 fn conditional_adapter_refuses_wrong_and_default_destinations() {
     let recipient = CellId([0x22; 32]);
     let attestation = ChainAttestation {
-        binding: binding(recipient, [0x55; 32]),
+        statement: statement(recipient, [0x55; 32]),
         dial: LockProofTrust::StructureOnly,
     };
 
@@ -85,7 +84,7 @@ fn conditional_adapter_refuses_event_splicing_and_zero_nullifier() {
     let adapter =
         ConditionalInterchainAdapter::new(DialAdapter::<LockProofTrust>::new(), [0x33; 32]);
     let attestation = ChainAttestation {
-        binding: binding(recipient, [0x33; 32]),
+        statement: statement(recipient, [0x33; 32]),
         dial: LockProofTrust::StructureOnly,
     };
 
@@ -114,7 +113,7 @@ fn conditional_adapter_refuses_event_splicing_and_zero_nullifier() {
     ));
 
     let mut empty = attestation;
-    empty.binding.nullifier = [0; 32];
+    empty.statement.nullifier = [0; 32];
     assert!(matches!(
         adapter.into_mint_request(
             &empty,
@@ -136,7 +135,7 @@ fn conditional_adapter_refuses_event_splicing_and_zero_nullifier() {
 fn exact_statement_constructs_only_checked_values() {
     let recipient = CellId([0x22; 32]);
     let attestation = ChainAttestation {
-        binding: binding(recipient, [0x33; 32]),
+        statement: statement(recipient, [0x33; 32]),
         dial: LockProofTrust::StructureOnly,
     };
     let adapter =
@@ -162,8 +161,8 @@ fn exact_statement_constructs_only_checked_values() {
 #[derive(Debug)]
 struct AlternatingAdapter {
     calls: Cell<usize>,
-    first: PortableActionBinding,
-    second: PortableActionBinding,
+    first: ForeignCreditStatement,
+    second: ForeignCreditStatement,
 }
 
 impl InterchainAdapter for AlternatingAdapter {
@@ -173,10 +172,10 @@ impl InterchainAdapter for AlternatingAdapter {
         TrustRung::Rpc
     }
 
-    fn to_action_binding(
+    fn to_credit_statement(
         &self,
         _: &Self::Attestation,
-    ) -> Result<PortableActionBinding, AdapterError> {
+    ) -> Result<ForeignCreditStatement, AdapterError> {
         let call = self.calls.get();
         self.calls.set(call + 1);
         Ok(if call == 0 {
@@ -188,12 +187,12 @@ impl InterchainAdapter for AlternatingAdapter {
 }
 
 #[test]
-fn binding_is_extracted_once_so_check_and_use_share_one_snapshot() {
+fn statement_is_extracted_once_so_check_and_use_share_one_snapshot() {
     let recipient = CellId([0x22; 32]);
     let inner = AlternatingAdapter {
         calls: Cell::new(0),
-        first: binding(recipient, [0x33; 32]),
-        second: binding(CellId([0x99; 32]), [0x33; 32]),
+        first: statement(recipient, [0x33; 32]),
+        second: statement(CellId([0x99; 32]), [0x33; 32]),
     };
     let adapter = ConditionalInterchainAdapter::new(inner, [0x33; 32]);
 
@@ -209,6 +208,6 @@ fn binding_is_extracted_once_so_check_and_use_share_one_snapshot() {
     assert_eq!(
         adapter.inner().calls.get(),
         1,
-        "binding must be extracted once"
+        "the credit statement must be extracted once"
     );
 }

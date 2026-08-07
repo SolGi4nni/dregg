@@ -1955,13 +1955,20 @@ fn verify_presentation_descriptor_wires(
 /// `PI_ROOT_4ARY`). So ANY registered descriptor with enough PI slots and no semantic content
 /// substitutes for the intended one, and the index reads then hold by construction.
 ///
-/// `bridge-action-leaf::bridge_action_air_v1` is precisely that gadget: 26 public inputs whose
-/// only constraints are `row0[c] == pi[c]` and per-column constancy — satisfiable for ANY 26-felt
+/// `bridge-action-leaf::bridge_action_air_v1` WAS precisely that gadget: 26 public inputs whose
+/// only constraints were `row0[c] == pi[c]` and per-column constancy — satisfiable for ANY 26-felt
 /// vector by a constant trace, with no table, no hash site and no range. A forger names it in both
 /// slots, places the verifier's own `federation_root` at index 0 and 8 and its own
 /// `compute_action_binding(action, resource)` at indices 1..9, and every downstream check in
 /// [`verify_proof_complete`] passes: steps 5-7 read only plaintext fields of the same
 /// attacker-supplied struct. Exhibited by `descriptor_substitution_forgery_is_refused`.
+///
+/// ⚑ **THAT ROW IS DELETED (2026-08-07) AND THE CLASS IS NOW GATED AT THE REGISTRY** —
+/// `dregg_circuit::descriptor_by_name`'s `no_registered_descriptor_is_a_free_substitution_gadget`
+/// refuses any registered descriptor that is table/hash/range-free with only identity pins and
+/// wide enough to carry the read indices, and carries its own positive control. THIS pin is still
+/// the closure at THIS call site and stays: the registry gate keeps FREE gadgets out, but a
+/// descriptor with real gates can still be the wrong one for the slot.
 ///
 /// This enum makes the slot's identity a REQUIRED argument, so a new call site cannot forget it.
 /// It is the bridge-side twin of `sdk::verify::check_bundle_predicates`, which has pinned both
@@ -3596,10 +3603,36 @@ mod tests {
         );
     }
 
-    /// The descriptor name of the substitution gadget: a table-free, hash-free, range-free
-    /// 26-slot identity binding whose only constraints are `row0[c] == pi[c]` and column
-    /// constancy. Resolved by KEY out of the production dispatch table, never re-typed as prose.
+    /// The substitution gadget's name. ⚑ **This descriptor is DELETED (2026-08-07) and is no
+    /// longer served by `descriptor_by_name`** — see the test below. It is kept here as a
+    /// SYNTHETIC (unregistered) shape so the forgery MECHANISM stays demonstrated, and so this
+    /// test keeps a live negative pole rather than being deleted along with its exhibit.
     const SUBSTITUTION_GADGET: &str = "bridge-action-leaf::bridge_action_air_v1";
+
+    /// ⚑ **THE SPECIMEN — the shape this gate exists to keep out, as a WIRE STRING.**
+    ///
+    /// A table-free, hash-free, range-free descriptor whose only constraints are identity
+    /// `pi_binding`s and per-column `window_gate` constancy, wide enough to carry the fixed PI
+    /// indices a presentation consumer reads. This is the shape
+    /// `bridge-action-leaf::bridge_action_air_v1` had (at width 26) until it was DELETED 2026-08-07.
+    ///
+    /// ⚠ It is a JSON literal, PARSED — deliberately not a Rust-authored `VmConstraint2` tree. Law #1
+    /// (`circuit-prove/tests/law1_enforcement_gate.rs`) counts hand-built constraint terms as
+    /// Rust-authored AIR, and it is right to: a specimen of a bad AIR is still an AIR. The wire string
+    /// is the same door every real descriptor comes through, and if the IR grammar moves, the parse
+    /// below fails loudly rather than the control silently ceasing to be one.
+    const FREE_SUBSTITUTION_SPECIMEN_JSON: &str = "{\"name\":\"deleted-gadget-specimen::free-substitution-shape\",\"ir\":2,\"trace_width\":10,\"public_input_count\":10,\"challenges\":0,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":9},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":3}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":4}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":6}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":7},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":7}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":8}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":9},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":9}}}}],\"hash_sites\":[],\"ranges\":[]}";
+
+    /// The deleted gadget, rebuilt from that wire string.
+    fn substitution_gadget() -> dregg_circuit::descriptor_ir2::EffectVmDescriptor2 {
+        let mut d =
+            dregg_circuit::descriptor_ir2::parse_vm_descriptor2(FREE_SUBSTITUTION_SPECIMEN_JSON)
+                .expect("the specimen must still parse under the current IR-v2 grammar");
+        // Name it what the registry used to serve, so the registry-miss assertion below is about
+        // the ACTUAL deleted key and not about an obviously-unknown placeholder.
+        d.name = SUBSTITUTION_GADGET.to_string();
+        d
+    }
 
     /// ⚑ **THE DESCRIPTOR-SUBSTITUTION FORGERY, AND THE PIN THAT REFUSES IT.**
     ///
@@ -3628,9 +3661,19 @@ mod tests {
 
         let fed_root_bb = BabyBear::new(0x0BAD_F00D);
 
-        // The gadget is in the PRODUCTION dispatch table — that is the whole problem.
-        let gadget = dregg_circuit::descriptor_by_name::descriptor_by_name(SUBSTITUTION_GADGET)
-            .expect("the substitution gadget is a live row of the production dispatch table");
+        // ⚑ THE ROW IS GONE. The gadget WAS a live row of the production dispatch table; the AIR
+        // and its registry entry were deleted 2026-08-07 (it bound a PROVER-CHOSEN tuple, had no
+        // enforcer anywhere in the tree, and `Dregg2.Circuit.BridgeBindingFromFold` refuses it as
+        // a bridge-mint backing). So the forgery now fails at TWO independent points, and this
+        // test asserts BOTH: the registry miss (here) and the slot pin (below). The class gate —
+        // "no registered descriptor is a free substitution gadget" — lives at the registry, in
+        // `dregg_circuit::descriptor_by_name`'s own test module, where `STATIC_GOLDENS` is
+        // visible; it goes red the moment such a row is re-registered.
+        assert!(
+            dregg_circuit::descriptor_by_name::descriptor_by_name(SUBSTITUTION_GADGET).is_none(),
+            "the substitution gadget must NOT be served by the production dispatch table"
+        );
+        let gadget = substitution_gadget();
         let width = gadget.trace_width;
         assert_eq!(gadget.public_input_count, width);
         assert!(
@@ -3664,22 +3707,30 @@ mod tests {
         let blinded_wire = forge(blinded_pis.clone());
         assert_eq!(bound_wire.predicate, SUBSTITUTION_GADGET);
 
-        // --- NON-VACUITY: everything the pre-pin verifier checked, PASSES on these wires. ---
+        // --- NON-VACUITY: the forged blobs are GENUINELY VERIFYING proofs and every index read
+        //     the pre-pin verifier performed still PASSES on them. Checked against the gadget
+        //     descriptor DIRECTLY (`verify_descriptor_wire` goes through the registry, and the
+        //     row is deleted), so the refusal below is attributable to the pin, not to a broken
+        //     proof. ---
+        let verify_against_gadget = |w: &dregg_circuit::presentation::DescriptorProofWire| {
+            let pis = dregg_circuit::presentation::descriptor_wire_pis(&w.vk)
+                .expect("the forged vk decodes to felts");
+            let batch: dregg_circuit::descriptor_ir2::Ir2BatchProof<
+                dregg_circuit::descriptor_ir2::DreggStarkConfig,
+            > = postcard::from_bytes(&w.blob).expect("the forged blob decodes");
+            dregg_circuit::descriptor_ir2::verify_vm_descriptor2(&gadget, &batch, &pis)
+                .expect("the forged blob is a GENUINELY VERIFYING Ir2BatchProof");
+            pis
+        };
         for w in [&bound_wire, &blinded_wire] {
-            assert!(
-                dregg_circuit::descriptor_by_name::descriptor_by_name(&w.predicate).is_some(),
-                "the old check (registry hit) accepts the forged predicate"
-            );
-            let verified = verify_descriptor_wire(w)
-                .expect("the forged blob is a GENUINELY VERIFYING Ir2BatchProof, not a broken one");
             assert_eq!(
-                verified.len(),
+                verify_against_gadget(w).len(),
                 width,
                 "the deployed verifier returns the forger's own {width} felts"
             );
         }
-        let bound_out = verify_descriptor_wire(&bound_wire).unwrap();
-        let blinded_out = verify_descriptor_wire(&blinded_wire).unwrap();
+        let bound_out = verify_against_gadget(&bound_wire);
+        let blinded_out = verify_against_gadget(&blinded_wire);
         assert_eq!(bound_out[BOUND_FED_ROOT], fed_root_bb, "root read passes");
         assert_eq!(blinded_out[PI_ROOT_4ARY], fed_root_bb, "root read passes");
         for i in 0..action_width {

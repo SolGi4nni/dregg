@@ -44,7 +44,6 @@ import Dregg2.Circuit.Emit.AutomataflStepMarksGolden
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
 import Dregg2.Circuit.Emit.BlindedMembershipWideEmit
 import Dregg2.Circuit.Emit.BoundPresentationEmit
-import Dregg2.Circuit.Emit.BridgeActionEmit
 import Dregg2.Circuit.Emit.DerivationEmit
 import Dregg2.Circuit.Emit.DfaRoutingEmit
 import Dregg2.Circuit.Emit.DfaRoutingTableEmit
@@ -225,8 +224,12 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.BlindedMembershipEmit.blindedMembershipDesc)
   , ("bound-presentation.json",
       Dregg2.Circuit.Emit.BoundPresentationEmit.boundPresentationDesc)
-  , ("bridge-action.json",
-      Dregg2.Circuit.Emit.BridgeActionEmit.bridgeActionDesc)
+  -- ⚑ DELETED 2026-08-07: `bridge-action.json` / `bridge-action-leaf::bridge_action_air_v1`.
+  -- The 28-slot binding-only leaf bound a PROVER-CHOSEN tuple, had no enforcer anywhere in the
+  -- tree (`verify_bridge_action` never existed), and `Dregg2.Circuit.BridgeBindingFromFold`
+  -- REFUSES it as a bridge-mint backing. The sound deployed backing is the re-proved note-spend
+  -- leaf connected to the leg's published PI-46 `mint_hash`
+  -- (`circuit-prove/src/note_spend_leaf_adapter.rs`). Nothing serves this name any more.
   , ("derivation.json",
       Dregg2.Circuit.Emit.DerivationEmit.derivationDesc)
   , ("dfa-routing.json",
@@ -685,7 +688,7 @@ Both directions are gated outside Lean:
 -- lean --run EmitByName.lean` dies, and the WHOLE by-name surface is unemittable for every lane
 -- at once. That outage is what produced the eleven private one-off emitters this file spent
 -- 2026-08-05 absorbing. Rows and pin are one atom.
-theorem byNameDescriptors_length : byNameDescriptors.length = 124 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 123 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

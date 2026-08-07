@@ -25,7 +25,7 @@
 //! | `MerkleMembership`| `merkle-membership-depth2-4ary::poseidon2-v1` + the depth-GENERAL builder |
 //! | `NonMembership`   | `dregg-membership-adjacency-wide::node8-v1` + `quantified-absence-…`    |
 //! | `BlindedSet`      | `dregg-accumulator-nonrev-emit-v2`                                      |
-//! | `BridgePredicate` | `bridge-action-leaf::bridge_action_air_v1` + `dregg-predicate-arith-ge::threshold-v1` |
+//! | `BridgePredicate` | `dregg-predicate-arith-ge::threshold-v1` (+ the le/gt/lt/neq/inrange siblings) |
 //! | `Custom`          | `dregg-effectvm-custom-v1` (customVmDescriptor2)                        |
 //! | `PedersenEquality`| NONE — off-STARK Schnorr, no descriptor (returns `&[]` / `None`)        |
 //!
@@ -126,10 +126,6 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     ),
     ("dregg-turn-chain-binding-v2", TURN_CHAIN_BINDING_JSON),
     ("dregg-accumulator-nonrev-emit-v2", ACCUMULATOR_NONREV_JSON),
-    (
-        "bridge-action-leaf::bridge_action_air_v1",
-        BRIDGE_ACTION_JSON,
-    ),
     (
         "dregg-predicate-arith-ge::threshold-v1",
         PREDICATE_ARITH_JSON,
@@ -404,7 +400,6 @@ const TURN_CHAIN_BINDING_JSON: &str =
     include_str!("../descriptors/by-name/turn-chain-binding.json");
 const ACCUMULATOR_NONREV_JSON: &str =
     include_str!("../descriptors/by-name/accumulator-nonrev.json");
-const BRIDGE_ACTION_JSON: &str = include_str!("../descriptors/by-name/bridge-action.json");
 const PREDICATE_ARITH_JSON: &str = include_str!("../descriptors/by-name/predicate-arith.json");
 /// The arithmetic COMPARISON goldens (`≤`/`>`/`<`/`≠`/InRange), authored + byte-pinned in
 /// `metatheory/Dregg2/Circuit/Emit/Predicates{Le,Gt,Lt,Neq,InRange}Emit.lean`.
@@ -830,8 +825,12 @@ pub fn descriptor_names_for_kind(kind: PredicateKind) -> &'static [&'static str]
         // (The 1-felt sorted-tree non-revocation descriptors are RETIRED — felt-width #11
         // fold-in. The polynomial-accumulator freshness leg remains.)
         PredicateKind::BlindedSet => &["dregg-accumulator-nonrev-emit-v2"],
+        // ⚑ `bridge-action-leaf::bridge_action_air_v1` was the FIRST name here and is DELETED
+        // (2026-08-07). It was a 28-slot binding-only leaf over a PROVER-CHOSEN tuple with no
+        // enforcer anywhere in the tree, REFUSED as a bridge-mint backing by
+        // `Dregg2.Circuit.BridgeBindingFromFold`. The sound backing is the re-proved note-spend
+        // leaf connected to the leg's published PI-46 `mint_hash`.
         PredicateKind::BridgePredicate => &[
-            "bridge-action-leaf::bridge_action_air_v1",
             "dregg-predicate-arith-ge::threshold-v1",
             "dregg-predicate-arith-le::threshold-v1",
             "dregg-predicate-arith-gt::threshold-v1",
@@ -972,6 +971,102 @@ mod tests {
     /// generate-fresh `scripts/check-descriptor-drift.sh` re-derivation from the Lean author plus
     /// the `PROVENANCE.json` stamp; this gate's job is that no member of the surface goes
     /// unexercised, mis-keyed, or silently un-dispatchable.
+    /// ⚑ **NO REGISTERED DESCRIPTOR MAY BE A FREE SUBSTITUTION GADGET.**
+    ///
+    /// `descriptor_by_name` serves the WHOLE registry to an attacker-supplied `predicate` string
+    /// (`bridge::present::verify_proof_complete`, reachable from the public `X-Dregg-Proof`
+    /// header), and consumers then read FIXED PI INDICES out of the verified result. So a
+    /// registered descriptor that (a) declares no tables, no hash sites and no ranges, (b) whose
+    /// every constraint is an identity `PiBinding` or a column-constancy `WindowGate`, and (c) has
+    /// enough PI slots to cover the read indices, is satisfiable **for any PI vector by a constant
+    /// trace** — a forger names it, plants the verifier's own trusted values at exactly the
+    /// indices that get read, and every downstream check passes. It is not a proof; it is a
+    /// registry hit wearing one.
+    ///
+    /// `bridge-action-leaf::bridge_action_air_v1` was exactly that row (26 slots, `pi_binding` +
+    /// `window_gate` only) and is DELETED (2026-08-07) with the AIR. The per-slot name pin
+    /// (`bridge::present::WireSlot`, `sdk::verify::check_bundle_predicates`) is the closure at the
+    /// call sites that exist today; THIS gate is the closure at the registry, so a NEW call site
+    /// that reads fixed indices cannot re-open the hole by accident, and re-registering such a
+    /// descriptor goes red HERE with the reason attached.
+    ///
+    /// The threshold is 9 PI slots: the presentation reads `FEDERATION_ROOT = 0`,
+    /// `REQUEST_PREDICATE_BASE = 1 .. 1 + ACTION_BINDING_WIDTH = 9`, and `PI_ROOT_4ARY = 8`.
+    /// ⚑ **THE SPECIMEN — the shape this gate exists to keep out, as a WIRE STRING.**
+    ///
+    /// A table-free, hash-free, range-free descriptor whose only constraints are identity
+    /// `pi_binding`s and per-column `window_gate` constancy, wide enough to carry the fixed PI
+    /// indices a presentation consumer reads. This is the shape
+    /// `bridge-action-leaf::bridge_action_air_v1` had (at width 26) until it was DELETED 2026-08-07.
+    ///
+    /// ⚠ It is a JSON literal, PARSED — deliberately not a Rust-authored `VmConstraint2` tree. Law #1
+    /// (`circuit-prove/tests/law1_enforcement_gate.rs`) counts hand-built constraint terms as
+    /// Rust-authored AIR, and it is right to: a specimen of a bad AIR is still an AIR. The wire string
+    /// is the same door every real descriptor comes through, and if the IR grammar moves, the parse
+    /// below fails loudly rather than the control silently ceasing to be one.
+    const FREE_SUBSTITUTION_SPECIMEN_JSON: &str = "{\"name\":\"deleted-gadget-specimen::free-substitution-shape\",\"ir\":2,\"trace_width\":10,\"public_input_count\":10,\"challenges\":0,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":9},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":3}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":4}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":6}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":7},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":7}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":8}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":9},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":9}}}}],\"hash_sites\":[],\"ranges\":[]}";
+
+    #[test]
+    fn no_registered_descriptor_is_a_free_substitution_gadget() {
+        /// The widest fixed PI index any registry consumer reads, exclusive.
+        const READ_SURFACE: usize = 9;
+
+        /// THE DETECTOR: is this descriptor satisfiable for an arbitrary PI vector by a constant
+        /// trace, and wide enough to carry the read indices?
+        fn is_free_substitution_gadget(d: &EffectVmDescriptor2) -> bool {
+            d.public_input_count >= READ_SURFACE
+                && d.tables.is_empty()
+                && d.hash_sites.is_empty()
+                && d.ranges.is_empty()
+                && d.constraints.iter().all(|c| {
+                    matches!(
+                        c,
+                        VmConstraint2::Base(VmConstraint::PiBinding { .. })
+                            | VmConstraint2::WindowGate(_)
+                    )
+                })
+        }
+
+        // ⚠ ANTI-VACUITY (the positive control): the detector FIRES on the shape that was
+        // registered until 2026-08-07 — `bridge-action-leaf::bridge_action_air_v1`. Without this,
+        // a detector that had silently stopped detecting (a renamed variant, a widened
+        // `READ_SURFACE`) would report the same green as a clean registry. The mutation is built
+        // CONSTRUCTIVELY and asserted BEFORE the verdict below is read.
+        let deleted_gadget = parse_vm_descriptor2(FREE_SUBSTITUTION_SPECIMEN_JSON)
+            .expect("the specimen must still parse under the current IR-v2 grammar");
+        assert!(
+            is_free_substitution_gadget(&deleted_gadget),
+            "the detector must fire on the shape this gate exists to keep out — it does not, so a \
+             green verdict below means nothing"
+        );
+        assert!(
+            descriptor_by_name("bridge-action-leaf::bridge_action_air_v1").is_none(),
+            "the deleted gadget must not be back in the dispatch table"
+        );
+        assert!(
+            descriptor_by_name(&deleted_gadget.name).is_none(),
+            "the specimen itself must never be registered"
+        );
+
+        let mut offenders = Vec::new();
+        for (key, json) in STATIC_GOLDENS {
+            let Ok(d) = parse_vm_descriptor2(json) else {
+                continue; // Leg 2 of the cover test above already fails on an undecodable row.
+            };
+            if is_free_substitution_gadget(&d) {
+                offenders.push((*key, d.public_input_count));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "these registered descriptors are FREE SUBSTITUTION GADGETS — table-free, hash-free, \
+             range-free, every constraint an identity pin, and wide enough to carry the {READ_SURFACE} \
+             fixed PI indices a presentation consumer reads. Any of them substitutes for any other \
+             descriptor at a consumer that reads indices out of `descriptor_by_name`'s result: \
+             {offenders:?}"
+        );
+    }
+
     #[test]
     fn every_static_golden_decodes_and_dispatches() {
         use std::collections::BTreeSet;

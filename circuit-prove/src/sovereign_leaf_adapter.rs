@@ -1,5 +1,5 @@
 //! Re-prove a sovereign turn's AUTHORITY tuple as a RECURSION-FOLDABLE IR-v2 leaf
-//! (the sovereign analog of [`crate::bridge_leaf_adapter`] / [`crate::custom_leaf_adapter`]).
+//! (the sovereign analog of [`crate::custom_leaf_adapter`]).
 //!
 //! ## What this closes
 //!
@@ -34,7 +34,7 @@
 //! `connect` it to the deployed sovereign leg's teeth PIs, exactly as
 //! `prove_custom_binding_node_segmented` connects the custom sub-proof.
 //!
-//! ## The constraint mapping (the same TOTAL, table-free shape `bridge_leaf_adapter` uses)
+//! ## The constraint mapping (a TOTAL, table-free shape)
 //!
 //! The authority tuple is a fixed-width vector pinned at row 0 and held constant:
 //!

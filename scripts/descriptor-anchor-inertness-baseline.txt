@@ -120,7 +120,7 @@
 #
 # ⚑⚑ 2026-08-05 — `dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1` ENTERS AT **192**, THE
 # LARGEST ROW IN THIS FILE, AND THE LARGEST BY SHARE BY A WIDE MARGIN. Per this file's own warning
-# above, say the share: **192 of 219 public inputs, 87.7%**. The next worst is `bridge-action-leaf`
+# above, say the share: **192 of 219 public inputs, 87.7%**. The next worst WAS `bridge-action-leaf` (DELETED 2026-08-07)
 # at 28 columns (26 until 2026-08-06, when the amount widened from 2 non-injective 32-bit limbs to
 # 4 injective 16-bit ones — the whole descriptor is inert by construction, so the row tracks its PI
 # count exactly). A row this size is not a number to leave uncommented, so:
@@ -171,7 +171,6 @@
 #
 # `count  descriptor-name`; descriptors at zero are omitted.
 
-28	bridge-action-leaf::bridge_action_air_v1
 1	dark-amm-private-v1::wide-poseidon2-v2
 12	dregg-automatafl-legc-n11
 12	dregg-automatafl-legc-n5

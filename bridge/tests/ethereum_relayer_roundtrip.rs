@@ -27,7 +27,7 @@
 //! the live `EthJsonRpc` client in production (the only swap is the [`EthRpc`]
 //! impl). The in-circuit witness of EVM finality (so a dregg LIGHT client, not a
 //! re-executing relayer, sees the backing) is the circuit swarm's VK-epoch
-//! (`dregg_circuit::bridge_action_witness`) — out of scope here.
+//! (a real foreign-consensus leaf) — out of scope here.
 
 use dregg_bridge::ethereum_relayer::{
     EthBridgeConfig, EthDepositTrust, EthRelayer, EthRelayerError, MockEthRpc,

@@ -22,7 +22,7 @@
 //!
 //! The fully-trustless in-circuit witness of Solana consensus (so a dregg LIGHT
 //! client, not a re-executing relayer, sees the backing) is the circuit swarm's
-//! G1 VK-epoch (`dregg_circuit::bridge_action_witness`) — out of scope here.
+//! G1 VK-epoch (a real foreign-consensus leaf) — out of scope here.
 
 use dregg_bridge::solana_consensus::{BankHashComponents, EpochStakeTable, ValidatorVote};
 use dregg_bridge::solana_mirror::MirrorConfig;

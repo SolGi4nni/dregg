@@ -145,7 +145,7 @@ def constBody (c : Nat) : WindowExpr :=
   Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread c c)
 
 /-- ⚑ **THE BYTE PIN.** `constBody` is `GateExpr.gThread` at the window view -- the SAME object
-`BridgeActionEmit.contBody`, `AccumulatorNonRevocationEmit.constBody`,
+`AccumulatorNonRevocationEmit.constBody`,
 `EffectActionBindingEmit.contWindowBody`, `ExactNullifierAafiRotatedStateWeld.carryBody` and
 `DyckStackEmit.wThread` each wrote out separately. `rfl`, for every column: no emitted byte moved. -/
 theorem constBody_eq (c : Nat) :

@@ -45,18 +45,21 @@
 //!
 //! For a **dregg light client** (not a re-executing validator) to witness that a
 //! mint is backed by a real finalized Solana lock, the Solana consensus + vault
-//! binding must be folded into the EffectVM as `dregg_circuit::bridge_action_witness`
-//! (the G1 VK-epoch). That weld is owned by the circuit swarm; this module does
+//! binding must be folded into the EffectVM as a REAL foreign-consensus leaf (the
+//! G1 VK-epoch). ⚑ This line used to name `dregg_circuit::bridge_action_witness`;
+//! that AIR is DELETED (2026-08-07) — it bound a PROVER-CHOSEN tuple and could never
+//! have been the weld. That weld is owned by the circuit swarm; this module does
 //! the off-chain relayer verify a re-executing validator runs, and binds the same
 //! BR-fix gates into the live path. See `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
 
 use base64::Engine as _;
 
-use crate::action_binding::PortableActionBinding;
 use crate::conditional_interchain_adapter::{
     ConditionalAdapterError, ConditionalInterchainAdapter, ExpectedCredit,
 };
-use crate::interchain_adapter::{AdapterError, ChainAttestation, DialAdapter};
+use crate::interchain_adapter::{
+    AdapterError, ChainAttestation, DialAdapter, ForeignCreditStatement,
+};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::solana_consensus::EpochStakeTable;
 use crate::solana_consensus::{BankHashComponents, PohAnchorPolicy, ValidatorVote};
@@ -1145,20 +1148,20 @@ impl ObservedLock {
 pub enum AdapterWiringError {
     /// The local federation identity is the all-zero/uninitialized value.
     EmptyLocalFederation,
-    /// The action binding is addressed to a DIFFERENT federation than this node
-    /// serves (`binding.destination_federation != this_federation`).
+    /// The relayed credit statement is addressed to a DIFFERENT federation than this node
+    /// serves (`statement.destination_federation != this_federation`).
     WrongDestinationFederation {
         /// The federation this relayer serves.
         expected: [u8; 32],
-        /// The federation the binding is addressed to.
+        /// The federation the statement is addressed to.
         found: [u8; 32],
     },
-    /// The supplied binding does not describe the SAME lock the relayer observed
+    /// The supplied statement does not describe the SAME lock the relayer observed
     /// (its nullifier, recipient, or amount disagree with this [`ObservedLock`]).
     /// Refused so a caller cannot pair one lock's trust dial with another credit.
-    BindingMismatch,
+    StatementMismatch,
     /// The [`InterchainAdapter`] itself refused the attestation — e.g. an all-zero
-    /// (uninitialized/default) binding, the Nomad-law reject
+    /// (uninitialized/default) statement, the Nomad-law reject
     /// ([`AdapterError::EmptyAttestation`]).
     Adapter(AdapterError),
 }
@@ -1172,13 +1175,13 @@ impl std::fmt::Display for AdapterWiringError {
             ),
             Self::WrongDestinationFederation { expected, found } => write!(
                 f,
-                "action binding is addressed to federation {} but this relayer serves {} — refused before minting",
+                "credit statement is addressed to federation {} but this relayer serves {} — refused before minting",
                 hex_short(found),
                 hex_short(expected),
             ),
-            Self::BindingMismatch => write!(
+            Self::StatementMismatch => write!(
                 f,
-                "action binding does not describe the observed lock (nullifier/recipient/amount mismatch)"
+                "credit statement does not describe the observed lock (nullifier/recipient/amount mismatch)"
             ),
             Self::Adapter(e) => write!(f, "{e}"),
         }
@@ -1196,7 +1199,7 @@ impl From<ConditionalAdapterError> for AdapterWiringError {
             }
             ConditionalAdapterError::NullifierMismatch
             | ConditionalAdapterError::RecipientMismatch
-            | ConditionalAdapterError::AmountMismatch => Self::BindingMismatch,
+            | ConditionalAdapterError::AmountMismatch => Self::StatementMismatch,
             ConditionalAdapterError::Adapter(error) => Self::Adapter(error),
         }
     }
@@ -1226,24 +1229,24 @@ impl ObservedLock {
     /// its request carries `consensus_verified = false` and
     /// `bridge_mint_against_lock` refuses it with `TrustTooLow`.
     ///
-    /// The statement-bound adapter extracts one immutable binding and checks all
+    /// The statement-bound adapter extracts one immutable statement and checks all
     /// four authority-bearing fields before construction: destination equals
     /// `this_federation`, while nullifier, recipient, and amount equal this
     /// observation.  A mismatched field cannot be copied into the request.
     ///
-    /// The adapter's own Nomad-law reject (an all-zero binding) surfaces as
+    /// The adapter's own Nomad-law reject (an all-zero statement) surfaces as
     /// [`AdapterWiringError::Adapter`]. `actor` holds the mirror mint-cap and
     /// `ledger_cell` is the committed mirror-ledger cell; the credited cell is this
     /// observation's [`ObservedLock::recipient`].
     pub fn to_bridge_mint_request_via_adapter(
         &self,
-        binding: PortableActionBinding,
+        statement: ForeignCreditStatement,
         this_federation: [u8; 32],
         actor: CellId,
         ledger_cell: CellId,
     ) -> Result<dregg_turn::BridgeMintRequest, AdapterWiringError> {
         let att = ChainAttestation {
-            binding,
+            statement,
             dial: self.trust,
         };
         ConditionalInterchainAdapter::new(DialAdapter::<LockProofTrust>::new(), this_federation)
@@ -1349,19 +1352,19 @@ pub enum LoopEntry {
     /// `false`, and the committed [`TurnExecutor::bridge_mint_against_lock`](dregg_turn::TurnExecutor::bridge_mint_against_lock)
     /// refuses it with `TrustTooLow` — the loop does NOT mint it.
     Request(dregg_turn::BridgeMintRequest),
-    /// The adapter refused BEFORE building a request: the binding was addressed to
+    /// The adapter refused BEFORE building a request: the statement was addressed to
     /// another federation ([`AdapterWiringError::WrongDestinationFederation`]), it
-    /// did not describe the observed lock ([`AdapterWiringError::BindingMismatch`]),
+    /// did not describe the observed lock ([`AdapterWiringError::StatementMismatch`]),
     /// or the Nomad-law reject ([`AdapterWiringError::Adapter`]).
     Refused(AdapterWiringError),
     /// The scan/observe itself refused this account (not the bridge vault, no lock
     /// record, un-finalized, or — on the consensus upgrade — evidence inconsistent
     /// with the real account / below the 2/3 super-majority).
     Observe(RelayerError),
-    /// No [`PortableActionBinding`] was available for the observed lock, so there
-    /// was nothing to route through the adapter. (A lock with no relayed binding
+    /// No [`ForeignCreditStatement`] was available for the observed lock, so there
+    /// was nothing to route through the adapter. (A lock with no relayed statement
     /// carries no `destination_federation` and cannot be credited anywhere.)
-    NoBinding,
+    NoStatement,
 }
 
 impl LoopEntry {
@@ -1396,9 +1399,9 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     ///    each account verified to [`LockProofTrust::StructureOnly`] over the REAL
     ///    finalized bytes (escrow-to-bridge-vault binding enforced). Non-bridge
     ///    accounts surface as [`LoopEntry::Observe`].
-    /// 2. For each observed lock, look up its [`PortableActionBinding`] via
-    ///    `bindings` (the relayed cross-chain message carrying the
-    ///    `destination_federation`); a lock with none is [`LoopEntry::NoBinding`].
+    /// 2. For each observed lock, look up its [`ForeignCreditStatement`] via
+    ///    `statements` (the relayed cross-chain message carrying the
+    ///    `destination_federation`); a lock with none is [`LoopEntry::NoStatement`].
     /// 3. Ask the [`ConsensusEvidenceSource`] (the geyser feed) for the lock's
     ///    [`ConsensusEvidence`]. When present, RE-OBSERVE the same vault account at
     ///    consensus ([`Self::observe_lock_at_consensus`]) so the evidence is
@@ -1410,7 +1413,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     ///    [`ObservedLock::to_bridge_mint_request_via_adapter`]: the
     ///    destination-federation check + the observed-lock consistency check run,
     ///    then `consensus_verified` is set SOLELY from the lock's trust dial (never a
-    ///    caller bool). A wrong-federation binding is [`LoopEntry::Refused`].
+    ///    caller bool). A wrong-federation statement is [`LoopEntry::Refused`].
     ///
     /// The loop **does not mint** — it produces the committed-mint requests the
     /// caller feeds to [`TurnExecutor::bridge_mint_against_lock`](dregg_turn::TurnExecutor::bridge_mint_against_lock)
@@ -1435,7 +1438,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     pub fn scan_to_mint_requests<S, B>(
         &self,
         source: &S,
-        bindings: B,
+        statements: B,
         stake_table: &EpochStakeTable,
         require_poh: bool,
         this_federation: [u8; 32],
@@ -1444,7 +1447,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     ) -> Result<Vec<LoopEntry>, RpcError>
     where
         S: ConsensusEvidenceSource,
-        B: Fn(&ObservedLock) -> Option<PortableActionBinding>,
+        B: Fn(&ObservedLock) -> Option<ForeignCreditStatement>,
     {
         let scanned = self.scan_program_locks()?;
         let mut out = Vec::with_capacity(scanned.len());
@@ -1452,7 +1455,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
             out.push(self.process_scanned_lock(
                 result,
                 source,
-                &bindings,
+                &statements,
                 stake_table,
                 require_poh,
                 this_federation,
@@ -1476,7 +1479,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     pub fn scan_to_mint_requests_anchored<S, B>(
         &self,
         source: &S,
-        bindings: B,
+        statements: B,
         require_poh: bool,
         poh_policy: Option<&PohAnchorPolicy>,
         this_federation: [u8; 32],
@@ -1485,7 +1488,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     ) -> Result<Vec<LoopEntry>, RpcError>
     where
         S: AnchoredEvidenceSource,
-        B: Fn(&ObservedLock) -> Option<PortableActionBinding>,
+        B: Fn(&ObservedLock) -> Option<ForeignCreditStatement>,
     {
         let scanned = self.scan_program_locks()?;
         let mut out = Vec::with_capacity(scanned.len());
@@ -1493,7 +1496,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
             out.push(self.process_scanned_lock_anchored(
                 result,
                 source,
-                &bindings,
+                &statements,
                 require_poh,
                 poh_policy,
                 this_federation,
@@ -1511,7 +1514,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
         &self,
         scanned: Result<ObservedLock, RelayerError>,
         source: &S,
-        bindings: &B,
+        statements: &B,
         require_poh: bool,
         poh_policy: Option<&PohAnchorPolicy>,
         this_federation: [u8; 32],
@@ -1520,7 +1523,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     ) -> LoopEntry
     where
         S: AnchoredEvidenceSource,
-        B: Fn(&ObservedLock) -> Option<PortableActionBinding>,
+        B: Fn(&ObservedLock) -> Option<ForeignCreditStatement>,
     {
         // (1) the scan already ran the finalized + escrow-to-bridge-vault verify.
         let structure_only = match scanned {
@@ -1528,10 +1531,10 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
             Err(e) => return LoopEntry::Observe(e),
         };
 
-        // (2) the relayed cross-chain binding. No binding ⟹ nothing to route.
-        let binding = match bindings(&structure_only) {
+        // (2) the relayed cross-chain credit statement. None ⟹ nothing to route.
+        let statement = match statements(&structure_only) {
             Some(b) => b,
-            None => return LoopEntry::NoBinding,
+            None => return LoopEntry::NoStatement,
         };
 
         // (3) ask the feed for consensus evidence + bank-state provenance.
@@ -1557,7 +1560,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
 
         // (4) drive the UNIFIED adapter trust-dial path.
         match observed.to_bridge_mint_request_via_adapter(
-            binding,
+            statement,
             this_federation,
             actor,
             ledger_cell,
@@ -1575,7 +1578,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
         &self,
         scanned: Result<ObservedLock, RelayerError>,
         source: &S,
-        bindings: &B,
+        statements: &B,
         stake_table: &EpochStakeTable,
         require_poh: bool,
         this_federation: [u8; 32],
@@ -1584,7 +1587,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     ) -> LoopEntry
     where
         S: ConsensusEvidenceSource,
-        B: Fn(&ObservedLock) -> Option<PortableActionBinding>,
+        B: Fn(&ObservedLock) -> Option<ForeignCreditStatement>,
     {
         // (1) the scan already ran the finalized + escrow-to-bridge-vault verify.
         let structure_only = match scanned {
@@ -1592,12 +1595,12 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
             Err(e) => return LoopEntry::Observe(e),
         };
 
-        // (2) the relayed cross-chain binding (destination_federation + the
-        //     nullifier/amount the adapter consistency-checks). No binding ⟹ nothing
+        // (2) the relayed cross-chain credit statement (destination_federation + the
+        //     nullifier/amount the adapter consistency-checks). None ⟹ nothing
         //     to route.
-        let binding = match bindings(&structure_only) {
+        let statement = match statements(&structure_only) {
             Some(b) => b,
-            None => return LoopEntry::NoBinding,
+            None => return LoopEntry::NoStatement,
         };
 
         // (3) ask the geyser feed for consensus evidence. Present ⟹ RE-OBSERVE the
@@ -1619,7 +1622,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
         //     check + observed-lock consistency, then consensus_verified straight
         //     from the trust dial.
         match observed.to_bridge_mint_request_via_adapter(
-            binding,
+            statement,
             this_federation,
             actor,
             ledger_cell,

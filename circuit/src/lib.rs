@@ -243,7 +243,6 @@ pub mod accumulator_types;
 
 // Backward-compatible shim modules (type definitions + re-exports from DSL).
 // These contain deprecated StarkAir impls superseded by DSL descriptors.
-pub mod bridge_action_witness;
 #[allow(deprecated)]
 pub mod derivation_air;
 pub mod effect_action_air;

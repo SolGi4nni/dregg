@@ -54,7 +54,7 @@ deployed-light-client.
    §A is the counterexample. So a light client that only checks the deployed sovereign AIR learns
    NOTHING about the owner signature / anchor. The repair (the authority must come from the FOLD over
    a re-proved sovereign-authority leaf) is named at §C, mirroring `CustomBindingFromFold` /
-   `bridge_leaf_adapter`.
+   `note_spend_leaf_adapter`.
 
 §C `deployed_admits_replayed_sequence` — the REPLAY corollary + the repair pointer. Even a
    `key_commit`/`anchor` a verifying signature attests is accepted by the deployed descriptor when

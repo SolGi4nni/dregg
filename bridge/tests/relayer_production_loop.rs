@@ -36,7 +36,7 @@
 //! the honest remaining adapter layer named in
 //! `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
 
-use dregg_bridge::action_binding::PortableActionBinding;
+use dregg_bridge::interchain_adapter::ForeignCreditStatement;
 use dregg_bridge::solana_consensus::{BankHashComponents, EpochStakeTable, ValidatorVote};
 use dregg_bridge::solana_mirror::MirrorConfig;
 use dregg_bridge::solana_relayer::{
@@ -192,32 +192,33 @@ fn consensus_for(
     }
 }
 
-/// A `PortableActionBinding` for the observed lock, addressed to `destination`.
+/// A `ForeignCreditStatement` for the observed lock, addressed to `destination`.
 ///
 /// The statement-bound adapter reads the plaintext nullifier, recipient, amount,
 /// and destination.  An empty `proof_bytes` is a focused fixture for this
 /// production-loop wiring test; proof verification lives in the action-binding
 /// suite.
-fn binding_for(
+fn statement_for(
     nullifier: [u8; 32],
     recipient: CellId,
     amount: u64,
     destination: [u8; 32],
-) -> PortableActionBinding {
-    PortableActionBinding {
+) -> ForeignCreditStatement {
+    ForeignCreditStatement {
         nullifier,
         recipient: recipient.0,
         destination_federation: destination,
         amount,
-        proof_bytes: Vec::new(),
     }
 }
 
 /// A binding lookup addressing every observed lock to `destination` (the relayed
 /// cross-chain message the feed pairs with each lock).
-fn bindings_to(destination: [u8; 32]) -> impl Fn(&ObservedLock) -> Option<PortableActionBinding> {
+fn statements_to(
+    destination: [u8; 32],
+) -> impl Fn(&ObservedLock) -> Option<ForeignCreditStatement> {
     move |lock: &ObservedLock| {
-        Some(binding_for(
+        Some(statement_for(
             lock.nullifier.0,
             lock.recipient,
             lock.amount,
@@ -253,7 +254,7 @@ fn loop_mints_consensus_verified_lock_for_this_federation() {
     let entries = relayer
         .scan_to_mint_requests(
             &feed,
-            bindings_to(THIS_FEDERATION),
+            statements_to(THIS_FEDERATION),
             &stake_table(),
             false,
             THIS_FEDERATION,
@@ -344,7 +345,7 @@ fn loop_refuses_structure_only_lock_trust_too_low() {
     let entries = relayer
         .scan_to_mint_requests(
             &feed,
-            bindings_to(THIS_FEDERATION),
+            statements_to(THIS_FEDERATION),
             &stake_table(),
             false,
             THIS_FEDERATION,
@@ -423,7 +424,7 @@ fn loop_refuses_a_lying_feed_below_supermajority() {
     let entries = relayer
         .scan_to_mint_requests(
             &feed,
-            bindings_to(THIS_FEDERATION),
+            statements_to(THIS_FEDERATION),
             &stake_table(),
             false,
             THIS_FEDERATION,
@@ -485,7 +486,7 @@ fn loop_refuses_wrong_federation_lock() {
     let entries = relayer
         .scan_to_mint_requests(
             &feed,
-            bindings_to(OTHER_FEDERATION),
+            statements_to(OTHER_FEDERATION),
             &stake_table(),
             false,
             THIS_FEDERATION,
@@ -546,7 +547,7 @@ fn loop_over_heterogeneous_scan_mints_vault_and_refuses_foreign() {
     let entries = relayer
         .scan_to_mint_requests(
             &feed,
-            bindings_to(THIS_FEDERATION),
+            statements_to(THIS_FEDERATION),
             &stake_table(),
             false,
             THIS_FEDERATION,

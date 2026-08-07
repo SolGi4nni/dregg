@@ -3,8 +3,7 @@
 //! This module defines the on-wire shape for carrying per-effect
 //! full-fidelity binding proofs alongside a `Turn`. Each binding proof
 //! is a sidecar STARK produced by `dregg_circuit::effect_action_air`
-//! (or the dedicated sibling AIRs `bridge_action_witness` /
-//! `bridge_lock_action_air`) that pins every typed parameter of one
+//! (or the dedicated sibling AIR `bridge_lock_action_air`) that pins every typed parameter of one
 //! runtime `Effect` at full fidelity:
 //!   - 32-byte fields as 8 × 4-byte BabyBear limbs (~248-bit binding)
 //!   - u64 amounts as 4 × 16-bit limbs (full 64-bit binding, INJECTIVELY)
@@ -13,7 +12,7 @@
 //! `BabyBear::new` reduces and `p < 2^32`, so `lo = 0` and `lo = p` were one
 //! cell. Two felts cannot injectively carry a u64 at all (`p² < 2^64`), so the
 //! repair was to widen, in both AIR families
-//! (`effect_action_air::AMOUNT_LIMBS`, `bridge_action_witness::AMOUNT_LIMBS`).
+//! (`effect_action_air::AMOUNT_LIMBS`).
 //!
 //! # Why a sidecar?
 //!

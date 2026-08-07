@@ -24,7 +24,6 @@ pub mod apex_shrink_gnark_export;
 /// o1js Kimchi verifier (`bridge/mina-zkapp/src/MinaShrinkVerify.ts`).
 pub mod apex_shrink_mina_export;
 pub mod blinded_membership_leaf_adapter;
-pub mod bridge_leaf_adapter;
 pub mod carrier_pin_twin;
 pub mod caveat_admission_leaf_adapter;
 pub mod cert_f_air;
@@ -62,14 +61,14 @@ pub mod joint_turn_recursive;
 pub mod lean_lookup_air;
 pub mod membership_leaf_adapter;
 pub mod merge_pool;
-/// The Pasta half of `dregg_circuit::mina_fixture_emit`: `DreggMinaConfig` as a
-/// fixture hash suite, plus the CHECKED `MultiField32Challenger` replica whose
-/// per-permutation sponge states the Pasta fixture publishes.
-pub mod mina_pasta_fixture_suite;
 /// ⚑ The DEFERRED IPA ACCUMULATOR CHECK as a RECURSION TREE: the Lean-authored
 /// `dregg-mina-accumulator-{seg,final}::v1` leaves, and the fold that carries the accumulator POINT
 /// from segment to segment INSIDE the recursion. The leg upstream's verifier does natively.
 pub mod mina_accumulator_fold;
+/// The Pasta half of `dregg_circuit::mina_fixture_emit`: `DreggMinaConfig` as a
+/// fixture hash suite, plus the CHECKED `MultiField32Challenger` replica whose
+/// per-permutation sponge states the Pasta fixture publishes.
+pub mod mina_pasta_fixture_suite;
 /// ⚑ The 46-permutation Fq transcript of Mina devnet block 539508 as a RECURSION TREE: the
 /// Lean-authored `dregg-pasta-fq-chainlink::v1` leaf, and the fold that carries the sponge state
 /// from link to link INSIDE the recursion.

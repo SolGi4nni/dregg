@@ -897,7 +897,6 @@ fn scan_tree(root: &Path) -> BTreeMap<String, Counts> {
 // ─────────────────────────────────────────────────────────────────────────────
 #[rustfmt::skip]
 const BASELINE: &[(&str, usize)] = &[
-    ("circuit-prove/src/bridge_leaf_adapter.rs", 3),
     ("circuit-prove/src/carrier_pin_twin.rs", 6),
     ("circuit-prove/src/caveat_admission_leaf_adapter.rs", 32),
     ("circuit-prove/src/custom_leaf_adapter.rs", 3),

@@ -28,7 +28,7 @@
 //!
 //! STARBRIDGE-FOLLOWUP-03 note (§5.5): This "proof-to-action binding lives
 //! in executor comments, not the circuit" (per BACKWATER-CRATES-AUDIT.md:78-81,1151).
-//! Moving the binding into AIR (circuit bridge_action_witness + effect_vm) is
+//! Moving the binding into AIR (the note-spend leaf + effect_vm) is
 //! the Golden lift, BLOCKED ON HUMAN + cargo for bridge/ + circuit/. The
 //! current Silver posture (executor cross-checks only) is load-bearing.
 

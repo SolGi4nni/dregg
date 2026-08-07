@@ -1684,7 +1684,7 @@ def gThread (dst src : Nat) : GExpr WLeaf :=
 abbrev gCarry (c : Nat) : GExpr WLeaf := gThread c c
 
 /-- ⚑ **THE DEPLOYED BYTE, FOR EVERY COLUMN PAIR, `by rfl`.** This is literally the body of
-`AccumulatorNonRevocationEmit.constBody`, `BridgeActionEmit.contBody`,
+`AccumulatorNonRevocationEmit.constBody`,
 `EffectActionBindingEmit.contWindowBody`, `ExactNullifierAafiRotatedStateWeld.carryBody` and
 `DyckStackEmit.wThread` — one object under five names, now one object under one name. -/
 theorem gThread_window (dst src : Nat) :

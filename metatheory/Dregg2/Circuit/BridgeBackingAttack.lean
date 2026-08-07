@@ -156,7 +156,7 @@ deployed intent holds while no verifying spend backs its `mint_hash`. So consumi
 against the deployed bridge-mint AIR asserts strictly MORE than the verifier enforces — the deployed
 descriptor binds only the balance credit (`value_lo`), never the foreign-spend backing. The real
 backing must come from the per-turn FOLD over the re-proved bridge-action / note-spend leaf (the
-`bridge_leaf_adapter` leaf connected to the published `mint_hash` PI), exactly as
+`note_spend_leaf_adapter` leaf connected to the published `mint_hash` PI), exactly as
 `CustomBindingFromFold` rebuilds the custom binding from `AggAirSound` — see §C. -/
 theorem deployed_intent_does_not_force_backing :
     ¬ ∀ (E : NoteSpendEngine) (consumed : ℤ → Prop) (env : VmRowEnv),

@@ -64,7 +64,8 @@
 //! For a **dregg light client** (not a re-executing validator) to witness that a
 //! mint is backed by a real finalized EVM deposit, the Ethereum finality
 //! (sync-committee / FFG) + the storage-inclusion proof must be folded into the
-//! EffectVM (`dregg_circuit::bridge_action_witness`, the VK-epoch). That weld is owned
+//! EffectVM as a REAL foreign-consensus leaf (the VK-epoch). ⚑ This line used to name
+//! `dregg_circuit::bridge_action_witness`; that AIR is DELETED (2026-08-07). That weld is owned
 //! by the circuit swarm; this module does the off-chain relayer verify a
 //! re-executing validator runs, and binds the same gates into the live path.
 

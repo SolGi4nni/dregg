@@ -136,7 +136,7 @@ pub enum CarrierWitness {
     CustomIr2(CustomIr2WitnessBundle),
     /// FOLD-WIRED (the 7th, LAST carrier): the bridge carrier's re-provable witness — the
     /// REAL foreign note-spend witness (per the carrier-deployment spec: folding the
-    /// binding-only `bridge_action_witness` alone is NOT the sound deployed path — a prover-chosen
+    /// binding-only `bridge_action_witness` (DELETED 2026-08-07) was NOT the sound deployed path — a prover-chosen
     /// tuple; the G2 backing is the re-proven note-spend STARK,
     /// `note_spend_leaf_adapter::prove_note_spend_leaf_with_claim`). The fold arm admits a leg
     /// only when its descriptor pins the felt mint-hash claim slot (`BRIDGE_MINT_HASH_PI` = 46,
@@ -413,7 +413,7 @@ pub struct CustomIr2WitnessBundle {
 /// [`crate::note_spend_leaf_adapter::prove_note_spend_leaf_with_claim`] consumes: the REAL
 /// foreign note-spend witness (spending key, 28-limb commitment preimage, Merkle path) — the
 /// G2 backing the carrier-deployment spec mandates. Folding the binding-only
-/// `bridge_action_witness` was REFUSED as the backing (a prover-chosen tuple, no membership / no
+/// `bridge_action_witness` was REFUSED as the backing and is now DELETED (a prover-chosen tuple, no membership / no
 /// key knowledge — the vacuous connect the fail-open law forbids); this bundle re-proves the
 /// REAL spend STARK, whose leaf exposes the FELT-domain mint identity
 /// (`note_spend_mint_hash_felt`, in-AIR-recomputed at claim lane 6) the deployed leg's

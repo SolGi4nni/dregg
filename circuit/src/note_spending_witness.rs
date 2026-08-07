@@ -79,7 +79,7 @@
 //!   claim a different value/asset_type than what is committed in the note.
 //! - Soundness: a cheating prover must break Poseidon2 collision resistance
 //!
-//! # Companion AIR: `bridge_action_witness`
+//! # Companion AIR: `bridge_action_witness` (DELETED 2026-08-07)
 //!
 //! Each 32-byte field in this AIR's PI vector (`nullifier`, `merkle_root`,
 //! `destination_federation`) lives in a **single** BabyBear slot — the prover
@@ -88,7 +88,7 @@
 //! binding, but for bridge mints the destination wants algebraic guarantees
 //! at full 32-byte fidelity on (nullifier, recipient, destination_federation)
 //! and at full 64-bit fidelity on amount. The sibling AIR
-//! `crate::bridge_action_witness::BridgeActionAir` provides exactly that: 8 limbs
+//! `crate::bridge_action_witness::BridgeActionAir` provided exactly that — 8 limbs
 //! per 32-byte field and 4 × 16-bit limbs for the u64 amount. ⚑ It was 2 × 32-bit
 //! until 2026-08-06, which was not "full fidelity" at all — `p < 2^32`, so
 //! `BabyBear::new` reduced and `amount` collided with `amount + p`. Two felts

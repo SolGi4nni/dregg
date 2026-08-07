@@ -27,17 +27,8 @@
 //! 8. `double_mint_rejected` — the same portable proof cannot mint twice on
 //!    the destination (BridgedNullifierSet replay defense).
 //!
-//! Full-fidelity AIR-level binding tests (using `bridge_action_witness`):
-//! 9.  `bridge_action_witness_wrong_amount_rejected` — proves that the high u64
-//!     bits of amount are bound (closes the 30-bit truncation gap from
-//!     CAVEAT-LAYER-COVERAGE.md §6.5).
-//! 10. `bridge_action_witness_wrong_recipient_rejected` — proves full 32-byte
-//!     recipient (destination commitment) binding (closes the audit gap that
-//!     the recipient was previously never threaded into any AIR).
-//! 11. `bridge_action_witness_wrong_nullifier_rejected` — full 32-byte nullifier
-//!     binding (8 limbs, 248 bits of binding strength).
-//! 12. `bridge_action_witness_wrong_destination_federation_rejected` — full
-//!     32-byte destination federation binding.
+//! (The full-fidelity `bridge_action_witness` AIR section is DELETED — see the note at the
+//! bottom of this file.)
 
 use dregg_cell::note::{NoteCommitment, Nullifier};
 use dregg_cell_crypto::note_bridge::{
@@ -525,38 +516,13 @@ fn double_mint_rejected() {
     );
 }
 
-// =============================================================================
-// Full-fidelity bridge-action AIR tests
+// ⚑ THE FULL-FIDELITY BRIDGE-ACTION AIR SECTION IS DELETED (2026-08-07), WITH THE AIR.
 //
-// These tests exercise `dregg_circuit::bridge_action_witness`, the sibling AIR
-// that binds the bridge action's parameters at full byte/bit fidelity:
-//   - nullifier: 8 BabyBear limbs (~248 bits)
-//   - recipient (destination_commitment): 8 BabyBear limbs (~248 bits)
-//   - destination_federation: 8 BabyBear limbs (~248 bits)
-//   - amount: 2 BabyBear limbs (low 32 + high 32 = full 64 bits)
-//
-// This closes the audit gaps documented in:
-//   - CAVEAT-LAYER-COVERAGE.md §6.5 (30-bit amount truncation)
-//   - BACKWATER-CRATES-AUDIT.md bridge/ open issue (proof-to-action binding
-//     lived in executor comments, not the circuit)
-// =============================================================================
-
-use dregg_circuit::bridge_action_witness::BridgeActionWitness;
-
-// RETIRED (2026-07-16): `bridge_action_witness_{happy_path, wrong_amount_rejected,
-// wrong_recipient_rejected}` drove `dregg_circuit::bridge_action_witness::{prove,verify}_bridge_action`,
-// which NO LONGER EXIST — that module now exports only `encode_hash`/`encode_amount`, and the hand
-// `BridgeActionAir` is trace-gen, explicitly "not in the soundness TCB". The broken import silently kept
-// THIS ENTIRE FILE (17 tests) out of the build. Their teeth live on the Lean-emitted rail:
-// `circuit-prove/tests/bridge_action_emit_gate.rs` (5 tests, byte-pinning `BridgeActionEmit.lean`).
-#[allow(dead_code)]
-fn make_action_witness() -> BridgeActionWitness {
-    BridgeActionWitness {
-        nullifier: dregg_cell::felt_to_bytes32(dregg_circuit::field::BabyBear::new(0x10)),
-        recipient: [0x20; 32],
-        destination_federation: FED_B,
-        // Amount above 2^30 to exercise high-bit binding (closes the 30-bit
-        // truncation gap).
-        amount: (1u64 << 33) | 0xDEAD_BEEF,
-    }
-}
+// It was already inert: the tests it named were RETIRED 2026-07-16 and all that survived was a
+// `#[allow(dead_code)]` witness builder. `dregg_circuit::bridge_action_witness` bound a
+// PROVER-CHOSEN tuple with no enforcer anywhere in the tree, and
+// `Dregg2.Circuit.BridgeBindingFromFold` REFUSES it as a bridge-mint backing. The live teeth for
+// this file's subject — that a bridge mint is backed by a real foreign spend — are the note-spend
+// leaf folded to the leg's published PI-46 `mint_hash`:
+// `circuit-prove/tests/bridge_binding_deployed_tooth.rs` and
+// `circuit-prove/tests/note_spend_binding_node_tooth.rs`.

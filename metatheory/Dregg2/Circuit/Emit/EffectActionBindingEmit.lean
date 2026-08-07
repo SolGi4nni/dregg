@@ -111,6 +111,24 @@ def LIMB_BASE : Int := 65536
 theorem limb_base_fits_felt : LIMB_BASE < 2013265921 := by decide
 theorem limbs_cover_u64 : AMOUNT_LIMBS * LIMB_BITS = 64 := by decide
 
+/-- ⚑ **WHY WIDENING WAS THE ONLY REPAIR — THE PIGEONHOLE, AS A THEOREM.** Two BabyBear felts
+carry `p² = 4_053_239_737_456_637_441` distinct pairs and a u64 has `2^64` values, so `p² < 2^64`
+and by pigeonhole EVERY 2-felt encoding of a u64 collides — on average 4.55 amounts per pair. No
+choice of coefficients or reduction could have fixed the retired 2 × 32-bit split; only widening
+could. This is what forces `AMOUNT_LIMBS = 4`.
+
+⚑ **RE-HOMED HERE 2026-08-07.** This statement lived only in `BridgeActionEmit.two_felts_cannot_
+carry_a_u64` and in `bridge_action_witness.rs`'s test of the same name. Both were deleted with the
+bridge-action binding AIR, and the fact is not about that AIR — it is about BabyBear and u64, and
+it is the reason THIS family's width is 4. A fact worth asserting is worth keeping named. -/
+theorem two_felts_cannot_carry_a_u64 : 2013265921 * 2013265921 < 2 ^ 64 := by decide
+
+/-- Four 16-bit limbs are EXACTLY enough and not more: `(2^16)^4 = 2^64`. -/
+theorem four_limbs_carry_u64_exactly : (2 ^ LIMB_BITS) ^ AMOUNT_LIMBS = 2 ^ 64 := by decide
+
+/-- Each limb fits a felt without reduction — the structural reason injectivity holds at all. -/
+theorem amount_limb_fits_felt : 2 ^ LIMB_BITS < 2013265921 := by decide
+
 /-- The ℤ value a canonical four-limb amount decodes to. ⚑ This is the SPEC's recomposition; it
 names `2^32` and `2^48`, which is exactly why it may never be a gate coefficient. -/
 def u64Of (l0 l1 l2 l3 : ℤ) : ℤ := l0 + 65536 * l1 + 4294967296 * l2 + 281474976710656 * l3
@@ -122,7 +140,7 @@ def contWindowBody (c : Nat) : WindowExpr :=
   Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread c c)
 
 /-- ⚑ **THE BYTE PIN.** `contWindowBody` is `GateExpr.gThread` at the window view -- the SAME object
-`BridgeActionEmit.contBody`, `AccumulatorNonRevocationEmit.constBody`,
+`AccumulatorNonRevocationEmit.constBody`,
 `EffectActionBindingEmit.contWindowBody`, `ExactNullifierAafiRotatedStateWeld.carryBody` and
 `DyckStackEmit.wThread` each wrote out separately. `rfl`, for every column: no emitted byte moved. -/
 theorem contWindowBody_eq (c : Nat) :
@@ -631,3 +649,7 @@ theorem cont_rejects_stash :
 #assert_axioms burnLimbsCanonical_is_load_bearing
 
 end Dregg2.Circuit.Emit.EffectActionBindingEmit
+
+#assert_axioms two_felts_cannot_carry_a_u64
+#assert_axioms four_limbs_carry_u64_exactly
+#assert_axioms amount_limb_fits_felt

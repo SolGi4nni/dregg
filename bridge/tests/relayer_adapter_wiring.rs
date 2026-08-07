@@ -24,9 +24,9 @@
 //!    [`AdapterWiringError::WrongDestinationFederation`] — never credited here.
 //! 4. **A binding that does not describe the observed lock is refused** (the
 //!    consistency tooth): a mismatched amount/nullifier yields
-//!    [`AdapterWiringError::BindingMismatch`].
+//!    [`AdapterWiringError::StatementMismatch`].
 
-use dregg_bridge::action_binding::PortableActionBinding;
+use dregg_bridge::interchain_adapter::ForeignCreditStatement;
 use dregg_bridge::solana_consensus::{BankHashComponents, EpochStakeTable, ValidatorVote};
 use dregg_bridge::solana_mirror::MirrorConfig;
 use dregg_bridge::solana_relayer::{AdapterWiringError, MockSolanaRpc, RpcAccount, SolanaRelayer};
@@ -178,24 +178,23 @@ fn consensus_for(
     }
 }
 
-/// A `PortableActionBinding` for the observed lock, addressed to `destination`.
+/// A `ForeignCreditStatement` for the observed lock, addressed to `destination`.
 ///
 /// The statement-bound adapter reads the plaintext nullifier, recipient, amount,
 /// and destination; an empty `proof_bytes` is therefore a focused fixture for the
 /// request-construction boundary under test.  Proof verification is exercised by
 /// the action-binding suite, not duplicated here.
-fn binding_for(
+fn statement_for(
     nullifier: [u8; 32],
     recipient: CellId,
     amount: u64,
     destination: [u8; 32],
-) -> PortableActionBinding {
-    PortableActionBinding {
+) -> ForeignCreditStatement {
+    ForeignCreditStatement {
         nullifier,
         recipient: recipient.0,
         destination_federation: destination,
         amount,
-        proof_bytes: Vec::new(),
     }
 }
 
@@ -226,14 +225,14 @@ fn adapter_path_consensus_lock_for_this_federation_mints() {
     assert_eq!(observed.trust, LockProofTrust::ConsensusVerified);
 
     // Drive the UNIFIED adapter path with a binding addressed to THIS federation.
-    let binding = binding_for(
+    let statement = statement_for(
         observed.nullifier.0,
         observed.recipient,
         amount,
         THIS_FEDERATION,
     );
     let req = observed
-        .to_bridge_mint_request_via_adapter(binding, THIS_FEDERATION, issuer, ledger_cell)
+        .to_bridge_mint_request_via_adapter(statement, THIS_FEDERATION, issuer, ledger_cell)
         .expect("a consensus-verified lock for this federation builds a mint request");
 
     // consensus_verified came from TrustRung::reached_consensus(), not a hand bool.
@@ -302,14 +301,14 @@ fn adapter_path_structure_only_lock_cannot_mint() {
 
     // Even for THIS federation, the StructureOnly dial maps to the fail-closed Rpc
     // rung, so the adapter sets consensus_verified = false.
-    let binding = binding_for(
+    let statement = statement_for(
         observed.nullifier.0,
         observed.recipient,
         amount,
         THIS_FEDERATION,
     );
     let req = observed
-        .to_bridge_mint_request_via_adapter(binding, THIS_FEDERATION, issuer, ledger_cell)
+        .to_bridge_mint_request_via_adapter(statement, THIS_FEDERATION, issuer, ledger_cell)
         .expect("the request still BUILDS (the committed gate, not the adapter, refuses it)");
     assert!(
         !req.consensus_verified,
@@ -356,14 +355,14 @@ fn adapter_path_wrong_federation_refused_before_minting() {
     assert_eq!(observed.trust, LockProofTrust::ConsensusVerified);
 
     // The binding is addressed to a DIFFERENT federation than this relayer serves.
-    let binding = binding_for(
+    let statement = statement_for(
         observed.nullifier.0,
         observed.recipient,
         amount,
         OTHER_FEDERATION,
     );
     let err = observed
-        .to_bridge_mint_request_via_adapter(binding, THIS_FEDERATION, issuer, ledger_cell)
+        .to_bridge_mint_request_via_adapter(statement, THIS_FEDERATION, issuer, ledger_cell)
         .expect_err("a lock destined for another federation is not credited here");
     assert_eq!(
         err,
@@ -407,7 +406,7 @@ fn adapter_path_mismatched_binding_refused() {
 
     // A binding for THIS federation but a DIFFERENT amount than the observed lock:
     // a caller cannot pair this lock's trust dial with an unrelated amount.
-    let wrong_amount = binding_for(
+    let wrong_amount = statement_for(
         observed.nullifier.0,
         observed.recipient,
         amount + 1,
@@ -417,22 +416,22 @@ fn adapter_path_mismatched_binding_refused() {
         observed
             .to_bridge_mint_request_via_adapter(wrong_amount, THIS_FEDERATION, issuer, ledger_cell)
             .unwrap_err(),
-        AdapterWiringError::BindingMismatch,
+        AdapterWiringError::StatementMismatch,
         "a binding whose amount disagrees with the observed lock is refused"
     );
 
     // A binding with a DIFFERENT nullifier is likewise refused.
-    let wrong_nf = binding_for([0x9Cu8; 32], observed.recipient, amount, THIS_FEDERATION);
+    let wrong_nf = statement_for([0x9Cu8; 32], observed.recipient, amount, THIS_FEDERATION);
     assert_eq!(
         observed
             .to_bridge_mint_request_via_adapter(wrong_nf, THIS_FEDERATION, issuer, ledger_cell)
             .unwrap_err(),
-        AdapterWiringError::BindingMismatch,
+        AdapterWiringError::StatementMismatch,
         "a binding whose nullifier disagrees with the observed lock is refused"
     );
 
     // A binding for the right lock and federation cannot redirect its credit.
-    let wrong_recipient = binding_for(
+    let wrong_recipient = statement_for(
         observed.nullifier.0,
         CellId([0x9Du8; 32]),
         amount,
@@ -447,7 +446,7 @@ fn adapter_path_mismatched_binding_refused() {
                 ledger_cell,
             )
             .unwrap_err(),
-        AdapterWiringError::BindingMismatch,
+        AdapterWiringError::StatementMismatch,
         "a proof-bound recipient cannot be substituted at request construction"
     );
 }

@@ -4,8 +4,17 @@
 //! Every inbound bridge leg answers two questions before it may mint:
 //!
 //! - **WHAT** is being minted — the `(nullifier, recipient, destination, amount)`
-//!   tuple, carried by a [`PortableActionBinding`] whose IR-v2 proof algebraically
-//!   attests those exact bytes.
+//!   tuple, carried by a [`ForeignCreditStatement`].
+//!
+//!   ⚑ **THIS IS A PLAINTEXT STATEMENT, NOT A PROOF, AND IT NEVER WAS (2026-08-07).** Until
+//!   this commit the field was a `PortableActionBinding` carrying `proof_bytes` — an IR-v2
+//!   proof over `bridge-action-leaf::bridge_action_air_v1`. Every producer that reached this
+//!   path built it with `proof_bytes: Vec::new()`, nothing on the inbound path ever called
+//!   `verify_action_binding`, and the AIR itself bound a PROVER-CHOSEN tuple, so a verifying
+//!   proof would not have been evidence of anything either. The field is now what the code
+//!   actually uses: the relayer's OBSERVED tuple, cross-checked field-by-field against the
+//!   local event by [`crate::conditional_interchain_adapter::ConditionalInterchainAdapter`].
+//!   The evidence that a foreign event happened is the [`TrustRung`], not this record.
 //! - **HOW TRUSTED** is the evidence — a per-chain dial today spelled five
 //!   different ways: Solana's [`LockProofTrust`], Ethereum outbound-settlement's
 //!   [`SnarkSystem`] (`is_snark_backed`), Ethereum inbound-deposit's
@@ -33,19 +42,69 @@
 //!    rung a `StructureOnly` / bare-RPC dial maps to — and `false` for an
 //!    unresolved watchtower or a zero-signer committee. The *default*/lowest-trust
 //!    dial can never mint.
-//! 2. [`InterchainAdapter::to_action_binding`] refuses a binding whose nullifier
+//! 2. [`InterchainAdapter::to_credit_statement`] refuses a statement whose nullifier
 //!    is the all-zero (uninitialized) value ([`AdapterError::EmptyAttestation`]),
 //!    so an empty attestation cannot even produce a mint request.
 
 use std::marker::PhantomData;
 
-use crate::action_binding::PortableActionBinding;
 use crate::ethereum::SnarkSystem;
 use crate::ethereum_relayer::EthDepositTrust;
-use crate::midnight_gateway::Verdict;
 use crate::solana_trustless::LockProofTrust;
 
 use dregg_lightclient::FinalizedAttestation;
+use serde::{Deserialize, Serialize};
+
+/// The `(nullifier, recipient, destination_federation, amount)` an inbound relayer OBSERVED on a
+/// foreign chain and intends to credit locally.
+///
+/// ⚑ **Plaintext. There is no proof here and there never was one that meant anything.** See the
+/// module docs. Authority to mint comes from the [`TrustRung`]; this record only says WHAT, and
+/// every field of it is re-checked against the locally observed event by
+/// [`crate::conditional_interchain_adapter::ConditionalInterchainAdapter::into_mint_request`]
+/// before a [`dregg_turn::BridgeMintRequest`] is assembled.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForeignCreditStatement {
+    /// The consume-once nullifier derived from the foreign lock/deposit/payment identity.
+    pub nullifier: [u8; 32],
+    /// The destination-side commitment (the local cell to credit).
+    pub recipient: [u8; 32],
+    /// The destination federation identity this credit is routed to.
+    pub destination_federation: [u8; 32],
+    /// The full u64 amount.
+    pub amount: u64,
+}
+
+/// An optimistic watchtower's verdict on a relayed cross-chain claim.
+///
+/// ⚑ Re-homed here 2026-08-07 from the deleted `midnight_gateway`. That module's whole subject
+/// was the `VerifiedDreggToMidnight` envelope, whose "fraud-proof material" was a
+/// `bridge-action-leaf` proof over a PROVER-CHOSEN tuple — evidence of nothing, and with no
+/// caller anywhere in the tree. The RUNG survives because the optimistic-watchtower trust model
+/// is real and [`TrustRung::OptimisticWatchtower`] is the fail-closed dial for it; the deleted
+/// envelope was one (unbuilt) producer of it, not the concept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// The challenge window resolved in favour of validity.
+    Valid {
+        /// The canonical claim hash this verdict pertains to.
+        claim_hash: [u8; 32],
+    },
+    /// The claim is objectively invalid — the challenge evidence.
+    Fraud {
+        /// The canonical claim hash this verdict pertains to.
+        claim_hash: [u8; 32],
+        /// Why the claim is invalid (the deterministic, re-checkable reason).
+        reason: String,
+    },
+}
+
+impl Verdict {
+    /// Whether this verdict warrants challenging the relay.
+    pub fn is_fraud(&self) -> bool {
+        matches!(self, Verdict::Fraud { .. })
+    }
+}
 
 /// The single trust ordinal every inbound bridge leg collapses onto.
 ///
@@ -255,7 +314,7 @@ impl std::error::Error for AdapterError {}
 /// The single abstraction every inbound bridge leg implements.
 ///
 /// An adapter turns a chain-specific `Attestation` into (a) its [`TrustRung`] and
-/// (b) a [`PortableActionBinding`].  It deliberately exposes no mint-request
+/// (b) a [`ForeignCreditStatement`].  It deliberately exposes no mint-request
 /// constructor: callers must pass both products through
 /// [`crate::conditional_interchain_adapter::ConditionalInterchainAdapter`], which
 /// binds destination, nullifier, recipient, and amount before assembling a
@@ -268,16 +327,16 @@ pub trait InterchainAdapter {
     /// The trust rung this attestation reaches.
     fn trust_rung(&self, att: &Self::Attestation) -> TrustRung;
 
-    /// The `(nullifier, recipient, destination, amount)` binding this attestation
-    /// carries. MUST refuse an all-zero/uninitialized binding
-    /// ([`AdapterError::EmptyAttestation`]) — the Nomad-law tooth.
-    fn to_action_binding(
+    /// The `(nullifier, recipient, destination, amount)` this attestation carries. MUST refuse
+    /// an all-zero/uninitialized statement ([`AdapterError::EmptyAttestation`]) — the Nomad-law
+    /// tooth.
+    fn to_credit_statement(
         &self,
         att: &Self::Attestation,
-    ) -> Result<PortableActionBinding, AdapterError>;
+    ) -> Result<ForeignCreditStatement, AdapterError>;
 }
 
-/// A chain-agnostic attestation: the WHAT ([`PortableActionBinding`]) bundled with
+/// A chain-agnostic attestation: the WHAT ([`ForeignCreditStatement`]) bundled with
 /// the HOW-TRUSTED (any [`TrustDial`]).
 ///
 /// This is the wire an off-chain relayer produces once it has (a) observed a lock /
@@ -285,8 +344,8 @@ pub trait InterchainAdapter {
 /// a dial value.
 #[derive(Clone, Debug)]
 pub struct ChainAttestation<D: TrustDial> {
-    /// The typed `(nullifier, recipient, destination, amount)` binding + its proof.
-    pub binding: PortableActionBinding,
+    /// The typed `(nullifier, recipient, destination, amount)` the relayer observed.
+    pub statement: ForeignCreditStatement,
     /// The chain's raw trust dial (e.g. [`LockProofTrust`], [`SnarkSystem`], …).
     pub dial: D,
 }
@@ -316,16 +375,16 @@ impl<D: TrustDial> InterchainAdapter for DialAdapter<D> {
         att.dial.rung()
     }
 
-    fn to_action_binding(
+    fn to_credit_statement(
         &self,
         att: &Self::Attestation,
-    ) -> Result<PortableActionBinding, AdapterError> {
+    ) -> Result<ForeignCreditStatement, AdapterError> {
         // Nomad-law: an all-zero (uninitialized/default) nullifier is refused here,
         // before any mint request can be built from it.
-        if att.binding.nullifier == [0u8; 32] {
+        if att.statement.nullifier == [0u8; 32] {
             return Err(AdapterError::EmptyAttestation);
         }
-        Ok(att.binding.clone())
+        Ok(att.statement.clone())
     }
 }
 
@@ -367,27 +426,22 @@ mod interchain_adapter_tests {
         )
     }
 
-    /// A NON-empty binding (nonzero nullifier + amount). We do NOT call the real
-    /// STARK prover here (that needs a full witness); the adapter's decision logic
-    /// reads only the plaintext limbs, so a binding with empty `proof_bytes` is a
-    /// faithful fixture for the trust/gate decision under test.
-    fn nonzero_binding(amount: u64) -> PortableActionBinding {
-        PortableActionBinding {
+    /// A NON-empty statement (nonzero nullifier + amount).
+    fn nonzero_statement(amount: u64) -> ForeignCreditStatement {
+        ForeignCreditStatement {
             nullifier: [0x11u8; 32],
             recipient: [0x22u8; 32],
             destination_federation: [0x33u8; 32],
             amount,
-            proof_bytes: Vec::new(),
         }
     }
 
-    fn zero_binding() -> PortableActionBinding {
-        PortableActionBinding {
+    fn zero_statement() -> ForeignCreditStatement {
+        ForeignCreditStatement {
             nullifier: [0u8; 32],
             recipient: [0u8; 32],
             destination_federation: [0u8; 32],
             amount: 0,
-            proof_bytes: Vec::new(),
         }
     }
 
@@ -403,9 +457,9 @@ mod interchain_adapter_tests {
             cid(2),
             cid(9),
             ExpectedCredit {
-                nullifier: att.binding.nullifier,
-                recipient: CellId(att.binding.recipient),
-                amount: att.binding.amount,
+                nullifier: att.statement.nullifier,
+                recipient: CellId(att.statement.recipient),
+                amount: att.statement.amount,
             },
         )
     }
@@ -491,7 +545,7 @@ mod interchain_adapter_tests {
         assert_eq!(
             TrustRung::from(&Verdict::Fraud {
                 claim_hash: [9u8; 32],
-                reason: crate::midnight_verified::VerifiedBridgeError::NullifierMismatch,
+                reason: "nullifier mismatch".to_string(),
             }),
             TrustRung::OptimisticWatchtower {
                 resolved_valid: false
@@ -518,7 +572,7 @@ mod interchain_adapter_tests {
         }
         let adapter = DialAdapter::<LockProofTrust>::new();
         let att = ChainAttestation {
-            binding: nonzero_binding(500),
+            statement: nonzero_statement(500),
             dial: LockProofTrust::ConsensusVerified,
         };
         let req = checked_request(adapter, &att)
@@ -538,7 +592,7 @@ mod interchain_adapter_tests {
         }
         let adapter = DialAdapter::<FinalizedAttestation>::new();
         let att = ChainAttestation {
-            binding: nonzero_binding(700),
+            statement: nonzero_statement(700),
             dial: committee_attestation(4),
         };
         let req = checked_request(adapter, &att)
@@ -562,7 +616,7 @@ mod interchain_adapter_tests {
         // StructureOnly CANNOT mint.
         let adapter = DialAdapter::<LockProofTrust>::new();
         let att = ChainAttestation {
-            binding: nonzero_binding(500),
+            statement: nonzero_statement(500),
             dial: LockProofTrust::StructureOnly,
         };
         let req = checked_request(adapter, &att)
@@ -581,7 +635,7 @@ mod interchain_adapter_tests {
         // Ethereum BindingOnly scaffold: no SNARK yet → false.
         let eth = DialAdapter::<SnarkSystem>::new();
         let eth_att = ChainAttestation {
-            binding: nonzero_binding(1),
+            statement: nonzero_statement(1),
             dial: SnarkSystem::BindingOnly,
         };
         assert!(!checked_request(eth, &eth_att).unwrap().consensus_verified);
@@ -589,10 +643,10 @@ mod interchain_adapter_tests {
         // Midnight watchtower verdict of FRAUD → unresolved → false.
         let mid = DialAdapter::<Verdict>::new();
         let mid_att = ChainAttestation {
-            binding: nonzero_binding(1),
+            statement: nonzero_statement(1),
             dial: Verdict::Fraud {
                 claim_hash: [1u8; 32],
-                reason: crate::midnight_verified::VerifiedBridgeError::NullifierMismatch,
+                reason: "nullifier mismatch".to_string(),
             },
         };
         assert!(!checked_request(mid, &mid_att).unwrap().consensus_verified);
@@ -606,13 +660,13 @@ mod interchain_adapter_tests {
         // can exist.
         let adapter = DialAdapter::<LockProofTrust>::new();
         let att = ChainAttestation {
-            binding: zero_binding(),
+            statement: zero_statement(),
             dial: LockProofTrust::ConsensusVerified,
         };
         assert_eq!(
             adapter
-                .to_action_binding(&att)
-                .expect_err("a zero-nullifier binding is refused"),
+                .to_credit_statement(&att)
+                .expect_err("a zero-nullifier statement is refused"),
             AdapterError::EmptyAttestation
         );
         assert_eq!(

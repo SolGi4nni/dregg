@@ -348,7 +348,7 @@ where
 // it trusts the RPC's finalized commitment. For a dregg LIGHT client (not a
 // re-executing observer) to witness the Midnight transition, the Substrate
 // finality + event inclusion must be folded into the EffectVM — that weld is the
-// parallel circuit swarm's (NOT this module's). See `midnight_verified.rs`.
+// parallel circuit swarm's (NOT this module's).
 //
 // # Why a polling follower (the dependency-light WS equivalent)
 //

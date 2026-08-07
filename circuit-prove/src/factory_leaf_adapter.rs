@@ -1,6 +1,5 @@
 //! Re-prove a factory-born cell's CREATION-BACKING tuple as a RECURSION-FOLDABLE IR-v2 leaf
-//! (the factory analog of [`crate::sovereign_leaf_adapter`] / [`crate::bridge_leaf_adapter`] /
-//! [`crate::custom_leaf_adapter`]).
+//! (the factory analog of [`crate::sovereign_leaf_adapter`] / [`crate::custom_leaf_adapter`]).
 //!
 //! ## What this closes
 //!

@@ -40,13 +40,11 @@ pub mod ethereum;
 /// for finalized `Deposit` logs, runs the off-chain verify (finality + the BR-2-B
 /// escrow-to-contract binding + receipt inclusion), and produces the committed-mint
 /// input. The Ethereum-direction twin of [`solana_relayer`]; the in-circuit witness
-/// of EVM finality is the circuit swarm's VK-epoch (`dregg_circuit::bridge_action_witness`).
+/// of EVM finality is the circuit swarm's VK-epoch (a real foreign-consensus leaf).
 pub mod ethereum_relayer;
 pub mod midnight;
-pub mod midnight_gateway;
 pub mod midnight_inclusion;
 pub mod midnight_observer;
-pub mod midnight_verified;
 pub mod mina;
 /// ⚑⚑ **dregg's own discharge of the claim Pickles DEFERS** — natively, batched, once, out of
 /// circuit, the way the design intends.
@@ -142,7 +140,7 @@ pub mod solana_provenance;
 /// verify (finality + the BR-2-B escrow-to-vault binding + structure/binding),
 /// and produces the committed-mint input. Replaces the in-memory feed stand-in.
 /// The in-circuit witness of the consensus path is the circuit swarm's G1
-/// VK-epoch (`dregg_circuit::bridge_action_witness`). See `solana_relayer` docs and
+/// VK-epoch (a real foreign-consensus leaf). See `solana_relayer` docs and
 /// `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`.
 pub mod solana_relayer;
 
@@ -155,12 +153,12 @@ pub mod solana_relayer;
 /// and the snapshot design.
 pub mod solana_feed;
 
-/// Full-fidelity bridge-action binding: a thin re-export plus a wrapper for
-/// the new sibling AIR `dregg_circuit::bridge_action_witness` that pins
-/// (nullifier, recipient, destination_federation, amount) at full byte/bit
-/// fidelity (no 30-bit amount truncation, no Poseidon2 compression of 32-byte
-/// values into a single felt). See module docs for the integration shape.
-pub mod action_binding;
+// ⚑ `pub mod action_binding` is DELETED (2026-08-07) along with the AIR it wrapped
+// (`dregg_circuit::bridge_action_witness` / `bridge-action-leaf::bridge_action_air_v1`).
+// It bound a PROVER-CHOSEN tuple, had no enforcer anywhere in the tree, and every inbound
+// producer built its `PortableActionBinding` with `proof_bytes: Vec::new()`. The honest
+// successor is `interchain_adapter::ForeignCreditStatement` — the same four fields, no
+// proof field that lies about what backs them.
 
 pub mod verifier;
 
@@ -179,9 +177,6 @@ pub mod conditional_interchain_adapter;
 mod tests;
 
 // Re-export primary types for convenience.
-pub use action_binding::{
-    ActionBindingError, PortableActionBinding, create_action_binding, verify_action_binding,
-};
 pub use authorize::{AuthError, authorize_with_trace};
 pub use conditional_interchain_adapter::{
     ConditionalAdapterError, ConditionalInterchainAdapter, ExpectedCredit,
@@ -195,14 +190,8 @@ pub use ethereum_relayer::{
     eth_deposit_nullifier,
 };
 pub use interchain_adapter::{
-    AdapterError, ChainAttestation, DialAdapter, InterchainAdapter, TrustDial, TrustRung,
-};
-pub use midnight_gateway::{
-    AcceptedEnvelope, BridgeGateway, ClaimFraud, ClaimVerdict, GatewayError, Verdict, Watchtower,
-    claim_hash,
-};
-pub use midnight_verified::{
-    VerifiedBridgeError, VerifiedDreggToMidnight, commit_midnight_recipient,
+    AdapterError, ChainAttestation, DialAdapter, ForeignCreditStatement, InterchainAdapter,
+    TrustDial, TrustRung, Verdict,
 };
 pub use mina_observer::{
     CheckedSegment, MinaBlock, MinaGraphQlRpc, MinaObserver, MinaObserverConfig, MinaRpc,

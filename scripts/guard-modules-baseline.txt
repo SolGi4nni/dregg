@@ -49,8 +49,6 @@ unrooted	Dregg2.Circuit.Emit.AutomataflNGenGolden	22	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.AvailWideMembersNarrow	15	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.BoundPresentationRefine	13	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.BoundPresentationRung2	16	# also-orphan-allow
-unrooted	Dregg2.Circuit.Emit.BridgeActionEmit	12	# also-orphan-allow
-unrooted	Dregg2.Circuit.Emit.BridgeActionRefine	11	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.CommittedThresholdEmit	15	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.CommittedThresholdRefine	17	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.DerivationEmit	12	# also-orphan-allow

@@ -134,7 +134,7 @@ def carryBody (col : Nat) : WindowExpr :=
   Dregg2.Circuit.GateExpr.render Dregg2.Circuit.GateExpr.toWindow (Dregg2.Circuit.GateExpr.gThread col col)
 
 /-- ⚑ **THE BYTE PIN.** `carryBody` is `GateExpr.gThread` at the window view -- the SAME object
-`AccumulatorNonRevocationEmit.constBody`, `BridgeActionEmit.contBody`,
+`AccumulatorNonRevocationEmit.constBody`,
 `EffectActionBindingEmit.contWindowBody` and `DyckStackEmit.wThread` each wrote out separately.
 `rfl`, for every column: no emitted byte moved. -/
 theorem carryBody_eq (col : Nat) :

@@ -1,6 +1,5 @@
 //! Re-prove a `SenderAuthorized` turn's set-MEMBERSHIP tuple as a RECURSION-FOLDABLE
-//! IR-v2 leaf (the membership analog of [`crate::sovereign_leaf_adapter`] /
-//! [`crate::bridge_leaf_adapter`]).
+//! IR-v2 leaf (the membership analog of [`crate::sovereign_leaf_adapter`]).
 //!
 //! ## What this closes
 //!
@@ -348,7 +347,8 @@ pub fn read_exposed_membership(
 ///
 /// THE TOOTH: if the leg claims a tuple the membership leaf does not bind, the per-lane
 /// `connect` is a conflict and the aggregation is UNSAT — no root. This is the
-/// term-for-term membership twin of [`crate::joint_turn_recursive::prove_bridge_binding_node`].
+/// term-for-term membership twin of
+/// [`crate::note_spend_leaf_adapter::prove_note_spend_binding_node`].
 ///
 /// `config` must be [`crate::ivc_turn_chain::ir2_leaf_wrap_config`].
 pub fn prove_membership_binding_node(

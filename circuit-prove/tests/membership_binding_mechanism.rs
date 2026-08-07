@@ -1,6 +1,6 @@
 //! # THE MEMBERSHIP-BINDING FOLD-MECHANISM TOOTH.
 //!
-//! The membership analog of the in-lib custom fold-wire teeth and `bridge_binding_mechanism`: it
+//! The membership analog of the in-lib custom fold-wire teeth: it
 //! exercises the membership-binding MECHANISM end-to-end over REAL recursion leaves, WITHOUT the
 //! deployed `SenderAuthorized` leg's tuple-emit (the named big-bang piece). Two
 //! `prove_membership_leaf_with_claim` leaves — each a genuine membership leaf re-exposing its bound

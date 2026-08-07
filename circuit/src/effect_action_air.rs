@@ -10,14 +10,14 @@
 //! the construction. See the ⚑ on `effect_action_to_descriptor2` for the one place the Rust
 //! construction is genuinely WEAKER than its Lean author.
 //!
-//! Sibling AIR to `bridge_action_witness`. The bridge AIR established the pattern:
+//! Sibling AIR to the (now DELETED) `bridge_action_witness`. That bridge AIR established the pattern:
 //! a 32-byte field becomes 8 BabyBear limbs (4 bytes each), a u64 amount
 //! becomes 4 BabyBear limbs of 16 bits each, and each limb is pinned to a
 //! trace-row-0 column via a boundary constraint. Transition constraints force
 //! every row to equal row 0, so a malicious prover cannot put one set of
 //! parameters in row 0 and another in row 1 to slip past the boundary check.
 //!
-//! `bridge_action_witness` ships a *fixed* schema (nullifier + recipient +
+//! `bridge_action_witness` shipped a *fixed* schema (nullifier + recipient +
 //! destination_federation + amount). This module generalizes the same shape to
 //! an arbitrary list of named 32-byte fields and named u64 amounts, so each
 //! `Effect` variant can have its parameters bound at full fidelity without
@@ -203,14 +203,14 @@ impl EffectActionSchema {
 /// `< 2^16 << p`, so `BabyBear::new` never reduces and two distinct u64s
 /// never share a limb vector. `encode_amount_is_injective` is the tooth.
 ///
-/// ⚑ `bridge_action_witness::encode_amount` was the 2 × 32-bit split carrying
-/// this same defect when this note was first written; it took the identical
-/// repair later the same day (`BRIDGE_ACTION_WIDTH` 26 → 28), so the two
-/// families now agree on `AMOUNT_LIMBS = 4` at `AMOUNT_LIMB_BITS = 16`. The
-/// pigeonhole that forced it — two BabyBear felts cannot injectively carry a
-/// u64, `p² < 2^64` — is a named theorem on both sides
-/// (`BridgeActionEmit.two_felts_cannot_carry_a_u64`,
-/// `bridge_action_witness::tests::two_felts_cannot_carry_a_u64`).
+/// ⚑ `bridge_action_witness::encode_amount` was the 2 × 32-bit split carrying this same defect
+/// when this note was first written; it took the identical repair later the same day, and the
+/// whole AIR was then DELETED (2026-08-07 — a prover-chosen tuple with no enforcer). What forced
+/// the repair in BOTH families is the pigeonhole — two BabyBear felts hold `p²` pairs and a u64
+/// has `2^64` values, so `p² < 2^64` and EVERY 2-felt encoding of a u64 collides. That fact is
+/// not about either AIR; it is about BabyBear and u64, and it now lives NAMED where the surviving
+/// family can cite it: `EffectActionBindingEmit.two_felts_cannot_carry_a_u64` (Lean) and
+/// [`tests::two_felts_cannot_carry_a_u64`] below.
 pub fn encode_amount(amount: u64) -> [BabyBear; AMOUNT_LIMBS] {
     let mut out = [BabyBear::ZERO; AMOUNT_LIMBS];
     for (i, slot) in out.iter_mut().enumerate() {
@@ -670,6 +670,39 @@ pub const SCHEMA_BURN: EffectActionSchema = EffectActionSchema {
 
 #[cfg(test)]
 mod tests {
+    /// ⚑ THE PIGEONHOLE, ASSERTED. Two felts hold `p²` pairs; a u64 has `2^64` values.
+    /// `p² < 2^64`, so EVERY 2-felt encoding of a u64 collides — the retired 2 × 32-bit shape was
+    /// not merely badly chosen, it was IMPOSSIBLE. Four 16-bit limbs are exactly enough and not
+    /// more. Re-homed here 2026-08-07 from `bridge_action_witness`, deleted with its AIR; the
+    /// fact is about BabyBear and u64, not about that AIR, and it is why THIS family is 4 × 16.
+    #[test]
+    fn two_felts_cannot_carry_a_u64() {
+        let p = u128::from(crate::field::BABYBEAR_P);
+        assert!(
+            p * p < 1u128 << 64,
+            "p^2 = {} must be < 2^64 = {} — the pigeonhole that makes any 2-felt u64 encoding \
+             non-injective",
+            p * p,
+            1u128 << 64
+        );
+        assert_eq!(super::AMOUNT_LIMBS as u32 * super::AMOUNT_LIMB_BITS, 64);
+        assert!(
+            (1u128 << super::AMOUNT_LIMB_BITS) <= p,
+            "each 16-bit limb must fit a felt without reduction"
+        );
+    }
+
+    /// The collision the retired 2 × 32-bit split had, one ADDITION away: `BabyBear::new` reduces,
+    /// `p < 2^32`, so `lo = 0` and `lo = p` were the same cell. The 4 × 16 encoding separates them.
+    #[test]
+    fn encode_amount_separates_across_the_reduction_boundary() {
+        assert_ne!(super::encode_amount(0), super::encode_amount(2_013_265_921));
+        assert_ne!(
+            super::encode_amount(1),
+            super::encode_amount(1 + 2_013_265_921)
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -18,8 +18,7 @@
 //!
 //! ⚑ The DEPLOYED leg (the `mintV3` felt-domain mint_hash PI-emit + dual-expose)
 //! is the named VK-gated big-bang piece — see the adapter's module docs. Until the
-//! regen lands this is the MECHANISM tooth (the same status
-//! `prove_bridge_binding_node`'s tooth has); `Dregg2.Circuit.BridgeBackingAttack`
+//! regen lands this is the MECHANISM tooth; `Dregg2.Circuit.BridgeBackingAttack`
 //! STANDS.
 
 use dregg_circuit::field::BabyBear;

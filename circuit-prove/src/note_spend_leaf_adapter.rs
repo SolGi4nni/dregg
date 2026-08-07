@@ -12,16 +12,17 @@
 //! carries the SPEND SEMANTICS — spending-key knowledge (the two-step 8-limb
 //! nullifier chain C3/C4), the FULL-WIDTH 28-limb commitment binding (C2a..C2g),
 //! and Merkle membership (the `hash_fact(current, [sib0..2, position])` chain C6/C7)
-//! — everything `bridge_action_witness` does NOT have. (`SCHEMA_NOTE_SPEND` in
+//! — everything the DELETED `bridge_action_witness` binding AIR did NOT have. (`SCHEMA_NOTE_SPEND` in
 //! `effect_action_air.rs` is a different surface: the in-federation binding schema
 //! for `Effect::NoteSpend` rows, not the bridge's foreign backing proof.)
 //!
-//! ## Why this module exists — folding `bridge_action_witness` is UNSOUND as a backing
+//! ## Why this module exists — folding `bridge_action_witness` was UNSOUND as a backing
 //!
-//! [`crate::bridge_leaf_adapter`] folds `BridgeActionAir`, which is a BINDING-ONLY
-//! AIR: its 26-limb tuple is a prover-chosen constant trace with NO Merkle membership
-//! and NO spending-key relation, and the deployed `mint_hash` is read by ZERO
-//! constraints. A leaf that re-proves only the binding AIR gives a light client a
+//! ⚑ That AIR and its fold adapter are DELETED (2026-08-07); this section records WHY, because
+//! the reason is the reason this module is the backing. `bridge_leaf_adapter` folded
+//! `BridgeActionAir`, a BINDING-ONLY AIR: its 26-limb tuple was a prover-chosen constant trace
+//! with NO Merkle membership and NO spending-key relation, and the deployed `mint_hash` was read
+//! by ZERO constraints. A leaf that re-proves only the binding AIR gives a light client a
 //! tuple the prover invented — the vacuous connect the fail-open law forbids. The
 //! SOUND backing leaf is THIS one: re-prove the real note-spend STARK, so the folded
 //! claim is welded (through the FRI-bound descriptor PIs) to a genuine
@@ -535,8 +536,7 @@ pub fn prove_note_spend_leaf(
 /// 7-slot claim tuple `[nullifier, merkle_root, value_lo, asset_type,
 /// destination_federation, value_hi, mint_hash]` as an IN-CIRCUIT `expose_claim`
 /// (lanes `[0 .. NOTE_SPEND_CLAIM_LEN)`), read from the leaf's own FRI-bound
-/// descriptor PIs — the note-spend analog of
-/// [`crate::bridge_leaf_adapter::prove_bridge_leaf_tuple_claim`].
+/// descriptor PIs.
 ///
 /// The exposed lane 6 is the in-AIR-recomputed [`note_spend_mint_hash_felt`]; lane 0
 /// is the nullifier (the double-mint guard's connect target — `NOTESPEND_NULLIFIER`
@@ -600,8 +600,7 @@ fn prove_note_spend_inner(
 /// ([`prove_note_spend_leaf_with_claim`]), CONNECTING the two tuples lane-by-lane
 /// in-circuit and re-exposing the bound tuple. A leg claiming a
 /// `(…, mint_hash)`/nullifier no verifying note-spend backs is a `connect` conflict
-/// ⇒ UNSAT ⇒ no root — the term-for-term note-spend twin of
-/// [`crate::joint_turn_recursive::prove_bridge_binding_node`].
+/// ⇒ UNSAT ⇒ no root.
 ///
 /// ⚑ The DEPLOYED leg side (the `mintV3` mint_hash PI-emit + dual-expose) is the
 /// named VK-gated big-bang piece (module docs); this node is its ready consumer.
@@ -676,8 +675,7 @@ pub fn prove_note_spend_binding_node(
 }
 
 /// **THE SEGMENT-PRESERVING NOTE-SPEND BINDING NODE (deployed-path shape, VK-gated
-/// consumer).** The note-spend twin of
-/// [`crate::joint_turn_recursive::prove_bridge_binding_node_segmented`]: the leg is a
+/// consumer).** The leg is a
 /// DUAL-EXPOSE leaf (`expose_claim` = segment lanes `[0 .. SEG_WIDTH)` ++ the claimed
 /// tuple lanes `[SEG_WIDTH ..)`), the sub-proof leaf is
 /// [`prove_note_spend_leaf_with_claim`]; the node `connect`s the tuple lanes and

@@ -40,7 +40,6 @@ metatheory/Dregg2/Circuit/Emit/AutomataflStepEmit.lean	dregg-automatafl/src/air.
 metatheory/Dregg2/Circuit/Emit/AutomataflStepEmit.lean	dregg-automatafl/src/builder.rs
 metatheory/Dregg2/Circuit/Emit/BlindedMembershipEmit.lean	bridge/present.rs
 metatheory/Dregg2/Circuit/Emit/BlindedMembershipWideEmit.lean	bridge/present.rs
-metatheory/Dregg2/Circuit/Emit/BridgeActionEmit.lean	circuit/src/bridge_action_air.rs
 metatheory/Dregg2/Circuit/Emit/CapOpenEmit.lean	cell/facet.rs
 metatheory/Dregg2/Circuit/Emit/DfaRoutingGeneralEmit.lean	circuit/src/stark.rs
 metatheory/Dregg2/Circuit/Emit/DfaRoutingRefine.lean	circuit/src/stark.rs
