@@ -96,7 +96,7 @@ fn an_honest_anchor_verifies_and_yields_the_turn_hash() {
     assert_eq!(verified.receipt_quorum_signers, 1);
     assert_eq!(verified.receipt_hash, anchor.receipt.receipt_hash());
     // The 8-felt pair rides along, REPORTED. It is not the proof's — see
-    // `turn_anchor_state_commits_are_not_the_proof_anchors.rs`.
+    // `turn/tests/receipt_state_commit_is_not_the_proof_state_commit.rs`.
     assert_eq!(verified.receipt_pre_state_commit, [0x11; 32]);
     assert_eq!(verified.receipt_post_state_commit, [0x22; 32]);
     // The hybrid vote quorum is absent in this fixture, and its absence never gates.
