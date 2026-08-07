@@ -481,6 +481,115 @@ theorem underflowingBurn_rejects :
       if c = B_NEW0 then 65535 else if c = B_AMT0 then 1 else if c = B_BRW2 then 1
       else if c = B_WB0 then 1 else 0) ≠ 0 := by decide
 
+/-! ### ⚑ THE FLOOR, PROVED FALSE — `BurnLimbsCanonical` is NECESSARY, not decorative.
+
+`burn_chain_exact_of_modEq` and `burn_no_underflow` both carry `BurnLimbsCanonical` as a named
+hypothesis. What decides whether a `rangeTableDef 16` lookup is worth BUILDING is whether that
+hypothesis is DISCHARGEABLE — whether the eleven gates plus the four-limb structure already force
+it. **They do not**, and the witness is one subtraction from the honest row.
+
+`pRow` sets `old = 0`, `new = 1`, `amt = p - 1 = 2013265920`, every borrow `0`, `was_burn = 1`.
+Every cell is a legal field element. The low chain body is then `1 + (p-1) - 0 - 0 = p`, which the
+prover's field reading sees as ZERO while its ℤ reading is `p`; the other ten bodies are `0`
+outright. So the row SATISFIES the whole algebraic block — and its decoded u64s say
+`old_balance = 0`, `amount = 2013265920`, `new_balance = 1`: a burn of two billion units out of an
+empty balance, ending RICHER than it started.
+
+The hypothesis is therefore SATISFIABLE (`demoBurnRow_canonical`), the theorems genuinely FIRE under
+it (`borrowBurnRow_exact`), and it is REFUTABLE and NOT PROVABLE from the gates
+(`burnLimbsCanonical_is_load_bearing`). A real floor, not a decorative one. Nothing weaker than a
+range lookup on the twelve chain limbs closes it INSIDE this descriptor.
+
+⚠ **What stands in for it today, named at its call site.** On the deployed executor path the twelve
+limbs are not prover-chosen at all: `verify_effect_binding_proofs_with_ledger`
+(`turn/src/executor/proof_verify.rs:2029-2103`) reconstructs all four amounts from its OWN ledger
+snapshot, builds the PI vector through `EffectActionWitness::public_inputs` — i.e. through the
+INJECTIVE 16-bit `encode_amount` — and STARK-verifies against THAT vector, which the `piBinding`
+gates pin to row 0. Every chain limb is `< 2^16` by the verifier's own construction, so `pRow` is
+unreachable there. It is reachable for any consumer that verifies such a proof STANDALONE, which is
+exactly the reader this theorem exists for. (⚠ That deployed path also runs the *Rust*-lowered
+descriptor, which carries NONE of the eleven gates — `circuit/tests/burn_air_conservation_gap.rs`
+is the falsifier for that separate, larger gap.) -/
+
+/-- The counterexample row: `old = 0`, `new = 1`, `amt = p - 1`, no borrows, `was_burn = 1`. Every
+cell is in `[0, p)`; only the CANONICALITY of the amount limb is violated. -/
+def pRow : Assignment := fun c =>
+  if c = B_NEW0 then 1 else if c = B_AMT0 then 2013265920
+  else if c = B_WB0 then 1 else 0
+
+/-- `pRow` is NOT canonical — its low amount limb is `p - 1`, far past `2^16`. -/
+theorem pRow_not_canonical : ¬ BurnLimbsCanonical pRow := by
+  rintro ⟨hl, -, -, -⟩
+  have h := hl B_AMT0 (by simp)
+  have e : pRow B_AMT0 = 2013265920 := rfl
+  omega
+
+/-- The four chain bodies vanish MOD `p` on `pRow` — the exact check the deployed prover performs.
+⚑ The low body is `p` itself over ℤ, which is the whole trick. -/
+theorem pRow_chain_holds_mod_p :
+    cSub0Body.eval pRow ≡ 0 [ZMOD 2013265921]
+    ∧ cSub1Body.eval pRow ≡ 0 [ZMOD 2013265921]
+    ∧ cSub2Body.eval pRow ≡ 0 [ZMOD 2013265921]
+    ∧ cSub3Body.eval pRow ≡ 0 [ZMOD 2013265921] := by
+  refine ⟨Int.modEq_zero_iff_dvd.mpr ⟨1, by decide⟩,
+          Int.modEq_zero_iff_dvd.mpr ⟨0, by decide⟩,
+          Int.modEq_zero_iff_dvd.mpr ⟨0, by decide⟩,
+          Int.modEq_zero_iff_dvd.mpr ⟨0, by decide⟩⟩
+
+/-- The low chain body is `p` over ℤ — NOT zero. This is the gap between the field reading the
+prover checks and the ℤ reading `burn_chain_exact` needs. -/
+theorem pRow_low_body_is_p : cSub0Body.eval pRow = 2013265921 := rfl
+
+/-- The seven non-chain gates (three borrow booleanity + four disclosure pins) vanish outright. -/
+theorem pRow_aux_gates_hold :
+    (cBoolBody B_BRW0).eval pRow = 0 ∧ (cBoolBody B_BRW1).eval pRow = 0
+    ∧ (cBoolBody B_BRW2).eval pRow = 0 ∧ cWasBurn0Body.eval pRow = 0
+    ∧ cWasBurn1Body.eval pRow = 0 ∧ cWasBurn2Body.eval pRow = 0
+    ∧ cWasBurn3Body.eval pRow = 0 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- The decoded u64s are the GENUINE ones, not a degenerate `0 = 0`: `old = 0`, `new = 1`,
+`amount = 2013265920`. ⚠ The ROUND-TRIP out of the limbs is what makes the next two theorems
+readable as balances rather than as felts. -/
+theorem pRow_decodes :
+    u64Of (pRow B_OLD0) (pRow B_OLD1) (pRow B_OLD2) (pRow B_OLD3) = 0
+    ∧ u64Of (pRow B_NEW0) (pRow B_NEW1) (pRow B_NEW2) (pRow B_NEW3) = 1
+    ∧ u64Of (pRow B_AMT0) (pRow B_AMT1) (pRow B_AMT2) (pRow B_AMT3) = 2013265920 := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- **The exactness conclusion is FALSE on `pRow`**: `0 ≠ 1 + 2013265920`. -/
+theorem pRow_breaks_exactness :
+    u64Of (pRow B_OLD0) (pRow B_OLD1) (pRow B_OLD2) (pRow B_OLD3)
+      ≠ u64Of (pRow B_NEW0) (pRow B_NEW1) (pRow B_NEW2) (pRow B_NEW3)
+        + u64Of (pRow B_AMT0) (pRow B_AMT1) (pRow B_AMT2) (pRow B_AMT3) := by decide
+
+/-- **…and so is the availability conclusion**: the row burns `2013265920` from a balance of `0`. -/
+theorem pRow_breaks_no_underflow :
+    ¬ (u64Of (pRow B_AMT0) (pRow B_AMT1) (pRow B_AMT2) (pRow B_AMT3)
+        ≤ u64Of (pRow B_OLD0) (pRow B_OLD1) (pRow B_OLD2) (pRow B_OLD3)) := by decide
+
+/-- ⚑ **`burnLimbsCanonical_is_load_bearing` — THE FLOOR, PROVED FALSE.** There EXISTS an assignment
+satisfying every chain gate mod `p` and every auxiliary gate outright, which is NOT canonical and
+which violates BOTH ℤ-conclusions the canonical theorems reach. So `BurnLimbsCanonical` cannot be
+dropped from `burn_chain_exact_of_modEq` or from `burn_no_underflow`, and no range-free
+strengthening of either exists. This is what makes the missing `rangeTableDef 16` a REAL residual
+rather than a stylistic one. -/
+theorem burnLimbsCanonical_is_load_bearing :
+    ∃ a : Assignment,
+      (cSub0Body.eval a ≡ 0 [ZMOD 2013265921] ∧ cSub1Body.eval a ≡ 0 [ZMOD 2013265921]
+        ∧ cSub2Body.eval a ≡ 0 [ZMOD 2013265921] ∧ cSub3Body.eval a ≡ 0 [ZMOD 2013265921])
+      ∧ ((cBoolBody B_BRW0).eval a = 0 ∧ (cBoolBody B_BRW1).eval a = 0
+        ∧ (cBoolBody B_BRW2).eval a = 0 ∧ cWasBurn0Body.eval a = 0
+        ∧ cWasBurn1Body.eval a = 0 ∧ cWasBurn2Body.eval a = 0 ∧ cWasBurn3Body.eval a = 0)
+      ∧ ¬ BurnLimbsCanonical a
+      ∧ u64Of (a B_OLD0) (a B_OLD1) (a B_OLD2) (a B_OLD3)
+          ≠ u64Of (a B_NEW0) (a B_NEW1) (a B_NEW2) (a B_NEW3)
+            + u64Of (a B_AMT0) (a B_AMT1) (a B_AMT2) (a B_AMT3)
+      ∧ ¬ (u64Of (a B_AMT0) (a B_AMT1) (a B_AMT2) (a B_AMT3)
+            ≤ u64Of (a B_OLD0) (a B_OLD1) (a B_OLD2) (a B_OLD3)) :=
+  ⟨pRow, pRow_chain_holds_mod_p, pRow_aux_gates_hold, pRow_not_canonical,
+    pRow_breaks_exactness, pRow_breaks_no_underflow⟩
+
 /-- Continuity: agrees ⇒ 0; differs ⇒ ≠ 0. -/
 theorem cont_accepts_chained :
     (contWindowBody 3).eval ⟨fun _ => 5, fun _ => 5, fun _ => 0, fun _ => 0⟩ = 0 := by decide
@@ -512,5 +621,13 @@ theorem cont_rejects_stash :
 #assert_axioms borrowBurnRow_exact
 #assert_axioms forgedBorrow_rejects
 #assert_axioms underflowingBurn_rejects
+#assert_axioms pRow_not_canonical
+#assert_axioms pRow_chain_holds_mod_p
+#assert_axioms pRow_low_body_is_p
+#assert_axioms pRow_aux_gates_hold
+#assert_axioms pRow_decodes
+#assert_axioms pRow_breaks_exactness
+#assert_axioms pRow_breaks_no_underflow
+#assert_axioms burnLimbsCanonical_is_load_bearing
 
 end Dregg2.Circuit.Emit.EffectActionBindingEmit
