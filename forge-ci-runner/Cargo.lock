@@ -899,6 +899,7 @@ name = "dregg-circuit"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-codec",
  "dregg-dsl",
  "getrandom 0.3.4",
  "itertools 0.14.0",
@@ -925,6 +926,13 @@ dependencies = [
  "rmp-serde",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "dregg-codec"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
