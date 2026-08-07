@@ -18,8 +18,13 @@ parses and proves through:
 VK name: `dregg-shielded-spend-exact-fsi2::v1`.
 
 ## Scope (honest) — what this descriptor is and is NOT
-It is the MEMBERSHIP FOLD + two-carrier PI exposure — the routable core of #15. It does NOT include
-(named rungs, composed later):
+⚑ **NOT THE ROUTE TARGET (pass B, 2026-08-07).** This is the proven MEMBERSHIP CORE RUNG; the
+ROUTABLE object is `ShieldedSpendCompleteEmit.shieldedSpendCompleteDesc`
+(`dregg-shielded-spend-complete-fsi2::v1`), whose constraint list extends this one verbatim and
+adds the FSI2 leaf sponge, the nullifier derivation and the wide-carrier binding. Routing THIS
+descriptor would drop the nullifier and value-binding checks — a regression worse than #15.
+It is the MEMBERSHIP FOLD + two-carrier PI exposure. It does NOT include
+(the completion rungs, landed in `ShieldedSpendCompleteEmit`):
   * the FSI2 LEAF sponge tying row-0 `current` to the note-commitment preimage (the value/nullifier
     side; `current` is the opened membership leaf, a witness here);
   * the BINDING of the 16 carrier lanes to the real `cap_node8` image (the reserved non-identity
