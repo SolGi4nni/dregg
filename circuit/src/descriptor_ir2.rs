@@ -588,8 +588,38 @@ const BUS_UMEM_LOG: &str = "ir2_umem_log";
 /// materialized size would refuse manifests the four-way cut is sized for, and that is a workload
 /// decision rather than a correctness one.
 const MAX_EXACT_PUBLIC_ROWS: usize = 1 << 21;
-const MAX_EXACT_PUBLIC_ARITY: usize = 64;
-const MAX_EXACT_PUBLIC_CELLS: usize = 1 << 25;
+/// ⚑ **FLAG DAY (2026-08-06): `64 → 97`, and this constant bounds NO RESOURCE.**
+///
+/// It is the MEMBER COUNT of `descriptors/table-airs/dregg-ir2-exact-public-v1.json` — a mirror of
+/// `ExactPublicTableEmit.EP_MAX_ARITY`, which is the source. Read at both of its readers before the
+/// raise:
+///
+/// * [`check_descriptor2`] admits `1 ..= MAX_EXACT_PUBLIC_ARITY`, and
+/// * [`exact_public_lean_instance`] REFUSES when this number is not
+///   `exact_public_table_air_family().len()` — a pure drift guard whose own message says the
+///   remedy, *"re-emit `dregg-ir2-exact-public-v1.json` or re-pin the cap"*.
+///
+/// Nothing else reads it. What bounds the verifier's allocation is the ROW and CELL caps above and
+/// below (`rows ≤ 2^21`, `rows · arity ≤ 2^25`), against a committed preprocessed matrix of
+/// `next_pow2(distinct) × (arity + 2)` — and neither moves with this ceiling. The whole price of
+/// the raise is the artifact's bytes: **63 429 → 128 142** (`O(arity²)`; the family renders
+/// `arity + 1` tuple entries per member).
+///
+/// ⚑ `97 = 1 + 3 · 32` is a PROJECTIVE PASTA POINT's routing tuple in the sound 8-bit encoding —
+/// a key plus `3 × 32` limbs — which `MinaAccumulatorAir.addendTable` declares and
+/// `dregg-mina-accumulator-routed::v1` queries. The cap is set to exactly the widest tuple any
+/// deployed descriptor needs, so the next one to outgrow it moves this number visibly.
+///
+/// ⚠ It was introduced (`dc285da37`) under a comment justifying ROWS and CELLS — *"each row becomes
+/// one batch instance, so bound the grammar before allocation"* — an argument about INSTANCE COUNT,
+/// which arity does not scale. Its two siblings have since moved by `2^14×` and `2^13×`.
+const MAX_EXACT_PUBLIC_ARITY: usize = 97;
+/// ⚑ **PUBLIC SO THE CAP CAN BE MEASURED AGAINST WHAT IT ACTUALLY BOUNDS.** The enforcement below
+/// compares this against `rows.len() * arity` — the DECLARED multiset, duplicates kept — while the
+/// only matrix anything materialises is [`ExactPublicManifest::committed_shape`]. A Lean-side cell
+/// model that transcribed either number would be a pin against its own definition; exporting the
+/// constant and the shape function is what lets the two sides disagree out loud.
+pub const MAX_EXACT_PUBLIC_CELLS: usize = 1 << 25;
 
 /// The committed height floor of an exact-public instance: p3 needs a power-of-two height and a
 /// two-row window, so a one-row manifest still commits two rows.
@@ -3445,6 +3475,22 @@ impl ExactPublicManifest {
     /// [`exact_public_lean_instance`], so a layout drift between the two sides REFUSES.
     const fn prep_width(&self) -> usize {
         self.arity + 2
+    }
+
+    /// ⚑ **THE COMMITTED SHAPE OF A DECLARED MANIFEST — `(height, prep_width)`**, computed by the
+    /// deployed dedup rather than by a restatement of it.
+    ///
+    /// This exists because [`MAX_EXACT_PUBLIC_CELLS`] is denominated in `rows.len() * arity` and
+    /// **nothing allocates that quantity.** What is allocated is
+    /// `max(next_pow2(|distinct rows|), MIN_EXACT_PUBLIC_HEIGHT) * (arity + 2)`, which for a
+    /// manifest carrying multiplicity is smaller by the average multiplicity and larger by the
+    /// power-of-two round and the two extra columns. `PastaMsmBucketed` §6c prices the deployed SRS
+    /// manifest against this function; before 2026-08-06 it priced it against `n * (arity + 2)`,
+    /// which was wrong by 2× because it forgot that the all-zero PAD row is a distinct row and so
+    /// pushes `next_pow2` up a rung.
+    pub fn committed_shape(rows: &[Vec<u32>], arity: usize) -> (usize, usize) {
+        let m = Self::of(0, rows, arity);
+        (m.height, m.prep_width())
     }
 
     /// The preprocessed matrix: `[table_id, value_0 … value_{arity−1}, multiplicity]`, padded to

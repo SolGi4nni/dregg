@@ -1135,16 +1135,27 @@ prep_width` — one column WIDER than `arity`."* Those are different numbers whe
 MULTIPLICITY, and an SRS manifest is nothing but multiplicity: it declares one row per TRACE row
 (the balance is a permutation) over only `n` DISTINCT generators.
 
-At the real object the gap is a factor of 21:
+⚠ **CORRECTED 2026-08-06 — THIS SECTION'S OWN FIGURE WAS WRONG BY 2×, AND IN THE FLATTERING
+DIRECTION.** It read the committed height off `n = 2^16` and called it "already a power of two".
+`srsManifest` does not declare `n` distinct rows. It declares `termRows = 20 × 65,536 = 1,310,720`
+real rows — each generator once per window, so `n` DISTINCT — and then pads to `bucketedRows =
+1,474,800` with `164,080` copies of the all-zero `SRS_TUP`-tuple. A real row begins with `i + 1 ≥ 1`
+and the pad row begins with `0`, so **the pad is a 65,537th distinct row**, `next_pow2` rounds to
+`2^17` rather than `2^16`, and the committed matrix is twice what this section claimed.
+
+At the real object the gap is a factor of **10**, not 21:
 
   * declared, which the cap counts: `1,474,800 × 28 = 41,294,400` — over the `2^25` cap;
-  * committed, which the verifier materialises: `65,536 × 30 = 1,966,080` — **7.9 MB, and 5.9% of
-    the cap.**
+  * committed, which the verifier materialises: `max(next_pow2(65,537), 2) × 30 = 131,072 × 30 =
+    3,932,160` — **15.7 MB, and 11.7% of the cap.**
 
 The two tables whose distinct count really is their declared count (`schedule`, keyed by row index,
-and `cover`) commit `2^21 × 5` each, and the three together are `22,937,600` cells — `91.8 MB`
-against the `276.8 MB` worst case `exactpublic_lean_emission_differential` already measures as
-admissible. **Nothing here is near a real limit.**
+and `cover`, keyed by `(window, index)`) commit `2^21 × 5` each, and the three together are
+`24,903,680` cells — `99.6 MB` against the `276.8 MB` worst case
+`exactpublic_lean_emission_differential` already measures as admissible. **Nothing here is near a
+real limit** — but the margin is 1.35× against the cap, not the 3× the old figure implied, and a
+section arguing that a cap is denominated in the wrong quantity has no business mis-denominating
+its own replacement.
 
 ⚑ **So the recommendation is neither of §6's two options.** Raising the constant would admit
 manifests whose COMMITTED size really is large; splitting the SRS manifest in two would route
@@ -1157,30 +1168,78 @@ and a manifest that genuinely would cost the verifier `2^25` cells is still refu
 multiplicity column and the table-id column (`descriptor_ir2.rs::ExactPublicManifest`). -/
 def prepWidthOf (arity : Nat) : Nat := arity + 2
 
-/-- What the VERIFIER materialises for the SRS manifest: one row per DISTINCT generator, rounded to
-a power of two, at `prep_width`. `n = 2^16` is already a power of two. -/
-def srsCommittedCells (n : Nat) : Nat := n * prepWidthOf SRS_TUP
+/-- ⚑ **THE MANIFEST IS PADDED, so `distinct` is not `n`.** `srsManifest` emits `termRows` real
+rows and pads to `bucketedRows`; at the real object the pad is non-empty, so an all-zero row is
+declared alongside the `n` generator rows. -/
+theorem the_srs_manifest_really_pads :
+    termRows STEP_SRS FULL_BITS BEST_C < bucketedRows STEP_SRS FULL_BITS BEST_C := by decide
 
-/-- ⚑ **The cap over-counts the SRS manifest by 21×.** The declared figure `srs_cells_exceed_the_
-deployed_cap` refutes against is 21 times the matrix the verifier actually commits. -/
-theorem srs_declared_overcounts_committed_by_21x :
-    21 * srsCommittedCells STEP_SRS ≤ srsCells STEP_SRS FULL_BITS BEST_C := by decide
+/-- ⚑ **…and the pad row is a row the generator rows never produce**, so it raises the distinct
+count rather than collapsing into one of them. Every real row's head is `i + 1`; the pad's is `0`.
+This is what `next_pow2` is applied to, and it is why `2^16` was the wrong height. -/
+theorem the_pad_row_is_distinct_from_every_generator_row (i k : Nat) (ls : List Nat) :
+    ((i + 1) :: ls) ≠ List.replicate (k + 1) 0 := by
+  intro h
+  rw [List.replicate_succ] at h
+  injection h with hhead _
+  exact Nat.succ_ne_zero i hhead
 
-/-- ⚑ **…and the committed matrix is well under the cap** — 5.9% of it. So the descriptor that
-`srs_cells_exceed_the_deployed_cap` says would be REFUSED costs the verifier `7.9 MB`. -/
+/-- …and the SRS tuple really is one of the `k + 1` widths the lemma above covers, so it applies to
+the emitted manifest and not merely to a nearby shape. -/
+theorem srs_tup_is_a_successor : SRS_TUP = 27 + 1 := by decide
+
+/-- The DISTINCT row count of the SRS manifest: one per generator, plus the pad. -/
+def srsDistinctRows : Nat := STEP_SRS + 1
+
+/-- The height `ExactPublicManifest::of` allocates — `max(next_pow2(distinct), 2)`. Stated as the
+LEAST power of two that covers `srsDistinctRows`, which is the property `next_pow2` has, rather
+than as a transcribed constant. -/
+def srsCommittedHeight : Nat := 131072
+
+/-- ⚑ **`next_pow2(65,537) = 2^17`** — it covers the distinct count, it is a power of two, and the
+power below it does NOT cover: exactly the three facts that make it the height Rust computes. The
+old section asserted `2^16` and never checked the third. -/
+theorem srs_committed_height_is_the_least_covering_power_of_two :
+    srsDistinctRows ≤ srsCommittedHeight
+    ∧ srsCommittedHeight = 2 ^ 17
+    ∧ 2 ^ 16 < srsDistinctRows := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- What the VERIFIER materialises for the SRS manifest: `next_pow2(distinct)` rows at `prep_width`
+(`descriptor_ir2.rs::ExactPublicManifest::of`, which deduplicates and pins a multiplicity column). -/
+def srsCommittedCells : Nat := srsCommittedHeight * prepWidthOf SRS_TUP
+
+/-- ⚑ **The cap over-counts the SRS manifest by 10×**, bracketed on both sides so the factor is
+pinned rather than rounded. The declared figure `srs_cells_exceed_the_deployed_cap` refutes against
+is between 10 and 11 times the matrix the verifier actually commits.
+
+⚠ This replaces `srs_declared_overcounts_committed_by_21x`, which was FALSE at the deployed
+allocator: it modelled the committed height as `n = 2^16`, ignoring both the pad row and
+`next_pow2`. -/
+theorem srs_declared_overcounts_committed_by_10x :
+    10 * srsCommittedCells ≤ srsCells STEP_SRS FULL_BITS BEST_C
+    ∧ srsCells STEP_SRS FULL_BITS BEST_C < 11 * srsCommittedCells := by
+  refine ⟨by decide, by decide⟩
+
+/-- ⚑ **…and the committed matrix is still well under the cap** — 11.7% of it, against the 5.9%
+this section used to claim. So the descriptor that `srs_cells_exceed_the_deployed_cap` says would
+be REFUSED costs the verifier `15.7 MB`. -/
 theorem srs_committed_cells_fit :
-    100 * srsCommittedCells STEP_SRS < 6 * MAX_EP_CELLS := by decide
+    100 * srsCommittedCells < 12 * MAX_EP_CELLS := by decide
 
 /-- The whole layout's committed exact-public footprint: the SRS matrix plus the two tables whose
 distinct count IS their declared count, each rounded up to `2^21`. -/
 def committedExactPublicCells : Nat :=
-  srsCommittedCells STEP_SRS + 2097152 * prepWidthOf COVER_TUP + 2097152 * prepWidthOf SCHED_TUP
+  srsCommittedCells + 2097152 * prepWidthOf COVER_TUP + 2097152 * prepWidthOf SCHED_TUP
 
-/-- ⚑ **`22,937,600` cells = `91.8 MB`** — a third of the `69,206,016` worst case the deployed
-differential already measures as admissible. -/
+/-- ⚑ **`24,903,680` cells = `99.6 MB`** — under the `69,206,016` worst case the deployed
+differential already measures as admissible, and under the `2^25` cap itself, though by 1.35× and
+not the 3× the pre-correction figure implied. -/
 theorem committed_footprint_is_under_the_measured_worst_case :
-    committedExactPublicCells = 22937600 ∧ committedExactPublicCells < 69206016 := by
-  constructor <;> decide
+    committedExactPublicCells = 24903680
+    ∧ committedExactPublicCells < 69206016
+    ∧ committedExactPublicCells < MAX_EP_CELLS := by
+  refine ⟨by decide, by decide, by decide⟩
 
 /-! ## §6d — ⚑ THE PRICE ON THE SOUND GATE, which is the real one.
 
@@ -1568,7 +1627,11 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms wrap_srs_fused_beats_naive
 #assert_axioms wrap_srs_fused_is_about_21x
 #assert_axioms wrap_srs_fused_fits_one_instance
-#assert_axioms srs_declared_overcounts_committed_by_21x
+#assert_axioms the_srs_manifest_really_pads
+#assert_axioms the_pad_row_is_distinct_from_every_generator_row
+#assert_axioms srs_tup_is_a_successor
+#assert_axioms srs_committed_height_is_the_least_covering_power_of_two
+#assert_axioms srs_declared_overcounts_committed_by_10x
 #assert_axioms srs_committed_cells_fit
 #assert_axioms committed_footprint_is_under_the_measured_worst_case
 #assert_axioms sound_rcb_reproduces_the_in_tree_figure
