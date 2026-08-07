@@ -307,6 +307,64 @@ def forgedDemo : Felt := 99
 -- A genuine two-level chain folds as claimed: Hdemo 407 lvlDemo = 407*4 + 10 + 1 = 1639.
 #guard decide (foldPath Hdemo forgedDemo [lvlDemo, lvlDemo] = 1639) = true
 
+/-! ## 6.5 ⚑ THE RUST NOW PINS AT THE EXECUTOR (2026-08-07) — and why `accepts` STILL STANDS.
+
+**Read this before flipping anything in this file.**
+
+`apply_shielded_transfer` no longer receives a root. `ShieldedTransferPayload.merkle_root` is
+DELETED; the executor reads `note_shielded.root8()` from live state (GATE 0) and every input's
+`dregg-shielded-spend-complete-fsi2::v1` proof is judged with it as the 8-lane `piCommitted`. The
+deployed-path exhibit is the KAT `executor_theft_forged_tree_refuses_on_the_deployed_path`
+(`turn-prover/tests/shielded_executor.rs`): ONE payload, TWO executors differing only in committed
+state — accepted by an executor whose accumulator IS the attacker's tree (so the payload is well
+formed in every respect), REFUSED by one holding the real accumulator.
+
+So `accepts` — the root-ignoring predicate of §2 — is no longer HEAD-faithful for the SPEND SIDE.
+`acceptsPinned` is. `pin_rejects_root_substitution` has become a statement about the deployed
+verifier rather than a proposed one.
+
+**AND YET `deployed_admits_but_pin_rejects` IS NOT FLIPPED, DELIBERATELY.** The obvious move — retire
+`accepts`, restate the theorem over `acceptsPinned`, and compose `ShieldedOnRampPin.
+shieldA_pin_closes_15` to conclude the spend is LEDGER-AUTHORIZED — would be an OVERCLAIM, because
+that composition's premise is measurably false at HEAD:
+
+  * `shieldA_pin_closes_15` needs `FoldReachIsMember … (IsLedgerNote hash auth)`, discharged via
+    `shieldAppend_is_ledger_note` — *every* leaf in the accumulator is a note the boundary gate
+    authorized.
+  * `apply_shield` GATE 4 appends the Poseidon2 `piCM` and satisfies that. **`apply_shielded_transfer`
+    GATE 4 does not**: it appends the output leg's Ristretto Pedersen `commitment_bytes`, chosen by
+    the prover. `note_shielded` therefore holds BOTH shapes, and `ShieldedOnRampPin.
+    deployed_append_unsound` / `l4_pin_over_deployed_append_relocates_15` are still true of the
+    transfer-written half.
+
+**What actually blocks the relocation, and at what resolution.** A spendable leaf's address is
+`felt_to_bytes32(cCM)` — four significant bytes and twenty-eight ZERO — because the Lean-emitted
+complete-spend relation pins `cADDR0`/`cADDR1` and constrains the higher limbs to zero, while the
+accumulator's leaf address is the RAW 32 bytes (sixteen `u16` limbs, `2^256` on the nose). A
+transfer-appended leaf must decompress as a valid Ristretto point for the conservation gate, so
+landing one in that subspace needs a compressed encoding with 224 zero bits: ~`2^-224`.
+
+That argument is an **ENCODING DISJOINTNESS**, and this model cannot see it — `Felt := ℤ`, `Note` has
+no byte encoding, so `l4_pin_over_deployed_append_relocates_15`'s freely-chosen `deployedAppendLeaf
+wire` is realizable IN THE MODEL and infeasible IN DEPLOYMENT. It is checked only by the Rust KAT
+`transfer_output_append_is_prover_written_and_cannot_be_opened_by_any_spend`, which asserts the
+appended bytes lie outside the openable subspace. **A Rust case-test is not a theorem**; this is
+named as the resolution's resolution, not laundered as one.
+
+**THE PRECISE FOLLOW-ON, so the next lane does not flip this blind.** Either
+  (a) model the address encoding here (the 4-byte/28-zero subspace vs the raw-32-byte leaf key) and
+      prove the two images disjoint, which makes the relocation unrealizable as a THEOREM; or
+  (b) land the L0.5 output relation — a Lean-authored note-creation AIR with HIDDEN value (the input
+      side's wide-carrier join, minus the membership fold) so a transfer's output commitment is a
+      Poseidon2 note commitment BOUND to its output leg's Pedersen value, and GATE 4 appends THAT.
+      Then `shieldAppend_is_ledger_note` holds for the whole accumulator and the composition above
+      becomes sound.
+Appending a prover-chosen note commitment WITHOUT (b)'s binding would be strictly worse than today:
+it would be a mint from nothing. Do not take that shortcut to reach the flip.
+
+§2's falsifier is retained as-is because it still PRICES what was fixed: it is the machine-checked
+statement of the wound the 2026-08-07 flag day closed on the spend side. -/
+
 /-! ## 7. Axiom hygiene. -/
 
 #assert_axioms accepts_independent_of_committedRoot
