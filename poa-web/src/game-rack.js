@@ -98,37 +98,53 @@ export const GAME_RACK = Object.freeze([
     boardLabel: "Probe grid",
     columns: 6,
   }),
-  // ⚠ Below here nothing is written yet. No length, no shape, and a flavour line
-  // that names a PLACE rather than a mechanic — because a mechanic would be an
-  // invention, and this rack is not allowed to invent a game.
+  // ⚠ The three records below are TAUGHT but not yet enrolled. Their controllers
+  // are installed (`mission-launcher.js`) and `Emit.lean` enrols them, so they
+  // render as `sealed` — "the drill is installed and the signed catalog does not
+  // enrol it at this counter" — until the curator signs the counter that carries
+  // their descriptors. A record may state a length and a shape as soon as a client
+  // can actually play the game; what it may never do is state them for a game
+  // nobody has written.
+  //
+  // ⚑ THERE IS NO BERTH LEFT ON THIS RACK, and that is the point at which the
+  // half-taught rule stops being theoretical. Every record here now claims a
+  // length and a shape, so the next game added is the first one that has to earn
+  // them — and `loadRackEntry` refuses a record that claims one without the other.
   Object.freeze({
-    gameId: "deck-descent",
-    name: "Deck Descent",
-    flavor: "A route down. Not yet cut.",
-    session: null,
-    shape: null,
-    eyebrow: "LOWER SPINE",
-    boardLabel: "Descent board",
-    columns: 3,
+    gameId: "artificer-logic",
+    name: "Artificer Logic",
+    flavor: "One law hides in a sixteen-law manual. Four charges to find it, then name it.",
+    session: "standard",
+    shape: SHAPES.parametric,
+    eyebrow: "ARTIFICER BENCH",
+    boardLabel: "Eight charges and the sixteen-law manual",
+    columns: 4,
   }),
   Object.freeze({
     gameId: "vent-crawl",
     name: "Vent Crawl",
-    flavor: "Somewhere in the vents. Not yet opened.",
-    session: null,
-    shape: null,
+    flavor: "Every rung down pays more and floods more. The odds are on the button.",
+    session: "quick-drill",
+    shape: SHAPES.pushYourLuck,
     eyebrow: "VENT ACCESS",
-    boardLabel: "Vent board",
-    columns: 3,
+    boardLabel: "Six rungs and two verbs",
+    columns: 2,
   }),
+  // ⚑ Deck Descent was the one the ceremony could get WRONG, and this record is
+  // the half of that repair the rack owns. `Emit.lean` already enrols it
+  // (mission 5); until 2026-08-07 it had no controller, so a signed catalog
+  // carrying it would have turned this card `unsupported` — "the signed catalog
+  // enrols this drill and this terminal has no controller for it", the one
+  // combination on this rack that is a defect. The controller is installed now,
+  // so the ceremony's failure mode is gone and the card is `sealed` until it.
   Object.freeze({
-    gameId: "artificer-logic",
-    name: "Artificer Logic",
-    flavor: "A bench, waiting for its work.",
-    session: null,
-    shape: null,
-    eyebrow: "ARTIFICER BENCH",
-    boardLabel: "Bench board",
+    gameId: "deck-descent",
+    name: "Deck Descent",
+    flavor: "Nine breaths of air, three passages you cannot see, and a climb back out.",
+    session: "standard",
+    shape: SHAPES.parametric,
+    eyebrow: "LOWER SPINE",
+    boardLabel: "Nine verbs over the three-chamber shaft",
     columns: 3,
   }),
 ]);

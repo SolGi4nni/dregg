@@ -242,16 +242,26 @@ export function mountVentCrawl(root, descriptor, callbacks = {}) {
     }
     const state = currentState(descriptor, run);
     if (state.terminal) {
-      callbacks.onTranscript?.(transcript(descriptor, run));
+      // ⚠ TWO arguments, and the second is not optional decoration. The shared
+      // end screen reads a finished run through `runOutcome(shape, run,
+      // descriptor)`, so a controller that reported only the transcript would
+      // reach `app.js` with `run` undefined and the screen would refuse. This is
+      // the same call shape `finite-table-controller.js` makes.
+      callbacks.onTranscript?.(transcript(descriptor, run), run);
     }
+  }
+
+  function restart() {
+    run = startRun(descriptor, session);
+    lastRefusal = null;
+    render();
+    return run;
   }
 
   crawlButton.addEventListener("click", () => act(descriptor.crawlAction));
   bankButton.addEventListener("click", () => act(descriptor.bankAction));
   resetButton.addEventListener("click", () => {
-    run = startRun(descriptor, session);
-    lastRefusal = null;
-    render();
+    restart();
     callbacks.onReset?.();
   });
 
@@ -263,6 +273,13 @@ export function mountVentCrawl(root, descriptor, callbacks = {}) {
     element: frame,
     get run() { return run; },
     get transcript() { return transcript(descriptor, run); },
+    /**
+     * ⚠ `reset` is part of the mount CONTRACT, not a convenience: the rack's
+     * "Run it again" control calls it on whatever controller is active, and a
+     * controller without one would silently do nothing at the one moment a
+     * player has asked for another run.
+     */
+    reset() { return restart(); },
     destroy() { root.replaceChildren(); },
   };
 }

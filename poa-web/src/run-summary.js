@@ -1,5 +1,7 @@
 import { ArtifactRefusal } from "./poag1.js";
 import { verificationFold } from "./game-rack.js";
+import { tableRunIsClosed, tableRunIsStuck, tableRunView } from "./finite-table-runtime.js";
+import { ventCrawlOutcome } from "./ventcrawl-runtime.js";
 
 /**
  * ONE END-OF-RUN SCREEN, AND ONE LADDER, FOR EVERY GAME.
@@ -73,7 +75,24 @@ const ADVANCE = Object.freeze({
   refused: Object.freeze([]),
 });
 
-const OUTCOMES = Object.freeze(["solved", "unsolved", "refused"]);
+/**
+ * ⚑ `lost` IS THE FOURTH OUTCOME, AND IT WAS OWED.
+ *
+ * For a long time this list had three values and `unsolved` carried two different
+ * endings: "the window closed" and "you took a bet and it went against you". They
+ * are not the same thing and the difference is the entire point of a game that
+ * lets you lose. `ventcrawl-runtime.js` named the gap in its own docblock — a
+ * drowned crawl ends EARLY, on a wager the player chose, with turns still on the
+ * clock — and said the repair was one of two: a fourth outcome, or a note. It is
+ * the fourth outcome, because a note under a headline reading "Window closed."
+ * would have left the headline lying.
+ *
+ * Artificer Logic makes it unavoidable: 717 of its states are a wrong law named,
+ * every action from them refuses, and the run is over on a MISTAKE with charges
+ * unspent. `refused` is not that either — that rung is for a NODE refusing a
+ * submitted run, not for a table refusing a move.
+ */
+const OUTCOMES = Object.freeze(["solved", "unsolved", "lost", "refused"]);
 
 function refuse(condition, code, message) {
   if (!condition) throw new ArtifactRefusal(code, message);
@@ -122,15 +141,35 @@ export function advanceRunStatus(from, to) {
 const HEADLINE = Object.freeze({
   solved: "Cleared it.",
   unsolved: "Window closed.",
+  lost: "Lost it.",
   refused: "Refused.",
 });
 
-const finiteOutcome = (run, descriptor) => ({
-  over: run.terminal === true || run.steps.length >= descriptor.actionLimit,
-  outcome: run.terminal === true ? "solved" : "unsolved",
-  actions: run.steps.length,
-  actionLimit: descriptor.actionLimit,
-});
+/**
+ * ⚠ SOLVED IS READ OFF THE VIEW, NOT OFF `run.terminal`.
+ *
+ * `terminal` is a per-state flag and the emitters do not all use it to mean the
+ * same thing: Relay emits `terminal = routed`, so there it IS solved; Artificer
+ * emits `terminal` only on an identification and leaves a wrong naming at
+ * `terminal: false` with every action refusing. Reading `run.terminal` as "solved"
+ * therefore reported a lost artificer run as `Cleared it.` — and, because `over`
+ * was read the same way, never reported it at all until the clock ran out.
+ *
+ * So: solved comes from `view.solved`, over comes from the ROWS, and the choice
+ * between `lost` and `unsolved` is whether the table stopped the run or the clock
+ * did.
+ */
+const finiteOutcome = (run, descriptor) => {
+  const view = tableRunView(descriptor, run);
+  return {
+    over: tableRunIsClosed(descriptor, run),
+    outcome: view.solved === true
+      ? "solved"
+      : (tableRunIsStuck(descriptor, run) ? "lost" : "unsolved"),
+    actions: run.steps.length,
+    actionLimit: descriptor.actionLimit,
+  };
+};
 
 /**
  * "Is this run over, and how did it go" — keyed by SHAPE, never by game id.
@@ -157,6 +196,11 @@ const OUTCOME_BY_SHAPE = Object.freeze({
   }),
   "machine-family": finiteOutcome,
   parametric: finiteOutcome,
+  // ⚠ Vent Crawl does NOT come through `finiteOutcome`: its runtime is its own,
+  // its rows carry `wager` rather than `resolve`, and its terminal states are the
+  // two ways out of a shaft. The reading lives beside that runtime, in the record
+  // this table's rows produce.
+  "push-your-luck": ventCrawlOutcome,
 });
 
 export function runOutcome(shape, run, descriptor) {

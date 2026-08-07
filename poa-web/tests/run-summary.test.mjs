@@ -14,7 +14,18 @@ import {
 import { RESULT_OUTCOMES, readRackResults, recordRackResult, resultBucket } from "../src/rack-results.js";
 import { buildRack } from "../src/game-rack.js";
 import { INSTALLED_GAME_IDS } from "../src/mission-launcher.js";
+import {
+  TableOracleQuery,
+  TableTransitionRefusal,
+  createFiniteTableRun,
+  submitFiniteTableAction,
+  tableRunIsClosed,
+  tableRunView,
+} from "../src/finite-table-runtime.js";
+import { salvagePracticeOracle } from "../src/salvage-runtime.js";
+import { artificerPracticeOracle } from "../src/artificer-runtime.js";
 import { canonicalDescriptors } from "./canonical-descriptors.mjs";
+import { pendingArtificer } from "./pending-descriptors.mjs";
 
 class FakeElement {
   constructor(tagName) {
@@ -165,20 +176,112 @@ test("the rendered end screen draws only reachable rungs and marks the current o
   assert.equal(judgedRungs.map((node) => node.dataset.state).join(","), "reached,current,ahead,ahead");
 }));
 
+/**
+ * Play a finite-table run forward, taking the first action the table accepts and
+ * answering oracle rows from the emitted practice board. It stops when the run is
+ * closed, so what it produces is a REAL end state rather than a hand-shaped record.
+ *
+ * ⚠ The stubs this replaces (`{ terminal: false, steps: [{}] }`) were the reason
+ * the old reading could be wrong and still test green: `finiteOutcome` read
+ * `run.terminal` as "solved", a stub could assert whatever it liked about a flag
+ * nothing had to earn, and the games where `terminal` does NOT mean solved were
+ * invisible. The reading now consults the emitted view, so the run handed to it
+ * has to be one the table could actually produce.
+ */
+function playToTheEnd(descriptor, session) {
+  let run = createFiniteTableRun(descriptor, session);
+  while (!tableRunIsClosed(descriptor, run)) {
+    const before = run;
+    for (const action of descriptor.actions) {
+      try {
+        run = submitFiniteTableAction(descriptor, run, action.id);
+        break;
+      } catch (error) {
+        if (error instanceof TableOracleQuery) {
+          run = submitFiniteTableAction(descriptor, run, action.id, session.oracle(tableRunView(descriptor, run), action.id));
+          break;
+        }
+        if (!(error instanceof TableTransitionRefusal)) throw error;
+      }
+    }
+    if (run === before) break;
+  }
+  return run;
+}
+
 test("the end of a run is read by SHAPE, so a new game in an old shape needs nothing", async () => {
-  const { relay, salvage, signalJson } = await canonicalDescriptors();
-  void signalJson;
-  const midRelay = { terminal: false, steps: [{ action: "a" }], mode: "practice" };
-  assert.deepEqual(runOutcome("machine-family", midRelay, relay), { over: false, outcome: "unsolved", actions: 1, actionLimit: relay.actionLimit, mode: "practice" });
-  assert.equal(runOutcome("machine-family", { terminal: true, steps: [{}, {}], mode: "practice" }, relay).outcome, "solved");
-  // Out of actions and not terminal is over, and is honestly `unsolved`.
-  const spent = { terminal: false, steps: Array.from({ length: salvage.actionLimit }, () => ({})), mode: "practice" };
-  assert.deepEqual(runOutcome("parametric", spent, salvage), { over: true, outcome: "unsolved", actions: salvage.actionLimit, actionLimit: salvage.actionLimit, mode: "practice" });
+  const { relay, salvage } = await canonicalDescriptors();
+
+  // A run that has not started is not over, and says so without guessing.
+  const freshRelay = createFiniteTableRun(relay, { mode: "practice", member: relay.memberKeys[0] });
+  assert.deepEqual(runOutcome("machine-family", freshRelay, relay), { over: false, outcome: "unsolved", actions: 0, actionLimit: relay.actionLimit, mode: "practice" });
+
+  // ⚑ REAL runs, played to whatever end the emitted table gives them. Every one
+  // must land on an outcome this file declares, and `solved` must agree with the
+  // view rather than with `terminal`.
+  for (const member of relay.memberKeys) {
+    const done = playToTheEnd(relay, { mode: "practice", member });
+    const reading = runOutcome("machine-family", done, relay);
+    assert.equal(reading.over, true, `relay board ${member} did not reach an end`);
+    assert.ok(["solved", "unsolved", "lost"].includes(reading.outcome));
+    assert.equal(reading.outcome === "solved", tableRunView(relay, done).solved === true);
+  }
+
+  const member = 0;
+  const salvageDone = playToTheEnd(salvage, { mode: "practice", member, oracle: salvagePracticeOracle(salvage, member) });
+  const salvageReading = runOutcome("parametric", salvageDone, salvage);
+  assert.equal(salvageReading.over, true);
+  assert.equal(salvageReading.actionLimit, salvage.actionLimit);
+  assert.equal(salvageReading.outcome === "solved", tableRunView(salvage, salvageDone).solved === true);
 
   assert.equal(runOutcome("deduction", { solved: true, exhausted: false, turns: [1, 2], mode: "practice" }, { maxTurns: 5 }).actions, 2);
   assert.equal(runOutcome("probe-oracle", { solved: false, exhausted: true, probes: [1], mode: "practice" }, { actionLimit: 9 }).outcome, "unsolved");
   // A genuinely NEW shape refuses rather than reaching for the nearest row.
   assert.throws(() => runOutcome("machine", { mode: "practice" }, { actionLimit: 1 }), { code: "run-shape" });
+});
+
+/** Name a law, answering the oracle row the table raises, on the emitted table. */
+function nameTheLaw(descriptor, run, oracle, ruleId) {
+  const action = descriptor.actions.find((candidate) => candidate.kind === "declare" && candidate.rule === ruleId);
+  assert.ok(action, `the emitted table has no naming for ${ruleId}`);
+  try {
+    return submitFiniteTableAction(descriptor, run, action.id);
+  } catch (error) {
+    if (!(error instanceof TableOracleQuery)) throw error;
+    return submitFiniteTableAction(descriptor, run, action.id, oracle(tableRunView(descriptor, run), action.id));
+  }
+}
+
+test("a run the table has stopped is LOST, and it is not `solved` and not `unsolved`", async () => {
+  // ⚑ THE DISTINCTION THE FOURTH OUTCOME EXISTS FOR, on the real Artificer table.
+  // A wrong naming ends the run with charges still on the clock, and the emitted
+  // states say so in a way no other game on the rack does: 717 of them carry
+  // `verdict: "mistaken"` with `terminal: FALSE`, and every action from them
+  // refuses `run-lost`. Under the old reading that was `over: false` — so the end
+  // screen never appeared at all — and if the clock had been allowed to run out it
+  // would then have printed `Cleared it.`, because `run.terminal` was being read as
+  // "solved". Both of those are checked here, on the bytes, not on a stub.
+  const artificer = await pendingArtificer();
+  const member = 0;
+  const oracle = artificerPracticeOracle(artificer, member);
+  const drawn = artificer.instance.manual.rules[member];
+  const wrong = artificer.instance.manual.rules.find((rule) => rule.id !== drawn.id);
+
+  const fresh = createFiniteTableRun(artificer, { mode: "practice", member, oracle });
+  assert.equal(runOutcome("parametric", fresh, artificer).over, false);
+
+  const lost = nameTheLaw(artificer, fresh, oracle, wrong.id);
+  assert.equal(lost.terminal, false, "the emitted table does not mark a mistaken naming terminal; if it starts to, this test is testing nothing");
+  const lostReading = runOutcome("parametric", lost, artificer);
+  assert.deepEqual(lostReading, { over: true, outcome: "lost", actions: 1, actionLimit: artificer.actionLimit, mode: "practice" });
+  assert.ok(lostReading.actions < artificer.actionLimit, "a lost run ends EARLY; that is what separates it from a closed window");
+  assert.equal(tableRunView(artificer, lost).verdict, "mistaken");
+
+  // …and the right naming, on the same table, is `solved`.
+  const won = nameTheLaw(artificer, createFiniteTableRun(artificer, { mode: "practice", member, oracle }), oracle, drawn.id);
+  assert.equal(won.terminal, true);
+  assert.equal(runOutcome("parametric", won, artificer).outcome, "solved");
+  assert.equal(tableRunView(artificer, won).verdict, "identified");
 });
 
 test("the local note keeps practice and judged in separate buckets, derived from the status", () => {
@@ -197,7 +300,7 @@ test("the local note keeps practice and judged in separate buckets, derived from
 
   assert.throws(() => recordRackResult(storage, "relay-repair", { status: "won", outcome: "solved", actions: 1 }), { code: "result-status" });
   assert.throws(() => recordRackResult(storage, "relay-repair", { status: "practice", outcome: "great", actions: 1 }), { code: "result-outcome" });
-  assert.deepEqual([...RESULT_OUTCOMES], ["solved", "unsolved", "refused"]);
+  assert.deepEqual([...RESULT_OUTCOMES], ["solved", "unsolved", "lost", "refused"]);
 });
 
 test("a practice record filed under judged in storage is dropped, not displayed", () => {

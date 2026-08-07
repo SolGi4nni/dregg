@@ -21,7 +21,14 @@ import { RUN_STATUSES, isRunStatus } from "./run-summary.js";
 
 export const RESULTS_STORAGE_KEY = "poa.rack.results.v1";
 export const RESULT_KEYS = Object.freeze(["status", "outcome", "actions", "at"]);
-export const RESULT_OUTCOMES = Object.freeze(["solved", "unsolved", "refused"]);
+/**
+ * ⚠ Kept in step with `run-summary.js`'s `OUTCOMES` by hand, and a record whose
+ * outcome is not in this list is DROPPED rather than repaired — so forgetting to
+ * teach this one a new outcome loses history silently. `lost` joined when Vent
+ * Crawl and Artificer Logic were wired: both end runs early on a player's
+ * mistake, which is neither "the window closed" nor "a node refused it".
+ */
+export const RESULT_OUTCOMES = Object.freeze(["solved", "unsolved", "lost", "refused"]);
 const PER_GAME_LIMIT = 32;
 
 function refuse(condition, code, message) {

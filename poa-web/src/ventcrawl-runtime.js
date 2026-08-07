@@ -447,21 +447,20 @@ export function play(descriptor, run, actionId, hostStep = null) {
  * The end-of-run reading for the `push-your-luck` shape, in the exact record
  * `run-summary.js`'s `OUTCOME_BY_SHAPE` rows produce.
  *
- * ⚠ A DROWNING MAPS TO `unsolved` AND THAT IS NOT WHAT `unsolved` MEANS ELSEWHERE.
- * For every other shape on the rack, `unsolved` is "the window closed" — the run
- * ran out of turns with the puzzle unfinished, and the shared headline
- * "Window closed." is exactly right. A drowned crawl is not that. It ended EARLY,
- * on a wager the player chose to take and lost, with turns still on the clock.
- * `OUTCOMES` has three values and none of them is "lost a bet", so this row uses
- * the closest one and the mismatch is named here rather than papered over. The
- * repair is the rack lane's call and it is one of two: a fourth outcome, or a
- * `note` on the summary. Do not fix it by calling a drowning "solved".
+ * ⚑ A DROWNING IS `lost`, AND THAT WORD NOW EXISTS. This function used to return
+ * `unsolved` for a flood and say so in a warning: for every other shape `unsolved`
+ * means "the window closed" — the run ran out of turns with the puzzle unfinished
+ * — and a drowned crawl is not that. It ended EARLY, on a wager the player chose
+ * to take and lost, with turns still on the clock. The repair named here was one
+ * of two, a fourth outcome or a note, and `run-summary.js` took the fourth
+ * outcome: a note under a headline reading "Window closed." would have left the
+ * headline lying. ⚠ It is still not `solved`, and no reading may make it one.
  */
 export function ventCrawlOutcome(run, descriptor) {
   const state = descriptor.states.get(run.stateId);
   return {
     over: state.terminal === true,
-    outcome: state.banked === true ? "solved" : "unsolved",
+    outcome: state.banked === true ? "solved" : "lost",
     actions: run.steps.length,
     actionLimit: descriptor.actionLimit,
   };

@@ -240,13 +240,20 @@ function loadMachine(machine, actions, spec, memberKey, at) {
   }
   refuse(reachable.size === states.length, "table-state-closure", `${at} contains a state outside the emitted legal-state closure`);
 
+  // A terminal state is ABSORBING: it accepts nothing, defers nothing, and gives
+  // one reason for all of it. ⚠ The reason is the SPEC'S, not this file's. It was
+  // the literal `"solved"` until Deck Descent, whose kernel ends a run at
+  // `run-banked` — "you are out of the shaft" — and for which `solved` would have
+  // been a word invented in a browser to satisfy a check. What the engine is
+  // entitled to require is that the state is absorbing and says so once.
+  const terminalReason = spec.terminalReason ?? "solved";
   for (const state of states) {
     if (!state.terminal) continue;
     const rows = transitions.filter((row) => row.state === state.id);
     refuse(
-      rows.every((row) => row.verdict === "refuse" && row.reason === "solved"),
+      rows.every((row) => row.verdict === "refuse" && row.reason === terminalReason),
       "table-terminal-row",
-      `${at} terminal state must refuse every action as solved`,
+      `${at} terminal state must refuse every action as ${terminalReason}`,
     );
   }
 
@@ -359,6 +366,44 @@ export function memberOf(descriptor, key) {
   const member = descriptor.members.find((candidate) => candidate.key === key);
   refuse(member, "table-member", "the run names a family member the descriptor does not emit");
   return member;
+}
+
+/**
+ * ⚑ "THE TABLE REFUSES EVERYTHING FROM HERE" — a run that is over without being
+ * `terminal`.
+ *
+ * This is not a nicety. `terminal` is emitted per state and several games use it
+ * to mean SOLVED rather than FINISHED: Artificer Logic emits 717 states in which
+ * the player has named the wrong law, every action refuses with `run-lost`, and
+ * `terminal` is FALSE on all of them. A consumer that reads only `run.terminal`
+ * therefore sees a lost artificer run as still in progress — no end screen, every
+ * button dead, and the player left looking at a board that will not answer.
+ *
+ * So the reading is taken off the ROWS, which is where the emitter actually says
+ * it: a run is closed when no action from the current state can be taken. That is
+ * shape-agnostic, needs no per-game field (`doomed`, `stranded`, `drowned` are
+ * three names for it), and cannot drift from the table it is read out of.
+ */
+export function tableRunIsStuck(descriptor, run) {
+  const member = validateRun(descriptor, run);
+  return descriptor.actions.every((action) => {
+    const row = member.transitions.find(
+      (transition) => transition.state === run.stateId && transition.action === action.id,
+    );
+    return row === undefined || row.verdict === "refuse";
+  });
+}
+
+/**
+ * Over, for any reason. ⚠ `stuck` and `spent` are kept APART above rather than
+ * folded together here, because they are the difference between "you lost" and
+ * "the window closed" and a consumer that cannot tell them apart reports one as
+ * the other.
+ */
+export function tableRunIsClosed(descriptor, run) {
+  if (run.terminal === true) return true;
+  if (run.steps.length >= descriptor.actionLimit) return true;
+  return tableRunIsStuck(descriptor, run);
 }
 
 function stateById(member, stateId) {

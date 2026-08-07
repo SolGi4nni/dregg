@@ -9,6 +9,10 @@ import {
 import { finiteTableAuthority, loadMissionCatalog, missionByGameId } from "./mission-catalog.js";
 import { loadRelayRepairDescriptor } from "./relay-runtime.js";
 import { loadSalvageLockDescriptor, salvagePracticeOracle } from "./salvage-runtime.js";
+import { artificerPracticeOracle, loadArtificerLogicDescriptor } from "./artificer-runtime.js";
+import { loadBlackBoxDescriptor } from "./blackbox-runtime.js";
+import { descentPracticeOracle, loadDeckDescentDescriptor } from "./descent-runtime.js";
+import { loadVentCrawlDescriptor } from "./ventcrawl-runtime.js";
 import { INSTALLED_GAME_IDS, launchCatalogMission } from "./mission-launcher.js";
 import { buildRack, mountGameRack } from "./game-rack.js";
 import { buildRunSummary, mountRunSummary, runOutcome } from "./run-summary.js";
@@ -111,6 +115,65 @@ const state = {
  * nearest-looking rung, which is how a rehearsal would start reading as a result.
  */
 const STATUS_BY_MODE = Object.freeze({ practice: "practice" });
+
+/**
+ * ⚑ ONE LOADER PER INSTALLED GAME, AND THE ABSENCE OF ONE IS A REFUSAL.
+ *
+ * The defect this replaces was live and reachable: `boot` loaded three
+ * descriptors by hand — signal, relay, salvage — while `mission-launcher.js`
+ * installed a FOURTH controller and the signed catalog enrolled a fourth mission.
+ * Black Box therefore rendered `open` (enrolled and installed, which is the state
+ * the rack calls playable) and pressing "Play Black Box Reconstruction" reached
+ * `launchCatalogMission` with `descriptor` undefined, which refused, which fell
+ * into `sealAuthority` — so one click on a card the board offered SEALED THE WHOLE
+ * TERMINAL. Nothing said the descriptor had never been loaded; the hand-written
+ * list and the dispatch table were simply two lists that had stopped agreeing.
+ *
+ * So there is one list now, `boot` walks the enrolled missions through it, and a
+ * game the launcher installs without a loader here is refused AT BOOT rather than
+ * on the click. `tests/controller-reach.test.mjs` holds the same statement
+ * statically.
+ */
+const DESCRIPTOR_LOADERS = Object.freeze({
+  "signal-triangulation": (json, mission, bundle) => loadSignalDescriptor(json, mission, bundle.contentEpoch),
+  "relay-repair": (json, mission) => loadRelayRepairDescriptor(json, finiteTableAuthority(mission)),
+  "salvage-lock": (json, mission) => loadSalvageLockDescriptor(json, finiteTableAuthority(mission)),
+  "black-box-reconstruction": (json, mission) => loadBlackBoxDescriptor(json, mission),
+  "artificer-logic": (json, mission) => loadArtificerLogicDescriptor(json, finiteTableAuthority(mission)),
+  // ⚑ This row was ADDED BY THE GATE ABOVE going red. `descent-controller.js`
+  // landed in the launcher's dispatch table from another lane while this file was
+  // open, with no loader here — the Black Box defect, reproduced within the hour by
+  // a different hand. `tests/controller-reach.test.mjs` named it in seconds, which
+  // is the whole argument for that test existing.
+  "deck-descent": (json, mission) => loadDeckDescentDescriptor(json, finiteTableAuthority(mission)),
+  "vent-crawl": (json, mission, bundle) => loadVentCrawlDescriptor(json, mission, bundle.contentEpoch),
+});
+
+/**
+ * Decode every enrolled mission this client has a controller for.
+ *
+ * ⚠ A mission the signed catalog enrols and this client does NOT install is not an
+ * error here — the rack renders it `unsupported` and says so, which is the honest
+ * picture and not a reason to refuse the whole bundle. The refusal is the other
+ * direction: a controller installed with no way to feed it.
+ */
+function loadEnrolledDescriptors(bundle, missions) {
+  for (const gameId of INSTALLED_GAME_IDS) {
+    if (!Object.hasOwn(DESCRIPTOR_LOADERS, gameId)) {
+      throw new ArtifactRefusal(
+        "descriptor-loader-missing",
+        `${gameId} has a controller installed and no descriptor loader, so its card would offer a game this page cannot decode`,
+      );
+    }
+  }
+  return Object.freeze(missions
+    .filter((mission) => Object.hasOwn(DESCRIPTOR_LOADERS, mission.gameId))
+    .map((mission) => DESCRIPTOR_LOADERS[mission.gameId](
+      bundle.payloads[mission.descriptorPath].json,
+      mission,
+      bundle,
+    )));
+}
 
 function localStore() {
   try { return globalThis.localStorage ?? null; } catch { return null; }
@@ -639,6 +702,29 @@ function practiceSession(gameId, descriptor) {
     const member = practiceMember(descriptor.instance.practice.boards.length);
     return { mode: "practice", member, oracle: salvagePracticeOracle(descriptor, member) };
   }
+  if (gameId === "artificer-logic") {
+    // The practice space is the published manual itself — `instance_space` is a
+    // COUNT and `member_names` points at `manual.rules`, so there is no second
+    // copy of the family to draw from and the member IS the rule index.
+    const member = practiceMember(descriptor.instance.manual.rules.length);
+    return { mode: "practice", member, oracle: artificerPracticeOracle(descriptor, member) };
+  }
+  if (gameId === "deck-descent") {
+    const member = practiceMember(descriptor.instance.practice.boards.length);
+    return { mode: "practice", member, oracle: descentPracticeOracle(descriptor, member) };
+  }
+  if (gameId === "black-box-reconstruction") {
+    // ⚠ Black Box calls it `instance`, not `member`: its runtime is its own and
+    // `createPracticeRun(descriptor, session.instance)` is what reads this.
+    return { mode: "practice", instance: practiceMember(descriptor.oracle.instanceSpace) };
+  }
+  if (gameId === "vent-crawl") {
+    // ⚠ Vent Crawl draws its own vein inside `startRun` with
+    // `crypto.getRandomValues`, because the vein is a per-slot SHARED table and
+    // the client picking one is the whole of what practice means here. Naming one
+    // from this file would put a second draw in the browser.
+    return { mode: "practice" };
+  }
   return undefined;
 }
 
@@ -786,24 +872,8 @@ async function boot() {
     });
     state.bundle = bundle;
     const missions = await loadMissionCatalog(bundle);
-    const signalMission = missionByGameId(missions, "signal-triangulation");
-    const relayMission = missionByGameId(missions, "relay-repair");
-    const salvageMission = missionByGameId(missions, "salvage-lock");
-    const signal = loadSignalDescriptor(
-      bundle.payloads["games/signal-triangulation.json"].json,
-      signalMission,
-      bundle.contentEpoch,
-    );
-    const relay = loadRelayRepairDescriptor(
-      bundle.payloads[relayMission.descriptorPath].json,
-      finiteTableAuthority(relayMission),
-    );
-    const salvage = loadSalvageLockDescriptor(
-      bundle.payloads[salvageMission.descriptorPath].json,
-      finiteTableAuthority(salvageMission),
-    );
     state.missions = missions;
-    state.games = Object.freeze([signal, relay, salvage]);
+    state.games = loadEnrolledDescriptors(bundle, missions);
     markAuthority(bundle);
     // ⚠ No drill auto-opens any more. The first thing a player meets is the rack.
     renderRack();

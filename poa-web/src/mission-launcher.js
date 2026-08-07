@@ -1,7 +1,10 @@
 import { ArtifactRefusal } from "./poag1.js";
+import { mountArtificerLogic } from "./artificer-controller.js";
 import { mountBlackBox } from "./blackbox-controller.js";
+import { mountDeckDescent } from "./descent-controller.js";
 import { mountRelayRepair } from "./relay-controller.js";
 import { mountSalvageLock } from "./salvage-controller.js";
+import { mountVentCrawl } from "./ventcrawl-controller.js";
 
 /**
  * The dispatch table IS the list of games this client can play.
@@ -13,20 +16,32 @@ import { mountSalvageLock } from "./salvage-controller.js";
  * in `game-rack.js`.
  *
  * ⚠ A controller installed here is NOT a game enrolled. Enrolment is the signed
- * catalog's, and only its. Black Box's controller sits in this table with no
- * descriptor to feed it, which is exactly the state the rack renders as a sealed
- * slot: the drill is built and the curator has not activated it.
+ * catalog's, and only its. Artificer Logic, Deck Descent and Vent Crawl sit in
+ * this table with no descriptor in the shipped bundle to feed them, which is
+ * exactly the state the rack renders as a sealed slot: the drill is built and the
+ * curator has not activated it. `Emit.lean` enrols all three; the counter that
+ * carries them has not been signed yet.
+ *
+ * ⚠ NOT ALL OF THESE ARE FINITE-TABLE MOUNTS, and the table deliberately does not
+ * say which are. `mountVentCrawl` renders two verbs of DIFFERENT shape (a wager
+ * with published odds against a certainty) and refuses the shared grid on purpose;
+ * `mountBlackBox` has its own probe grid. What every entry here shares is the
+ * mount SIGNATURE — `(root, descriptor, callbacks)` returning a controller with
+ * `destroy()` and `reset()` — and that is the only thing this file may rely on.
  */
-const FINITE_CONTROLLERS = Object.freeze({
+const MOUNTED_CONTROLLERS = Object.freeze({
+  "artificer-logic": mountArtificerLogic,
+  "deck-descent": mountDeckDescent,
   "relay-repair": mountRelayRepair,
   "salvage-lock": mountSalvageLock,
   "black-box-reconstruction": mountBlackBox,
+  "vent-crawl": mountVentCrawl,
 });
 
 /** Signal has its own authored surface in the page; the rest mount generically. */
 export const SIGNAL_GAME_ID = "signal-triangulation";
 
-export const INSTALLED_GAME_IDS = Object.freeze([SIGNAL_GAME_ID, ...Object.keys(FINITE_CONTROLLERS)]);
+export const INSTALLED_GAME_IDS = Object.freeze([SIGNAL_GAME_ID, ...Object.keys(MOUNTED_CONTROLLERS)]);
 
 function refuse(condition, code, message) {
   if (!condition) throw new ArtifactRefusal(code, message);
@@ -52,10 +67,10 @@ export function launchCatalogMission({ mission, descriptor, signalRoot, finiteRo
     signalRoot.hidden = false;
     return Object.freeze({ gameId: mission.gameId, controller: launchSignal(descriptor) ?? null });
   }
-  refuse(finiteRoot && signalRoot, "mission-launch", "finite-table mission roots are unavailable");
+  refuse(finiteRoot && signalRoot, "mission-launch", "the generic mission roots are unavailable");
   signalRoot.hidden = true;
   finiteRoot.hidden = false;
-  const mount = FINITE_CONTROLLERS[mission.gameId];
+  const mount = MOUNTED_CONTROLLERS[mission.gameId];
   refuse(typeof mount === "function", "mission-game-unsupported", `no controller exists for ${mission.gameId}`);
   return Object.freeze({ gameId: mission.gameId, controller: mount(finiteRoot, descriptor, callbacks) });
 }

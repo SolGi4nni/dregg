@@ -102,3 +102,237 @@
   }
 }
 
+
+/*
+ * Deck Descent. The shell's children are ORDERED explicitly rather than by
+ * append order: the shaft map is created by the controller and appended last (a
+ * controller may only `append` — `finite-table-controller.js` owns the shell and
+ * the a11y harness gives it no `insertBefore`), and a map that read BELOW the
+ * verbs would put the board a player is deciding about under the decision.
+ */
+.deck-descent .poa-minigame__header { order: 1; }
+.deck-descent .poa-minigame__brief { order: 2; }
+.deck-descent .descent-shaft { order: 3; }
+.deck-descent .poa-minigame__board { order: 4; }
+.deck-descent .poa-minigame__status { order: 5; }
+.deck-descent .poa-minigame__boundary { order: 6; }
+
+.deck-descent .poa-minigame__board {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.descent-shaft {
+  display: grid;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.descent-shaft__node {
+  align-items: baseline;
+  border: 1px solid var(--line, #36504d);
+  border-left-width: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.descent-shaft__name {
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.descent-shaft__reading {
+  color: var(--signal, #d6a95a);
+  font: 700 0.7rem/1.4 ui-monospace, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.descent-shaft__detail {
+  color: var(--dim, #809b97);
+  font-size: 0.78rem;
+  margin-left: auto;
+}
+
+/* Where the body is. The only positional cue on the map, so it is not subtle. */
+.descent-shaft__node[data-here="true"] {
+  border-left-color: var(--signal, #d6a95a);
+  box-shadow: inset 0 0 0 1px var(--signal, #d6a95a);
+}
+
+/* A passage that has read flooded. It has already cost a body; it says so. */
+.descent-shaft__node[data-cold="true"] .descent-shaft__reading {
+  color: var(--warn, #d98a72);
+}
+
+/* ⚑ A doomed run's map goes cold rather than staying inviting. The status line
+   says it in words; this says it before the words are read. */
+.descent-shaft[data-doomed="true"] .descent-shaft__node {
+  opacity: 0.55;
+}
+
+/*
+ * Vent Crawl. NOT a `.poa-minigame`: `ventcrawl-controller.js` mounts its own
+ * shell because its two verbs are of DIFFERENT shape — one is a wager carrying
+ * published odds, a prize range and a stake, the other is a certainty — and the
+ * shared action grid renders same-shaped cells. Flattening them into one grid is
+ * exactly the thing the game is about, undone.
+ *
+ * ⚑ The RISK line and the PRIZE line are given the same weight on purpose. A
+ * push-your-luck face that shades the reward and mutes the hazard is how a player
+ * ends up feeling cheated by a die they were shown.
+ */
+.vent-crawl {
+  display: grid;
+  gap: 1rem;
+}
+
+.vent-crawl__eyebrow,
+.vent-crawl__brief,
+.vent-crawl__status,
+.vent-crawl__day {
+  margin: 0;
+}
+
+.vent-crawl__eyebrow {
+  color: var(--dim, #809b97);
+  font: 700 0.7rem/1.4 ui-monospace, monospace;
+  letter-spacing: 0.12em;
+}
+
+.vent-crawl__title {
+  margin: 0.2rem 0 0;
+}
+
+/* The whole ladder at once: a crawler at rung 3 is choosing against 4, 5 and 6. */
+.vent-crawl__shaft {
+  display: grid;
+  gap: 0.4rem;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.vent-crawl__rung {
+  border: 1px solid var(--line, #36504d);
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.5rem 0.4rem;
+  text-align: center;
+}
+
+.vent-crawl__rung[data-passed="true"] {
+  border-color: var(--ok, #58b894);
+  opacity: 0.75;
+}
+
+.vent-crawl__rung[data-here="true"] {
+  border-color: var(--signal, #d6a95a);
+  box-shadow: inset 0 0 0 1px var(--signal, #d6a95a);
+}
+
+.vent-crawl__rung-index {
+  color: var(--dim, #809b97);
+  font: 700 0.62rem/1.3 ui-monospace, monospace;
+  letter-spacing: 0.08em;
+}
+
+.vent-crawl__rung-odds {
+  font: 700 0.8rem/1.3 ui-monospace, monospace;
+}
+
+.vent-crawl__rung-pay {
+  color: var(--ok, #58b894);
+  font-size: 0.72rem;
+}
+
+.vent-crawl__day,
+.vent-crawl__status {
+  color: var(--dim, #809b97);
+  font-size: 0.82rem;
+}
+
+.vent-crawl__controls {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.vent-crawl__verb,
+.vent-crawl__reset {
+  min-height: 48px;
+  touch-action: manipulation;
+}
+
+.vent-crawl__verb {
+  align-items: start;
+  background: color-mix(in srgb, var(--panel, #112124) 88%, transparent);
+  border: 1px solid var(--line, #36504d);
+  color: var(--ink, #d7e7df);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  justify-content: center;
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.vent-crawl__verb--crawl:not(:disabled) {
+  border-color: var(--signal, #d6a95a);
+}
+
+.vent-crawl__verb--bank:not(:disabled) {
+  border-color: var(--ok, #58b894);
+}
+
+.vent-crawl__verb:focus-visible,
+.vent-crawl__reset:focus-visible {
+  outline: 3px solid var(--signal, #d6a95a);
+  outline-offset: 3px;
+}
+
+.vent-crawl__verb:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.vent-crawl__verb-name {
+  font-weight: 750;
+}
+
+/* Same size as the prize, deliberately: the hazard is not fine print. */
+.vent-crawl__verb-risk,
+.vent-crawl__verb-prize {
+  font-size: 0.78rem;
+}
+
+.vent-crawl__verb-risk {
+  color: var(--signal, #d6a95a);
+}
+
+.vent-crawl__verb-prize {
+  color: var(--ok, #58b894);
+}
+
+.vent-crawl__verb-stake {
+  color: var(--dim, #809b97);
+  font-size: 0.72rem;
+}
+
+@media (max-width: 560px) {
+  .vent-crawl__shaft {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .vent-crawl__controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vent-crawl__reset {
+    width: 100%;
+  }
+}

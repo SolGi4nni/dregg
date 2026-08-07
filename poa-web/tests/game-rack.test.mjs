@@ -80,12 +80,23 @@ test("a record cannot know a length without a shape, and a berth claims neither"
   assert.throws(() => loadRackEntry({ ...signal, session: null }), { code: "rack-half-taught" });
   assert.throws(() => loadRackEntry({ ...signal, shape: null }), { code: "rack-half-taught" });
 
-  const berths = GAME_RACK.filter((entry) => entry.session === null);
-  assert.ok(berths.length > 0, "the rack should carry at least one reserved berth");
-  for (const berth of berths) {
+  // ⚠ THE RACK NO LONGER CARRIES A BERTH, and this test used to require one.
+  // Every record now claims a length and a shape, because every game on the board
+  // has a controller that can play it — Artificer Logic, Vent Crawl and Deck
+  // Descent were the last three berths and all three were wired on 2026-08-07. An
+  // assertion that a berth EXISTS would now be an assertion that the rack is
+  // incomplete, which is a strange thing to demand. What must stay true is the
+  // RULE, so it is checked in both directions: any berth on the rack is fully
+  // absent and uninstalled, and the loader still refuses a half-taught record.
+  for (const berth of GAME_RACK.filter((entry) => entry.session === null)) {
     assert.equal(berth.shape, null, `${berth.gameId} states a shape for a game nobody has written`);
     assert.ok(!INSTALLED_GAME_IDS.includes(berth.gameId), `${berth.gameId} has a controller but no shape`);
   }
+  const berth = loadRackEntry({ ...signal, gameId: "nobody-has-written-this", name: "Berth", session: null, shape: null });
+  assert.equal(berth.session, null);
+  assert.equal(berth.shape, null);
+  assert.throws(() => loadRackEntry({ ...berth, session: "standard" }), { code: "rack-half-taught" });
+  assert.throws(() => loadRackEntry({ ...berth, shape: signal.shape }), { code: "rack-half-taught" });
 });
 
 test("every installed controller has a fully taught presentation record", () => {
@@ -108,9 +119,19 @@ test("the shape a record claims is the shape the emitted descriptor actually has
     ["salvage-lock", JSON.parse(await readFile(new URL("salvage-lock.json", games), "utf8"))],
     ["black-box-reconstruction", JSON.parse(await readFile(new URL("black-box-reconstruction.json", games), "utf8"))],
   ];
+  // ⚠ The three games whose descriptors are EMITTED but not yet signed are checked
+  // against their real bytes too, out of `poa/artifacts/poag1-pending/`. A card
+  // that claimed a shape its descriptor did not have would otherwise go unnoticed
+  // until the ceremony, which is the worst possible moment to find out.
+  const pending = new URL("../../poa/artifacts/poag1-pending/games/", import.meta.url);
+  for (const gameId of ["artificer-logic", "vent-crawl", "deck-descent"]) {
+    const doc = JSON.parse(await readFile(new URL(`${gameId}.json`, pending), "utf8"));
+    emitted.push([gameId, doc]);
+  }
   for (const [gameId, doc] of emitted) {
     assert.equal(byGame.get(gameId).shape, descriptorShape(doc), `${gameId}'s card claims a shape its descriptor does not have`);
   }
+  assert.equal(emitted.length, GAME_RACK.length, "every record on the rack must be checked against real emitted bytes");
 });
 
 test("the signed catalog decides what is open; a presentation record cannot enrol itself", async () => {
@@ -133,10 +154,20 @@ test("the signed catalog decides what is open; a presentation record cannot enro
   const sealedBlackBox = withheld.find((card) => card.gameId === "black-box-reconstruction");
   assert.equal(sealedBlackBox.state, "sealed");
   assert.match(sealedBlackBox.seal.label, /AWAITING CURATOR ACTIVATION/);
-  // Neither installed nor enrolled: a berth, and it claims no length.
-  assert.equal(byGame.get("vent-crawl").state, "reserved");
-  assert.equal(byGame.get("vent-crawl").sessionLabel, "LENGTH NOT DECLARED");
-  assert.equal(byGame.get("vent-crawl").session, null);
+  // Installed and NOT enrolled: Artificer Logic, Vent Crawl and Deck Descent have
+  // controllers and no mission in this counter's signed catalog, which is the
+  // sealed slot in its natural habitat rather than a synthesised one. `Emit.lean`
+  // enrols all three; the counter that carries their descriptors is unsigned.
+  for (const gameId of ["artificer-logic", "vent-crawl", "deck-descent"]) {
+    const sealed = byGame.get(gameId);
+    assert.equal(sealed.state, "sealed", `${gameId} is installed, so it cannot be a berth`);
+    assert.equal(sealed.playable, false);
+    assert.match(sealed.seal.label, /AWAITING CURATOR ACTIVATION/);
+    // ⚠ A sealed card MAY state its length and shape, because a client that can
+    // play the game is not guessing about it. Only a berth must not.
+    assert.notEqual(sealed.session, null);
+    assert.notEqual(sealed.shape, null);
+  }
 
   // Enrolled with no controller is the one combination that is a defect, and it
   // is LOUD rather than quietly absent from the board.
