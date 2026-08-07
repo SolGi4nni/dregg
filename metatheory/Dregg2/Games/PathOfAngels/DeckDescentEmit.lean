@@ -226,12 +226,39 @@ chamber counts once per relic it still holds, one lift per relic - plus the \
 extraction, on the most favourable board still consistent with what the run has \
 seen\"}"
 
+/-! ### The practice family — all eight boards, and no answer
+
+⚑ **PUBLISHING THE FAMILY IS NOT PUBLISHING THE INSTANCE**, and here the family
+was already public before this block existed.  `shaft` names three chambers and
+declares `lore` and `damaging_lore`; every `resolve` row names two successors
+whose views differ in exactly one chamber's reading, and those two readings ARE
+`sound` and `flooded`.  From that alone `scripts/poa-design-gate.py` rebuilds all
+eight boards and walks them — it did so before this block was written and reads
+nothing from it now.  So the bits are all already there; what this block removes
+is the RULE a client would otherwise have to carry ("each chamber is
+independently sound or flooded") in order to enumerate them.  A lookup replaces a
+second model of the game.
+
+⚠ What it still says nothing about is WHICH board a run drew.  A judged run's
+board comes from `HiddenInstance` under purpose tag 1 off a slot secret this
+artifact does not contain and could not; a practice run picks a row here, under a
+client-chosen index, and is `scored:false` in the block and `mode:"practice"` in
+the transcript.  A reader who has not played can reconstruct the eight; nobody
+can reconstruct the one. -/
+private def boardLoreJson (b : DeckDescent.Board) : String :=
+  "{" ++ String.intercalate "," (DeckDescent.allChambers.map fun c =>
+    jsonString c.tag ++ ":" ++ jsonString (b.lore c).tag) ++ "}"
+
+private def practiceBoardsJson (boards : List DeckDescent.Board) : String :=
+  jsonPrettyArray (boards.map fun b => "      " ++ boardLoreJson b)
+
 /-! ## The descriptor -/
 
-/-- The whole document, parameterised by the state list and the row list so that
-a HOSTILE variant goes through the SAME renderer as the honest one.  A falsifier
-built any other way tests a second encoder. -/
-def descriptorFrom (states : List DeckDescent.State) (rows : List DescentRow) : String :=
+/-- The whole document, parameterised by the state list, the row list and the
+practice family so that a HOSTILE variant goes through the SAME renderer as the
+honest one.  A falsifier built any other way tests a second encoder. -/
+def descriptorFrom (states : List DeckDescent.State) (rows : List DescentRow)
+    (boards : List DeckDescent.Board) : String :=
   "{\n" ++
   "  \"format\":\"POAG1-GAME\",\n" ++
   "  \"schema_version\":1,\n" ++
@@ -250,18 +277,26 @@ def descriptorFrom (states : List DeckDescent.State) (rows : List DescentRow) : 
   "    \"actions\":" ++ jsonPrettyArray (descentActions.map actionJson) ++ ",\n" ++
   "    \"transitions\":" ++ jsonPrettyArray (rows.map transitionJson) ++ "\n" ++
   "  },\n" ++
+  "  \"practice\":{\"instance_space\":" ++ toString boards.length ++
+    ",\"instance_shape\":\"one passage per chamber, sound or flooded\"" ++
+    ",\"scored\":false" ++
+    ",\"boards\":" ++ practiceBoardsJson boards ++ "},\n" ++
   "  \"output\":{\"requires\":\"terminal\",\"contribution\":\"mission_reward\"," ++
     "\"artifact\":\"mission_artifact\"}\n" ++
   "}\n"
 
-def deckDescentDescriptorJson : String := descriptorFrom descentStates descentRows
+def descentPracticeBoards : List DeckDescent.Board := DeckDescent.boardTable
+
+def deckDescentDescriptorJson : String :=
+  descriptorFrom descentStates descentRows descentPracticeBoards
 
 /-! ## Validation — the key set, exactly -/
 
 def validateDescentDescriptor (bytes : String) : Except String Unit := do
   let document ← Json.parse bytes
   exactKeys document ["format", "schema_version", "game_id", "ruleset", "engine_module",
-    "action_limit", "security", "instance", "shaft", "state_machine", "output"]
+    "action_limit", "security", "instance", "shaft", "state_machine", "practice",
+    "output"]
   validateHiddenSecurity document "oracle-only"
   validateInstanceDeclaration (← document.getObjVal? "instance") "oracle-only"
   exactKeys (← document.getObjVal? "output") ["requires", "contribution", "artifact"]
@@ -271,6 +306,20 @@ def validateDescentDescriptor (bytes : String) : Except String Unit := do
     "forfeit_order", "lore", "damaging_lore", "air_per_action", "reserve"]
   exactKeys (← shaft.getObjVal? "budgets")
     ["air", "shoring", "base_capacity", "bank_target"]
+  let practice ← document.getObjVal? "practice"
+  exactKeys practice ["instance_space", "instance_shape", "scored", "boards"]
+  if (← practice.getObjValAs? Bool "scored") != false then
+    throw "POAG1 descent practice block declares practice runs scored"
+  let space ← practice.getObjValAs? Nat "instance_space"
+  if space != DeckDescent.boardTable.length then
+    throw s!"POAG1 descent practice declares a space of {space}, kernel family is \
+{DeckDescent.boardTable.length}"
+  let boards ← (practice.getObjVal? "boards") >>= Json.getArr?
+  if boards.size != space then
+    throw s!"POAG1 descent practice emits {boards.size} boards for a declared space \
+of {space}"
+  for board in boards do
+    exactKeys board (DeckDescent.allChambers.map DeckDescent.Chamber.tag)
   let machine ← document.getObjVal? "state_machine"
   exactKeys machine ["initial_state", "states", "actions", "transitions"]
   let states ← (machine.getObjVal? "states") >>= Json.getArr?
@@ -415,6 +464,42 @@ def descentViewsRefineKernel (bytes : String) : Except String Unit := do
             throw s!"POAG1 descent view {index} misreports the sling count for {c.tag}"
     index := index + 1
 
+/-- Every emitted practice board, against `DeckDescent.boardTable`.
+
+Two things are checked and they are not the same thing.  The first is that each
+row IS the kernel's board at that index, chamber by chamber — a client answering
+its own rehearsal from a row that is not a board of the family would be
+rehearsing a game nobody can be dealt.  The second is that the emitted rows are
+DISTINCT and there are as many as the kernel has: a family short one member has
+told a reader which board is not in play, and a family with a duplicate has told
+them one is twice as likely. -/
+def descentPracticeRefinesKernel (bytes : String) : Except String Unit := do
+  let document ← Json.parse bytes
+  let practice ← document.getObjVal? "practice"
+  let emitted ← (practice.getObjVal? "boards") >>= Json.getArr?
+  let kernel := DeckDescent.boardTable
+  if emitted.size != kernel.length then
+    throw s!"POAG1 descent practice emits {emitted.size} boards, kernel family has \
+{kernel.length}"
+  let mut index := 0
+  let mut seen : List String := []
+  for b in kernel do
+    match emitted[index]? with
+    | none => throw s!"POAG1 descent practice has no board {index}"
+    | some row =>
+        let mut shape := ""
+        for c in DeckDescent.allChambers do
+          let emittedLore ← row.getObjValAs? String c.tag
+          if emittedLore != (b.lore c).tag then
+            throw s!"POAG1 descent practice board {index} reads {c.tag} as \
+{emittedLore}, kernel says {(b.lore c).tag}"
+          shape := shape ++ emittedLore
+        if seen.contains shape then
+          throw s!"POAG1 descent practice board {index} repeats a board the family \
+already names"
+        seen := shape :: seen
+    index := index + 1
+
 /-! ## ⚠ The falsifiers, built constructively from the live encoder
 
 Each mutant is rendered by `descriptorFrom` — the SAME function that renders the
@@ -436,10 +521,26 @@ def flattenedResolveRows : List DescentRow :=
   | none => descentRows
   | some i => descentRows.modify i flatten
 
-def flattenedResolveDescriptor : String := descriptorFrom descentStates flattenedResolveRows
+def flattenedResolveDescriptor : String :=
+  descriptorFrom descentStates flattenedResolveRows descentPracticeBoards
 
 /-- One row short.  Catches a table that is no longer total. -/
-def truncatedDescriptor : String := descriptorFrom descentStates descentRows.tail
+def truncatedDescriptor : String :=
+  descriptorFrom descentStates descentRows.tail descentPracticeBoards
+
+/-- Seven of the eight boards.  ⚠ This is a LEAK and not merely a shortage: a
+family missing a member has told every reader which board the run is not playing,
+which is one bit of the three the descriptor exists to withhold. -/
+def sevenBoardDescriptor : String :=
+  descriptorFrom descentStates descentRows (descentPracticeBoards.eraseIdx 3)
+
+/-- Eight boards, one of them a duplicate of another — so the family is seven
+distinct instances wearing eight names, and a reader who counts is told that one
+board is twice as likely as the rest. -/
+def duplicatedBoardDescriptor : String :=
+  descriptorFrom descentStates descentRows
+    (descentPracticeBoards.set 3
+      { mouth := .sound, west := .sound, east := .flooded })
 
 /-! ## The pins -/
 
@@ -475,6 +576,33 @@ theorem truncated_table_is_caught :
   · native_decide
   · native_decide
 
+theorem descentDescriptor_practice_is_the_kernel :
+    descentPracticeRefinesKernel deckDescentDescriptorJson = .ok () := by
+  native_decide
+
+/-- ⚠ A family short one board, caught twice — once by the declared space and
+once against the kernel's own table. -/
+theorem a_missing_board_is_caught :
+    sevenBoardDescriptor ≠ deckDescentDescriptorJson ∧
+    validateDescentDescriptor sevenBoardDescriptor ≠ .ok () ∧
+    descentPracticeRefinesKernel sevenBoardDescriptor ≠ .ok () := by
+  refine ⟨?_, ?_, ?_⟩
+  · native_decide
+  · native_decide
+  · native_decide
+
+/-- ⚠ The one a count cannot see.  Eight rows, so `instance_space` agrees and the
+schema check passes; the family is still wrong, and only a comparison against the
+kernel's boards catches it. -/
+theorem a_duplicated_board_is_caught :
+    duplicatedBoardDescriptor ≠ deckDescentDescriptorJson ∧
+    validateDescentDescriptor duplicatedBoardDescriptor = .ok () ∧
+    descentPracticeRefinesKernel duplicatedBoardDescriptor ≠ .ok () := by
+  refine ⟨?_, ?_, ?_⟩
+  · native_decide
+  · native_decide
+  · native_decide
+
 #assert_axioms line_determines_target
 
 #assert_compiled descentDescriptor_exact_schema
@@ -482,6 +610,9 @@ theorem truncated_table_is_caught :
 #assert_compiled descentDescriptor_views_are_the_kernel
 #assert_compiled flattened_resolve_is_caught
 #assert_compiled truncated_table_is_caught
+#assert_compiled descentDescriptor_practice_is_the_kernel
+#assert_compiled a_missing_board_is_caught
+#assert_compiled a_duplicated_board_is_caught
 
 /-! ## Handover — what `Emit.lean` and `EmitMain.lean` must splice
 

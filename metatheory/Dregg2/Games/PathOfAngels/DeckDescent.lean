@@ -1727,8 +1727,16 @@ def Lore.tag : Lore → String
   | .flooded => "flooded"
   | .shored => "shored"
 
+/-- One lowercase letter per reading, and `dark` is `d` rather than `?`.
+
+⚠ A STATE ID IS AN IDENTIFIER AND HAS AN IDENTIFIER'S ALPHABET.  `?` (and the
+`+` `slingTag` used to join with) are outside `[a-z0-9._:-]`, which is the
+character class every POAG1 client checks a state id against before it will read
+a table.  A descriptor whose ids carry them is one no client can load, and the
+repair belongs HERE — widening the client's alphabet would weaken the check for
+the four games that do not need it. -/
 def Lore.code : Lore → String
-  | .dark => "?"
+  | .dark => "d"
   | .sound => "s"
   | .flooded => "f"
   | .shored => "x"
@@ -1759,7 +1767,7 @@ theorem action_tags_are_distinct :
     (allActions.map Action.tag).eraseDups = allActions.map Action.tag := by decide
 
 private def slingTag (s : Sling) : String :=
-  String.intercalate "+" ((allChambers.filter (fun c => s.holds c)).map
+  String.intercalate "." ((allChambers.filter (fun c => s.holds c)).map
     (fun c => c.tag ++ (if 2 ≤ s.get c then toString (s.get c) else "")))
 
 def stateId (s : State) : String :=
@@ -1776,6 +1784,48 @@ theorem state_ids_are_distinct :
     (parametricStates.map stateId).eraseDups.length = parametricStates.length := by
   native_decide
 
+/-! ### The id alphabet, as a fact rather than a habit
+
+`?` sat in `Lore.code` for as long as the game has existed and nothing was
+measuring it, because nothing in Lean cares what a string looks like.  A POAG1
+client does: it checks every state id, action id and refusal reason against
+`^[a-z0-9][a-z0-9._:-]{0,95}$` before it will read a row, so a descriptor whose
+ids fall outside that class is one no browser can load — a stop that shows up as
+a total refusal in a browser and as nothing at all here.  So the class is stated,
+and the states are held to it. -/
+
+def isIdTailChar (c : Char) : Bool :=
+  ('a' ≤ c && c ≤ 'z') || ('0' ≤ c && c ≤ '9') ||
+    c = '.' || c = '_' || c = ':' || c = '-'
+
+def isIdHeadChar (c : Char) : Bool :=
+  ('a' ≤ c && c ≤ 'z') || ('0' ≤ c && c ≤ '9')
+
+/-- `^[a-z0-9][a-z0-9._:-]{0,95}$`, the POAG1 identifier class. -/
+def isPoag1Identifier (s : String) : Bool :=
+  match s.toList with
+  | [] => false
+  | c :: rest => isIdHeadChar c && rest.all isIdTailChar && rest.length ≤ 95
+
+/-- ⚑ **Every id a client is handed is an identifier.**  This is the pin that
+`?` and `+` walked past; it is stated over the SAME `stateId` the descriptor
+renders, so re-introducing either character goes red here. -/
+theorem state_ids_are_identifiers :
+    parametricStates.all (fun s => isPoag1Identifier (stateId s)) = true := by
+  native_decide
+
+theorem action_tags_are_identifiers :
+    allActions.all (fun a => isPoag1Identifier a.tag) = true := by
+  decide
+
+/-- ⚠ The falsifier.  Without it `isPoag1Identifier` could be a function that
+says `true` of everything, and both theorems above would be decoration.  These
+are the two characters that were actually there. -/
+theorem the_id_alphabet_refuses_the_old_codes :
+    isPoag1Identifier "dd:hatch:9:2:0:???:000:-:in" = false ∧
+    isPoag1Identifier "dd:mouth:5:2:0:sfd:100:mouth+west:in" = false := by
+  decide
+
 /-- What a client may render.  Everything the rules read is here, which is the
 property the design gate's differential depends on: it rebuilds every verdict
 from these fields alone and refuses on disagreement. -/
@@ -1790,6 +1840,8 @@ def solvedB (s : State) : Bool := s.banked
 #assert_axioms branches_agree_on_refusal
 #assert_axioms resolve_rows_name_two_states
 #assert_axioms action_tags_are_distinct
+#assert_axioms action_tags_are_identifiers
+#assert_axioms the_id_alphabet_refuses_the_old_codes
 
 #assert_compiled parametric_closure_is_closed
 #assert_compiled parametric_states_nodup
@@ -1797,6 +1849,7 @@ def solvedB (s : State) : Bool := s.banked
 #assert_compiled parametric_shape_is_measured
 #assert_compiled the_table_consults_the_instance
 #assert_compiled state_ids_are_distinct
+#assert_compiled state_ids_are_identifiers
 
 #assert_axioms allChambers_complete
 #assert_axioms allNodes_complete

@@ -16,7 +16,7 @@ So the bytes go to a PENDING directory the design gate can be pointed at:
 
 The driver fails closed: it validates the bytes and checks them against the
 kernel BEFORE writing, so a descriptor that does not refine `DeckDescent` never
-reaches the disk.  The same three checks are `#assert_compiled` theorems in
+reaches the disk.  The same four checks are `#assert_compiled` theorems in
 `DeckDescentEmit`; running them here as well costs a second and means an
 operator who skips the build still cannot ship a wrong table.
 -/
@@ -43,6 +43,8 @@ def main : IO Unit := do
     (descentTableRefinesKernel bytes)
   orThrow "POAG1 descent state views do not refine the kernel"
     (descentViewsRefineKernel bytes)
+  orThrow "POAG1 descent practice family does not refine the kernel"
+    (descentPracticeRefinesKernel bytes)
   IO.FS.createDirAll (dir / "games")
   writeAtomic (dir / "games" / "deck-descent.json") bytes
   IO.println s!"wrote {dir}/games/deck-descent.json ({bytes.length} bytes, \
