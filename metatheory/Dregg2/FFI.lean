@@ -86,6 +86,31 @@ import Dregg2.Games.PathOfAngels.EventBatchRuntime
 import Dregg2.Games.PathOfAngels.WorldActivation
 import Dregg2.Games.PathOfAngels.ActivatedContentRuntime
 import Dregg2.Games.PathOfAngels.BazaarGameRuntime
+-- The Night Watch campaign judge, `dregg_poa_night_watch_campaign_judge`. Until
+-- 2026-08-07 the campaign was authored, authenticated, emitted and proven — 15
+-- `#assert_compiled` teeth over the epoch-1 artifact bytes, including a full watch
+-- (claim/choose/resolve/debrief) settling on the authored table — and the export was
+-- reachable by NOTHING: not in this closure, so not in the archive, so every
+-- `#[cfg(dregg_*_present)]` arm that could have called it did not exist to compile
+-- out. A judge no host can invoke is not a fail-closed refusal; it is an organ with
+-- no way in, and the proofs about it were about a function the node never runs.
+--
+-- ⚠ The wire carries the SLOT SECRET (`NightWatchCampaignWire.activationJson`), as
+-- `POA-SLOT-DERIVE-1` does. These bytes are node-held state and never a client claim;
+-- the reply carries no activation field, and `StateViewWire` is encode-only —
+-- `no_state_view_decoder_can_be_sound` proves no decoder back to a `State` exists, so
+-- a host cannot round-trip a state through a player. Absent, no watch can be judged
+-- at all and there must be no Rust twin: a second `HiddenInstance` sponge or a
+-- hand-written `replay` would hand players a different campaign than the one that
+-- settles.
+--
+-- Added 2026-08-07; **+13 modules** to the closure — MEASURED on the transitive
+-- import graph: this module, `NightWatchCampaign`, `NightWatchCampaignAdmission`,
+-- `CrewRelayExpedition`, `CrewFieldMission`, `CrewFieldMissionRuntime`,
+-- `CrewSigningVectors`, `OfficerLogbook`, `ShipLifeProgression`,
+-- `ShipExpeditionSeason`, `Shipworks`, `ContentContract` and
+-- `AttendantContinuityAggregate`.
+import Dregg2.Games.PathOfAngels.NightWatchCampaignWire
 import Dregg2.Apps.DelegAdmit
 
 -- §1.4 Post-quantum cores.
@@ -315,6 +340,15 @@ is stated on their entry rather than implied by membership in this archive.
   SHA-256, exact all-five-field active-world root/scope membership, and canonical Galley policy
   extraction. Persistence supplies the world after its same-writer signed-lineage audit; absence
   or rejection means no gameplay policy can be installed, with no Rust semantic twin.)
+* `Dregg2.Games.PathOfAngels.NightWatchCampaignWire` — `dregg_poa_night_watch_campaign_judge`
+  (the Night Watch campaign boundary: strict canonical input decode, world-scoped config
+  admission through `authorizeCampaignConfigForWorld?` — the config is NOT a caller argument and
+  is only ever what the manifest committed to by the audited world's `contentRoot` carries —
+  re-derivation of the slot commitment and run seed from the node-held secret, exact `replay` of
+  the player's own command log, and one judged successor. It takes no authority argument, so
+  there is no sponsor or override a caller can supply, and it returns the empty string rather
+  than a partial answer. Absence means no watch can be judged; there is no Rust gameplay twin and
+  there must never be one.)
 
 ### §1.4 Post-quantum cores — the crates these take OUT of the TCB (10 symbols)
 Absent ⇒ `dregg-pq` answers with an unaudited third-party crate. `DREGG_REQUIRE_PQ_CORES` turns

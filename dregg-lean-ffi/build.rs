@@ -315,6 +315,15 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          source. The daily must refuse; there is no Rust gameplay twin",
     ),
     (
+        "dregg_poa_night_watch_campaign_judge",
+        "the Path of Angels Night Watch campaign evaluator compiles out: world-scoped config \
+         admission (the rulebook is what the audited world's content root commits to, never a \
+         caller argument), slot-commitment and run-seed re-derivation from the node-held secret, \
+         strict command-log replay and the judged successor have no answer source. Every watch \
+         must refuse; there is no Rust gameplay twin and a second HiddenInstance sponge would \
+         hand players a different campaign than the one that settles",
+    ),
+    (
         "dregg_poa_event_batch_runtime_plan",
         "the Path of Angels finalized EventBatch planner compiles out: exact world/coordinate, \
          ordered multi-stream predecessor chaining, payload/projection commitments and the \
@@ -2464,6 +2473,41 @@ fn archive_exports(archive: &std::path::Path, symbol: &str) -> bool {
         .any(|l| l.trim_end().ends_with(&mach_o) || l.trim_end().ends_with(&elf))
 }
 
+/// Whether the C shim actually DEFINES a given `_str` transport bridge.
+///
+/// ⚑ THE CLASS THIS DETECTS, which this file already documents twice and has only ever
+/// answered with a discipline. On 2026-07-30 `dregg_mina_wrap_challenges` was rooted in
+/// `Dregg2/FFI.lean` and probed here, had no `_str` bridge in `lean_init.c` and no wrapper in
+/// `lib.rs` — "so the cfg was set, the archive carried the symbol, and nothing on earth could
+/// call it." The remedy written down was *"both halves of the plumbing land together now"*: a
+/// rule a human follows, invisible to the build, and therefore not a gate. The same pair
+/// (`lean_init.c` / `lean_init_st.cpp`) desynced twice in the week of 2026-08-07 and every
+/// scored run on one path silently refused.
+///
+/// The archive probe alone cannot see this: the Lean symbol IS present, so the cfg is set, and
+/// the Rust `extern "C"` block then names a `_str` function the shim never compiled. On a
+/// static link that is a hard link error; with `-dead_strip` in play it has historically been
+/// worse than an error, because the linker resolves it by dropping an object.
+///
+/// So a `*_present` cfg means what a caller reads it to mean — **the bridge is callable** —
+/// only if BOTH halves are there. This asks the shim source directly, which is exactly the
+/// resource the claim is about. Textual, deliberately: the shim is compiled by `cc` from a file
+/// we can read at build time, and a `#ifdef`-gated definition is not observable any other way
+/// before the link.
+///
+/// Fail-closed: unreadable source ⇒ `false` ⇒ the bridge is treated as absent and the caller's
+/// refusal arm compiles in.
+fn shim_defines_bridge(symbol: &str) -> bool {
+    let needle = format!("{symbol}_str(");
+    ["src/lean_init.c", "src/lean_init_st.cpp"]
+        .iter()
+        .any(|path| {
+            std::fs::read_to_string(path)
+                .map(|text| text.contains(&needle))
+                .unwrap_or(false)
+        })
+}
+
 /// Whether the SHARED link mode is selected (`DREGG_LEAN_LINK=shared`).
 ///
 /// An ENV VAR, deliberately NOT a cargo feature: features UNIFY across a workspace
@@ -2552,6 +2596,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_network_genesis_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_night_watch_campaign_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_plan_present)");
     println!(
         "cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_initial_heads_digest_present)"
@@ -3609,6 +3654,28 @@ fn main() {
              must not mint holder authority before an atomically consumable wallet capability exists"
         );
     }
+    // PATH OF ANGELS NIGHT WATCH. Probed like the Galley judge beside it, with one difference
+    // that is deliberate: the cfg additionally requires the C `_str` bridge to EXIST, via
+    // `shim_defines_bridge`. See that function for the class — a symbol rooted in `Dregg2/FFI.lean`
+    // and probed here, with no bridge in `lean_init.c`, sets a `*_present` cfg that promises a
+    // callable path and delivers a link error. Until the bridge lands, this stays false and
+    // `poa_night_watch_ffi`'s absent arm refuses; when it lands, nothing here needs editing.
+    let poa_night_watch_campaign_judge_in_archive =
+        archive_exports(&build_archive, "dregg_poa_night_watch_campaign_judge");
+    let poa_night_watch_campaign_judge_present = poa_night_watch_campaign_judge_in_archive
+        && shim_defines_bridge("dregg_poa_night_watch_campaign_judge");
+    if poa_night_watch_campaign_judge_present {
+        println!("cargo:rustc-cfg=dregg_poa_night_watch_campaign_judge_present");
+    } else if poa_night_watch_campaign_judge_in_archive {
+        println!(
+            "cargo:warning=dregg-lean-ffi: dregg_poa_night_watch_campaign_judge IS in the archive \
+             but src/lean_init.c defines no dregg_poa_night_watch_campaign_judge_str bridge, so no \
+             caller can reach it. Night Watch play refuses. Land the C bridge (and its \
+             lean_init_st.cpp twin) to complete the mount."
+        );
+    } else {
+        absent_export_warn("dregg_poa_night_watch_campaign_judge");
+    }
     let poa_event_batch_runtime_plan_present =
         archive_exports(&build_archive, "dregg_poa_event_batch_runtime_plan");
     if poa_event_batch_runtime_plan_present {
@@ -4095,6 +4162,9 @@ fn main() {
     }
     if poa_galley_daily_judge_present {
         shim.define("DREGG_POA_GALLEY_DAILY_JUDGE", None);
+    }
+    if poa_night_watch_campaign_judge_present {
+        shim.define("DREGG_POA_NIGHT_WATCH_CAMPAIGN_JUDGE", None);
     }
     if poa_event_batch_runtime_plan_present {
         shim.define("DREGG_POA_EVENT_BATCH_RUNTIME_PLAN", None);

@@ -104,6 +104,12 @@ pub mod poa_dark_bazaar_ffi;
 #[path = "poa_galley_ffi.rs"]
 pub mod poa_galley_ffi;
 
+/// Lean-owned Night Watch campaign judge. Takes no authority argument: the rulebook is
+/// what the audited world's content root commits to, never a caller's claim. ⚠ Its input
+/// wire carries the node-held slot secret and must never be echoed.
+#[path = "poa_night_watch_ffi.rs"]
+pub mod poa_night_watch_ffi;
+
 /// Lean-owned post-finality planner for atomic, replayable Path of Angels event batches.
 #[path = "poa_event_batch_ffi.rs"]
 pub mod poa_event_batch_ffi;
