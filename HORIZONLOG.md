@@ -1,5 +1,44 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 7 — a wire the evaluator could not READ was reported as a CONSTRAINT VIOLATION
+
+`a02306c5e`. `admitsWire` rendered a **parse failure** as `"1"` — byte-identical to the string
+`ConstraintViolated` is decoded from. So nine probe assertions passed for a week on wires that
+nothing parsed, `perf_ffi_admission_cost` was **timing a parse failure** and printing a plausible
+admission cost, and a node whose marshaller had drifted would have refused **every turn** while
+blaming the player's caveat — a true refusal wearing a false diagnosis.
+
+The repair is **in the type**: `DWireOutcome.malformed` is not a `DAdmit`, so `admits`/`admitsTop`
+structurally cannot construct it; it renders `"7 <stage>"` and decodes to
+`ProgramError::ConstraintOracleWireMalformed { constraint, stage }` naming which of 8 parse stages
+refused. `DeployedConstraint.parse` was **deleted** rather than kept as `(parseE s).toOption` — a
+fault-forgetting view is the same defect with a shorter name. Both poles are kernel theorems over
+every wire and verdict (`admitsWire_eq_violated_iff`, `admitsWire_malformed_iff`,
+`render_eq_violated_iff`, `render_ne_malformed`), with concrete stages **measured by `#eval`**, not
+predicted (the first draft mispredicted the short-wire stage and was corrected).
+
+**Four more tests were asserting less than they looked**, found by the same lens: two `#guard`s that
+could not tell fails-closed from grammar drift; `monotonic_slot_poles_through_lean.rs`, whose vacuity
+guard read `!reason.contains("oracle")` against a **player-facing** sentence that has named no
+component since the 2026-07-26 copy rewrite — *it could not fire for the error it named*; four
+`is_err()` refuse legs in `constraint_oracle_reality_gate.rs`; and the differential's REFUSE cases,
+whose header had correctly said they would not bite.
+
+⚠ **Rust half UNBUILT** — `dregg-circuit` red in the shared tree (PI-compaction lane, above).
+Commands are in the commit.
+
+⚑ **SAME CLASS STILL OPEN ON THE SIGNATURE WIRES** (dispatched): `Fips204Verify.lean:174`/`:392` and
+`R3Verify.lean:347` render a malformed wire as `"0"` — **the same value as an honest REJECT** — and
+`dregg-lean-ffi/src/lib.rs:715` says so in its own words. Fail-closed, so not unsound, but every
+negative test on ML-DSA verification and on the R3 anti-forgery verdict currently cannot tell a
+forged signature from a drifted wire. ⓘ `CrossCellConserveDecision.lean` is NOT the same shape — its
+decoder already separates bare `"0"` from `"0 <asset> <imbalance>"`.
+
+⚑ **Grammar weakness exposed:** a 17-token, mostly-zero positional header **cannot detect its own
+arity locally** — a one-token shift parses the header and both register runs and only dies at the
+cell count. A self-describing length prefix would make arity drift a first-token failure.
+
+
 ## ⛑⛑⛑ AUGUST 7 (`x != x`) — the endpoint tooth gets a second value to bite on, and the four causes turn out to be **six**
 
 **⚠ FIRST, THE HONEST LABEL: THIS DID NOT BUILD, AND NOT BECAUSE OF ITSELF.** `dregg-circuit` is
