@@ -136,6 +136,12 @@ lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_GalleyMaintenanceDailyR
 #ifdef DREGG_POA_NIGHT_WATCH_CAMPAIGN_JUDGE
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NightWatchCampaignWire(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_CREW_FIELD_STEP
+/* Parity for the crew step surface. The `_str` bridge and the byte ceiling live only in
+ * lean_init.c — that asymmetry is correct; INITIALIZER parity is what must hold, and this
+ * file records two cases where it did not and every scored run silently refused. */
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_CrewFieldMissionAdmission(uint8_t builtin);
+#endif
 #if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
     defined(DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST)
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_EventBatchRuntime(uint8_t builtin);
@@ -322,6 +328,18 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(nightwatchres);
+    }
+#endif
+#ifdef DREGG_POA_CREW_FIELD_STEP
+    {
+        lean_object *crewfieldres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_CrewFieldMissionAdmission(1);
+        if (!lean_io_result_is_ok(crewfieldres)) {
+            lean_io_result_show_error(crewfieldres);
+            lean_dec_ref(crewfieldres);
+            return 1;
+        }
+        lean_dec_ref(crewfieldres);
     }
 #endif
 #if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \

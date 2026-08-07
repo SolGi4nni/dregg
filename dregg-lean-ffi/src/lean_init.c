@@ -544,6 +544,18 @@ extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NightWatchCampai
 extern lean_object *dregg_poa_night_watch_campaign_judge(lean_object *input);
 #endif
 
+/* Path of Angels CREW FIELD MISSION — one seat's signed handoff. The export takes BYTES
+ * ONLY (world + manifest + step request); it accepts no `RunSeal` argument, because the
+ * only public seals in the tree besides the production one are the FIXTURE seals, whose
+ * signature pattern is publicly computable — an export taking a seal would be "anyone
+ * completes any seat". `CrewFieldMissionAdmission` MINTS the seal from admitted bytes
+ * instead, and refuses the fixture suite INSIDE the mint, before the world is consulted. */
+#ifdef DREGG_POA_CREW_FIELD_STEP
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_CrewFieldMissionAdmission(uint8_t builtin);
+#define DREGG_POA_CREW_FIELD_STEP_WIRE_MAX_BYTES ((size_t)4194304u)
+extern lean_object *dregg_poa_crew_field_step(lean_object *input);
+#endif
+
 /* Post-finality, multi-stream EventBatch planner. The native host constructs the duplicated
  * authority envelope from its commit record and game-judge result; this bridge transports the
  * exact canonical bytes and never promotes a network caller's alleged authority. */
@@ -1537,6 +1549,16 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(nightwatchres);
 #endif
+#ifdef DREGG_POA_CREW_FIELD_STEP
+    lean_object *crewfieldres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_CrewFieldMissionAdmission(1);
+    if (!lean_io_result_is_ok(crewfieldres)) {
+        lean_io_result_show_error(crewfieldres);
+        lean_dec_ref(crewfieldres);
+        return 1;
+    }
+    lean_dec_ref(crewfieldres);
+#endif
 #if defined(DREGG_POA_EVENT_BATCH_RUNTIME_PLAN) || \
     defined(DREGG_POA_EVENT_BATCH_RUNTIME_INITIAL_HEADS_DIGEST)
     lean_object *batchres =
@@ -1804,6 +1826,33 @@ size_t dregg_poa_night_watch_campaign_judge_str(const char *in_utf8, char *out, 
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_NIGHT_WATCH_CAMPAIGN_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_CREW_FIELD_STEP
+size_t dregg_poa_crew_field_step_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_CREW_FIELD_STEP_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_crew_field_step(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_CREW_FIELD_STEP_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;
