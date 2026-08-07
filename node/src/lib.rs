@@ -122,11 +122,16 @@ pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;
 pub mod poa_signal_genesis;
 pub mod poa_signal_slot_api;
+pub mod poa_signal_slot_ceremony;
 // STEPS 5–6 of the first-turn ceremony: THE ONE Signal carrier builder (lifted out
 // of the milestone test so the operator ships the carrier that was proved) plus the
 // submit + `latest_height` watch.
-pub mod poa_signal_slot_ceremony;
 pub mod poa_signal_slot_claim;
+// THE OPERATOR DRILL (`#[ignore]`, needs built binaries): steps 0–6 of the
+// first-turn ceremony run as REAL SUBPROCESSES of `dregg-node` / `poa-curator`
+// against a real redb store and a real TCP listener, ending on `latest_height: 1`.
+#[cfg(test)]
+mod poa_signal_slot_first_turn_rehearsal;
 // ⚠ STEP 4, OPERATOR-ONLY: derives the Signal puzzle's ANSWER from the installed
 // slot secret. Never reachable from the router — a name gate in the module fails if
 // any route-defining file so much as mentions it.

@@ -121,6 +121,17 @@ pub async fn submit_poa_signal_claim(args: &PoaSignalSubmitClaimArgs) -> Result<
         dregg_types::hex_encode(&agent.0),
     ));
     if args.identity_only {
+        // The ML-DSA-65 half, which is NOT reconstructible from the Ed25519 public
+        // key — it derives from the seed. A cell that must be able to ACT has to
+        // COMMIT it (`Cell::with_hybrid_balance` / a genesis cell's
+        // `ml_dsa_public_key`), or hybrid admission refuses every turn it is the
+        // agent of as `pq-identity-not-enrolled`. Printed here because funding a
+        // player at genesis is the only way value enters a PoA chain, and whoever
+        // writes that descriptor needs this exact string.
+        report.push_str(&format!(
+            "player_ml_dsa_public_key: {}\n",
+            dregg_types::hex_encode(&player.ml_dsa_public_bytes()),
+        ));
         report.push_str(
             "identity only: nothing was signed or submitted. Fund this cell before claiming.\n",
         );
