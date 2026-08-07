@@ -94,8 +94,8 @@ could move under a different fixture. -/
 `wrap_verifier.ml:844-891` absorbs `sponge_digest_before_evaluations`, the nested challenge digest,
 `ft_eval1` and both public evaluations, then `Evals.to_absorption_sequence`'s 43 columns at ζ and ζω
 INTERLEAVED; the nested sponge absorbs the flattened old bulletproof challenges. -/
-theorem fin_sponge_tape_lengths (s : WrapShape) (sp : SpAcc) (p cd : Nat) :
-    (finSpTape s sp p cd).length = 5 + 2 * FIN_NCOLS
+theorem fin_sponge_tape_lengths (p cd : Nat) :
+    (finSpTape p cd).length = 5 + 2 * FIN_NCOLS
     ∧ 5 + 2 * FIN_NCOLS = 91
     ∧ (whOldChals p).length = WH_MLMB * WH_ROUNDS
     ∧ WH_MLMB * WH_ROUNDS = 30 := by
@@ -233,7 +233,7 @@ a property of the block's own configuration rather than as a reading of OCaml:
     paragraph named — is NOT what this rung reads. Naming the wrong object was the error, not
     getting the encoding wrong. -/
 theorem the_finalize_evaluations_need_no_encoding :
-    (finSpTape tW.sh tW.sp FIN_LIVE_BLOCK 0).all (fun w => decide (w < qN)) = true
+    (finSpTape FIN_LIVE_BLOCK 0).all (fun w => decide (w < qN)) = true
   -- ⚑ the DOMAIN is the real Wrap index's own, stated against `MinaRealBlockGate.N` and not
   -- against `FIN_LOG2N`'s own definition — two sources, so it is a gate and not decoration.
   ∧ 2 ^ FIN_LOG2N = Dregg2.Circuit.Emit.MinaRealBlockGate.N
@@ -290,7 +290,7 @@ what that bought, against a referee this file cannot influence:
 
 ✅ **AND `FIN_DEFERRED_XI` IS `V_CHAL` SINCE 2026-08-07**, because the single named statement word
 that stood in the way — packed 31, the live block's `perm` — is the derived one now:
-`the_bend_is_gone_because_the_live_block_publishes_the_derived_perm`. -/
+`the_live_block_publishes_the_derived_perm_so_no_solve_is_needed`. -/
 theorem finalize_reproduces_minas_own_ft_eval0 :
     (let d := finProbeData tW.sh tW.sp FIN_LIVE_BLOCK
      d.vals.getD d.fp.slots.ftEval0 0 = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.FT0
@@ -378,7 +378,8 @@ moves every challenge below it, which moves the derivation."**
 Its first clause is true — writing the words does move `x_hat` and every transcript challenge below
 it, and `KimchiWrapMainCore` §20's own note lists what re-emits. Its second clause does not follow,
 and it is the one that priced the repair as unbounded iteration: **no transcript squeeze value reaches
-§19 or §20 at all.** The `sp : SpAcc` threaded through `finWireOf`, `finSpWireOf` and `finSpTape`
+§19 or §20 at all.** The `sp : SpAcc` threaded through `finWireOf` and `finSpWireOf`
+(⚑ and NO LONGER through `finSpTape`: `finZW0`'s deletion made that thread dead and it is gone)
 supplies variable ADDRESSES (`prevW s sp w = .external (basePrev s sp + w)`), never values; §19's own
 β and γ are `prevW s sp (finBlockWord p 6)` / `(… p 7)` — PACKED STATEMENT WORDS, not the transcript's
 β and γ; and the finalize sponge is a FRESH `runSpongeQ` over `finSpTape`, whose 91 elements are one

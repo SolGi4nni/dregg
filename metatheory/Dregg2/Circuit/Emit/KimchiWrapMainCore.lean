@@ -3761,8 +3761,8 @@ def finRawEnv (s : WrapShape) (sp : SpAcc) (p : Nat) : VarEnv :=
     , (finEvVar s sp p k 1, (finColVal p k 1 : Int)) ])
   ++ finTailEnv s sp p
 
-/-- ✅ ⚑⚑⚑ **THE PREVIOUS PROOF'S `z(ζω)` — AND SINCE 2026-08-07 THIS SOLVE IS THE IDENTITY.
-THE CONTAINMENT LABEL IS RETIRED, NOT SOFTENED.**
+/-- ✅ ⚑⚑⚑ **THE PREVIOUS PROOF'S `z(ζω)` — AND SINCE 2026-08-07 THERE IS NO SOLVE AT ALL.
+`finZW0` IS DELETED, WITH AN EMIT-AND-DIFF RATHER THAN AN ASSERTION.**
 
 ⚠ **WHAT THIS DOCBLOCK USED TO ARGUE, AND WHY IT IS KEPT VISIBLE.** It said: *"THE FREE CELL TO MOVE
 IS NOT THE STATEMENT WORD. That is MSM scalar material … `z` at ζω is a `Req.Evals` witness this
@@ -3770,9 +3770,7 @@ sub-circuit alone reads, and `derive_plonk`'s `perm` is `−(e1z · β · α²¹
 it. So the honest value is `e1z · permUsed / perm₀`: one probe evaluation, one inversion, statement
 word untouched."* Its premise expired on 2026-08-06 when §19c started reading Mina devnet block
 539508's own `es` columns — bending a fixture is free, bending a real block's evaluation presents
-§20's sponge a value that block does not have — and it was labelled a CONTAINMENT here from then
-until now. It also priced the alternative as *"not free on the step side: `stepStmtVar` maps the
-live block's `perm` hi/parity to `ftcDiv2 0`/`ftcOdd 0`."*
+§20's sponge a value that block does not have.
 
 ⚑ **THAT PRICE WAS A DESCRIPTION OF THE DEFECT, NOT OF A COST.** `ftcDiv2 0`/`ftcOdd 0` are §6b's
 own **Fp** ft-comm scalar — the WRAP statement's word 4. The step statement's word 31 is an **Fq**
@@ -3780,29 +3778,44 @@ own **Fp** ft-comm scalar — the WRAP statement's word 4. The step statement's 
 never could. It was ALIASED onto those cells, and un-aliasing it (`KimchiStepMainCore` §1f) was
 eleven new cells, one emit and one re-prove — no MSM move that mattered, no fixpoint.
 
-⚑ **SO `permUsed = perm₀` NOW, THE RATIO IS 1, AND THIS FUNCTION RETURNS `finColVal p FIN_IDX_Z 1`
-ON BOTH BLOCKS.** `KimchiWrapFinalizeSpongeGate.the_bend_is_gone_because_the_live_block_publishes
-_the_derived_perm` measures exactly that, and `…the_emitted_finalize_tape_is_minas` measures its
-consequence: the emitted 91-element tape disagrees with `MinaRealBlockTranscript.fqTape2` in **no**
-slot, where it disagreed at slot 6.
+⚑ **THE LABEL WAS RETIRED ON `9c03979cb`; THE SOLVE WAS NOT, AND THAT GAP IS THE WHOLE LESSON.**
+`permUsed = perm₀` made the ratio 1, so the function returned `finColVal p FIN_IDX_Z 1` on both
+blocks — **inert**. An inert solve is worse than none: it is a compensator with no input yet, and a
+future word 31 that stopped being the derived `perm` would be silently absorbed by the ratio instead
+of refusing at `w10_finalize`'s `Field.equal`. The three theorem conjuncts that named it would have
+gone on being green about `finZW0 = finColVal` while the emission drifted.
 
-⚠ ⚑ **NAMED, MEASURED, AND UNDONE: THIS FUNCTION SHOULD BE DELETED.** It is inert — the theorem
-above is the measurement that deleting it moves ZERO emitted bytes — and an inert solve is worse
-than no solve, because a future word 31 that stopped being the derived `perm` would be silently
-compensated here instead of refusing at `w10_finalize`'s `Field.equal`. What stopped this pass from
-doing it is that the removal wants its own emit-and-diff to show the byte-identity rather than
-assert it, and this commit's evidence budget went to the de-aliasing. It is dead-code removal on a
-green tree, not a containment left standing in front of a live defect — the defect is closed.
+⚑ **THE EVIDENCE IS AN EMIT-AND-DIFF, NOT AN ASSERTION**, which is what the previous pass said it
+owed and did not pay. `w11_finsponge` and `w12_close` were emitted at the smoke shape with the solve
+present and with it deleted; all four artifacts (each rung wired + unwired) are **byte-identical**,
+`cmp` silent, same length, same digest:
 
-⚠ ⚑ **AND IT IS APPLIED ONLY TO THE BLOCK THAT CLAIMS `should_finalize`, WHICH IS NOT A DETAIL.**
-Solving it in EVERY block would force `perm = permUsed` for any statement word whatever, so
-`Field.equal` would take `bit = 1` unconditionally, `1 − finalized` would be 0 unconditionally, and
-the one constraint this rung exists to emit could not go red for any witness the emitter can
-produce. `Field.equal`'s `(d⁻¹, 0)` branch — the whole point of `d7d0a150e`, which stopped ASSUMING
-the witness — would have no instance left. Block 0 does not claim `should_finalize`, so it keeps the
-`a^9` fixture, runs the gadget at a NONZERO difference, and `(1 − finalized)·should_finalize = 0`
-still holds because its `should_finalize` is 0. Both branches stay live and the assert stays
-falsifiable: give block 0 a `should_finalize` of 1 and this rung is unsatisfiable. -/
+    269f4b37b838cc76…  wrapmain_smoke_w11_finsponge.json          6 545 266 B
+    d105ed6fd2253509…  wrapmain_smoke_w11_finsponge_unwired.json  6 545 274 B
+    6bc681cc241db839…  wrapmain_smoke_w12_close.json              4 973 000 B
+    e24824a4cf153c3f…  wrapmain_smoke_w12_close_unwired.json      4 973 008 B
+
+⚠ ⚑ **AND THE FIRST RUN OF THAT DIFF SAID THE OPPOSITE, WHICH IS THE PART TO INHERIT.** It reported
+21 777 differing witness cells, 50 differing gate rows and a MOVED public input — because the
+"before" emission had been run against **stale `.olean`s** while the "after" one followed a
+`lake build`. Nothing in the delta was this change; it was a sibling's landed work in the dependency
+closure showing up as if it were mine. **An emit-and-diff is only evidence if BOTH sides were
+built**, and in a shared tree that has to be arranged rather than assumed. The value-layer probe
+agrees with the corrected diff: the solve returned the block's own `z(ζω)` at BOTH instances — the
+padding block by its `should_finalize` guard, the live block because `perm = permUsed`.
+
+`KimchiWrapFinalizeSpongeGate.the_live_block_publishes_the_derived_perm_so_no_solve_is_needed`
+carries the arithmetic half (`perm = permUsed`, and the padding block's word is still NOT its
+derivation, so `Field.equal`'s `(d⁻¹, 0)` branch keeps an instance).
+
+⚠ ⚑ **AND THE `should_finalize` GUARD WENT WITH IT, WHICH IS NOT A LOSS.** The guard existed so the
+solve applied only to the block that claims `should_finalize` — solving in EVERY block would have
+forced `perm = permUsed` for any statement word whatever, `Field.equal` would take `bit = 1`
+unconditionally, and the one constraint this rung exists to emit could not go red. With no solve at
+all, both blocks read their own `z(ζω)`, the live one agrees because the statement carries the
+derivation and the padding one does not — so both branches stay live and the assert stays
+falsifiable for the ORIGINAL reason: give block 0 a `should_finalize` of 1 and this rung is
+unsatisfiable. -/
 structure FinData where
   fp : FinProg
   vals : Array Nat
@@ -3814,25 +3827,34 @@ def finProbeData (s : WrapShape) (sp : SpAcc) (p : Nat) : FinData :=
   let fp := finProgOf (finWireOf s sp p) (finCfgOf s p)
   { fp := fp, vals := fnEval (envLookupAt (envIndex (finRawEnv s sp p))) fp.prog }
 
-/-- ⚑ Instance `p`'s `z(ζω)` — the raw `Req.Evals` fixture on a block that does NOT claim
-`should_finalize`, and `e1z · permUsed / perm₀` on the one that does. See the docblock above for why
-that guard is the difference between a live assert and one that cannot go red. -/
-def finZW0 (s : WrapShape) (sp : SpAcc) (p : Nat) : Nat :=
-  if finBlockVal p PREV_SHOULD_FINALIZE != 1 then finColVal p FIN_IDX_Z 1
-  else
-    let d := finProbeData s sp p
-    let perm0 := d.vals.getD d.fp.slots.perm 0
-    let pu := d.vals.getD d.fp.slots.permUsed 0
-    if perm0 == 0 then finColVal p FIN_IDX_Z 1
-    else qMul (finColVal p FIN_IDX_Z 1) (qMul pu (qInv perm0))
+/-! ⚑⚑ **`finZW0` IS DELETED (2026-08-07), AND ITS INERTNESS IS WHY.**
+
+It stood here and read: *instance `p`'s `z(ζω)` — the raw `Req.Evals` fixture on a block that does
+NOT claim `should_finalize`, and `e1z · permUsed / perm₀` on the one that does.* It was a
+CONTAINMENT: it scaled the live block's `z(ζω)` so §19's `Field.equal` leg would hold while packed
+word 31 carried something other than the derived `perm`. Word 31 became
+`Shifted_value.Type2.of_field perm` (`the_live_block_publishes_the_derived_perm_so_no_solve_is_needed`),
+so the ratio went to 1 and the solve became the IDENTITY at both instances — the live one because
+`permUsed = perm`, the padding one because the `should_finalize` guard already returned the raw
+column. Its LABEL was retired on `9c03979cb`; the solve was not.
+
+⚠ **AN INERT SOLVE IS WORSE THAN NONE.** Left in place it is a compensator waiting for an input: a
+future wrong word 31 gets silently ABSORBED by the ratio instead of REFUSING at `w10_finalize`,
+which is precisely the check this ladder exists to run. Deleting it means the three consumers below
+read `finColVal p k 1` — the block's own evaluation — unconditionally, so §19's `Field.equal` is
+answered by the derivation or not at all.
+
+⚑ `finProbeData` STAYS: it is what
+`the_live_block_publishes_the_derived_perm_so_no_solve_is_needed` reads `perm`/`permUsed` out of,
+and that theorem is the anti-vacuity leg that keeps the padding block's difference NONZERO. The
+probe was never the containment; the scaling was. -/
 
 /-- Instance `p`'s `.inp` lookup: the 87 witnessed evaluation cells, the two lifts, and the four
 statement words. Every entry is a cell some row of the assembly defines. -/
 def finInputEnv (s : WrapShape) (sp : SpAcc) (p : Nat) : VarEnv :=
   (List.range FIN_NCOLS).flatMap (fun k =>
     [ (finEvVar s sp p k 0, (finColVal p k 0 : Int))
-    , (finEvVar s sp p k 1,
-       ((if k == FIN_IDX_Z then finZW0 s sp p else finColVal p k 1 : Nat) : Int)) ])
+    , (finEvVar s sp p k 1, (finColVal p k 1 : Int)) ])
   ++ finTailEnv s sp p
 
 /-- ⚑ **THE `Field.equal` WITNESS IS COMPUTED, NOT ASSUMED — AND ASSUMING IT IS WHY THE FIRST
@@ -5065,24 +5087,24 @@ def finChalSpongeOf (base : Nat) (cs : List Nat) : SpAcc :=
 
 def finChalSponge (base p : Nat) : SpAcc := finChalSpongeOf base (whOldChals p)
 
-/-- `Evals.to_absorption_sequence` — the 43 columns at ζ and ζω INTERLEAVED, at the SOLVED `z(ζω)`
-so the sponge absorbs §19's own cells and not a second reading of them. -/
-def finEvalTape (s : WrapShape) (sp : SpAcc) (p : Nat) : List Nat :=
-  (List.range FIN_NCOLS).flatMap (fun k =>
-    [ finColVal p k 0, (if k == FIN_IDX_Z then finZW0 s sp p else finColVal p k 1) ])
+/-- `Evals.to_absorption_sequence` — the 43 columns at ζ and ζω INTERLEAVED. ⚑ `z(ζω)` is the
+block's OWN evaluation since `finZW0`'s deletion (see §19 above): the sponge absorbs §19's own cells
+because those cells now ARE the block's, not because a solve was applied to make them agree. -/
+def finEvalTape (p : Nat) : List Nat :=
+  (List.range FIN_NCOLS).flatMap (fun k => [ finColVal p k 0, finColVal p k 1 ])
 
 /-- **THE 91-ELEMENT TAPE** (`wrap_verifier.ml:844-891`), in upstream's own order. -/
-def finSpTape (s : WrapShape) (sp : SpAcc) (p cd : Nat) : List Nat :=
+def finSpTape (p cd : Nat) : List Nat :=
   [ finBlockVal p FIN_W_DIGEST, cd, finFtEval1Val p, finPZetaVal p, finPZetaWVal p ]
-  ++ finEvalTape s sp p
+  ++ finEvalTape p
 
 /-- …and the sponge over it, closed by the TWO squeezes ξ′ and r′. -/
 def finFrSpongeOf (base : Nat) (tp : List Nat) : SpAcc :=
   runSpongeQ base (tp.map (fun w => Ev.abs T_FINTAPE w) ++ [Ev.sq .chal, Ev.sq .chal])
     (tp.length + 1) 0
 
-def finFrSponge (s : WrapShape) (sp : SpAcc) (base p cd : Nat) : SpAcc :=
-  finFrSpongeOf base (finSpTape s sp p cd)
+def finFrSponge (base p cd : Nat) : SpAcc :=
+  finFrSpongeOf base (finSpTape p cd)
 
 /-- Squeeze `k` of a sponge — the cell it is read out of, and its value. -/
 def finSpSq (a : SpAcc) (k : Nat) : PVar × Nat := (chalSqueezes a).getD k (PVAR_NOWHERE, 0)
@@ -5353,8 +5375,7 @@ def finSpInputEnv (t : WrapData) (fa : List FinData) (d : FinSpData) (p : Nat) :
         (finSpOldV d i k, (whOldChal p (WH_ROUNDS * i + k) : Int))))
   ++ (List.range FIN_NCOLS).flatMap (fun k =>
       [ (finEvVar s sp p k 0, (finColVal p k 0 : Int))
-      , (finEvVar s sp p k 1,
-         ((if k == FIN_IDX_Z then finZW0 s sp p else finColVal p k 1 : Nat) : Int)) ])
+      , (finEvVar s sp p k 1, (finColVal p k 1 : Int)) ])
 
 /-- The config, at a PLACEHOLDER `Field.equal` witness. -/
 def finSpCfg0 : FinSpCfg :=
@@ -5367,10 +5388,8 @@ read, and the honest `(inv, bit)` follows from the ACTUAL difference — `(0, 1)
 `(d⁻¹, 0)` where they do not. Asserting the answer instead is what made the first `w10_finalize`
 emission unprovable while every σ-pin stayed green. -/
 def runFinSp (t : WrapData) (fa : List FinData) (base p : Nat) : FinSpData :=
-  let s := t.sh
-  let sp := t.sp
   let cs := finChalSponge base p
-  let fs := finFrSponge s sp (base + cs.next) p (whDigestVal cs)
+  let fs := finFrSponge (base + cs.next) p (whDigestVal cs)
   let d0 : FinSpData := { base := base, cs := cs, fs := fs, fp := default, vals := #[] }
   let W := finSpWireOf t fa d0 p
   let lk := envLookupAt (envIndex (finSpInputEnv t fa d0 p))
@@ -5446,7 +5465,6 @@ def finSpRows (t : WrapData) (wired : Bool) : List WRow :=
 /-- W-FINSPONGE's variable environment. -/
 def finSpEnv (t : WrapData) : VarEnv :=
   let s := t.sh
-  let sp := t.sp
   let fa := finAll t
   let da := finSpAll t fa
   (List.range s.prevs).flatMap (fun p =>

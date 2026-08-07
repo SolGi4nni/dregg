@@ -227,16 +227,20 @@ solve is the identity and the tape it presents the sponge is the block's own. -/
 /-- The 91-element tape §20's rows build at the live block, with the challenge digest the emitter's
 own nested sponge squeezes. -/
 def emittedFinTape : List Nat :=
-  finSpTape tW.sh tW.sp FIN_LIVE_BLOCK (whDigestVal (finChalSponge 0 FIN_LIVE_BLOCK))
+  finSpTape FIN_LIVE_BLOCK (whDigestVal (finChalSponge 0 FIN_LIVE_BLOCK))
 
-/-- …and the same tape with `finZW0`'s solve removed — every entry read straight off Mina devnet
-block 539508's own Wrap-proof evaluations, with nothing of this assembly's choosing in it. -/
-def unbentFinTape : List Nat :=
-  [ finBlockVal FIN_LIVE_BLOCK FIN_W_DIGEST
-  , whDigestVal (finChalSponge 0 FIN_LIVE_BLOCK)
-  , finFtEval1Val FIN_LIVE_BLOCK, finPZetaVal FIN_LIVE_BLOCK, finPZetaWVal FIN_LIVE_BLOCK ]
-  ++ (List.range FIN_NCOLS).flatMap
-       (fun k => [ finColVal FIN_LIVE_BLOCK k 0, finColVal FIN_LIVE_BLOCK k 1 ])
+/-! ⚑⚑ **`unbentFinTape` IS DELETED WITH `finZW0` (2026-08-07), AND KEEPING IT WOULD HAVE BEEN THE
+GREEN-PIN SIN.**
+
+It read: *the same tape with `finZW0`'s solve removed — every entry read straight off Mina devnet
+block 539508's own Wrap-proof evaluations.* Its whole job was to be the object `emittedFinTape` had
+to become, and `emittedFinTape = unbentFinTape` was the theorem that said the bend was inert. With
+`finZW0` gone, `finEvalTape` IS that list by definition, so the conjunct is `rfl` — a tautology
+wearing the name of a measurement. It is removed rather than left standing green.
+
+⚑ What survives is the leg that was always the content and can still go red:
+`emittedFinTape = MinaRealBlockTranscript.fqTape2`, ninety-one entries against the accepted block's
+own. -/
 
 /-- ⚑⚑ **§20's NESTED CHALLENGE-DIGEST SPONGE, AS THE EMITTER DRIVES IT, IS THE ACCEPTED BLOCK'S.**
 
@@ -269,17 +273,22 @@ layer — `finBlockVal` (the published step statement), `finChalSponge` (this fi
 EQUAL, element for element, to `MinaRealBlockTranscript.fqTape2`, which was extracted from the
 block's bytes on a path that has never seen this assembly. Two constructions, ninety-one numbers.
 
-✅ **WHAT IT SAYS NOW.** When this was written it did not say the EMITTED tape was this one —
-`the_emitted_finalize_tape_is_minas` said it differed at slot 6 when it was named
-`…differs_from_minas_in_exactly_one_slot`, and
-the content here was that the distance between the two was a single statement word. That word is
-published (`KimchiStepMainCore` §1f), so `the_emitted_finalize_tape_is_minas` closes the gap and
-this theorem is the KERNEL half of it: the compiled one is about the emitter's `finZW0` probe, this
-one is `rfl` over the value layer. Two constructions, ninety-one numbers, and no bend between
-them. -/
-theorem the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges :
-    unbentFinTape = Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2
-    ∧ (chalSqueezes (finFrSpongeOf 0 unbentFinTape)).map (fun e => e.2 % 2 ^ 128)
+✅ ⚑⚑ **AND SINCE `finZW0`'s DELETION IT IS ABOUT THE EMITTED TAPE, IN THE KERNEL.** This theorem
+used to be stated over `unbentFinTape` — a by-hand list standing beside the emitter — precisely
+because `emittedFinTape` ran the solve and could not be reduced by `rfl`. It was the KERNEL half of
+a pair whose COMPILED half (`the_emitted_finalize_tape_is_minas`) said the same thing about the
+emitter's own value layer. With the solve gone the two objects are one, so the hand-built list is
+deleted and this is restated over `emittedFinTape`: **the same claim, one object, and `rfl` instead
+of `native_decide` for the equality leg.** (Was
+`the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges`; renamed because "unbent" named a
+distinction that no longer exists.)
+
+⚠ Slot 1 still costs a nested sponge, so the SLOT-BY-SLOT form and the two squeezes stay in the
+compiled theorem below; what moves into the kernel here is the ninety-one-element equality itself,
+which is the leg a reader is entitled to want unconditioned on the compiler. -/
+theorem the_emitted_finalize_tape_is_minas_in_the_kernel :
+    emittedFinTape = Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2
+    ∧ (chalSqueezes (finFrSpongeOf 0 emittedFinTape)).map (fun e => e.2 % 2 ^ 128)
         = [ Dregg2.Circuit.Emit.MinaRealBlockTranscript.V_CHAL
           , Dregg2.Circuit.Emit.MinaRealBlockTranscript.U_CHAL ] := by
   refine ⟨rfl, rfl⟩
@@ -290,36 +299,56 @@ theorem the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges :
 count says a number; the list says WHICH, so a future edit that breaks slot 40 reds here with the
 slot named instead of with an integer that moved.
 
-⚑ **WHAT THIS SAYS THAT `the_unbent_finalize_tape_…` DOES NOT.** That theorem is about a tape built
-by hand from `finColVal`; this one is about the tape §20's ROWS actually build — the emitter's own
-value layer, `finZW0` included. Until 2026-08-07 the two were different objects and the difference
-was slot 6. They coincide now, which is the whole content: the emitter absorbs the block's own
-`z(ζω)` because packed word 31 carries the derived `perm` and the solve's ratio is 1.
+⚠ ⚑ **THREE CONJUNCTS WERE DELETED FROM THIS STATEMENT ON 2026-08-07, AND THE DELETION IS THE
+POINT.** They were `emittedFinTape = unbentFinTape`, `emittedFinTape.getD 6 0 = finZW0 …` and
+`finZW0 … = finColVal …` — each of them a fact about the SOLVE, i.e. about a definition that no
+longer exists. With `finZW0` deleted (`KimchiWrapMainCore` §19), `finEvalTape` reads the block's own
+column unconditionally, so all three reduce to `rfl` and would have stood here as green lines
+asserting nothing. **A conjunct that survives the removal of its subject is measuring the
+tautology.**
 
-⚑ Compiler-trusted, because `finZW0` runs §19's 1047-op probe and `whnf` models an `Array` as its
-`List` model (`KimchiWrapMainPins12` §20b measured the same wall). -/
+⚑ **WHAT IS LEFT IS WHAT WAS ALWAYS THE CONTENT**: the tape §20's ROWS build — the emitter's own
+value layer, not a list assembled by hand next to it — is the accepted block's, entry for entry, and
+§20's two squeezes over it are that block's ξ′ and r′. Slot 6 was the disagreement until
+`KimchiStepMainCore` §1f gave the live per-proof block's `perm` its own cell carrying
+`Shifted_value.Type2.of_field` of the derived value; the solve became inert then, and is gone now.
+
+⚑ Compiler-trusted, because slot 1's challenge digest runs a nested sponge and `whnf` models an
+`Array` as its `List` model (`KimchiWrapMainPins12` §20b measured the same wall). -/
 theorem the_emitted_finalize_tape_is_minas :
     ((List.range 91).filter (fun i =>
         emittedFinTape.getD i 0
           != Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2.getD i 0)) = []
     ∧ emittedFinTape = Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2
-    ∧ emittedFinTape = unbentFinTape
-    ∧ emittedFinTape.getD 6 0 = finZW0 tW.sh tW.sp FIN_LIVE_BLOCK
-    ∧ finZW0 tW.sh tW.sp FIN_LIVE_BLOCK = finColVal FIN_LIVE_BLOCK FIN_IDX_Z 1
+    -- ⚑ …and slot 6 — the one the deleted solve used to bend — is the block's own `z(ζω)`, named
+    -- here against MINA'S entry rather than against this file's own `finColVal`, which is the only
+    -- form of the claim that survives `finZW0`'s deletion with content in it.
+    ∧ emittedFinTape.getD 6 0
+        = Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2.getD 6 0
     -- ⚑ …and §20's two squeezes over the EMITTED tape are that block's ξ′ and r′.
     ∧ (chalSqueezes (finFrSpongeOf 0 emittedFinTape)).map (fun e => e.2 % 2 ^ 128)
         = [ Dregg2.Circuit.Emit.MinaRealBlockTranscript.V_CHAL
           , Dregg2.Circuit.Emit.MinaRealBlockTranscript.U_CHAL ] := by
   native_decide
 
-/-- ✅ ⚑⚑⚑ **AND THE BEND IS GONE, BECAUSE THE LIVE BLOCK PUBLISHES THE DERIVED `perm` — THE
-BLOCKER OF `w11_finsponge`, CLOSED WHERE IT WAS EXHIBITED.**
+/-- ✅ ⚑⚑⚑ **THE LIVE BLOCK PUBLISHES THE DERIVED `perm`, SO NO SOLVE IS NEEDED — AND THE SOLVE IS
+DELETED, NOT MERELY INERT.** (Was `the_bend_is_gone_because_the_live_block_publishes_the_derived_perm`;
+**renamed 2026-08-07 because the name became false**: nothing here is "gone because" any more, the
+`finZW0` it named no longer exists.)
 
 `finZW0` scaled `z(ζω)` by `permUsed / perm` so that §19's `Field.equal` leg would hold on the block
 that claims `should_finalize`. `perm` is the derivation over Mina's own evaluations — the one
 `finalize_reproduces_minas_own_ft_eval0` grounds against `FT0`, `LCT` and `PVP`. `permUsed` is
-packed word `27·FIN_LIVE_BLOCK + 4` = **31**, read through `Shifted_value.Type2`. They AGREE now, so
-the ratio is 1, the solve is the identity, and the sponge above it absorbs the block's own value.
+packed word `27·FIN_LIVE_BLOCK + 4` = **31**, read through `Shifted_value.Type2`. They AGREE, which
+is why the scaling was removable; the theorem below is that agreement, stated over `finProbeData`'s
+own slots and NOT over the deleted function.
+
+⚠ ⚑ **WHY DELETION AND NOT AN INERT KEEP.** An identity solve is a compensator with no input yet: a
+future word 31 that is NOT the derived `perm` would be silently ABSORBED by the ratio instead of
+refusing at `w10_finalize`, and this theorem would go on being green about `finZW0 = finColVal`
+while the emission drifted. The three conjuncts of this shape that named `finZW0` are removed with
+it; what is left names `perm`, `permUsed` and the published word, which is where a drift would
+actually show.
 
 ⚠ ⚑ **WHAT THE PREVIOUS VERSION OF THIS THEOREM GOT RIGHT, AND WHAT IT GOT WRONG.** It said, and
 this was correct: *"word 31 must be `Shifted_value.Type2.of_field` of `perm` — `qSub perm
@@ -331,19 +360,16 @@ merely aliased onto them and was never derived at all. Un-aliasing it (`KimchiSt
 one cell, not a re-derivation, and the containment `finZW0` had become is retired rather than kept
 alongside its replacement.
 
-⚑ **THE LAST TWO CONJUNCTS ARE THE ANTI-VACUITY AND THEY ARE THE ONES THAT COULD GO RED.** A
-`finZW0` that returned `e1z` unconditionally would satisfy everything above; the PADDING block's own
-perm word is NOT its derived one and its solve is therefore still guarded off — which is what keeps
-`Field.equal`'s `(d⁻¹, 0)` branch instantiated by this same emission. -/
-theorem the_bend_is_gone_because_the_live_block_publishes_the_derived_perm :
+⚑ **THE LAST TWO CONJUNCTS ARE THE ANTI-VACUITY AND THEY ARE THE ONES THAT COULD GO RED.** The
+PADDING block's own perm word is NOT its derived one, so `Field.equal` still runs at a nonzero
+difference somewhere in this emission — which is what keeps its `(d⁻¹, 0)` branch instantiated. -/
+theorem the_live_block_publishes_the_derived_perm_so_no_solve_is_needed :
     (let d := finProbeData tW.sh tW.sp FIN_LIVE_BLOCK
      d.vals.getD d.fp.slots.permUsed 0
          = qAdd (finBlockVal FIN_LIVE_BLOCK 4) FIN_SHIFT2
      ∧ d.vals.getD d.fp.slots.perm 0 = d.vals.getD d.fp.slots.permUsed 0
      -- ⚑ …the value the word map has to carry, and it does: `Shifted_value.Type2.of_field perm`.
-     ∧ qSub (d.vals.getD d.fp.slots.perm 0) FIN_SHIFT2 = finBlockVal FIN_LIVE_BLOCK 4
-     -- ⚑ …so the solve is the identity on the evaluation it used to bend.
-     ∧ finZW0 tW.sh tW.sp FIN_LIVE_BLOCK = finColVal FIN_LIVE_BLOCK FIN_IDX_Z 1)
+     ∧ qSub (d.vals.getD d.fp.slots.perm 0) FIN_SHIFT2 = finBlockVal FIN_LIVE_BLOCK 4)
     -- ⚑ ANTI-VACUITY: the OTHER block is unchanged — its published `perm` is NOT its derivation, so
     -- `Field.equal` still runs at a nonzero difference somewhere in this emission.
     ∧ (let d := finProbeData tW.sh tW.sp (1 - FIN_LIVE_BLOCK)
@@ -353,7 +379,7 @@ theorem the_bend_is_gone_because_the_live_block_publishes_the_derived_perm :
   native_decide
 
 #assert_compiled the_emitted_finalize_tape_is_minas
-#assert_compiled the_bend_is_gone_because_the_live_block_publishes_the_derived_perm
+#assert_compiled the_live_block_publishes_the_derived_perm_so_no_solve_is_needed
 
 -- ⚠ The four named below are the ONLY compiler-trusted facts in this namespace, each pinned by
 -- `#assert_compiled` at its own site (a RED path in both directions). Everything else — both
@@ -363,6 +389,6 @@ theorem the_bend_is_gone_because_the_live_block_publishes_the_derived_perm :
   except cip_fold_reproduces_the_accepted_block
          cip_fold_direction_and_every_entry_are_load_bearing
          the_emitted_finalize_tape_is_minas
-         the_bend_is_gone_because_the_live_block_publishes_the_derived_perm
+         the_live_block_publishes_the_derived_perm_so_no_solve_is_needed
 
 end Dregg2.Circuit.Emit.KimchiWrapFinalizeSpongeGate
