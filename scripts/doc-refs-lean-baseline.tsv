@@ -106,6 +106,7 @@ metatheory/Dregg2/Verify/StripeBridgeV2.lean	docs/STRIPE-RESERVE-DESIGN-AND-PROO
 metatheory/EffectAlgebraSketch.lean	metatheory/EmitRotationV3SetFieldValue8.lean
 metatheory/Market/DistributedPrivateProverBoundary.lean	fhegg-fhe/private_book_distributed_prover.rs
 metatheory/Market/PrivateClearingGameConsequence.lean	dreggnet-market/private_clearing_consequence.rs
+metatheory/fixtures/pickles-extractors/staged-step-statement/KimchiStepWrapChainFixture.lean	pickles-chain-harness/src/bin/export_step_tape.rs
 orb-compiler/Pancake/NatToDecCompile.lean	Pancake/RealStages/MultiWord.lean
 orb/Control/TailcfgBridge.lean	types/key/node.go
 orb/Datapath/AcmeDeployedAudit.lean	docs/gateway/ACME-SPAN-AUDIT.md
