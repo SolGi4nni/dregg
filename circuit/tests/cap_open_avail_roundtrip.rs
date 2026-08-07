@@ -309,8 +309,9 @@ fn cap_open_eff_member_roundtrips_live() {
         "eff width = bare cap-open width + avail pad"
     );
     assert_eq!(
-        desc.public_input_count, 46,
-        "eff carries the rotated 46 PIs"
+        desc.public_input_count, ROT_PI_COUNT,
+        "eff carries the bare rotated {ROT_PI_COUNT} PIs (46 before the 2026-08-07 seven-slot \
+         compaction)"
     );
 
     let (mut trace, base_pis) = build_transfer_base_avail(pad);

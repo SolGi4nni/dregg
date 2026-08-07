@@ -62,9 +62,9 @@ use dregg_circuit::descriptor_ir2::{
 // (verify_vm_descriptor2 is used by the makeSovereign FORCED-ON-WIRE positive tooth.)
 use dregg_circuit::effect_vm::columns::PARAM_BASE;
 use dregg_circuit::effect_vm::trace_rotated::{
-    AFTER_BASE, B_AUTHORITY_DIGEST, B_MODE, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
-    generate_rotated_effect_vm_trace, generate_rotated_set_field_dyn_base,
-    rotated_descriptor_name_for_effect,
+    AFTER_BASE, B_AUTHORITY_DIGEST, B_MODE, DFA_RC_LEN, ROT_PI_COUNT, ROT_WIDTH,
+    RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
+    generate_rotated_set_field_dyn_base, rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -188,9 +188,12 @@ fn no_cell_write_audit(effect: Effect, name: &str) -> (bool, bool, bool) {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .unwrap_or_else(|e| panic!("rotated {name} descriptor parses: {e}"));
     assert_eq!(
-        desc.public_input_count, 50,
-        "{name}: a no-cell-write passthrough carries the rotated 46-PI vector + the 4 dsl rc pins \
-         (withDfaRcPins: rc at PI ROT_PI_COUNT (was 46)..49; no per-effect fifth pin) = 50"
+        desc.public_input_count,
+        ROT_PI_COUNT + DFA_RC_LEN,
+        "{name}: a no-cell-write passthrough carries the rotated {ROT_PI_COUNT}-PI vector + the \
+         {DFA_RC_LEN} dsl rc pins (withDfaRcPins: rc at PI ROT_PI_COUNT..; no per-effect fifth \
+         pin) = {} (was 50 before the 2026-08-07 seven-slot compaction)",
+        ROT_PI_COUNT + DFA_RC_LEN
     );
 
     // The rotated descriptor binds NONE of PI[16..20] (the effects_hash): the produced output is
@@ -408,9 +411,13 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated makeSovereign descriptor parses");
     assert_eq!(
-        desc.public_input_count, 58,
-        "makeSovereign descriptor DECLARES all 8 authority record-pins + the 4 dsl rc pins \
-         (46 rotated + H1 record-pin8 at PI ROT_PI_COUNT (was 46)..53 + withDfaRcPins rc at PI 54..57 = 58)"
+        desc.public_input_count,
+        ROT_PI_COUNT + 8 + DFA_RC_LEN,
+        "makeSovereign descriptor DECLARES all 8 authority record-pins + the {DFA_RC_LEN} dsl rc \
+         pins ({ROT_PI_COUNT} rotated + H1 record-pin8 at PI ROT_PI_COUNT..{} + withDfaRcPins rc \
+         above it = {}; it was 58 before the 2026-08-07 seven-slot compaction)",
+        ROT_PI_COUNT + 8,
+        ROT_PI_COUNT + 8 + DFA_RC_LEN
     );
 
     let st = CellState::new(balance as u64, 0);
@@ -603,12 +610,15 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
     let desc =
         parse_vm_descriptor2(rotated_descriptor_json(name)).expect("setFieldDyn descriptor parses");
     assert_eq!(
-        desc.public_input_count, 51,
-        "setFieldDyn DECLARES 46 rotated + the fields-root weld fifth PIN at PI ROT_PI_COUNT (was 46) + the 4 \
-         `withDfaRcPins` rc tail SLOTS at PI 47..50 = 51. ⚑ SLOTS, not pins: `dropUnforcedPins` \
-         deleted the four rc `.piBinding`s (their columns are read by nothing) and left `piCount` \
-         untouched, so those four are now verifier-supplied inputs the AIR ignores. The fifth pin \
-         SURVIVED — gate 31 (`col 275 == col 68`) forces its column."
+        desc.public_input_count,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "setFieldDyn DECLARES {ROT_PI_COUNT} rotated + the fields-root weld fifth PIN at PI \
+         ROT_PI_COUNT + the {DFA_RC_LEN} `withDfaRcPins` rc tail SLOTS above it = {} (51 before \
+         the 2026-08-07 seven-slot compaction). ⚑ SLOTS, not pins: `dropUnforcedPins` deleted the \
+         four rc `.piBinding`s (their columns are read by nothing) and left `piCount` untouched, \
+         so those four are now verifier-supplied inputs the AIR ignores. The fifth pin SURVIVED — \
+         gate 31 (`col 275 == col 68`) forces its column.",
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
     // The DISTINCT geometry the generator produces from scratch: a V1Face (the v13-geom re-lay), NOT
     // the ungraduated rotated trace — four fewer chip sites (4 × 7 lanes = 28 cols) than the standard

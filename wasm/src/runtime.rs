@@ -550,7 +550,18 @@ impl DreggRuntime {
         let fabricate = |cell: &CellId| -> WitnessedReceipt {
             let counts = sched.counts_for(cell);
             let roots = sched.roots_for(cell, turn.nonce);
-            let mut pi_bb = vec![BabyBear::ZERO; p::BASE_COUNT];
+            // ⚑ `ACTIVE_BASE_COUNT`, NOT `BASE_COUNT`. This read `BASE_COUNT` and made
+            // `prove_bilateral_aggregate` return `Err` DETERMINISTICALLY: the consumer,
+            // `turn_prover::aggregate_bilateral_prover::build_inner_rows_v2`, refuses a WR whose
+            // `public_inputs.len() < inner_pi::ACTIVE_BASE_COUNT` when there is no native
+            // `bilateral_schedule` — and the v3 tail makes `ACTIVE_BASE_COUNT` exactly four felts
+            // longer than `BASE_COUNT`. The gap has been 4 on both sides of the 2026-08-07
+            // seven-slot compaction, so this is NOT compaction fallout; it was invisible because
+            // `wasm` is workspace-`exclude`d and the browser path swallows the error in a
+            // `console.warn`. Every sibling WR producer sizes at `ACTIVE_BASE_COUNT`
+            // (`turn::bilateral_schedule::pi_from_schedule_block`,
+            // `teasting/tests/multi_cell_cross_fed_binding.rs`, the prover's own tests).
+            let mut pi_bb = vec![BabyBear::ZERO; p::ACTIVE_BASE_COUNT];
             for i in 0..4 {
                 pi_bb[p::TURN_HASH_BASE + i] = th[i];
                 pi_bb[p::EFFECTS_HASH_GLOBAL_BASE + i] = eg[i];

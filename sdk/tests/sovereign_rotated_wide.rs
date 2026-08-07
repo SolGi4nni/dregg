@@ -24,6 +24,9 @@
 use dregg_cell::commitment::{V9RotationContext, compute_rotated_pre_limbs};
 use dregg_cell::{Cell, CellMode, Ledger};
 use dregg_circuit::descriptor_ir2::{parse_vm_descriptor2, verify_vm_descriptor2};
+use dregg_circuit::effect_vm::trace_rotated::{
+    DFA_RC_LEN, REFUSAL_EXACT_AUDIT_PI_LEN, ROT_PI_COUNT,
+};
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
 use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 use dregg_circuit::field::BabyBear;
@@ -437,10 +440,18 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
     // regenerated it to 90 and this assertion could not object, because the target had stopped
     // compiling in that same commit. If this reds, RE-READ the registry and re-derive the geometry —
     // never edit the number to match.
+    // ⚑ RE-DERIVED, not re-typed — which is what the canary above demands and what the literal
+    // `90` could not do. The 2026-08-07 seven-slot PI compaction (`docs/PI-DISPOSITION.md` §6) took
+    // `ROT_PI_COUNT` 46 → 39 and every registry member with it; the literal survived as a stale
+    // number a human had to notice. The shape: the rotated base, the 8 faithful authority
+    // record-pins, the 16 raw-audit limbs the exact refusal ABI splices above them, the dsl rc tail,
+    // and the 16 wide commit anchors.
+    let refusal_wide_pi_count =
+        ROT_PI_COUNT + 8 + REFUSAL_EXACT_AUDIT_PI_LEN + DFA_RC_LEN + WIDE_COMMIT_PI_COUNT;
     assert_eq!(
-        desc.public_input_count, 90,
-        "refusal wide descriptor carries 90 PIs (staged registry at HEAD); a move here is a real \
-         geometry change and must be re-derived, not re-typed"
+        desc.public_input_count, refusal_wide_pi_count,
+        "refusal wide descriptor carries {refusal_wide_pi_count} PIs (staged registry at HEAD, 90 \
+         pre-compaction); a move here is a real geometry change and must be re-derived, not re-typed"
     );
     // Derived, never hand-pinned: the 16 wide commit PIs are the descriptor's TAIL.
     let refusal_wide_pi_base = desc.public_input_count - WIDE_COMMIT_PI_COUNT;
@@ -645,8 +656,9 @@ fn flagday_wide_full_turn_proves_and_light_client_verifies_at_124_bit() {
         .expect("rotated effect-vm leg present");
     let n = leg.sub_public_inputs.len();
     assert!(
-        n >= 16 + 46,
-        "the WIDE transfer leg carries the 46 base PIs + 16 wide commit PIs (got {n})"
+        n >= WIDE_COMMIT_PI_COUNT + ROT_PI_COUNT,
+        "the WIDE transfer leg carries the {ROT_PI_COUNT} base PIs + {WIDE_COMMIT_PI_COUNT} wide \
+         commit PIs (got {n}); the base was 46 before the 2026-08-07 seven-slot compaction"
     );
     let leg_after8: [BabyBear; 8] = leg.sub_public_inputs[n - 8..n].try_into().unwrap();
     assert_eq!(

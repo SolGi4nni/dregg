@@ -59,7 +59,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
 use dregg_circuit_prove::joint_turn_aggregation::{
     CustomWitnessBundle, DescriptorParticipant, RotatedParticipantLeg,
 };
-use dregg_circuit_prove::joint_turn_recursive::CUSTOM_COMMIT_LEN;
+use dregg_circuit_prove::joint_turn_recursive::{CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO};
 use dregg_circuit_prove::mpt_holding_leaf::{
     MPT_HOLDING_HASH_PI, MptHoldingWitness, mpt_holding_program,
 };
@@ -182,15 +182,19 @@ fn mint_custom_leg(
         None,
     )
     .expect("custom wide dispatch");
+    // ⚑ `CUSTOM_COMMIT_PI_LO`, not the literal `46`. The 2026-08-07 seven-slot compaction took
+    // that base to `ROT_PI_COUNT` = 39; a stale `46` here does not fail loudly, it READS EIGHT
+    // DIFFERENT FELTS and compares them to the commitment (`docs/PI-DISPOSITION.md` §6).
     assert!(
-        dpis.len() >= 46 + CUSTOM_COMMIT_LEN,
-        "custom leg PI vector must carry the commitment claim lanes at 46.. (got {})",
+        dpis.len() >= CUSTOM_COMMIT_PI_LO + CUSTOM_COMMIT_LEN,
+        "custom leg PI vector must carry the commitment claim lanes at {CUSTOM_COMMIT_PI_LO}.. \
+         (got {})",
         dpis.len()
     );
     assert_eq!(
-        &dpis[46..46 + CUSTOM_COMMIT_LEN],
+        &dpis[CUSTOM_COMMIT_PI_LO..CUSTOM_COMMIT_PI_LO + CUSTOM_COMMIT_LEN],
         &commit[..CUSTOM_COMMIT_LEN],
-        "custom leg must publish the claimed commitment lanes at PI 46.."
+        "custom leg must publish the claimed commitment lanes at PI {CUSTOM_COMMIT_PI_LO}.."
     );
 
     let config = ir2_leaf_wrap_config();

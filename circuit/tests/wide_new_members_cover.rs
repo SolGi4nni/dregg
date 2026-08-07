@@ -16,9 +16,9 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::effect_vm::bare_floor_refuse_weld as refuse;
 use dregg_circuit::effect_vm::trace_rotated::{
     CAP_OPEN_TB_PI_COUNT, CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH, CapOpenWitness, FACET_MASK_HI,
-    GRAD_ROT_WIDTH, HEAP_WRITE_HOST_WIDTH, RotatedBlockWitness, SIGNATURE_AUTH_TAG,
-    TRANSFER_AVAIL_PAD, V1_WIDTH, WIDE_CARRIER_APPENDIX, WRITE_MASK_LO, anchor_cap_open_turn_pins,
-    avail_pad_for_descriptor_name, empty_caveat_manifest,
+    GRAD_ROT_WIDTH, HEAP_WRITE_HOST_WIDTH, ROT_PI_COUNT, RotatedBlockWitness, SIGNATURE_AUTH_TAG,
+    TRANSFER_AVAIL_PAD, V1_WIDTH, WIDE_CARRIER_APPENDIX, WIDE_PI_COUNT, WRITE_MASK_LO,
+    anchor_cap_open_turn_pins, avail_pad_for_descriptor_name, empty_caveat_manifest,
     generate_rotated_effect_vm_descriptor_and_trace_wide, generate_rotated_heap_write_wide,
     generate_rotated_transfer_cap_open_tb_wide, transfer_caveat_manifest,
 };
@@ -124,11 +124,11 @@ fn new_wide_members_carry_16_commit_pis() {
     // The committed post-v2-carrier-rotation shapes (the registry drift pins), each DERIVED from
     // its own pre-wide HOST width through `wide_width` rather than transcribed — the TB host is the
     // turn-bound cap-open width on the AVAIL-hardened transfer face, heapWrite carries the OPTION-I
-    // after-spine host, and supplyMint rides the BARE graduated rotated host at the UNWRAPPED 62 PIs
-    // (never rc-wrapped, like cap-open).
+    // after-spine host, and supplyMint rides the BARE graduated rotated host at the UNWRAPPED
+    // `ROT_PI_COUNT + 16` PIs (never rc-wrapped, like cap-open).
     for (name, host, want_pi) in [
-        // The TB member's wide PI count is DERIVED, not transcribed: `CAP_OPEN_TB_PI_COUNT` (47 =
-        // the rotated 46 + the ONE turn-identity `src` slot) + the 16 wide-commit anchors = 63.
+        // The TB member's wide PI count is DERIVED, not transcribed: `CAP_OPEN_TB_PI_COUNT` (the
+        // rotated base + the ONE turn-identity `src` slot) + the 16 wide-commit anchors.
         // It was 65 until 2026-07-31, when `CapOpenTurnPins` deleted the `actor`/`dst` pins and
         // their two PI slots — they named columns no other constraint read.
         (
@@ -136,8 +136,17 @@ fn new_wide_members_carry_16_commit_pis() {
             CAP_OPEN_TB_WIDTH + TRANSFER_AVAIL_PAD,
             CAP_OPEN_TB_PI_COUNT + 16,
         ),
+        // ⓘ heapWrite's base descriptor declares ZERO v1 PIs, so its wide count is the 4 rotated
+        // commit pins + the 16 wide anchors — INDEPENDENT of `V1_PI_COUNT`, and correctly untouched
+        // by the 2026-08-07 seven-slot compaction.
         ("heapWriteVmDescriptor2R24", HEAP_WRITE_HOST_WIDTH, 20),
-        ("supplyMintVmDescriptor2R24", GRAD_ROT_WIDTH, 62),
+        // supplyMint is UNWRAPPED (no dsl rc tail): the bare rotated base + the 16 wide anchors.
+        // This was the literal `62` until the compaction took `ROT_PI_COUNT` 46 -> 39.
+        (
+            "supplyMintVmDescriptor2R24",
+            GRAD_ROT_WIDTH,
+            ROT_PI_COUNT + 16,
+        ),
     ] {
         let d = parse_vm_descriptor2(wide_json(name)).unwrap();
         let want_w = wide_width(name, host);
@@ -236,8 +245,11 @@ fn wide_supply_mint_proves_and_verifies() {
          supplyMintVmDescriptor2R24)"
     );
     assert_eq!(
-        desc.public_input_count, 62,
-        "supplyMint wide 62 PIs (unwrapped — no rc tail)"
+        desc.public_input_count,
+        ROT_PI_COUNT + 16,
+        "supplyMint wide {} PIs (unwrapped — no rc tail): the bare rotated {ROT_PI_COUNT} + the 16 \
+         wide commit anchors; it was 62 before the 2026-08-07 seven-slot compaction",
+        ROT_PI_COUNT + 16
     );
     assert_eq!(trace[0].len(), desc.trace_width);
     assert_eq!(dpis.len(), desc.public_input_count);
@@ -567,8 +579,10 @@ fn wide_transfer_membership_leg_mints_through_refuse_weld() {
          stride-tail above it)"
     );
     assert_eq!(
-        desc.public_input_count, 68,
-        "66 producer PIs + 2 spliced membership claim PIs"
+        desc.public_input_count,
+        WIDE_PI_COUNT + 2,
+        "{WIDE_PI_COUNT} producer PIs + 2 spliced membership claim PIs (68 = 66 + 2 before the \
+         2026-08-07 seven-slot compaction)"
     );
     assert_eq!(
         dpis.len(),
@@ -682,7 +696,7 @@ fn fresh_fold_leaf_mints_and_proves_both_bodies() {
             refuse::CAPACITY_TAGS.len() * refuse::REFUSE_STRIDE,
             "the teeth-less incrementNonce carries the dead stride-tail above its refuse block"
         );
-        assert_eq!(desc.public_input_count, 59);
+        assert_eq!(desc.public_input_count, WIDE_PI_COUNT);
         assert_eq!(dpis.len(), desc.public_input_count);
         let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mb, &map_heaps)
             .unwrap_or_else(|e| panic!("IncrementNonce fresh leaf must PROVE: {e}"));
@@ -755,7 +769,7 @@ fn fresh_fold_leaf_mints_and_proves_both_bodies() {
             refuse::REFUSE_WELD_WIDEN,
             "the avail-hardened transfer's refuse block rides at the TOP of the trace"
         );
-        assert_eq!(desc.public_input_count, 61);
+        assert_eq!(desc.public_input_count, WIDE_PI_COUNT + 2);
         assert_eq!(dpis.len(), desc.public_input_count);
         let proof =
             prove_vm_descriptor2(&desc, &trace, &dpis, &mb, &map_heaps).unwrap_or_else(|e| {

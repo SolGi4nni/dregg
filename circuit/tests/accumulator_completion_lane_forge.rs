@@ -63,10 +63,11 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::bare_floor_refuse_weld;
 use dregg_circuit::effect_vm::trace_rotated::{
-    ACCUM_INSERT_HOST_WIDTH, AFTER_BASE, B_COMMITMENTS_ROOT, RotatedBlockWitness,
-    append_wide_carriers, compact_e1_columns, compact_s2_columns, empty_caveat_manifest,
-    generate_rotated_note_create_trace_with_commitments_tree, generate_rotated_note_create_wide,
-    recompute_after_blocks_for_test, rotated_descriptor_name_for_effect,
+    ACCUM_INSERT_HOST_WIDTH, AFTER_BASE, B_COMMITMENTS_ROOT, DFA_RC_LEN, ROT_NULLIFIER_PI_COUNT,
+    RotatedBlockWitness, append_wide_carriers, compact_e1_columns, compact_s2_columns,
+    empty_caveat_manifest, generate_rotated_note_create_trace_with_commitments_tree,
+    generate_rotated_note_create_wide, recompute_after_blocks_for_test,
+    rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::{V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV};
@@ -284,8 +285,11 @@ fn wide_notecreate_completion_lane_forge_verdict() {
     let wide_desc = parse_vm_descriptor2(registry_json_static(WIDE_REGISTRY_STAGED_TSV, name))
         .expect("WIDE noteCreate descriptor parses");
     assert_eq!(
-        wide_desc.public_input_count, 67,
-        "the wide 8-felt-commit geometry a light client runs (51 base + 16 wide commit PIs)"
+        wide_desc.public_input_count,
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN + 16,
+        "the wide 8-felt-commit geometry a light client runs ({} base + 16 wide commit PIs; it was \
+         51 + 16 = 67 before the 2026-08-07 seven-slot compaction)",
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN
     );
 
     let new_root_cols = insert_new_root_cols(&wide_desc);

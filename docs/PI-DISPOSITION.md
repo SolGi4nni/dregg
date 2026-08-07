@@ -312,9 +312,10 @@ is a true statement about *those descriptors*. It is not a statement about the l
 **a slot can be unpinned in its own descriptor and load-bearing in another one that consumes the
 window.** That is exactly what happens here:
 
-* `circuit/src/bilateral_aggregation_air.rs:230` — `SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE`
-  (33). The **49-felt bilateral-schedule contract** *is* the v1 PI window `[33, 82)`, and
-  `sched::EFFECTS_HASH_GLOBAL_BASE = 4` puts its four felts at **v1 offsets 37..40**.
+* `circuit/src/bilateral_aggregation_air.rs:240` — `SCHEDULE_PI_BASE = inner_pi::TURN_HASH_BASE`
+  (33 when this was written; **26 at HEAD**, the compaction slid it). The **49-felt
+  bilateral-schedule contract** *is* the v1 PI window `[33, 82)` → **`[26, 75)` now**, and
+  `sched::EFFECTS_HASH_GLOBAL_BASE = 4` puts its four felts at **v1 offsets 37..40 → 30..33**.
 * `schedule_block_from_inner_pi` (`:236`) projects that window into the deployed
   `dregg-bilateral-aggregation-v3` main trace at cols `[0, 49)`.
 * In the **emitted descriptor bytes** (`circuit/descriptors/dregg-bilateral-aggregation-v3.json`,

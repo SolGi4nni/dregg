@@ -31,9 +31,9 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::effect_vm::columns::sel;
 use dregg_circuit::effect_vm::trace_rotated::{
     CAP_OPEN_AFTER_SPINE_SPAN, CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, DFA_RC_LEN,
-    FACET_MASK_HI, RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO, empty_caveat_manifest,
-    generate_rotated_cap_attenuate_after_spine, generate_rotated_effect_vm_trace,
-    widen_to_cap_open,
+    FACET_MASK_HI, ROT_PI_COUNT, RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO,
+    empty_caveat_manifest, generate_rotated_cap_attenuate_after_spine,
+    generate_rotated_effect_vm_trace, widen_to_cap_open,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
@@ -255,12 +255,12 @@ fn cap_open_witness_and_appendix_are_genuine() {
         "cap-open WRITE width = read appendix (CAP_OPEN_WIDTH) + after-spine"
     );
     assert_eq!(
-        desc.public_input_count, 46,
-        "cap-open carries the rotated 46 PIs"
+        desc.public_input_count, ROT_PI_COUNT,
+        "cap-open carries the bare rotated {ROT_PI_COUNT} PIs (46 pre-compaction)"
     );
 
     let (mut trace, pis) = build_attenuate_base();
-    assert_eq!(pis.len(), 39);
+    assert_eq!(pis.len(), ROT_PI_COUNT);
 
     let w = cap_open_witness();
     assert_eq!(
@@ -515,8 +515,10 @@ fn cap_open_wide_proves_verifies_and_executor_anchors() {
     let raw_wide_width = host_width + WIDE_CARRIER_APPENDIX;
     assert_eq!(
         desc.public_input_count,
-        46 + 16,
-        "cap-open wide PIs = the 46 rotated base + the 16 wide commit pins"
+        ROT_PI_COUNT + 16,
+        "cap-open wide PIs = the {ROT_PI_COUNT} rotated base + the 16 wide commit pins (the base \
+         was 46 before the 2026-08-07 seven-slot compaction; the 16 is two 8-felt commits and did \
+         not move)"
     );
 
     let (mut trace, pis) = build_attenuate_base();
@@ -525,7 +527,8 @@ fn cap_open_wide_proves_verifies_and_executor_anchors() {
     assert_eq!(trace[0].len(), CAP_OPEN_WIDTH, "cap-open READ width");
 
     // The after-spine + the wide carriers in ONE deployed producer (the narrow lift plus
-    // `append_wide_carriers` — they cannot drift). The 16 wide commit PIs append past the base 46.
+    // `append_wide_carriers` — they cannot drift). The 16 wide commit PIs append past the
+    // `ROT_PI_COUNT` base (46 before the 2026-08-07 seven-slot compaction).
     let dpis = generate_rotated_cap_attenuate_after_spine_wide(
         &mut trace,
         pis,
@@ -556,13 +559,16 @@ fn cap_open_wide_proves_verifies_and_executor_anchors() {
         circuit_commit[1..].iter().any(|f| *f != BabyBear::ZERO),
         "cap-open wide: the commit is genuinely 8-felt-wide (lanes 1..8 not all zero)"
     );
-    // And the published PIs ARE that carrier (the 16 wide pins ride past the base 46).
+    // And the published PIs ARE that carrier (the 16 wide pins ride past the `ROT_PI_COUNT` base).
+    // ⚑ This read `dpis[46 + j]`, and it is the INDEX half of the class: the count pin two hundred
+    // lines up went red at the 2026-08-07 seven-slot compaction, this one just read eight different
+    // felts. `ROT_PI_COUNT` now, so the next cascade carries it (`docs/PI-DISPOSITION.md` §6).
     for j in 0..8 {
         assert_eq!(
-            dpis[46 + j],
+            dpis[ROT_PI_COUNT + j],
             circuit_commit[j],
             "cap-open wide PI {} = BEFORE 8-felt commit felt {j}",
-            46 + j
+            ROT_PI_COUNT + j
         );
     }
 

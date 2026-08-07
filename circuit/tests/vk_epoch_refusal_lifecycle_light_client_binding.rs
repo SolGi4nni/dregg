@@ -21,7 +21,7 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    AFTER_BASE, B_LIFECYCLE, REFUSAL_EXACT_AUDIT_PI_BASE, REFUSAL_EXACT_AUDIT_PI_LEN,
+    AFTER_BASE, B_LIFECYCLE, DFA_RC_LEN, REFUSAL_EXACT_AUDIT_PI_BASE, REFUSAL_EXACT_AUDIT_PI_LEN,
     REFUSAL_WRITE_HOST_WIDTH, ROT_PI_COUNT, RotatedBlockWitness, WIDE_CARRIER_APPENDIX,
     compact_e1_columns, compact_s2_columns, empty_caveat_manifest,
     generate_rotated_effect_vm_trace, generate_rotated_refusal_write_wide,
@@ -31,6 +31,17 @@ use dregg_circuit::effect_vm::{CellState, Effect, bytes32_to_8_limbs};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
 use dregg_turn::rotation_witness as rw;
+
+/// The DEPLOYED exact-refusal WIDE member's published PI arity, DERIVED from the rotation geometry
+/// rather than transcribed: the rotated base, the 8 faithful authority record-pins, the 16 raw-audit
+/// limbs the exact ABI splices above them, the dsl rc tail, and the 16 wide commit anchors.
+///
+/// ⚑ This was the literal `90`, in five places, and every one of them went stale in the same
+/// instant on 2026-08-07 when the seven-slot PI compaction took `V1_PI_COUNT` 42 → 35 and
+/// `ROT_PI_COUNT` 46 → 39 (`docs/PI-DISPOSITION.md` §6). A literal that can only go red by hand is
+/// not a pin on the geometry; it is a pin on somebody having remembered.
+const EXACT_REFUSAL_WIDE_PI_COUNT: usize =
+    ROT_PI_COUNT + 8 + REFUSAL_EXACT_AUDIT_PI_LEN + DFA_RC_LEN + 16;
 
 /// Resolve a rotated descriptor JSON by registry key from the committed staged TSV.
 fn rotated_descriptor_json(name: &str) -> &'static str {
@@ -175,7 +186,7 @@ fn refusal_exact_statement_is_raw_state16_and_nonlegacy() {
         map_heaps.is_empty(),
         "the exact epoch must not use scalar map-op heaps"
     );
-    assert_eq!(dpis.len(), 83);
+    assert_eq!(dpis.len(), EXACT_REFUSAL_WIDE_PI_COUNT);
     assert_eq!(
         trace[0].len(),
         REFUSAL_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX
@@ -195,8 +206,9 @@ fn refusal_exact_statement_is_raw_state16_and_nonlegacy() {
         .expect("exact refusal descriptor parses");
     assert_eq!(desc.trace_width, exact_refusal_committed_width());
     // 90 until the 2026-08-07 seven-slot PI compaction (`docs/PI-DISPOSITION.md` §6) took
-    // `V1_PI_COUNT` 42 → 35; every member of both rotation registries moved by exactly −7.
-    assert_eq!(desc.public_input_count, 83);
+    // `V1_PI_COUNT` 42 → 35; every member of both rotation registries moved by exactly −7. DERIVED
+    // now, so the next cascade carries it instead of leaving a literal behind.
+    assert_eq!(desc.public_input_count, EXACT_REFUSAL_WIDE_PI_COUNT);
     assert_eq!(
         trace[0].len(),
         exact_refusal_compacted_producer_width(),
@@ -253,9 +265,13 @@ fn lifecycle_payload_forge_rejected_by_hash_gate_anchor_disabled() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated cellSeal descriptor parses");
     assert_eq!(
-        desc.public_input_count, 44,
-        "cellSeal PIs = 50 rotated base (46 + 4 dsl rc) + 1 appended record pin = 51 \
-         (committed cellSealVmDescriptor2R24)"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "cellSeal PIs = {} rotated base ({ROT_PI_COUNT} + {DFA_RC_LEN} dsl rc) + 1 appended record \
+         pin = {} (committed cellSealVmDescriptor2R24; 50 + 1 = 51 before the 2026-08-07 \
+         seven-slot compaction)",
+        ROT_PI_COUNT + DFA_RC_LEN,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
 
     let st = CellState::new(balance as u64, 0);
@@ -509,11 +525,13 @@ fn wide_fields_write_proves_and_verifies() {
         "the exact wide host after the S2 + E1 deletions, plus the prover-filled gentian block"
     );
     assert_eq!(
-        desc.public_input_count, 90,
-        "46 rotated + 8 authority + 16 raw-audit + 4 DFA + 16 wide anchors"
+        desc.public_input_count, EXACT_REFUSAL_WIDE_PI_COUNT,
+        "{ROT_PI_COUNT} rotated + 8 authority + {REFUSAL_EXACT_AUDIT_PI_LEN} raw-audit + \
+         {DFA_RC_LEN} DFA + 16 wide anchors (46 + 8 + 16 + 4 + 16 = 90 before the 2026-08-07 \
+         seven-slot compaction)"
     );
     assert_eq!(trace[0].len(), exact_refusal_compacted_producer_width());
-    assert_eq!(dpis.len(), 83);
+    assert_eq!(dpis.len(), EXACT_REFUSAL_WIDE_PI_COUNT);
     assert!(map_heaps.is_empty());
 
     let mb = MemBoundaryWitness::default();

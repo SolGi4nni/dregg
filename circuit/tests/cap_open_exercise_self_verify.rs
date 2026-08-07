@@ -36,9 +36,9 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, DFA_RC_LEN, FACET_MASK_HI, RotatedBlockWitness,
-    SIGNATURE_AUTH_TAG, WRITE_MASK_LO, generate_rotated_effect_vm_trace, transfer_caveat_manifest,
-    widen_to_cap_open,
+    CAP_OPEN_BASE, CAP_OPEN_WIDTH, CapOpenWitness, DFA_RC_LEN, FACET_MASK_HI, ROT_PI_COUNT,
+    RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO, generate_rotated_effect_vm_trace,
+    transfer_caveat_manifest, widen_to_cap_open,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
@@ -192,12 +192,12 @@ fn cap_open_exercise_witness_and_appendix_are_genuine() {
         "exercise cap-open width = CAP_OPEN_WIDTH"
     );
     assert_eq!(
-        desc.public_input_count, 46,
-        "exercise cap-open carries the rotated 46 PIs"
+        desc.public_input_count, ROT_PI_COUNT,
+        "exercise cap-open carries the bare rotated {ROT_PI_COUNT} PIs (46 pre-compaction)"
     );
 
     let (mut trace, pis) = build_exercise_base();
-    assert_eq!(pis.len(), 39);
+    assert_eq!(pis.len(), ROT_PI_COUNT);
 
     let w = exercise_cap_open_witness();
     assert_eq!(

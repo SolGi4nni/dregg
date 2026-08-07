@@ -461,7 +461,8 @@ re-emit, −392 felts wide / −413 v3. `docs/PI-DISPOSITION.md` §6.
 ⚑ **`EFFECTS_HASH_GLOBAL` (37..40) was struck from this list on 2026-08-07 and it is the most
 useful line in the section.** "Zero on every deployed leg, no reader" was measured off the two
 rotation registries, where it is true — and it is not what "no reader" means. Those four felts are
-`sched::EFFECTS_HASH_GLOBAL` inside the 49-felt bilateral-schedule contract window `inner_pi[33, 82)`,
+`sched::EFFECTS_HASH_GLOBAL` inside the 49-felt bilateral-schedule contract window `inner_pi[26, 75)`
+(`[33, 82)` before the compaction slid it down by seven, intact),
 which `schedule_block_from_inner_pi` projects into the deployed `dregg-bilateral-aggregation-v3`,
 where the emitted bytes force them (4 `window_gate` transitions) and pin them first+last to that
 descriptor's outer `PI[4..7]` — the algebraic cross-cell agreement §3's `rEffectsGlobal` reason said

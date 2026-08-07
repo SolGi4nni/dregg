@@ -61,7 +61,7 @@ use dregg_circuit::effect_vm::pi::{
 };
 use dregg_circuit::effect_vm::satisfaction_weld::before_field_col;
 use dregg_circuit::effect_vm::trace_rotated::{
-    GRAD_ROT_WIDTH, RotatedBlockWitness, RotatedCaveatEntry, RotatedCaveatManifest,
+    GRAD_ROT_WIDTH, ROT_PI_COUNT, RotatedBlockWitness, RotatedCaveatEntry, RotatedCaveatManifest,
     generate_rotated_settle_escrow_trace_forged,
 };
 use dregg_circuit::effect_vm::vault_weld::{
@@ -250,8 +250,10 @@ fn discharge_descriptor() -> EffectVmDescriptor2 {
     let mut desc =
         parse_vm_descriptor2(discharge_json()).expect("Lean-emitted discharge descriptor");
     assert_eq!(
-        desc.public_input_count, 47,
-        "rotated 46 + the selector slot"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1,
+        "the rotated {ROT_PI_COUNT}-PI vector + the capacity selector slot (was 47 before the \
+         2026-08-07 seven-slot compaction)"
     );
     assert_eq!(
         desc.trace_width,
@@ -266,8 +268,10 @@ fn discharge_descriptor() -> EffectVmDescriptor2 {
 fn vault_descriptor() -> EffectVmDescriptor2 {
     let mut desc = parse_vm_descriptor2(vault_json()).expect("Lean-emitted vault descriptor");
     assert_eq!(
-        desc.public_input_count, 47,
-        "rotated 46 + the selector slot"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1,
+        "the rotated {ROT_PI_COUNT}-PI vector + the capacity selector slot (was 47 before the \
+         2026-08-07 seven-slot compaction)"
     );
     assert_eq!(
         desc.trace_width,
@@ -304,7 +308,7 @@ fn discharge_trace_ex(
     let (mut trace, dpis) =
         generate_rotated_settle_escrow_trace_forged(&st, &bw, &aw, &m, CUR, TOT, before, after)
             .expect("the discharge settle carrier must generate");
-    assert_eq!(dpis.len(), 40);
+    assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
     fill_discharge_aux(
         &mut trace,
         desc.trace_width,
@@ -343,7 +347,7 @@ fn vault_trace(
     let (mut trace, dpis) =
         generate_rotated_settle_escrow_trace_forged(&st, &bw, &aw, &m, ASSET, SHARE, before, after)
             .expect("the vault deposit carrier must generate");
-    assert_eq!(dpis.len(), 40);
+    assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
     fill_vault_aux(&mut trace, desc.trace_width, ASSET, SHARE);
     (trace, dpis)
 }

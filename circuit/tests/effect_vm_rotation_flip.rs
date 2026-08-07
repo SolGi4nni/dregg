@@ -43,12 +43,16 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::columns::{PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
+// ⚑ `DFA_RC_LEN` / `ROT_PI_COUNT` / `V1_PI_COUNT` are imported here so every PI geometry pin in
+// this file DERIVES. Each one was a literal (`46`, `50`, `51`, `58`, `p[43]`, `p[46]`) until the
+// 2026-08-07 seven-slot compaction moved `V1_PI_COUNT` 42 → 35 and every one of them went stale at
+// once — the count pins loudly, the index reads silently. `docs/PI-DISPOSITION.md` §6.
 use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_COMMITTED_HEIGHT, B_IROOT, B_STATE_COMMIT, BEFORE_BASE, C_CAVEAT_COMMIT,
-    CAVEAT_BASE, GRAD_ROT_WIDTH, ROT_WIDTH, RotatedBlockWitness, avail_pad_for_descriptor_name,
-    empty_caveat_manifest, generate_rotated_effect_vm_trace,
-    generate_rotated_effect_vm_trace_avail, rotated_descriptor_name_for_effect,
-    transfer_caveat_manifest,
+    CAVEAT_BASE, DFA_RC_LEN, GRAD_ROT_WIDTH, ROT_PI_COUNT, ROT_WIDTH, RotatedBlockWitness,
+    V1_PI_COUNT, avail_pad_for_descriptor_name, empty_caveat_manifest,
+    generate_rotated_effect_vm_trace, generate_rotated_effect_vm_trace_avail,
+    rotated_descriptor_name_for_effect, transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -218,8 +222,11 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
-        desc.public_input_count, 50,
-        "42 v1 PIs + 4 appended + 4 dsl rc"
+        desc.public_input_count,
+        ROT_PI_COUNT + DFA_RC_LEN,
+        "transferVmDescriptor2R24 (registry, {}): {V1_PI_COUNT} v1 PIs + 4 appended commit pins + \
+         {DFA_RC_LEN} dsl rc",
+        ROT_PI_COUNT + DFA_RC_LEN
     );
     // The deployed transfer member is AVAILABILITY-HARDENED (`…-v1-avail`, pad 10): the weld
     // witness rides `[V1_WIDTH, V1_WIDTH + pad)` and every rotated base shifts by the pad.
@@ -276,13 +283,13 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         &bridge(&after_w),
         &caveat,
     )
-    .expect("live rotated generator must produce the avail-hardened rotated trace + 50 PIs");
+    .expect("live rotated generator must produce the avail-hardened rotated trace + its PI vector");
     assert_eq!(
         trace[0].len(),
         ROT_WIDTH + pad,
         "avail-shifted rotated trace"
     );
-    assert_eq!(dpis.len(), 43);
+    assert_eq!(dpis.len(), ROT_PI_COUNT + DFA_RC_LEN);
 
     // -- (2) THE cell≡circuit ROTATED DIFFERENTIAL: producer limbs == the generated trace's
     //    welded state-block felts (r0↔balance_lo, …, cap_root↔cap_root), on the first row. --
@@ -490,10 +497,10 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     // forged appended PI (rotated NEW commit).
     {
         let mut p = dpis.clone();
-        p[43] = p[43] + BabyBear::new(123);
+        p[V1_PI_COUNT + 1] = p[V1_PI_COUNT + 1] + BabyBear::new(123);
         assert!(
             refused(&trace, &p),
-            "forged rotated NEW-commit PI must refuse"
+            "forged rotated NEW-commit PI (V1_PI_COUNT + 1, was the literal 43) must refuse"
         );
     }
 
@@ -541,7 +548,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         expected_rot_width(&desc),
         "the graduated rotated width + the gentian refuse extent"
     );
-    assert_eq!(desc.public_input_count, 43);
+    assert_eq!(desc.public_input_count, ROT_PI_COUNT + DFA_RC_LEN);
     // The deployed burn member is AVAILABILITY-HARDENED (`…-v1-avail`, pad 8 — debit-only, no
     // credit-carry chain): every rotated base shifts by the pad.
     let pad = avail_pad_for_descriptor_name(&desc.name);
@@ -631,21 +638,22 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
 /// THE C4 LAST-FLIP-GATE (end-to-end, in-circuit): a real ROTATED note-spend turn proves +
 /// verifies through the `noteSpendVmDescriptor2R24` descriptor (the FIFTH appended PI pin,
 /// `EffectVmEmitRotationV3.noteSpendV3`), the rotated PI vector is 47 elements with the spent
-/// nullifier at PI[46] = the spend row's folded `param0`, AND the SOUNDNESS TOOTH bites: a turn
-/// that publishes a DIFFERENT nullifier in PI[46] than the one the spend row carries (or tampers
+/// nullifier at PI[ROT_PI_COUNT] = the spend row's folded `param0`, AND the SOUNDNESS TOOTH bites: a turn
+/// that publishes a DIFFERENT nullifier in PI[ROT_PI_COUNT] than the one the spend row carries (or tampers
 /// the nullifier column) is UNSAT. This is the rotated re-statement of the v1 hand-AIR D5
 /// cross-binding (`s_notespend·(param0 − PI[NOTESPEND_NULLIFIER])` in the WIDE `pi::` layout;
 /// this said "offset 198" until 2026-08-06, a pre-Phase-C number — cite the constant) — now a first-row
 /// pin of the rotated descriptor, so a note-spending turn rotates and `verify_full_turn` step 8
-/// reads PI[46]. With the in-circuit pin proven UNSAT under tamper, the off-AIR no-double-spend
+/// reads PI[ROT_PI_COUNT]. With the in-circuit pin proven UNSAT under tamper, the off-AIR no-double-spend
 /// cross-check binds THIS turn's nullifier (the node `spend_freshness_for_wrong_item_is_rejected`
 /// drives the off-AIR half through the rotated leg).
 #[test]
 fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
 
-    // The note-spend cohort member's rotated descriptor — 51 PIs (46 prefix + the nullifier
-    // fifth pin at PI ROT_PI_COUNT (was 46) + the withDfaRcPins dsl rc tail at PI 47..50).
+    // The note-spend cohort member's rotated descriptor — `ROT_PI_COUNT + 1 + DFA_RC_LEN` PIs (the
+    // rotated prefix + the nullifier fifth pin at PI ROT_PI_COUNT + the withDfaRcPins dsl rc tail
+    // above it). Those were 51 / 46 / 47..50 before the 2026-08-07 seven-slot compaction.
     let spend = Effect::NoteSpend {
         nullifier: BabyBear::new(0xBEEF),
         value: 500,
@@ -671,9 +679,13 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
-        desc.public_input_count, 51,
-        "noteSpendVmDescriptor2R24 (registry): 46 rotated + the nullifier fifth pin at PI ROT_PI_COUNT (was 46) + \
-         the withDfaRcPins rc tail at PI 47..50 = 51"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "noteSpendVmDescriptor2R24 (registry): {ROT_PI_COUNT} rotated + the nullifier fifth pin at \
+         PI ROT_PI_COUNT (was 46) + the withDfaRcPins rc tail at PI {}..{} = {}",
+        ROT_PI_COUNT + 1,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
 
     // A real note-spend turn: the EffectVM credits balance by `value` (the shielding convention),
@@ -725,12 +737,14 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         "the un-graduated ROT_WIDTH rotated trace"
     );
 
-    // THE FIFTH PI: 51 elements, and PI[46] == the row-0 spend's folded nullifier (param0).
+    // THE FIFTH PI: `ROT_PI_COUNT + 1 + DFA_RC_LEN` elements, and PI[ROT_PI_COUNT] == the row-0
+    // spend's folded nullifier (param0).
     assert_eq!(
         dpis.len(),
-        51,
-        "note-spend rotated PI is 51 = ROT_PI_COUNT 46 + the nullifier fifth pin at PI ROT_PI_COUNT (was 46) + \
-         DFA_RC_LEN 4 rc pins at PI 47..50 (matches the registry descriptor)"
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "note-spend rotated PI is {} = ROT_PI_COUNT {ROT_PI_COUNT} + the nullifier fifth pin at PI \
+         ROT_PI_COUNT + DFA_RC_LEN {DFA_RC_LEN} rc pins above it (matches the registry descriptor)",
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
     let r0 = &trace[0];
     assert_eq!(
@@ -784,7 +798,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     let total = postcard::to_allocvec(&proof).expect("postcard").len();
     eprintln!(
         "ROTATED NOTE-SPEND (R=24, 39-PI, LIVE-GENERATED, SET-INSERT FORCED): proof {total} B \
-         (~{:.1} KiB) — PROVED + VERIFIED; the nullifier is pinned at PI[46] AND the kernel-set \
+         (~{:.1} KiB) — PROVED + VERIFIED; the nullifier is pinned at PI[ROT_PI_COUNT] AND the kernel-set \
          insert is forced in-circuit (limb-26 accumulator grow-gate)",
         total as f64 / 1024.0
     );
@@ -818,7 +832,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
                 // recompute the after-block chain for every row so STATE_COMMIT matches the forged limb,
                 // then publish the new commit PI from the last row.
                 dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut t);
-                p[43] = t[t.len() - 1][AB + BSC];
+                p[V1_PI_COUNT + 1] = t[t.len() - 1][AB + BSC];
                 prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
                     .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
             },
@@ -921,23 +935,25 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
             Outcome::Accepted(_) => false,
         }
     };
-    // (a) publish a DIFFERENT nullifier in PI[46] than the spend row carries ("prove N, spend M").
+    // (a) publish a DIFFERENT nullifier in PI[ROT_PI_COUNT] than the spend row carries ("prove N,
+    //     spend M").
     {
         let mut p = dpis.clone();
-        p[46] = p[46] + BabyBear::ONE;
+        p[ROT_PI_COUNT] = p[ROT_PI_COUNT] + BabyBear::ONE;
         assert!(
             refused(&trace, &p),
-            "a published PI[46] differing from the spend row's nullifier MUST be UNSAT \
-             (the no-double-spend pin)"
+            "a published PI[{ROT_PI_COUNT}] (ROT_PI_COUNT, was the literal 46) differing from the \
+             spend row's nullifier MUST be UNSAT (the no-double-spend pin)"
         );
     }
-    // (b) tamper the nullifier COLUMN (param0) so it no longer matches the (honest) PI[46].
+    // (b) tamper the nullifier COLUMN (param0) so it no longer matches the (honest)
+    //     PI[ROT_PI_COUNT].
     {
         let mut t = trace.clone();
         t[0][PARAM_BASE + param::NULLIFIER] = t[0][PARAM_BASE + param::NULLIFIER] + BabyBear::ONE;
         assert!(
             refused(&t, &dpis),
-            "tampering the spend row's nullifier column away from PI[46] MUST be UNSAT"
+            "tampering the spend row's nullifier column away from PI[ROT_PI_COUNT] MUST be UNSAT"
         );
     }
 }
@@ -1158,7 +1174,7 @@ fn rotated_revoke_forces_revoked_set_insert_and_refuses_double_revoke() {
                 }
                 dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut t);
                 let mut p = dpis.clone();
-                p[43] = t[t.len() - 1][AFTER_BASE + BSC]; // PI V1_PI_COUNT+1 (was 43) = V1_PI_COUNT+1 = rotated NEW commit
+                p[V1_PI_COUNT + 1] = t[t.len() - 1][AFTER_BASE + BSC]; // the rotated NEW commit (was the literal 43)
                 prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
                     .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
             },
@@ -1221,8 +1237,9 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     use dregg_circuit::effect_vm::trace_rotated::generate_rotated_create_cell_trace_with_accounts_tree;
     use dregg_circuit::heap_root::{CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf};
 
-    // The createCell cohort member's rotated descriptor — 51 PIs (46 prefix + the new-cell-key
-    // fifth pin at PI ROT_PI_COUNT (was 46) + the withDfaRcPins dsl rc tail at PI 47..50).
+    // The createCell cohort member's rotated descriptor — `ROT_PI_COUNT + 1 + DFA_RC_LEN` PIs (the
+    // rotated prefix + the new-cell-key fifth pin at PI ROT_PI_COUNT + the withDfaRcPins dsl rc
+    // tail above it). Those were 51 / 46 / 47..50 before the 2026-08-07 seven-slot compaction.
     let new_cell_id = BabyBear::new(0xCE11);
     let create = Effect::CreateCell {
         create_hash: [new_cell_id; 8],
@@ -1237,9 +1254,13 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
-        desc.public_input_count, 51,
-        "createCellVmDescriptor2R24 (registry): 46 rotated + the new-cell-key fifth pin at PI ROT_PI_COUNT (was 46) \
-         + the withDfaRcPins rc tail at PI 47..50 = 51"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "createCellVmDescriptor2R24 (registry): {ROT_PI_COUNT} rotated + the new-cell-key fifth pin \
+         at PI ROT_PI_COUNT (was 46) + the withDfaRcPins rc tail at PI {}..{} = {}",
+        ROT_PI_COUNT + 1,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
 
     let before_balance: i64 = 40_000;
@@ -1297,12 +1318,15 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         "the un-graduated ROT_WIDTH rotated trace"
     );
 
-    // THE FIFTH PI: 51 elements, and PI[46] == the row-0 new-cell key (param0 for createCell).
+    // THE FIFTH PI: `ROT_PI_COUNT + 1 + DFA_RC_LEN` elements, and PI[ROT_PI_COUNT] == the row-0
+    // new-cell key (param0 for createCell).
     assert_eq!(
         dpis.len(),
-        51,
-        "createCell rotated PI is 51 = ROT_PI_COUNT 46 + the new-cell-key fifth pin at PI ROT_PI_COUNT (was 46) + \
-         DFA_RC_LEN 4 rc pins at PI 47..50 (matches the registry descriptor)"
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "createCell rotated PI is {} = ROT_PI_COUNT {ROT_PI_COUNT} + the new-cell-key fifth pin at \
+         PI ROT_PI_COUNT + DFA_RC_LEN {DFA_RC_LEN} rc pins above it (matches the registry \
+         descriptor)",
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
     assert_eq!(
         dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT],
@@ -1338,7 +1362,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         .expect("rotated createCell proof must verify independently");
     eprintln!(
         "ROTATED createCell (R=24, 39-PI, LIVE-GENERATED, SET-INSERT FORCED): PROVED + VERIFIED; \
-         the new-cell key is pinned at PI[46] AND the accounts-set insert is forced in-circuit \
+         the new-cell key is pinned at PI[ROT_PI_COUNT] AND the accounts-set insert is forced in-circuit \
          (limb-0 cells_root accumulator grow-gate)"
     );
 
@@ -1370,7 +1394,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
             row[AB + 0] = row[AB + 0] + bump; // forged after cells_root
         }
         let mut p = dpis.clone();
-        p[43] = t[t.len() - 1][AB + BSC]; // a self-consistent (but forged) NEW commit PI
+        p[V1_PI_COUNT + 1] = t[t.len() - 1][AB + BSC]; // a self-consistent (but forged) NEW commit PI
         assert!(
             refused(&t, &p, &map_heaps),
             "a FORGED after cells_root (not the genuine sorted insert) MUST be UNSAT — the \
@@ -1396,14 +1420,15 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         );
     }
 
-    // -- THE ANTI-GHOST TOOTH: a published PI[46] differing from the create row's new-cell key
-    //    (param0) is UNSAT (the new-cell-key weld pin). --
+    // -- THE ANTI-GHOST TOOTH: a published PI[ROT_PI_COUNT] differing from the create row's
+    //    new-cell key (param0) is UNSAT (the new-cell-key weld pin). --
     {
         let mut p = dpis.clone();
-        p[46] = p[46] + BabyBear::ONE;
+        p[ROT_PI_COUNT] = p[ROT_PI_COUNT] + BabyBear::ONE;
         assert!(
             refused(&trace, &p, &map_heaps),
-            "a published PI[46] differing from the create row's new-cell key MUST be UNSAT"
+            "a published PI[{ROT_PI_COUNT}] (ROT_PI_COUNT, was the literal 46) differing from the \
+             create row's new-cell key MUST be UNSAT"
         );
     }
 
@@ -1639,10 +1664,15 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         // The old message said "the 7 VALUE8 completion pins (46..=52) + 4 rc" and was wrong on
         // both counts, not just on the total.
         assert_eq!(
-            desc.public_input_count, 58,
-            "setField is a 46-PI cohort member + the 8 VALUE8 completion pins (46..=53) + the 4 \
-             unpinned rc tail slots (54..=57); it was 50 while the member rode the freeze-ALL wrap \
-             that made an honest 32-byte write unprovable"
+            desc.public_input_count,
+            ROT_PI_COUNT + 8 + DFA_RC_LEN,
+            "setField is a {ROT_PI_COUNT}-PI cohort member + the 8 VALUE8 completion pins \
+             ({ROT_PI_COUNT}..={}) + the {DFA_RC_LEN} unpinned rc tail slots ({}..={}); it was \
+             {ROT_PI_COUNT} + {DFA_RC_LEN} while the member rode the freeze-ALL wrap that made an \
+             honest 32-byte write unprovable",
+            ROT_PI_COUNT + 7,
+            ROT_PI_COUNT + 8,
+            ROT_PI_COUNT + 8 + DFA_RC_LEN - 1
         );
 
         // A real setField turn: the field write ticks the nonce (before 5 → after 6); the
@@ -1767,9 +1797,11 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             "the graduated rotated width + the gentian refuse extent"
         );
         assert_eq!(
-            desc.public_input_count, 51,
-            "mintVmDescriptor2R24 (registry): 46 rotated + the felt mint-hash fifth pin at PI ROT_PI_COUNT (was 46) \
-             (mintV3BridgeHash) + the withDfaRcPins rc tail at PI 47..50 = 51"
+            desc.public_input_count,
+            ROT_PI_COUNT + 1 + DFA_RC_LEN,
+            "mintVmDescriptor2R24 (registry): {ROT_PI_COUNT} rotated + the felt mint-hash fifth \
+             pin at PI ROT_PI_COUNT (mintV3BridgeHash) + the withDfaRcPins rc tail above it = {}",
+            ROT_PI_COUNT + 1 + DFA_RC_LEN
         );
 
         // A real bridge-mint turn: credit bal_lo by `value` (100 → 130), the nonce ticks 5 → 6.
@@ -1922,11 +1954,12 @@ fn rotated_supply_mint_self_verifies_under_dedicated_selector() {
         "graduated rotated width"
     );
     assert_eq!(
-        desc.public_input_count, 46,
+        desc.public_input_count, ROT_PI_COUNT,
         "supplyMintVmDescriptor2R24 (registry) is UNWRAPPED — the Lean `supplyMintV3` is emitted \
          BARE (outside the `v3Registry.map withDfaRcPins`, EmitRotationV3.lean), so it carries \
-         the bare 46-PI rotated vector: no mint-hash fifth pin, no dsl rc tail (exactly like the \
-         cap-open family; the wide dispatcher drains the rc PIs for this member likewise)"
+         the bare {ROT_PI_COUNT}-PI rotated vector: no mint-hash fifth pin, no dsl rc tail \
+         (exactly like the cap-open family; the wide dispatcher drains the rc PIs for this member \
+         likewise)"
     );
 
     // A real supply-mint turn: credit bal_lo 100 → 130, the nonce ticks 5 → 6.
@@ -2602,9 +2635,9 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
 /// ROTATED `CellSeal` turn proves + verifies through the `cellSealVmDescriptor2R24` descriptor
 /// (the FIFTH appended PI pin, `EffectVmEmitRotationV3.cellSealV3` /
 /// `rotateV3WithRecordPin B_LIFECYCLE`), the rotated PI vector is 47 elements with the
-/// CORRECTLY-WRITTEN post lifecycle felt at PI[46] = the AFTER block's lifecycle limb (col
+/// CORRECTLY-WRITTEN post lifecycle felt at PI[ROT_PI_COUNT] = the AFTER block's lifecycle limb (col
 /// `AFTER_BASE + B_LIFECYCLE` = 258), AND the SOUNDNESS TOOTH bites: a trace that FREEZES the
-/// lifecycle (AFTER limb still the PRE/Live value) while claiming the sealed PI[46] is UNSAT.
+/// lifecycle (AFTER limb still the PRE/Live value) while claiming the sealed PI[ROT_PI_COUNT] is UNSAT.
 ///
 /// This is the gap the `RotatedKernelRefinementCellSeal` rung proved against a FIX descriptor
 /// (`gLifecycleSeal` / `cellSeal_descriptorRefines_rejects_unsealed`), now BITING in the LIVE
@@ -2632,9 +2665,14 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
         "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
-        desc.public_input_count, 51,
-        "cellSealVmDescriptor2R24 (registry): 46 rotated + the record-forcing (lifecycle) fifth \
-         pin at PI ROT_PI_COUNT (was 46) + the withDfaRcPins rc tail at PI 47..50 = 51"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "cellSealVmDescriptor2R24 (registry): {ROT_PI_COUNT} rotated + the record-forcing \
+         (lifecycle) fifth pin at PI ROT_PI_COUNT (was 46) + the withDfaRcPins rc tail at PI \
+         {}..{} = {}",
+        ROT_PI_COUNT + 1,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
 
     // A real cellSeal turn: lifecycle Live -> Sealed, economic block frozen, nonce ticks.
@@ -2691,13 +2729,16 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
         "the un-graduated ROT_WIDTH rotated trace"
     );
 
-    // THE FIFTH PI: 51 elements, and PI[46] == the LAST row's AFTER lifecycle limb (the
-    // correctly-written sealed post the verifier recomputes), the column the pin binds.
+    // THE FIFTH PI: `ROT_PI_COUNT + 1 + DFA_RC_LEN` elements, and PI[ROT_PI_COUNT] == the LAST
+    // row's AFTER lifecycle limb (the correctly-written sealed post the verifier recomputes), the
+    // column the pin binds.
     assert_eq!(
         dpis.len(),
-        51,
-        "cellSeal rotated PI is 51 = ROT_PI_COUNT 46 + the record-forcing fifth pin at PI ROT_PI_COUNT (was 46) + \
-         DFA_RC_LEN 4 rc pins at PI 47..50 (matches the registry descriptor)"
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "cellSeal rotated PI is {} = ROT_PI_COUNT {ROT_PI_COUNT} + the record-forcing fifth pin at \
+         PI ROT_PI_COUNT + DFA_RC_LEN {DFA_RC_LEN} rc pins above it (matches the registry \
+         descriptor)",
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
     let last = &trace[trace.len() - 1];
     assert_eq!(
@@ -2743,25 +2784,26 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
             Outcome::Accepted(_) => false,
         }
     };
-    // (a) publish a DIFFERENT post in PI[46] than the AFTER block carries.
+    // (a) publish a DIFFERENT post in PI[ROT_PI_COUNT] than the AFTER block carries.
     {
         let mut p = dpis.clone();
-        p[46] = p[46] + BabyBear::ONE;
+        p[ROT_PI_COUNT] = p[ROT_PI_COUNT] + BabyBear::ONE;
         assert!(
             refused(&trace, &p),
-            "a published PI[46] differing from the AFTER lifecycle limb MUST be UNSAT (the record pin)"
+            "a published PI[{ROT_PI_COUNT}] differing from the AFTER lifecycle limb MUST be UNSAT \
+             (the record pin)"
         );
     }
     // (b) THE CENTRAL FORGERY: FREEZE the AFTER lifecycle limb to the PRE (Live) value — the
-    //     un-sealed post the deployed circuit USED to accept — while PI[46] stays the honest
-    //     sealed felt. The pin (last.loc(258) == PI[46]) now bites: this is UNSAT.
+    //     un-sealed post the deployed circuit USED to accept — while PI[ROT_PI_COUNT] stays the honest
+    //     sealed felt. The pin (last.loc(258) == PI[ROT_PI_COUNT]) now bites: this is UNSAT.
     {
         let mut t = trace.clone();
         let last_row = t.len() - 1;
         t[last_row][AFTER_BASE + B_LIFECYCLE] = before_w.pre_limbs[B_LIFECYCLE]; // frozen Live
         assert!(
             refused(&t, &dpis),
-            "FREEZING the AFTER lifecycle limb (un-sealed post) while claiming the sealed PI[46] \
+            "FREEZING the AFTER lifecycle limb (un-sealed post) while claiming the sealed PI[ROT_PI_COUNT] \
              MUST be UNSAT — the deployment-soundness gap is closed (the forgery the light client \
              could not previously detect is now rejected in the LIVE descriptor)"
         );
@@ -2769,7 +2811,7 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
 
     eprintln!(
         "ROTATED CELLSEAL RECORD-PIN (R=24, 39-PI, LIVE-GENERATED): PROVED + VERIFIED; the \
-         committed lifecycle limb is FORCED at PI[46], and a FROZEN-lifecycle forgery is UNSAT — \
+         committed lifecycle limb is FORCED at PI[ROT_PI_COUNT], and a FROZEN-lifecycle forgery is UNSAT — \
          the binds-but-unforced deployment gap is closed for cellSeal."
     );
 }
@@ -2804,8 +2846,9 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
         "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
-        desc.public_input_count, 50,
-        "value descriptor keeps the 46-PI shape"
+        desc.public_input_count,
+        ROT_PI_COUNT + DFA_RC_LEN,
+        "value descriptor keeps the {ROT_PI_COUNT}-PI rotated shape + the {DFA_RC_LEN} dsl rc tail"
     );
     // Avail-hardened transfer member: every rotated base shifts by the weld pad (10).
     let pad = avail_pad_for_descriptor_name(&desc.name);
@@ -2956,7 +2999,7 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
 /// `compute_authority_digest_felt` FOLDS into the r23 authority residue (`B_RECORD_DIGEST` = limb
 /// 24). So a genuine audit write MOVES the AFTER `record_digest` limb; the record-forcing pin
 /// (`EffectVmEmitRotationV3.{refusalV3,receiptArchiveV3}`, `rotateV3WithRecordPin B_RECORD_DIGEST`)
-/// welds it to PI[46]. A FROZEN-audit-slot AFTER block (the forged refusal / archive) carries the
+/// welds it to PI[ROT_PI_COUNT]. A FROZEN-audit-slot AFTER block (the forged refusal / archive) carries the
 /// unchanged record digest, FAILS the pin, and is UNSAT — the gap closed for the LIVE descriptor.
 #[test]
 fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
@@ -2979,7 +3022,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
     // The two audit effects. `record_pin_offset` routes them to DIFFERENT committed limbs (post
     // #218/#219): a genuine `Refusal` moves `fields_root` → folds into the r23 authority residue
     // (`B_RECORD_DIGEST`); a genuine `ReceiptArchive` transitions the cell lifecycle to `Archived`
-    // → `lifecycle_felt` (`B_LIFECYCLE = 29`). Each effect's pin welds ITS limb to PI[46].
+    // → `lifecycle_felt` (`B_LIFECYCLE = 29`). Each effect's pin welds ITS limb to PI[ROT_PI_COUNT].
     let refusal = Effect::Refusal {
         target: [BabyBear::new(0); 8],
         reason_hash: [BabyBear::new(5); 8],
@@ -3031,14 +3074,16 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
             );
         }
         // H1: a record-digest mover (refusal, pin offset `B_RECORD_DIGEST`) pins ALL 8 faithful
-        // authority limbs (record-pin8 at PI ROT_PI_COUNT (was 46)..53); on the DEPLOYED exact member its ABI then
-        // continues `audit16 || dfa4 || before_commit8 || after_commit8` → 90 PIs. A lifecycle
-        // mover (archive, `B_LIFECYCLE`) keeps the single record-forcing pin at PI ROT_PI_COUNT (was 46) + the rc
-        // tail at PI 47..50 → 51 PIs. PI[46] is the AFTER pinned limb in BOTH ABIs.
+        // authority limbs (record-pin8 at PI `ROT_PI_COUNT..ROT_PI_COUNT + 8`); on the DEPLOYED
+        // exact member its ABI then continues `audit16 || dfa4 || before_commit8 || after_commit8`.
+        // A lifecycle mover (archive, `B_LIFECYCLE`) keeps the single record-forcing pin at PI
+        // `ROT_PI_COUNT` + the rc tail above it. PI[ROT_PI_COUNT] is the AFTER pinned limb in BOTH
+        // ABIs. (Those were 46..53 / 46 / 47..50, and 90 and 51 PIs, until the 2026-08-07 seven-slot
+        // compaction; both arms DERIVE now, so the next cascade moves them without an edit.)
         let expect_pis = if exact_refusal {
             ROT_PI_COUNT + 8 + REFUSAL_EXACT_AUDIT_PI_LEN + DFA_RC_LEN + 16
         } else {
-            51
+            ROT_PI_COUNT + 1 + DFA_RC_LEN
         };
         assert_eq!(
             desc.public_input_count, expect_pis,
@@ -3173,10 +3218,10 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         );
 
         // THE RECORD-FORCING PI(s): a record-digest mover (refusal) pins all 8 authority limbs
-        // (PI[46..53]); a lifecycle mover (archive) keeps the single pin (PI[46], + rc at 47..50 =
-        // 51). PI[46] is the LAST row's AFTER record-digest / lifecycle limb in both cases — the
-        // exact refusal ABI splices its 16 raw-audit limbs AFTER the authority octet, so the pin
-        // index is unmoved.
+        // (PI[ROT_PI_COUNT .. ROT_PI_COUNT + 8]); a lifecycle mover (archive) keeps the single pin
+        // (PI[ROT_PI_COUNT], + the rc tail above it). PI[ROT_PI_COUNT] is the LAST row's AFTER
+        // record-digest / lifecycle limb in both cases — the exact refusal ABI splices its 16
+        // raw-audit limbs AFTER the authority octet, so the pin index is unmoved.
         assert_eq!(
             dpis.len(),
             expect_pis,
@@ -3237,7 +3282,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
 
         // **THE CENTRAL FORGERY, BUILT ON THE RAW ROW.** FREEZE the AFTER record-digest limb to the
         // PRE value — the audit-slot-NOT-written post the deployed circuit USED to accept — while
-        // PI[46] stays the honest written felt. It is a PRODUCER-level forgery, so it is written at
+        // PI[ROT_PI_COUNT] stays the honest written felt. It is a PRODUCER-level forgery, so it is written at
         // the uncompacted `AFTER_BASE + pin_limb` and then carried through the SAME compaction the
         // honest row takes (the deleted bands would otherwise renumber the column out from under it).
         let mut frozen = trace.clone();
@@ -3287,23 +3332,23 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
                 Outcome::Accepted(_) => false,
             }
         };
-        // (a) publish a DIFFERENT post in PI[46] than the AFTER block carries.
+        // (a) publish a DIFFERENT post in PI[ROT_PI_COUNT] than the AFTER block carries.
         {
             let mut p = dpis.clone();
-            p[46] = p[46] + BabyBear::ONE;
+            p[ROT_PI_COUNT] = p[ROT_PI_COUNT] + BabyBear::ONE;
             assert!(
                 refused(&trace, &p),
-                "{name}: a published PI[46] differing from the AFTER record-digest limb MUST be \
+                "{name}: a published PI[{ROT_PI_COUNT}] differing from the AFTER record-digest limb MUST be \
                  UNSAT (the record pin)"
             );
         }
         // (b) THE CENTRAL FORGERY (built above, on the raw row, then compacted with the honest one):
         //     the audit-slot-NOT-written post — a refusal / archive that did not happen — claimed
-        //     against the honest written PI[46]. UNSAT.
+        //     against the honest written PI[ROT_PI_COUNT]. UNSAT.
         assert!(
             refused(&frozen, &dpis),
             "{name}: FREEZING the AFTER record-digest limb (audit-slot-NOT-written post) while \
-             claiming the written PI[46] MUST be UNSAT — the forged refusal / archive a prover \
+             claiming the written PI[ROT_PI_COUNT] MUST be UNSAT — the forged refusal / archive a prover \
              could previously publish (the commitment did not even bind the audit write) is now \
              rejected in the LIVE deployed descriptor"
         );
@@ -3311,7 +3356,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         eprintln!(
             "ROTATED AUDIT RECORD-PIN ({name}, R=24, {expect_pis}-PI, LIVE-GENERATED): PROVED + \
              VERIFIED; the committed record-digest limb (r23, folding the audit slot via \
-             fields_root) is FORCED at PI[46], and a FROZEN-audit-slot forgery is UNSAT — the \
+             fields_root) is FORCED at PI[ROT_PI_COUNT], and a FROZEN-audit-slot forgery is UNSAT — the \
              field-NOT-bound deployment gap is closed."
         );
     }
@@ -3348,7 +3393,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
 /// The cells family (`createCell`/`factory`/`spawn`) is ALSO now deployment-real:
 /// `{createCell,factory,spawn}VmDescriptor2R24` carry `cellsFreshOp` (`.absent`) + `cellsInsertOp`
 /// (`.insert`) on the openable `cells_root` limb (limb 0), keyed by a NEW published new-cell-key
-/// PI[46] (`EffectVmEmitRotationV3.{createCellV3,factoryV3,spawnV3}` — param0 for createCell/spawn,
+/// PI[ROT_PI_COUNT] (`EffectVmEmitRotationV3.{createCellV3,factoryV3,spawnV3}` — param0 for createCell/spawn,
 /// param1/CHILD_VK_DERIVED for factory). The set-insert is FORCED; a forged/frozen `cells_root` is
 /// REJECTED. Proven end-to-end in `rotated_create_cell_pins_accounts_and_refuses_tamper`. spawn's
 /// cap-handoff (the child cap-root MOVE + delegation snapshot) is ORTHOGONAL to the accounts-set
@@ -3467,7 +3512,7 @@ fn note_create_pins_commitments_and_refuses_tamper() {
             }
             let mut p = dpis.clone();
             recompute_after_blocks_for_test(&mut t);
-            p[43] = t[t.len() - 1][AFTER_BASE + B_STATE_COMMIT];
+            p[V1_PI_COUNT + 1] = t[t.len() - 1][AFTER_BASE + B_STATE_COMMIT];
             prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
                 .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
         }));
@@ -3517,8 +3562,10 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         "the fee'd transfer keeps the graduated rotated width"
     );
     assert_eq!(
-        desc.public_input_count, 51,
-        "fee'd transfer: 38 rotated PIs + the appended fee PI (slot 38)"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "fee'd transfer: {ROT_PI_COUNT} rotated PIs + the appended fee PI (slot {ROT_PI_COUNT}) + \
+         the {DFA_RC_LEN} dsl rc tail"
     );
     // The deployed fee member is AVAILABILITY-HARDENED (`…-v1-fee-avail`, pad 16): every rotated
     // base shifts by the pad.
@@ -3572,11 +3619,12 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         &caveat,
         fee,
     )
-    .expect("fee'd rotated generator produces the avail-shifted trace + 51 PIs");
+    .expect("fee'd rotated generator produces the avail-shifted trace + its PI vector");
     assert_eq!(
         dpis.len(),
-        44,
-        "44 PIs (39 rotated + the fee + 4 dsl rc); 51 pre-compaction"
+        ROT_PI_COUNT + 1 + DFA_RC_LEN,
+        "{} PIs ({ROT_PI_COUNT} rotated + the fee + {DFA_RC_LEN} dsl rc); 51 pre-compaction",
+        ROT_PI_COUNT + 1 + DFA_RC_LEN
     );
     assert_eq!(
         dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT],
@@ -3594,13 +3642,17 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         "honest fee'd transfer proof must verify independently (no trusted reconstruction)",
     );
 
-    // The PROVEN final balance (PI 22 = FINAL_BAL_LO, the last-row after bal_lo bound into
+    // The PROVEN final balance (PI `pi::FINAL_BAL_LO`, the last-row after bal_lo bound into
     // NEW_COMMIT) is the POST-fee balance `before − amount − fee` — the fee debit is INSIDE the
-    // proven transition, NOT a trusted reconstruction. A ledgerless client reads the fee off PI ROT_PI_COUNT (was 46).
+    // proven transition, NOT a trusted reconstruction. A ledgerless client reads the fee off PI
+    // ROT_PI_COUNT (was 46). ⓘ `FINAL_BAL_LO` is 22 and did NOT move in the seven-slot compaction —
+    // the cut was at v1 26..32, entirely above the economic prefix — but it is named, not typed,
+    // because the NEXT cascade will not be so kind.
     let (post_fee_lo, _post_fee_hi) =
         dregg_circuit::effect_vm::split_u64((before_balance - amount as i64 - fee as i64) as u64);
     assert_eq!(
-        dpis[22], post_fee_lo,
+        dpis[dregg_circuit::effect_vm::pi::FINAL_BAL_LO],
+        post_fee_lo,
         "FINAL_BAL_LO (bound into NEW_COMMIT) is the POST-fee balance `before − amount − fee` — the \
          fee debit is proven, not reconstructed"
     );
@@ -3637,7 +3689,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
     //    fee PI (and writes the smaller fee into the after-block RESERVED column) is UNSAT. The
     //    balance-lo gate forces `after = before − amount − col89`; if col89 < the real fee the
     //    after-balance no longer matches the (post-fee) NEW_COMMIT-bound limb, and the last-row pin
-    //    forces col89 = PI[46]. So publishing a smaller fee cannot satisfy the descriptor. --
+    //    forces col89 = PI[ROT_PI_COUNT]. So publishing a smaller fee cannot satisfy the descriptor. --
     {
         let underclaim: u64 = 3; // < fee
         // Rebuild a trace whose fee column = the underclaim but whose ACTUAL balance moved by `fee`:
@@ -3653,7 +3705,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
             row[before_reserved] = BabyBear::new(underclaim as u32);
         }
         let mut p = dpis.clone();
-        p[46] = BabyBear::new(underclaim as u32);
+        p[ROT_PI_COUNT] = BabyBear::new(underclaim as u32);
         assert!(
             refused(&t, &p),
             "an UNDERCLAIMED fee (col 89 / PI ROT_PI_COUNT (was 46) smaller than the balance actually moved) MUST be \
@@ -3663,14 +3715,14 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
     }
 
     // -- (3) FORGED FEE PI: keep the honest trace but publish a DIFFERENT fee PI. The last-row pin
-    //    `col 89 == PI[46]` forces the published fee to equal the proven column — a forged PI fails. --
+    //    `col 89 == PI[ROT_PI_COUNT]` forces the published fee to equal the proven column — a forged PI fails. --
     {
         let mut p = dpis.clone();
-        p[46] = dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT] + BabyBear::new(11);
+        p[ROT_PI_COUNT] = dpis[ROT_PI_COUNT] + BabyBear::new(11);
         assert!(
             refused_verify(&p),
             "a FORGED fee PI (≠ the debited after-block RESERVED column) MUST fail the last-row pin \
-             (col 89 == PI[46]) — a ledgerless client cannot be told a fee the proof did not move"
+             (col 89 == PI[ROT_PI_COUNT]) — a ledgerless client cannot be told a fee the proof did not move"
         );
     }
 

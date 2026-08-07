@@ -1243,13 +1243,30 @@ mod tests {
         );
     }
 
-    /// The decoupled `sched` block re-bases the v1 bilateral-schedule PI window `[33, 82)` to 0.
+    /// The decoupled `sched` block re-bases the v1 bilateral-schedule PI window `[26, 75)` to 0.
     /// Pin the contiguity assumption `schedule_block_from_inner_pi` relies on: every schedule
     /// field sits at `inner_pi::<field> == SCHEDULE_PI_BASE + sched::<field>`.
     #[test]
     fn schedule_block_offsets_match_v1_pi_window() {
-        assert_eq!(SCHEDULE_PI_BASE, 33);
+        // ⚑ THE ABSOLUTE ANCHOR IS NOT RE-TYPED HERE. This line read `assert_eq!(SCHEDULE_PI_BASE,
+        // 33)` and survived the 2026-08-07 seven-slot compaction as a stale number: the window had
+        // moved to `[26, 75)` and the pin could only go red by hand. It could not have said anything
+        // else either — `SCHEDULE_PI_BASE` IS `inner_pi::TURN_HASH_BASE` by definition, so pinning
+        // it to a literal asserted only that somebody had retyped the number. The absolute pin lives
+        // ONCE, in the module that owns the layout (`effect_vm::pi`'s
+        // `v1_window_covers_the_highest_v1_pin`). What this test checks is the property the
+        // projection actually needs and this literal never did: the 49-felt block is CONTIGUOUS and
+        // lands inside the v1 PI vector.
         assert_eq!(sched::WIDTH, 49);
+        assert!(
+            SCHEDULE_PI_BASE + sched::WIDTH <= inner_pi::BASE_COUNT,
+            "the {}-felt bilateral-schedule window `[{}, {})` must fit inside the v1 PI vector \
+             (BASE_COUNT {})",
+            sched::WIDTH,
+            SCHEDULE_PI_BASE,
+            SCHEDULE_PI_BASE + sched::WIDTH,
+            inner_pi::BASE_COUNT
+        );
         assert_eq!(
             inner_pi::TURN_HASH_BASE,
             SCHEDULE_PI_BASE + sched::TURN_HASH_BASE
@@ -1275,7 +1292,7 @@ mod tests {
             inner_pi::IS_AGENT_CELL,
             SCHEDULE_PI_BASE + sched::IS_AGENT_CELL
         );
-        // The window is exactly the 49 felts [33, 82) — nothing else lives in it.
+        // The window is exactly the 49 felts [26, 75) — nothing else lives in it.
         assert_eq!(SCHEDULE_PI_BASE + sched::WIDTH, inner_pi::IS_AGENT_CELL + 1);
     }
 

@@ -7615,7 +7615,15 @@ mod tests {
             .expect("Lean-emitted EffectVM transfer descriptor must parse");
         assert_eq!(d.name, "dregg-effectvm-transfer-v1");
         assert_eq!(d.trace_width, 188);
-        assert_eq!(d.public_input_count, 35);
+        // ⚑ 42, NOT `V1_PI_COUNT`. `TRANSFER_VM_DESCRIPTOR_JSON` above is a FROZEN IR-v1 string
+        // literal — the object under test is the PARSER, and this asserts that it reads the field
+        // the fixture declares. The fixture says 42 and is internally consistent with it (its own
+        // `pi_binding` names `pi_index: 41`, the pre-compaction `ACTOR_NONCE`). The 2026-08-07
+        // seven-slot compaction commit `9bdab9b5b` rewrote this line 42 → 35 alongside the LIVE
+        // layout pins, leaving the assertion contradicting the very literal three lines above it —
+        // a blind −7 landing on the one number in this file the compaction cannot reach. Nothing
+        // re-emits this fixture; if it is ever regenerated, the `pi_index` inside it moves too.
+        assert_eq!(d.public_input_count, 42);
         // 14 per-row gates + 14 transitions + 7 boundary PI pins + 1 selector-binding gate.
         assert_eq!(d.constraints.len(), 14 + 14 + 7 + 1);
         assert_eq!(d.hash_sites.len(), 4);

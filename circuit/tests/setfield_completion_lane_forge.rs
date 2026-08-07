@@ -34,10 +34,12 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    AFTER_BASE, B_CHAIN_BASE, B_IROOT, B_STATE_COMMIT, NUM_PRE_LIMBS, V1_PI_COUNT,
-    empty_caveat_manifest, generate_rotated_effect_vm_trace, rotated_descriptor_name_for_effect,
+    AFTER_BASE, B_CHAIN_BASE, B_IROOT, B_STATE_COMMIT, DFA_RC_LEN, NUM_PRE_LIMBS, ROT_PI_COUNT,
+    V1_PI_COUNT, empty_caveat_manifest, generate_rotated_effect_vm_trace,
+    rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, fold_bytes32_to_bb};
+use dregg_circuit::effect_vm_descriptors::SETFIELD_VALUE8_PI_BASE;
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_many;
@@ -392,23 +394,29 @@ fn honest_large_value_setfield_proves_on_the_deployed_member() {
             "the generator must publish the honest large-value completion lane {lane}"
         );
     }
-    // The generator publishes the 7 freed lanes as PIs 46..=52, ahead of the 4 rc pins.
+    // The generator publishes the 7 freed lanes at `SETFIELD_VALUE8_PI_BASE..`, ahead of the rc
+    // pins.
     // ⚑ 57 → 58: the NINE-LANE epoch (`e662ade32`). DERIVED, not re-pinned to what the file says:
-    // the emitted descriptor carries pi_binding indices 46..=53 on columns [569..575, 614] — seven
-    // contiguous lanes plus the ninth at 614, which is `fieldLaneCol`'s documented NON-CONTIGUOUS
-    // shape. So the count is 46 prefix + 8 value8 + 4 rc.
+    // the emitted descriptor carries pi_binding indices `[SETFIELD_VALUE8_PI_BASE, +8)` on columns
+    // [569..575, 614] — seven contiguous lanes plus the ninth at 614, which is `fieldLaneCol`'s
+    // documented NON-CONTIGUOUS shape. So the count is the rotated prefix + 8 value8 + the rc tail.
+    // ⚑ 58 → 51 and the base 46 → 39: the 2026-08-07 seven-slot compaction. The COUNT went red; the
+    // INDEX reads below did not — they would have compared seven different felts and gone on
+    // "passing". Both derive now (`docs/PI-DISPOSITION.md` §6).
     assert_eq!(
         h.dpis.len(),
-        58,
-        "the deployed setField member is 58 PIs (46 prefix + 8 value8 + 4 rc)"
+        ROT_PI_COUNT + 8 + DFA_RC_LEN,
+        "the deployed setField member is {} PIs ({ROT_PI_COUNT} prefix + 8 value8 + {DFA_RC_LEN} \
+         rc); it was 58 = 46 + 8 + 4 before the compaction",
+        ROT_PI_COUNT + 8 + DFA_RC_LEN
     );
     let last = h.trace.last().expect("non-empty trace");
     for k in 0..7 {
         assert_eq!(
-            h.dpis[46 + k],
+            h.dpis[SETFIELD_VALUE8_PI_BASE + k],
             last[AFTER_BASE + COMPLETION_BASE + k],
             "PI {} must publish the written slot's completion lane {k}",
-            46 + k
+            SETFIELD_VALUE8_PI_BASE + k
         );
     }
     assert!(

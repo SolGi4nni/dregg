@@ -57,10 +57,11 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
 use dregg_circuit::effect_vm::trace_rotated::{
     ACCUM_INSERT_HOST_WIDTH, AFTER_BASE, B_COMMITMENTS_ROOT, B_NULLIFIER_ROOT, B_STATE_COMMIT,
-    BEFORE_BASE, CAP_OPEN_SPAN, ROT_WIDTH, RotatedBlockWitness, WIDE_WIDTH, append_wide_carriers,
-    empty_caveat_manifest, generate_rotated_note_create_trace_with_commitments_tree,
-    generate_rotated_note_create_wide, generate_rotated_note_spend_trace_with_nullifier_tree,
-    recompute_after_blocks_for_test, rotated_descriptor_name_for_effect,
+    BEFORE_BASE, CAP_OPEN_SPAN, DFA_RC_LEN, ROT_NULLIFIER_PI_COUNT, ROT_PI_COUNT, ROT_WIDTH,
+    RotatedBlockWitness, WIDE_WIDTH, append_wide_carriers, empty_caveat_manifest,
+    generate_rotated_note_create_trace_with_commitments_tree, generate_rotated_note_create_wide,
+    generate_rotated_note_spend_trace_with_nullifier_tree, recompute_after_blocks_for_test,
+    rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -186,9 +187,12 @@ fn notespend_forced_on_wire_rejects_forged_nullifier_root_anchor_disabled() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated noteSpend descriptor parses");
     assert_eq!(
-        desc.public_input_count, 51,
-        "noteSpend PIs = ROT_NULLIFIER_PI_COUNT (47 = 46 rotated + 1 nullifier-forcing pin) + \
-         DFA_RC_LEN (4 dsl rc pins) = 51 (committed noteSpendVmDescriptor2R24)"
+        desc.public_input_count,
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN,
+        "noteSpend PIs = ROT_NULLIFIER_PI_COUNT ({ROT_NULLIFIER_PI_COUNT} = {ROT_PI_COUNT} rotated \
+         + 1 nullifier-forcing pin) + DFA_RC_LEN ({DFA_RC_LEN} dsl rc pins) = {} (committed \
+         noteSpendVmDescriptor2R24; 47 + 4 = 51 before the 2026-08-07 seven-slot compaction)",
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN
     );
 
     let st = CellState::new(before_balance as u64, 0);
@@ -347,9 +351,13 @@ fn notecreate_forced_on_wire_rejects_forged_commitments_root_anchor_disabled() {
     let desc = parse_vm_descriptor2(rotated_descriptor_json(name))
         .expect("rotated noteCreate descriptor parses");
     assert_eq!(
-        desc.public_input_count, 51,
-        "noteCreate PIs = ROT_NULLIFIER_PI_COUNT (47 = 46 rotated + 1 commitment-forcing pin) + \
-         DFA_RC_LEN (4 dsl rc pins) = 51 (committed noteCreateVmDescriptor2R24)"
+        desc.public_input_count,
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN,
+        "noteCreate PIs = ROT_NULLIFIER_PI_COUNT ({ROT_NULLIFIER_PI_COUNT} = {ROT_PI_COUNT} \
+         rotated + 1 commitment-forcing pin) + DFA_RC_LEN ({DFA_RC_LEN} dsl rc pins) = {} \
+         (committed noteCreateVmDescriptor2R24; 47 + 4 = 51 before the 2026-08-07 seven-slot \
+         compaction)",
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN
     );
 
     let st = CellState::new(before_balance as u64, 0);
@@ -527,9 +535,13 @@ fn notecreate_forced_on_wire_through_live_wide_producer() {
     let wide_desc = parse_vm_descriptor2(wide_rotated_descriptor_json(name))
         .expect("WIDE noteCreate descriptor parses");
     assert_eq!(
-        wide_desc.public_input_count, 67,
-        "WIDE noteCreate PIs = narrow 51-PI base (47 + 4 dsl rc) + 16 wide commit PIs = 67 \
-         (committed wide noteCreateVmDescriptor2R24)"
+        wide_desc.public_input_count,
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN + 16,
+        "WIDE noteCreate PIs = narrow {}-PI base ({ROT_NULLIFIER_PI_COUNT} + {DFA_RC_LEN} dsl rc) \
+         + 16 wide commit PIs = {} (committed wide noteCreateVmDescriptor2R24; 51 + 16 = 67 before \
+         the 2026-08-07 seven-slot compaction)",
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN,
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN + 16
     );
 
     let st = CellState::new(before_balance as u64, 0);
@@ -589,8 +601,10 @@ fn notecreate_forced_on_wire_through_live_wide_producer() {
     );
     assert_eq!(
         wide_dpis.len(),
-        67,
-        "wide PI vector (51 base = 47 + 4 dsl rc, + 16 wide commit PIs)"
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN + 16,
+        "wide PI vector ({} base = {ROT_NULLIFIER_PI_COUNT} + {DFA_RC_LEN} dsl rc, + 16 wide \
+         commit PIs)",
+        ROT_NULLIFIER_PI_COUNT + DFA_RC_LEN
     );
 
     // ⚠ THE COMMITTED WIDE GEOMETRY. The per-family wide producer stops at the OLD wide row (asserted

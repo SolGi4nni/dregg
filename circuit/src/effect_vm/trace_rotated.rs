@@ -3,8 +3,18 @@
 //! From the 188-column v1 face plus a per-turn rotated witness, this module builds the current
 //! 709-column ungraduated trace: two 239-column state blocks and the 43-column caveat region.
 //! Chip graduation appends 7 lanes at each of 134 sites, producing the deployed 1647-column base
-//! shape. The common rotated PI vector is 46 entries (42 v1 + four rotated commit pins); wide
-//! members append the DFA and faithful-commitment carriers from that base.
+//! shape. The common rotated PI vector is [`ROT_PI_COUNT`] entries ([`V1_PI_COUNT`] v1 + four
+//! rotated commit pins) — 39 = 35 + 4 since the 2026-08-07 seven-slot compaction, 46 = 42 + 4
+//! before it; wide members append the DFA and faithful-commitment carriers from that base.
+//!
+//! ⚠ **PROSE RESIDUE, MEASURED 2026-08-07 AND NOT SWEPT.** Roughly thirty comments and docblocks
+//! below this line still say `46` / `PI 46` / `PIs 46..=52` / `47..50` where they mean
+//! `ROT_PI_COUNT` / `ROT_PI_COUNT + k`, and `effect_vm_descriptors.rs` carries about twenty-five
+//! more (`"rotated 46-PI"`). Every LOAD-BEARING literal in the rotated family was resolved against
+//! the emitted registry and converted to a derivation; these are narration only, and they are
+//! listed here rather than half-corrected because a partly-updated set of numbers reads worse than
+//! a uniformly stale one. `docs/PI-DISPOSITION.md` §6 is the authority; when in doubt read
+//! `V1_PI_COUNT` / `ROT_PI_COUNT` below, never a number in a sentence.
 //!
 //! ## Law #1 — the shapes come from Lean
 //!
@@ -337,7 +347,8 @@ pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 666
 /// 2026-08-07 SEVEN-SLOT COMPACTION then deleted v1 offsets 26..32 (`docs/PI-DISPOSITION.md`
 /// §6), taking `ACTOR_NONCE` 41→34 and the window 42→35.
 pub const V1_PI_COUNT: usize = 35;
-/// The rotated public-input count (42 v1 + 4 appended commit/height/caveat pins).
+/// The rotated public-input count ([`V1_PI_COUNT`] v1 + 4 appended commit/height/caveat pins).
+/// 39 since the 2026-08-07 seven-slot compaction; 46 before it.
 pub const ROT_PI_COUNT: usize = V1_PI_COUNT + 4;
 /// The rotated NOTE-SPEND public-input count (the rotated prefix + the appended
 /// nullifier slot at index `ROT_PI_COUNT` — `EffectVmEmitRotationV3.noteSpendV3`, the
@@ -2286,7 +2297,16 @@ pub fn generate_rotated_refusal_write_wide(
         trace[0].len(),
         REFUSAL_WRITE_HOST_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
     );
-    debug_assert_eq!(dpis.len(), 90);
+    // ⚑ DERIVED, and this one was a DEBUG-ONLY landmine: `debug_assert_eq!(dpis.len(), 90)` is
+    // compiled out of `--release`, so the 2026-08-07 seven-slot compaction (which took this vector
+    // to 83) left a producer that is green in every release run and PANICS in debug — the same
+    // shape as `daf38eb87`. The exact-refusal wide ABI: the rotated base, the 8 faithful authority
+    // record-pins, the 16 raw-audit limbs spliced above them, the dsl rc tail, and the 16 wide
+    // commit anchors.
+    debug_assert_eq!(
+        dpis.len(),
+        ROT_PI_COUNT + 8 + REFUSAL_EXACT_AUDIT_PI_LEN + DFA_RC_LEN + 16
+    );
     Ok((trace, dpis, map_heaps))
 }
 
@@ -4607,8 +4627,8 @@ const _: () = {
 };
 /// The committed wide public-input count for the bare transfer-shape member
 /// (`h.piCount + 16`, where `h.piCount = ROT_PI_COUNT + DFA_RC_LEN` — the wide host is the
-/// `withDfaRcPins`-wrapped member, so the 4 dsl rc PIs ride BETWEEN the base 46 and the 16 wide
-/// commit PIs).
+/// `withDfaRcPins`-wrapped member, so the 4 dsl rc PIs ride BETWEEN the `ROT_PI_COUNT` base and
+/// the 16 wide commit PIs).
 pub const WIDE_PI_COUNT: usize = ROT_PI_COUNT + DFA_RC_LEN + 16;
 
 /// Fill one block's [`WIDE_NUM_CARRIERS`]-carrier × 8-felt wide commitment chain at `cbase`,

@@ -857,7 +857,7 @@ pub const WIDE_UMEM_MULTIDOMAIN_WELD_SUFFIX: &str = "-umem-multidomain-wide-weld
 /// **THE ROTATED+UMEM WELD (STAGED, VK-RISK-FREE) — the last precursor before the gated VK epoch.**
 ///
 /// Weld the universal-memory COHORT leg INTO a rotated R=24 descriptor: keep the WHOLE rotated
-/// constraint set (gates / transitions / pi-bindings / chip lookups) AND the rotated 46-PI vector
+/// constraint set (gates / transitions / pi-bindings / chip lookups) AND the rotated ROT_PI_COUNT-PI vector
 /// (`ROT_PI_COUNT` — the OLD/NEW state-commit pins at PI `V1_PI_COUNT` / `+1` the IVC chain fold
 /// reads as `old_root` / `new_root`), and APPEND a SINGLE-domain `umem_op` reconciliation leg over
 /// 7 fresh main columns `[base .. base+7)` (`base` = the rotated trace width) plus the `umemory`
@@ -3153,9 +3153,10 @@ mod tests {
                 let _ = is_tb;
                 // The spawn cap-open members (`spawnCapOpen`/`spawnWriteCapOpen`) are the ONLY cap-fanout
                 // members built over a BIRTH base (`spawnV3`/`spawnWriteV3`): spawn carries the extra
-                // new-cell-key PI weld (`ROT_NEW_CELL_KEY_PI = 46`, the child id pinned on row 0), so its
-                // rotated base publishes 47 PIs (the 46-PI vector + 1), not 46. So the cap-open wrapper
-                // inherits 47 PIs. Every other cap-open member rides a non-birth base (46 PIs).
+                // new-cell-key PI weld (`ROT_NEW_CELL_KEY_PI = ROT_PI_COUNT`, the child id pinned on
+                // row 0), so its rotated base publishes `ROT_PI_COUNT + 1` PIs. So the cap-open wrapper
+                // inherits that. Every other cap-open member rides a non-birth base (`ROT_PI_COUNT`).
+                // (Those were 47 / 46 before the 2026-08-07 seven-slot compaction.)
                 let is_spawn = key.starts_with("spawn");
                 let extra_pis = if is_tb { 1 } else { 0 } + if is_spawn { 1 } else { 0 };
                 // Phase H-CAP-8: the FAITHFUL 8-FELT cap-open appendix. The native `node8` arity-16
@@ -3201,11 +3202,12 @@ mod tests {
                      cap-membership appendix (+143 after-spine for write/attenuate). The TB weld \
                      adds NO column: it pins the EXISTING `src` column."
                 );
+                let rot_pi_count = crate::effect_vm::trace_rotated::ROT_PI_COUNT;
                 assert_eq!(
                     d.public_input_count,
-                    46 + extra_pis,
-                    "{key}: cap-open carries the rotated 46-PI vector (+1 turn-identity `src` PI \
-                     for TB, +1 new-cell-key PI for the spawn birth base)"
+                    rot_pi_count + extra_pis,
+                    "{key}: cap-open carries the rotated {rot_pi_count}-PI vector (+1 turn-identity \
+                     `src` PI for TB, +1 new-cell-key PI for the spawn birth base)"
                 );
                 // The cap-open READ appendix declares EXACTLY 17 poseidon2 chip lookups whose DIGEST
                 // (out0, tuple col CHIP_RATE+1) lands in the cap-membership CORE column block
@@ -3631,7 +3633,7 @@ mod tests {
             if key == "noteSpendVmDescriptor2R24" {
                 assert_eq!(
                     base_pi_count, 47,
-                    "noteSpend: rotated 46-PI + the appended nullifier slot"
+                    "noteSpend: rotated ROT_PI_COUNT-PI + the appended nullifier slot"
                 );
                 assert_eq!(
                     nullifier_pins,
@@ -3645,7 +3647,7 @@ mod tests {
                 // (`EffectVmEmitRotationV3.noteCreateV3`).
                 assert_eq!(
                     base_pi_count, 47,
-                    "noteCreate: rotated 46-PI + the appended commitment slot"
+                    "noteCreate: rotated ROT_PI_COUNT-PI + the appended commitment slot"
                 );
                 assert_eq!(
                     nullifier_pins,
@@ -3662,7 +3664,7 @@ mod tests {
                 use crate::effect_vm::trace_rotated::{B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET};
                 assert_eq!(
                     base_pi_count, 63,
-                    "factory: rotated 46-PI + the new-cell-key slot + the 16 carrier-octet pins"
+                    "factory: rotated ROT_PI_COUNT-PI + the new-cell-key slot + the 16 carrier-octet pins"
                 );
                 let mut expected = vec![(PARAM_BASE + param::CHILD_VK_DERIVED, pi_base + 4)];
                 for i in 0..8 {
@@ -3679,7 +3681,7 @@ mod tests {
             } else if new_cell_key_pin_member {
                 assert_eq!(
                     base_pi_count, 47,
-                    "{key}: rotated 46-PI + the appended new-cell-key slot"
+                    "{key}: rotated ROT_PI_COUNT-PI + the appended new-cell-key slot"
                 );
                 // createCell/spawn key on param0 (the new-cell id).
                 let key_col = PARAM_BASE;
@@ -3696,7 +3698,8 @@ mod tests {
                 // wide-open authority forged into ANY limb is UNSAT (the GENTIAN close for movers).
                 assert_eq!(
                     base_pi_count, 54,
-                    "{key}: rotated 46-PI + the 8 authority record-pins (47..53)"
+                    "{key}: rotated ROT_PI_COUNT-PI + the 8 authority record-pins \
+                     (`ROT_PI_COUNT ..= ROT_PI_COUNT + 7`; 46..53 pre-compaction)"
                 );
                 let mut expected = vec![(after_base + B_AUTHORITY_DIGEST, pi_base + 4)];
                 for i in 0..7 {
@@ -3709,7 +3712,7 @@ mod tests {
             } else if lifecycle_record_pin_member {
                 assert_eq!(
                     base_pi_count, 47,
-                    "{key}: rotated 46-PI + the appended record-forcing slot"
+                    "{key}: rotated ROT_PI_COUNT-PI + the appended record-forcing slot"
                 );
                 assert_eq!(
                     nullifier_pins,
@@ -3724,7 +3727,7 @@ mod tests {
                 use crate::effect_vm::columns::{STATE_AFTER_BASE, state};
                 assert_eq!(
                     base_pi_count, 47,
-                    "transferFee: rotated 46-PI + the appended fee slot"
+                    "transferFee: rotated ROT_PI_COUNT-PI + the appended fee slot"
                 );
                 assert_eq!(
                     nullifier_pins,
@@ -3759,7 +3762,7 @@ mod tests {
                     + crate::effect_vm::trace_rotated::B_FIELDS_ROOT;
                 assert_eq!(
                     base_pi_count, 47,
-                    "setFieldDyn: rotated 46-PI + the appended fields-root weld slot"
+                    "setFieldDyn: rotated ROT_PI_COUNT-PI + the appended fields-root weld slot"
                 );
                 assert_eq!(
                     nullifier_pins,
@@ -3789,7 +3792,7 @@ mod tests {
                 // would look like, and at that point this should become a presence assertion again.
                 assert_eq!(
                     base_pi_count, 47,
-                    "mint: rotated 46-PI + the appended mint-hash SLOT (the slot survives the \
+                    "mint: rotated ROT_PI_COUNT-PI + the appended mint-hash SLOT (the slot survives the \
                      unforced-pin subtraction; only its pin was dropped)"
                 );
                 assert_eq!(
@@ -3819,7 +3822,7 @@ mod tests {
                 use crate::effect_vm::columns::PARAM_BASE;
                 assert_eq!(
                     base_pi_count, 47,
-                    "{key}: rotated 46-PI + the appended capacity-selector slot"
+                    "{key}: rotated ROT_PI_COUNT-PI + the appended capacity-selector slot"
                 );
                 assert_eq!(
                     nullifier_pins,
@@ -3842,9 +3845,11 @@ mod tests {
             } else if key == "customVmDescriptor2R24" {
                 // G2 custom-leg PI exposure (`EffectVmEmitRotationV3.customPiExposure`) — the
                 // PROOF-BIND FLAG-DAY ROTATION (blocker #2, 4 → 8 commitment felts): customV3
-                // RESERVES 16 published slots PAST the rotated 46-PI vector —
+                // RESERVES 16 published slots PAST the rotated ROT_PI_COUNT-PI vector —
                 // `custom_proof_commitment` limbs 0..8 at PI[46..53] and `custom_program_vk_hash`
-                // limbs 0..8 at PI[54..61] — so custom carries 62 PIs (46 + 16).
+                // limbs 0..8 at PI[`ROT_PI_COUNT + 8` ..) — so custom carries `ROT_PI_COUNT + 16`
+                // PIs. (That was PI[54..61] and 62 = 46 + 16 before the 2026-08-07 seven-slot
+                // compaction; `docs/PI-DISPOSITION.md` §6.)
                 //
                 // ⚑ 2026-07-31: FOURTEEN OF THE SIXTEEN PINS ARE GONE, and this assertion listed
                 // all sixteen. It read them as "16 fold-binding pins weld …", and the word `weld`
@@ -3879,7 +3884,8 @@ mod tests {
                 // recommitted at eight times the width.
                 assert_eq!(
                     base_pi_count, 62,
-                    "custom: rotated 46-PI + the 16 RESERVED custom exposure slots (46..61)."
+                    "custom: rotated ROT_PI_COUNT-PI + the 16 RESERVED custom exposure slots \
+                     (`ROT_PI_COUNT ..= ROT_PI_COUNT + 15`; 46..61 pre-compaction)."
                 );
                 use crate::descriptor_ir2::ProofBindSpec;
                 use crate::lean_descriptor_air::LeanExpr;
@@ -3987,7 +3993,7 @@ mod tests {
                 assert_eq!(
                     base_pi_count,
                     46 + SETFIELD_VALUE8_PI_LEN,
-                    "{key}: the deployed setField member carries the rotated 46-PI + the VALUE8 \
+                    "{key}: the deployed setField member carries the rotated ROT_PI_COUNT-PI + the VALUE8 \
                      completion pins"
                 );
                 // The extras are EXACTLY the value8 completion block: contiguous PI slots
@@ -4017,7 +4023,7 @@ mod tests {
             } else {
                 assert_eq!(
                     base_pi_count, 46,
-                    "{key}: non-record-pin cohort carries the rotated 46-PI"
+                    "{key}: non-record-pin cohort carries the rotated ROT_PI_COUNT-PI"
                 );
                 assert!(
                     nullifier_pins.is_empty(),
@@ -4292,19 +4298,29 @@ mod tests {
             );
             // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after
             // anchors) appended PAST its host's PI vector, so `piCount = host.piCount + 16`. The
-            // rotated cohort / `-eff` / cap-open / write members host the full 46-PI rotated vector →
-            // 62; the turn-identity-pinned `transferCapOpenTB` hosts 49 → 65; the minimal-PI Class-A
+            // rotated cohort / `-eff` / cap-open / write members host the full rotated vector; the
+            // turn-identity-pinned `transferCapOpenTB` hosts one more; the minimal-PI Class-A
             // `heapWrite` hosts just 4 → 20. The floor (≥ 20) is exactly the 16 anchors + heapWrite's
-            // 4 host PIs — every member fits the 16 wide PIs, NO narrowing.
+            // 4 host PIs — every member fits the 16 wide PIs, NO narrowing. (The rotated host was 46
+            // → 62 and TB 49 → 65 before the 2026-08-07 seven-slot compaction.)
             assert!(
                 d.public_input_count >= 20,
                 "{key}: wide PI count {} carries the 16 wide-commit PIs",
                 d.public_input_count
             );
             // ⚑ Row 0 (transfer) is the AVAIL-HARDENED, membership-teeth, gentian-refuse-welded
-            // face and carries 68 PIs: the 46-PI rotated vector + 2 `(sender_leaf,
-            // authorized_root)` membership claims + the 16 wide-commit anchors. Pinned ABSOLUTELY
-            // here, against the same independent-literal discipline as `WIDE_MEMBER_GEOMETRY`.
+            // face and carries `WIDE_PI_COUNT + 2` PIs: the rotated vector + the dsl rc tail + the
+            // 16 wide-commit anchors (that IS `WIDE_PI_COUNT`), plus 2 `(sender_leaf,
+            // authorized_root)` membership claims.
+            //
+            // ⚑ This was the LITERAL `68` and it went stale on 2026-08-07, when the seven-slot PI
+            // compaction took `V1_PI_COUNT` 42 → 35 (`docs/PI-DISPOSITION.md` §6). The
+            // absolute-literal discipline the paragraph below argues for is aimed at a DIFFERENT
+            // failure — re-deriving a member from a committed FORK OF ITSELF — and `WIDE_PI_COUNT`
+            // is not that: it is the single symbolic layout source the Lean emitters and the Rust
+            // generators both read, held to the Lean `pi.V1_PI_COUNT` by `pi::v3_drift_guard`. The
+            // `+ 2` is this member's own membership splice and stays a literal, because it is a
+            // property of THIS member and nothing else can move it.
             //
             // ⚠ This used to be a RELATIVE pin — `d.public_input_count == plain.public_input_count
             // + 2` and a five-term width equation `plain + avail_pad + 2 teeth + refuse_extent −
@@ -4317,9 +4333,11 @@ mod tests {
             // = 1610`) was 172 columns out of date at deletion. An absolute pin against a literal
             // is a gate; a relation to a fork of the same object is not.
             if i == 0 {
+                let want = crate::effect_vm::trace_rotated::WIDE_PI_COUNT + 2;
                 assert_eq!(
-                    d.public_input_count, 68,
-                    "{key}: wide row 0 PI count drifted off its pin"
+                    d.public_input_count, want,
+                    "{key}: wide row 0 PI count drifted off its pin (WIDE_PI_COUNT + 2 membership \
+                     claim PIs)"
                 );
             }
         }

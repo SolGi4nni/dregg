@@ -51,8 +51,9 @@ use dregg_circuit::effect_vm::pi::{
 };
 use dregg_circuit::effect_vm::satisfaction_weld::ESCROW_SEL_COL;
 use dregg_circuit::effect_vm::trace_rotated::{
-    RotatedBlockWitness, RotatedCaveatEntry, RotatedCaveatManifest, empty_caveat_manifest,
-    generate_rotated_settle_escrow_trace, generate_rotated_settle_escrow_trace_forged,
+    ROT_PI_COUNT, RotatedBlockWitness, RotatedCaveatEntry, RotatedCaveatManifest,
+    empty_caveat_manifest, generate_rotated_settle_escrow_trace,
+    generate_rotated_settle_escrow_trace_forged,
 };
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
@@ -151,8 +152,10 @@ fn carrier_descriptor() -> EffectVmDescriptor2 {
     let mut desc =
         parse_vm_descriptor2(welded_escrow_json()).expect("welded escrow descriptor parses");
     assert_eq!(
-        desc.public_input_count, 47,
-        "rotated 46 + the selector slot"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1,
+        "the rotated {ROT_PI_COUNT}-PI vector + the escrow selector slot (was 47 before the \
+         2026-08-07 seven-slot compaction; DERIVED now, so the next cascade carries it)"
     );
     desc.name = format!("{}-gentian-carrier-demo", desc.name);
     desc.constraints.extend(carrier_floor_gates()); // the carrier adds NO public input
@@ -212,7 +215,7 @@ fn carrier_trace(
     let (mut trace, dpis) =
         generate_rotated_settle_escrow_trace(&st, &bw, &aw, manifest, LEG_A, LEG_B)
             .expect("the settle carrier must generate");
-    assert_eq!(dpis.len(), 40);
+    assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
     let w = desc.trace_width;
     for row in trace.iter_mut() {
         fill_carrier_decode(row, w);
@@ -240,7 +243,7 @@ fn carrier_trace_forged(
         after_status,
     )
     .expect("the forged settle carrier must generate");
-    assert_eq!(dpis.len(), 40);
+    assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
     let w = desc.trace_width;
     for row in trace.iter_mut() {
         fill_carrier_decode(row, w);

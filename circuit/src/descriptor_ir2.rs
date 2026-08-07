@@ -11213,12 +11213,13 @@ mod tests {
     #[test]
     fn deployed_notespend_wide_bracket_double_spend_rejected() {
         use crate::effect_vm::trace_rotated::{
-            NUM_PRE_LIMBS, ROT_WIDTH, RotatedBlockWitness, SpendRevocationWitness,
-            empty_caveat_manifest, generate_rotated_note_spend_trace_with_nullifier_tree,
+            DFA_RC_LEN, NUM_PRE_LIMBS, ROT_PI_COUNT, ROT_WIDTH, RotatedBlockWitness,
+            SpendRevocationWitness, empty_caveat_manifest,
+            generate_rotated_note_spend_trace_with_nullifier_tree,
         };
         use crate::effect_vm::{CellState, Effect};
 
-        // Resolve the DEPLOYED noteSpend descriptor (the light-client V3-staged 47-PI shape carrying
+        // Resolve the DEPLOYED noteSpend descriptor (the light-client V3-staged shape carrying
         // the two nullifier map-ops — `.absent` freshness + `.insert` set-insert).
         let name = "noteSpendVmDescriptor2R24";
         let json = crate::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV
@@ -11234,8 +11235,12 @@ mod tests {
             })
             .expect("noteSpendVmDescriptor2R24 in V3_STAGED_REGISTRY_TSV");
         let desc = parse_vm_descriptor2(json).expect("deployed noteSpend descriptor parses");
+        // DERIVED, not transcribed: the rotated base + the nullifier-forcing fifth pin + the dsl rc
+        // tail. This read `51` and went stale when the 2026-08-07 seven-slot PI compaction took
+        // `ROT_PI_COUNT` 46 -> 39 (`docs/PI-DISPOSITION.md` §6).
         assert_eq!(
-            desc.public_input_count, 51,
+            desc.public_input_count,
+            ROT_PI_COUNT + 1 + DFA_RC_LEN,
             "deployed noteSpend carries the nullifier-forcing pin"
         );
         // The descriptor genuinely carries the `.absent` freshness map-op (the adjacency-forcing leg).

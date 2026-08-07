@@ -6691,9 +6691,11 @@ mod tests {
         )
         .expect("the WIDE attenuate cap-open leg must prove + self-verify");
         let n = dpis.len();
+        let rot_pi_count = dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT;
         assert!(
-            n >= 16 + 46,
-            "the WIDE cap-open leg carries the cap-open base PIs + 16 wide commit PIs (got {n})"
+            n >= 16 + rot_pi_count,
+            "the WIDE cap-open leg carries the cap-open base PIs ({rot_pi_count}) + 16 wide commit \
+             PIs (got {n}); the base was 46 before the 2026-08-07 seven-slot compaction"
         );
         let proof_bytes = postcard::to_allocvec(&proof).expect("serialize wide cap-open leg");
         let vk_hash = cap_open_wide_vk_hash_by_key(effective_key).expect("wide cap-open vk_hash");

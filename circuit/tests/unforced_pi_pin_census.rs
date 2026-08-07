@@ -81,6 +81,7 @@
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, VmConstraint2, WindowExpr, parse_vm_descriptor2,
 };
+use dregg_circuit::effect_vm::trace_rotated::CAP_OPEN_TB_PI_SRC;
 use dregg_circuit::effect_vm_descriptors::{
     V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, welded_wide_members,
 };
@@ -424,7 +425,7 @@ fn unforced_pi_pin_census_is_pinned() {
             .iter()
             .filter_map(|c| match c {
                 VmConstraint2::Base(VmConstraint::PiBinding { pi_index, .. })
-                    if *pi_index >= 46 =>
+                    if *pi_index >= CAP_OPEN_TB_PI_SRC =>
                 {
                     Some(*pi_index)
                 }
@@ -433,8 +434,9 @@ fn unforced_pi_pin_census_is_pinned() {
             .collect()
     };
     assert!(
-        tb_pins.contains(&46),
-        "the TB weld's `src` pin (PI 46) must SURVIVE the subtraction: it is FORCED \
+        tb_pins.contains(&CAP_OPEN_TB_PI_SRC),
+        "the TB weld's `src` pin (PI {CAP_OPEN_TB_PI_SRC}, the literal 46 before the 2026-08-07 \
+         seven-slot compaction) must SURVIVE the subtraction: it is FORCED \
          (targetBindGate pins leaf.target == src, and the depth-16 open chains that leaf to the \
          committed cap root). Its survival is the evidence `dropUnforcedPins` discriminates."
     );

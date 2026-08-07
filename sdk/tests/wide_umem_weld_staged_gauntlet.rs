@@ -40,7 +40,7 @@
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2, verify_vm_descriptor2};
 use dregg_circuit::effect_vm::trace_rotated::{
-    rotated_descriptor_name_for_effect, transfer_caveat_manifest,
+    ROT_PI_COUNT, rotated_descriptor_name_for_effect, transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
 use dregg_circuit::effect_vm_descriptors::{
@@ -185,8 +185,9 @@ fn wide_umem_welded_transfer_proves_and_preserves_8felt() {
          the 8-felt commit is preserved"
     );
     assert!(
-        welded_dpis.len() >= 16 + 46,
-        "the welded WIDE transfer leg carries the 46 base PIs + 16 wide commit PIs (got {})",
+        welded_dpis.len() >= 16 + ROT_PI_COUNT,
+        "the welded WIDE transfer leg carries the {ROT_PI_COUNT} base PIs + 16 wide commit PIs \
+         (got {}); the base was 46 before the 2026-08-07 seven-slot compaction",
         welded_dpis.len()
     );
 

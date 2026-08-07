@@ -205,7 +205,7 @@ mod tests {
     /// settle row makes every emitted gate body vanish; (c) a forged partial / phantom settle makes
     /// an emitted gate body NON-zero — the teeth bite against the DEPLOYED-staged descriptor's own
     /// constraints, not a hand-built shadow. The selector is the real col 70 (param2), pinned to PI
-    /// 46 by the descriptor.
+    /// `ROT_PI_COUNT` by the descriptor (46 before the 2026-08-07 seven-slot compaction).
     #[test]
     fn emitted_descriptor_carries_the_welded_gates_and_they_bite() {
         use crate::descriptor_ir2::parse_vm_descriptor2;
@@ -224,9 +224,13 @@ mod tests {
             })
             .expect("settleEscrowSatVmDescriptor2R24 in the staged registry");
         let desc = parse_vm_descriptor2(json).expect("welded escrow descriptor parses");
+        // DERIVED, not transcribed: this read `47` and went stale the instant the 2026-08-07
+        // seven-slot PI compaction took `ROT_PI_COUNT` 46 -> 39 (`docs/PI-DISPOSITION.md` §6).
+        let rot_pi_count = crate::effect_vm::trace_rotated::ROT_PI_COUNT;
         assert_eq!(
-            desc.public_input_count, 47,
-            "rotated 46-PI + the selector slot"
+            desc.public_input_count,
+            rot_pi_count + 1,
+            "the rotated {rot_pi_count}-PI vector + the escrow selector slot"
         );
 
         // The emitted welded gates: row-local bodies of the form `mul(var ESCROW_SEL_COL, _)`.

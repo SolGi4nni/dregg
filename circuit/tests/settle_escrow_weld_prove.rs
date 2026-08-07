@@ -38,7 +38,7 @@ use dregg_circuit::effect_vm::satisfaction_weld::{
     ESCROW_SEL_COL, after_field_col, before_field_col,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    RotatedBlockWitness, empty_caveat_manifest, generate_rotated_settle_escrow_trace,
+    ROT_PI_COUNT, RotatedBlockWitness, empty_caveat_manifest, generate_rotated_settle_escrow_trace,
     generate_rotated_settle_escrow_trace_forged,
 };
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -127,8 +127,10 @@ fn carrier_inputs() -> (CellState, RotatedBlockWitness, RotatedBlockWitness) {
 fn honest_settle_proves_and_verifies_end_to_end() {
     let desc = parse_vm_descriptor2(welded_escrow_json()).expect("welded escrow descriptor parses");
     assert_eq!(
-        desc.public_input_count, 47,
-        "rotated 46 + the selector slot"
+        desc.public_input_count,
+        ROT_PI_COUNT + 1,
+        "the rotated {ROT_PI_COUNT}-PI vector + the escrow selector slot (was 47 before the \
+         2026-08-07 seven-slot compaction)"
     );
 
     let (initial_state, before_w, after_w) = carrier_inputs();
@@ -144,8 +146,9 @@ fn honest_settle_proves_and_verifies_end_to_end() {
     .expect("the satisfying settle carrier must generate");
     assert_eq!(
         dpis.len(),
-        40,
-        "40 PIs (rotated ROT_PI_COUNT=39 + selector); 47 pre-compaction"
+        ROT_PI_COUNT + 1,
+        "{} PIs (rotated ROT_PI_COUNT={ROT_PI_COUNT} + selector); 47 pre-compaction",
+        ROT_PI_COUNT + 1
     );
 
     // The welded gate reads exactly these columns; pin the satisfying assignment for clarity.
