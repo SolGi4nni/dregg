@@ -30,10 +30,38 @@
 //! such process and `fhegg-fhe/tests/distributed_threshold_committee.rs` stands three of them up
 //! with distinct pids.
 //!
-//! **The two market callers here still use THIS in-process committee**, and this line is the whole
-//! status: nothing below has been rewired, the distributed committee is `t`-of-`n` where this one
-//! is `n`-of-`n`, and it has no relinearization ceremony, so `mul_engine` has no distributed
-//! counterpart yet. Read that as work not done, not as an option the markets have.
+//! **The two market callers here still use THIS in-process committee.** That much is unchanged.
+//! What HAS changed is the reason, so read this rather than the sentence it replaces.
+//!
+//! The old status said the distributed committee "has no relinearization ceremony, so `mul_engine`
+//! has no distributed counterpart yet". That is no longer true and had become the kind of stale
+//! blocker that keeps work from starting. As of `fhegg_fhe::threshold::distributed_relin` there IS
+//! a distributed relinearization ceremony, and
+//! [`fhegg_fhe::threshold::relying_party::DistributedCommitteeClient::relin_key`] drives it over
+//! the authenticated transport and returns a key only after it has been observed relinearizing —
+//! fresh random `ct×ct` products decrypted through the committee's real `t`-of-`n` certified
+//! opening. `fhegg-fhe/tests/distributed_threshold_committee.rs` runs it across three PROCESSES.
+//! The payload ceiling that also blocked this is gone: the commit and finalize rounds are chunked
+//! under the 8 MiB sealed-envelope limit (`fhegg_fhe::threshold::chunked`), so `n > 3` and
+//! degree-8192 no longer overflow.
+//!
+//! # What is actually left, named exactly
+//!
+//! The remaining gap is NOT cryptographic, it is LIFECYCLE. Both ceremonies here
+//! ([`dark_pool_offering`](crate::dark_pool_offering)'s `pool_ceremony` and
+//! [`oracle_pit`](crate::oracle_pit)'s `pit_ceremony`) are synchronous functions that return a
+//! ready committee. A distributed committee is `n` party PROCESSES that must be enrolled, spawned
+//! or connected to, waited on, and shut down, and whose failure is an operational event rather than
+//! an `Err`. Nothing in this module has anywhere to put that, and inventing a process supervisor
+//! inside a market offering is how it would be put in the wrong place.
+//!
+//! One more difference a rewire must not paper over: the distributed committee is `t`-of-`n` and
+//! this one is `n`-of-`n`. That is a WEAKER reconstruction requirement, not merely a different
+//! shape — `t` parties suffice there where all `n` are needed here — and it is a deliberate
+//! availability trade, not a detail to be matched silently.
+//!
+//! Read the above as work not done. It is no longer an option the markets do not have; it is one
+//! nobody has wired up yet.
 //!
 //! # The two refusals a caller must not conflate
 //!
