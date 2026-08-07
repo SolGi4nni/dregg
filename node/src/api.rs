@@ -11426,15 +11426,14 @@ mod tests {
                 // against nothing, and the executor now supplies the root from
                 // `note_shielded.root8()`. This fixture constructed the retired
                 // field and broke every `cargo test -p dregg-node` in the tree.
+                // ⚑ FLAG DAY (value link): the Pedersen half is DELETED from the payload —
+                // `input_legs` / `output_legs` / `output_range_proofs` / `conservation` all go,
+                // because the leg's `v` was tied to the STARK-side `v` by a transcript and by no
+                // circuit equality. An output is now a Poseidon2 note commitment plus the
+                // Lean-emitted `dregg-shielded-transfer-value-link::v1` proof binding it to the
+                // spent note's carrier.
                 inputs: vec![],
-                input_legs: vec![],
-                output_legs: vec![],
-                output_range_proofs: vec![],
-                conservation: dregg_cell_crypto::value_commitment::ConservationProof {
-                    excess_commitment: [0u8; 32],
-                    nonce_commitment: [0u8; 32],
-                    response: [0u8; 32],
-                },
+                outputs: vec![],
             },
         },
 
