@@ -30,7 +30,7 @@
     { "i": 26, "name": "bulletproof_challenges[13]", "value": "63330253630208683616997490417027977146" },
     { "i": 27, "name": "bulletproof_challenges[14]", "value": "122481746783850907330621371818595491099" },
     { "i": 28, "name": "bulletproof_challenges[15]", "value": "307599670269490453626177987240772268801" },
-    { "i": 29, "name": "branch_data((domain_log2<<2)|proofs_verified)", "value": "59" },
+    { "i": 29, "name": "branch_data((domain_log2<<2)|proofs_verified)", "value": "58" },
     { "i": 30, "name": "feature_flags.range_check0", "value": "0" },
     { "i": 31, "name": "feature_flags.range_check1", "value": "0" },
     { "i": 32, "name": "feature_flags.foreign_field_add", "value": "0" },

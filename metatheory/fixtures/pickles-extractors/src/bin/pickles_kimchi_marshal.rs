@@ -710,7 +710,27 @@ fn statement(
                 runtime_tables: false,
             },
         bulletproof_challenges: tr.bulletproof_challenges,
-        branch_proofs_verified: PicklesBaseProofsVerifiedStableV1::N2,
+        // ⚑⚑ **`N1`, DERIVED FROM THE RULE — AND IT WAS A HARDCODED `N2` UNTIL 2026-08-07, WHICH
+        // IS WHY PUBLIC SLOT 29 "AGREED" AT 59.**
+        //
+        // `branch_data.proofs_verified` is the SELECTED step branch's `actual_proofs_verified`:
+        // `wrap_main.ml:173-198` builds `ones_vector ~first_zero:(Pseudo.choose (which_branch,
+        // step_widths))`, front-extends it to `N2` and `Field.Assert.equal branch_data`s the pack.
+        // Dregg's step rule assembles ONE `verify_one`, so `STEP_RULE_N_PREVIOUS = 1` and
+        // `proofs_verified.ml:70-78`'s `Prefix_mask.there N1 = [false; true]` packs — via
+        // `prepared_statement.rs:131-139`'s `N1 => 0b10` — to `(domain_log2 << 2) | 2`.
+        //
+        // ⚠ `gates::STEP_RULE_N_PREVIOUS`'s own docblock has said `Prefix_mask.there N1` since the
+        // arity was corrected; this line was the half that did not move with it, so the emitter and
+        // the referee were wrong in the SAME direction and slot 29 read as a passing slot.
+        // **WHAT RE-BAKES:** `MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED` slot 29 (59 → 58)
+        // and the marshalled wire statement's `branch_data`.
+        branch_proofs_verified: match gates::STEP_RULE_N_PREVIOUS {
+            0 => PicklesBaseProofsVerifiedStableV1::N0,
+            1 => PicklesBaseProofsVerifiedStableV1::N1,
+            2 => PicklesBaseProofsVerifiedStableV1::N2,
+            n => panic!("STEP_RULE_N_PREVIOUS = {n} has no Proofs_verified encoding"),
+        },
         branch_domain_log2: tr.domain_log2,
         sponge_digest_before_evaluations: tr.sponge_digest,
         // ⚑ VESTA, and now an actual multi-scalar multiplication. This is the STEP proof's

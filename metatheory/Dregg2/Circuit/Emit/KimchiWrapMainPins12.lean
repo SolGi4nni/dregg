@@ -101,7 +101,7 @@ theorem fin_sponge_tape_lengths (p cd : Nat) :
     ∧ WH_MLMB * WH_ROUNDS = 30 := by
   refine ⟨?_, by decide, ?_, by decide⟩
   · simp [finSpTape, finEvalTape, FIN_NCOLS]
-  · simp [whOldChals]
+  · simp only [whOldChals]; decide
 
 /-! ### §20b‴ — ⚠ **THE COMPILED HALF, AND WHY IT IS COMPILED.**
 
@@ -536,13 +536,21 @@ moves `STEP_PUBCOMM_XY`, `STEP_WCOMM_XY` and every derived challenge; it does no
 ⚠ **THE LAST CONJUNCT IS THE ONE THAT COULD GO RED AND THE FIRST TWO ARE ITS SETUP.** A tape entry
 that coincided with a published entry would not by itself be a defect — but it is the only observable
 this file has of the wiring mistake that already happened once here, when `whSgOld` and
-`itemVal T_SGOLD` held one object through two literals and `RC_SGOLD` moved without it. -/
+`itemVal T_SGOLD` held one object through two literals and `RC_SGOLD` moved without it. ⚑ `whSgOld`
+is GONE — `whSlotSg` reads the record itself — which is why the legs below name the record's slots
+rather than a second copy of them. -/
 theorem the_wraphack_tape_reads_no_published_statement_entry :
-    (whTape (whOldChals 0) (whSgOld 0)).length = WH_MLMB * WH_ROUNDS + 2
-  ∧ (whTape (whOldChals 1) (whSgOld 1)).length = WH_MLMB * WH_ROUNDS + 2
-  ∧ ((whTape (whOldChals 0) (whSgOld 0) ++ whTape (whOldChals 1) (whSgOld 1)).filter
+    (List.range WH_PADDED).all (fun p =>
+      (whTape (whSlotChals WH_REAL_SLOTS p) (whSlotSg WH_REAL_SLOTS p)).length
+        == WH_MLMB * WH_ROUNDS + 2) = true
+  ∧ (((List.range WH_PADDED).flatMap (fun p =>
+        whTape (whSlotChals WH_REAL_SLOTS p) (whSlotSg WH_REAL_SLOTS p))).filter
       (fun v => Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.contains v)).length
-      = 0 := by
+      = 0
+  -- ⚑ …and the two record slots really are DIFFERENT tapes, which is the leg that would have caught
+  -- the pad reading a real accumulator (`whSlotSgAt`'s index shift) rather than agreeing with itself.
+  ∧ whTape (whSlotChals WH_REAL_SLOTS 0) (whSlotSg WH_REAL_SLOTS 0)
+      ≠ whTape (whSlotChals WH_REAL_SLOTS 1) (whSlotSg WH_REAL_SLOTS 1) := by
   native_decide
 
 /-- ⚑ **AND THE SIX WORDS ARE INDEPENDENT OF EACH OTHER**, which is what makes the three strata an
@@ -582,8 +590,12 @@ squeezes once (**15** permutations: the rate-2 machine permutes before absorbs 3
 14 — and once more for the squeeze, which arrives at `Absorbed 2`), and the finalize sponge absorbs
 **91** and squeezes twice (**46**: 45 during the absorbs, one for the first squeeze; the second
 squeeze reads lane 1 of the SAME permutation, which is `finalize_sponge_squeezes_share_one_permutation`
-and is why this is 46 and not 47). **61 per instance, 122 at `prevs = 2`** — and `prevs = 2` at BOTH
-committed shapes, so the wrap-scale figure is this figure.
+and is why this is 46 and not 47). **61 per instance, 122 at `maxPrevs = 2`** — and
+`Max_proofs_verified` is 2 at BOTH committed shapes because `wrap_main.ml:287-289` runs this loop
+over `prev_proof_state.unfinalized_proofs`, whose own upstream comment is *"This is padded to
+max_proofs_verified for the benefit of wrapping with dummy unfinalized proofs"*. So the wrap-scale
+figure is this figure, and it does NOT follow `actual_proofs_verified` — setting the shape field to
+`actual` on 2026-08-07 dropped one whole instance and put this census at 61 against Mina's 122.
 
 Against Mina's `wrap-transaction`: **137 blocks before this rung, 259 of 261 after.** The two that
 remain are not this sponge's.
@@ -594,8 +606,8 @@ also grows the `Zero ≥ 2` run family that Mina's wrap does not have at all. Sa
 transcript sponge, not a new one. -/
 theorem finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks :
     (finSpRowsW.filter (fun r => r.kind == KGateType.poseidon)).length = 122 * 11
-    ∧ shapeSmoke.prevs = 2
-    ∧ shapeWrap.prevs = 2
+    ∧ shapeSmoke.maxPrevs = 2
+    ∧ shapeWrap.maxPrevs = 2
     ∧ 137 + 122 = 259 := by
   native_decide
 

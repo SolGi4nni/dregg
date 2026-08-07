@@ -91,9 +91,29 @@ def dFuncQ (x : Nat) : Nat := if x == 0 then qN - 1 else if x == 1 then 1 else 0
 Every field is a quantity `wrap_main` fixes. §8 sets them against the census in §2b/§2c. -/
 
 structure WrapShape where
-  /-- `Max_proofs_verified.n` — how many previous STEP proofs the wrap statement carries
-  (`wrap_main.ml:103-104,180`). The devnet wrap VK says `prev_challenges = 2`. -/
-  prevs : Nat
+  /-- ⚑⚑ **`Max_proofs_verified.n`, AND NOT `actual_proofs_verified` — RENAMED 2026-08-07 BECAUSE
+  ONE NAME SERVING TWO NUMBERS HAS NOW COST THIS FILE FIVE REPAIRS.**
+
+  This sizes every STRUCTURAL `prev_step_accs`-shaped thing the wrap circuit allocates, and every
+  one of them is `Max_proofs_verified` at source:
+
+    * `prev_step_accs = exists (Vector.typ Inner_curve.typ Max_proofs_verified.n)`
+      (`wrap_main.ml:221-223`; `wrap.rs:2832-2840` hands it `messages_for_next_wrap_proof_padded`),
+      so `assert_on_curve` runs on all of them — the PAD included, and `whPadSg` is on `y² = x³ + 5`;
+    * `prev_proof_state.typ` at `Vector.init Max_proofs_verified.n` (`wrap_main.ml:265-275`);
+    * the `finalize_other_proof` loop, over `prev_proof_state.unfinalized_proofs`, whose own
+      upstream comment is *"This is padded to max_proofs_verified for the benefit of wrapping with
+      dummy unfinalized proofs"* (`wrap_main.ml:287-289`);
+    * `Split_commitments.combine`'s list, `Vector.append sg_old … (snd (Max_proofs_verified.add
+      Nat.N45.n))` (`wrap_verifier.ml:687-702`; `wrap.rs:2458-2477`'s `sg_old.chain(rest)` over
+      `NUM_COMMITMENTS_WITHOUT_DEGREE_BOUND = 45`) — so `combTerms` is `maxPrevs + 45`.
+
+  ⚠ **`actual_proofs_verified` IS NOT A SHAPE FIELD AND CANNOT BE ONE**, which is the structural
+  reason the conflation kept coming back: it is `Pseudo.choose (which_branch, step_widths)`
+  (`wrap_main.ml:173-180`) — a value the WITNESS selects — while `Max_proofs_verified` is a functor
+  argument of the compiled instance. It lives on `BranchData.fz`, and the one place the transcript
+  needs it is `schedule`, which reads `WH_REAL_SLOTS`. -/
+  maxPrevs : Nat
   /-- `Backend.Tick.Rounds.n` — the STEP proof's IPA round count, which is how many `(L,R)` pairs
   `bullet_reduce` absorbs and how many prechallenges it squeezes (`wrap_main.ml:381`,
   `wrap_verifier.ml:159-174`). -/
@@ -278,7 +298,7 @@ came from `pickles_kimchi_marshal`'s step proof, and `KimchiStepWrapChainFixture
 SECOND binary about a THIRD step proof — proved over kimchi's TEST SRS with **`OsRng`**, so not even
 reproducible.
 
-⚠ **THREE PROOFS, AND EVERY SHAPE AGREED**: `prevs = 2`, `wComms = 15`, `tComms = 7` on all three,
+⚠ **THREE PROOFS, AND EVERY SHAPE AGREED**: `maxPrevs = 2`, `wComms = 15`, `tComms = 7` on all three,
 so no census, no arity check and no `WrapShape` comparison could ever go red. That is the whole
 lesson — *same-shape is not same-proof*, and a pipeline whose parts agree on shape will keep its
 disagreement about IDENTITY silently forever.
@@ -298,9 +318,26 @@ sourced here and are not claimed to be:
 So the emitted transcript's β/γ/α/ζ are NOT this step proof's β/γ/α/ζ, and nothing here says they
 are. `KimchiStepWrapChain` is where that equality is a theorem, because it overrides both. -/
 
-/-- `sg_old` — the step proof's two `RecursionChallenge` commitments (`verifier.rs:165-168`,
-absorbed at `wrap_verifier.ml:538`). -/
-def RC_SGOLD : List Nat := Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY
+/-- ⚑⚑ **`prev_step_accs`, THE WHOLE `Max_proofs_verified`-LONG RECORD — `[pad …; real …]`.**
+
+`wrap_main.ml:221-223` allocates `Vector.typ Inner_curve.typ Max_proofs_verified.n` and
+`wrap.rs:2832-2840` fills it from `messages_for_next_wrap_proof_padded`, which
+`pad_messages_for_next_wrap_proof` (`wrap.rs:476-491`) has PREPENDED
+`InnerCurve::from(dummy_ipa_step_sg())` onto until it is `WH_PADDED` long. So slot 0 is the pad and
+the real `RecursionChallenge` commitments (`verifier.rs:165-168`) are LAST.
+
+⚠ **IT CARRIED THE REAL POINTS ALONE UNTIL 2026-08-07 AND THAT IS WHAT PUT AN OFF-CURVE POINT IN
+THE SMOKE SHAPE.** When `STEP_PREVCOMM_XY` went from four coordinates to two (dregg's step rule
+has one `verify_one`), `shapeSmoke`'s two-slot `prev_step_accs` indexed past the end and took
+`wrapFixture 1 2` — a number that is not on `y² = x³ + 5`, so `prev_step_accs_are_on_vesta`,
+`bullData`'s `equal_g` legs and `close_witness_is_the_bullet_verdict` all went red on the same
+filler. The pad is a REAL Vesta point and the record is now the object upstream allocates.
+
+⚑ The TRANSCRIPT is a different length: `schedule` absorbs the kept SUFFIX only, because the
+`OptSponge` mask drops the pad. -/
+def RC_SGOLD : List Nat :=
+  (List.range (whNPad WH_REAL_SLOTS)).flatMap (fun _ => [whPadSg.1, whPadSg.2])
+  ++ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY
 /-- ⚠ **NOT ON THE TRANSCRIPT ANY MORE — A RED CONTROL ONLY.** The third-party proof's
 public-input commitment, kept because `xhat_derived_is_not_the_old_fixture` exhibits the value the
 transcript used to absorb before §15's MSM replaced it. -/
@@ -415,7 +452,21 @@ output, and the MSM reads no sponge state — so the schedule can and must carry
 no row computed. -/
 def schedule (s : WrapShape) : List Ev :=
   [ Ev.abs T_DIGEST RC_DIGEST ]
-  ++ (List.range (2 * s.prevs)).map (fun i => Ev.abs T_SGOLD (itemVal T_SGOLD i))
+  -- ⚑⚑ **`WH_REAL_SLOTS`, NOT `s.maxPrevs` — THIS IS THE ONE PLACE THE TRANSCRIPT WANTS
+  -- `actual_proofs_verified`, AND IT IS SHAPE-INDEPENDENT.**
+  --
+  -- `wrap_verifier.ml:511-514` masks the `Max_proofs_verified`-long `sg_old` with
+  -- `actual_proofs_verified_mask` and `:538` absorbs it through an `Opt` sponge. A `keep = false`
+  -- absorb is a NO-OP on the state, and that is upstream's own statement rather than a reading of
+  -- ours: `opt_sponge.ml`'s `let%test_unit "correctness"` asserts the opt sponge's squeeze equals a
+  -- plain sponge over `List.filter_map ps ~f:(fun (b, x) -> if b then Some x else None)`.
+  -- `wrap.rs:2280-2300` is the same shape (`absorb_curve` → `OptSponge::absorb ((b, x))`).
+  --
+  -- So the RECORD has `WH_PADDED` slots and the TAPE carries `WH_REAL_SLOTS` points — the kept
+  -- SUFFIX, because `pad_messages_for_next_wrap_proof` PREPENDS (`wrap.rs:476-491`) and
+  -- `ones_vector … |> Vector.rev` puts the zeros at the front. `whNPad` is that offset.
+  ++ (List.range (2 * WH_REAL_SLOTS)).map (fun i =>
+       Ev.abs T_SGOLD (itemVal T_SGOLD (2 * whNPad WH_REAL_SLOTS + i)))
   ++ [ Ev.abs T_XHAT s.xhatXY.1, Ev.abs T_XHAT s.xhatXY.2 ]
   ++ (List.range (2 * s.wComms)).map (fun i => Ev.abs T_WCOMM (itemVal T_WCOMM i))
   ++ [ Ev.sq .chal, Ev.sq .chal ]                                   -- beta, gamma
@@ -938,8 +989,12 @@ structure BranchVars where
   packed : PVar
 
 /-- `Max_proofs_verified.n` for the wrap statement — `ones_vector`'s length and the mask's width
-(`wrap_main.ml:179-180`, `Nat.N2` at `:195`). -/
-def MASK_N : Nat := 2
+(`wrap_main.ml:179-180`, `Nat.N2` at `:195`).
+
+⚑ **IT IS `WH_PADDED` AND NOT A THIRD COPY OF `2`.** `Wrap_hack.Padded_length` and
+`Max_proofs_verified.n` are one number upstream (`wrap_main.ml:423` hashes the closing record at
+`Max_proofs_verified.n`), and this file held them as two literals until 2026-08-07. -/
+def MASK_N : Nat := WH_PADDED
 
 def branchVars (s : WrapShape) (base : Nat) : BranchVars :=
   let b := s.branches
@@ -1135,9 +1190,18 @@ is absorbed BEFORE β.
 
 ⚑ Two derived words follow the selection and neither is decoration:
 
-  * `fz = widths.getD 2 = 2`, so `Branch_data.proofs_verified` packs as `N2` (`[1,1]`,
-    `Field.pack = 3`) — the honest value for a step rule carrying
-    `STEP_PREV_CHALLENGES = 2` accumulators and a tape with two `sg_old` points on it;
+  * ⚑⚑ `fz = widths.getD KEY_CHAIN_BRANCH = WH_REAL_SLOTS = 1`, so
+    `Branch_data.proofs_verified` packs as **`N1`** — mask `[0, 1]`, `Field.pack = 2`, and Mina's
+    public slot 29 is `4·domain_log2 + 2`.
+    ⚠ **IT WAS `2` UNTIL 2026-08-07 AND THAT MADE SLOT 29 AGREE ON A WRONG NUMBER.** `first_zero`
+    is `Pseudo.choose (which_branch, step_widths)` (`wrap_main.ml:173-180`) — the SELECTED branch's
+    `actual_proofs_verified`, the same quantity `wrap.rs:666` reads off the step record — and
+    dregg's step rule assembles ONE `verify_one`. `proofs_verified.ml:70-78` gives
+    `Prefix_mask.there N1 = [false; true]` and `prepared_statement.rs:131-139` packs `N1 => 0b10`,
+    so the honest word is 58 and not 59. It read 59 on BOTH sides because the referee's own
+    `pickles_kimchi_marshal` hardcoded `PicklesBaseProofsVerifiedStableV1::N2` while its
+    `gates::STEP_RULE_N_PREVIOUS` docblock already said `Prefix_mask.there N1`. Two wrong sides
+    agreeing is not agreement, and this is the one slot in the forty where that was true;
   * `logs.getD KEY_CHAIN_BRANCH = STEP_DOMAIN_LOG2`, the domain `kimchi::verifier` proved that rule
     at. **Every entry used to be `16`** — `Common.Max_degree.step_log2`, Mina's `step-transaction`
     domain and the SRS depth, which is right for `KEY_REAL_BRANCH` and describes a different
@@ -1147,7 +1211,12 @@ def mkWrapWith (s : WrapShape) (bt bw : Nat) : WrapData :=
   { sh := s
   , sp := runSpongeQ (baseSp s) (schedule s) bt bw
   , br := runBranch s (min KEY_CHAIN_BRANCH (s.branches - 1))
-            ((List.range s.branches).map (fun i => min 2 i))
+            -- ⚑ per-branch `actual_proofs_verified` (`step_widths`, `wrap_main.ml:130-133`).
+            -- ⚠ `KEY_CHAIN_BRANCH`'s is dregg's own rule's — `WH_REAL_SLOTS`, ONE — and not
+            -- `min 2 i`'s saturation at `Max_proofs_verified`; that saturation is what packed
+            -- `branch_data` as `N2` for a one-`verify_one` rule.
+            ((List.range s.branches).map (fun i =>
+              if i == KEY_CHAIN_BRANCH then WH_REAL_SLOTS else min WH_PADDED i))
             ((List.range s.branches).map (fun i =>
               if i == KEY_CHAIN_BRANCH then
                 Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2
@@ -1831,7 +1900,14 @@ def prevW (s : WrapShape) (sp : SpAcc) (w : Nat) : PVar := .external (basePrev s
 (`snarky_curve.ml:211-217`). -/
 def prevSq (s : WrapShape) (sp : SpAcc) (p t : Nat) : PVar :=
   .external (basePrev s sp + PREV_WORDS + 2 * p + t)
-def nPrevVars (s : WrapShape) : Nat := PREV_WORDS + 2 * s.prevs
+/-- ⚑ **THE PADDED `prev_step_accs` SLOTS' OWN COORDINATE CELLS.** `wrap_main.ml:221-223` allocates
+`Max_proofs_verified` points and the `OptSponge` mask (`wrap_verifier.ml:511-514`) keeps `whNPad` of
+them off the tape — so those have no absorbed cell to borrow and this rung witnesses them here.
+`sgOldVar` is where the two halves are joined. -/
+def prevPadSg (s : WrapShape) (sp : SpAcc) (p j : Nat) : PVar :=
+  .external (basePrev s sp + PREV_WORDS + 2 * s.maxPrevs + 2 * p + j)
+def nPrevVars (s : WrapShape) : Nat :=
+  PREV_WORDS + 2 * s.maxPrevs + 2 * whNPad WH_REAL_SLOTS
 
 /-- ⚑ **ENTRY `k`'s SCALAR CELL.** For a `` `Packed_bits `` entry that IS the packed statement word;
 for the two halves of a `split_field` pair it is the gadget's own output cell, whose `x` is the word.
@@ -2584,11 +2660,44 @@ the transcript is the same size it was. What ties them upstream is W-FINALIZE, W
 `Cvar.scale` by zero upstream and costs no cell here either. -/
 def cOnCurveQ : List Int := [0, 0, -1, 1, -(5 : Int)]
 
-/-- `prev_step_accs.(p)`'s coordinate `j` — the TRANSCRIPT's own absorbed cell, because
-`wrap_main.ml:412` hands `incrementally_verify_proof` the same vector `wrap_verifier.ml:538`
-absorbs. -/
+/-- ⚑ **RECORD SLOT `p`'s COMMITMENT, AS THE CIRCUIT SEES IT.** A REAL slot reads the TRANSCRIPT's
+own absorbed cells (`absPtVal`), so §21's tie row joins two cells that already hold one value; the
+PAD slot reads `whPadSg` — `Dummy.Ipa.Step.sg` — which the transcript never absorbs because the
+`OptSponge` mask drops it.
+
+⚠ **THE INDEX SHIFT IS THE WHOLE POINT.** Record slot `whNPad + j` is transcript slot `j`. Reading
+`absPtVal t.sp T_SGOLD p` at the RECORD's index is what made a one-`verify_one` rule hash the real
+accumulator into the PAD's word.
+
+⚠ ⚑ **AND IT IS `WH_REAL_SLOTS`, NOT `t.sh.maxPrevs`, AND THE FIRST DRAFT OF THIS REPAIR USED
+`t.sh.maxPrevs`.** The record is not a per-shape object: `whRows` ties slot `p`'s squeeze to
+`prevWordVal (PREV_MSG_NEXT_STEP + 1 + p)`, which recomposes `STEP_PUBLIC_IN` and is the SAME step
+statement whatever wrap shape is being emitted. A shape-keyed `whNPad` would make `shapeSmoke`
+(a shape-keyed `whNPad` would be 0 there) hash a real accumulator into the word the step proof
+publishes the PAD at —
+a tie with no satisfying witness, i.e. `w11_wraphack` back in `STATEMENT_BLOCKED`. The transcript is
+per-shape; the record is the pipeline's. -/
+def whSlotSgAt (t : WrapData) (p : Nat) : Nat × Nat :=
+  if p < whNPad WH_REAL_SLOTS then whPadSg
+  else absPtVal t.sp T_SGOLD (p - whNPad WH_REAL_SLOTS)
+
+/-- ⚑⚑ **RECORD SLOT `p`'s COORDINATE `j` — AND THE PAD SLOT HAS A CELL OF ITS OWN.**
+
+A REAL slot is the TRANSCRIPT's own absorbed cell, because `wrap_main.ml:412` hands
+`incrementally_verify_proof` the same vector `wrap_verifier.ml:538` absorbs — one `exists`, two
+consumers, which is why §18b's `assert_on_curve` and §21's tie join cells that already hold one
+value rather than copies.
+
+⚠ **THE PAD SLOT IS THE HALF THAT HAS NO TRANSCRIPT CELL**, and it is not an omission: upstream
+allocates all `Max_proofs_verified` points (`wrap_main.ml:221-223`) and the `OptSponge` mask drops
+the padded one from the tape (`wrap_verifier.ml:511-514,538`). So it is a witness cell this rung
+allocates, `assert_on_curve`d like every other, carrying `whPadSg`. Reading a transcript cell at the
+RECORD's index — which is what this def did until 2026-08-07 — is how a one-`verify_one` rule put
+the real accumulator where the pad belongs. -/
 def sgOldVar (t : WrapData) (p j : Nat) : PVar :=
-  ((t.sp.evs.filter (fun e => e.isAbs && e.tag == T_SGOLD)).getD (2 * p + j) default).wordV
+  if p < whNPad WH_REAL_SLOTS then prevPadSg t.sh t.sp p j
+  else ((t.sp.evs.filter (fun e => e.isAbs && e.tag == T_SGOLD)).getD
+          (2 * (p - whNPad WH_REAL_SLOTS) + j) default).wordV
 
 /-- **W-PREV's ROWS.** Everything `wrap_main.ml:201-256` and `:350-351` cost, and nothing else. -/
 def prevRows (t : WrapData) (wired : Bool) : List WRow :=
@@ -2603,9 +2712,10 @@ def prevRows (t : WrapData) (wired : Bool) : List WRow :=
   let pubTie : List (List (Option PVar) × List Int) :=
     [ ([some (.external WRAP_SLOT_MSG_NEXT_STEP : PVar), some (prevW s sp PREV_MSG_NEXT_STEP), none]
       , cEq) ]
-  -- (3) `assert_on_curve` on each `prev_step_accs` point, over the transcript's `sg_old` cells.
+  -- (3) `assert_on_curve` on each `prev_step_accs` point — all `Max_proofs_verified` of them, over
+  -- the transcript's `sg_old` cells at the REAL slots and this rung's own at the padded ones.
   let curveHalves : List (List (Option PVar) × List Int) :=
-    (List.range s.prevs).flatMap (fun p =>
+    (List.range s.maxPrevs).flatMap (fun p =>
       [ ([some (sgOldVar t p 0), some (sgOldVar t p 0), some (prevSq s sp p 0)], cMul)
       , ([some (prevSq s sp p 0), some (sgOldVar t p 0), some (prevSq s sp p 1)], cMul)
       , ([some (sgOldVar t p 1), some (sgOldVar t p 1), some (prevSq s sp p 1)], cOnCurveQ) ])
@@ -2620,12 +2730,16 @@ def prevEnv (t : WrapData) : VarEnv :=
   let s := t.sh
   let sp := t.sp
   (List.range PREV_WORDS).map (fun w => (prevW s sp w, (prevWordVal w : Int)))
+  -- ⚑ the padded slots' own coordinate cells — `Dummy.Ipa.Step.sg`, the value
+  -- `pad_messages_for_next_wrap_proof` puts at the front (`wrap.rs:476-491`).
+  ++ (List.range (whNPad WH_REAL_SLOTS)).flatMap (fun p =>
+      [ (prevPadSg s sp p 0, (whPadSg.1 : Int)), (prevPadSg s sp p 1, (whPadSg.2 : Int)) ])
   -- ⚑ `assert_on_curve`'s intermediates are `sgOldVar`'s OWN square and cube, so the value must come
-  -- from `sp` — `absVal`, not `itemVal`. Under `itemVal` these three rows were satisfied only for a
-  -- `schedule`-driven tape; on a chained one the cube of the borrowed proof's abscissa sat in a cell
-  -- whose `cMul` factors were the chained one's, and `cOnCurveQ` had no witness.
-  ++ (List.range s.prevs).flatMap (fun p =>
-      let x := absVal sp T_SGOLD (2 * p)
+  -- from the RECORD — `whSlotSgAt`, not `itemVal`. Under `itemVal` these three rows were satisfied
+  -- only for a `schedule`-driven tape; on a chained one the cube of the borrowed proof's abscissa
+  -- sat in a cell whose `cMul` factors were the chained one's, and `cOnCurveQ` had no witness.
+  ++ (List.range s.maxPrevs).flatMap (fun p =>
+      let x := (whSlotSgAt t p).1
       [ (prevSq s sp p 0, (qMul x x : Int))
       , (prevSq s sp p 1, (qMul (qMul x x) x : Int)) ])
 
@@ -2737,7 +2851,7 @@ nothing asserted. It is the class this file spends its whole §12 refusing, in a
 BOTTOM block of three disjoint ones and the `rungsUpto` accident carries no weight any more. -/
 def baseWh (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + nFtcVars s sp
 def whBaseP (s : WrapShape) (sp : SpAcc) (p : Nat) : Nat := baseWh s sp + WH_VARS * p
-/-- ⚑⚑ **`WH_PADDED`, NOT `s.prevs` — THE RECORD'S LENGTH IS `Max_proofs_verified` AND THE
+/-- ⚑⚑ **`WH_PADDED`, NOT `s.maxPrevs` — THE RECORD'S LENGTH IS `Max_proofs_verified` AND THE
 TRANSCRIPT'S IS `actual_proofs_verified`.**
 
 `wrap.rs:2832-2846` hands the wrap circuit `prev_step_accs` and `old_bp_chals` off
@@ -2745,9 +2859,10 @@ TRANSCRIPT'S IS `actual_proofs_verified`.**
 has made **two** entries long whatever the step proof carried, and `wrap.rs:2919-2932` hashes every
 one of them. The `sg_old` the TRANSCRIPT absorbs is the same list masked by
 `actual_proofs_verified_mask` (`wrap.rs:2280-2300`) through an `OptSponge`, so the padded slot is
-computed and NOT absorbed — two counts, and `shapeWrap.prevs` served both until 2026-08-07.
+computed and NOT absorbed — two counts, and `shapeWrap.maxPrevs` served both until 2026-08-07.
 
-⚠ At `shapeSmoke` the two coincide (`prevs = 2 = WH_PADDED`), which is why every one of the thirty
+⚠ At BOTH shapes `maxPrevs = WH_PADDED`, which is the point of the rename: the RECORD's length is a
+shape parameter and the TAPE's is not. Every one of the thirty
 tracked smoke fixtures is unmoved by this split and why it stayed invisible. -/
 def whBaseC (s : WrapShape) (_sp : SpAcc) : Nat := baseWh s _sp + WH_VARS * WH_PADDED
 def nWhVars (_s : WrapShape) : Nat := WH_VARS * (WH_PADDED + 1)
@@ -2759,25 +2874,6 @@ shape arithmetic, so a cap with slack here would be slack nothing needs.
 the block ends where W-CLOSE's cell does. -/
 def WH_REGION_CAP (s : WrapShape) : Nat := nWhVars s + 1
 
-/-- ⚑ **RECORD SLOT `p`'s COMMITMENT, AS THE CIRCUIT SEES IT.** A REAL slot reads the TRANSCRIPT's
-own absorbed cells (`absPtVal`), so §21's tie row joins two cells that already hold one value; the
-PAD slot reads `whPadSg` — `Dummy.Ipa.Step.sg` — which the transcript never absorbs because the
-`OptSponge` mask drops it.
-
-⚠ **THE INDEX SHIFT IS THE WHOLE POINT.** Record slot `whNPad + j` is transcript slot `j`. Reading
-`absPtVal t.sp T_SGOLD p` at the RECORD's index is what made a one-`verify_one` rule hash the real
-accumulator into the PAD's word.
-
-⚠ ⚑ **AND IT IS `WH_REAL_SLOTS`, NOT `t.sh.prevs`, AND THE FIRST DRAFT OF THIS REPAIR USED
-`t.sh.prevs`.** The record is not a per-shape object: `whRows` ties slot `p`'s squeeze to
-`prevWordVal (PREV_MSG_NEXT_STEP + 1 + p)`, which recomposes `STEP_PUBLIC_IN` and is the SAME step
-statement whatever wrap shape is being emitted. A shape-keyed `whNPad` would make `shapeSmoke`
-(`prevs = 2`, so no pad) hash a real accumulator into the word the step proof publishes the PAD at —
-a tie with no satisfying witness, i.e. `w11_wraphack` back in `STATEMENT_BLOCKED`. The transcript is
-per-shape; the record is the pipeline's. -/
-def whSlotSgAt (t : WrapData) (p : Nat) : Nat × Nat :=
-  if p < whNPad WH_REAL_SLOTS then whPadSg
-  else absPtVal t.sp T_SGOLD (p - whNPad WH_REAL_SLOTS)
 
 /-- Record slot `p`'s sponge (`wrap_main.ml:341-348`, `wrap.rs:2919-2932`).
 
@@ -2861,7 +2957,11 @@ def whRows (t : WrapData) (wired : Bool) : List WRow :=
       (if p < whNPad WH_REAL_SLOTS then [] else
         (List.range 2).map (fun j =>
           ([some (a.evs.getD (WH_MLMB * WH_ROUNDS + j) default).wordV,
-            some (sgOldVar t (p - whNPad WH_REAL_SLOTS) j), none],
+            -- ⚠ ⚑ `sgOldVar` is RECORD-indexed since 2026-08-07 and does the `whNPad` shift
+            -- itself; this line subtracted it a SECOND time and the smoke rung stopped proving
+            -- (`Prover("rest of division by vanishing polynomial")`) — the pad's cell tied to the
+            -- real accumulator's absorb.
+            some (sgOldVar t p j), none],
            cEq)))
       -- …and the squeeze IS packed statement word 55 / 56, which the MSM consumes as entry 65 / 66.
       ++ [ ([some (whDigestVar a), some (prevW s sp (PREV_MSG_NEXT_STEP + 1 + p)), none], cEq) ])
@@ -2927,7 +3027,7 @@ def bpSuccessVar (s : WrapShape) (sp : SpAcc) : PVar := .external (baseClose s s
 /-! ## §19 — ⚑ **W-FINALIZE**: `finalize_other_proof`, and the fact that decides it.
 
 `wrap_verifier.ml:820-1049`, run `Max_proofs_verified.n` times from `wrap_main.ml:329-336`
-(`Vector.mapn` over `prev_proof_state.unfinalized_proofs`), so this rung emits **`prevs` instances**
+(`Vector.mapn` over `prev_proof_state.unfinalized_proofs`), so this rung emits **`maxPrevs` instances**
 and not one.
 
 ⚑⚑ **`Scalars.Tock` IS NOT `Scalars.Tick` WITH DIFFERENT LITERALS, AND THE DIFFERENCE IS MEASURED,
@@ -3710,15 +3810,15 @@ The FIRST TWO summands are EXACT and are spelled to match §19e's own layout: `f
 `2 · FIN_NCOLS + 1` evaluation columns per instance. `fin_block_prefix_is_shape_arithmetic` and
 `fin_block_ceiling_is_finProgBase_plus_the_two_caps` close both, general over every shape and every
 sponge — so the exact part is not taken on trust, and the block's CEILING is `finProgBase` plus
-exactly `prevs` copies of the two capped sizes. The last summand is the cap: one compiled §19 program
+exactly `maxPrevs` copies of the two capped sizes. The last summand is the cap: one compiled §19 program
 and one §20 sponge half per instance.
 
 ⚠ At both committed shapes this is **6694** against a cone measured at **5852** — 842 cells of
 headroom, which is what lets §19/§20 grow without moving W-COMBINE and W-BULLET. It is not slack for
 its own sake: a block whose cap is its exact size re-bases everything above it on any change. -/
 def FIN_REGION_CAP (s : WrapShape) : Nat :=
-  2 * s.prevs * chainStride s + s.prevs * (2 * FIN_NCOLS + 1)
-  + s.prevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP)
+  2 * s.maxPrevs * chainStride s + s.maxPrevs * (2 * FIN_NCOLS + 1)
+  + s.maxPrevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP)
 
 /-- The finalize block starts above W-WRAPHACK's, at its CAP (§17b). ⚠ It read
 `baseFtc s sp + nFtcVars s sp` — W-WRAPHACK's own base and W-COMBINE's — until 2026-08-05. -/
@@ -3728,30 +3828,30 @@ def baseFin (s : WrapShape) (sp : SpAcc) : Nat := baseWh s sp + WH_REGION_CAP s
 def finChainVars (s : WrapShape) (sp : SpAcc) (p j : Nat) : ChainVars :=
   chainVars s (baseFin s sp) (2 * p + j)
 def finEvBase (s : WrapShape) (sp : SpAcc) : Nat :=
-  baseFin s sp + 2 * s.prevs * chainStride s
+  baseFin s sp + 2 * s.maxPrevs * chainStride s
 /-- Instance `p`'s evaluation column `k` at ζ (`j = 0`) / ζω (`j = 1`); slot `2·NCOLS` is `p(ζ)`. -/
 def finEvVar (s : WrapShape) (sp : SpAcc) (p k j : Nat) : PVar :=
   .external (finEvBase s sp + p * (2 * FIN_NCOLS + 1) + j * FIN_NCOLS + k)
 def finPZetaVar (s : WrapShape) (sp : SpAcc) (p : Nat) : PVar :=
   .external (finEvBase s sp + p * (2 * FIN_NCOLS + 1) + 2 * FIN_NCOLS)
 def finProgBase (s : WrapShape) (sp : SpAcc) : Nat :=
-  finEvBase s sp + s.prevs * (2 * FIN_NCOLS + 1)
+  finEvBase s sp + s.maxPrevs * (2 * FIN_NCOLS + 1)
 
 /-- ⚑ **THE EXACT PART OF `FIN_REGION_CAP` IS EXACT** — everything below `finProgBase` is shape
 arithmetic, general over every shape and every sponge. -/
 theorem fin_block_prefix_is_shape_arithmetic (s : WrapShape) (sp : SpAcc) :
     finProgBase s sp
-      = baseFin s sp + (2 * s.prevs * chainStride s + s.prevs * (2 * FIN_NCOLS + 1)) := by
+      = baseFin s sp + (2 * s.maxPrevs * chainStride s + s.maxPrevs * (2 * FIN_NCOLS + 1)) := by
   simp [finProgBase, finEvBase, Nat.add_assoc]
 
-/-- ⚑⚑ **AND THEREFORE THE BLOCK'S CEILING IS `finProgBase` PLUS `prevs` COPIES OF THE TWO CAPPED
+/-- ⚑⚑ **AND THEREFORE THE BLOCK'S CEILING IS `finProgBase` PLUS `maxPrevs` COPIES OF THE TWO CAPPED
 SIZES** — which is what makes the emit refusal's obligation narrow enough to state in one line:
 each instance's compiled §19 program must fit in `FIN_PROG_CAP` and its §20 sponge half in
 `FINSP_BLOCK_CAP`. Nothing else in this block is taken on trust. General over every shape and every
 sponge, so it is not a coincidence of the two committed ones. -/
 theorem fin_block_ceiling_is_finProgBase_plus_the_two_caps (s : WrapShape) (sp : SpAcc) :
     baseFin s sp + FIN_REGION_CAP s
-      = finProgBase s sp + s.prevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP) := by
+      = finProgBase s sp + s.maxPrevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP) := by
   simp [FIN_REGION_CAP, finProgBase, finEvBase, Nat.add_assoc]
 
 /-- Instance `p`'s wire. ⚑ β and γ are the RAW packed words; α and ζ are their lift chains' `lift`
@@ -3927,7 +4027,7 @@ docblock names. `finRows` and `finEnv` each USED to call `runFin` **and** a sepa
 (a second full `finProgOf`) per instance, and `emitRung` calls those four times over — ~20 builds and
 evaluations of a ~900-op program per emission. Bind the list once at the top of each and index it. -/
 def finAll (t : WrapData) : List FinData :=
-  (List.range t.sh.prevs).map (fun p => runFin t.sh t.sp p)
+  (List.range t.sh.maxPrevs).map (fun p => runFin t.sh t.sp p)
 
 /-- The per-instance program stride: instance 0's size. The programs are the same builder at
 different wires, so they agree; a shape whose instances disagreed would overlap and `placeChecked`
@@ -3940,11 +4040,11 @@ def finProgAt (s : WrapShape) (sp : SpAcc) (fa : List FinData) (p : Nat) : Nat :
 statement shape `rungRows_is_a_ladder` uses, and the reason the change is auditable rather than
 trusted: the bound list IS the per-instance recomputation, so no emitted cell can have moved. -/
 theorem finAll_is_the_recomputation (t : WrapData) :
-    finAll t = (List.range t.sh.prevs).map (fun p => runFin t.sh t.sp p) := rfl
+    finAll t = (List.range t.sh.maxPrevs).map (fun p => runFin t.sh t.sp p) := rfl
 
-/-- …and at both committed shapes (`prevs = 2`) the stride really is instance 0's program size,
+/-- …and at both committed shapes (`maxPrevs = 2`) the stride really is instance 0's program size,
 which is exactly the value the separate second `finProgOf` used to compute. -/
-theorem finStride_is_instance_zeros_program_size (t : WrapData) (h : t.sh.prevs = 2) :
+theorem finStride_is_instance_zeros_program_size (t : WrapData) (h : t.sh.maxPrevs = 2) :
     finStride (finAll t) = (runFin t.sh t.sp 0).fp.prog.size := by
   simp [finStride, finAll, h]
 
@@ -3956,7 +4056,7 @@ def finRows (t : WrapData) (wired : Bool) : List WRow :=
   let sp := t.sp
   let cb := baseCh s sp
   let fa := finAll t
-  (List.range s.prevs).flatMap (fun p =>
+  (List.range s.maxPrevs).flatMap (fun p =>
     let d := fa.getD p default
     let base := finProgAt s sp fa p
     let V := fnVarAt base d.fp.prog
@@ -3977,7 +4077,7 @@ def finEnv (t : WrapData) : VarEnv :=
   let s := t.sh
   let sp := t.sp
   let fa := finAll t
-  (List.range s.prevs).flatMap (fun p =>
+  (List.range s.maxPrevs).flatMap (fun p =>
     let d := fa.getD p default
     chainEnv s (finChainVars s sp p 0) (finBlockVal p 8) 0
     ++ chainEnv s (finChainVars s sp p 1) (finBlockVal p 9) 0
@@ -4084,9 +4184,20 @@ manufactured 46 of them. -/
 
 /-- ⚑ `Nat.N45.n + Max_proofs_verified.n` — the commitments `Split_commitments.combine` folds.
 `KEY_COLS` and `KEY_SIGMA` are `Plonk_types.Columns.n` / `Permuts.n` and are NOT shape knobs: the
-coefficient and sigma commitments come out of W-KEY's 56 REAL coordinates at every shape. -/
+coefficient and sigma commitments come out of W-KEY's 56 REAL coordinates at every shape.
+
+⚑⚑ **AND THE `sg_old` PREFIX IS `Max_proofs_verified`, NOT `actual_proofs_verified`.**
+`wrap_verifier.ml:687-702` builds the list as `Vector.append sg_old (…) (snd
+(Max_proofs_verified.add num_commitments_without_degree_bound))` with `num_commitments_without
+_degree_bound = Nat.N45.n`, and `sg_old` is typed `(_, Max_proofs_verified.n) Vector.t` at `:507`.
+`wrap.rs:2458-2477` says it the same way: `sg_old.chain(rest)` over
+`NUM_COMMITMENTS_WITHOUT_DEGREE_BOUND = 45`. **The `keep` mask selects at the MUX, not at the
+LIST** — a masked entry still gets its `Scalar_challenge.endo` ladder, which is exactly why the
+census is `32 × (46 + 33) = 2528` and not `32 × (45 + 33) = 2496`. This def read `s.prevs` while
+that field held `actual_proofs_verified`, and `comb_and_bullet_close_minas_endomul_census` was RED
+against Mina's own compiled `wrap_main` for it. -/
 def combTerms (s : WrapShape) : Nat :=
-  s.prevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS + (KEY_SIGMA - 1)
+  s.maxPrevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS + (KEY_SIGMA - 1)
 /-- Fold steps — one fewer than the commitments, because `~init` consumes the last. -/
 def combSteps (s : WrapShape) : Nat := combTerms s - 1
 
@@ -4113,16 +4224,16 @@ def combPtVal (t : WrapData) (k : Nat) : Nat × Nat :=
   let s := t.sh
   let sp := t.sp
   let kc : Nat → Nat × Nat := fun c => (keyConst t.br.idx c, keyConst t.br.idx (c + 1))
-  if k < s.prevs then absPtVal sp T_SGOLD k
-  else if k == s.prevs then absPtVal sp T_XHAT 0
-  else if k == s.prevs + 1 then ftcOut t
-  else if k == s.prevs + 2 then absPtVal sp T_ZCOMM 0
-  else if k < s.prevs + 3 + KEY_SINGLES then kc (44 + 2 * (k - s.prevs - 3))
-  else if k < s.prevs + 3 + KEY_SINGLES + s.wComms then
-    absPtVal sp T_WCOMM (k - s.prevs - 3 - KEY_SINGLES)
-  else if k < s.prevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS then
-    kc (14 + 2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms))
-  else kc (2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms - KEY_COLS))
+  if k < s.maxPrevs then whSlotSgAt t k
+  else if k == s.maxPrevs then absPtVal sp T_XHAT 0
+  else if k == s.maxPrevs + 1 then ftcOut t
+  else if k == s.maxPrevs + 2 then absPtVal sp T_ZCOMM 0
+  else if k < s.maxPrevs + 3 + KEY_SINGLES then kc (44 + 2 * (k - s.maxPrevs - 3))
+  else if k < s.maxPrevs + 3 + KEY_SINGLES + s.wComms then
+    absPtVal sp T_WCOMM (k - s.maxPrevs - 3 - KEY_SINGLES)
+  else if k < s.maxPrevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS then
+    kc (14 + 2 * (k - s.maxPrevs - 3 - KEY_SINGLES - s.wComms))
+  else kc (2 * (k - s.maxPrevs - 3 - KEY_SINGLES - s.wComms - KEY_COLS))
 
 /-- …and its VARIABLE. ⚑ Every one is another rung's cell; this sub-circuit allocates none of them. -/
 def combPtVar (t : WrapData) (k : Nat) : PVar × PVar :=
@@ -4132,17 +4243,17 @@ def combPtVar (t : WrapData) (k : Nat) : PVar × PVar :=
   let kc : Nat → PVar × PVar := fun c => (kv.acc c (s.branches - 1), kv.acc (c + 1) (s.branches - 1))
   let absW : Nat → Nat → PVar := fun tag i =>
     ((sp.evs.filter (fun e => e.isAbs && e.tag == tag)).getD i default).wordV
-  if k < s.prevs then (absW T_SGOLD (2 * k), absW T_SGOLD (2 * k + 1))
-  else if k == s.prevs then (absW T_XHAT 0, absW T_XHAT 1)
-  else if k == s.prevs + 1 then ftcOutV s sp
-  else if k == s.prevs + 2 then (absW T_ZCOMM 0, absW T_ZCOMM 1)
-  else if k < s.prevs + 3 + KEY_SINGLES then kc (44 + 2 * (k - s.prevs - 3))
-  else if k < s.prevs + 3 + KEY_SINGLES + s.wComms then
-    let j := k - s.prevs - 3 - KEY_SINGLES
+  if k < s.maxPrevs then (sgOldVar t k 0, sgOldVar t k 1)
+  else if k == s.maxPrevs then (absW T_XHAT 0, absW T_XHAT 1)
+  else if k == s.maxPrevs + 1 then ftcOutV s sp
+  else if k == s.maxPrevs + 2 then (absW T_ZCOMM 0, absW T_ZCOMM 1)
+  else if k < s.maxPrevs + 3 + KEY_SINGLES then kc (44 + 2 * (k - s.maxPrevs - 3))
+  else if k < s.maxPrevs + 3 + KEY_SINGLES + s.wComms then
+    let j := k - s.maxPrevs - 3 - KEY_SINGLES
     (absW T_WCOMM (2 * j), absW T_WCOMM (2 * j + 1))
-  else if k < s.prevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS then
-    kc (14 + 2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms))
-  else kc (2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms - KEY_COLS))
+  else if k < s.maxPrevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS then
+    kc (14 + 2 * (k - s.maxPrevs - 3 - KEY_SINGLES - s.wComms))
+  else kc (2 * (k - s.maxPrevs - 3 - KEY_SINGLES - s.wComms - KEY_COLS))
 
 /-- ⚑ `actual_proofs_verified_mask ! k` (`wrap_verifier.ml:511-514`). §9 emits `ones_vector` and
 `Vector.rev` makes element `k` the running value `vv (MASK_N − 1 − k)` — the SAME cells §11c's
@@ -4169,7 +4280,7 @@ def combData (t : WrapData) : CombData :=
       let idx := n - 2 - a
       let ed := runEndoQ cur combXiVal
       let sum := addAQ (combPtVal t idx) (ed.accs.getLastD (0, 0))
-      let out := if idx < t.sh.prevs && combKeepVal t idx == 0 then cur else sum
+      let out := if idx < t.sh.maxPrevs && combKeepVal t idx == 0 then cur else sum
       { accs := st.accs ++ [out], eds := st.eds ++ [ed], sums := st.sums ++ [sum] })
     { accs := [combPtVal t (n - 1)], eds := [], sums := [] }
   st
@@ -4177,7 +4288,7 @@ def combData (t : WrapData) : CombData :=
 /-- The commitment fold step `a` consumes — the fold runs DOWN the flat list. -/
 def combIdx (s : WrapShape) (a : Nat) : Nat := combTerms s - 2 - a
 /-- …and whether that step carries a live `keep` mux. -/
-def combIsMux (s : WrapShape) (a : Nat) : Bool := combIdx s a < s.prevs
+def combIsMux (s : WrapShape) (a : Nat) : Bool := combIdx s a < s.maxPrevs
 
 /-! ### §23a — the variable layout.
 
@@ -5063,7 +5174,7 @@ prover who moves a column to satisfy one of them moves ξ and breaks the other.
     against `Shifted_value.Type2.to_field` of packed word 1. `zetaw = ω · ζ` at the wrap domain's own
     generator, which §19c pins.
   * **`combined_inner_product_correct`** (`:951-1009`) — `Pcs_batch.combine_split_evaluations`, a
-    Horner fold in ξ over **47** entries per point: the `prevs` old accumulators' challenge
+    Horner fold in ξ over **47** entries per point: the `maxPrevs` old accumulators' challenge
     polynomials at that point, `evals.public_input`, `ft_eval`, then the 43 columns; the ζ fold uses
     **§19's own `ft_eval0` slot** and the ζω fold uses `ft_eval1`; and the two combine as
     `combine ζ + r · combine ζω`. ⚑ **THE FOLD IS CHECKED AGAINST THE SAME REAL BLOCK**, not against
@@ -5349,7 +5460,7 @@ def finSpOldV (d : FinSpData) (i k : Nat) : PVar :=
 /-- The region above §19's programs. ⚠ It is `WrapData`-dependent and not shape-dependent, because
 `finStride` is instance 0's compiled program size and nothing but the emitter knows it. -/
 def baseFinSp (t : WrapData) (fa : List FinData) : Nat :=
-  finProgBase t.sh t.sp + t.sh.prevs * finStride fa
+  finProgBase t.sh t.sp + t.sh.maxPrevs * finStride fa
 
 /-- §19's `ft_eval0` slot, as a VARIABLE and as a VALUE. -/
 def finFtEval0V (t : WrapData) (fa : List FinData) (p : Nat) : PVar :=
@@ -5448,7 +5559,7 @@ def runFinSp (t : WrapData) (fa : List FinData) (base p : Nat) : FinSpData :=
 /-- Every instance's sponge half, built ONCE and stacked — the regions are data-sized, so the fold
 threads the base rather than a shape stride. -/
 def finSpAll (t : WrapData) (fa : List FinData) : List FinSpData :=
-  (List.range t.sh.prevs).foldl
+  (List.range t.sh.maxPrevs).foldl
     (fun acc p =>
       let b := match acc.getLast? with
                | none => baseFinSp t fa
@@ -5466,7 +5577,7 @@ def finSpRows (t : WrapData) (wired : Bool) : List WRow :=
   let cb := baseCh s sp
   let fa := finAll t
   let da := finSpAll t fa
-  (List.range s.prevs).flatMap (fun p =>
+  (List.range s.maxPrevs).flatMap (fun p =>
     let d := da.getD p default
     let sq0 := finSpSq d.fs 0
     let sq1 := finSpSq d.fs 1
@@ -5509,7 +5620,7 @@ def finSpEnv (t : WrapData) : VarEnv :=
   let s := t.sh
   let fa := finAll t
   let da := finSpAll t fa
-  (List.range s.prevs).flatMap (fun p =>
+  (List.range s.maxPrevs).flatMap (fun p =>
     let d := da.getD p default
     let sq0 := finSpSq d.fs 0
     let sq1 := finSpSq d.fs 1
@@ -6047,22 +6158,23 @@ def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :
 
 /-! ## §8 — the committed shape.
 
-  * ⚑⚑ `prevs = 1` — **`actual_proofs_verified`, NOT `Max_proofs_verified`, CORRECTED 2026-08-07.**
-    This field sizes the `sg_old` block the wrap circuit absorbs at `wrap_verifier.ml:538`, i.e.
-    the STEP proof's own kimchi recursion arity. `wrap.rs:658-666` sets that arity outright —
-    `actual_proofs_verified = <messages_for_next_step_proof>.old_bulletproof_challenges.len()` —
-    and `step.rs:2848-2857` builds that record UNPADDED at `N_PREVIOUS`, while the SAME function
-    pads `unfinalized_proofs` (`:2861-2868`) and `messages_for_next_wrap_proof` (`:2764-2772`) to
-    two explicitly and in view. Dregg's step rule assembles ONE `verify_one`
-    (`KimchiStepMainCore`), so `N_PREVIOUS = 1` (`gates::STEP_RULE_N_PREVIOUS`) and the record is
-    one entry long.
-    ⚠ **THIS LINE READ `2` UNTIL 2026-08-07 AND CITED THE WRONG NUMBER FOR IT**: the devnet wrap
-    VK's `prev_challenges: 2` (`bridge/mina-zkapp/fixtures/mina-devnet-wrap-transaction-vk.json`)
-    is `Max_proofs_verified` — the most a wrap instance can be handed — and that is a different
-    quantity from how many this step proof actually carries. The two coincided only because
-    `prove_step` folded two recursion challenges where upstream folds one, i.e. dregg's step proof
-    was PADDED where upstream is not, and the padding then propagated into `STEP_PREVCOMM_XY`
-    (4 coordinates, now 2) and every wrap fixture below it.
+  * ⚑⚑ `maxPrevs = 2` — **`Max_proofs_verified`, and the field was RENAMED on 2026-08-07 because
+    the two numbers had swapped places rather than separated.** It sizes `prev_step_accs`
+    (`wrap_main.ml:221-223`), the `prev_proof_state` typ (`:265-275`), the `finalize_other_proof`
+    loop over `unfinalized_proofs` (`:287-289`, whose upstream comment is *"This is padded to
+    max_proofs_verified"*) and `Split_commitments.combine`'s list (`wrap_verifier.ml:687-702`) —
+    every one of them `Max`, and it is the devnet wrap VK's `prev_challenges: 2`
+    (`bridge/mina-zkapp/fixtures/mina-devnet-wrap-transaction-vk.json`).
+    ⚠ **AND `actual_proofs_verified` LIVES ON THE BRANCH, NOT ON THE SHAPE.** It is
+    `Pseudo.choose (which_branch, step_widths)` (`wrap_main.ml:173-180`) — a witness-selected
+    value — so it reaches this file as `BranchData.fz` and as `WH_REAL_SLOTS`, which is 1 because
+    dregg's step rule assembles ONE `verify_one` (`gates::STEP_RULE_N_PREVIOUS`,
+    `marshal::STEP_RECURSION_SLOTS`, `wrap.rs:666` reading the record's own length).
+    ⚠ **THE 2026-08-07 MORNING EDIT SET THIS FIELD TO `1` AND THAT WAS THE FIFTH TURN OF THE SAME
+    DEFECT.** It cost `combTerms` (46 against Mina's 47), one of the two `finalize_other_proof`
+    instances (61 Poseidon blocks against 122), and — through `RC_SGOLD` shrinking with it — an
+    OFF-CURVE `sg_old` at the smoke shape. The transcript's absorb count really did have to move,
+    and it moved: it is `schedule`'s `WH_REAL_SLOTS`, where it belongs.
   * `ipaRounds = 16` — `Backend.Tick.Rounds.n`, the STEP proof's IPA round count
     (`Common.Max_degree.step_log2 = 16`); `wrap_main.ml:381` sizes `openings_proof.lr` by it.
     ⚠ It is NOT 15; 15 is `Tock.Rounds.n`, which is what the STEP circuit's `verify_one` sees.
@@ -6076,23 +6188,8 @@ def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :
     `WRAP_PRIMARY_LEN = 40` wide at every rung from `w4_bind` up, in Mina's slot order; `w9_prev`
     adds slot 12 and `w11_wraphack` slot 11, which is the 22 → 24 ladder, and the remaining sixteen
     are `WRAP_UNPINNED_SLOTS`. -/
-/-- ⚑⚑ **`MAX_PROOFS_VERIFIED_N` — the OTHER number, kept separate from `shapeWrap.prevs`.**
-
-`wrap.rs:729-737` pads the WRAP proof's own accumulator list up to this by
-`vec.insert(0, InnerCurve::of_affine(dummy_ipa_wrap_sg()))` — a PREPEND, so slot 0 is the dummy and
-the real accumulators are last (`MinaWrapHackDummySg`, `KimchiStepMainFixture.chainSlot0`). It is
-also the devnet wrap VK's `prev_challenges: 2`
-(`bridge/mina-zkapp/fixtures/mina-devnet-wrap-transaction-vk.json`).
-
-⚠ **It is NOT `shapeWrap.prevs`**, which is `actual_proofs_verified` — how many recursion
-accumulators the STEP proof this instance wraps actually carries, read off the step record by
-`wrap.rs:666`. One name served both until 2026-08-07, and the two agreed only while dregg's step
-proof was padded where upstream is not.
-`KimchiStepWrapChain.chain_shape_is_the_measured_step_shape` states the separation. -/
-def MAX_PROOFS_VERIFIED : Nat := 2
-
 def shapeWrap : WrapShape :=
-  { prevs := 1, ipaRounds := 16, wComms := 15, tComms := 7, emsRows := 8
+  { maxPrevs := 2, ipaRounds := 16, wComms := 15, tComms := 7, emsRows := 8
   , branches := 5, pubWords := 22, xhatEntries := xhatSel XHAT_TERMS_FULL
   -- ⚑ `xhatOut XHAT_TERMS_FULL`, and `EmitWrapMainJson` re-derives it and REFUSES on disagreement
   -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far
@@ -6144,7 +6241,7 @@ def shapeWrap : WrapShape :=
 
 /-- A small shape for the in-CI `#guard`s (the committed one is emitted by the driver). -/
 def shapeSmoke : WrapShape :=
-  { prevs := 2, ipaRounds := 3, wComms := 3, tComms := 2, emsRows := 8
+  { maxPrevs := 2, ipaRounds := 3, wComms := 3, tComms := 2, emsRows := 8
   , branches := 3, pubWords := 6
   -- ⚑ FIVE ENTRIES, and `xhatSel` makes them `[0, 1, 11, 64, 31]` — a 255-bit `B Field` value, its
   -- 1-bit parity, a 128-bit challenge, the `messages_for_next_step_proof` DIGEST and

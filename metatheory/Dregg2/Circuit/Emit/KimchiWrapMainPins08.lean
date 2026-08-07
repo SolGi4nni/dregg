@@ -40,34 +40,62 @@ probe, and every value pin is over `Nat`s.
 to oversell; what these say is exactly what §18's header says — the checks upstream emits, the σ
 identities that make the MSM read the statement, and the census entry that did NOT move. -/
 
-/-- ⚑ **`prev_step_accs` ARE REAL VESTA POINTS.** `Inner_curve.typ`'s check is `assert_on_curve`, so
-the rung is only satisfiable if the values the transcript already absorbs as `sg_old` lie on
-`y² = x³ + 5` over Fq. They do — `PastaPoseidonFq.PREVCOMM_XY` are the two `RecursionChallenge`
-commitments of a proof `kimchi::verifier::verify` ACCEPTED — so `w9_prev` adds a real check WITHOUT
-moving the transcript. Had they not been on the curve, this rung would have had to re-fixture
-`sg_old` and every challenge below the absorb would have moved. -/
-theorem prev_step_accs_are_on_vesta :
-    (List.range shapeSmoke.prevs).all (fun p =>
-      onCurveQ (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true
-    ∧ (List.range shapeWrap.prevs).all (fun p =>
-      onCurveQ (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true := by
-  refine ⟨rfl, rfl⟩
+/-- ⚑ **`prev_step_accs` ARE REAL VESTA POINTS — ALL `Max_proofs_verified` OF THEM, PAD INCLUDED.**
 
-/-- ⚑ **AND THE ON-CURVE CHECK RUNS ON THE ABSORBED CELLS, NOT ON COPIES.** `wrap_main.ml:412` hands
-`incrementally_verify_proof` the same `prev_step_accs` that `wrap_verifier.ml:538` absorbs, so both
-`assert_on_curve` chains here name the transcript's own `wordV` for `sg_old`. A version that
-allocated fresh coordinate cells would have checked a curve point the sponge never saw. -/
+`Inner_curve.typ`'s check is `assert_on_curve` and `wrap_main.ml:221-223` applies it to the whole
+`Vector.typ Inner_curve.typ Max_proofs_verified.n`, so the rung is only satisfiable if every slot of
+the record lies on `y² = x³ + 5` over Fq. They do: the REAL slots are `STEP_PREVCOMM_XY`, the
+`RecursionChallenge` commitments of a proof `kimchi::verifier::verify` ACCEPTED, and the PAD slot is
+`Dummy.Ipa.Step.sg` (`wrap.rs:476-491`), which is a curve point because openmina puts a curve point
+there. So `w9_prev` adds a real check WITHOUT moving the transcript.
+
+⚠ ⚑ **THE THIRD AND FOURTH LEGS ARE WHY THIS WENT RED ON 2026-08-07 AND ARE KEPT AS THE CONTROL.**
+When `STEP_PREVCOMM_XY` correctly shrank to one point, `RC_SGOLD` was the REAL list alone, so record
+slot 1 fell off its end and `itemVal T_SGOLD 2` took the `wrapFixture 1 2` totality default — a
+number that is **not** on the curve, and every `equal_g` leg below the fold went red on it. Leg 3
+exhibits that filler as off-curve so a `RC_SGOLD` that stops being the padded record cannot pass
+this theorem quietly; leg 4 says the two record slots are DISTINCT points, which is what makes the
+first two legs two facts rather than one fact twice. -/
+theorem prev_step_accs_are_on_vesta :
+    (List.range shapeSmoke.maxPrevs).all (fun p =>
+      onCurveQ (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true
+    ∧ (List.range shapeWrap.maxPrevs).all (fun p =>
+      onCurveQ (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true
+    -- ⚑ the totality default this def had been silently taking, exhibited as NOT a curve point.
+    ∧ onCurveQ (wrapFixture 1 2, wrapFixture 1 3) = false
+    -- ⚑ …and the pad really is a different point from the real accumulator.
+    ∧ (itemVal T_SGOLD 0, itemVal T_SGOLD 1) = whPadSg
+    ∧ (itemVal T_SGOLD 2, itemVal T_SGOLD 3) ≠ whPadSg := by
+  refine ⟨rfl, rfl, rfl, rfl, by decide⟩
+
+/-- ⚑ **AND THE ON-CURVE CHECK RUNS ON THE ABSORBED CELLS AT THE REAL SLOTS — AND ON THIS RUNG'S
+OWN AT THE PADDED ONE. BOTH HALVES, BECAUSE ONLY ONE OF THEM IS THE FLATTERING ONE.**
+
+**What closes:** `wrap_main.ml:412` hands `incrementally_verify_proof` the same `prev_step_accs`
+that `wrap_verifier.ml:538` absorbs, so at a REAL slot the `assert_on_curve` chain names the
+transcript's own `wordV` (leg 2). A version that allocated fresh coordinate cells there would have
+checked a curve point the sponge never saw.
+
+**What misses, and it is upstream's miss too:** the PADDED slot has no absorbed cell to name,
+because `actual_proofs_verified_mask` drops it from the `OptSponge` (`wrap_verifier.ml:511-514`).
+Its coordinates are a free witness here (leg 3) exactly as they are a free `exists` upstream, and
+the transcript carries `WH_REAL_SLOTS` points and not `maxPrevs` (leg 4). What binds the pad is
+§21's tie from `whPrevDigest`'s squeeze to packed statement word 55, not this rung. -/
 theorem prev_on_curve_runs_on_the_absorbed_cells :
-    (List.range shapeSmoke.prevs).all (fun p =>
+    (List.range shapeSmoke.maxPrevs).all (fun p =>
       hasHalf prRows [some (sgOldVar tPrev p 0), some (sgOldVar tPrev p 0),
                       some (prevSq shapeSmoke tPrev.sp p 0)] cMul
       && hasHalf prRows [some (prevSq shapeSmoke tPrev.sp p 0), some (sgOldVar tPrev p 0),
                          some (prevSq shapeSmoke tPrev.sp p 1)] cMul
       && hasHalf prRows [some (sgOldVar tPrev p 1), some (sgOldVar tPrev p 1),
                          some (prevSq shapeSmoke tPrev.sp p 1)] cOnCurveQ) = true
-    ∧ (List.range shapeSmoke.prevs).all (fun p =>
-        (sgOldVar tPrev p 0) == ((tPrev.sp.evs.getD (1 + 2 * p) default).wordV)) = true := by
-  refine ⟨rfl, rfl⟩
+    ∧ (List.range WH_REAL_SLOTS).all (fun j =>
+        (sgOldVar tPrev (whNPad WH_REAL_SLOTS + j) 0)
+          == ((tPrev.sp.evs.getD (1 + 2 * j) default).wordV)) = true
+    ∧ (List.range (whNPad WH_REAL_SLOTS)).all (fun p =>
+        (sgOldVar tPrev p 0) == prevPadSg shapeSmoke tPrev.sp p 0) = true
+    ∧ (tPrev.sp.evs.filter (fun e => e.isAbs && e.tag == T_SGOLD)).length = 2 * WH_REAL_SLOTS := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
 
 /-- ⚑ **THE ONE CHECK THE 57-WORD `typ` EMITS, AND IT IS EMITTED TWICE BECAUSE THERE ARE TWO
 `B Bool`s.** Everything else in `Types.Step.Proof_state.typ` is check-free at source (§18), so a

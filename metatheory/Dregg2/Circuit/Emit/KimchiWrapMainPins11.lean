@@ -81,30 +81,46 @@ theorem comb_fold_runs_backwards_and_ends_on_sg_old :
     ∧ ((List.range (combSteps shapeWrap)).map (combIdx shapeWrap)).length = 46 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
-/-- ⚑⚑ **THE MUX KEEPS BOTH `sg_old`, BECAUSE THE SELECTED RULE HAS TWO ACCUMULATORS.**
-`mkWrapWith` witnesses `KEY_CHAIN_BRANCH` at widths `[0,1,2,…]`, so `first_zero = 2` and
-`Vector.rev (ones_vector ~first_zero:2 2)` is `[1, 1]`. That is the honest witness for a step rule
-carrying `STEP_PREV_CHALLENGES = 2` accumulators over a tape with two `sg_old` points on it — and it
-is the same `fz` that packs `proofs_verified` as `N2` in Mina's public slot 29.
+/-- ⚑⚑ **THE MUX DROPS THE PAD AND KEEPS THE ONE REAL `sg_old`, BECAUSE THE SELECTED RULE HAS ONE
+ACCUMULATOR — AND THIS IS THE SITE THAT OWNS MINA'S PUBLIC SLOT 29.**
 
-⚠ ⚑ **SAY WHAT MOVED AND WHAT IT COSTS.** Until 2026-08-06 this assembly selected branch 1, `keep`
-was `[0, 1]`, one `sg_old` was dropped, and the emitted witness ran the `Inner_curve.if_` mux BOTH
-ways. It does not any more: at the committed selection the `~else_` ROW's arm is not exercised by the
-emission. Restating this theorem as `[1, 1]` and stopping there would have deleted a falsifier and
-called it a repair, so the third leg is the one that keeps it one — `keep` is a function OF THE
-BRANCH's width, exhibited at `KEY_REAL_BRANCH`'s, and not a constant the gadget could be replaced by.
-The arm the committed emission no longer witnesses is named here rather than left to be rediscovered. -/
+`first_zero` is `Pseudo.choose (which_branch, step_widths)` (`wrap_main.ml:173-180`): the SELECTED
+branch's `actual_proofs_verified`, which for dregg's step rule is `WH_REAL_SLOTS = 1` — one
+`verify_one`, `gates::STEP_RULE_N_PREVIOUS`, and `wrap.rs:666` reading that record's own length. So
+`Vector.rev (ones_vector ~first_zero:1 2) = [0, 1]`: the PREPENDED pad (`wrap.rs:476-491`) is
+dropped and the real accumulator is kept. The same mask is front-extended and packed at
+`wrap_main.ml:186-198`, and `Prefix_mask.there N1 = [false; true]` (`proofs_verified.ml:70-78`)
+packs `0b10` (`prepared_statement.rs:131-139`) — so `branch_data = 4·domain_log2 + 2`.
+
+⚠ ⚑ **SAY WHAT MOVED AND WHAT IT COSTS.** `mkWrapWith` gave `KEY_CHAIN_BRANCH` the width `min 2 i`
+until 2026-08-07, so `fz` was 2, the mask was `[1, 1]`, the pad was FOLDED IN, and slot 29 packed
+`N2`. It agreed with `WRAP_PUBLIC_INPUT_MEASURED` — because the referee's own
+`pickles_kimchi_marshal` hardcoded `PicklesBaseProofsVerifiedStableV1::N2`. Two wrong sides agreeing
+is the exact shape a passing slot can hide in, and this is the only one of the forty where it was
+true. Both sides now derive from `STEP_RULE_N_PREVIOUS` and slot 29 is 58.
+
+⚑ **AND `keep` IS STILL A FUNCTION OF THE BRANCH's WIDTH, NOT A CONSTANT** — leg 3 exhibits a
+branch whose width is `WH_PADDED`, where the mask really is `[1, 1]` and both `Inner_curve.if_` arms
+are live. Restating this theorem as `[0, 1]` and stopping there would have deleted the falsifier and
+called it a repair. -/
 theorem comb_mux_keep_is_the_branch_selections :
-    (List.range MASK_N).map (combKeepVal (mkWrap shapeSmoke)) = [1, 1]
-    ∧ (List.range MASK_N).map (combKeepVal (mkWrap shapeWrap)) = [1, 1]
+    (List.range MASK_N).map (combKeepVal (mkWrap shapeSmoke)) = [0, 1]
+    ∧ (List.range MASK_N).map (combKeepVal (mkWrap shapeWrap)) = [0, 1]
     ∧ (List.range MASK_N).map
         (combKeepVal { sh := shapeWrap, sp := (mkWrap shapeWrap).sp
                      , br := runBranch shapeWrap KEY_REAL_BRANCH
-                               ((List.range shapeWrap.branches).map (fun i => min 2 i))
+                               ((List.range shapeWrap.branches).map (fun _ => WH_PADDED))
                                ((List.range shapeWrap.branches).map (fun _ => 16)) })
-        = [0, 1]
-    ∧ (mkWrap shapeWrap).br.fz = 2 := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+        = [1, 1]
+    ∧ (mkWrap shapeWrap).br.fz = WH_REAL_SLOTS
+    ∧ (mkWrap shapeSmoke).br.fz = WH_REAL_SLOTS
+    -- ⚑ …and that `fz` IS Mina's slot 29, arithmetic and all.
+    ∧ (mkWrap shapeWrap).br.packedV
+        = 4 * Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2 + 2
+    ∧ (mkWrap shapeWrap).br.packedV
+        = Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD
+            WRAP_SLOT_BRANCH_DATA 0 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **ALL 46 LADDERS' COUNTERS LAND ON ONE CELL.** `Field.Assert.equal !n_acc scalar`
 (`scalar_challenge.ml:305`) is emitted as a σ class rather than as a row, which is upstream's shape
@@ -263,7 +279,7 @@ theorem region_escape_bites_on_the_emitted_gates :
 /-- ⚑ **WHAT THE KERNEL CLOSES ABOUT THE CAPS, AND WHAT IT CANNOT — SAID AS ONE STATEMENT.** Two of
 the three caps are EXACT and their blocks' last cells are named here (`close_is_the_last_cell_…`,
 `bullet_is_the_last_cell_…`, both general over shape and sponge). W-FINALIZE's is the one with
-headroom, and its ceiling is `finProgBase` — pure shape arithmetic — plus `prevs` copies of
+headroom, and its ceiling is `finProgBase` — pure shape arithmetic — plus `maxPrevs` copies of
 `FIN_PROG_CAP + FINSP_BLOCK_CAP`.
 
 ⚠ **THE FIT OF THOSE TWO IS NOT CLOSED HERE AND CANNOT BE**, and that is not a hedge: reading
@@ -276,7 +292,7 @@ theorem the_caps_are_the_blocks (s : WrapShape) (sp : SpAcc) :
     baseClose s sp + 1 = baseWh s sp + WH_REGION_CAP s
     ∧ baseBull s sp + nBullVars s = baseComb s sp + COMB_REGION_CAP s
     ∧ baseFin s sp + FIN_REGION_CAP s
-        = finProgBase s sp + s.prevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP) :=
+        = finProgBase s sp + s.maxPrevs * (FIN_PROG_CAP + FINSP_BLOCK_CAP) :=
   ⟨close_is_the_last_cell_of_the_wraphack_block s sp
   , bullet_is_the_last_cell_of_the_combine_block s sp
   , fin_block_ceiling_is_finProgBase_plus_the_two_caps s sp⟩
@@ -294,21 +310,26 @@ edit; a variable identity is not. ⚠ Three of those entries still read "needs W
 that reason — five pins in the W-WRAPHACK and W-FINALIZE blocks quote them verbatim, so rewording
 them is a coordinated edit and not this rung's to make alone. -/
 theorem comb_reads_the_transcripts_own_commitment_cells :
-    (combPtVar (mkWrap shapeSmoke) 0).1
+    -- ⚑ the fold's `sg_old` prefix is `Max_proofs_verified` long, so its REAL entry is at
+    -- `whNPad`, and that one IS the transcript's own cell. (Slot 0 is the pad, whose cell is
+    -- W-PREV's `prevPadSg` and which the tape never absorbs — `sgOldVar`.)
+    (combPtVar (mkWrap shapeSmoke) (whNPad WH_REAL_SLOTS)).1
       = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_SGOLD)).getD 0
           default).wordV
-    ∧ (combPtVar (mkWrap shapeSmoke) shapeSmoke.prevs).1
+    ∧ (combPtVar (mkWrap shapeSmoke) 0).1
+      = prevPadSg shapeSmoke (mkWrap shapeSmoke).sp 0 0
+    ∧ (combPtVar (mkWrap shapeSmoke) shapeSmoke.maxPrevs).1
       = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).getD 0
           default).wordV
-    ∧ combPtVar (mkWrap shapeSmoke) (shapeSmoke.prevs + 1)
+    ∧ combPtVar (mkWrap shapeSmoke) (shapeSmoke.maxPrevs + 1)
       = ftcOutV shapeSmoke (mkWrap shapeSmoke).sp
-    ∧ (combPtVar (mkWrap shapeSmoke) (shapeSmoke.prevs + 2)).1
+    ∧ (combPtVar (mkWrap shapeSmoke) (shapeSmoke.maxPrevs + 2)).1
       = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_ZCOMM)).getD 0
           default).wordV
-    ∧ (combPtVar (mkWrap shapeSmoke) (shapeSmoke.prevs + 3 + KEY_SINGLES)).1
+    ∧ (combPtVar (mkWrap shapeSmoke) (shapeSmoke.maxPrevs + 3 + KEY_SINGLES)).1
       = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_WCOMM)).getD 0
           default).wordV := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- ⚑ **`lr` AND `delta` ARE ON THE CURVE NOW, AND THE OLD FILLER WAS NOT.** This is the flag day
 §2d's `itemVal` carries, exhibited rather than described: the `wrapFixture` values that stood there

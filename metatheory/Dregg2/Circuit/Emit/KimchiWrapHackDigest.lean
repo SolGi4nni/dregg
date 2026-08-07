@@ -238,7 +238,8 @@ and `whSgOld` did not, with every pin staying green.
 
 ⚠ **IT IS `whNPad`-SHAPED AND NOT AN INDEX INTO `whRecordAt`.** `whRecordAt` is the REAL pipeline's
 record, whose real slots read `whRealSgs` and are therefore `WH_REAL_SLOTS` long; a shape whose
-`prevs` exceeds that (`shapeSmoke.prevs = 2`) would index past its end and silently take the default.
+`maxPrevs` exceeds that (`shapeSmoke.maxPrevs = 2`) would index past its end and silently take the
+default.
 The challenge vector at a slot does not need the commitment list at all, so it does not consult it. -/
 def whSlotChals (nReal p : Nat) : List Nat :=
   if p < whNPad nReal then whPadChals else whRealChals

@@ -132,7 +132,8 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   pure (rowsW.length, probes.length)
 
 /-- An eight-field comma spec:
-`prevs,ipaRounds,wComms,tComms,emsRows,branches,pubWords,xhatTerms`.
+`maxPrevs,ipaRounds,wComms,tComms,emsRows,branches,pubWords,xhatTerms`. ⚠ The first field is
+`Max_proofs_verified`, NOT `actual_proofs_verified` — see `WrapShape.maxPrevs`.
 
 ⚑ **`xhatXY` IS DERIVED HERE, NOT PARSED**, and that is the only honest option: the pair is two
 Fq coordinates and a comma spec of naturals has no independent source for them. So a
@@ -148,7 +149,7 @@ Saying the spec covered both would be describing a branch that cannot be taken. 
 def parseShape (spec : String) : Option WrapShape :=
   match (spec.splitOn ",").map String.toNat? with
   | [some a, some b, some c, some d, some e, some f, some g, some h] =>
-      some { prevs := a, ipaRounds := b, wComms := c, tComms := d, emsRows := e
+      some { maxPrevs := a, ipaRounds := b, wComms := c, tComms := d, emsRows := e
            , branches := f, pubWords := g, xhatEntries := xhatSel h
            , xhatXY := xhatOutOf (xhatSel h) }
   | _ => none

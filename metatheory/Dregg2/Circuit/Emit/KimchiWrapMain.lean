@@ -246,13 +246,14 @@ and had not finished when this line was written:
   * `w8_ftcomm` = `6492 + 846` — `4` rows of `n₀ = 0` halves, `8 × (1 seed + 51×2 chunk rows + 1
     probe) = 832`, the fold's `tComms − 1 = 6` `add_fast` rows, and `4` closing rows;
   * `w11_wraphack` = `7344 + 637` and `w12_close` = `7981 + 2`, and these two are the SAFEST
-    derivations in the table: `whRows` and `closeRows` depend on the shape only through `s.prevs`,
+    derivations in the table: `whRows` and `closeRows` depend on the shape only through `s.maxPrevs`,
     which is **2 at both shapes**, so the wrap delta IS the smoke delta — `2250 − 1613 = 637` and
     `2252 − 2250 = 2`, both measured. 637 = three sponges × 211 rows + 4 tie rows, where a sponge is
     2 init rows + 15 × (1 absorb-pair row + 12 permutation rows) + (1 + 12 + 1) for the closing
     absorb pair, the squeeze's permutation and its σ-probe;
-  * `w9_prev` = `7338 + 6` — nine `Generic` halves (2 `Boolean.typ`, 1 public tie, 3 × `prevs = 2`
-    `assert_on_curve`) packed two to a row, plus one σ-probe. `prevs` is 2 at BOTH shapes, so this
+  * `w9_prev` = `7338 + 6` — nine `Generic` halves (2 `Boolean.typ`, 1 public tie, 3 × `maxPrevs = 2`
+    `assert_on_curve`) packed two to a row, plus one σ-probe. `maxPrevs` is `Max_proofs_verified` and
+    is 2 at BOTH shapes, so this
     is the same six rows at either — which is why the smoke measurement `1613 − 1607 = 6` is a real
     check on the wrap figure and not merely a consistency one.
 
@@ -287,7 +288,7 @@ assembly against it. RE-GRADED at `w6_xhat` (exit 0), the verdicts that are not 
     header did — reads a per-instance fidelity result as a whole-circuit one; it was 89 of 261,
     i.e. 34%, then 137 of 261, and it is **259 of 261** since W-FINSPONGE (§20) landed
     `finalize_other_proof`'s two sponges: 15 permutations for the nested challenge digest and 46 for
-    the 91-element finalize sponge, **61 per instance and 122 at `prevs = 2`** — measured off the
+    the 91-element finalize sponge, **61 per instance and 122 at `maxPrevs = 2`** — measured off the
     emitted rows by `finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks`, not derived from a
     schedule. ⚠ The remaining TWO blocks are named nowhere yet, which is said rather than rounded
     away; §13 item 7 carries the rest.
@@ -559,7 +560,7 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      Generic 2 — and §19b emits those and nothing else. ⚠ The alpha powers really ARE shared across
      the gates (`alpha_pows` is ONE `Array.create ~len:71`, `plonk_checks.ml:330-338`); §19 emits
      that unaltered, as §15 emits `scale_fast`'s two admissible decompositions unaltered.
-     ✅ **WHAT `w10_finalize` EMITS**, per instance and `prevs` instances: `scalars_env`'s
+     ✅ **WHAT `w10_finalize` EMITS**, per instance and `maxPrevs` instances: `scalars_env`'s
      ω⁻¹/ω⁻²/ω⁻³ (the first a WITNESS the program checks by `ω·ω⁻¹ = 1`), `zk_polynomial`,
      `ζⁿ − 1` by 14 squarings at the wrap domain `2^14`, the α⁰..α²³ chain, `Scalars.Tock`'s constant
      term, `ft_eval0` (`plonk_checks.ml:420-460`, C5 denominator by a second CHECKED witnessed
@@ -594,8 +595,8 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      2026-08-06, superseded the same day by a theorem in its own tree.
      ⛑ **AND IT IS WHERE WRAP'S LARGEST REMAINING GATE GAP WAS.** The census that motivated this
      rung read **137 `(Poseidon × 11, Zero)` blocks of Mina's 261**; the two sponges are **61 per
-     instance and 122 at `prevs = 2`** (`finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks`,
-     measured off the emitted rows), so it is **259 of 261**. `prevs = 2` at both committed shapes,
+     instance and 122 at `maxPrevs = 2`** (`finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks`,
+     measured off the emitted rows), so it is **259 of 261**. `maxPrevs = 2` at both committed shapes,
      so that is the wrap-scale figure too. ⚠ The residual TWO blocks are not this sponge's and are
      not yet attributed; and the `Zero` overshoot grows with the win, because each block ends in its
      own `Zero` and each squeeze is followed by a σ-only probe.
@@ -820,5 +821,15 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          -- itself: `wrapPublicAt (mkWrap shapeWrap) .close` against openmina's forty, forty
          -- comparisons over a vector whose closing rung runs `bullData`'s 67 endo ladders.
          the_forty_agree_but_for_the_arity_mismatched_slot
+         -- ⚠ ⚑⚑ **AND THE SAME CLASS AGAIN, ONE COMMIT LATER — `95ab41aef` LANDED THIS THEOREM IN
+         -- `KimchiWrapHackDigest` WITH ITS OWN `#assert_compiled` AND THIS LIST DID NOT FOLLOW.**
+         -- It went unseen for a different reason from the last one, and the reason is worth
+         -- naming: FOUR `…PinsNN` modules were red at HEAD, so the umbrella they feed never
+         -- elaborated and this line never ran. A gate downstream of a red is not a gate that
+         -- passed — it is a gate that was never asked. Nothing is weakened by adding it: it runs
+         -- fifteen Poseidon permutations over `whPadChals ++ whPadSg` and compares the squeeze to
+         -- openmina's own `MessagesForNextWrapProof::dummy_padding()` digest, which is the same
+         -- wall `wraphack_digest_is_the_emitted_squeeze` hit.
+         the_pad_slot_derives_minas_own_padding_digest
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

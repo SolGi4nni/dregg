@@ -97,7 +97,7 @@ def WRAP_PUBLIC_INPUT_MEASURED : List Nat :=
    63330253630208683616997490417027977146, -- 26  bulletproof_challenges[13]
    122481746783850907330621371818595491099, -- 27  bulletproof_challenges[14]
    307599670269490453626177987240772268801, -- 28  bulletproof_challenges[15]
-   59, -- 29  branch_data((domain_log2<<2)|proofs_verified)
+   58, -- 29  branch_data((domain_log2<<2)|proofs_verified)
    0, -- 30  feature_flags.range_check0
    0, -- 31  feature_flags.range_check1
    0, -- 32  feature_flags.foreign_field_add
@@ -285,21 +285,48 @@ proof. -/
 theorem zeta_to_srs_length_and_zeta_to_domain_size_differ :
     DEF_ZETA_TO_SRS_LENGTH ≠ DEF_ZETA_TO_DOMAIN_SIZE := by decide
 
-/-- **`branch_data_is_two_proofs_at_domain_log2_fourteen`** -- slot 29 DECOMPOSED rather than quoted.
-`(domain_log2 <<< 2) ||| proofs_verified` with `N2 = 0b11` (`prepared_statement.rs:131-139`), so 59
-says two recursion slots at a 2^14 step domain -- which is what the marshaller builds. A `59` that
-matched nothing would be a number in a dump.
+/-- ⚑ `Pickles_base.Proofs_verified.Prefix_mask`'s two-bit packing — `there N0 = [f;f]`,
+`there N1 = [f;t]`, `there N2 = [t;t]` (`proofs_verified.ml:70-78`) through `Field.pack` LSB-first,
+which is `prepared_statement.rs:131-139`'s `N0 => 0b00 | N1 => 0b10 | N2 => 0b11` exactly. ⚠ **`N1`
+is `2` and not `1`** — the mask is a PREFIX mask over a reversed `ones_vector`, so the low bit is
+the padded slot. Writing `n` there is the arithmetic that makes 58 read as 57. -/
+def proofsVerifiedBits (n : Nat) : Nat := if n == 0 then 0 else if n == 1 then 2 else 3
 
-⚠ ⚑ **IT WAS 51 AT `2^12` UNTIL 2026-08-06, AND THE MOVE IS THE STEP CIRCUIT'S.** The forty are
-`PreparedStatement::to_public_input(40)` on whatever step proof the marshaller made; that proof is
-`stepmain_step_r8_finalize` now — 10 347 rows at 67 public words, so its evaluation domain is `2^14`
-where `stepmain_smoke_r8_finalize` sat at `2^12`. `KimchiWrapMain.mkWrapWith` reads
-`KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2` for the same reason, so this number and the one the
-assembly DERIVES follow one source and cannot drift apart silently. -/
-theorem branch_data_is_two_proofs_at_domain_log2_fourteen :
-    WRAP_PUBLIC_INPUT_MEASURED.getD 29 0 = 14 * 4 + 3
-    ∧ WRAP_PUBLIC_INPUT_MEASURED.getD 29 0 = 59 := by
-  refine ⟨?_, ?_⟩ <;> decide
+/-- ⚑⚑ **`branch_data_is_this_rules_arity_at_its_own_domain`** — slot 29 DECOMPOSED rather than
+quoted, and DERIVED from the two things it is a function of rather than pinned as a numeral.
+
+`branch_data = (domain_log2 <<< 2) ||| proofs_verified` (`branch_data.ml:63,95-101`), where
+`proofs_verified` is the SELECTED step branch's `actual_proofs_verified` — `wrap_main.ml:173-198`
+packs `ones_vector ~first_zero:(Pseudo.choose (which_branch, step_widths))` and
+`Field.Assert.equal branch_data`s it. Dregg's step rule assembles ONE `verify_one`, so
+`STEP_PREV_CHALLENGES = 1`, and its own proof's domain is `2^14`: **58**.
+
+⚠ ⚑ **IT READ 59 UNTIL 2026-08-07 AND THAT WAS THE ONLY SLOT OF THE FORTY WHERE THE REFEREE AND
+THE ASSEMBLY WERE WRONG IN THE SAME DIRECTION.** `pickles_kimchi_marshal` hardcoded
+`PicklesBaseProofsVerifiedStableV1::N2` while its own `gates::STEP_RULE_N_PREVIOUS` docblock already
+said `Prefix_mask.there N1`, and `KimchiWrapMain.mkWrapWith` gave the selected branch the width
+`min 2 i`. Both packed `N2`; slot 29 "agreed"; and nothing in either tree could see it, because a
+quoted numeral cannot disagree with itself. **The last leg is what makes that impossible now** — it
+is the red control for the value this file used to carry, and the first leg names
+`STEP_PREV_CHALLENGES` rather than a digit so the referee moves with the rule.
+
+⚠ It was 51 at `2^12` before 2026-08-06; the domain moved with the step circuit
+(`stepmain_step_r8_finalize`), and `KimchiWrapMain.mkWrapWith` reads the same
+`KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2`, so this number and the one the assembly DERIVES
+follow one source. `KimchiWrapMainPins11.comb_mux_keep_is_the_branch_selections` is the other end of
+that tie and states the equality from the emitted side. -/
+theorem branch_data_is_this_rules_arity_at_its_own_domain :
+    WRAP_PUBLIC_INPUT_MEASURED.getD 29 0
+      = 4 * Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2
+        + proofsVerifiedBits Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREV_CHALLENGES
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREV_CHALLENGES = 1
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2 = 14
+    ∧ WRAP_PUBLIC_INPUT_MEASURED.getD 29 0 = 58
+    -- ⚑ the red control: the hardcoded `N2` both sides carried until 2026-08-07.
+    ∧ WRAP_PUBLIC_INPUT_MEASURED.getD 29 0
+        ≠ 4 * Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DOMAIN_LOG2
+          + proofsVerifiedBits 2 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- **`the_tail_is_ten_zeros`** -- the eight feature flags, `uses_lookup` and the lookup value. The
 wrap emit path ties none of these to a variable, and this is what says a zero there is the value

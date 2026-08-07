@@ -291,7 +291,7 @@ field-crossed value. -/
 theorem the_commitments_needed_no_encoding :
     chainTape.all (fun w => decide (w < qN)) = true
     ∧ chainTape.contains STEP_CIP_WORD_FQ = false
-    ∧ chainTape.length = 1 + 2 * shapeWrap.prevs + 2 + 2 * shapeWrap.wComms := by
+    ∧ chainTape.length = 1 + 2 * WH_REAL_SLOTS + 2 + 2 * shapeWrap.wComms := by
   native_decide
 
 #assert_compiled the_commitments_needed_no_encoding
@@ -329,7 +329,7 @@ theorem chain_moves_with_the_step_proof :
     ∧ chainBentPhase1.2.2.1 ≠ STEP_ALPHA_CHAL
     ∧ chainBentPhase1.2.2.2.1 ≠ STEP_ZETA_CHAL
     ∧ chainBentPhase1.2.2.2.2 ≠ STEP_DIGEST
-    ∧ STEP_BENT_INDEX = 1 + 2 * shapeWrap.prevs + 2 := by
+    ∧ STEP_BENT_INDEX = 1 + 2 * WH_REAL_SLOTS + 2 := by
   native_decide
 
 #assert_compiled chain_moves_with_the_step_proof
@@ -394,10 +394,13 @@ theorem chain_unread_bend_is_a_different_proof_with_the_same_tape :
 asserts it is BYTE-IDENTICAL to the honest one. -/
 def chainUnreadSchedule (s : WrapShape) : List Ev :=
   [ Ev.abs T_DIGEST (STEP_UNREAD_TAPE.getD 0 0) ]
-  ++ (List.range (2 * s.prevs)).map (fun i => Ev.abs T_SGOLD (STEP_UNREAD_TAPE.getD (1 + i) 0))
-  ++ (List.range 2).map (fun i => Ev.abs T_XHAT (STEP_UNREAD_TAPE.getD (1 + 2 * s.prevs + i) 0))
+  -- ⚑ `WH_REAL_SLOTS`, not `s.maxPrevs` — the TAPE carries the kept `sg_old` only (§8's note).
+  ++ (List.range (2 * WH_REAL_SLOTS)).map (fun i =>
+       Ev.abs T_SGOLD (STEP_UNREAD_TAPE.getD (1 + i) 0))
+  ++ (List.range 2).map (fun i =>
+       Ev.abs T_XHAT (STEP_UNREAD_TAPE.getD (1 + 2 * WH_REAL_SLOTS + i) 0))
   ++ (List.range (2 * s.wComms)).map (fun i =>
-       Ev.abs T_WCOMM (STEP_UNREAD_TAPE.getD (1 + 2 * s.prevs + 2 + i) 0))
+       Ev.abs T_WCOMM (STEP_UNREAD_TAPE.getD (1 + 2 * WH_REAL_SLOTS + 2 + i) 0))
   ++ [ Ev.sq .chal, Ev.sq .chal ]
   ++ (List.range 2).map (fun i => Ev.abs T_ZCOMM (STEP_UNREAD_ZCOMM_XY.getD i 0))
   ++ [ Ev.sq .chal ]
@@ -417,11 +420,23 @@ def chainUnreadSchedule (s : WrapShape) : List Ev :=
 If the chained tape ever coincided with `PastaPoseidonFq`'s, this file would be the same
 measurement under a new filename. -/
 
-/-- **`the_chain_is_not_the_borrowed_fixture`** — same LENGTH (both are `prev_challenges = 2`,
-15-column, 7-chunk Pasta proofs, so the shape agrees by construction) and a different VALUE in
-every labelled block, including the verifier-index digest and all five phase-1 outputs. -/
+/-- **`the_chain_is_not_the_borrowed_fixture`** — a different VALUE in every labelled block,
+including the verifier-index digest and all five phase-1 outputs.
+
+⚠ ⚑ **THE FIRST LEG USED TO SAY THE TWO TAPES HAVE THE SAME LENGTH, AND IT WAS RED AT HEAD.** It
+read `chainTape.length = fqTape.length` and its docblock explained the equality as "both are
+`prev_challenges = 2`, 15-column, 7-chunk Pasta proofs, so the shape agrees by construction". The
+premise stopped holding on 2026-08-07: `marshal::STEP_RECURSION_SLOTS` went to ONE, dregg's step
+proof carries one `RecursionChallenge` and the borrowed `pickles_p6_fq_export` proof still carries
+two, so the tapes differ by exactly `2 · (WH_PADDED − WH_REAL_SLOTS)` words. The equality is
+replaced by that arithmetic rather than deleted — a control that names WHY the shapes differ is
+strictly better than one that asserted they did not, and dropping the leg would have retired a
+falsifier under cover of a repair. -/
 theorem the_chain_is_not_the_borrowed_fixture :
-    chainTape.length = Dregg2.Circuit.Emit.PastaPoseidonFq.fqTape.length
+    chainTape.length = 35
+    ∧ Dregg2.Circuit.Emit.PastaPoseidonFq.fqTape.length = 37
+    ∧ chainTape.length + 2 * (WH_PADDED - WH_REAL_SLOTS)
+        = Dregg2.Circuit.Emit.PastaPoseidonFq.fqTape.length
     ∧ chainTape ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.fqTape
     ∧ STEP_VKDIGEST ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST
     ∧ STEP_WCOMM_XY ≠ Dregg2.Circuit.Emit.PastaPoseidonFq.WCOMM_XY
@@ -458,37 +473,53 @@ wrap VK. Two derivations, one shape.
 claims, so a re-export that changed the proof's IPA round count or `t_comm` chunking reds here rather
 than three rungs up.
 
-⚑⚑ **AND THE `prevs` LEG WAS A CONFLATION UNTIL 2026-08-07 — TWO QUANTITIES UNDER ONE NAME.**
-This theorem asserted `(shapeWrap.prevs, …) = (2, 16, 15, 7)`, and the `2` was read off the devnet
-wrap VK's `prev_challenges: 2`. That number is **`Max_proofs_verified`** — the most a wrap instance
-can be handed. What `prevs` actually sizes is the `sg_old` block the wrap circuit replays out of the
-STEP proof's own kimchi transcript (`verifier.rs:165-168`, `wrap_verifier.ml:538`), which is
-**`actual_proofs_verified`**, and `wrap.rs:666` reads that straight off the step record:
-`actual_proofs_verified = <messages_for_next_step_proof>.old_bulletproof_challenges.len()`.
+⚑⚑ **AND THE ARITY LEG WAS A CONFLATION THAT TOOK THREE PASSES TO SETTLE — READ IT BEFORE
+TOUCHING EITHER NUMBER.**
 
-The two are different numbers for dregg's step rule — one `verify_one`, so `N_PREVIOUS = 1` — and
-they COINCIDED only because `prove_step` folded two recursion challenges where upstream folds one,
-i.e. **because dregg's step proof was PADDED where upstream is not.** Fixing the prover
-(`marshal::STEP_RECURSION_SLOTS`) is what separated them; this theorem now states the separation
-instead of the coincidence.
+This theorem once asserted `(shapeWrap.prevs, …) = (2, …)` against the devnet wrap VK's
+`prev_challenges: 2`; on the morning of 2026-08-07 it asserted `1` against
+`STEP_RULE_N_PREVIOUS`; and both readings were one name over two objects. There are **two
+quantities and they belong in different places**:
 
-⚠ Read `wrap.rs:729-737` before assuming `Max_proofs_verified` has gone away: it pads the wrap
-proof's OWN accumulator list up to `MAX_PROOFS_VERIFIED_N` by **`vec.insert(0, …)`** —
-`dummy_ipa_wrap_sg()` PREPENDED, so slot 0 is the dummy and the real accumulator is last. That is a
-second list, on the wrap side, and it is NOT this one. `MinaWrapHackDummySg` carries the point. -/
+  * **`Max_proofs_verified` = 2** is a compile-time parameter of the wrap instance — the functor
+    argument at `wrap_main.ml:120-123`. Everything the wrap circuit ALLOCATES is sized by it:
+    `prev_step_accs` (`:221-223`), `prev_proof_state.typ` (`:265-275`), the
+    `finalize_other_proof` loop over `unfinalized_proofs` (`:287-289`) and
+    `Split_commitments.combine`'s list (`wrap_verifier.ml:687-702`). That is `shapeWrap.maxPrevs`,
+    and it is the devnet wrap VK's `prev_challenges: 2`.
+  * **`actual_proofs_verified` = 1** is *witness-selected* — `Pseudo.choose (which_branch,
+    step_widths)` (`wrap_main.ml:173-180`) — so it cannot be a shape field at all. `wrap.rs:666`
+    reads it off the step record (`old_bulletproof_challenges.len()`), dregg's step rule assembles
+    ONE `verify_one`, and it reaches this tree as `WH_REAL_SLOTS` / `STEP_PREV_CHALLENGES` and as
+    `BranchData.fz`.
+
+⚑ **THE PLACE THE SECOND ONE ACTUALLY BINDS IS THE TAPE**, and only the tape: the `sg_old` block
+is `Max` long in the circuit but the `OptSponge` mask (`wrap_verifier.ml:511-514,538`) keeps the
+padded entries OFF the transcript, so `chainTape` carries `2 · WH_REAL_SLOTS` sg_old words. That is
+what the `chainTape.length = 35` leg measures — 33 at `WH_REAL_SLOTS = 0`, 37 at 2.
+
+⚠ Read `wrap.rs:729-737` before assuming there is only one pad: it pads the wrap proof's OWN
+accumulator list by `vec.insert(0, dummy_ipa_WRAP_sg())`, a SECOND list on the wrap side, while
+`pad_messages_for_next_wrap_proof` (`:476-491`) pads the record `prev_step_accs` comes from with
+`dummy_ipa_STEP_sg()`. `MinaWrapHackDummySg` carries both and swapping them is a digest that agrees
+with nothing. -/
 theorem chain_shape_is_the_measured_step_shape :
-    shapeWrap.prevs = STEP_PREVCOMM_XY.length / 2
+    -- ⚑ the SHAPE half — `Max_proofs_verified`, the wrap instance's own parameter.
+    shapeWrap.maxPrevs = WH_PADDED
     ∧ shapeWrap.ipaRounds = STEP_IPA_ROUNDS
     ∧ shapeWrap.wComms = STEP_WCOMM_XY.length / 2
     ∧ shapeWrap.tComms = STEP_TCOMM_XY.length / 2
-    -- ⚑ `prevs` is `actual_proofs_verified` = `STEP_RULE_N_PREVIOUS` = 1, NOT the devnet VK's
-    -- `Max_proofs_verified` = 2. The two legs below say both halves of that.
-    ∧ (shapeWrap.prevs, shapeWrap.ipaRounds, shapeWrap.wComms, shapeWrap.tComms) = (1, 16, 15, 7)
-    ∧ shapeWrap.prevs ≠ MAX_PROOFS_VERIFIED
-    ∧ STEP_PREV_CHALLENGES = shapeWrap.prevs
+    ∧ (shapeWrap.maxPrevs, shapeWrap.ipaRounds, shapeWrap.wComms, shapeWrap.tComms) = (2, 16, 15, 7)
+    -- ⚑ …and the WITNESS half, which is a different number, measured off the step proof.
+    ∧ WH_REAL_SLOTS = STEP_PREVCOMM_XY.length / 2
+    ∧ STEP_PREV_CHALLENGES = WH_REAL_SLOTS
+    ∧ WH_REAL_SLOTS ≠ shapeWrap.maxPrevs
+    -- ⚑ …and it is the TAPE, not the shape, that the second one sizes.
+    ∧ chainTape.length = 1 + 2 * WH_REAL_SLOTS + 2 + 2 * shapeWrap.wComms
+    ∧ chainTape.length = 35
+    ∧ (mkWrap shapeWrap).br.fz = WH_REAL_SLOTS
     ∧ shapeWrap.xhatEntries = List.range XHAT_TERMS_FULL
     ∧ shapeWrap.xhatEntries.length = STEP_PUBLIC
-    ∧ chainTape.length = 35
     ∧ STEP_LR_XY.length = 4 * shapeWrap.ipaRounds
     ∧ STEP_TCOMM_XY.length = 2 * shapeWrap.tComms := by
   native_decide
@@ -542,8 +573,8 @@ theorem chain_xhat_is_the_msm_output_and_the_step_proofs :
     ∧ STEP_PUBCOMM_XY.length = 2
     -- ⚑⚑ the second-copy detector: the EMITTED trace's `T_XHAT` cells against the REFERENCE tape.
     ∧ ((tChain.sp.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).map (fun e => e.word))
-        = [chainTape.getD (1 + 2 * shapeWrap.prevs) 0,
-           chainTape.getD (1 + 2 * shapeWrap.prevs + 1) 0] := by
+        = [chainTape.getD (1 + 2 * WH_REAL_SLOTS) 0,
+           chainTape.getD (1 + 2 * WH_REAL_SLOTS + 1) 0] := by
   native_decide
 
 #assert_compiled chain_xhat_is_the_msm_output_and_the_step_proofs
@@ -899,7 +930,9 @@ and it is not free: the trace's absorbed σ classes hold THIS step proof's tape,
 Without this the two theorems after it would be about cells that happen to be wired together. -/
 theorem chain_absorbed_cells_are_the_step_proofs_own_words :
     chainAbsVal T_DIGEST 0 = STEP_VKDIGEST
-    ∧ ((List.range (2 * shapeWrap.prevs)).all
+    -- ⚑ `WH_REAL_SLOTS`, not `maxPrevs`: the tape carries the KEPT `sg_old` only, so absorbed
+    -- cell `i` is `STEP_PREVCOMM_XY.getD i` with no pad in between.
+    ∧ ((List.range (2 * WH_REAL_SLOTS)).all
         (fun i => chainAbsVal T_SGOLD i == STEP_PREVCOMM_XY.getD i 0)) = true
     ∧ ((List.range 2).all (fun i => chainAbsVal T_XHAT i == STEP_PUBCOMM_XY.getD i 0)) = true
     ∧ ((List.range (2 * shapeWrap.wComms)).all
@@ -922,14 +955,22 @@ The three non-transcript families are named too, so the count is exhibited rathe
 coordinates. -/
 theorem chain_combine_would_fold_over_the_absorbed_cells :
     combTerms shapeWrap = 47
-    ∧ ((List.range shapeWrap.prevs).all (fun p =>
-        combPtVar tChain p == (chainAbsV T_SGOLD (2 * p), chainAbsV T_SGOLD (2 * p + 1)))) = true
-    ∧ combPtVar tChain shapeWrap.prevs == (chainAbsV T_XHAT 0, chainAbsV T_XHAT 1)
-    ∧ combPtVar tChain (shapeWrap.prevs + 2) == (chainAbsV T_ZCOMM 0, chainAbsV T_ZCOMM 1)
+    -- ⚑ the fold's `sg_old` prefix is `Max_proofs_verified` long; its REAL entries are the
+    -- transcript's own σ classes at the SHIFTED index, and its padded one is W-PREV's own cell,
+    -- which is upstream's shape (`wrap_main.ml:221-223` allocates all of them, the `OptSponge`
+    -- mask absorbs the kept ones).
+    ∧ ((List.range WH_REAL_SLOTS).all (fun j =>
+        combPtVar tChain (whNPad WH_REAL_SLOTS + j)
+          == (chainAbsV T_SGOLD (2 * j), chainAbsV T_SGOLD (2 * j + 1)))) = true
+    ∧ ((List.range (whNPad WH_REAL_SLOTS)).all (fun p =>
+        combPtVar tChain p
+          == (prevPadSg shapeWrap tChain.sp p 0, prevPadSg shapeWrap tChain.sp p 1))) = true
+    ∧ combPtVar tChain shapeWrap.maxPrevs == (chainAbsV T_XHAT 0, chainAbsV T_XHAT 1)
+    ∧ combPtVar tChain (shapeWrap.maxPrevs + 2) == (chainAbsV T_ZCOMM 0, chainAbsV T_ZCOMM 1)
     ∧ ((List.range shapeWrap.wComms).all (fun j =>
-        combPtVar tChain (shapeWrap.prevs + 3 + KEY_SINGLES + j)
+        combPtVar tChain (shapeWrap.maxPrevs + 3 + KEY_SINGLES + j)
           == (chainAbsV T_WCOMM (2 * j), chainAbsV T_WCOMM (2 * j + 1)))) = true
-    ∧ combPtVar tChain (shapeWrap.prevs + 1) == ftcOutV shapeWrap tChain.sp := by
+    ∧ combPtVar tChain (shapeWrap.maxPrevs + 1) == ftcOutV shapeWrap tChain.sp := by
   native_decide
 
 #assert_compiled chain_combine_would_fold_over_the_absorbed_cells
@@ -940,9 +981,13 @@ per point, `wrap_main.ml:201-256`) squares and cubes `sgOldVar`, which is the tr
 `sg_old` σ class and not a second copy of it. So `sg_old` has TWO readers in the ladder — this and
 W-COMBINE's fold — and both read the cell the sponge wrote. -/
 theorem chain_prev_on_curve_checks_the_absorbed_sg_old_cells :
-    ((List.range shapeWrap.prevs).all (fun p =>
-        sgOldVar tChain p 0 == chainAbsV T_SGOLD (2 * p)
-        && sgOldVar tChain p 1 == chainAbsV T_SGOLD (2 * p + 1))) = true := by
+    ((List.range WH_REAL_SLOTS).all (fun j =>
+        sgOldVar tChain (whNPad WH_REAL_SLOTS + j) 0 == chainAbsV T_SGOLD (2 * j)
+        && sgOldVar tChain (whNPad WH_REAL_SLOTS + j) 1 == chainAbsV T_SGOLD (2 * j + 1))) = true
+    -- ⚠ …and the PADDED slot is checked on a cell the sponge never wrote, which is upstream's own
+    -- shape and is stated rather than left as a gap in the quantifier.
+    ∧ ((List.range (whNPad WH_REAL_SLOTS)).all (fun p =>
+        sgOldVar tChain p 0 == prevPadSg shapeWrap tChain.sp p 0)) = true := by
   native_decide
 
 #assert_compiled chain_prev_on_curve_checks_the_absorbed_sg_old_cells
@@ -982,11 +1027,13 @@ and variable are now ONE object for every `WrapData`, and this states that at ev
 names — including `x_hat`, which `schedule` absorbs as `s.xhatXY` and this tape absorbs as the step
 proof's own public-input commitment. -/
 theorem the_consuming_rungs_values_are_the_chains_own_proof :
-    combPtVal tChain 0 = (chainAbsVal T_SGOLD 0, chainAbsVal T_SGOLD 1)
-    ∧ combPtVal tChain (shapeWrap.prevs + 2) = (chainAbsVal T_ZCOMM 0, chainAbsVal T_ZCOMM 1)
-    ∧ combPtVal tChain (shapeWrap.prevs + 3 + KEY_SINGLES)
+    -- ⚑ record slot `whNPad` is the REAL `sg_old`; slot 0 is the pad and reads `whPadSg`.
+    combPtVal tChain (whNPad WH_REAL_SLOTS) = (chainAbsVal T_SGOLD 0, chainAbsVal T_SGOLD 1)
+    ∧ combPtVal tChain 0 = whPadSg
+    ∧ combPtVal tChain (shapeWrap.maxPrevs + 2) = (chainAbsVal T_ZCOMM 0, chainAbsVal T_ZCOMM 1)
+    ∧ combPtVal tChain (shapeWrap.maxPrevs + 3 + KEY_SINGLES)
         = (chainAbsVal T_WCOMM 0, chainAbsVal T_WCOMM 1)
-    ∧ combPtVal tChain shapeWrap.prevs = (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
+    ∧ combPtVal tChain shapeWrap.maxPrevs = (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
     ∧ bullCipVal tChain = chainAbsVal T_CIP 0
     ∧ bullDeltaVal tChain = (chainAbsVal T_DELTA 0, chainAbsVal T_DELTA 1)
     ∧ bullLrVal tChain 0 0 = (chainAbsVal T_LR 0, chainAbsVal T_LR 1) := by
@@ -1029,7 +1076,7 @@ assembly absorbs the digest of the key it committed to and the two tables agree.
 reds here — and the branch the committed `WrapData` selects is stated rather than assumed. -/
 theorem the_consuming_rungs_and_the_wrap_read_one_step_proof :
     combPtVal tChain 0 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
-    ∧ combPtVal tChain (shapeWrap.prevs + 2) = (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
+    ∧ combPtVal tChain (shapeWrap.maxPrevs + 2) = (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
     ∧ bullCipVal tChain = itemVal T_CIP 0
     ∧ bullDeltaVal tChain = (itemVal T_DELTA 0, itemVal T_DELTA 1)
     ∧ combPtVal (mkWrap shapeWrap) 0 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
@@ -1272,26 +1319,28 @@ value — variable AND value, since `absVal`. If `w6_xhat` were passed, nothing 
 would be reading a borrowed proof.
 
 ⚠ ⚑ **`x_hat` WAS THE EXCEPTION AND IS NOT ANY MORE, AND THE LAST CONJUNCT IS THE INVERSION.** It
-read `combPtVal tChain shapeWrap.prevs ≠ shapeWrap.xhatXY` — the fold slot held the step proof's
+read `combPtVal tChain shapeWrap.maxPrevs ≠ shapeWrap.xhatXY` — the fold slot held the step proof's
 commitment while the MSM that had to produce it ran over a fixture, so the two disagreed and the
 disagreement was the blocker. They are one value now, which is `w6_xhat` closing. Written as an
 equality against BOTH sources (the absorbed cell and the shape's memo) so a repair that moved either
 one alone goes red. -/
 theorem the_combine_and_bullet_families_are_not_what_blocks_them :
-    ((List.range shapeWrap.prevs).all (fun p =>
-        combPtVal tChain p == (chainAbsVal T_SGOLD (2 * p), chainAbsVal T_SGOLD (2 * p + 1)))) = true
-    ∧ combPtVal tChain (shapeWrap.prevs + 2) = (chainAbsVal T_ZCOMM 0, chainAbsVal T_ZCOMM 1)
+    ((List.range WH_REAL_SLOTS).all (fun j =>
+        combPtVal tChain (whNPad WH_REAL_SLOTS + j)
+          == (chainAbsVal T_SGOLD (2 * j), chainAbsVal T_SGOLD (2 * j + 1)))) = true
+    ∧ ((List.range (whNPad WH_REAL_SLOTS)).all (fun p => combPtVal tChain p == whPadSg)) = true
+    ∧ combPtVal tChain (shapeWrap.maxPrevs + 2) = (chainAbsVal T_ZCOMM 0, chainAbsVal T_ZCOMM 1)
     ∧ ((List.range shapeWrap.wComms).all (fun j =>
-        combPtVal tChain (shapeWrap.prevs + 3 + KEY_SINGLES + j)
+        combPtVal tChain (shapeWrap.maxPrevs + 3 + KEY_SINGLES + j)
           == (chainAbsVal T_WCOMM (2 * j), chainAbsVal T_WCOMM (2 * j + 1)))) = true
     ∧ bullCipVal tChain = chainAbsVal T_CIP 0
     ∧ ((List.range shapeWrap.ipaRounds).all (fun r => (List.range 2).all (fun j =>
         bullLrVal tChain r j
           == (chainAbsVal T_LR (4 * r + 2 * j), chainAbsVal T_LR (4 * r + 2 * j + 1))))) = true
     ∧ bullDeltaVal tChain = (chainAbsVal T_DELTA 0, chainAbsVal T_DELTA 1)
-    ∧ combPtVal tChain shapeWrap.prevs = (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
-    ∧ combPtVal tChain shapeWrap.prevs = shapeWrap.xhatXY
-    ∧ combPtVal tChain shapeWrap.prevs
+    ∧ combPtVal tChain shapeWrap.maxPrevs = (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
+    ∧ combPtVal tChain shapeWrap.maxPrevs = shapeWrap.xhatXY
+    ∧ combPtVal tChain shapeWrap.maxPrevs
         = (STEP_PUBCOMM_XY.getD 0 0, STEP_PUBCOMM_XY.getD 1 0) := by
   native_decide
 

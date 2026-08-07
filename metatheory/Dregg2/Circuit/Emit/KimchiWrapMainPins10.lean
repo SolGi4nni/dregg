@@ -158,27 +158,35 @@ the object it is about.
     its own challenge polynomial, the hash hashed what it was given. The marshaller reads the step
     statement now (`step_statement_prechallenges`), and the last conjunct below is the old refusal
     INVERTED: all thirty inputs coincide, and `whCloseDigest shapeWrap` **is** Mina's slot 11.
-  * ⚠ **SLOT 12 — `messages_for_next_step_proof`.** §18's `prevRows` ties Mina's slot 12 to packed
-    word 54 by `Field.Assert.equal`, and the wrap DERIVES NOTHING for it. This entry used to say the
-    disagreement is "entirely the step assembly's outer hash against the marshaller's", closing "when
-    the step assembly's outer hash produces what the marshaller computes." **It cannot**, and the
-    reason is arity rather than arithmetic. Read at source on both sides:
+  * ⚠ **SLOT 12 — `messages_for_next_step_proof`, AND IT IS NOT AN ARITY GAP ANY MORE.** §18's
+    `prevRows` ties Mina's slot 12 to packed word 54 by `Field.Assert.equal`, and the wrap DERIVES
+    NOTHING for it. This entry has now been wrong twice about WHY it misses, and both wrong answers
+    were the same shape — a structural explanation for what is a VALUE difference:
 
-        openmina  `MessagesForNextStepProof::to_fields` (`public_input/messages.rs:160-215`)
-                  56 VK coordinates ++ `app_state.to_field_elements` ++ per slot `[x; y] ++ 16 chals`
-                  with `app_state = ()` (**0** fields) and **PROOFS_VERIFIED = 2** slots — 56 + 36
-        this tree `KimchiStepMainCore.hmOutSpec` (`step_main.ml:525-566`)
-                  segment C's state after the same 56 index words, then `N_HM_APP = 2` app-state
-                  words, then `[vGx; vGy]` and `bRounds = 16` lifts for **ONE** `verify_one` — 56 + 20
+      1. *"the step assembly's outer hash against the marshaller's, closing when the outer hash
+         produces what the marshaller computes"* — refuted by the index repair;
+      2. *"two assemblies of one object at different ARITIES, closing when the marshaller reads the
+         step proof and the two agree on how many slots the record has"* — refuted on 2026-08-07.
+         The arities DO agree now (`marshal::STEP_RECURSION_SLOTS = gates::STEP_RULE_N_PREVIOUS = 1`,
+         `gate_c` prints `MATCH=true`), the app state agrees (two words on both sides), the index
+         agrees (`MinaWrapOwnVerifierKey`), **and slot 12 still misses.**
 
-    Two app-state words upstream does not have, and one slot where the marshalled record declares
-    two. ⚑ **MEASURED, and it is the decisive control:** re-proving the step circuit with a moved
-    public input on 2026-08-06 changed slot **11** and left slot **12** at the same digit, because
-    the marshaller builds `messages_for_next_step_proof` from the WRAP proof's `prev_challenges`
-    commitments and a caller-chosen `step_old_bulletproof_challenges` (`marshal.rs:578-608`) and
-    never consults the step proof at all. So slot 12 is not a step-side value gap: it is two
-    assemblies of one object at different arities, and it closes when the marshaller reads the step
-    proof and the two agree on how many slots the record has.
+    ⚑ **WHAT IS ACTUALLY LEFT, MEASURED BY `segd_slot12_probe` RATHER THAN INFERRED.** Hand
+    openmina's own `MessagesForNextStepProof::hash()` segment D's OWN preimage — 56 index
+    coordinates, `N_HM_APP = 2` app-state words, ONE `[Gx; Gy]`, `bRounds = 16` lifts — and it
+    returns **12050182178576971049813971198188121605941048571897685942524995475420733365304**,
+    which is segment D's squeeze and the emitted slot 12 **to the digit**. So there is no sponge
+    gap, no arity gap and no index gap. What differs is WHICH VALUES fill the one slot: segment D
+    absorbs the step assembly's own `G` (`solveG`'s output, §19) and its own sixteen
+    `to_field_checked` lifts, while `gate_c` hashes the WIRE record's
+    `challenge_polynomial_commitments` and `step_old_bulletproof_challenges`
+    (`marshal.rs:578-608`) — numbers the marshaller CHOSE and the step assembly never derived.
+
+    ⚠ ⚑ **AND CLOSING IT IS A FIXPOINT, WHICH IS WHY IT IS NOT A ONE-LINE MARSHALLER EDIT.** Making
+    the wire record carry segment D's `G` and lifts moves the step proof's PUBLIC INPUT at word 54;
+    the step transcript absorbs the public-input commitment; `solveG`'s output is derived from that
+    transcript. Naming that loop is the whole content of this entry — the previous two answers each
+    priced a repair that would not have closed it.
 
 ⚠ **AND THIS THEOREM IS A REFUSAL SHAPED TO SHRINK, like `STATEMENT_BLOCKED`.** Its second conjunct
 asserts a DISAGREEMENT. Close it and it goes red at the place the claim is made, and the counts above

@@ -149,7 +149,7 @@ agreed, so nothing could go red:
   * `KimchiStepWrapChainFixture` came from a SECOND binary's own proof, over kimchi's TEST SRS and
     with **`OsRng`** — not reproducible at all.
 
-`prevs = 2`, `wComms = 15`, `tComms = 7` on all three. ⚠ **Same-shape is not same-proof**, and a
+`maxPrevs = 2`, `wComms = 15`, `tComms = 7` on all three. ⚠ **Same-shape is not same-proof**, and a
 census that only counts cannot tell them apart — which is exactly why the pins below compare VALUES,
 elementwise, and why the red controls are against the specific objects that used to sit here.
 
@@ -157,17 +157,22 @@ elementwise, and why the red controls are against the specific objects that used
 `lrPointQ i = xhatBase (5 + i % 50)` made thirty-two of the thirty-three IPA points fifty SRS
 Lagrange bases, cycled. `the_ipa_opening_is_not_srs_lagrange_bases` is the control for that. -/
 
-/-- ⚑ **ALL 116 Fq WORDS THE TRANSCRIPT SOURCES ARE THIS PIPELINE'S OWN STEP PROOF'S**, elementwise,
+/-- ⚑ **ALL 114 Fq WORDS THE TRANSCRIPT SOURCES ARE THIS PIPELINE'S OWN STEP PROOF'S**, elementwise,
 at BOTH committed shapes. Not a length, not a digest, not a sample: `itemVal` is compared against
 `KimchiStepWrapChainFixture`'s blocks at every index the schedule reads.
+
+⚠ ⚑ **THE `sg_old` LEG IS READ AT THE RECORD'S INDEX AND COMPARED AT THE TRANSCRIPT'S.** `RC_SGOLD`
+is the PADDED record `[pad …; real …]` (`wrap.rs:476-491`), so the words the tape actually absorbs
+start at `2 · whNPad`. Comparing `itemVal T_SGOLD i` against `STEP_PREVCOMM_XY.getD i` — which is
+what this leg said until 2026-08-07 — is only true when there is no pad.
 
 ⚠ Two absorbed items are deliberately NOT here and are not claimed: `RC_DIGEST` is Mina's
 `step-transaction` key's index digest (§14's `choose_key` anchor) and `x_hat` is §15's MSM output.
 So this says the COMMITMENTS are this proof's — it does not say the emitted transcript's β/γ/α/ζ are
 this proof's, and they are not. `KimchiStepWrapChain` is where that becomes a theorem. -/
 theorem the_transcript_absorbs_this_pipelines_own_step_proof :
-    (List.range (2 * shapeWrap.prevs)).all (fun i =>
-      itemVal T_SGOLD i
+    (List.range (2 * WH_REAL_SLOTS)).all (fun i =>
+      itemVal T_SGOLD (2 * whNPad WH_REAL_SLOTS + i)
         == Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.getD i 0) = true
     ∧ (List.range (2 * shapeWrap.wComms)).all (fun i =>
         itemVal T_WCOMM i
@@ -192,16 +197,22 @@ rather than a number typed next to a claim. `sg_old 1 + w_comm 15 + z_comm 1 + t
 is derived rather than sourced, and counting it would inflate the fixture census by the one pair a
 rung earned.
 
-⚠ ⚑ **IT WAS 58 / 116 AND THE NAME SAID SO**, because `shapeWrap.prevs` was `2` while dregg's step
-proof carried two recursion slots. `marshal::STEP_RECURSION_SLOTS = 1` took it to one, the transcript
-absorbs one `sg_old` point, and `STEP_PREVCOMM_XY` went from four coordinates to two — so the pair of
-numbers in the name moved with it. The old name is retired rather than annotated. -/
+⚠ ⚑ **IT WAS 58 / 116 AND THE NAME SAID SO**, because dregg's step proof carried two recursion
+slots. `marshal::STEP_RECURSION_SLOTS = 1` took it to one, the transcript absorbs one `sg_old`
+point, and `STEP_PREVCOMM_XY` went from four coordinates to two — so the pair of numbers in the name
+moved with it. The old name is retired rather than annotated.
+
+⚠ ⚑ **AND THE COUNT IS `WH_REAL_SLOTS`, NOT `shapeWrap.maxPrevs`.** The wrap circuit ALLOCATES
+`Max_proofs_verified` `sg_old` points and the `OptSponge` mask keeps the padded one off the tape
+(`wrap_verifier.ml:511-514,538`), so the SOURCED census follows `actual_proofs_verified` while the
+allocation follows `Max`. Writing `maxPrevs` here would put the pad's two words in a census of words
+the step proof supplied. -/
 theorem the_sourced_transcript_census_is_57_points :
-    shapeWrap.prevs + shapeWrap.wComms + 1 + shapeWrap.tComms = 24
+    WH_REAL_SLOTS + shapeWrap.wComms + 1 + shapeWrap.tComms = 24
     ∧ 2 * shapeWrap.ipaRounds + 1 = 33
-    ∧ 2 * (shapeWrap.prevs + shapeWrap.wComms + 1 + shapeWrap.tComms)
+    ∧ 2 * (WH_REAL_SLOTS + shapeWrap.wComms + 1 + shapeWrap.tComms)
         + 2 * (2 * shapeWrap.ipaRounds + 1) = 114
-    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.length = 2 * shapeWrap.prevs
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.length = 2 * WH_REAL_SLOTS
     ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_WCOMM_XY.length = 2 * shapeWrap.wComms
     ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_ZCOMM_XY.length = 2
     ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_TCOMM_XY.length = 2 * shapeWrap.tComms
@@ -243,7 +254,7 @@ over an off-curve `l` — its `res = [x⁻¹]·l` needs the group. A real openin
 construction; measuring it is what makes that a fact about these numbers rather than a deduction
 from their provenance. -/
 theorem the_transcript_points_are_on_vesta :
-    (List.range shapeWrap.prevs).all (fun p =>
+    (List.range shapeWrap.maxPrevs).all (fun p =>
       onCurveQ (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true
     ∧ (List.range shapeWrap.wComms).all (fun j =>
         onCurveQ (itemVal T_WCOMM (2 * j), itemVal T_WCOMM (2 * j + 1))) = true
@@ -304,28 +315,28 @@ slot `j`.** The old name (`the_wraphack_sg_old_is_the_transcripts`) is retired r
 because what it asserted is now false at slot 0 and true at slot 1 for a reason it could not say. -/
 theorem the_record_pads_at_the_front_and_its_real_slots_are_the_transcripts :
     -- ⚑ every REAL slot reads the transcript's own cells, at the SHIFTED index…
-    (List.range (WH_PADDED - whNPad shapeWrap.prevs)).all (fun j =>
-      whSlotSgAt (mkWrap shapeWrap) (whNPad shapeWrap.prevs + j)
-        == (itemVal T_SGOLD (2 * j), itemVal T_SGOLD (2 * j + 1))) = true
-    -- ⚑ …and the PAD slot reads `Dummy.Ipa.Step.sg`, which is NOT a transcript cell.
-    ∧ whNPad shapeWrap.prevs = 1
+    (List.range (WH_PADDED - whNPad WH_REAL_SLOTS)).all (fun j =>
+      whSlotSgAt (mkWrap shapeWrap) (whNPad WH_REAL_SLOTS + j)
+        == (itemVal T_SGOLD (2 * (whNPad WH_REAL_SLOTS + j)),
+            itemVal T_SGOLD (2 * (whNPad WH_REAL_SLOTS + j) + 1))) = true
+    -- ⚑ …and the PAD slot reads `Dummy.Ipa.Step.sg`, which is record slot 0 and NO transcript cell.
+    ∧ whNPad WH_REAL_SLOTS = 1
     ∧ whSlotSgAt (mkWrap shapeWrap) 0 = whPadSg
-    ∧ whSlotSgAt (mkWrap shapeWrap) 0 ≠ (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
+    ∧ (itemVal T_SGOLD 0, itemVal T_SGOLD 1) = whPadSg
+    ∧ whSlotSgAt (mkWrap shapeWrap) 0 ≠ whSlotSgAt (mkWrap shapeWrap) 1
     -- ⚑ …and the record is the PIPELINE's, not the shape's: the smoke shape gets the same
     -- `[pad, real]` because `whRows` ties slot `p`'s squeeze to packed statement word `55 + p` of
     -- the ONE step proof, whatever wrap shape is emitting.
     ∧ whSlotSgAt (mkWrap shapeSmoke) 0 = whPadSg
-    ∧ whSlotSgAt (mkWrap shapeSmoke) 1 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
-    -- ⚠ ⚑ **AND THE SMOKE SHAPE HAS A TRANSCRIPT SLOT THE RECORD DOES NOT READ, WHICH IS AN OPEN
-    -- INCOHERENCE AND IS STATED RATHER THAN AVOIDED.** `shapeSmoke.prevs = 2` while `RC_SGOLD` —
-    -- `STEP_PREVCOMM_XY` — carries ONE point, so `itemVal T_SGOLD 2` falls through to a
-    -- `wrapFixture`, which is not on the curve. `KimchiWrapMainPins08.prev_step_accs_are_on_vesta`
-    -- is red on exactly that, and it is red at HEAD too: the shape was left at 2 when
-    -- `marshal::STEP_RECURSION_SLOTS` took the fixture to one point, and
-    -- `KimchiWrapMainField` being red kept every consumer from building and saying so.
-    ∧ shapeSmoke.prevs = 2
-    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.length
-        < 2 * shapeSmoke.prevs := by
-  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide, by decide, by decide⟩
+    ∧ whSlotSgAt (mkWrap shapeSmoke) 1 = (itemVal T_SGOLD 2, itemVal T_SGOLD 3)
+    -- ⚑ …and the RECORD is `WH_PADDED` points long where the TAPE is `WH_REAL_SLOTS`, which is the
+    -- whole content of the split: allocation follows `Max_proofs_verified`, absorption follows
+    -- `actual_proofs_verified`, and `RC_SGOLD` is the former.
+    ∧ RC_SGOLD.length = 2 * WH_PADDED
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.length = 2 * WH_REAL_SLOTS
+    ∧ ((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_SGOLD)).length
+        = 2 * WH_REAL_SLOTS := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide, by decide,
+          by decide, by decide, by decide⟩
 
 end Dregg2.Circuit.Emit.KimchiWrapMain
