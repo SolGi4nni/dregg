@@ -60,14 +60,19 @@ theorem the_challenge_slots_are_the_transcript_order :
     ∧ ((schedule shapeWrap).filter (fun e => match e with | .sq .chal => true | _ => false)).length
         = nChals shapeWrap
     -- ⚑ AND THE GAP STRUCTURE IS THE EVIDENCE, not the naming. The schedule positions of the first
-    -- four `chal` squeezes: β and γ are BACK TO BACK (`wrap_verifier.ml:620-621`, positions 37/38,
+    -- four `chal` squeezes: β and γ are BACK TO BACK (`wrap_verifier.ml:620-621`, positions 35/36,
     -- nothing absorbed between them), α comes only after `z_comm`'s two absorbs (`:623-624`,
-    -- position 41) and ζ after `t_comm`'s fourteen (`:630-631`, position 56). That adjacency is
+    -- position 39) and ζ after `t_comm`'s fourteen (`:630-631`, position 54). That adjacency is
     -- exactly what makes the first two the `challenge` bucket and α/ζ `scalar_challenge`s — the
     -- split `Wrap.Statement.to_data` orders slots 5-8 on.
+    -- ⚠ **THE FOUR POSITIONS SHIFTED BY TWO ON 2026-08-07 AND THE ADJACENCIES DID NOT**, which is
+    -- the content: `shapeWrap.prevs` went 2 → 1 with `marshal::STEP_RECURSION_SLOTS`, so the
+    -- transcript absorbs one `sg_old` point fewer and every squeeze after it moves two slots
+    -- earlier. A `[37, 38, 41, 56]` that survived would have meant the schedule did not read
+    -- `prevs` at all.
     ∧ (List.range 60).filter (fun i =>
         match (schedule shapeWrap).getD i default with | .sq .chal => true | _ => false)
-       = [37, 38, 41, 56] := by
+       = [35, 36, 39, 54] := by
   refine ⟨rfl, rfl, rfl, ?_⟩
   rfl
 
@@ -133,14 +138,27 @@ side's order give a DIFFERENT digest, so "absorbed the right values" and "absorb
 order" are two facts and this file checks both. -/
 theorem wraphack_tape_is_the_challenges_then_the_commitment :
     WH_ROUNDS = 15 ∧ WH_PADDED = 2 ∧ WH_ABSORBS = 32
-    ∧ (whTape (whOldChals 0) (whSgOld 0)).length = WH_ABSORBS
-    ∧ (whTape (whOldChals 0) (whSgOld 0)).getD (WH_ABSORBS - 2) 0 = (whSgOld 0).1
-    ∧ (whTape (whOldChals 0) (whSgOld 0)).getD (WH_ABSORBS - 1) 0 = (whSgOld 0).2
-    ∧ ((List.range (WH_MLMB * WH_ROUNDS)).all (fun k =>
-        (whTape (whOldChals 0) (whSgOld 0)).getD k 0 == whOldChal 0 k)) = true
-    ∧ (whDigestOf (whOldChals 0) (whSgOld 0)
-        == whDigestCommitmentFirst (whOldChals 0) (whSgOld 0)) = false := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    -- ⚑ AT EVERY SLOT OF THE RECORD, pad and real alike — the two have the same 30+2 width, which
+    -- is what `messages.rs:85-105`'s `assert_eq!(fields.len(), NFIELDS)` says with `NFIELDS = 32`.
+    -- ⚠ This read `whOldChals 0 / whSgOld 0` — ONE slot, and the one that is now the PAD — so it
+    -- said nothing about the slot the real accumulator is in.
+    ∧ ((List.range WH_PADDED).all (fun p =>
+        let g := whSlotSgAt (mkWrap shapeWrap) p
+        let cs := whSlotChals shapeWrap.prevs p
+        ((whTape cs g).length == WH_ABSORBS)
+        && ((whTape cs g).getD (WH_ABSORBS - 2) 0 == g.1)
+        && ((whTape cs g).getD (WH_ABSORBS - 1) 0 == g.2)
+        && ((List.range (WH_MLMB * WH_ROUNDS)).all (fun k =>
+              (whTape cs g).getD k 0 == cs.getD k 0)))) = true
+    -- ⚠ …and the order is a FACT: the same 32 values commitment-first give a different digest.
+    ∧ ((List.range WH_PADDED).all (fun p =>
+        let g := whSlotSgAt (mkWrap shapeWrap) p
+        let cs := whSlotChals shapeWrap.prevs p
+        (whDigestOf cs g == whDigestCommitmentFirst cs g) == false)) = true
+    -- ⚑ …and the two slots are not one object: pad ≠ real, in both halves of the tape.
+    ∧ (whSlotChals shapeWrap.prevs 0 == whSlotChals shapeWrap.prevs 1) = false
+    ∧ (whSlotSgAt (mkWrap shapeWrap) 0 == whSlotSgAt (mkWrap shapeWrap) 1) = false := by
+  refine ⟨rfl, rfl, rfl, by decide, by decide, by decide, by decide⟩
 
 /-- ⚑ **THE FRONT PAD IS THE FRESH STATE, AND TWO EMITTED ROWS PIN IT.** `whPadVectors` is
 `2 − max_proofs_verified` in general and `0` at the committed shape, so the opening state is
@@ -232,29 +250,38 @@ theorem wraphack_digest_is_the_emitted_squeeze :
 
 #assert_compiled wraphack_digest_is_the_emitted_squeeze
 
-/-- ⚑ …and the sponge runs on the TRANSCRIPT's own `sg_old` values, not a second copy of them
-(`~sg_old:prev_step_accs`, `wrap_main.ml:412` against `wrap_verifier.ml:538`). -/
-theorem wraphack_absorbs_the_transcripts_own_sg_old :
-    ((List.range shapeSmoke.prevs).all (fun p =>
-      (whSgOld p).1 == itemVal T_SGOLD (2 * p) && (whSgOld p).2 == itemVal T_SGOLD (2 * p + 1)))
+/-- ⚑ …and the REAL slot's sponge runs on the TRANSCRIPT's own `sg_old` values, not a second copy of
+them (`~sg_old:prev_step_accs`, `wrap_main.ml:412` against `wrap_verifier.ml:538`).
+
+⚠ ⚑ **AT THE REAL SLOT, WHICH IS SLOT 1, AND THIS THEOREM USED TO SAY IT OF SLOT 0.** The record is
+`[pad, real]` (`step.rs:2764-2772`), so record slot `whNPad + j` is transcript slot `j`; the PAD slot
+absorbs `Dummy.Ipa.Step.sg`, which the transcript's `OptSponge` mask drops (`wrap.rs:2280-2300`) and
+which therefore has no transcript cell to be equal to. The second half is that non-equality, stated
+rather than left out. -/
+theorem wraphack_real_slot_absorbs_the_transcripts_own_sg_old :
+    ((List.range (WH_PADDED - whNPad WH_REAL_SLOTS)).all (fun j =>
+      let a := whSpongeP tWh (whNPad WH_REAL_SLOTS + j)
+      (a.evs.getD (WH_MLMB * WH_ROUNDS) default).word == itemVal T_SGOLD (2 * j)
+      && (a.evs.getD (WH_MLMB * WH_ROUNDS + 1) default).word == itemVal T_SGOLD (2 * j + 1)))
       = true
-    ∧ ((whSpongeP tWh 0).evs.getD (WH_MLMB * WH_ROUNDS) default).word = itemVal T_SGOLD 0
-    ∧ ((whSpongeP tWh 0).evs.getD (WH_MLMB * WH_ROUNDS + 1) default).word = itemVal T_SGOLD 1 := by
-  refine ⟨rfl, rfl, rfl⟩
+    -- ⚠ …and the PAD slot's last two absorbs are openmina's dummy, not a transcript cell.
+    ∧ ((whSpongeP tWh 0).evs.getD (WH_MLMB * WH_ROUNDS) default).word = whPadSg.1
+    ∧ ((whSpongeP tWh 0).evs.getD (WH_MLMB * WH_ROUNDS + 1) default).word = whPadSg.2
+    ∧ whPadSg.1 ≠ itemVal T_SGOLD 0 := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
 
 /-- ⚑ **RED CONTROL — the digest is a function of every input it absorbs.** Bending the first old
 bulletproof challenge, the last one, or either coordinate of `sg_old` moves it. Without this the
-theorem above is a number agreeing with a number. -/
+theorem above is a number agreeing with a number. ⚠ Stated at the REAL slot, whose inputs are the
+ones this pipeline derives; the pad's own controls are in `KimchiWrapHackDigest`. -/
 theorem wraphack_digest_bends_at_every_probed_input :
-    (whDigestOf (whOldChals 0) (whSgOld 0)
-      == whDigestOf ((whOldChals 0).set 0 0) (whSgOld 0)) = false
-    ∧ (whDigestOf (whOldChals 0) (whSgOld 0)
-      == whDigestOf ((whOldChals 0).set (WH_MLMB * WH_ROUNDS - 1) 0) (whSgOld 0)) = false
-    ∧ (whDigestOf (whOldChals 0) (whSgOld 0)
-      == whDigestOf (whOldChals 0) (qAdd (whSgOld 0).1 1, (whSgOld 0).2)) = false
-    ∧ (whDigestOf (whOldChals 0) (whSgOld 0)
-      == whDigestOf (whOldChals 0) ((whSgOld 0).1, qAdd (whSgOld 0).2 1)) = false
-    ∧ (whPrevDigest 0 == whPrevDigest 1) = false := by
+    (let cs := whSlotChals WH_REAL_SLOTS 1
+     let g := whSlotSg WH_REAL_SLOTS 1
+     ((whDigestOf cs g == whDigestOf (cs.set 0 0) g) = false)
+     ∧ ((whDigestOf cs g == whDigestOf (cs.set (WH_MLMB * WH_ROUNDS - 1) 0) g) = false)
+     ∧ ((whDigestOf cs g == whDigestOf cs (qAdd g.1 1, g.2)) = false)
+     ∧ ((whDigestOf cs g == whDigestOf cs (g.1, qAdd g.2 1)) = false)
+     ∧ ((whPrevDigest 0 == whPrevDigest 1) = false)) := by
   refine ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- ⚑⚑⚑ **THE CLOSING SPONGE REPRODUCES MINA'S OWN SLOT 11, ON MINA'S OWN INPUTS.**

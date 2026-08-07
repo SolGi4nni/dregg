@@ -1,16 +1,33 @@
-//! ⚑⚑ **`Dummy.Ipa.Wrap.sg` — THE POINT `wrap.rs:736` PREPENDS, EXPORTED RATHER THAN GUESSED.**
+//! ⚑⚑ **THE WRAP RECORD'S PADDED SLOT, EXPORTED AS ITS PREIMAGE AND NOT ONLY AS ITS DIGEST.**
 //!
-//! `wrap.rs:729-737`, read at source:
+//! `wrap.rs:476-491`, read at source:
 //!
 //! ```ignore
-//! let mut vec = step_statement.proof_state.messages_for_next_step_proof
-//!                 .challenge_polynomial_commitments.clone();
-//! while vec.len() < MAX_PROOFS_VERIFIED_N as usize {
-//!     vec.insert(0, InnerCurve::of_affine(dummy_ipa_wrap_sg()));
+//! fn pad_messages_for_next_wrap_proof(mut msgs: Vec<MessagesForNextWrapProof>) -> Vec<…> {
+//!     while msgs.len() < 2 {
+//!         msgs.insert(0, MessagesForNextWrapProof {
+//!             challenge_polynomial_commitment: InnerCurve::from(dummy_ipa_step_sg()),
+//!             old_bulletproof_challenges: vec![MessagesForNextWrapProof::dummy_padding(); 2],
+//!         });
+//!     }
+//!     msgs
 //! }
 //! ```
 //!
-//! Two facts this settles, both of which the Lean side had wrong while `actual_proofs_verified`
+//! and `wrap.rs:2832-2846` hands exactly that list to the wrap circuit as `prev_step_accs` /
+//! `old_bp_chals`, which `wrap.rs:2919-2932` hashes with `hash_checked` per slot. So the wrap
+//! circuit's slot-0 `hash_messages_for_next_wrap_proof` is not a fixture and not a constant it is
+//! told: it is a SPONGE over a preimage upstream fixes, whose squeeze is
+//! `messages_for_next_wrap_proof_padding()` (`transaction.rs:3691-3700`).
+//!
+//! ⚑ **THAT IS WHY THIS BINARY EXPORTS THE PREIMAGE.** A Lean side handed only the digest would
+//! TRANSCRIBE the pad — one more literal standing for an object the assembly can derive, which is
+//! the defect `KimchiWrapHackDigest` exists to refuse. Handed the preimage AND the digest, the Lean
+//! side derives the first into the second and
+//! `KimchiWrapMain.the_pad_slot_derives_minas_own_padding_digest` is that agreement as a theorem —
+//! our Fq sponge against openmina's `hash_fields`, on openmina's own inputs.
+//!
+//! Four facts this settles, three of which the Lean side had wrong while `actual_proofs_verified`
 //! happened to equal `MAX_PROOFS_VERIFIED_N`:
 //!
 //!   1. **The padding is a PREPEND.** Slot 0 is the DUMMY and the real accumulators are at the END.
@@ -20,6 +37,17 @@
 //!      `actual_proofs_verified = <the record>.old_bulletproof_challenges.len()` — 1 for dregg's
 //!      one-`verify_one` step rule — while this padding runs to `MAX_PROOFS_VERIFIED_N` = 2.
 //!      `KimchiWrapMainCore.shapeWrap.prevs` served BOTH until 2026-08-07.
+//!   3. ⚑ **THE PAD'S COMMITMENT IS `Dummy.Ipa.STEP.sg`, NOT `Dummy.Ipa.WRAP.sg`**, and this file
+//!      said the wrong one until 2026-08-07. They pad two DIFFERENT records: `dummy_ipa_wrap_sg()`
+//!      pads `messages_for_next_step_proof.challenge_polynomial_commitments` at `wrap.rs:736` (the
+//!      accumulator list), `dummy_ipa_step_sg()` pads `messages_for_next_wrap_proof` at
+//!      `wrap.rs:484` (the record packed statement words 55/56 carry). Both are exported so the
+//!      distinction is legible rather than remembered.
+//!   4. **The pad's challenge vectors are `Dummy.Ipa.Wrap.challenges_computed`**, which openmina
+//!      carries as fifteen literals (`messages.rs:114-134`). ⚠ `KimchiWrapHackDigest.WH_MLMB`'s
+//!      docblock declared these "an OCaml random-oracle draw this tree has no independent source
+//!      for" and used that to justify emitting only the `mlmb = 2` case. There IS a source; it is
+//!      this export.
 //!
 //! ⚠ Until this export existed, `KimchiWrapHackDigest.whSgOld` read
 //! `STEP_PREVCOMM_XY.getD (2*p) (wrapFixtureQ 1 (2*p))` — so a `STEP_PREVCOMM_XY` that carried
@@ -29,6 +57,7 @@
 //! RUN: `cargo run --release --bin wrap_hack_dummy_sg [out_dir]`
 
 use ark_ec::AffineRepr;
+use ledger::proofs::public_input::messages::{dummy_ipa_step_sg, MessagesForNextWrapProof};
 use ledger::proofs::transaction::messages_for_next_wrap_proof_padding;
 use ledger::proofs::wrap::dummy_ipa_wrap_sg;
 
@@ -39,12 +68,24 @@ fn main() {
     std::fs::create_dir_all(&out_dir).expect("out dir");
 
     let p = dummy_ipa_wrap_sg();
-    let (x, y) = p
+    let (wx, wy) = p
         .xy()
         .expect("Dummy.Ipa.Wrap.sg is not the point at infinity");
-    println!("[dummy] Dummy.Ipa.Wrap.sg = ({x}, {y})");
+    println!("[dummy] Dummy.Ipa.Wrap.sg = ({wx}, {wy})");
 
-    // ⚑⚑ …and the OTHER pad, which is the one packed statement words 55/56 actually need.
+    // ⚑ …and the OTHER dummy point, which is the one packed statement words 55/56 actually need.
+    let (sx, sy) = dummy_ipa_step_sg();
+    println!("[dummy] Dummy.Ipa.Step.sg = ({sx}, {sy})");
+
+    // ⚑ `Dummy.Ipa.Wrap.challenges_computed` — ONE vector of fifteen; the pad carries TWO of them.
+    let chals = MessagesForNextWrapProof::dummy_padding();
+    assert_eq!(chals.len(), 15, "Tock.Rounds.n");
+    println!(
+        "[dummy] Dummy.Ipa.Wrap.challenges_computed[0] = {}",
+        chals[0]
+    );
+
+    // ⚑⚑ …and the digest the preimage above must produce.
     // `step.rs:2764-2772`:
     //     let n_padding = 2 - expanded_proofs.len();
     //     if i < n_padding { messages_for_next_wrap_proof_padding() }
@@ -54,39 +95,69 @@ fn main() {
     let pad = messages_for_next_wrap_proof_padding();
     println!("[dummy] messages_for_next_wrap_proof_padding() = {pad}");
 
+    let chal_list = {
+        let mut s = String::new();
+        for (i, c) in chals.iter().enumerate() {
+            s.push_str(if i == 0 { "  [ " } else { "  , " });
+            s.push_str(&c.to_string());
+            s.push('\n');
+        }
+        s.push_str("  ]");
+        s
+    };
+
     let body = format!(
         "/-\n\
-         # MinaWrapHackDummySg — `Dummy.Ipa.Wrap.sg`, the point `wrap.rs:736` PREPENDS.\n\n\
+         # MinaWrapHackDummySg — ⚑ THE WRAP RECORD'S PADDED SLOT, PREIMAGE AND DIGEST.\n\n\
          ⚑ GENERATED by `pickles-extractors/src/bin/wrap_hack_dummy_sg.rs` out of openmina's own\n\
-         `ledger::proofs::wrap::dummy_ipa_wrap_sg()`. Do not hand-edit.\n\n\
-         `wrap.rs:729-737` pads `messages_for_next_step_proof.challenge_polynomial_commitments` up\n\
-         to `MAX_PROOFS_VERIFIED_N` by INSERTING this point AT INDEX 0 — so on a rule whose\n\
-         `actual_proofs_verified` is 1, the wrap proof's own accumulator list is `[dummy, real]`\n\
-         and NOT `[real, dummy]`. `KimchiStepMainFixture.chainSlot0` says the same thing about\n\
-         segment C's slot 0.\n\n\
+         `dummy_ipa_wrap_sg()`, `dummy_ipa_step_sg()`, `MessagesForNextWrapProof::dummy_padding()`\n\
+         and `messages_for_next_wrap_proof_padding()`. Do not hand-edit.\n\n\
+         ⚠ **TWO RECORDS, TWO DUMMY POINTS, AND THEY ARE NOT INTERCHANGEABLE.**\n\
+         `wrap.rs:729-737` pads `messages_for_next_step_proof.challenge_polynomial_commitments` — the\n\
+         ACCUMULATOR list — by inserting `Dummy.Ipa.Wrap.sg` at index 0. `wrap.rs:476-491` pads\n\
+         `messages_for_next_wrap_proof` — the record packed statement words 55/56 carry — by\n\
+         inserting a whole `MessagesForNextWrapProof` whose commitment is `Dummy.Ipa.STEP.sg` and\n\
+         whose challenge vectors are two copies of `Dummy.Ipa.Wrap.challenges_computed`. Both pads\n\
+         are PREPENDS, so on a rule whose `actual_proofs_verified` is 1 both lists are\n\
+         `[dummy, real]` and NOT `[real, dummy]`.\n\n\
+         ⚑ **THE PAD SLOT IS A DERIVATION, NOT A CONSTANT THIS TREE IS TOLD.** `wrap.rs:2919-2932`\n\
+         hashes every slot of the PADDED record in circuit, so the wrap circuit computes the pad's\n\
+         digest out of the preimage below. `NEXT_WRAP_PROOF_PADDING` is here as the ORACLE that\n\
+         derivation is checked against — `KimchiWrapMain.the_pad_slot_derives_minas_own_padding\n\
+         _digest` — and not as the value the assembly emits.\n\n\
          ⚠ WHAT THIS RETIRED: `KimchiWrapHackDigest.whSgOld`'s `getD … (wrapFixtureQ 1 …)`\n\
          fallback, which turned a too-short `STEP_PREVCOMM_XY` into a hashed filler instead of a\n\
          refusal.\n\
          -/\n\
          namespace Dregg2.Circuit.Emit.MinaWrapHackDummySg\n\n\
-         /-- `Dummy.Ipa.Wrap.sg`'s affine `x`. -/\n\
-         def DUMMY_SG_X : Nat := {x}\n\n\
+         /-- `Dummy.Ipa.Wrap.sg`'s affine `x` — the ACCUMULATOR list's pad (`wrap.rs:736`). ⚠ NOT\n\
+         the wrap record's; see `DUMMY_STEP_SG`. -/\n\
+         def DUMMY_WRAP_SG_X : Nat := {wx}\n\n\
          /-- …and its `y`. -/\n\
-         def DUMMY_SG_Y : Nat := {y}\n\n\
+         def DUMMY_WRAP_SG_Y : Nat := {wy}\n\n\
          /-- …as a point. -/\n\
-         def DUMMY_SG : Nat × Nat := (DUMMY_SG_X, DUMMY_SG_Y)\n\n\
-         /-- ⚑⚑ **`messages_for_next_wrap_proof_padding()`** — `transaction.rs:3691-3700`, the\n\
-         `hash()` of a `MessagesForNextWrapProof` whose commitment is `dummy_ipa_step_sg()` and\n\
-         whose challenge vector is empty.\n\n\
-         `step.rs:2764-2772` builds the wrap record as `[Fp; 2]` of DIGESTS and puts\n\
-         `n_padding = 2 - expanded_proofs.len()` copies of THIS at the FRONT. Dregg's step rule has\n\
-         one `verify_one`, so packed statement words 55/56 are `[this, the real one]`.\n\n\
-         ⚠ `KimchiWrapHackDigest.whPrevDigest` computes BOTH words as `whDigestOf` over a slot of\n\
-         `STEP_PREVCOMM_XY`, i.e. it models TWO real previous proofs. That was invisible while the\n\
-         step proof was padded to two recursion slots and `STEP_PREVCOMM_XY` had two points; with\n\
-         `marshal::STEP_RECURSION_SLOTS = 1` slot 1 falls through to a `wrapFixtureQ` filler and\n\
-         `KimchiWrapMainField.the_published_statement_carries_every_derived_word_but_the_arity\n\
-         _mismatched_one` goes RED on it. -/\n\
+         def DUMMY_WRAP_SG : Nat × Nat := (DUMMY_WRAP_SG_X, DUMMY_WRAP_SG_Y)\n\n\
+         /-- ⚑ `Dummy.Ipa.Step.sg`'s affine `x` — the WRAP RECORD's pad commitment\n\
+         (`wrap.rs:484`), i.e. `prev_step_accs.(0)` on a one-`verify_one` rule. -/\n\
+         def DUMMY_STEP_SG_X : Nat := {sx}\n\n\
+         /-- …and its `y`. -/\n\
+         def DUMMY_STEP_SG_Y : Nat := {sy}\n\n\
+         /-- …as a point. -/\n\
+         def DUMMY_STEP_SG : Nat × Nat := (DUMMY_STEP_SG_X, DUMMY_STEP_SG_Y)\n\n\
+         /-- ⚑ **`Dummy.Ipa.Wrap.challenges_computed`** (`wrap_hack.ml:37`,\n\
+         `messages.rs:114-134`) — ONE `Tock.Rounds.n = 15` vector. The pad carries TWO copies.\n\n\
+         ⚠ These are `Ipa.Wrap.compute_challenge` of `Ro.scalar_chal ()`, i.e. an OCaml\n\
+         random-oracle draw. `KimchiWrapHackDigest.WH_MLMB` used to call that \"a value this tree\n\
+         has no independent source for\" and declined to emit the `mlmb < 2` opening state because\n\
+         of it. openmina carries them as literals; this is that source. -/\n\
+         def DUMMY_PAD_CHALS : List Nat :=\n{chal_list}\n\n\
+         /-- ⚑⚑ **`messages_for_next_wrap_proof_padding()`** (`transaction.rs:3691-3700`) — the\n\
+         `hash()` of the padded record's slot-0 entry, i.e. the squeeze over\n\
+         `DUMMY_PAD_CHALS ++ DUMMY_PAD_CHALS ++ [DUMMY_STEP_SG_X, DUMMY_STEP_SG_Y]`.\n\n\
+         ⚠ **THIS IS AN ORACLE, NOT AN INPUT.** The assembly DERIVES this value; the theorem\n\
+         `KimchiWrapMain.the_pad_slot_derives_minas_own_padding_digest` is the two agreeing. A use\n\
+         site that emitted this literal instead of the sponge would be transcribing an object it\n\
+         can compute, which is what `KimchiWrapHackDigest`'s whole docblock refuses. -/\n\
          def NEXT_WRAP_PROOF_PADDING : Nat := {pad}\n\n\
          end Dregg2.Circuit.Emit.MinaWrapHackDummySg\n"
     );

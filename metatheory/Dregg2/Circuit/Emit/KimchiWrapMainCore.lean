@@ -363,7 +363,7 @@ key) and `x_hat` (§15's MSM output).
 
 ⚠ `wrapFixture` survives as the `getD` TOTALITY default on the four commitment blocks — not a value
 anything reads, since a fired default would mean the tape asked for a word past the end of a block
-and `the_sourced_transcript_census_is_58_points` pins every length against the shape.
+and `the_sourced_transcript_census_is_57_points` pins every length against the shape.
 `lrPointQ`/`deltaPointQ` default to **`0`** instead, and the difference is deliberate rather than an
 oversight: `(0, 0)` is kimchi's own flattening of the point at infinity (`sponge.rs:332-344`), it is
 off `y² = x³ + 5`, and `the_transcript_points_are_on_vesta` therefore turns a fired default there
@@ -2737,8 +2737,20 @@ nothing asserted. It is the class this file spends its whole §12 refusing, in a
 BOTTOM block of three disjoint ones and the `rungsUpto` accident carries no weight any more. -/
 def baseWh (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + nFtcVars s sp
 def whBaseP (s : WrapShape) (sp : SpAcc) (p : Nat) : Nat := baseWh s sp + WH_VARS * p
-def whBaseC (s : WrapShape) (sp : SpAcc) : Nat := baseWh s sp + WH_VARS * s.prevs
-def nWhVars (s : WrapShape) : Nat := WH_VARS * (s.prevs + 1)
+/-- ⚑⚑ **`WH_PADDED`, NOT `s.prevs` — THE RECORD'S LENGTH IS `Max_proofs_verified` AND THE
+TRANSCRIPT'S IS `actual_proofs_verified`.**
+
+`wrap.rs:2832-2846` hands the wrap circuit `prev_step_accs` and `old_bp_chals` off
+`messages_for_next_wrap_proof_padded`, which `pad_messages_for_next_wrap_proof` (`wrap.rs:476-491`)
+has made **two** entries long whatever the step proof carried, and `wrap.rs:2919-2932` hashes every
+one of them. The `sg_old` the TRANSCRIPT absorbs is the same list masked by
+`actual_proofs_verified_mask` (`wrap.rs:2280-2300`) through an `OptSponge`, so the padded slot is
+computed and NOT absorbed — two counts, and `shapeWrap.prevs` served both until 2026-08-07.
+
+⚠ At `shapeSmoke` the two coincide (`prevs = 2 = WH_PADDED`), which is why every one of the thirty
+tracked smoke fixtures is unmoved by this split and why it stayed invisible. -/
+def whBaseC (s : WrapShape) (_sp : SpAcc) : Nat := baseWh s _sp + WH_VARS * WH_PADDED
+def nWhVars (_s : WrapShape) : Nat := WH_VARS * (WH_PADDED + 1)
 
 /-- ⚑ **W-WRAPHACK'S BLOCK (§17b)** — the three sponges' cells, plus the ONE cell W-CLOSE puts at
 the block's last address (`baseClose = baseWh + nWhVars`, §22). EXACT, not capped: both summands are
@@ -2747,17 +2759,41 @@ shape arithmetic, so a cap with slack here would be slack nothing needs.
 the block ends where W-CLOSE's cell does. -/
 def WH_REGION_CAP (s : WrapShape) : Nat := nWhVars s + 1
 
-/-- Previous proof `p`'s sponge (`wrap_main.ml:341-348`).
+/-- ⚑ **RECORD SLOT `p`'s COMMITMENT, AS THE CIRCUIT SEES IT.** A REAL slot reads the TRANSCRIPT's
+own absorbed cells (`absPtVal`), so §21's tie row joins two cells that already hold one value; the
+PAD slot reads `whPadSg` — `Dummy.Ipa.Step.sg` — which the transcript never absorbs because the
+`OptSponge` mask drops it.
 
-⚑ Its `sg_old` pair is `absPtVal t.sp T_SGOLD p` — the TRANSCRIPT's own absorbed cells, per `absVal`.
-`KimchiWrapMainField.whSgOld` (which reads `PastaPoseidonFq.PREVCOMM_XY` directly) survives only as
-`prevWordVal`'s source, because `KimchiWrapMainField` is BELOW this file in the import graph and
-cannot see `SpAcc` at all. ⚠ **Residual, named:** the 57 packed previous-statement words that
-`prevWordVal` feeds are a FREE WITNESS upstream (`wrap_main.ml:226-256` checks `old_bp_chals` with
-no `typ` of any kind) and are memoized into `WrapShape.xhatXY`, so routing them through a tape would
-make the shape depend on the transcript. That is a design fork, not this repair. -/
+⚠ **THE INDEX SHIFT IS THE WHOLE POINT.** Record slot `whNPad + j` is transcript slot `j`. Reading
+`absPtVal t.sp T_SGOLD p` at the RECORD's index is what made a one-`verify_one` rule hash the real
+accumulator into the PAD's word.
+
+⚠ ⚑ **AND IT IS `WH_REAL_SLOTS`, NOT `t.sh.prevs`, AND THE FIRST DRAFT OF THIS REPAIR USED
+`t.sh.prevs`.** The record is not a per-shape object: `whRows` ties slot `p`'s squeeze to
+`prevWordVal (PREV_MSG_NEXT_STEP + 1 + p)`, which recomposes `STEP_PUBLIC_IN` and is the SAME step
+statement whatever wrap shape is being emitted. A shape-keyed `whNPad` would make `shapeSmoke`
+(`prevs = 2`, so no pad) hash a real accumulator into the word the step proof publishes the PAD at —
+a tie with no satisfying witness, i.e. `w11_wraphack` back in `STATEMENT_BLOCKED`. The transcript is
+per-shape; the record is the pipeline's. -/
+def whSlotSgAt (t : WrapData) (p : Nat) : Nat × Nat :=
+  if p < whNPad WH_REAL_SLOTS then whPadSg
+  else absPtVal t.sp T_SGOLD (p - whNPad WH_REAL_SLOTS)
+
+/-- Record slot `p`'s sponge (`wrap_main.ml:341-348`, `wrap.rs:2919-2932`).
+
+⚠ **Residual, named:** the 57 packed previous-statement words that `prevWordVal` feeds are a FREE
+WITNESS upstream (`wrap_main.ml:226-256` checks `old_bp_chals` with no `typ` of any kind) and are
+memoized into `WrapShape.xhatXY`, so routing them through a tape would make the shape depend on the
+transcript. That is a design fork, not this repair.
+
+⚠ ⚑ **AND THE PAD SLOT'S THIRTY-TWO ABSORBS ARE FREE WITNESS CELLS HERE EXACTLY AS THEY ARE
+UPSTREAM** (`w.exists`, `wrap.rs:2832-2846`). What binds them is the tie `whRows` emits from the
+squeeze to packed statement word 55, plus the STEP circuit publishing `messages_for_next_wrap_proof
+_padding()` there. Neither side pins the preimage to the constant, and saying so is the point:
+`the_pad_slot_derives_minas_own_padding_digest` is a fact about the EMITTED VALUE, not a
+constraint the emitted circuit carries. -/
 def whSpongeP (t : WrapData) (p : Nat) : SpAcc :=
-  whSpongeOf (whBaseP t.sh t.sp p) (whTape (whOldChals p) (absPtVal t.sp T_SGOLD p))
+  whSpongeOf (whBaseP t.sh t.sp p) (whTape (whSlotChals WH_REAL_SLOTS p) (whSlotSgAt t p))
 
 /-- ⚑⚑⚑ **`new_bulletproof_challenges`, DERIVED — and it was a `wrapFixtureQ 42` FIXTURE until
 2026-08-06.**
@@ -2814,18 +2850,24 @@ def whRows (t : WrapData) (wired : Bool) : List WRow :=
   let s := t.sh
   let sp := t.sp
   let ties : List (List (Option PVar) × List Int) :=
-    (List.range s.prevs).flatMap (fun p =>
+    (List.range WH_PADDED).flatMap (fun p =>
       let a := whSpongeP t p
       -- ⚑ THE LAST TWO ABSORBS ARE `prev_step_accs.(p)` — the TRANSCRIPT's own `sg_old` cells, not
       -- a second copy of them. This is what makes `x; y` last rather than first observable.
-      ((List.range 2).map (fun j =>
-        ([some (a.evs.getD (WH_MLMB * WH_ROUNDS + j) default).wordV, some (sgOldVar t p j), none],
-         cEq)))
+      -- ⚠ ⚑ **ONLY FOR A REAL SLOT.** A PADDED slot's commitment is `Dummy.Ipa.Step.sg`, which the
+      -- transcript's `OptSponge` never absorbs (`wrap.rs:2280-2300`), so there is no cell to tie to
+      -- and emitting one would tie the pad's absorb to a REAL accumulator — the exact aliasing this
+      -- repair removes. Its binding is the squeeze tie below and nothing else, as upstream.
+      (if p < whNPad WH_REAL_SLOTS then [] else
+        (List.range 2).map (fun j =>
+          ([some (a.evs.getD (WH_MLMB * WH_ROUNDS + j) default).wordV,
+            some (sgOldVar t (p - whNPad WH_REAL_SLOTS) j), none],
+           cEq)))
       -- …and the squeeze IS packed statement word 55 / 56, which the MSM consumes as entry 65 / 66.
       ++ [ ([some (whDigestVar a), some (prevW s sp (PREV_MSG_NEXT_STEP + 1 + p)), none], cEq) ])
     -- ⚑ …and the closing squeeze IS wrap statement word 11 (`wrap_main.ml:421-431`).
     ++ [ ([some (.external (WH_PUB_SLOT s) : PVar), some (whDigestVar (whSpongeC t)), none], cEq) ]
-  (List.range s.prevs).flatMap (fun p =>
+  (List.range WH_PADDED).flatMap (fun p =>
     transcriptRowsQ (whBaseP s sp p) (whSpongeP t p) wired)
   ++ transcriptRowsQ (whBaseC s sp) (whSpongeC t) wired
   ++ packHalves ties
@@ -2834,7 +2876,7 @@ def whRows (t : WrapData) (wired : Bool) : List WRow :=
 values `spongeEnv (baseSp …)` already carries for the transcript's own cells; they are DIFFERENT
 variables holding ONE value, which is what the tie rows say and what a σ class means. -/
 def whEnv (t : WrapData) : VarEnv :=
-  (List.range t.sh.prevs).flatMap (fun p => spongeEnv (whBaseP t.sh t.sp p) (whSpongeP t p))
+  (List.range WH_PADDED).flatMap (fun p => spongeEnv (whBaseP t.sh t.sp p) (whSpongeP t p))
   ++ spongeEnv (whBaseC t.sh t.sp) (whSpongeC t)
 
 /-! ## §22 — ⚑ **W-CLOSE**: `wrap_main.ml:419-420`, and it is one constraint.
@@ -6117,8 +6159,17 @@ def shapeSmoke : WrapShape :=
   -- proof's own domain's now and every scalar is a published statement word, so a five-entry subset
   -- of the same 67 is a different point. Unlike the four previous moves, this one is NOT confined to
   -- the wrap shape — all thirty smoke rungs re-emit.
+  -- ⚑⚑ **AND IT MOVED AGAIN ON 2026-08-07, WHEN THE WRAP RECORD ACQUIRED ITS PAD.** Packed statement
+  -- words 55/56 became `[messages_for_next_wrap_proof_padding(), the real digest]`, so
+  -- `stepmain_step_r8_finalize` re-emitted (exactly two of sixty-seven entries) and the step proof
+  -- re-proved — which moves EVERY commitment in `KimchiStepWrapChainFixture` and therefore every
+  -- MSM scalar and every Lagrange base this fold reads.
+  -- ⚠ `shapeWrap.xhatXY` did NOT need a hand-edit for the same event, and the asymmetry is the
+  -- lesson: it names `STEP_PUBCOMM_XY` (the fixture's own words) and moved with the re-export, while
+  -- this one is a literal pair and went stale silently. `EmitWrapMainJson`'s refusal is what caught
+  -- it — a memo written as a numeral is a memo that can rot.
   , xhatXY :=
-      (451248160371249392551674732251582055375504469355824347021701436595532393133,
-       12949190268820875210097164267897441826420200650509082217547608746165978449665) }
+      (28165423449084717082481151485798317168113882370163881582671000826766251401262,
+       4549862343199917614386982613737362184182002331567877581633298615345383329301) }
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

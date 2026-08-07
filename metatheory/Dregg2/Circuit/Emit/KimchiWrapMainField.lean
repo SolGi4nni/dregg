@@ -500,8 +500,10 @@ def prevWordWidth (w : Nat) : Nat :=
 
 /-! ### §15c″ — ⚑ **W-WRAPHACK's VALUE LAYER MOVED DOWN ON 2026-08-06** — `WH_ROUNDS`,
 `WH_PADDED`, `whPadVectors`, `WH_MLMB`, `whTape`, `whDigestOf`, `whOldChal`, `whOldChals`,
-`whSgOld` and `whPrevDigest` are in **`Dregg2.Circuit.Emit.KimchiWrapHackDigest`**, same namespace,
-imported above; nothing here is renamed and no wrap-side use site moves.
+`whRecordAt`, `whSlotChals`, `whPadChals`, `whPadSg`, `whRealSgs` and `whPrevDigest` are in
+**`Dregg2.Circuit.Emit.KimchiWrapHackDigest`**, same namespace, imported above; nothing here is
+renamed and no wrap-side use site moves. (`whSgOld` was retired there on 2026-08-07 — the record has
+a PAD slot and a REAL slot and one accessor could not name both.)
 
 The reason is the one that sent `whNewChals` the other way, and it is not taste. `wrap_main.ml:
 340-348` COMPUTES packed words 55 and 56 — they are not witnessed on the wrap side — and

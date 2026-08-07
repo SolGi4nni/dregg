@@ -186,16 +186,21 @@ theorem the_transcript_absorbs_this_pipelines_own_step_proof :
           == Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_DELTA_XY.getD i 0) = true := by
   refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- ⚑ **THE CENSUS THOSE WORDS MAKE: 58 POINTS, 116 WORDS**, and it is arithmetic over the SHAPE
-rather than a number typed next to a claim. `sg_old 2 + w_comm 15 + z_comm 1 + t_comm 7 = 25` and
+/-- ⚑ **THE CENSUS THOSE WORDS MAKE: 57 POINTS, 114 WORDS**, and it is arithmetic over the SHAPE
+rather than a number typed next to a claim. `sg_old 1 + w_comm 15 + z_comm 1 + t_comm 7 = 24` and
 `lr 2·16 + delta 1 = 33`. ⚠ `x_hat` is not counted: `w6_xhat` made that pair §15's MSM output, so it
 is derived rather than sourced, and counting it would inflate the fixture census by the one pair a
-rung earned. -/
-theorem the_sourced_transcript_census_is_58_points :
-    shapeWrap.prevs + shapeWrap.wComms + 1 + shapeWrap.tComms = 25
+rung earned.
+
+⚠ ⚑ **IT WAS 58 / 116 AND THE NAME SAID SO**, because `shapeWrap.prevs` was `2` while dregg's step
+proof carried two recursion slots. `marshal::STEP_RECURSION_SLOTS = 1` took it to one, the transcript
+absorbs one `sg_old` point, and `STEP_PREVCOMM_XY` went from four coordinates to two — so the pair of
+numbers in the name moved with it. The old name is retired rather than annotated. -/
+theorem the_sourced_transcript_census_is_57_points :
+    shapeWrap.prevs + shapeWrap.wComms + 1 + shapeWrap.tComms = 24
     ∧ 2 * shapeWrap.ipaRounds + 1 = 33
     ∧ 2 * (shapeWrap.prevs + shapeWrap.wComms + 1 + shapeWrap.tComms)
-        + 2 * (2 * shapeWrap.ipaRounds + 1) = 116
+        + 2 * (2 * shapeWrap.ipaRounds + 1) = 114
     ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.length = 2 * shapeWrap.prevs
     ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_WCOMM_XY.length = 2 * shapeWrap.wComms
     ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_ZCOMM_XY.length = 2
@@ -282,18 +287,45 @@ theorem the_bend_still_bends_when_it_is_aimed :
     ∧ RC_DIGEST ≠ 7 := by
   refine ⟨rfl, rfl, by decide⟩
 
-/-- ⚑ **ONE `sg_old`, NOT TWO — the defect the move exposed.** `KimchiWrapMainField.whSgOld` feeds
-`prevWordVal`, i.e. packed statement words 55/56 and therefore x_hat MSM entries 65/66; `itemVal
-T_SGOLD` feeds the TRANSCRIPT, whose cells §21's rows actually hash. The two were separate defs that
-happened to name one list, and when `RC_SGOLD` moved to this pipeline's own step proof they came
-apart **silently** — `xhatOut 67` did not move, so the emitter's `xhatXY` refusal stayed green while
-the emitted rows and the packed words had stopped describing one `sg_old`. A green gate was evidence
-of the defect. Both now resolve through `STEP_PREVCOMM_XY`, and this `rfl` is what keeps them one. -/
-theorem the_wraphack_sg_old_is_the_transcripts :
-    (List.range shapeWrap.prevs).all (fun p =>
-      whSgOld p == (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true
-    ∧ (List.range shapeSmoke.prevs).all (fun p =>
-        whSgOld p == (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true := by
-  refine ⟨rfl, rfl⟩
+/-- ⚑ **ONE `sg_old`, NOT TWO — the defect the move exposed.** `whSgOld` fed `prevWordVal`, i.e.
+packed statement words 55/56 and therefore x_hat MSM entries 65/66; `itemVal T_SGOLD` feeds the
+TRANSCRIPT, whose cells §21's rows actually hash. The two were separate defs that happened to name
+one list, and when `RC_SGOLD` moved to this pipeline's own step proof they came apart **silently** —
+`xhatOut 67` did not move, so the emitter's `xhatXY` refusal stayed green while the emitted rows and
+the packed words had stopped describing one `sg_old`. A green gate was evidence of the defect.
+
+⚠ ⚑ **AND THE THEOREM THIS REPLACES WAS TRUE OF THE WRONG LIST, WHICH IS WORSE THAN FALSE.** It read
+`whSgOld p == itemVal T_SGOLD (2p), (2p+1)` at every `p < prevs` — a statement that identifies the
+RECORD's slot `p` with the TRANSCRIPT's slot `p`, and those are the same index only when nothing is
+padded. `wrap.rs:476-491` prepends a whole dummy `MessagesForNextWrapProof` and
+`wrap.rs:2280-2300` masks the padded slot out of the `OptSponge`, so on a one-`verify_one` rule the
+record is `[pad, real]` while the transcript is `[real]`: **record slot `whNPad + j` is transcript
+slot `j`.** The old name (`the_wraphack_sg_old_is_the_transcripts`) is retired rather than annotated,
+because what it asserted is now false at slot 0 and true at slot 1 for a reason it could not say. -/
+theorem the_record_pads_at_the_front_and_its_real_slots_are_the_transcripts :
+    -- ⚑ every REAL slot reads the transcript's own cells, at the SHIFTED index…
+    (List.range (WH_PADDED - whNPad shapeWrap.prevs)).all (fun j =>
+      whSlotSgAt (mkWrap shapeWrap) (whNPad shapeWrap.prevs + j)
+        == (itemVal T_SGOLD (2 * j), itemVal T_SGOLD (2 * j + 1))) = true
+    -- ⚑ …and the PAD slot reads `Dummy.Ipa.Step.sg`, which is NOT a transcript cell.
+    ∧ whNPad shapeWrap.prevs = 1
+    ∧ whSlotSgAt (mkWrap shapeWrap) 0 = whPadSg
+    ∧ whSlotSgAt (mkWrap shapeWrap) 0 ≠ (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
+    -- ⚑ …and the record is the PIPELINE's, not the shape's: the smoke shape gets the same
+    -- `[pad, real]` because `whRows` ties slot `p`'s squeeze to packed statement word `55 + p` of
+    -- the ONE step proof, whatever wrap shape is emitting.
+    ∧ whSlotSgAt (mkWrap shapeSmoke) 0 = whPadSg
+    ∧ whSlotSgAt (mkWrap shapeSmoke) 1 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
+    -- ⚠ ⚑ **AND THE SMOKE SHAPE HAS A TRANSCRIPT SLOT THE RECORD DOES NOT READ, WHICH IS AN OPEN
+    -- INCOHERENCE AND IS STATED RATHER THAN AVOIDED.** `shapeSmoke.prevs = 2` while `RC_SGOLD` —
+    -- `STEP_PREVCOMM_XY` — carries ONE point, so `itemVal T_SGOLD 2` falls through to a
+    -- `wrapFixture`, which is not on the curve. `KimchiWrapMainPins08.prev_step_accs_are_on_vesta`
+    -- is red on exactly that, and it is red at HEAD too: the shape was left at 2 when
+    -- `marshal::STEP_RECURSION_SLOTS` took the fixture to one point, and
+    -- `KimchiWrapMainField` being red kept every consumer from building and saying so.
+    ∧ shapeSmoke.prevs = 2
+    ∧ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.length
+        < 2 * shapeSmoke.prevs := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide, by decide, by decide⟩
 
 end Dregg2.Circuit.Emit.KimchiWrapMain
