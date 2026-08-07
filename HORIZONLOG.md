@@ -1,5 +1,61 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 7 — judged Signal could be PLAYED but nothing REQUIRED it, and the Lean boundary only ever scored a ONE-ROUND game
+
+`86786886d`, `1eda4187d`. The judged session landed on the 6th and made deduction possible:
+open a session, spend five bursts, get LOCKED/DRIFT from the Lean oracle against the instance
+that settles. **Nothing required it.** `POST …/claims` still admitted a bare code, so a stranger
+who guessed right — 1 in 216 — settled a turn with no session, no feedback and no deduction
+anywhere in the causal history of the block. `latest_height` moving was evidence of a lucky guess
+OR a played game, and the chain could not tell which.
+
+⚑ **AND THE THIRD CAUSE IS THE ONE NOBODY HAD LOOKED AT.** `NetworkJudge.oneSignalAction?`
+matched `[wireAction]` and returned `none` for anything longer — so a two-round request died as
+`LeanRejected`. Meanwhile `SignalTriangulation.judge` has always taken a `List Action` and
+replayed it, `WIRE_ACTION_LIMIT` has always been `MAX_TURNS = 5`, and `parseActions` has always
+parsed five. The wire, the bound and the rule were all ready; **the boundary let exactly one
+through**, which is *why* a blind guess was the whole of judged play: the only transcript the
+network could score was a single code. It is `signalActions?` now, and the RULE is untouched
+(`replay` still fail-stop, `step` still refuses after `solved`).
+
+**The gate.** `verify_claim_transcript_was_played` compares a claim's rounds against the durable
+session record for that (authority, slot, signer) — same slot, same published commitment, same
+guesses in the same order, last one the guess THIS NODE scored as locking. It runs at
+FINALIZATION, before the executor and before any judgment, and routes to
+`persist_finalized_payload_rejection`: no transition, no height. The claims route runs it again
+as a courtesy; the binding one is finalization, because a gossiped carrier never touches the
+handler. **`SignalTriangulation.judge` remains the sole authority on whether a transcript solves
+— there is no Rust copy of the rule.** Every refusal is a function of (stored session, submitted
+claim) only, so it cannot say how close a guess was; a solving and a losing code against one
+session draw the same refusal, and a test drives that.
+
+**Both poles, e2e through the real router and consensus loop.** A genuinely solving code with no
+session is refused by name at `…/claims` AND through `/turns/submit` (which reaches consensus),
+`latest_height` still 0, `transition_count` 0, node still answering — and the mutation is
+exhibited by the node itself: the same code played through `session/guess` returns `exact: 3`,
+and the **byte-identical carrier** then settles 0 → 1. A three-round played run settles; a claim
+naming only its solving code, from the player who genuinely deduced it, refuses as
+`poa-signal-transcript-length-mismatch`.
+
+**FLAG DAY — what refuses to load and what re-emits.** The reserved event is a FIXED seventeen
+lanes (`mission_id`, `rounds`, five band triples, unplayed ones exactly zero). Every existing
+`poa-signal` carrier **refuses to decode** — four lanes, named `MalformedReserved`. The topic did
+**not** move to `/v2` on purpose: a topic bump would have made old carriers classify as
+`Ordinary` and execute as plain event turns, silently. The claim FEE moved, so every genesis
+player grant priced off `signal_claim_fee_v1()` re-emits (still a constant of the shape — the
+fixed width is what keeps it quotable). `request.actions` is the transcript, so retained judge
+inputs replay to a different `transcriptDigest`: **the PoA authority re-genesises**.
+`poa-signal-submit-claim` now PLAYS before it settles (`--code` is a `;`-separated transcript of
+bursts, `--bearer` new) and builds the claim from what the NODE reports, not what was typed.
+`build_poa_signal_claim_turn` takes `transcript`; the extension moved with it in `1eda4187d`
+(`deny_unknown_fields` meant the browser path would otherwise have broken on a field name).
+
+⚠ **UNCHANGED AND STILL RED, not caused by this:** the six `poa_signal_genesis` tests documented
+at `node/src/poa_signal_genesis.rs:658` — `build_network_genesis_input` reads
+`descriptor["target"]`, which `4db8ec12e` deleted because a published target IS the published
+answer. Closing it means deciding what the Signal genesis head commits to when there is no
+published target, which is genesis/manifest territory another lane holds.
+
 ## ⛑⛑⛑⛑ AUGUST 7 — a wire the evaluator could not READ was reported as a CONSTRAINT VIOLATION
 
 `a02306c5e`. `admitsWire` rendered a **parse failure** as `"1"` — byte-identical to the string
