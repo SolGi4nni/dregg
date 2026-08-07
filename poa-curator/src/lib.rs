@@ -45,8 +45,11 @@ pub const POA_EPOCH_PREVIEW_SCHEMA: &str = "POA-EPOCH-PREVIEW-V1";
 ///
 /// ⚑ This is the shape that CANNOT SETTLE A TURN, and it is named that way on
 /// purpose. A Signal claim costs `dregg_sdk::poa_signal::signal_claim_fee_v1()`
-/// (870 at `ComputronCosts::default()`, measured 2026-08-07), `execute` refuses any agent
-/// whose balance is under the fee, and this economy has no cell with a positive
+/// — quoted by CALL and never by literal, because the number moved on 2026-08-07
+/// when the claim started carrying the played transcript (four event lanes to
+/// seventeen) and a figure written here would be wrong the next time it moves —
+/// `execute` refuses any agent whose balance is under the fee, and this economy
+/// has no cell with a positive
 /// balance at all — so a deployment declaring this policy is one whose
 /// `latest_height` is structurally pinned to 0. It is retained only because the
 /// live epoch-1 deployment declares it and has not been re-genesised yet; DELETE
