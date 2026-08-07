@@ -101,13 +101,16 @@ const MAX_ARTIFACT_BYTES: u64 = 16 * 1024 * 1024;
 /// exist, and the type made that look mandatory rather than wrong. The census is the
 /// list below; this is only a ceiling.
 ///
-/// ⚠ Say the resolution out loud: with five supported paths this ceiling DOES NOT
-/// BIND. A catalog cannot exceed the count of distinct authenticated descriptors and
-/// every descriptor path must be in `SUPPORTED_GAME_PATHS`, so the effective cap is
-/// `SUPPORTED_GAME_PATHS.len()`. Six is the number this becomes a real bound at, once
-/// Containment Inspection is enrolled (Deck Descent enrolled 2026-08-07) — until then
-/// it is headroom, not a check, and no test can make it refuse.
-const MAX_MISSIONS_PER_EPOCH: usize = 6;
+/// ⚠ Say the resolution out loud: this ceiling DOES NOT BIND, and raising it here is
+/// not a weakening. A catalog cannot exceed the count of distinct authenticated
+/// descriptors and every descriptor path must be in `SUPPORTED_GAME_PATHS`, so the
+/// effective cap is `SUPPORTED_GAME_PATHS.len()` — seven, after Artificer Logic and
+/// Vent Crawl enrolled on 2026-08-07. It was `6` while the census held five, which
+/// means the const assertion below is what forced this line to move, and that is the
+/// assertion doing its job: a ceiling that silently sat under the census would have
+/// refused a bundle the emitter can legitimately produce. It is headroom, not a
+/// check, and no test can make it refuse until the census passes it.
+const MAX_MISSIONS_PER_EPOCH: usize = 8;
 const MAX_FIXTURES_PER_EPOCH: usize = 24;
 const MAX_FIXTURES_PER_MISSION: usize = 8;
 const MAX_DISCOVERIES_PER_MISSION: usize = 8;
@@ -124,12 +127,17 @@ const SIGNAL_PATH: &str = "games/signal-triangulation.json";
 /// `schema.json` declares. The two halves are joined by nothing but a re-emit, so
 /// `scripts/check-poag1-artifacts.sh` byte-compares the emission against the
 /// checked-in bundle and this curator refuses any path outside this list.
+/// ⚠ `games/artificer-logic.json` sorts FIRST, ahead of `BLACKBOX_PATH` which held
+/// that slot until 2026-08-07. Appending a new game is right only if its path really
+/// does sort last, which of these seven is true for `games/vent-crawl.json` alone.
 const SUPPORTED_GAME_PATHS: &[&str] = &[
+    "games/artificer-logic.json",
     BLACKBOX_PATH,
     "games/deck-descent.json",
     "games/relay-repair.json",
     "games/salvage-lock.json",
     SIGNAL_PATH,
+    "games/vent-crawl.json",
 ];
 
 /// Lexicographic `<` over UTF-8 bytes, usable in a const block. `str`'s own `<` is

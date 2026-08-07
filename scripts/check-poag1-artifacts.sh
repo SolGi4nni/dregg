@@ -89,6 +89,13 @@ be64() {
 # converges on) all joined the emitter's import closure at once. They are placed
 # in dependency order for the same reason `SeedDraw.lean` was.
 #
+# ⚠ 2026-08-07, second flag day of the day: Artificer Logic and Vent Crawl enrolled
+# as missions 6 and 7, so `ArtificerLogic.lean`, `ArtificerLogicEmit.lean`,
+# `VentCrawl.lean` and `VentCrawlEmit.lean` joined the emitter's import closure.
+# `VentCrawl.lean` also consumes `HiddenInstance` — for the DAY seed, drawn under a
+# reserved sentinel key that is not a player, which is why its hidden table is
+# shared across a slot rather than per-crawler.
+#
 # The invariant to preserve: this list must contain the TRANSITIVE closure of
 # `Emit.lean`'s imports inside `Dregg2/Games/PathOfAngels/`. It now does.
 source_files=(
@@ -100,9 +107,13 @@ source_files=(
   "Dregg2/Games/PathOfAngels/BlackBoxReconstruction.lean"
   "Dregg2/Games/PathOfAngels/DeckDescent.lean"
   "Dregg2/Games/PathOfAngels/HiddenInstance.lean"
+  "Dregg2/Games/PathOfAngels/ArtificerLogic.lean"
+  "Dregg2/Games/PathOfAngels/VentCrawl.lean"
   "Dregg2/Games/PathOfAngels/FiniteTables.lean"
   "Dregg2/Games/PathOfAngels/EmitJson.lean"
   "Dregg2/Games/PathOfAngels/DeckDescentEmit.lean"
+  "Dregg2/Games/PathOfAngels/ArtificerLogicEmit.lean"
+  "Dregg2/Games/PathOfAngels/VentCrawlEmit.lean"
   "Dregg2/Games/PathOfAngels/Emit.lean"
   "Dregg2/Games/PathOfAngels/EmitMain.lean"
 )
@@ -168,22 +179,27 @@ export LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-2}"
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
 )
 
+artificer_sha="$(sha_file "$tmp_root/games/artificer-logic.json")"
 blackbox_sha="$(sha_file "$tmp_root/games/black-box-reconstruction.json")"
 descent_sha="$(sha_file "$tmp_root/games/deck-descent.json")"
 relay_sha="$(sha_file "$tmp_root/games/relay-repair.json")"
 salvage_sha="$(sha_file "$tmp_root/games/salvage-lock.json")"
 signal_sha="$(sha_file "$tmp_root/games/signal-triangulation.json")"
+vent_sha="$(sha_file "$tmp_root/games/vent-crawl.json")"
 # ⚠ PATH-ASCENDING, and the content root's own framing says so
-# (`entry_order: path_ascending` in schema.json). `games/black-box-reconstruction.json`
-# sorts FIRST and `games/deck-descent.json` SECOND. A wrong order here does not fail:
-# it silently computes a different content root, which the missions then bind and the
-# curator then accepts.
+# (`entry_order: path_ascending` in schema.json). `games/artificer-logic.json` sorts
+# FIRST — it took that slot from `games/black-box-reconstruction.json` when it
+# enrolled — and `games/vent-crawl.json` is the only one that actually sorts last. A
+# wrong order here does not fail: it silently computes a different content root,
+# which the missions then bind and the curator then accepts.
 content_paths=(
+  "games/artificer-logic.json"
   "games/black-box-reconstruction.json"
   "games/deck-descent.json"
   "games/relay-repair.json"
   "games/salvage-lock.json"
   "games/signal-triangulation.json"
+  "games/vent-crawl.json"
 )
 # The one place the ordering claim is CHECKED rather than asserted in a comment.
 printf '%s\n' "${content_paths[@]}" | LC_ALL=C sort -c || {
@@ -212,6 +228,7 @@ content_root_sha="$(
     POA_SOURCE_SHA256="$source_sha" POA_RELAY_SHA256="$relay_sha" \
     POA_SALVAGE_SHA256="$salvage_sha" POA_SIGNAL_SHA256="$signal_sha" \
     POA_BLACKBOX_SHA256="$blackbox_sha" POA_DECKDESCENT_SHA256="$descent_sha" \
+    POA_ARTIFICER_SHA256="$artificer_sha" POA_VENTCRAWL_SHA256="$vent_sha" \
     POA_CONTENT_ROOT_SHA256="$content_root_sha" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
 )
@@ -226,6 +243,7 @@ catalog_sha="$(sha_file "$tmp_root/catalog.json")"
     POA_SOURCE_SHA256="$source_sha" POA_RELAY_SHA256="$relay_sha" \
     POA_SALVAGE_SHA256="$salvage_sha" POA_SIGNAL_SHA256="$signal_sha" \
     POA_BLACKBOX_SHA256="$blackbox_sha" POA_DECKDESCENT_SHA256="$descent_sha" \
+    POA_ARTIFICER_SHA256="$artificer_sha" POA_VENTCRAWL_SHA256="$vent_sha" \
     POA_CONTENT_ROOT_SHA256="$content_root_sha" \
     POA_SCHEMA_SHA256="$schema_sha" POA_CATALOG_SHA256="$catalog_sha" \
     lake env lean --run Dregg2/Games/PathOfAngels/EmitMain.lean
@@ -233,11 +251,13 @@ catalog_sha="$(sha_file "$tmp_root/catalog.json")"
 
 test "$(sha_file "$tmp_root/schema.json")" = "$schema_sha"
 test "$(sha_file "$tmp_root/catalog.json")" = "$catalog_sha"
+test "$(sha_file "$tmp_root/games/artificer-logic.json")" = "$artificer_sha"
 test "$(sha_file "$tmp_root/games/black-box-reconstruction.json")" = "$blackbox_sha"
 test "$(sha_file "$tmp_root/games/deck-descent.json")" = "$descent_sha"
 test "$(sha_file "$tmp_root/games/relay-repair.json")" = "$relay_sha"
 test "$(sha_file "$tmp_root/games/salvage-lock.json")" = "$salvage_sha"
 test "$(sha_file "$tmp_root/games/signal-triangulation.json")" = "$signal_sha"
+test "$(sha_file "$tmp_root/games/vent-crawl.json")" = "$vent_sha"
 
 catalog_federations="$(jq -er '[.missions[].federation_id] | unique | .[]' "$tmp_root/catalog.json")"
 if [ "$catalog_federations" != "$federation_id" ]; then
@@ -251,11 +271,13 @@ expected=(
   "manifest.json"
   "schema.json"
   "catalog.json"
+  "games/artificer-logic.json"
   "games/black-box-reconstruction.json"
   "games/deck-descent.json"
   "games/relay-repair.json"
   "games/salvage-lock.json"
   "games/signal-triangulation.json"
+  "games/vent-crawl.json"
 )
 
 # The emitted games and the measured games are the SAME set, derived independently:
@@ -351,4 +373,4 @@ const verified = await authenticateContentEpoch({
 process.stdout.write(`POAG1 curator signature authenticated (activation=${verified.activationDigest})\n`);
 NODE
 
-echo "POAG1 artifacts reproduce exactly (federation=$federation_id source=$source_sha blackbox=$blackbox_sha descent=$descent_sha relay=$relay_sha salvage=$salvage_sha signal=$signal_sha content_root=$content_root_sha)"
+echo "POAG1 artifacts reproduce exactly (federation=$federation_id source=$source_sha artificer=$artificer_sha blackbox=$blackbox_sha descent=$descent_sha relay=$relay_sha salvage=$salvage_sha signal=$signal_sha vent=$vent_sha content_root=$content_root_sha)"

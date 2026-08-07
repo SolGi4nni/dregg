@@ -4,8 +4,8 @@
 The driver has three fail-closed phases so the external SHA-256 primitive can
 measure bytes without making the host an author of game semantics:
 
-  POA_EMIT_MODE=descriptors writes the five digest-independent game descriptors
-  POA_EMIT_MODE=artifacts  writes the seven canonical artifacts
+  POA_EMIT_MODE=descriptors writes the seven digest-independent game descriptors
+  POA_EMIT_MODE=artifacts  writes the nine canonical artifacts
   POA_EMIT_MODE=bundle     writes artifacts plus the exact self-ingested manifest
 
 scripts/check-poag1-artifacts.sh performs these phases in order, measures SHA-256
@@ -52,26 +52,36 @@ def writeArtifacts (dir : System.FilePath)
     if let some parent := path.parent then IO.FS.createDirAll parent
     writeAtomic path artifact.contents
 
+/- ⚠ Written in `canonicalArtifacts` order, which is PATH-ASCENDING:
+`games/artificer-logic.json` sorts first and `games/vent-crawl.json` last.  The
+order does not affect these bytes — each write is independent — but keeping it is
+how a reader checks this list against the artifact list at a glance. -/
 def emitDescriptors (dir : System.FilePath) : IO Unit := do
   IO.FS.createDirAll (dir / "games")
+  writeAtomic (dir / "games" / "artificer-logic.json")
+    ArtificerLogicEmit.artificerLogicDescriptorJson
   writeAtomic (dir / "games" / "black-box-reconstruction.json") blackBoxDescriptorJson
   writeAtomic (dir / "games" / "deck-descent.json")
     DeckDescentEmit.deckDescentDescriptorJson
   writeAtomic (dir / "games" / "relay-repair.json") relayDescriptorJson
   writeAtomic (dir / "games" / "salvage-lock.json") salvageDescriptorJson
   writeAtomic (dir / "games" / "signal-triangulation.json") signalDescriptorJson
+  writeAtomic (dir / "games" / "vent-crawl.json") VentCrawlEmit.ventCrawlDescriptorJson
 
-/- ⚠ `POA_BLACKBOX_SHA256` and `POA_DECKDESCENT_SHA256` have NO default.  A caller
-that predates the fourth or fifth game fails closed here rather than emitting a
-bundle whose descriptor nothing measured — which is the state the black-box
-descriptor was in before 2026-08-06. -/
+/- ⚠ `POA_BLACKBOX_SHA256`, `POA_DECKDESCENT_SHA256`, `POA_ARTIFICER_SHA256` and
+`POA_VENTCRAWL_SHA256` have NO default.  A caller that predates the fourth, fifth,
+sixth or seventh game fails closed here rather than emitting a bundle whose
+descriptor nothing measured — which is the state the black-box descriptor was in
+before 2026-08-06. -/
 def requiredGameDigests : IO GameContentDigests := do
   pure {
+    artificer := (← requiredDigest "POA_ARTIFICER_SHA256").2
     blackBox := (← requiredDigest "POA_BLACKBOX_SHA256").2
     deckDescent := (← requiredDigest "POA_DECKDESCENT_SHA256").2
     signal := (← requiredDigest "POA_SIGNAL_SHA256").2
     relay := (← requiredDigest "POA_RELAY_SHA256").2
     salvage := (← requiredDigest "POA_SALVAGE_SHA256").2
+    ventCrawl := (← requiredDigest "POA_VENTCRAWL_SHA256").2
   }
 
 def main : IO Unit := do
@@ -94,11 +104,13 @@ def main : IO Unit := do
       let hashes : ArtifactHashes := {
         schema := ← requiredHash "POA_SCHEMA_SHA256"
         catalog := ← requiredHash "POA_CATALOG_SHA256"
+        artificer := ← requiredHash "POA_ARTIFICER_SHA256"
         blackBox := ← requiredHash "POA_BLACKBOX_SHA256"
         deckDescent := ← requiredHash "POA_DECKDESCENT_SHA256"
         relay := ← requiredHash "POA_RELAY_SHA256"
         salvage := ← requiredHash "POA_SALVAGE_SHA256"
         signal := ← requiredHash "POA_SIGNAL_SHA256"
+        ventCrawl := ← requiredHash "POA_VENTCRAWL_SHA256"
       }
       writeArtifacts dir federation source contentRoot digests
       let manifest := manifestFor sourceString federation source contentRoot digests hashes

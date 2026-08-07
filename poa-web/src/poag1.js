@@ -26,6 +26,36 @@ export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
   Object.freeze({ path: "games/signal-triangulation.json", mediaType: "application/json" }),
 ]);
 
+/**
+ * ⚑ THE FLAG DAY, DECLARED RATHER THAN DISCOVERED.
+ *
+ * `Emit.lean` renders SEVEN game descriptors; the list above pins the four the
+ * curator has signed. That gap is one ceremony, and it used to be held by nothing
+ * at all — a game could join `canonicalArtifacts` and this client would simply
+ * refuse the next bundle with `POAG1 artifact count does not match the Lean
+ * bundle`, at load, in a browser, with no earlier warning anywhere.
+ *
+ * So the delta is NAMED here and CHECKED against the emitter by
+ * `tests/bundle-enrolment.test.mjs`: pinned ∪ pending must equal
+ * `Emit.POAG1_GAME_PATHS` exactly, every pending game must already have a
+ * controller and a fully taught rack record, and every pending descriptor must be
+ * emitted into `poa/artifacts/poag1-pending/` and absent from the signed bundle.
+ *
+ * ⚠ THE CEREMONY'S EDIT IS TO MOVE A LINE FROM HERE TO THE LIST ABOVE, in
+ * path-ascending position, in the same commit as the re-emitted bundle. Nothing
+ * else about this file changes. A path left here after its descriptor lands in
+ * `poa/artifacts/poag1/` fails the test, and so does the reverse.
+ *
+ * ⚠ It is NOT a widening. `validateManifest` still refuses any count, order, path
+ * or media type other than the pinned list; a pending path buys a game nothing at
+ * load time. It is a statement about what the emitter will produce next.
+ */
+export const POAG1_PENDING_ARTIFACTS = Object.freeze([
+  Object.freeze({ path: "games/artificer-logic.json", mediaType: "application/json" }),
+  Object.freeze({ path: "games/deck-descent.json", mediaType: "application/json" }),
+  Object.freeze({ path: "games/vent-crawl.json", mediaType: "application/json" }),
+]);
+
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const HEX_16 = /^[0-9a-f]{16}$/;
 

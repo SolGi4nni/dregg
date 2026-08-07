@@ -26,6 +26,8 @@ import Dregg2.Games.PathOfAngels.BlackBoxReconstruction
 import Dregg2.Games.PathOfAngels.HiddenInstance
 import Dregg2.Games.PathOfAngels.EmitJson
 import Dregg2.Games.PathOfAngels.DeckDescentEmit
+import Dregg2.Games.PathOfAngels.ArtificerLogicEmit
+import Dregg2.Games.PathOfAngels.VentCrawlEmit
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.Emit
@@ -1567,18 +1569,249 @@ def descentPreview (runSeed : Digest32)
 #assert_axioms descentConfig_board_is_the_live_draw
 #assert_compiled descentDescriptor_does_not_determine_the_board
 
+/-! ## Artificer Logic — the sixth mission
+
+The descriptor, its exact-schema check, the manual/row/view refinements against
+`ArtificerLogic` and the constructive falsifiers all live in
+`Dregg2.Games.PathOfAngels.ArtificerLogicEmit`; this section is everything that
+puts the game IN the bundle — mission, budget, artifact slot, and the wiring into
+`catalogJson`, `schemaJson`, `canonicalArtifacts` and the manifest pins.
+
+⚠ **`games/artificer-logic.json` sorts FIRST** — before
+`games/black-box-reconstruction.json`, which held that slot until now.  It is the
+first game entry in `canonicalArtifacts`, the first element of `schemaJson`'s
+`content_root.paths` and the first `content_paths` entry in
+`scripts/check-poag1-artifacts.sh` — while its MISSION (id 6) is second-to-last in
+`catalogJson`.  The two orders disagree on purpose, as they already do for Black
+Box (first artifact, fourth mission) and Deck Descent.
+
+⚑ **Enrolling this game re-slots every other one.**  Black Box moves from artifact
+index 2 to 3 and Deck Descent from 3 to 4; `canonicalPins` zips the artifact list
+against `ArtifactHashes.inCanonicalOrder`, so `artificer` has to be inserted at the
+matching position in BOTH or the pins pair a path with another game's digest. -/
+
+def artificerContentSession : Digest32 :=
+  taggedBytes32 [80, 79, 65, 45, 65, 82, 84, 73, 70, 73, 67, 69, 82, 45, 49]
+
+def artificerBudget : ContributionBudget :=
+  { intel := ⟨45, by decide⟩
+    supplies := ⟨5, by decide⟩
+    cohesion := ⟨10, by decide⟩
+    influence := ⟨15, by decide⟩
+    score := ⟨800, by decide⟩
+    relics := ⟨1, by decide⟩ }
+
+/-- The bench pays in INTEL, which is what the game produces: a documented
+mechanism.  One relic, ⟨6⟩ — the mission id, which is what the browser's catalog
+consumer pins each mission's allowlist against. -/
+def artificerReward : Contribution :=
+  { intel := ⟨45, by decide⟩
+    supplies := ⟨5, by decide⟩
+    cohesion := ⟨10, by decide⟩
+    influence := ⟨15, by decide⟩
+    score := ⟨800, by decide⟩
+    relics := {⟨6⟩}
+    relics_bounded := by simp [RELIC_LIMIT] }
+
+theorem artificerReward_within : artificerReward.within artificerBudget = true := by
+  decide
+
+def artificerArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
+  { missionId := ⟨6⟩
+    artifactId := ⟨6⟩
+    sourceDigest
+    contentDigest }
+
+def artificerMission (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    MissionSpec :=
+  { missionId := ⟨6⟩
+    artifact := artificerArtifact sourceDigest contentDigest
+    epoch := ⟨1⟩
+    federationId
+    contentRoot
+    activationDigest
+    contentSession := artificerContentSession
+    runSeed := runSeed
+    budget := artificerBudget
+    allowedRelics := {⟨6⟩}
+    privacy := .public
+    ballot := .none
+    artifact_matches := rfl
+    allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
+
+theorem artificerReward_accepted (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (artificerMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).acceptsContribution artificerReward = true := by
+  apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
+  exact ⟨artificerReward_within, by simp [artificerMission, artificerReward]⟩
+
+/-- The SIGNATURE of the rule a live seed would draw, not the rule itself: the
+signature is the row of answers the mechanism gives to all eight legal charges, so
+two demonstration secrets with different signatures are two mechanisms a player can
+actually tell apart.  Comparing `Rule` values would have counted a difference no
+experiment can see, which is the weaker claim. -/
+private def demoArtificerSignature? (tag : Nat) : Option (List Bool) :=
+  (ArtificerLogic.ruleFromRunSeed?
+    (demoLiveSeed (artificerMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+      (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)).map
+    ArtificerLogic.signature
+
+/-- ⚑ **The artifact does not determine the hidden rule.**
+
+Artificer publishes its ENTIRE hypothesis space — all sixteen rules with the exact
+charges each engages on — so "the descriptor tells you everything" is nearer true
+here than anywhere else on the rack, and the statement that it still does not tell
+you the INSTANCE has to be made carefully.
+
+Stated in the shape `salvageDescriptor_does_not_determine_the_board` was repaired
+into, so a `none` cannot launder a missing difference: every one of the eight
+demonstration secrets RESOLVES to a rule, AND at least two of those rules are
+separated by a legal experiment. -/
+theorem artificerDescriptor_does_not_determine_the_rule :
+    ((List.range 8).all fun tag => (demoArtificerSignature? tag).isSome) = true ∧
+      2 ≤ ((List.range 8).filterMap demoArtificerSignature?).eraseDups.length := by
+  native_decide
+
+def artificerPreview (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option WorldState :=
+  applyContribution
+    (artificerMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest)
+    artificerReward WorldState.empty
+
+#assert_axioms artificerReward_within
+#assert_axioms artificerReward_accepted
+#assert_compiled artificerDescriptor_does_not_determine_the_rule
+
+/-! ## Vent Crawl — the seventh mission
+
+The descriptor, its exact-schema check and the row/view refinements against
+`VentCrawl` live in `Dregg2.Games.PathOfAngels.VentCrawlEmit`; this section is
+everything that puts the game IN the bundle.
+
+⚠ **`games/vent-crawl.json` sorts LAST**, after
+`games/signal-triangulation.json` — the one game whose artifact position and
+mission position happen to agree, and that agreement is a coincidence of the
+alphabet rather than a rule anything may rely on.
+
+⚠ **The hidden thing here is not shaped like the others.**  Signal, Relay, Salvage,
+Black Box, Deck Descent and Artificer each hide a PER-PLAYER draw off
+`mission.runSeed`.  Vent Crawl hides a PER-SLOT SHARED table — the day's vein —
+drawn under `VentCrawl.DAY_TABLE_KEY`, a reserved sentinel that is not a player, so
+every crawler in the slot gets the same table and the per-player run seed only
+draws the flood tape.  The theorem below is therefore stated over the DAY SEED, not
+over `demoLiveSeed`. -/
+
+def ventContentSession : Digest32 :=
+  taggedBytes32 [80, 79, 65, 45, 86, 69, 78, 84, 45, 49]
+
+def ventBudget : ContributionBudget :=
+  { intel := ⟨10, by decide⟩
+    supplies := ⟨45, by decide⟩
+    cohesion := ⟨15, by decide⟩
+    influence := ⟨5, by decide⟩
+    score := ⟨750, by decide⟩
+    relics := ⟨1, by decide⟩ }
+
+/-- The shaft pays in SUPPLIES, which is what a sling holds.  ⚠ The preview is the
+mission's ceiling, not an outcome: an actual crawl banks whatever it banks and a
+drowned one banks nothing, so this is the "solved-run preview" every other mission
+publishes and it grants exactly as little. -/
+def ventReward : Contribution :=
+  { intel := ⟨10, by decide⟩
+    supplies := ⟨45, by decide⟩
+    cohesion := ⟨15, by decide⟩
+    influence := ⟨5, by decide⟩
+    score := ⟨750, by decide⟩
+    relics := {⟨7⟩}
+    relics_bounded := by simp [RELIC_LIMIT] }
+
+theorem ventReward_within : ventReward.within ventBudget = true := by
+  decide
+
+def ventArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
+  { missionId := ⟨7⟩
+    artifactId := ⟨7⟩
+    sourceDigest
+    contentDigest }
+
+def ventMission (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    MissionSpec :=
+  { missionId := ⟨7⟩
+    artifact := ventArtifact sourceDigest contentDigest
+    epoch := ⟨1⟩
+    federationId
+    contentRoot
+    activationDigest
+    contentSession := ventContentSession
+    runSeed := runSeed
+    budget := ventBudget
+    allowedRelics := {⟨7⟩}
+    privacy := .public
+    ballot := .none
+    artifact_matches := rfl
+    allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
+
+theorem ventReward_accepted (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (ventMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).acceptsContribution ventReward = true := by
+  apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
+  exact ⟨ventReward_within, by simp [ventMission, ventReward]⟩
+
+/-- The day's table, as its published tag.  ⚠ `daySeedFor` takes NO player, so this
+takes none either: the whole point of the per-slot draw is that a demonstration
+that varied the player would show a difference the real game does not have. -/
+private def demoVeinTag? (tag : Nat) : Option String :=
+  (VentCrawl.veinFromDaySeed?
+    (VentCrawl.daySeedFor (demoSecret tag) demoSlot
+      (HiddenInstance.MissionContext.ofMission
+        (ventMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 []))))).map
+    VentCrawl.Vein.tag
+
+/-- ⚑ **The artifact does not determine the day's vein.**
+
+Vent Crawl's descriptor publishes ALL FOUR yield ladders in full — it has to, or a
+client could not render the range a rung might pay — so the artifact names the
+hypothesis space exactly and names the instance not at all.  Stated in the repaired
+salvage shape: every demonstration secret RESOLVES to a vein, AND at least two of
+those veins differ. -/
+theorem ventDescriptor_does_not_determine_the_vein :
+    ((List.range 8).all fun tag => (demoVeinTag? tag).isSome) = true ∧
+      2 ≤ ((List.range 8).filterMap demoVeinTag?).eraseDups.length := by
+  native_decide
+
+def ventPreview (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option WorldState :=
+  applyContribution
+    (ventMission runSeed federationId sourceDigest contentDigest contentRoot activationDigest)
+    ventReward WorldState.empty
+
+#assert_axioms ventReward_within
+#assert_axioms ventReward_accepted
+#assert_compiled ventDescriptor_does_not_determine_the_vein
+
 /-- ⚠ Every field here is a game whose descriptor is measured by the driver and
-pinned in the manifest.  `blackBox` was added 2026-08-06 and `deckDescent`
-2026-08-07; the emit driver requires `POA_BLACKBOX_SHA256` and
-`POA_DECKDESCENT_SHA256` and there is no default for either, so a caller that has
-not been taught a new game fails closed rather than emitting an unmeasured
+pinned in the manifest.  `blackBox` was added 2026-08-06, `deckDescent`
+2026-08-07, and `artificer`/`ventCrawl` 2026-08-07; the emit driver requires
+`POA_BLACKBOX_SHA256`, `POA_DECKDESCENT_SHA256`, `POA_ARTIFICER_SHA256` and
+`POA_VENTCRAWL_SHA256` and there is no default for any of them, so a caller that
+has not been taught a new game fails closed rather than emitting an unmeasured
 bundle. -/
 structure GameContentDigests where
+  artificer : Digest32
   blackBox : Digest32
   deckDescent : Digest32
   signal : Digest32
   relay : Digest32
   salvage : Digest32
+  ventCrawl : Digest32
 deriving DecidableEq
 
 private def missionCatalogJson (mission : MissionSpec) (title engineModule ruleset : String)
@@ -1634,12 +1867,16 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
   let salvage := salvageMission unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation
   let blackBox := blackBoxMission unbound federationId sourceDigest digests.blackBox contentRoot inactiveActivation
   let descent := descentMission unbound federationId sourceDigest digests.deckDescent contentRoot inactiveActivation
+  let artificer := artificerMission unbound federationId sourceDigest digests.artificer contentRoot inactiveActivation
+  let vent := ventMission unbound federationId sourceDigest digests.ventCrawl contentRoot inactiveActivation
   /- ⚠ MISSION order here is `mission_id`-ascending, which is NOT the path-ascending
   order the manifest and the content root use.  Black Box is mission 4, so it is
-  fourth in this list and FIRST in `canonicalArtifacts`; Deck Descent is mission 5,
-  so it is LAST in this list and SECOND there.  The curator refuses both a
-  non-ascending mission list and a non-ascending artifact list, so the two orders have
-  to disagree on purpose. -/
+  fourth in this list and SECOND in `canonicalArtifacts`; Deck Descent is mission 5,
+  so it is fifth here and THIRD there; Artificer Logic is mission 6, so it is sixth
+  here and FIRST there.  Only Vent Crawl (mission 7, last artifact) happens to agree,
+  and that is the alphabet, not a rule.  The curator refuses both a non-ascending
+  mission list and a non-ascending artifact list, so the two orders have to disagree
+  on purpose. -/
   let missions :=
     [ missionCatalogJson signal "Signal Triangulation"
         "Dregg2.Games.PathOfAngels.SignalTriangulation" "signal-v2"
@@ -1654,7 +1891,13 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
         "oracle-only"
     , missionCatalogJson descent "Deck Descent"
         "Dregg2.Games.PathOfAngels.DeckDescent" "descent-v1"
-        DeckDescent.AIR [⟨5⟩, ⟨6⟩, ⟨7⟩, ⟨8⟩] "games/deck-descent.json" "oracle-only" ]
+        DeckDescent.AIR [⟨5⟩, ⟨6⟩, ⟨7⟩, ⟨8⟩] "games/deck-descent.json" "oracle-only"
+    , missionCatalogJson artificer "Artificer Logic"
+        "Dregg2.Games.PathOfAngels.ArtificerLogic" "artificer-v1"
+        ArtificerLogic.ACTION_LIMIT [⟨6⟩] "games/artificer-logic.json" "oracle-only"
+    , missionCatalogJson vent "Vent Crawl" "Dregg2.Games.PathOfAngels.VentCrawl"
+        "push-your-luck-v1"
+        VentCrawl.ACTION_LIMIT [⟨7⟩] "games/vent-crawl.json" "oracle-only" ]
   let fixtures :=
     [ previewFixtureJson "signal-solved-preview-v1" signal signalReward [⟨1⟩]
         (signalPreview unbound federationId sourceDigest digests.signal contentRoot inactiveActivation)
@@ -1665,7 +1908,11 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
     , previewFixtureJson "blackbox-solved-preview-v1" blackBox blackBoxReward [⟨4⟩]
         (blackBoxPreview unbound federationId sourceDigest digests.blackBox contentRoot inactiveActivation)
     , previewFixtureJson "descent-solved-preview-v1" descent descentReward [⟨7⟩, ⟨8⟩]
-        (descentPreview unbound federationId sourceDigest digests.deckDescent contentRoot inactiveActivation) ]
+        (descentPreview unbound federationId sourceDigest digests.deckDescent contentRoot inactiveActivation)
+    , previewFixtureJson "artificer-solved-preview-v1" artificer artificerReward [⟨6⟩]
+        (artificerPreview unbound federationId sourceDigest digests.artificer contentRoot inactiveActivation)
+    , previewFixtureJson "vent-solved-preview-v1" vent ventReward [⟨7⟩]
+        (ventPreview unbound federationId sourceDigest digests.ventCrawl contentRoot inactiveActivation) ]
   "{\n" ++
   "  \"format\":\"POAG1-CATALOG\",\n" ++
   "  \"schema_version\":1,\n" ++
@@ -1688,9 +1935,10 @@ def schemaJson : String :=
     "\"domain\":\"path-of-angels/content-root/v1\\u0000\"," ++
     "\"framing\":\"file_count_be64 || (path_len_be64 || path_utf8 || content_len_be64 || content_bytes)*\"," ++
     "\"entry_order\":\"path_ascending\"," ++
-    "\"paths\":[\"games/black-box-reconstruction.json\",\"games/deck-descent.json\"," ++
+    "\"paths\":[\"games/artificer-logic.json\"," ++
+      "\"games/black-box-reconstruction.json\",\"games/deck-descent.json\"," ++
       "\"games/relay-repair.json\",\"games/salvage-lock.json\"," ++
-      "\"games/signal-triangulation.json\"]},\n" ++
+      "\"games/signal-triangulation.json\",\"games/vent-crawl.json\"]},\n" ++
   "    \"activation_digest\":{\"algorithm\":\"sha256\"," ++
     "\"domain\":\"pathofangels.network/activation-digest/v1\\u0000\"," ++
     "\"framing\":\"schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64\"," ++
@@ -1727,12 +1975,15 @@ def canonicalArtifacts (federationId sourceDigest contentRoot : Digest32)
     (digests : GameContentDigests) :
     List ArtifactBytes :=
   /- ⚠ PATH-ASCENDING after schema/catalog, and the curator refuses any other order.
-  `games/black-box-reconstruction.json` sorts before `games/deck-descent.json`, which
-  sorts before `games/relay-repair.json` — so the fourth game goes FIRST here and the
-  fifth game SECOND, not last. -/
+  `games/artificer-logic.json` sorts before `games/black-box-reconstruction.json`,
+  which sorts before `games/deck-descent.json` — so the SIXTH game goes first here,
+  the fourth second and the fifth third, and only the seventh (`vent-crawl`) is
+  actually last. -/
   [ { path := "schema.json", mediaType := "application/schema+json", contents := schemaJson }
   , { path := "catalog.json", mediaType := "application/json",
       contents := catalogJson federationId sourceDigest contentRoot digests }
+  , { path := "games/artificer-logic.json", mediaType := "application/json",
+      contents := ArtificerLogicEmit.artificerLogicDescriptorJson }
   , { path := "games/black-box-reconstruction.json", mediaType := "application/json",
       contents := blackBoxDescriptorJson }
   , { path := "games/deck-descent.json", mediaType := "application/json",
@@ -1742,31 +1993,36 @@ def canonicalArtifacts (federationId sourceDigest contentRoot : Digest32)
   , { path := "games/salvage-lock.json", mediaType := "application/json",
       contents := salvageDescriptorJson }
   , { path := "games/signal-triangulation.json", mediaType := "application/json",
-      contents := signalDescriptorJson } ]
+      contents := signalDescriptorJson }
+  , { path := "games/vent-crawl.json", mediaType := "application/json",
+      contents := VentCrawlEmit.ventCrawlDescriptorJson } ]
 
 /-! SHA-256 is a deployed crypto primitive rather than a theorem implemented in
-this emitter.  The driver measures these seven exact Lean-rendered byte strings;
+this emitter.  The driver measures these nine exact Lean-rendered byte strings;
 the signed content epoch anchors the resulting manifest. -/
 structure ArtifactHashes where
   schema : String
   catalog : String
+  artificer : String
   blackBox : String
   deckDescent : String
   relay : String
   salvage : String
   signal : String
+  ventCrawl : String
 deriving DecidableEq, Repr
 
 def ArtifactHashes.valid (h : ArtifactHashes) : Bool :=
-  validSha256 h.schema && validSha256 h.catalog && validSha256 h.blackBox &&
-    validSha256 h.deckDescent && validSha256 h.relay && validSha256 h.salvage &&
-    validSha256 h.signal
+  validSha256 h.schema && validSha256 h.catalog && validSha256 h.artificer &&
+    validSha256 h.blackBox && validSha256 h.deckDescent && validSha256 h.relay &&
+    validSha256 h.salvage && validSha256 h.signal && validSha256 h.ventCrawl
 
 /-- The measured hashes in the SAME order `canonicalArtifacts` renders its entries.
 This list and that one are the two halves of one pairing; nothing else may reorder
 either of them. -/
 def ArtifactHashes.inCanonicalOrder (h : ArtifactHashes) : List String :=
-  [h.schema, h.catalog, h.blackBox, h.deckDescent, h.relay, h.salvage, h.signal]
+  [h.schema, h.catalog, h.artificer, h.blackBox, h.deckDescent, h.relay, h.salvage,
+    h.signal, h.ventCrawl]
 
 /-- ⚑ THE SIXTH ARTIFACT LANDMINE — REBUILT SO IT CANNOT BE RE-ARMED.
 
@@ -1821,15 +2077,17 @@ The ORDER is not decoration either.  The content root frames its entries
 every mission then binds and the curator then accepts. -/
 
 /-- The game descriptor paths of a POAG1 v1 bundle, in the path-ascending order the
-content root, the manifest and the check script all require.  ⚠ `black-box` sorts
-FIRST — appending a new game to the end of this list is right only if its path
-actually sorts last. -/
+content root, the manifest and the check script all require.  ⚠ `artificer-logic`
+sorts FIRST — appending a new game to the end of this list is right only if its
+path actually sorts last, which of the seven is true for `vent-crawl` alone. -/
 def POAG1_GAME_PATHS : List String :=
-  [ "games/black-box-reconstruction.json"
+  [ "games/artificer-logic.json"
+  , "games/black-box-reconstruction.json"
   , "games/deck-descent.json"
   , "games/relay-repair.json"
   , "games/salvage-lock.json"
-  , "games/signal-triangulation.json" ]
+  , "games/signal-triangulation.json"
+  , "games/vent-crawl.json" ]
 
 theorem POAG1_GAME_PATHS_strictly_ascending :
     (POAG1_GAME_PATHS.zip POAG1_GAME_PATHS.tail).all (fun pair => decide (pair.1 < pair.2))
@@ -1884,11 +2142,13 @@ def acceptsManifest (sourceDigestString : String)
   validSha256 sourceDigestString &&
     hashes.valid &&
     decide (digestHex sourceDigest = sourceDigestString) &&
+    decide (digestHex digests.artificer = hashes.artificer) &&
     decide (digestHex digests.blackBox = hashes.blackBox) &&
     decide (digestHex digests.deckDescent = hashes.deckDescent) &&
     decide (digestHex digests.signal = hashes.signal) &&
     decide (digestHex digests.relay = hashes.relay) &&
     decide (digestHex digests.salvage = hashes.salvage) &&
+    decide (digestHex digests.ventCrawl = hashes.ventCrawl) &&
     decide (candidate =
       manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes)
 
@@ -1900,11 +2160,13 @@ theorem acceptsManifest_eq_true_iff
       validSha256 sourceDigestString = true ∧
       hashes.valid = true ∧
       digestHex sourceDigest = sourceDigestString ∧
+      digestHex digests.artificer = hashes.artificer ∧
       digestHex digests.blackBox = hashes.blackBox ∧
       digestHex digests.deckDescent = hashes.deckDescent ∧
       digestHex digests.signal = hashes.signal ∧
       digestHex digests.relay = hashes.relay ∧
       digestHex digests.salvage = hashes.salvage ∧
+      digestHex digests.ventCrawl = hashes.ventCrawl ∧
       candidate =
         manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes := by
   simp [acceptsManifest, and_assoc]
@@ -1926,7 +2188,7 @@ theorem acceptsManifest_determines_the_manifest
       candidate = true) :
     candidate =
       manifestFor sourceDigestString federationId sourceDigest contentRoot digests hashes := by
-  obtain ⟨-, -, -, -, -, -, -, -, hcandidate⟩ :=
+  obtain ⟨-, -, -, -, -, -, -, -, -, -, hcandidate⟩ :=
     (acceptsManifest_eq_true_iff _ _ _ _ _ _ _).mp h
   exact hcandidate
 
