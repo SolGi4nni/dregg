@@ -350,14 +350,20 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 # "never terminate" — this file's other stated bound, since an unbounded heavy suite is how
 # `cargo test --workspace` came to need an external watchdog on 2026-07-26.
 [[profile.default.overrides]]
+# 2026-08-07: `shielded_ring_clearing_air`, `shielded_ring_clearing_nleg_air` and
+# `shielded_spend_leaf_adapter` were dropped from this budget because the modules are DELETED
+# (the Rust-authored shielded-spend tower, house law #1). A filter naming a test that cannot
+# exist is a budget that can never be exercised — exactly the fail-open shape this file's
+# timeout doctrine warns about — so the names go with the code.
+#
+# ⚠ AND THE NOTE ABOVE USED TO LIVE INSIDE THE FILTERSET BELOW, where `#` is NOT a comment —
+# it is filterset syntax. nextest validates EVERY profile on EVERY invocation, so this broke
+# `cargo nextest` REPO-WIDE at HEAD: any invocation, any package, exited before running a
+# single test with `failed to parse profile.default … expected close parenthesis`. A lane
+# measuring "0 tests failed" against that would have been reading a parse error as a green.
 filter = '''package(dregg-circuit-prove) and (
   test(/caveat_admission_leaf_adapter/) or test(/blinded_membership_leaf_adapter/)
   or test(/solvency_leaf_adapter/)
-  # 2026-08-07: `shielded_ring_clearing_air`, `shielded_ring_clearing_nleg_air` and
-  # `shielded_spend_leaf_adapter` were dropped from this budget because the modules are DELETED
-  # (the Rust-authored shielded-spend tower, house law #1). A filter naming a test that cannot
-  # exist is a budget that can never be exercised — exactly the fail-open shape this file's
-  # timeout doctrine warns about — so the names go with the code.
   or test(/presentation_leaf_adapter/) or test(/factory_leaf_adapter/)
   or test(/hatchery_leaf_adapter/)
   or test(/custom_fold_wire_tests/) or test(/broken_order_rejected/)
