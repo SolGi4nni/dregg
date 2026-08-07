@@ -20,11 +20,19 @@
 # (dregg-sdk/turn/circuit/verifier) are members of the ROOT workspace, so THEIR
 # `workspace = true` deps (p3-*, ark-serialize, dregg-* locals) resolve against the
 # root; this manifest references none of them via `workspace = true`, so the
-# `[workspace.dependencies]` table is empty. `[patch.crates-io]` replicates only
-# the root patch this graph consumes — the `ark-serialize` serde-integration fork
-# the proof tree (dregg-hints via dregg-circuit/dregg-sdk) needs. The
-# plonky3-recursion deps are direct git deps in the root `[workspace.dependencies]`
-# (no patch) and resolve via the path-dep'd circuit crate's root membership.
+# `[workspace.dependencies]` table is empty. The `[patch]` tables below replicate
+# the root patches this graph consumes. The plonky3-recursion deps are direct git
+# deps in the root `[workspace.dependencies]` (no patch) and resolve via the
+# path-dep'd circuit crate's root membership.
+#
+# ⚑ A ROOT PATCH IS NOT INHERITED. `[patch]` is honoured only from the workspace
+# ROOT MANIFEST of the workspace being built. A path-dep whose own crate lives in
+# the root workspace still resolves its git deps through THIS manifest's patch
+# table, so every root patch this graph touches must be mirrored here BY HAND or
+# the crate silently resolves to stock upstream and fails to compile. That is
+# exactly what happened: `774628a4e` (2026-07-21) added the vendored-p3 patch and
+# the `circuit-prove` code that needs it, this manifest was never updated, and the
+# leg died on `unresolved imports p3_fri::CpuTwoAdicFriFold, TwoAdicFriFoldBackend`.
 [workspace]
 members = ["."]
 resolver = "2"
@@ -35,7 +43,22 @@ all = { level = "warn", priority = -1 }
 [workspace.lints.rust]
 unexpected_cfgs = "allow"
 
+# Vendored `82cfad73` sources, MIRRORING the root `[patch."…/Plonky3/Plonky3"]`
+# table — see the root Cargo.toml for what each delta is and why.
+#   p3-fri        additive backend-injection seam (`TwoAdicFriFoldBackend` /
+#                 `CpuTwoAdicFriFold` / 6-generic `HidingFriPcs<…, Fold>`), which
+#                 `dregg-circuit-prove` (transitive here) is compiled against.
+#   p3-challenger ordered rayon finders at the five PoW `grind` sites, so emitted
+#                 proof bytes are reproducible.
+# All other p3 crates stay on the same git rev, so no field/MMCS type splits by
+# source. These paths are relative to dregg-tui/, not the repo root.
+[patch."https://github.com/Plonky3/Plonky3"]
+p3-fri = { path = "../vendor/plonky3-fri-82cfad73" }
+p3-challenger = { path = "../vendor/plonky3-challenger-82cfad73" }
+
 [patch.crates-io]
+# ark-serialize fork — the `serde_with` feature the proof tree (dregg-hints via
+# dregg-circuit/dregg-sdk) needs.
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 
