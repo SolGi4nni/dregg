@@ -223,8 +223,26 @@ if [ "$#" -gt 0 ]; then
 else
   for d in docs site; do
     [ -d "$d" ] || continue
-    while IFS= read -r f; do FILES+=("$f"); done \
-      < <(find "$d" -type f -name '*.md' 2>/dev/null)
+    while IFS= read -r f; do
+      # A REVIEW OF AN EXTERNAL BRANCH IS A DATED RECORD ABOUT THAT BRANCH, not a claim
+      # about this tree — the same distinction the append-only logs above are excluded on,
+      # one scope out. `docs/REVIEW-pr72.md` cites `sdk/tests/public_api.rs` and four others
+      # because PR #72 ADDS them; they resolve in `akapug:lane/fee-loop-plus-coordination`
+      # and can never resolve here. Rewriting them to keep this gate green would falsify the
+      # review, which is exactly the argument the log exclusion already makes.
+      #
+      # ⚠ Measured 2026-08-07, and this is why it is a RULE and not a baseline row: those
+      # six refs were the ENTIRE standing block on `git push` for this repo. Every lane was
+      # passing `DREGG_ALLOW_DEAD_DOC_REFS=1` — one used it four times in a session and
+      # flagged it — and a refused push leaves NO artifact anywhere, so `origin/main`
+      # silently fell 49 commits behind local `main` for a day and a half while every CI run
+      # anyone read measured a tree from before all of it. An escape hatch everyone needs
+      # stops being an escape hatch and becomes the door.
+      case "$(basename "$f")" in
+        REVIEW-*.md) continue ;;
+      esac
+      FILES+=("$f")
+    done < <(find "$d" -type f -name '*.md' 2>/dev/null)
   done
   # THE ROOT MARKDOWN WAS NOT SCANNED AT ALL until 2026-07-26 — so the four files a
   # fresh agent is TOLD to read first were the only ones outside this gate. `AGENTS.md`
