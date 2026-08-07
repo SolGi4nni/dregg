@@ -275,6 +275,10 @@ mod tests {
         ("poa_records_api.rs", include_str!("poa_records_api.rs")),
         ("poa_holding_api.rs", include_str!("poa_holding_api.rs")),
         (
+            "poa_signal_session.rs",
+            include_str!("poa_signal_session.rs"),
+        ),
+        (
             "poa_signal_slot_api.rs",
             include_str!("poa_signal_slot_api.rs"),
         ),

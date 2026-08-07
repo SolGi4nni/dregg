@@ -381,6 +381,148 @@ pub fn derive_operator_instance(
     })
 }
 
+/// One mid-run classification: LOCKED and DRIFT, and nothing else.
+///
+/// ⚠ Contrast [`OperatorDerivedInstance`], which is the ANSWER and may never reach a
+/// route. This value is what a judged session serves, and it is safe to serve for a
+/// structural reason rather than by filtering: there is no field here that a target
+/// could occupy. Lean carries the same fact past the wire —
+/// `SignalFeedbackRuntime.reply_bytes_are_a_function_of_the_feedback_alone` proves the
+/// served bytes are a function of the classification alone, and
+/// `served_transcript_cannot_separate_feedback_equivalent_targets` proves a whole
+/// session's bytes are invariant across the feedback-consistency class of its own
+/// transcript. That is "no faster than playing", stated exactly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionClassification {
+    /// `SignalTriangulation.Feedback.exact` — bands in the correct position.
+    pub exact: u8,
+    /// `SignalTriangulation.Feedback.present` — additional multiplicity-respecting
+    /// matches in the wrong position.
+    pub present: u8,
+}
+
+impl SessionClassification {
+    /// A run is solved exactly when all three bands lock, which
+    /// `SignalTriangulation.accepted_solved_iff_target` proves is equivalent to the
+    /// guess BEING the target. The node decides this on no other evidence.
+    pub fn solved(self) -> bool {
+        self.exact == 3
+    }
+}
+
+/// The `POA-SIGNAL-FEEDBACK-1` request, with the wire's key order as its FIELD order.
+///
+/// ⚠ THE ORDER OF THESE FIELDS IS THE WIRE, for exactly the reason spelled out on
+/// [`SlotDeriveRequestDto`]: `SignalFeedbackRuntime.decodeRequest` is
+/// `canonicalDecode parseRequestJson Request.toJson`, so Lean re-encodes what it parsed
+/// and compares BYTES. A derived `Serialize` emits declaration order unconditionally;
+/// a `json!` map's order would be an accident of the dependency graph.
+///
+/// `signal_feedback_request_is_the_exact_pinned_wire` fails if this order changes.
+#[derive(Serialize)]
+struct SignalFeedbackRequestDto<'a> {
+    format: &'static str,
+    slot: u64,
+    secret: &'a str,
+    mission_id: u64,
+    epoch: u64,
+    federation_id: &'a str,
+    content_session: &'a str,
+    player_key: &'a str,
+    commitment: &'a str,
+    guess: SignalCodeDto,
+}
+
+/// Build the exact canonical classification request. Extracted from
+/// [`classify_session_guess`] so a test can assert its BYTES without a Lean archive.
+fn signal_feedback_request_wire(
+    context: &SignalAuthorityContext,
+    guess: SignalCode,
+) -> Result<String, SignalAdapterError> {
+    serde_json::to_string(&SignalFeedbackRequestDto {
+        format: dregg_lean_ffi::poa_signal_feedback_ffi::SIGNAL_FEEDBACK_INPUT_FORMAT,
+        slot: context.slot_state.slot,
+        secret: &context.slot_state.secret,
+        mission_id: context.config.mission.mission_id,
+        epoch: context.config.mission.epoch,
+        federation_id: &context.config.mission.federation_id,
+        content_session: &context.config.mission.content_session,
+        player_key: &context.carrier.player_key,
+        commitment: &context.slot_state.commitment,
+        guess: SignalCodeDto::from(guess),
+    })
+    .map_err(|error| SignalAdapterError::Json(error.to_string()))
+}
+
+/// The actor root a session context carries.
+///
+/// ⚠ A judged session has no executor receipt, so there is no `pre_state_hash` to
+/// supply — and none is needed: the classification wire's ten fields (above) do not
+/// include one, and the derivation the oracle performs is
+/// `HiddenInstance.runSeedFor ⟨secret, slot, playerKey⟩ ctx`, which does not read it
+/// either. It is threaded only because [`authority_context_from_persisted_head`] is the
+/// one place the head/Canon/slot bindings are checked, and that function's contract
+/// covers the whole judge input. `the_feedback_wire_does_not_carry_an_actor_root` fails
+/// if this value ever reaches the bytes.
+const SESSION_UNREAD_ACTOR_ROOT: [u8; 32] = [0u8; 32];
+
+/// Classify ONE mid-run guess against the judged instance, through Lean.
+///
+/// This is the function a judged session route calls, and it is deliberately
+/// route-reachable — the one PoA derivation-adjacent path that is. What makes that
+/// sound is not a filter here but the shape of what comes back: two counts.
+///
+/// It writes nothing and settles nothing. A session's budget is spent by the caller
+/// committing the round to storage, and the caller must do that BEFORE returning this
+/// value to the player (`dregg_persist::poa_signal_session`'s persist-then-reveal
+/// rule); answering before committing hands a free round to anyone who can crash the
+/// node.
+///
+/// There is no Rust classification here and there must never be one: the rule is
+/// `SignalTriangulation.feedback`, the same function `step` scores a settling
+/// transcript with, and a second copy of it in Rust would hand players a different game
+/// than the one that settles.
+pub fn classify_session_guess(
+    head: &dregg_persist::PoaSignalHeadV1,
+    slot: &dregg_persist::PoaInstalledSlotV1,
+    active_federation_id: [u8; 32],
+    player_key: [u8; 32],
+    guess: SignalCode,
+) -> Result<SessionClassification, SignalAdapterError> {
+    let context = authority_context_from_persisted_head(
+        head,
+        slot,
+        active_federation_id,
+        player_key,
+        SESSION_UNREAD_ACTOR_ROOT,
+    )?;
+    let wire = signal_feedback_request_wire(&context, guess)?;
+    let reply = dregg_lean_ffi::poa_signal_feedback_ffi::classify_poa_signal_guess(&wire)
+        .map_err(SignalAdapterError::LeanTransport)?
+        .ok_or(SignalAdapterError::FeedbackRefused)?;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct FeedbackReplyDto {
+        format: String,
+        exact: u8,
+        present: u8,
+    }
+    let reply: FeedbackReplyDto = parse_exact(&reply, "Signal feedback")?;
+    if reply.format != dregg_lean_ffi::poa_signal_feedback_ffi::SIGNAL_FEEDBACK_OUTPUT_FORMAT {
+        return Err(SignalAdapterError::InvalidField("feedback reply format"));
+    }
+    // `SignalTriangulation.feedback_match_bound` is the Lean statement; this is the
+    // host-side refusal that a reply violating it is not passed on as a classification.
+    if reply.exact > 3 || reply.exact.saturating_add(reply.present) > 3 {
+        return Err(SignalAdapterError::InvalidField("feedback counts"));
+    }
+    Ok(SessionClassification {
+        exact: reply.exact,
+        present: reply.present,
+    })
+}
+
 /// Invoke the existing Lean FFI and strictly parse its exact reply.
 ///
 /// This function is intentionally pure with respect to node state: it neither
@@ -817,6 +959,11 @@ pub enum SignalAdapterError {
     /// the curator published. The node holds the wrong secret for this slot and
     /// must not serve a run against it.
     SlotCommitmentMismatch,
+    /// The Lean feedback oracle refused the classification wire. It is a distinct
+    /// refusal from [`Self::LeanRejected`] on purpose: nothing was judged and no
+    /// transition was proposed, so reporting this as "Lean rejected the transition"
+    /// would name a cause that did not happen.
+    FeedbackRefused,
     OutputBinding(&'static str),
     PreparedTransition(String),
     SemanticReplay(String),
@@ -844,6 +991,11 @@ impl fmt::Display for SignalAdapterError {
                 f,
                 "the installed slot secret does not open the published slot commitment; \
                  refusing to serve a run whose instance nobody committed to"
+            ),
+            Self::FeedbackRefused => write!(
+                f,
+                "the Lean Signal feedback oracle refused this classification wire; no guess was \
+                 scored"
             ),
             Self::OutputBinding(reason) => write!(f, "Lean Signal output binding failed: {reason}"),
             Self::PreparedTransition(error) => {
@@ -1795,6 +1947,162 @@ mod tests {
             None,
             "Lean accepted a reordered request; the canonical seal is not order-sensitive \
              and the key-order gate above is decoration"
+        );
+    }
+
+    /// The classification wire has the same order discipline and the same consequence
+    /// for getting it wrong: a reordered wire is refused, which surfaces as every
+    /// judged guess failing.
+    #[test]
+    fn signal_feedback_request_is_the_exact_pinned_wire() {
+        let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
+        let context = parsed.authority_context();
+        let guess = SignalCode::new(0, 1, 2).unwrap();
+        let wire = signal_feedback_request_wire(&context, guess).unwrap();
+
+        assert_eq!(
+            wire,
+            concat!(
+                r#"{"format":"POA-SIGNAL-FEEDBACK-1""#,
+                r#","slot":9"#,
+                r#","secret":"7777777777777777777777777777777777777777777777777777777777777777""#,
+                r#","mission_id":1"#,
+                r#","epoch":1"#,
+                r#","federation_id":"4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a""#,
+                r#","content_session":"504f412d5349472d310000000000000000000000000000000000000000000000""#,
+                r#","player_key":"5555555555555555555555555555555555555555555555555555555555555555""#,
+                r#","commitment":"bc7742888f4ed90ace371abf4b0be7dec5e22d47723bcfd01903a8aa2332a491""#,
+                r#","guess":{"low":0,"mid":1,"high":2}}"#,
+            ),
+            "the Signal feedback request wire changed; Lean's canonicalDecode compares \
+             BYTES against Request.toJson, so this is a total judged-session outage, not \
+             a formatting nit"
+        );
+    }
+
+    /// ⚑ The classification wire's first eight fields are the DERIVATION wire's, field
+    /// for field and byte for byte. That is what makes a served classification a
+    /// classification about the instance that will SETTLE, rather than about a second
+    /// instance the session happens to agree with today. Lean proves the same weld
+    /// (`SignalFeedbackRuntime.request_derives_the_judged_instance`, `rfl`); this is the
+    /// host-side half, over the bytes this module actually builds.
+    #[test]
+    fn the_feedback_wire_is_the_derivation_wire_plus_a_commitment_and_a_guess() {
+        let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
+        let context = parsed.authority_context();
+        let derive = slot_derive_request_wire(&context).unwrap();
+        let feedback =
+            signal_feedback_request_wire(&context, SignalCode::new(0, 1, 2).unwrap()).unwrap();
+
+        let derive_body = derive
+            .strip_prefix(r#"{"format":"POA-SLOT-DERIVE-1","#)
+            .and_then(|rest| rest.strip_suffix('}'))
+            .expect("the derivation wire shape changed");
+        let feedback_body = feedback
+            .strip_prefix(r#"{"format":"POA-SIGNAL-FEEDBACK-1","#)
+            .expect("the feedback wire shape changed");
+        assert!(
+            feedback_body.starts_with(derive_body),
+            "the feedback wire no longer begins with the derivation wire's exact eight \
+             fields, so the two exports can be about DIFFERENT instances:\n  derive: \
+             {derive_body}\n  feedback: {feedback_body}"
+        );
+    }
+
+    /// ⚠ The wire carries no actor root. `SESSION_UNREAD_ACTOR_ROOT` is threaded through
+    /// `authority_context_from_persisted_head` only because that is where the
+    /// head/Canon/slot bindings are checked; if it ever reached the bytes it would be a
+    /// zeroed field a client could mistake for a real one.
+    #[test]
+    fn the_feedback_wire_does_not_carry_an_actor_root() {
+        let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
+        let context = parsed.authority_context();
+        let wire =
+            signal_feedback_request_wire(&context, SignalCode::new(0, 1, 2).unwrap()).unwrap();
+        assert!(!wire.contains("actor_root"));
+        assert!(!wire.contains(&dregg_types::hex_encode(&SESSION_UNREAD_ACTOR_ROOT)));
+    }
+
+    /// The pinned wire is ACCEPTED by the live export and a reordered one is REFUSED,
+    /// so the order gate above measures a live property rather than a belief.
+    ///
+    /// Skipped (not silently passed) when the archive lacks the export.
+    #[test]
+    fn a_reordered_feedback_request_is_refused_by_lean() {
+        if !dregg_lean_ffi::poa_signal_feedback_ffi::poa_signal_feedback_available() {
+            eprintln!("skipped: dregg_poa_signal_feedback is not in the linked archive");
+            return;
+        }
+        let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
+        let context = parsed.authority_context();
+        let honest =
+            signal_feedback_request_wire(&context, SignalCode::new(0, 1, 2).unwrap()).unwrap();
+        assert!(
+            dregg_lean_ffi::poa_signal_feedback_ffi::classify_poa_signal_guess(&honest)
+                .unwrap()
+                .is_some(),
+            "the pinned wire must be accepted, or this test proves nothing"
+        );
+
+        let alphabetical = concat!(
+            r#"{"commitment":"bc7742888f4ed90ace371abf4b0be7dec5e22d47723bcfd01903a8aa2332a491""#,
+            r#","content_session":"504f412d5349472d310000000000000000000000000000000000000000000000""#,
+            r#","epoch":1"#,
+            r#","federation_id":"4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a""#,
+            r#","format":"POA-SIGNAL-FEEDBACK-1""#,
+            r#","guess":{"high":2,"low":0,"mid":1}"#,
+            r#","mission_id":1"#,
+            r#","player_key":"5555555555555555555555555555555555555555555555555555555555555555""#,
+            r#","secret":"7777777777777777777777777777777777777777777777777777777777777777""#,
+            r#","slot":9}"#,
+        );
+        assert_eq!(
+            dregg_lean_ffi::poa_signal_feedback_ffi::classify_poa_signal_guess(alphabetical)
+                .unwrap(),
+            None,
+            "Lean accepted a reordered feedback request; the canonical seal is not \
+             order-sensitive and the key-order gate above is decoration"
+        );
+    }
+
+    /// ⚑ THE ORACLE AGREES WITH THE JUDGE ON THIS FIXTURE'S INSTANCE. The solving code
+    /// `evaluate_signal_claim` settles with is exactly the code the oracle answers
+    /// `exact: 3` to — and the oracle's answer for a losing guess is a real
+    /// classification, not a constant.
+    ///
+    /// This is the one place the two Lean exports are compared on the SAME context, and
+    /// it is worth the fixture: a session that classified against a different instance
+    /// than the judge scores would teach a player the wrong answer and then refuse it.
+    ///
+    /// Skipped (not silently passed) when the archive lacks either export.
+    #[test]
+    fn the_oracle_and_the_judge_agree_on_the_fixture_instance() {
+        if !dregg_lean_ffi::poa_signal_feedback_ffi::poa_signal_feedback_available()
+            || !dregg_lean_ffi::poa_slot_derive_ffi::poa_slot_derive_available()
+        {
+            eprintln!("skipped: a PoA Signal export is not in the linked archive");
+            return;
+        }
+        let parsed = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
+        let context = parsed.authority_context();
+
+        let classify = |code: SignalCode| {
+            let wire = signal_feedback_request_wire(&context, code).unwrap();
+            dregg_lean_ffi::poa_signal_feedback_ffi::classify_poa_signal_guess(&wire)
+                .unwrap()
+                .expect("the pinned wire must be accepted")
+        };
+
+        // `solving_claim`'s code: the fixture's `targetFromSeed(d15ad7b7…)` = (5, 0, 5).
+        assert_eq!(
+            classify(SignalCode::new(5, 0, 5).unwrap()),
+            r#"{"format":"POA-SIGNAL-FEEDBACK-OUT-1","exact":3,"present":0}"#,
+            "the code the judge settles must LOCK all three bands on the oracle"
+        );
+        assert_ne!(
+            classify(SignalCode::new(0, 1, 2).unwrap()),
+            classify(SignalCode::new(5, 0, 5).unwrap()),
+            "the oracle answers every guess the same; it is not classifying"
         );
     }
 

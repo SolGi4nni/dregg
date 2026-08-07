@@ -80,6 +80,11 @@ mod first_turn_e2e;
 // consensus loop — the one public number that says a Path of Angels game settled.
 #[cfg(test)]
 mod poa_signal_first_turn_e2e;
+// A judged SESSION played to both poles through the real router: one solves and its
+// own settling code moves `latest_height` 0 -> 1; the other burns all five bursts, is
+// refused BY NAME, and settles nothing without wedging the node.
+#[cfg(test)]
+mod poa_signal_session_e2e;
 // WHAT DOES A FAILED FULL-TURN PROOF LEAVE? The commit-anyway fork is NOT settled
 // there; what is pinned is that the failure is durable, served as 410, and never
 // reported as `ProofPending`.
@@ -125,6 +130,10 @@ pub mod poa_records_api;
 pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;
 pub mod poa_signal_genesis;
+/// The judged Signal SESSION: an authenticated, budgeted, durable deduction game
+/// against the instance that will settle. Without it, judged play is a blind 1-in-216
+/// claim and the game with feedback lives only in the browser's practice mode.
+pub mod poa_signal_session;
 pub mod poa_signal_slot_api;
 pub mod poa_signal_slot_ceremony;
 // STEPS 5–6 of the first-turn ceremony: THE ONE Signal carrier builder (lifted out
@@ -831,6 +840,21 @@ pub enum Command {
         /// own assets and must not inherit the generic devnet economy.
         #[arg(long)]
         no_demo_economy: bool,
+
+        /// Issue this many units, by ONE issuer-move, into the deployment-local
+        /// PLAYER GRANT cell — the only economy an application federation has.
+        ///
+        /// Without it the value column is all zeroes: no cell can pay a turn
+        /// fee, the executor refuses every claim with `insufficient balance`,
+        /// and `latest_height` cannot leave 0. Requires `--deployment-domain`
+        /// and `--no-demo-economy`, and is refused below the cost of a single
+        /// Signal claim.
+        ///
+        /// ⚑ The grant seed derives from PUBLIC material (the deployment domain
+        /// and the federation id), so it is bearer value for anyone who can read
+        /// the descriptor. Fund it for the turns you intend.
+        #[arg(long)]
+        player_grant: Option<u64>,
     },
 
     /// Run as a hosted inbox relay operator.
@@ -1583,6 +1607,7 @@ pub async fn run(cli: Cli) {
             output,
             deployment_domain,
             no_demo_economy,
+            player_grant,
         } => genesis::run_genesis_with_options(
             validators,
             epoch_length,
@@ -1591,6 +1616,7 @@ pub async fn run(cli: Cli) {
             genesis::GenesisOptions {
                 deployment_domain,
                 seed_demo_economy: !no_demo_economy,
+                player_grant,
             },
         ),
         Command::RegisterFederation {

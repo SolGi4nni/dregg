@@ -150,6 +150,17 @@ struct GenesisConfig {
     /// then applies these moves; `initial_cells[].balance` is the declared
     /// (checked) outcome.
     genesis_moves: Vec<GenesisMove>,
+    /// Hex cell id of the PLAYER GRANT cell — the one deployment-local cell an
+    /// application federation issues value INTO at genesis, so a player identity
+    /// can pay a turn fee on a chain that has no faucet and no other economy.
+    ///
+    /// Present exactly when the deployment issues genesis value. Absent means the
+    /// column is all zeroes and nothing can act; the PoA deployment gates
+    /// (`scripts/poa-devnet-manifest.mjs`, `poa_curator::PoaDeploymentScope`) read
+    /// this field to decide WHICH genesis economy the descriptor must be, and the
+    /// manifest policy has to agree with it in both directions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    player_grant: Option<String>,
     /// Factory cells minted at boot via `starbridge_seed` (devnet only).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     starbridge_cells: Vec<StarbridgeGenesisCell>,
@@ -163,6 +174,22 @@ pub struct GenesisOptions {
     pub deployment_domain: Option<String>,
     /// Seed the generic faucet/demo-agent/Starbridge economy.
     pub seed_demo_economy: bool,
+    /// Issue this many units, by ONE issuer-move, into the deployment-local
+    /// PLAYER GRANT cell.
+    ///
+    /// This is the whole economy of an application federation that has no
+    /// faucet: `POST /api/faucet` needs a genesis faucet cell an empty-economy
+    /// deployment does not have, `Effect::Mint` needs a fee the zero-balance
+    /// issuer well cannot pay, and the executor refuses any agent whose balance
+    /// is below the turn fee (`turn/src/executor/execute.rs`, `InsufficientBalance`).
+    /// With nothing here, a Path of Angels player cannot pay
+    /// `dregg_sdk::poa_signal::signal_claim_fee_v1()` and the chain cannot leave
+    /// height 0 — which is exactly where it sat until 2026-08-07.
+    ///
+    /// Requires a `deployment_domain` and no demo economy: the grant identity is
+    /// deployment-scoped and the generic devnet economy already funds its own
+    /// agents.
+    pub player_grant: Option<u64>,
 }
 
 impl Default for GenesisOptions {
@@ -170,9 +197,35 @@ impl Default for GenesisOptions {
         Self {
             deployment_domain: None,
             seed_demo_economy: true,
+            player_grant: None,
         }
     }
 }
+
+/// Key-derivation context for the deployment-local PLAYER GRANT identity.
+///
+/// ⚑ CUSTODY, SAID OUT LOUD. [`auxiliary_genesis_key`] derives from
+/// `(context, deployment_domain, federation_id)` and BOTH of those inputs are
+/// PUBLIC — the domain is a constant and the federation id is printed in the
+/// descriptor every follower pins. So this seed is a pure function of published
+/// data: whoever can read `genesis.json` can recompute `player-grant.key`. That
+/// is already true of `issuer-well.key` and `fee-well.key`, where it costs
+/// nothing (a well cannot author a turn: the issuer well's balance is negative
+/// and `execute` refuses a negative-balance agent outright). It does NOT cost
+/// nothing here, because this cell HOLDS value: the grant is BEARER value for
+/// anyone who reads the descriptor, and the only thing bounding the loss is the
+/// grant amount.
+///
+/// It is deliberate anyway, and the reason is that the alternative is worse in
+/// the same direction: a grant to an operator-supplied player key is a second
+/// custody scheme with a seed that has to be transported, and this deployment
+/// has exactly one shared player pool. Fund it for the turns you intend, not for
+/// a treasury. If you want per-player custody, that is a real design change —
+/// mint per-player grants against keys the players bring — not a bigger number here.
+pub const PLAYER_GRANT_KEY_CONTEXT: &str = "dregg-poa-player-grant-key-v1";
+
+/// Filename of the PLAYER GRANT seed inside a generated deployment bundle.
+pub const PLAYER_GRANT_KEY_FILE: &str = "player-grant.key";
 
 /// Run the genesis configuration generation.
 pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u64, output: &Path) {
@@ -223,6 +276,42 @@ pub fn run_genesis_with_options(
             "error: --deployment-domain requires --no-demo-economy; the generic faucet endpoint uses the legacy devnet identity"
         );
         std::process::exit(1);
+    }
+
+    // ── THE PLAYER GRANT, refused HERE or never. ─────────────────────────────
+    // The two poles of the funding decision are decided at the point the operator
+    // types the amount, because after this command runs there is a chain, a
+    // deployment digest and a signed follower package built on top of the number.
+    // A grant that cannot buy one turn is not a small problem to discover later:
+    // it produces a deployment that verifies, boots, serves, reports
+    // `healthy: true` and refuses every claim.
+    let signal_claim_fee = dregg_sdk::poa_signal::signal_claim_fee_v1();
+    if let Some(grant) = options.player_grant {
+        if deployment_domain.is_none() {
+            eprintln!(
+                "error: --player-grant requires --deployment-domain; the grant identity is \
+                 derived per deployment and an unscoped genesis would mint it into the shared \
+                 legacy devnet identity space"
+            );
+            std::process::exit(1);
+        }
+        if options.seed_demo_economy {
+            eprintln!(
+                "error: --player-grant requires --no-demo-economy; the generic devnet economy \
+                 already funds its own agents through the faucet"
+            );
+            std::process::exit(1);
+        }
+        if grant < signal_claim_fee {
+            eprintln!(
+                "error: --player-grant {grant} is below the Path of Angels Signal claim fee \
+                 {signal_claim_fee}; the grant cell could not pay for a SINGLE turn, so the \
+                 deployment would boot healthy and refuse every claim with \
+                 `insufficient balance ... need {signal_claim_fee}, have {grant}`. \
+                 Fund it for the turns you intend: {signal_claim_fee} buys one."
+            );
+            std::process::exit(1);
+        }
     }
 
     // Wall time is sampled exactly once while BUILDING the deployment configuration. It is not a
@@ -448,6 +537,33 @@ pub fn run_genesis_with_options(
         }
     }
 
+    // The PLAYER GRANT cell — the whole economy of an application federation.
+    // It is an ordinary recipient of an ordinary issuer-move: no minting, no
+    // special case in the loader, and the column still sums to zero. What makes
+    // it usable rather than decorative is the ML-DSA commitment below: hybrid
+    // admission anchors the PQ key a turn carries in the AGENT CELL's committed
+    // `pq_identity`, so a grant cell without one is a funded cell that refuses
+    // every turn it is the agent of (`pq-identity-not-enrolled`).
+    let player_grant_id = options.player_grant.map(|amount| {
+        let secret = auxiliary_genesis_key(
+            PLAYER_GRANT_KEY_CONTEXT,
+            deployment_domain,
+            &federation_id_bytes,
+        );
+        let pubkey = ed25519_dalek::SigningKey::from_bytes(&secret)
+            .verifying_key()
+            .to_bytes();
+        write_key_file(output, PLAYER_GRANT_KEY_FILE, &secret);
+        let id = derive_cell_id(&pubkey, &default_token_id);
+        recipients.push((
+            id.clone(),
+            pubkey,
+            ml_dsa_public_key_for_seed(&secret),
+            amount,
+        ));
+        id
+    });
+
     let total_issued: u64 = recipients.iter().map(|(_, _, _, amt)| amt).sum();
     let genesis_moves: Vec<GenesisMove> = recipients
         .iter()
@@ -485,14 +601,26 @@ pub fn run_genesis_with_options(
             ml_dsa_public_key: Some(hex_encode(ml_dsa_pubkey)),
         });
     }
-    debug_assert_eq!(
-        initial_cells
-            .iter()
-            .map(|c| c.balance as i128)
-            .sum::<i128>(),
-        0,
-        "genesis value column must sum to zero"
-    );
+    // CONSERVATION, checked in every profile.
+    //
+    // ⚑ This was a `debug_assert_eq!`, which is compiled OUT of a release build —
+    // so the one property that makes an issuer-move genesis different from minting
+    // from nowhere was checked exactly where nobody generates a deployment, and not
+    // checked in the binary an operator actually runs. A genesis is written ONCE
+    // and then hashed into a deployment id, a manifest, a follower package and a
+    // signed authority head; if the column does not close, all of that pins a chain
+    // whose supply is a lie. Refuse instead.
+    let column: i128 = initial_cells
+        .iter()
+        .map(|c| c.balance as i128)
+        .sum::<i128>();
+    if column != 0 {
+        eprintln!(
+            "error: genesis value column sums to {column}, not zero; value would enter this \
+             chain from nowhere. Refusing to write a descriptor that does not conserve."
+        );
+        std::process::exit(1);
+    }
 
     let starbridge_cells = if options.seed_demo_economy {
         default_starbridge_genesis_cells()
@@ -514,6 +642,7 @@ pub fn run_genesis_with_options(
         issuer_well: issuer_well_id,
         fee_well: fee_well_id,
         genesis_moves,
+        player_grant: player_grant_id,
         starbridge_cells,
     };
 
@@ -549,6 +678,24 @@ pub fn run_genesis_with_options(
         println!("  Deployment domain: {domain}");
     }
     println!("  Demo economy: {}", options.seed_demo_economy);
+    match (&genesis.player_grant, options.player_grant) {
+        (Some(id), Some(amount)) => {
+            println!("  Player grant: {amount} into cell {id}");
+            println!(
+                "    one Signal claim costs {signal_claim_fee}, so this buys {} turn(s)",
+                amount / signal_claim_fee
+            );
+            println!(
+                "    ⚑ {PLAYER_GRANT_KEY_FILE} derives from the PUBLIC (domain, federation_id): \
+                 anyone who reads this descriptor can recompute it. The grant is bearer value; \
+                 the amount is the loss bound."
+            );
+        }
+        _ => println!(
+            "  Player grant: NONE — the value column is all zeroes, so no cell can pay a turn \
+             fee and this chain cannot leave height 0. Pass --player-grant to fund one."
+        ),
+    }
     println!();
     println!("Files:");
     println!("  {}", genesis_path.display());
@@ -840,6 +987,7 @@ mod tests {
             issuer_well: "00".repeat(32),
             fee_well: "11".repeat(32),
             genesis_moves: vec![],
+            player_grant: None,
             starbridge_cells: default_starbridge_genesis_cells(),
         };
 

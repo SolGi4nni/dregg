@@ -2478,6 +2478,23 @@ pub fn router_with_cors(
         // the bearer layer below and applies its own proxy-aware rate/concurrency
         // budget; it is neither anonymous nor a finality/provenance surface.
         .merge(crate::poa_signal_authority_export::routes())
+        // ⚑ AUTHENTICATED ON PURPOSE, 2026-08-07. The judged Signal session spends a
+        // scarce per-player action budget against a LIVE slot secret; its sibling
+        // `poa_signal_slot_api` is deliberately public because it publishes a
+        // curator-signed commitment every reader needs. These are opposite postures and
+        // the split is the point.
+        //
+        // The standing question, answered rather than waved at: CAN A READER WHO HAS
+        // NEVER PLAYED RECONSTRUCT THE HIDDEN INSTANCE FROM WHAT THESE ROUTES SERVE? No,
+        // and provably: the only thing a session emits about the target is
+        // `SignalTriangulation.feedback`, and Lean's
+        // `SignalFeedbackRuntime.served_transcript_cannot_separate_feedback_equivalent_
+        // targets` shows a whole session's bytes are IDENTICAL for any two targets
+        // consistent with the guesses played. A reader of a transcript is exactly where
+        // the player who produced it is. The document carries no secret, no run seed and
+        // no target, and its `settlement.code` is the player's own solving guess read
+        // back out of the stored transcript.
+        .merge(crate::poa_signal_session::routes())
         // THE DAILY SALVAGE CRATE'S ONE WRITE. Authenticated because opening is an authorized
         // act against a curator-authored roster; the document it returns is still communal
         // (`ShipInstrumentPanel.State` has no per-player field), so mounting it here rather than
