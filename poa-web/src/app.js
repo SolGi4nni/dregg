@@ -15,6 +15,12 @@ import { buildRunSummary, mountRunSummary, runOutcome } from "./run-summary.js";
 import { readRackResults, recordRackResult } from "./rack-results.js";
 import { buildTodayBoard, loadSlotState, mountTodayBoard } from "./today-board.js";
 import {
+  buildJudgedPanel,
+  judgedCustody,
+  loadJudgedSession,
+  mountJudgedPanel,
+} from "./judged-session.js";
+import {
   buildCrateOpenAction,
   buildStationPanel,
   loadStationState,
@@ -51,6 +57,18 @@ const state = {
   platformEvidence: Object.freeze({}),
   slot: null,
   station: null,
+  /**
+   * What custody this page has for JUDGED Signal, and the judged session itself.
+   *
+   * ⚠ BOTH STAY `null`-ish ON THIS DEPLOYMENT, and the panel says why in words.
+   * Judged play needs a raw Ed25519 signature by the player key over the node's
+   * documented session statement, and `window.dregg` exposes no such signer —
+   * only a public identity and a signer for already-built turns. So the action
+   * renders DISABLED naming that fact, exactly as the crate's crew binding does
+   * above, rather than this page generating a keypair to make a button work.
+   */
+  judgedCustody: null,
+  judgedSession: null,
   /**
    * The crew identity the crate open is authorized under, or `null`.
    *
@@ -288,6 +306,55 @@ function renderToday() {
     cards: state.cards,
     station: state.station,
   }));
+  renderJudged();
+}
+
+/**
+ * The judged-session panel, mounted beside the board that says whether a slot is
+ * open at all.
+ *
+ * ⚠ It reads `state.slot` — the opening this page ALREADY verified against the
+ * pinned curator key — and never re-fetches or re-checks it. One verifier; a
+ * second one is a second answer waiting to disagree.
+ */
+function renderJudged() {
+  const root = byId("judged-panel");
+  if (!root) return;
+  mountJudgedPanel(root, buildJudgedPanel({
+    slot: state.slot,
+    custody: state.judgedCustody,
+    session: state.judgedSession,
+  }));
+}
+
+/**
+ * Ask whether this player has a judged session open, once the slot is verified.
+ *
+ * Deliberately best-effort and deliberately quiet about failure: the session
+ * routes are authenticated and this origin holds no bearer, so on the live
+ * deployment this lands as `unauthenticated` and the panel says so in words.
+ * That is the honest state, not an error — and it can only ever fail toward
+ * "no judged session shown".
+ */
+async function initializeJudgedSession() {
+  state.judgedCustody = judgedCustody(window.dregg ?? null);
+  renderJudged();
+  if (state.slot?.state !== "open") return;
+  let playerKey = null;
+  try {
+    const identity = await window.dregg?.getActiveIdentity?.();
+    if (typeof identity?.publicKeyHex === "string") playerKey = identity.publicKeyHex;
+  } catch {
+    // A declined or absent identity is the `unbound` panel, not a failure.
+  }
+  if (!playerKey) return;
+  state.judgedSession = await loadJudgedSession({
+    authorityId: state.missions[0]?.federationId ?? null,
+    commitment: state.slot.commitment,
+    playerKey,
+    baseUrl: location.href,
+  });
+  renderJudged();
 }
 
 function renderStation() {
@@ -695,6 +762,9 @@ async function boot() {
     renderRack();
     renderToday();
     await Promise.all([initializeSlotState(), initializeAuthorityOrgans()]);
+    // ⚠ AFTER the slot, never beside it: a judged session is only ever read
+    // against a commitment this page has already verified for itself.
+    await initializeJudgedSession();
   } catch (error) {
     sealAuthority(error);
   } finally {

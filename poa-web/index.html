@@ -70,6 +70,18 @@
             <p class="today-board__lead">Reading today’s state…</p>
           </section>
 
+          <!--
+            The judged session, beside the board that says whether a slot is open.
+            A judged run is the only kind that settles; practice is drawn in this
+            browser and scored in this browser, and settles nothing. The panel
+            never renders a practice board in judged furniture — it shows a run
+            only when the node calls it `judged` against the commitment this page
+            verified, and otherwise says plainly why there is nothing to show.
+          -->
+          <section id="judged-panel" class="judged-panel-root" aria-label="Judged Signal session">
+            <p class="today-board__lead">Reading the judged slot…</p>
+          </section>
+
           <div class="overview-grid">
             <article class="panel officer-card">
               <div class="panel-label">EXPEDITION OFFICER SLOT</div>

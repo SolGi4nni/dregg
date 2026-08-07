@@ -416,6 +416,32 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
 .today-tile__headline { color: var(--text); font: 400 17px/1.15 var(--serif); }
 .today-tile__detail { color: var(--dim); font-size: 9px; line-height: 1.5; }
 
+/* --- the judged session -------------------------------------------------
+   Deliberately the today-tile anatomy, one tone wider: a judged run is the
+   same KIND of claim as the four tiles above it — something this page checked,
+   or an honest absence — and it should not look like a louder one. */
+.judged-panel-root { margin-bottom: 20px; }
+.judged-panel { --tone: #526760; display: grid; align-content: start; gap: 8px; padding: 13px 14px;
+  border-left: 2px solid var(--tone); background: rgba(0,0,0,.16); }
+.judged-panel--playing, .judged-panel--settled { --tone: var(--acid); }
+.judged-panel--sealed, .judged-panel--unbound, .judged-panel--unplayable, .judged-panel--spent { --tone: #526760; }
+.judged-panel--pending { --tone: var(--line-bright); }
+.judged-panel__eyebrow { margin: 0; color: var(--tone); font-size: 7px; font-weight: 600; letter-spacing: .14em; }
+.judged-panel__headline { color: var(--text); font: 400 17px/1.15 var(--serif); }
+.judged-panel__detail { color: var(--dim); font-size: 9px; line-height: 1.5; }
+.judged-panel__rounds { display: grid; gap: 4px; margin: 2px 0 0; padding: 0; list-style: none; }
+.judged-round { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 10px;
+  padding: 5px 8px; background: rgba(0,0,0,.22); }
+.judged-round__code { color: var(--text); font-size: 11px; letter-spacing: .12em; }
+.judged-round__locked { color: var(--acid); font-size: 9px; letter-spacing: .1em; }
+.judged-round__drift { color: var(--dim); font-size: 9px; letter-spacing: .1em; }
+.judged-panel__action { justify-self: start; padding: 6px 13px; border: 1px solid var(--line-bright);
+  background: transparent; color: var(--text); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; }
+.judged-panel__action[disabled] { border-color: var(--line); color: var(--dim); cursor: not-allowed; }
+/* The reason is body text, never a tooltip: a disabled control whose reason
+   only appears on hover reads as broken to anyone who cannot hover. */
+.judged-panel__reason { margin: 0; color: var(--dim); font-size: 8px; line-height: 1.55; }
+
 /* --- the rack ----------------------------------------------------------- */
 .game-rack { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 11px; margin-bottom: 20px; }
 .rack-card { display: grid; align-content: start; gap: 9px; min-height: 210px; padding: 15px 16px; border: 1px solid var(--line); background: linear-gradient(145deg, rgba(13,31,32,.92), rgba(6,17,19,.86)); }
