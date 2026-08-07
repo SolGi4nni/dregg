@@ -53,6 +53,8 @@ Axiom-clean: `by decide` only; no `sorry`, no `native_decide`.
 -/
 import Dregg2.Tactics
 import Dregg2.Circuit.Emit.PastaField
+-- ⚑ slot 11's preimage IS the step statement's own packed words since 2026-08-06 — see §1b.
+import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 
 namespace Dregg2.Circuit.Emit.MinaWrapDeferredWords
 
@@ -66,35 +68,35 @@ set_option autoImplicit false
 in Mina's own slot order. Every entry is an `Fq` element (the wrap circuit's native field). -/
 def WRAP_PUBLIC_INPUT_MEASURED : List Nat :=
   [
-   1117645832111364878683857204788714449840860772346495449428610585539693137167, --  0  combined_inner_product
-   21777777234232217860821360887121611618288927319335688664328246535554721523720, --  1  b
-   8149239663751596801662678693302821294394998295243361602830765183121890662110, --  2  zeta_to_srs_length
-   13754637000960282899699529053766972504264385824296256138307852822773767922204, --  3  zeta_to_domain_size
-   8593722480541502673495264527951508995759096174473186282076668487031666439767, --  4  perm
-   193434172244141145548481111131525554009, --  5  beta
-   14611295132465104478110401651760541530, --  6  gamma
-   128824226505427250820816902487251758556, --  7  alpha
-   49764862543162710842432820270994491928, --  8  zeta
-   238028948094493284007588209949128471000, --  9  xi
-   13363709624839189624729053474885468137854461440653564568955298336522016580644, -- 10  sponge_digest_before_evaluations
-   14487526077498829597225611381866255782252406825040604733580765573935450872395, -- 11  messages_for_next_wrap_proof(hash)
-   2140974966619622776015189267648243586732098598200249976162061600531359395435, -- 12  messages_for_next_step_proof(hash)
-   193413021763088679378346223800452572014, -- 13  bulletproof_challenges[0]
-   211497503736393113809876588853595421377, -- 14  bulletproof_challenges[1]
-   65562840999573818458670249776743061639, -- 15  bulletproof_challenges[2]
-   95996046518973242036019614846661742708, -- 16  bulletproof_challenges[3]
-   73907839716720835025479147802246695639, -- 17  bulletproof_challenges[4]
-   77623633289130501347820137490767714972, -- 18  bulletproof_challenges[5]
-   280492384813645995475067781368985441736, -- 19  bulletproof_challenges[6]
-   55371934463937073510985154106716719151, -- 20  bulletproof_challenges[7]
-   300077920515855457750918930666510292264, -- 21  bulletproof_challenges[8]
-   274182238000232084153684845036035137968, -- 22  bulletproof_challenges[9]
-   331563109375578417372038715052717228647, -- 23  bulletproof_challenges[10]
-   10319218948555694921762899643910912343, -- 24  bulletproof_challenges[11]
-   117679627433170027353577543684584321946, -- 25  bulletproof_challenges[12]
-   155875792560497771807557655150773723741, -- 26  bulletproof_challenges[13]
-   167894599541559745617214839948604366193, -- 27  bulletproof_challenges[14]
-   271258881347124905993567886492750457261, -- 28  bulletproof_challenges[15]
+   17157418922086209917978626834833170734226168415222430536758541141512662204881, --  0  combined_inner_product
+   21462094254569293056058389999433116751297896387313140222875301633253859882958, --  1  b
+   158273222659820817964901124731494794664062272559822118278686487880440951863, --  2  zeta_to_srs_length
+   412145561143388113365239829551639793757772598856583380581211508158932200915, --  3  zeta_to_domain_size
+   6123756029412981482974397683997468173556109625559912885656262562384684464949, --  4  perm
+   151876253559130533081036972182927137591, --  5  beta
+   175590710578932357617539127178887564224, --  6  gamma
+   19288584136430097701536122286986765740, --  7  alpha
+   306446060205467753921706208550304970119, --  8  zeta
+   244247128499983034414612160713020639521, --  9  xi
+   22684335153542856330087797681184410169172511111833173433844071674464605122184, -- 10  sponge_digest_before_evaluations
+   2829045973418845973612201722212487596922084535664337639223508679863192549943, -- 11  messages_for_next_wrap_proof(hash)
+   18791908833463912602354670461025321774885842588314200243344231754906943671830, -- 12  messages_for_next_step_proof(hash)
+   25785283438713501944955655305495753894, -- 13  bulletproof_challenges[0]
+   14327484021467251655356318718168131880, -- 14  bulletproof_challenges[1]
+   129790456054623970221703528687544554597, -- 15  bulletproof_challenges[2]
+   129728325799348713247992089122702483403, -- 16  bulletproof_challenges[3]
+   279252836812369044279309544792655651393, -- 17  bulletproof_challenges[4]
+   267856673932651547791623615034141237092, -- 18  bulletproof_challenges[5]
+   273062107884746848368994422264864606684, -- 19  bulletproof_challenges[6]
+   111366547051415511135125687382214437321, -- 20  bulletproof_challenges[7]
+   154389916813704330639598376730583208130, -- 21  bulletproof_challenges[8]
+   179332267101114141226510017204516508245, -- 22  bulletproof_challenges[9]
+   287320920605923941481475386932554184818, -- 23  bulletproof_challenges[10]
+   79834409002835140013632896000151542387, -- 24  bulletproof_challenges[11]
+   92436088439815627491546593262494517942, -- 25  bulletproof_challenges[12]
+   311189548756642028653699025426173004415, -- 26  bulletproof_challenges[13]
+   317241906107895562501746274757852290922, -- 27  bulletproof_challenges[14]
+   65973121353641143588718750481834955441, -- 28  bulletproof_challenges[15]
    59, -- 29  branch_data((domain_log2<<2)|proofs_verified)
    0, -- 30  feature_flags.range_check0
    0, -- 31  feature_flags.range_check1
@@ -108,57 +110,78 @@ def WRAP_PUBLIC_INPUT_MEASURED : List Nat :=
    0  -- 39  joint_combiner_or_zero
   ]
 
-/-! ## §1b -- ⚑ SLOT 11's PREIMAGE, so one of the forty stops being an opaque number
+/-! ## §1b -- ⚑⚑⚑ SLOT 11's PREIMAGE IS THE STEP STATEMENT'S OWN WORDS, AND UNTIL 2026-08-06
+IT WAS A SECOND VECTOR NOBODY HAD NOTICED WAS A SECOND VECTOR
 
-Slot 11 is `MessagesForNextWrapProof::hash()` (`gates.rs:272-284`), and openmina computes it over
-exactly two things: the record's `challenge_polynomial_commitment` and its `old_bulletproof_challenges`
--- `Vector (Vector Fq 15) 2`, flattened. `pickles_kimchi_marshal` puts
-`old_wrap_bulletproof_challenges` there (`pickles_kimchi_marshal.rs:634`), and those are the
-DETERMINISTIC prechallenges the wrap proof was made about (`:336-344`): limbs
-`k·0x9E3779B97F4A7C15 | 1` and `(k+7)·0xBF58476D1CE4E5B9 | 1`, little-endian, `k = 15·p + j`. They are
-then endo-expanded by the prover's own `ScalarChallenge::to_field` (`marshal.rs:416-422`) before the
-hash sees them.
+Slot 11 is `MessagesForNextWrapProof::hash()` (`gates.rs:272-284`), computed over exactly two things:
+the record's `challenge_polynomial_commitment` and its `old_bulletproof_challenges` --
+`Vector (Vector Fq 15) 2`, flattened.
 
-⚑ **WHY THE PREIMAGE IS WORTH BAKING AND WHY IT IS NOT A SECOND SPELLING.** The list below is a
-transcription of a generator, and a transcription can be wrong; what makes it a MEASUREMENT is that
-`KimchiWrapMain.wraphack_closing_sponge_reproduces_minas_slot_eleven` hashes it with THIS tree's own
-sponge and lift and lands on slot 11 to the digit. A wrong transcription moves the digest. So the
-forty's eleventh entry is now checked against its own inputs by two implementations rather than
-carried as an opaque constant -- which is what turns "slot 11 disagrees" from a mood into a located
-fact about WHICH input disagrees.
+⚠ ⚑⚑ **WHERE THOSE THIRTY CAME FROM WAS THE DEFECT.** `pickles_kimchi_marshal` CHOSE them, as
+limbs `k·0x9E3779B97F4A7C15 | 1` / `(k+7)·0xBF58476D1CE4E5B9 | 1`, and handed the same ladder to the
+wrap proof's `create_recursive`. Upstream there is no choice to make: `wrap_main.ml:421-431` takes
+`old_bulletproof_challenges` from
+`prev_statement.proof_state.unfinalized_proofs.(p).deferred_values.bulletproof_challenges` -- the
+**step statement's own fifteen per block**, packed words `27·p + 11 … 25`. So this pipeline had TWO
+vectors where Pickles has ONE, and **every instrument agreed with itself**: `expand_prechallenge`
+matched the proof it was checked against, the accumulator matched the challenge polynomial of the
+numbers it was built from, and `MessagesForNextWrapProof::hash()` hashed whatever it was given.
+Nothing could go red. What it cost is that Lean's `whCloseDigest` -- which hashes the step
+statement's words, as upstream does -- disagreed with slot 11 in **all thirty inputs**, and the
+disagreement read as a Lean-side gap.
+
+⚑ **THE LIST IS DERIVED NOW AND NOT TRANSCRIBED**, which is why the thirty literals that used to
+sit here are deleted rather than re-baked: `wrap_verifier.ml:542-548` expands packed word `27·p + k`
+into published entry `32·p + (k+5)` for `k ≥ 5`, so word `27·p + 11 + j` is entry `32·p + 16 + j` of
+`STEP_PUBLIC_IN` -- and `step_statement_prechallenges` in the marshaller reads the same entries.
+A transcription can be wrong; a recomposition of the emitted artifact cannot be wrong about anything
+except the index arithmetic, which the width leg below grades.
 
 ⚠ These are the RAW 128-bit prechallenges, not the lifts. The lift is
 `Scalar_challenge.to_field_checked` at `ENDO_Q`, i.e. `KimchiWrapMain.liftValQ`, and keeping the raw
 form here is what lets that lift be the thing under test. -/
-def WRAP_MSG_NEXT_WRAP_PRECHALS : List Nat :=
-  [ 78974591495854773213676270960737517569, 333315509510218643319316488156567206933
-  , 247374060603644049906241865699500029995, 161432611697069456548507475463561507903
-  , 75491162790494863135432853006494330965, 329832080804858733222626326128614468713
-  , 243890631898284139827998447745256843391, 157949182991709546451817313435608769683
-  , 72007734085134953057189435052251144361, 326348652099498823144382908174371282109
-  , 240407203192924229731308285717304105171, 154465754286349636373573895481365583079
-  , 68524305379775042960499273024298406141, 322865223394138913047692746146418543889
-  , 236923774487564319653064867763060918567
-  , 150982325580989726276883733453412844859, 65040876674415132882255855070055219537
-  , 319381794688779002969449328192175357285, 233440345782204409556374705735108180347
-  , 147498896875629816198640315499169658255, 61557447969055222785565693042102481317
-  , 315898365983419092891205910237932170681, 229956917076844499478131287780864993743
-  , 144015468170269906101950153471216920035, 58074019263695312707322275087859294713
-  , 312414937278059182794515748209979432461, 226473488371484589381441125752912255523
-  , 140532039464909996023706735516973733431, 54590590558335402610632113059906556493
-  , 308931508572699272716272330255736245857 ]
 
-/-- ⚑ **THIRTY OF THEM, TWO VECTORS OF FIFTEEN, EACH A 128-BIT PRECHALLENGE AND ALL DISTINCT.**
+/-- Packed statement word `27·p + 11 + j`'s published entry (`wrap_verifier.ml:542-548`). -/
+def prechalEntry (p j : Nat) : Nat := 32 * p + 16 + j
+
+/-- The thirty, instance-major, as `composition_types.ml:411-418` flattens them. -/
+def WRAP_MSG_NEXT_WRAP_PRECHALS : List Nat :=
+  (List.range 30).map (fun k =>
+    Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.getD
+      (prechalEntry (k / 15) (k % 15)) 0)
+
+/-- ⚑ **THIRTY OF THEM, TWO VECTORS OF FIFTEEN, EACH WITHIN `Challenge.length` AND ALL DISTINCT.**
 The width is the object check `the_width_signature_is_minas_own_layout` runs on the forty, applied to
-slot 11's preimage: a lift where a prechallenge belongs is the classic defect and nothing but the
-width sees it. `Nodup` is the anti-vacuity -- thirty aliases of one number would satisfy
-`KimchiWrapMain.wraphack_closing_sponge_reproduces_minas_slot_eleven` just as well and mean nothing.
-⚠ That pin cannot live in this file: it needs `whDigestOf` and `liftValQ`, which are five modules
-above it, and this file is imported BY them. -/
+slot 11's preimage: a 255-bit lift where a 128-bit prechallenge belongs is the classic defect and
+nothing but the width sees it. `Nodup` is the anti-vacuity -- thirty aliases of one number would
+satisfy `KimchiWrapMain.wraphack_closing_sponge_reproduces_minas_slot_eleven` just as well and mean
+nothing.
+
+⚠ ⚑⚑ **AND THE OLD `2^125 < x` LEG IS GONE, BECAUSE HALF THE VECTOR IS THE PADDING BLOCK'S.**
+`Vector.extend_front` puts the dummy `per_proof` block at the FRONT, so the first fifteen are block
+0's -- `KimchiStepMainCore.vStmtDummy` filler, small structured numerals -- and only the last fifteen
+are `bullet_reduce` prechallenges. The old leg held because the marshaller's invented ladder made all
+thirty look alike; keeping it would have hidden exactly the fact that makes this vector honest. The
+split is stated instead, as the count, so a filler that leaked into block 1 (or a real challenge
+mis-indexed into block 0) reds here.
+
+⚠ **THAT SPLIT IS A FIDELITY GAP AND IT IS NOT CLOSED.** Upstream a padding block carries
+`Unfinalized.Constant.dummy ()`, whose challenges are `Ipa.Wrap.compute_challenge` of
+`Ro.scalar_chal ()` -- full-width 128-bit draws, not `19 + 4000037·i`-shaped filler. What this pass
+fixed is that both sides now hash the SAME thirty, not that all thirty are upstream-shaped. -/
 theorem the_slot_eleven_preimage_is_thirty_distinct_prechallenges :
     WRAP_MSG_NEXT_WRAP_PRECHALS.length = 30
     ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.all (fun x => decide (x < 2 ^ 128)) = true
-    ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.all (fun x => decide (2 ^ 125 < x)) = true
+    -- ⚑ …and the two halves are SEPARATED rather than each pinned to a threshold someone can
+    -- slide: EVERY word of the real block exceeds EVERY word of the padding block. That is the
+    -- shape claim -- filler at the front, `bullet_reduce` prechallenges at the back -- and it reds
+    -- if a filler leaks into block 1 or a challenge is mis-indexed into block 0, without naming a
+    -- bound that a re-bake can nudge. (The old leg was `2^125 < x` on all thirty; it held only
+    -- because the marshaller's invented ladder made both halves look alike.)
+    ∧ ((List.range 15).all (fun j =>
+        (List.range 15).all (fun i =>
+          decide (WRAP_MSG_NEXT_WRAP_PRECHALS.getD i 0
+                    < WRAP_MSG_NEXT_WRAP_PRECHALS.getD (15 + j) 0)))) = true
     ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.Nodup := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
@@ -207,22 +230,34 @@ disjoint and together with slots 29-39 they exhaust the forty.
 `Challenge`/`Scalar Challenge`/`Bulletproof_challenge` is `Challenge.length = 128` bits, so `2^128 ≤
 x` is exactly "x cannot be one" -- leg 2 is the check the docblock above has always described.
 
-⚠ ⚑ **THE MARGIN LEG MOVED FROM `2^250` TO `2^249` ON 2026-08-06, AND LEG 4 IS WHY THAT IS NOT A
-WIDENED PIN.** The re-baked forty came off `stepmain_step_r8_finalize`, and its slot 0
-(`combined_inner_product`, `Shifted_value.Type1`) is a **250-bit** field element -- one bit under the
-old threshold. `2^250` was a comfortable margin, not a property of the object, and a margin that
-happens to hold on one sample is a coincidence dressed as a check. So the margin is kept, one bit
-lower, and leg 4 NAMES how many slots sit in the bit that was given up: exactly one. A second slot
-falling below reds here rather than being absorbed by a further nudge. -/
+⚠ ⚑⚑ **THE TWO MARGIN LEGS ARE DELETED (2026-08-06, second re-bake), AND THE DELETION IS THE
+POINT.** They read `FIELD_SLOTS.all (2^249 < ·)` and "exactly one field slot sits below `2^250`", and
+the paragraph that stood here defended having nudged the threshold from `2^250` to `2^249` because a
+re-bake had put slot 0 one bit under it. That was the tell and it was written down and shipped
+anyway: **a `Field` slot is an arbitrary `Fq` element and nothing bounds it from below.** The next
+re-bake -- this one, off a step proof whose words 55/56 became the wrap's own squeezes -- put the
+field slots at 247, 248, 251, 252 and 254 bits, and a third nudge to `2^246` would have been the same
+coincidence a third time.
+
+⚑ **WHAT SURVIVES IS THE CHECK THE DOCBLOCK ALWAYS DESCRIBED, AND IT IS STRUCTURAL ON ONE SIDE.**
+`spec.ml:374-392` packs a `Challenge` / `Scalar Challenge` / `Bulletproof_challenge` at
+`Challenge.length = 128`, so leg 1 is a property of the LAYOUT: a slot holding a 255-bit endo lift
+where the raw prechallenge belongs cannot satisfy it. Leg 2 is its converse and is a SAMPLE fact --
+an honest `Fq` element falls under `2^128` with probability `2^-126` -- kept because it is the
+instrument that sees a raw prechallenge parked in a `Field` slot, and said to be a sample fact rather
+than dressed as a bound. Legs 3 and 4 are new and are the reason the pair GRADES the twenty-nine:
+the two sets are disjoint and they exhaust slots 0-28, so neither leg can be satisfied by looking at
+a convenient subset. -/
 theorem the_width_signature_is_minas_own_layout :
     CHALLENGE_SLOTS.all (fun i =>
       decide (WRAP_PUBLIC_INPUT_MEASURED.getD i 0 < 2 ^ 128)) = true
     ∧ FIELD_SLOTS.all (fun i =>
       decide (2 ^ 128 ≤ WRAP_PUBLIC_INPUT_MEASURED.getD i 0)) = true
-    ∧ FIELD_SLOTS.all (fun i =>
-      decide (2 ^ 249 < WRAP_PUBLIC_INPUT_MEASURED.getD i 0)) = true
-    ∧ (FIELD_SLOTS.filter (fun i =>
-        decide (WRAP_PUBLIC_INPUT_MEASURED.getD i 0 < 2 ^ 250))).length = 1
+    -- ⚑ …and the two sets are DISJOINT and EXHAUST the twenty-nine slots `wrap_main` reads, so the
+    -- two legs above grade every one of them rather than a subset that happens to pass.
+    ∧ CHALLENGE_SLOTS.filter (fun i => FIELD_SLOTS.contains i) = []
+    ∧ (List.range 29).all (fun i =>
+        CHALLENGE_SLOTS.contains i || FIELD_SLOTS.contains i) = true
     ∧ CHALLENGE_SLOTS.length = 21 ∧ FIELD_SLOTS.length = 8 := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 

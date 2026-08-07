@@ -52,7 +52,7 @@ use poly_commitment::commitment::{absorb_commitment, PolyComm};
 use poly_commitment::SRS as _;
 
 use kimchi::circuits::wires::{COLUMNS, PERMUTS};
-use kimchi::proof::RecursionChallenge;
+use kimchi::proof::{PointEvaluations, RecursionChallenge};
 
 use crate::marshal::StepKimchiProof;
 use crate::transcript::{StepBase, StepScalar, StepVerifierIndex};
@@ -485,6 +485,81 @@ pub fn export(inp: StepTapeInputs<'_>) -> StepTapeOut {
          the {} points `lrPointQ`/`deltaPointQ` used to fill with SRS Lagrange bases",
         lr_xy.len(),
         2 * ipa_rounds + 1
+    );
+
+    // ───── ⚑ THE STEP PROOF'S OWN `openings.evals`, IN `to_absorption_sequence` ORDER ─────
+    //
+    // ⚠ ⚑ **SAY WHICH FINALIZE THESE ARE FOR, BECAUSE THE TREE GOT IT WRONG FOR A DAY.** These are
+    // **Fp** — Vesta's scalar field — at the STEP proof's own domain. They are the object
+    // `step_main`'s `finalize_other_proof` reads: a step circuit verifies WRAP proofs, each of which
+    // carries deferred values ABOUT the step proof it wrapped, and those are Fp scalars a native-Fp
+    // circuit can finalize. `KimchiStepMainCore.evVal` is the mixer standing where this belongs.
+    //
+    // They are **NOT** what `KimchiWrapMain` §19/§20 reads, and four docblocks used to say they
+    // were. `wrap_main`'s `finalize_other_proof` finalizes deferred values about **wrap** proofs —
+    // Fq, at the wrap domain, `Scalars.Tock`, `Shifted_value.Type2` — which is why §19's own
+    // `FIN_OMEGA`/`FIN_SHIFTS` are Mina's devnet WRAP verifier index's and why §19c reads
+    // `MinaRealBlockGate.EVZ`/`EVZW` instead. Exporting these here does not make them that object.
+    //
+    // `Evals.to_absorption_sequence` (`plonk_types.ml`): `z`, then the six always-on gate
+    // selectors, then `w`×15, `coefficients`×15, `s`×6 — 43 columns, which is `FIN_NCOLS`.
+    let ev = &proof.evals;
+    let ev_cols: Vec<&PointEvaluations<Vec<Fp>>> = [
+        &ev.z,
+        &ev.generic_selector,
+        &ev.poseidon_selector,
+        &ev.complete_add_selector,
+        &ev.mul_selector,
+        &ev.emul_selector,
+        &ev.endomul_scalar_selector,
+    ]
+    .into_iter()
+    .chain(ev.w.iter())
+    .chain(ev.coefficients.iter())
+    .chain(ev.s.iter())
+    .collect();
+    // ⚑ THE REFUSAL, EXTENDED IN THE SAME SHAPE AS THE SLOT-WIDTH ONE ABOVE. A published word that
+    // does not fit its slot is refused there; here, a column that is CHUNKED is refused, because
+    // `evals_of_split_evals` is the identity only at one chunk and a 43-entry fold over the first
+    // chunk of a chunked column is a prefix wearing the name of the whole.
+    const EV_NCOLS: usize = 1 + 6 + COLUMNS + COLUMNS + (PERMUTS - 1);
+    assert_eq!(
+        EV_NCOLS, 43,
+        "to_absorption_sequence is not 1 + 6 + 15 + 15 + 6"
+    );
+    assert_eq!(
+        ev_cols.len(),
+        EV_NCOLS,
+        "the absorption sequence is {} columns, not {EV_NCOLS}",
+        ev_cols.len()
+    );
+    for (i, c) in ev_cols.iter().enumerate() {
+        assert_eq!(
+            (c.zeta.len(), c.zeta_omega.len()),
+            (1, 1),
+            "evaluation column {i} is chunked ({}, {}) — `evals_of_split_evals` is not the identity \
+             on it and a one-chunk read would be a prefix wearing the name of the column",
+            c.zeta.len(),
+            c.zeta_omega.len()
+        );
+    }
+    let ev_zeta: Vec<Fp> = ev_cols.iter().map(|c| c.zeta[0]).collect();
+    let ev_zetaw: Vec<Fp> = ev_cols.iter().map(|c| c.zeta_omega[0]).collect();
+    // …and `evals.public_input`, refused rather than zero-filled when the prover left it empty.
+    let pub_ev = ev.public.as_ref().expect(
+        "the step proof carries no public evaluation — `prover.rs:995` fills it only for a \
+                 circuit with a public input, and substituting zeros would be a fixture",
+    );
+    assert_eq!(
+        (pub_ev.zeta.len(), pub_ev.zeta_omega.len()),
+        (1, 1),
+        "the public evaluation is chunked"
+    );
+    let (pub_eval_z, pub_eval_w) = (pub_ev.zeta[0], pub_ev.zeta_omega[0]);
+    println!(
+        "[EVALS] {EV_NCOLS} to_absorption_sequence columns at ζ and ζω, one chunk each; \
+         ft_eval1 and (p(ζ), p(ζω)) alongside — the object step_main's finalize_other_proof reads \
+         (Fp, step domain), NOT the wrap circuit's"
     );
 
     // ⚑ Every point on this tape must be ON VESTA. `Inner_curve.typ` is `assert_on_curve`
@@ -1027,6 +1102,49 @@ def STEP_DOMAIN_LOG2 : Nat := {}
          which is a two-source pin rather than a second copy.",
         &[hx, hy],
     ));
+    // ───────── ⚑ the step proof's own `openings.evals` ─────────
+    l.push_str(
+        r#"/-! ## ⚑ THE STEP PROOF'S OWN `openings.evals` — AND WHICH `finalize_other_proof` THEY ARE FOR.
+
+`Evals.to_absorption_sequence` (`plonk_types.ml`) order: `z`, the six always-on gate selectors
+(`generic`, `poseidon`, `complete_add`, `mul`, `emul`, `endomul_scalar`), `w`×15,
+`coefficients`×15, `s`×6 — **43** columns, one chunk each. The exporter REFUSES to write this
+module if any column is chunked: `evals_of_split_evals` is the identity only at one chunk, and a
+43-entry fold over the first chunk of a chunked column is a prefix wearing the name of the whole.
+
+⚠ ⚑ **THESE ARE THE *STEP* CIRCUIT'S FINALIZE INPUT, NOT THE WRAP CIRCUIT'S, AND FOUR DOCBLOCKS
+SAID OTHERWISE.** A step circuit verifies WRAP proofs; each wrap proof's statement carries deferred
+values ABOUT the step proof it wrapped, and those are **Fp** — Vesta's scalar field, native to a
+step circuit. So `step_main`'s `finalize_other_proof` reads THESE, and
+`KimchiStepMainCore.evVal`'s mixer is what stands where they belong.
+
+`wrap_main`'s `finalize_other_proof` reads the other side of the cycle: deferred values about
+**wrap** proofs, in **Fq** at the wrap domain, folded with `Scalars.Tock` and closed with
+`Shifted_value.Type2`. That is why `KimchiWrapMain` §19's `FIN_OMEGA` and `FIN_SHIFTS` are Mina's
+devnet WRAP verifier index's, and why §19c reads `MinaRealBlockGate.EVZ`/`EVZW` rather than
+anything in this file. **Exporting these here does not make them that object**, and the sentence
+"they are Fp, so they enter only through `Other_field`, and that encoding is the distance to the
+top of the ladder" was wrong about which finalize it was describing. -/
+
+"#,
+    );
+    l.push_str(&lean_nat_list_fp(
+        "STEP_EVALS_ZETA",
+        "⚑ The step proof's 43 `to_absorption_sequence` columns at ζ, one chunk each (Fp).",
+        &ev_zeta,
+    ));
+    l.push_str(&lean_nat_list_fp(
+        "STEP_EVALS_ZETAW",
+        "…and at ζω.",
+        &ev_zetaw,
+    ));
+    l.push_str(&lean_nat_list_fp(
+        "STEP_PUB_EVAL",
+        "⚑ `evals.public_input` — `(p(ζ), p(ζω))` of the same proof. `STEP_FT_EVAL1_FP` above is \
+         its partner; together they are the five-element prefix a finalize sponge absorbs ahead of \
+         the 43 columns.",
+        &[pub_eval_z, pub_eval_w],
+    ));
     l.push_str("end Dregg2.Circuit.Emit.KimchiStepWrapChainFixture\n");
 
     // ───────────────────── W-KEY's module ─────────────────────
@@ -1127,6 +1245,10 @@ namespace Dregg2.Circuit.Emit.KimchiStepWrapChainKey
         "cip_fp": dp(&cip),
         "cip_shifted_fp": dp(&cip_shifted_fp),
         "cip_word_fq": dq(&cip_word_fq),
+        // ⚑ the STEP circuit's finalize input — Fp, one chunk per column. NOT the wrap's.
+        "evals_zeta_fp": ev_zeta.iter().map(dp).collect::<Vec<_>>(),
+        "evals_zeta_omega_fp": ev_zetaw.iter().map(dp).collect::<Vec<_>>(),
+        "public_eval_fp": [dp(&pub_eval_z), dp(&pub_eval_w)],
     });
 
     StepTapeOut {

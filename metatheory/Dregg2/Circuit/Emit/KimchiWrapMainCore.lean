@@ -3362,11 +3362,65 @@ def FIN_IDX_S : Nat := 37
 `ft_eval0` seeds with. -/
 def FIN_PERMUTS1 : Nat := 6
 
-/-- Column `k`'s value at ζ (`j = 0`) / at ζω (`j = 1`) for instance `p` — a NAMED FIXTURE, because
-`exists ~request:Req.Evals` is a free witness upstream and a fixture is the faithful stand-in. -/
-def finColVal (p k j : Nat) : Nat := wrapFixtureQ (40 + 2 * p + j) k
-/-- `evals.public_input.0` — `p(ζ)`, likewise witnessed. -/
-def finPZetaVal (p : Nat) : Nat := wrapFixtureQ (44 + p) 0
+/-! #### ⚑⚑ **THE EVALUATIONS ARE MINA'S OWN WRAP PROOF'S, AND THEY NEEDED NO ENCODING.**
+
+Until 2026-08-06 the four families below were `wrapFixtureQ` — `(11 + 1000003·(17·tag + i)) % qN`,
+a mixer. The step side's twins (`KimchiStepMainCore.evVal`) are a DIFFERENT mixer, which is why
+"two derivations of one quantity" could never agree: neither was about a proof.
+
+⚠ ⚑ **AND THE REASON THAT WAS NOT A ONE-LINE CHANGE WAS RECORDED AS A FIELD BOUNDARY. THERE IS NO
+FIELD BOUNDARY.** Four docblocks said these evaluations are **Fp** and "enter only through
+`Other_field` (`impls.ml:167-217`)", and that the encoding — "not a fixpoint" — was the distance to
+the top of the ladder. This block's OWN CONFIGURATION refutes it, and did before the sentence was
+written:
+
+  * `FIN_LOG2N = 14` is `Common.wrap_domains ~proofs_verified:1 |>.h`, the **WRAP** evaluation
+    domain — not the step-transaction `2^16`;
+  * `FIN_OMEGA` and `FIN_SHIFTS` are that same **Fq** wrap verifier index's root of unity and coset
+    shifts, digit for digit `MinaRealBlockGate.OMEGA` and `.SHIFT`;
+  * `finBuild` folds `Scalars.Tock` bodies and closes with `Shifted_value.Type2`
+    (`FIN_SHIFT2 = 2^255`), the SAME-field shift. `Type1` — the one with a cross-field `c` — is
+    what `wrap_main.ml:454` uses on `combined_inner_product`, and that is a different word.
+
+`wrap_main.ml`'s `finalize_other_proof` finalizes the deferred SCALAR work of the proofs the STEP
+verified, and those are **wrap** proofs over Pallas, whose scalar field IS this circuit's native Fq.
+So the evaluations are native, the crossing is empty, and `the_finalize_evaluations_need_no_encoding`
+says so as a theorem rather than as a paragraph.
+
+⚑ **ONE OBJECT, READ ONCE.** `MinaRealBlockTranscript.EVZ_N` / `.EVZW_N` are `ZMod.val` of
+`MinaRealBlockGate.EVZ` / `.EVZW` — the 47 `es` columns of Mina devnet block 539508's own Wrap
+proof, the proof whose verifier index already supplies `FIN_OMEGA` and `FIN_SHIFTS` and whose
+transcript already supplies packed statement words 32–36 (`STEP_PUBLIC_IN`'s digest, β, γ, α′, ζ′
+are `MinaRealBlockTranscript.FQ_DIGEST`, `BETA_N`, `GAMMA_N`, `ALPHA_CHAL`, `ZETA_CHAL` to the
+digit). Reading them here makes the config, the statement and the evaluations three views of ONE
+proof instead of a real index over a mixer.
+
+⚠ **AND THE `p` ARGUMENT IS GONE FROM THE VALUE, WHICH IS THE HONEST SHAPE.** There is ONE real Mina
+wrap proof in this tree, so both blocks read it; block 0 is the one whose `should_finalize` is 0 and
+whose statement words are the synthetic ramp, so its `Field.equal` gadgets still run at NONZERO
+differences and `(1 − finalized)·should_finalize = 0` still has a failing instance. The argument at
+`finZW0` and at §20's solve is unchanged: only the LIVE block is solved. -/
+
+/-- The 4-entry prefix `verifier.rs:492-540` puts ahead of the 43 columns: the 2 recursion
+b-polynomials, the public polynomial, then `ft`. `MinaRealBlockTranscript.evalsTape` drops exactly
+these four, which is the same convention read from the other end. -/
+def FIN_EV_PREFIX : Nat := 4
+/-- …and where the public polynomial sits inside that prefix — `p(ζ)` / `p(ζω)`. -/
+def FIN_EV_PUB : Nat := 2
+/-- …and `ft`: at ζ it is `ft_eval0`, at ζω it is `ft_eval1`. -/
+def FIN_EV_FT : Nat := 3
+
+/-- The real Wrap proof's evaluation columns at ζ, as `Nat`. -/
+def finEvZ : List Nat := Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZ_N
+/-- …and at ζω. -/
+def finEvW : List Nat := Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZW_N
+
+/-- Column `k`'s value at ζ (`j = 0`) / at ζω (`j = 1`) — Mina devnet block 539508's own Wrap
+proof's, in `to_absorption_sequence` order after the 4-entry prefix. -/
+def finColVal (_p k j : Nat) : Nat :=
+  (if j == 0 then finEvZ else finEvW).getD (FIN_EV_PREFIX + k) 0
+/-- `evals.public_input.0` — `p(ζ)`, the same proof's. -/
+def finPZetaVal (_p : Nat) : Nat := finEvZ.getD FIN_EV_PUB 0
 
 -- ⚑ `finBlockWord` / `finBlockVal` are in `KimchiWrapMainField`, below `prevWordVal`, since
 -- 2026-08-06: §21's closing sponge is defined ABOVE this point and needs to name a packed word.
@@ -4979,12 +5033,13 @@ def T_FINTAPE : Nat := 12
 -- `KimchiWrapMainField` since 2026-08-06, for the same reason `finBlockVal` is: §21 reads
 -- `FIN_W_CHAL + k` and §21 is defined two thousand lines above this rung.
 
-/-- `evals.ft_eval1` — a `Req.Evals` witness upstream (`wrap_main.ml:262-268`), so a NAMED FIXTURE
-here for the same reason §19's evaluation columns are. -/
-def finFtEval1Val (p : Nat) : Nat := wrapFixtureQ (60 + p) 0
-/-- `evals.public_input.1` — `p(ζω)`, likewise. §19 witnessed only `p(ζ)` because `ft_eval0` is the
-only consumer it had; the finalize sponge absorbs both. -/
-def finPZetaWVal (p : Nat) : Nat := wrapFixtureQ (62 + p) 0
+/-- `evals.ft_eval1` — the real Wrap proof's, entry `FIN_EV_FT` of the ζω column
+(`MinaRealBlockGate.FT1`). A `Req.Evals` witness upstream (`wrap_main.ml:262-268`), and a NAMED
+FIXTURE here until 2026-08-06 for the same reason §19's evaluation columns were. -/
+def finFtEval1Val (_p : Nat) : Nat := finEvW.getD FIN_EV_FT 0
+/-- `evals.public_input.1` — `p(ζω)`, the same proof's. §19 witnessed only `p(ζ)` because `ft_eval0`
+is the only consumer it had; the finalize sponge absorbs both. -/
+def finPZetaWVal (_p : Nat) : Nat := finEvW.getD FIN_EV_PUB 0
 
 /-- Instance `p`'s challenge-digest sponge: a FRESH Fq sponge over the `WH_MLMB · WH_ROUNDS`
 flattened old bulletproof challenges, closed by one `Sponge.squeeze_field`. `bt` is out of range so

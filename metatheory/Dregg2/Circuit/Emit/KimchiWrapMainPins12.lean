@@ -129,6 +129,153 @@ theorem fin_deferred_words_are_the_derivation :
     finSpDerivedWords tW = (FIN_DEFERRED_CIP, FIN_DEFERRED_B, FIN_DEFERRED_XI) := by
   native_decide
 
+/-! ### §20b⁗ — ⚑⚑⚑ **THE EVALUATIONS ARE A REAL WRAP PROOF'S, AND §19 REPRODUCES ITS `ft_eval0`.**
+
+Until 2026-08-06 both sides of the 27/28/37 disagreement ran on pseudo-random mixers — the wrap's on
+`wrapFixtureQ`, the step's on `KimchiStepMainCore.evVal` — and four docblocks priced the repair as a
+FIELD CROSSING that does not exist. The three theorems below replace that paragraph with facts. -/
+
+/-- ⚑⚑ **THE BLOCK DECLARES WHICH PROOF IT IS ABOUT, AND IT IS MINA'S.** This is what makes the
+choice of evaluations a measurement rather than a preference: the live block's own packed statement
+words — its Fq-sponge digest and its β, γ, α′, ζ′ — ARE Mina devnet block 539508's Wrap proof's, to
+the digit, and they came from `STEP_PUBLIC_IN`, the step proof's own public input, not from this
+file. A block that says "I am that proof" must be finalized against that proof's evaluations.
+
+⚠ **AND THE SAME BLOCK'S FIELD WORDS ARE NOT** — last four conjuncts. `combined_inner_product`, `b`
+and ξ′ disagree with the derivation, and ξ′ disagrees with `V_CHAL`, the real block's own first
+phase-2 squeeze. So the residue is not "the wrap reads a fixture" any more; it is that the STEP
+assembly published a real block's challenges beside its own mixer's scalars. `KimchiStepMainCore`'s
+`evVal` is that mixer and `MinaWrapDeferredWeld.EVALS` is the object it stands in for. -/
+theorem the_live_block_declares_itself_minas_own_wrap_proof :
+    finBlockVal FIN_LIVE_BLOCK FIN_W_DIGEST
+      = Dregg2.Circuit.Emit.MinaRealBlockTranscript.FQ_DIGEST
+  ∧ finBlockVal FIN_LIVE_BLOCK 6 = Dregg2.Circuit.Emit.MinaRealBlockTranscript.BETA_N
+  ∧ finBlockVal FIN_LIVE_BLOCK 7 = Dregg2.Circuit.Emit.MinaRealBlockTranscript.GAMMA_N
+  ∧ finBlockVal FIN_LIVE_BLOCK 8 = Dregg2.Circuit.Emit.MinaRealBlockTranscript.ALPHA_CHAL
+  ∧ finBlockVal FIN_LIVE_BLOCK 9 = Dregg2.Circuit.Emit.MinaRealBlockTranscript.ZETA_CHAL
+  -- ⚑ …and the SAME block's ξ′ is NOT that proof's, which is the step-side gap, located.
+  ∧ finBlockVal FIN_LIVE_BLOCK FIN_W_XI
+      ≠ Dregg2.Circuit.Emit.MinaRealBlockTranscript.V_CHAL
+  -- ⚑ …nor is its `combined_inner_product`, read through `Shifted_value.Type2.to_field`.
+  ∧ qAdd (finBlockVal FIN_LIVE_BLOCK FIN_W_CIP) FIN_SHIFT2
+      ≠ ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.CIP
+  -- ⚑ …and the OTHER block declares nothing of the kind, so this is not a property of every block.
+  ∧ finBlockVal (1 - FIN_LIVE_BLOCK) FIN_W_DIGEST
+      ≠ Dregg2.Circuit.Emit.MinaRealBlockTranscript.FQ_DIGEST := by
+  native_decide
+
+/-- ⚑⚑ **§19c READS THAT PROOF, AND NOT THE MIXER IT USED TO.** The four families are the real
+block's `es` columns after the 4-entry prefix `verifier.rs:492-540` puts ahead of them (2 recursion
+b-polynomials, the public polynomial, `ft`) — the same drop `MinaRealBlockTranscript.evalsTape`
+takes from the other end, so the two readings are one convention rather than two.
+
+⚑ **THE ANTI-VACUITY IS THE LAST THREE CONJUNCTS**, and they are the ones a future edit reds:
+not one of the 43 columns coincides with the `wrapFixtureQ` value it replaced, at either point. A
+theorem that only said "the columns equal `EVZ_N`" would stay green if someone re-pointed `EVZ_N`
+at a mixer. -/
+theorem the_finalize_evaluations_are_minas_own_wrap_proof :
+    ((List.range FIN_NCOLS).all (fun k =>
+        finColVal FIN_LIVE_BLOCK k 0
+          == Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZ_N.getD (FIN_EV_PREFIX + k) 0
+        && finColVal FIN_LIVE_BLOCK k 1
+          == Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZW_N.getD (FIN_EV_PREFIX + k) 0)) = true
+  ∧ finPZetaVal FIN_LIVE_BLOCK = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.PZ
+  ∧ finFtEval1Val FIN_LIVE_BLOCK = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.FT1
+  ∧ finPZetaWVal FIN_LIVE_BLOCK
+      = Dregg2.Circuit.Emit.MinaRealBlockTranscript.EVZW_N.getD FIN_EV_PUB 0
+  -- ⚑ ANTI-VACUITY: no column is the mixer's value, at ζ or at ζω, in either block.
+  ∧ ((List.range FIN_NCOLS).filter (fun k =>
+        finColVal FIN_LIVE_BLOCK k 0 == wrapFixtureQ (40 + 2 * FIN_LIVE_BLOCK) k
+        || finColVal FIN_LIVE_BLOCK k 1
+             == wrapFixtureQ (40 + 2 * FIN_LIVE_BLOCK + 1) k)).length = 0
+  ∧ finPZetaVal FIN_LIVE_BLOCK ≠ wrapFixtureQ (44 + FIN_LIVE_BLOCK) 0
+  ∧ finFtEval1Val FIN_LIVE_BLOCK ≠ wrapFixtureQ (60 + FIN_LIVE_BLOCK) 0
+  -- ⚑⚑ …AND THE TAG COLLISION IS GONE, which is the part a reader would not guess. The old
+  -- `wrapFixtureQ (40 + 2p + j)` family OVERLAPPED W-BULLET's: `finColVal 0 z 1` was
+  -- `wrapFixtureQ 41 0`, which IS `bullScalVal 1` (`z₁`), and `finColVal 1 z 0` was
+  -- `wrapFixtureQ 42 0`, which IS `bullScalVal 2` (`z₂`). Two sub-circuits' unrelated witness
+  -- cells carried ONE number. They are distinct values now, and `z₁`/`z₂` stay free because free
+  -- is their faithful shape (`wrap_main.ml:357-382`) — the defect was the aliasing, not the
+  -- freeness.
+  ∧ finColVal FIN_LIVE_BLOCK FIN_IDX_Z 1 ≠ bullScalVal 1
+  ∧ finColVal FIN_LIVE_BLOCK FIN_IDX_Z 0 ≠ bullScalVal 2 := by
+  native_decide
+
+/-- ⚑⚑⚑ **AND NOTHING CROSSES A FIELD — THE THEOREM THAT REPLACES THE DELETED PARAGRAPH.**
+
+`KimchiWrapMainField` §15c‴ and `…Pins12` §20 both said these evaluations are Fp and "enter only
+through `Other_field` (`impls.ml:167-217`)", and that the encoding was the distance to the top of
+the ladder. `wrap_main`'s `finalize_other_proof` finalizes deferred values about **wrap** proofs,
+whose scalar field IS this circuit's native Fq, so there is nothing to encode. This states that as
+a property of the block's own configuration rather than as a reading of OCaml:
+
+  * every word §20's 91-element tape absorbs is already a legal Fq element — the whole obligation
+    an `Other_field` encoding would exist to discharge, discharged by being vacuous;
+  * the domain is the **wrap** one and the ω and coset shifts are that index's, digit for digit;
+  * the closing shift is `Shifted_value.Type2` — the SAME-field shift. `Type1`, the one whose `c`
+    is created over the other field, is what `wrap_main.ml:454` puts on `combined_inner_product`,
+    and `KimchiStepWrapChain.cip_crosses_by_type1_over_Fp` is where that one lives;
+  * ⚑ and the NEGATIVE CONTROL: the step proof's own `ft_eval1` — the Fp scalar the deleted
+    paragraph named — is NOT what this rung reads. Naming the wrong object was the error, not
+    getting the encoding wrong. -/
+theorem the_finalize_evaluations_need_no_encoding :
+    (finSpTape tW.sh tW.sp FIN_LIVE_BLOCK 0).all (fun w => decide (w < qN)) = true
+  -- ⚑ the DOMAIN is the real Wrap index's own, stated against `MinaRealBlockGate.N` and not
+  -- against `FIN_LOG2N`'s own definition — two sources, so it is a gate and not decoration.
+  ∧ 2 ^ FIN_LOG2N = Dregg2.Circuit.Emit.MinaRealBlockGate.N
+  ∧ FIN_OMEGA = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.OMEGA
+  ∧ FIN_SHIFTS = Dregg2.Circuit.Emit.MinaRealBlockGate.SHIFT.map ZMod.val
+  -- ⚑ and the shift is `Type2`'s and NOT `Type1`'s — `2^255` in Fq against `(2^255+1) mod p`, the
+  -- constant `shifted_value.ml:124` creates over the OTHER field. Two constants, one inequality:
+  -- naming `Type2` is the whole claim that nothing crosses.
+  ∧ FIN_SHIFT2 = 2 ^ 255 % qN
+  ∧ FIN_SHIFT2 ≠ (2 ^ 255 + 1) % Dregg2.Circuit.Emit.PastaField.pN
+  ∧ finFtEval1Val FIN_LIVE_BLOCK
+      ≠ Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_FT_EVAL1_FP := by
+  native_decide
+
+/-- ⚑⚑⚑ **THE REALITY GATE: §19's OWN PROGRAM REPRODUCES MINA'S `ft_eval0` AND ITS LINEARIZATION
+CONSTANT, ON MINA'S OWN WRAP PROOF.**
+
+This is the first time the finalize sub-circuit has been checkable against anything. `finProbeData`
+runs the emitted 1047-op program on the RAW evaluations — before `finZW0` solves `z(ζω)` — with the
+live block's own statement challenges, and three of its slots land on numbers `MinaRealBlockGate`
+carries from the block's `oracles(...)`:
+
+  * `linConst` = `LCT`, the `Scalars.Tock` constant term folded over the six always-on gate bodies —
+    generic, poseidon, complete_add, var_base_mul, endomul, endomul_scalar. A wrong α power, a
+    transposed MDS row or a missing selector multiply moves it;
+  * `ftEval0` = `FT0` — the whole `plonk_checks.ml:420-460` body: the σ/w Horner numerator, the
+    seven-shift denominator, the C5 quotient and the linearization subtraction;
+  * `zkp` = `PVP`, the permutation vanishing polynomial at the real ζ.
+
+`MinaRealBlockGate.real_ft_eval0` proves the same identity for `KimchiVerify`'s C5 — a SECOND,
+independently written formula over the same inputs. Two implementations, one number, one real
+proof.
+
+⚠ ⚑ **WHAT THIS DOES NOT SAY, AND THE SEQUEL IT LOCATES.** It does not say `w11_finsponge` proves;
+`finsponge_has_no_witness_on_the_published_statement` says it does not. The `ft_eval0` leg is real
+now and the sponge above it is not: `finSpTape`'s challenge digest is over `whOldChals`, which is
+still a `wrapFixtureQ` where `MinaRealBlockGate.CHALS0`/`CHALS1` belong, and `finZW0` moves `z(ζω)`
+off the real value because packed word `27·FIN_LIVE_BLOCK + 4` is not the derived `perm`. Those two
+are why `FIN_DEFERRED_XI` is not `V_CHAL`, and they are the next two items rather than a caveat on
+this one. -/
+theorem finalize_reproduces_minas_own_ft_eval0 :
+    (let d := finProbeData tW.sh tW.sp FIN_LIVE_BLOCK
+     d.vals.getD d.fp.slots.ftEval0 0 = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.FT0
+     ∧ d.vals.getD d.fp.slots.linConst 0
+         = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.LCT
+     ∧ d.vals.getD d.fp.slots.zkp 0 = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.PVP)
+  -- ⚑ …and the OTHER block, on the same evaluations at its own synthetic challenges, lands on
+  -- NONE of the three — so this is a fact about the pair (proof, challenges), not about the
+  -- program answering the same thing whatever it is fed.
+  ∧ (let d := finProbeData tW.sh tW.sp (1 - FIN_LIVE_BLOCK)
+     d.vals.getD d.fp.slots.ftEval0 0 ≠ ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.FT0
+     ∧ d.vals.getD d.fp.slots.linConst 0
+         ≠ ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.LCT
+     ∧ d.vals.getD d.fp.slots.zkp 0 ≠ ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.PVP) := by
+  native_decide
+
 /-- ⚑⚑⚑ **W-FINSPONGE HAS NO SATISFYING WITNESS ON THE PUBLISHED STEP STATEMENT, AND THAT IS THE
 STATEMENT OF THIS THEOREM RATHER THAN A CAVEAT ATTACHED TO A GREEN ONE.**
 
@@ -158,7 +305,7 @@ rung at all, so there is no loop; and those three words are **not free on the st
 statement carrying the wrap's numbers would make the STEP circuit unsatisfiable rather than this one
 satisfiable. What actually disagrees is two derivations of one quantity, one of which runs on
 `wrapFixtureQ` evaluation columns where `prev_proof.openings.evals` belongs.
-`KimchiWrapMainField.the_published_statement_does_not_carry_the_derived_words` names all six words at
+`KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words` names all six words at
 issue; §20c names which of them can move and what the other four are waiting on.
 
 ⚑ **WHAT IS PRESERVED IS THE FALSIFIABILITY, and it is why the `(d⁻¹, 0)` branch conjuncts stay.**
@@ -239,14 +386,27 @@ in for `prev_proof.openings.evals`. `finalize_other_proof` is supposed to read t
 evaluations. It reads a fixture, so it gets a different number, and no statement can satisfy both.
 
 ⚑ **THAT IS THE SAME DEFECT CLASS THIS CAMPAIGN SPENT THE DAY DELETING — a fixture where a real value
-belongs, making two copies of one object — and it is what actually blocks these three rungs.** The
-repair is to wire §19/§20's evaluation inputs to the step proof's own `evals`, not to re-bake a
-statement. ⚠ **And the reason that is not a one-line change is a FIELD BOUNDARY, stated rather than
-discovered later**: those evaluations are **Fp**, Vesta's scalar field, while this circuit is native
-**Fq**, so they enter only through `Other_field` (`impls.ml:167-217`, one Fq wire because `p < q`) —
-the encoding `KimchiStepWrapChainFixture`'s own header names as the thing its negative-control items
-would need. That encoding is not assembled here. It, and not a fixpoint, is the distance to the top
-of the ladder.
+belongs, making two copies of one object — and it is what actually blocks these three rungs.**
+
+⚠ ⚑ **THE PARAGRAPH THAT FOLLOWED PRICED THE REPAIR AS A FIELD BOUNDARY AND WAS WRONG ON BOTH
+CLAUSES. IT IS DELETED, NOT SOFTENED.** It read: *"The repair is to wire §19/§20's evaluation inputs
+to the step proof's own `evals`, not to re-bake a statement. And the reason that is not a one-line
+change is a FIELD BOUNDARY, stated rather than discovered later: those evaluations are **Fp**,
+Vesta's scalar field, while this circuit is native **Fq**, so they enter only through `Other_field`
+(`impls.ml:167-217`, one Fq wire because `p < q`) — the encoding `KimchiStepWrapChainFixture`'s own
+header names as the thing its negative-control items would need. That encoding is not assembled here.
+It, and not a fixpoint, is the distance to the top of the ladder."*
+
+`wrap_main.ml`'s `finalize_other_proof` finalizes the deferred scalar work of the proofs the STEP
+verified, and those are **wrap** proofs over Pallas — scalar field Fq, this circuit's own. §19's
+configuration had been saying so since it was written: `FIN_LOG2N = 14` is `Common.wrap_domains
+~proofs_verified:1 |>.h`, `FIN_OMEGA`/`FIN_SHIFTS` are `MinaRealBlockGate.OMEGA`/`.SHIFT` digit for
+digit, and `finBuild` closes with `Shifted_value.Type2`, the same-field shift. **Nothing crosses, and
+the crossing was never the cost.** "The step proof's own `evals`" also names the wrong object: those
+are Fp at the `2^16` step domain and belong to the NEXT step circuit's finalize. §19c reads Mina
+devnet block 539508's own Wrap-proof evaluations since 2026-08-06 —
+`MinaRealBlockGate.EVZ`/`EVZW`, in this tree the whole time, the same proof whose index supplies
+`FIN_OMEGA` and whose transcript supplies packed words 32–36.
 
 ⚑ **AND THE THEOREM BELOW IS WHAT MAKES STRATUM 2 A FACT RATHER THAN A READING.** Prose about a
 definition graph is exactly the instrument that was wrong before; this computes the transitive input
@@ -294,7 +454,7 @@ order, over the transitive cone.
 
   * **legs 1–3** — the three cells the rung CHECKS are absent from the cone of the two it DERIVES.
     Those cells are packed words `27·FIN_LIVE_BLOCK + {0, 1, 10}` = **27, 28 and 37**, the three
-    `the_published_statement_does_not_carry_the_derived_words` names.
+    `the_published_statement_carries_two_of_the_six_derived_words` names.
   * **leg 4** — and ξ's two sides are different cells, so `xi_correct` is not an identity either.
   * **legs 5–9, THE ANTI-VACUITY** — the cone is not empty and not a handful: it contains ζ, r, ξ,
     the first `compute_challenges` lift and the first evaluation column, and runs to more than
@@ -402,7 +562,63 @@ theorem finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks :
 -- kernel-clean conjuncts loses their pin.
 #assert_compiled the_deferred_derivation_does_not_read_the_words_it_checks
 #assert_compiled the_wraphack_tape_reads_no_published_statement_entry
+/-! ### §20b⁵ — ⚑⚑⚑ **AGREEMENT WITH MINA'S FORTY, AS A SET AND NOT AS A TOTAL.**
+
+`KimchiWrapMainPins10`'s `w12_close` docblock said for a long time that the emitted forty and
+`WRAP_PUBLIC_INPUT_MEASURED` "agree at exactly **six** slots — 0–4 and 9, the six taken from that
+list by definition". That was true when written and had silently stopped being true: the tape work
+made `RC_*` the real step proof's commitments and slot 11 stopped hashing a fixture, and nobody
+re-measured. **Measured 2026-08-06 with `EmitWrapFortyAgreement`: it went to thirty-eight
+(disagreeing at 11 and 12) and then, when a sibling lane closed slot 11 the same evening, to
+THIRTY-NINE — only slot 12 is left. Both numbers were measured hours apart on the same day, which
+is precisely why the theorem below is a SET.**
+
+⚠ ⚑ **AND THE THEOREM BELOW IS A SET, NOT THAT TOTAL, ON PURPOSE.** A literal `= 38` is a count that
+reds when a lane CLOSES slot 11 — i.e. it punishes exactly the progress it exists to track, and the
+lane that closed it would have to edit this file to land. Stating "every slot outside {11, 12}
+agrees" is strictly stronger where it matters (any transcript slot drifting reds it) and neutral
+where it does not (slot 11 closing does not). The residual `≠` at slot 12 keeps it a refusal shaped
+to shrink: close slot 12 and it goes red at the place the claim is made.
+
+⚑ **NEITHER OF THE TWO IS A WRAP-SIDE DERIVATION.** Slot 12 is packed statement word 54, the step
+assembly's own outer hash (`dccd4e030`); slot 11's closing wrap-hack digest is the sibling subject of
+`…Pins10`. **This commit's change moves neither**, and cannot: `rungPub .close = rungPub .wraphack`
+and W-FINSPONGE derives no public word, so no slot of the forty reads the finalize block at all.
+The number is recorded here because it is the measurement the ladder is graded on, not because this
+rung moved it. -/
+
+/-- ⚑⚑ **THE EMITTED FORTY DISAGREES WITH MINA'S ONLY AT SLOTS 11 AND 12.**
+
+Graded the strict way — `emitted[i] == WRAP_PUBLIC_INPUT_MEASURED[i]`, not "does the assembly put a
+derivation there". Both sides are about the SAME step proof (`stepmain_step_r8_finalize`): Mina's
+side is openmina's `PreparedStatement::to_public_input(40)`, ours is `wrapPublicAt … .close`, so a
+disagreement is a measurement and not a preference.
+
+⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY**, and it is what makes this a fact about VALUES rather
+than about a list of zeros: ten of the forty are `Spec.T.Constant` padding and the lookup `Opt` and
+are zero on both sides, so an all-zero emission would satisfy the first conjunct at those ten.
+Twenty-nine of the agreements are NONZERO. -/
+theorem the_forty_disagree_only_at_the_step_statement_words :
+    (let em := (wrapPublicAt (mkWrap shapeWrap) .close).map (fun z => (z % (qN : Int)).toNat)
+     let mn := Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED
+     -- ⚑ EVERY slot outside {11, 12} agrees — all thirty-eight of them, named as a set rather
+     -- than as a total, so a lane closing 11 does not red this while a lane breaking slot 7 does.
+     ((List.range 40).filter (fun i => i != 11 && i != 12 && em.getD i 0 != mn.getD i 0)) = []
+     -- ⚑ …and slot 12 still disagrees, so this is a refusal shaped to shrink and not a tautology.
+     ∧ em.getD 12 0 != mn.getD 12 0
+     -- ⚑ ANTI-VACUITY: the agreeing set is not the padding. Ten of the forty are `Spec.T.Constant`
+     -- padding and the lookup `Opt` and are zero on both sides; twenty-eight agreements are NONZERO.
+     ∧ ((List.range 40).filter (fun i =>
+          em.getD i 0 == mn.getD i 0 && em.getD i 0 != 0)).length = 29) := by
+  native_decide
+
+#assert_compiled the_forty_disagree_only_at_the_step_statement_words
+
 #assert_compiled fin_deferred_words_are_the_derivation
+#assert_compiled the_live_block_declares_itself_minas_own_wrap_proof
+#assert_compiled the_finalize_evaluations_are_minas_own_wrap_proof
+#assert_compiled the_finalize_evaluations_need_no_encoding
+#assert_compiled finalize_reproduces_minas_own_ft_eval0
 #assert_compiled finsponge_has_no_witness_on_the_published_statement
 #assert_compiled finsponge_assert_reds_if_the_other_block_claims_should_finalize
 #assert_compiled finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks

@@ -255,9 +255,27 @@ def main : IO Unit := do
     {(xhLadders s).length} ladders, widths={(xhSel s).map xhatBits}"
   IO.println s!"  x_hat (DERIVED, absorbed at wrap_verifier.ml:617) = {xhatOutOf s.xhatEntries}"
   let _ ← force t.sp.evs.length "sponge events"
-  for k in [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind, Rung.key, Rung.xhat,
-           Rung.split, Rung.ftcomm, Rung.prev, Rung.wraphack, Rung.close, Rung.finalize,
-           Rung.finsponge, Rung.combine, Rung.bullet] do
+  let all := [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind, Rung.key, Rung.xhat,
+              Rung.split, Rung.ftcomm, Rung.prev, Rung.wraphack, Rung.close, Rung.finalize,
+              Rung.finsponge, Rung.combine, Rung.bullet]
+  -- ⚑ `DREGG_WM_RUNGS` — a comma list that RESTRICTS the emission to those rungs, the exact twin of
+  -- the harness's own filter and additive in the same way: unset, the behaviour is what it was.
+  -- It exists because `w12_close` and `w11_bullet` are measured in tens of minutes each, and a lane
+  -- that changed ONE block's inputs should not have to pay for the other thirteen to re-prove its
+  -- own — which is how a verification does not get run at all.
+  -- ⚠ ⚑ **THE REFUSALS ABOVE ARE NOT UNDER THE FILTER**, and that is the whole reason this is a
+  -- filter here rather than a second driver: a cheaper emitter that skipped the `xhatXY` and
+  -- `FIN_DEFERRED_*` memo checks would be a way to write an artifact the real one refuses.
+  let rungs ← match (← IO.getEnv "DREGG_WM_RUNGS") with
+    | none => pure all
+    | some f =>
+        let want := (f.splitOn ",").map String.trim |>.filter (· != "")
+        let sel := all.filter (fun k => want.contains k.tag)
+        if sel.isEmpty then
+          throw (IO.userError s!"⚑ DREGG_WM_RUNGS={f} selected NO rung out of \
+            {all.map Rung.tag} — refusing to report a green emission that emitted nothing.")
+        else pure sel
+  for k in rungs do
     let _ ← emitRung dir tag t k
     pure ()
   IO.println s!"wrote {dir}/wrapmain_{tag}_*.json"

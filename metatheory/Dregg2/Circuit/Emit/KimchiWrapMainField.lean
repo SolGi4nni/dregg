@@ -57,6 +57,7 @@ import Dregg2.Circuit.Emit.PastaCurve
 -- this adds no cycle; it is what makes `lrPointQ`/`deltaPointQ` read a real `openings_proof`
 -- instead of cycling SRS Lagrange bases.
 import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
+import Dregg2.Circuit.Emit.KimchiWrapHackDigest
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 
@@ -409,9 +410,12 @@ than a stand-in for a derivation. What is NOT free is the SHAPE: each word is re
 `spec.ml:374-392` packs it at, so `scale_fast2`'s top-bit asserts have something honest to assert,
 and the derived split halves land inside their own widths by construction. -/
 
-/-- The named filler. Same shape as `KimchiWrapMain.wrapFixture`, defined here because §2's schedule
-needs `x_hat` and `x_hat` needs the scalars. -/
-def wrapFixtureQ (tag i : Nat) : Nat := (11 + 1000003 * (17 * tag + i)) % qN
+/-! ⚑ **`wrapFixtureQ` LEFT THIS FILE ON 2026-08-06 AND THE REASON IS THE SAME IMPORT DIRECTION THAT
+SENT `whNewChals` UP.** It is `whOldChal`'s filler, and `whOldChal` feeds `whPrevDigest` — packed
+statement words 55 and 56 — which the STEP circuit has to PUBLISH. `KimchiStepMainCore` cannot see
+this file (it is the wrap side's value layer), so the derivation moved DOWN to
+`KimchiWrapHackDigest`, which both circuits import. The namespace did not move, so every use site
+here is unchanged. -/
 
 /-! ### §15c′ — ⚑ **THE PACKED PREVIOUS STEP STATEMENT** (W-PREV, `wrap_main.ml:201-256`).
 
@@ -488,102 +492,24 @@ def prevWordWidth (w : Nat) : Nat :=
     let j := w % PREV_PER_PROOF_WORDS
     if j < 6 then WQ_FIELD else if j < PREV_SHOULD_FINALIZE then WQ_CHAL else WQ_BOOL
 
-/-! ### §15c″ — ⚑ **W-WRAPHACK's VALUE LAYER** (`wrap_hack.ml:99-141`, `wrap_main.ml:340-355,421-431`).
+/-! ### §15c″ — ⚑ **W-WRAPHACK's VALUE LAYER MOVED DOWN ON 2026-08-06** — `WH_ROUNDS`,
+`WH_PADDED`, `whPadVectors`, `WH_MLMB`, `whTape`, `whDigestOf`, `whOldChal`, `whOldChals`,
+`whSgOld` and `whPrevDigest` are in **`Dregg2.Circuit.Emit.KimchiWrapHackDigest`**, same namespace,
+imported above; nothing here is renamed and no wrap-side use site moves.
 
-It is declared HERE, above `prevWordVal`, because two of the 57 packed statement words are NOT
-witnessed: `wrap_main.ml:340-348` COMPUTES them.
+The reason is the one that sent `whNewChals` the other way, and it is not taste. `wrap_main.ml:
+340-348` COMPUTES packed words 55 and 56 — they are not witnessed on the wrap side — and
+`step_main.ml:364-366` `exists`-es the SAME two as a request of the step circuit. **One object, two
+circuits.** While the derivation lived in this file the step side could not name it, so it published
+a deterministic fixture, `whRows`' two `Field.Assert.equal` rows had no satisfying witness, and
+`w11_wraphack` sat in the harness's `STATEMENT_BLOCKED` set for exactly that. `KimchiStepMainCore`
+imports the derivation now.
 
-    let prev_messages_for_next_wrap_proof =
-      Vector.map2 prev_step_accs old_bp_chals ~f:(fun sacc (T (mlmb, chals)) →
-        Wrap_hack.Checked.hash_messages_for_next_wrap_proof mlmb
-          { challenge_polynomial_commitment = sacc; old_bulletproof_challenges = chals })
-
-and `prev_statement.messages_for_next_wrap_proof` is that vector, which `pack_statement` puts at
-words `PREV_MSG_NEXT_STEP + 1` and `+ 2` — 55 and 56. So `prevWordVal` may not answer with a
-fixture there, and the override below is what makes the SAME two words derived on the value side
-that §21 derives on the row side.
-
-⚑ **THE ABSORPTION ORDER IS THE OPPOSITE OF THE STEP SIDE'S.**
-`Messages_for_next_wrap_proof.to_field_elements` (`composition_types.ml:411-418`) is
-
-    Array.concat [ Vector.to_array old_bulletproof_challenges |> Array.concat_map ~f:Vector.to_array
-                 ; Array.of_list (g1_to_field_elements challenge_polynomial_commitment) ]
-
-— every old bulletproof challenge FIRST, flattened, and the commitment's `[x; y]` LAST. The step
-side interleaves; this one does not.
-
-⚑ **AND THE FRONT PAD IS A PRECOMPUTED SPONGE STATE, NOT AN IN-CIRCUIT ABSORB.** `pad_vector`
-(`wrap_hack.ml:26-28`) is `Vector.extend_front_exn v Padded_length.n dummy` — the padding goes at
-the FRONT, which is exactly why upstream can precompute it: `Checked
-.hash_messages_for_next_wrap_proof` (`wrap_hack.ml:110-137`) does NOT pad `t` at all. It opens the
-sponge at `dummy_messages_for_next_wrap_proof_sponge_states.(2 − max_proofs_verified)`, the state a
-fresh sponge reaches after absorbing that many DUMMY challenge vectors, injected as
-`Impls.Wrap.Field.constant`. -/
-
-/-- `Backend.Tock.Rounds.n` — one `old_bulletproof_challenges` vector's length (`wrap_main.ml:230`,
-`composition_types.ml:1358`). ⚠ **Tock's 15, not Tick's 16**; `ipaRounds` is the other one. -/
-def WH_ROUNDS : Nat := 15
-
-/-- `Wrap_hack.Padded_length = Nat.N2` (`wrap_hack.ml:24`) — the length every accumulator is padded
-UP TO, at the front. -/
-def WH_PADDED : Nat := 2
-
-/-- ⚑ How many DUMMY challenge vectors the precomputed opening state stands for
-(`wrap_hack.ml:124-130`): `2 − max_proofs_verified`. -/
-def whPadVectors (mlmb : Nat) : Nat := WH_PADDED - mlmb
-
-/-- ⚑ **`max_local_max_proofs_verified` AT THE COMMITTED SHAPE, AND IT IS A SHAPE CHOICE THAT IS
-SAID RATHER THAN BANKED.** `Max_widths_by_slot.maxes` (`wrap_main.ml:130-133`) is a per-slot
-constant of the compiled instance; this assembly fixes it at `WH_PADDED` for every slot, which is
-also what `Max_proofs_verified.n = 2` gives the closing hash at `wrap_main.ml:423`. So
-`whPadVectors WH_MLMB = 0` in all three sponges and the front pad is the FRESH state — the one this
-file can pin to zero out of its own `Sponge.create` rows.
-
-⚠ **THE OTHER CASE IS NOT EMITTED AND THE REASON IS NOT "LATER".** At `mlmb < 2` the opening state
-is the sponge state after absorbing `Dummy.Ipa.Wrap.challenges_computed`, and those values are
-`Ipa.Wrap.compute_challenge` of `Ro.scalar_chal ()` (`dummy.ml:30-35`) — an OCaml random-oracle draw
-this tree has no independent source for. Emitting it would mean a FIXTURE constant standing in for a
-derived sponge state, which is defect class 5 in a new place and inside the pad specifically. A
-shape choice that avoids inventing a constant is the honest one; `whPadVectors` is here so the
-general statement is in the file rather than the instance. -/
-def WH_MLMB : Nat := 2
-
-/-- The absorbed elements of ONE `hash_messages_for_next_wrap_proof`, in
-`to_field_elements` order. -/
-def whTape (chals : List Nat) (g : Nat × Nat) : List Nat := chals ++ [g.1, g.2]
-
-/-- `Tock_field_sponge.digest` in circuit — `Sponge.squeeze_field` of an Fq sponge over the tape
-(`wrap_hack.ml:131-137`). ⚑ `newSponge` IS the `whPadVectors WH_MLMB = 0` opening state. -/
-def whDigestOf (chals : List Nat) (g : Nat × Nat) : Nat :=
-  (Dregg2.Circuit.Emit.PastaPoseidonFq.squeeze1 Dregg2.Circuit.Emit.PastaPoseidonFq.fqParams
-      (Dregg2.Circuit.Emit.PastaPoseidonFq.absorbMany Dregg2.Circuit.Emit.PastaPoseidonFq.fqParams
-        Dregg2.Circuit.Emit.PastaPoseidonFq.newSponge (whTape chals g))).2
-
-/-- `old_bp_chals.(p)` flattened — `Vector.typ (Vector.typ Field.typ Tock.Rounds.n)` with NO check
-of any kind (`wrap_main.ml:226-256`), so a free witness upstream and a NAMED FIXTURE here. -/
-def whOldChal (p k : Nat) : Nat := wrapFixtureQ 41 (WH_PADDED * WH_ROUNDS * p + k)
-def whOldChals (p : Nat) : List Nat := (List.range (WH_MLMB * WH_ROUNDS)).map (whOldChal p)
-
-/-- `prev_step_accs.(p)` — ⚑ the TRANSCRIPT's own `sg_old` coordinates, not a second copy of them.
-This mirrors `KimchiWrapMain.itemVal T_SGOLD` exactly, including its fallback, so §21's tie row
-joins two cells that already hold one value.
-
-⚠ ⚑ **AND "MIRRORS" WAS ONE EDIT AWAY FROM FALSE, WHICH IS WHY IT NOW READS THE SAME LIST.** This
-def used to name `PastaPoseidonFq.PREVCOMM_XY` and `itemVal T_SGOLD` used to name it too, so the
-sentence above was true by coincidence of two literals. On 2026-08-05 `RC_SGOLD` moved to the step
-proof this pipeline is actually about and this one did not — instantly making the emitted §21 rows
-(which read the TRANSCRIPT cells, `absPtVal t.sp T_SGOLD p`) hash a different `sg_old` from the one
-`prevWordVal` packs into statement words 55/56 and the x_hat MSM consumes.
-`wraphack_digest_is_the_emitted_squeeze` is the pin that would have gone red for it. Two defs holding one object is the defect; both now
-resolve through `KimchiStepWrapChainFixture.STEP_PREVCOMM_XY`. -/
-def whSgOld (p : Nat) : Nat × Nat :=
-  ((Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY).getD (2 * p)
-      (wrapFixtureQ 1 (2 * p)),
-   (Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY).getD (2 * p + 1)
-      (wrapFixtureQ 1 (2 * p + 1)))
-
-/-- ⚑ **PACKED STATEMENT WORD `55 + p`** — `prev_statement.messages_for_next_wrap_proof.(p)`. -/
-def whPrevDigest (p : Nat) : Nat := whDigestOf (whOldChals p) (whSgOld p)
+⚠ `prevWordVal` still does NOT override at 55/56 and must not start: it is the recomposition of
+`STEP_PUBLIC_IN`, and an override there would be a SECOND copy of the statement disagreeing with the
+one the MSM consumes — the exact shape that kept `xhatOut 67` unchanged while `RC_SGOLD` moved. The
+agreement is a fact about the emitted step proof's own public input, which is what
+`the_published_statement_carries_the_wraphack_digests` measures. -/
 
 /-! ⚑ **`whNewChal` / `whNewChals` / `whCloseDigest` LEFT THIS FILE ON 2026-08-06 AND THE REASON IS
 THE IMPORT DIRECTION, not taste.** They were `wrapFixtureQ 42` — a NAMED FIXTURE standing for
@@ -631,7 +557,7 @@ circuit while wrong is a memo; one that can is a fixture.
 FINDING.** `prevWordVal` used to answer with this triple at words 27, 28 and 37 — x_hat entries
 32/33, 34/35 and 47 — so the statement the MSM consumed CONTAINED the derivation by construction.
 The scalars are the step proof's own published `Types.Step.Statement` now, and that statement does
-**not** carry these three values. `the_published_statement_does_not_carry_the_derived_words` states
+**not** carry these three values. `the_published_statement_carries_two_of_the_six_derived_words` states
 which words and refuses the claim that it does.
 
 ⚠ **THE PRICE, SAID PLAINLY.** `w12_finsponge`'s `Field.equal` legs on the finalizing block have no
@@ -667,15 +593,29 @@ branch live. -/
 def FIN_LIVE_BLOCK : Nat := 1
 
 /-- `Shifted_value.Type2.of_field` of the derived `combined_inner_product` — the fold
-`combine ζ + r · combine ζω` less `2^255`. -/
+`combine ζ + r · combine ζω` less `2^255`.
+
+⚠ ⚑ **ALL THREE MOVED ON 2026-08-06 AND THE MOVE IS THE POINT.** §19c stopped reading `wrapFixtureQ`
+evaluation columns and started reading Mina devnet block 539508's own Wrap-proof evaluations
+(`MinaRealBlockGate.EVZ`/`EVZW`), so this triple is a derivation over a REAL proof for the first
+time. `EmitWrapFinDeferred` prints it; `fin_deferred_words_are_the_derivation` and
+`EmitWrapMainJson`'s refusal are what stop the literal drifting from the emission. -/
 def FIN_DEFERRED_CIP : Nat :=
-  10742481956508484414461324644563643284499330972958261991466391374195412245280
+  6359989686629472738469128335643037281678649527633058133389454667795680729865
 /-- …and of the derived `b` — `challenge_polynomial ζ + r · challenge_polynomial ζω`. -/
 def FIN_DEFERRED_B : Nat :=
-  1652019457232851511929345484207094574373269249791287408713807329851805585096
-/-- …and the RAW 128-bit ξ′, the finalize sponge's first squeeze. -/
+  4871653580152294245178499848068324494957829690445060489896152267618388633075
+/-- …and the RAW 128-bit ξ′, the finalize sponge's first squeeze.
+
+⚠ **THIS IS NOT MINA'S ξ′ AND THE GAP IS NOW LOCATED RATHER THAN DESCRIBED.**
+`MinaRealBlockTranscript.V_CHAL` — the real block's own first phase-2 squeeze — is
+`330305781815358857211111367912836029937`. The finalize sponge eats five things ahead of the 43
+columns, and two of them are still not that proof's: the challenge digest is over `whOldChals`, a
+`wrapFixtureQ` (W-WRAPHACK's, where `MinaRealBlockGate.CHALS0`/`CHALS1` belong), and `finZW0` moves
+`z(ζω)` off the real value because the statement's `perm` word is not the derived one. Both are
+named at `finalize_reproduces_minas_own_ft_eval0`. -/
 def FIN_DEFERRED_XI : Nat :=
-  328188568881711558850681563153200103698
+  339931735288088339585480564981297032938
 
 /-- ⚑⚑ **ENTRY `i`'s SCALAR IS MEASURED SINCE 2026-08-06 — it is the value the prover handed
 `kimchi::verifier`.** `STEP_PUBLIC_IN` is `stepmain_step_r8_finalize.json`'s `public_input` as the
@@ -708,7 +648,7 @@ copy of the statement disagreeing with the one the MSM consumes — the exact sh
 ⚠⚑ **WHAT THAT COSTS IS REAL AND IS NAMED, NOT ABSORBED.** The published statement's words 27, 28,
 37, 54, 55 and 56 are NOT the values the wrap circuit derives for them, so the ties at `w9_prev`,
 `w11_wraphack` and `w12_finsponge` have no satisfying witness on this step proof.
-`the_published_statement_does_not_carry_the_derived_words` states exactly which six and refuses the
+`the_published_statement_carries_two_of_the_six_derived_words` states exactly which six and refuses the
 claim that it does; §15c‴ prices the repair. It is undone work on the STEP side, not a theorem of
 this model. -/
 def prevWordVal (w : Nat) : Nat :=
@@ -1499,68 +1439,77 @@ theorem split_field_halves_are_published_bits :
   ∧ (((List.range XHAT_TERMS_FULL).filter xhatIsSplitLo).map xhatScalar).eraseDups.length = 2 := by
   decide
 
-/-- ⚑⚑⚑ **THE STEP STATEMENT IS PUBLISHED, AND IT DOES NOT CARRY THE WORDS THE WRAP CIRCUIT DERIVES.
-THIS IS UNDONE WORK ON THE STEP SIDE, STATED AS A REFUSAL SO IT CANNOT BE MISREAD AS CLOSED.**
+/-- ⚑⚑⚑ **THE STEP STATEMENT IS PUBLISHED, AND IT CARRIES TWO OF THE SIX WORDS THE WRAP
+CIRCUIT DERIVES. THE OTHER FOUR ARE STATED AS A REFUSAL SO THEY CANNOT BE MISREAD AS CLOSED.**
 
 Three sub-circuits of `wrap_main` tie a packed statement word to a value the wrap circuit computes:
 
   * **W-FINSPONGE** (`wrap_main.ml:258-338`) — `finalize_other_proof` recomputes the finalizing
     block's `combined_inner_product`, `b` and `xi`, packed words `27·FIN_LIVE_BLOCK + {0, 1, 10}`,
     and `Field.equal`s each against the statement's;
-  * **W-WRAPHACK** (`wrap_main.ml:340-348`) — the two `hash_messages_for_next_wrap_proof` squeezes
-    ARE packed words 55 and 56;
+  * ✅ **W-WRAPHACK** (`wrap_main.ml:340-348`) — the two `hash_messages_for_next_wrap_proof` squeezes
+    ARE packed words 55 and 56. **CLOSED 2026-08-06** (see below);
   * **W-PREV** (`wrap_main.ml:350-351`) — packed word 54 is `Field.Assert.equal`-tied to Mina's
     public slot 12.
 
 Until 2026-08-06 `prevWordVal` ANSWERED WITH THOSE DERIVATIONS at exactly those six words, so all
 three ties held by construction and none of them was a question. The scalars are the step proof's own
-`STEP_PUBLIC_IN` now, and this measures what that costs: **six words disagree**, and the emitted rows
-above `w9_prev` have no satisfying witness on this step proof.
+`STEP_PUBLIC_IN` now, and this measures what that costs.
 
-⚠ ⚑ **THE REPAIR WAS PRICED AS A STEP-SIDE FIXPOINT UNTIL 2026-08-06, AND IT IS NOT ONE — WHICH IS
-WHY IT KEPT NOT HAPPENING.** This paragraph used to read: the step proof must be re-proved with a
-statement whose six words are the wrap's own derivation, and each is an x_hat MSM entry, so
-re-proving moves `x_hat`, moves every challenge below it, and moves the derivation. The first clause
-is true and the inference is not. `KimchiWrapMain.the_deferred_derivation_does_not_read_the_words_it
-_checks` (`…Pins12` §20c) computes the transitive input cone of the two values W-FINSPONGE derives,
-over its own 1732-op emitted program, and the three cells it checks are absent from it — **no
-transcript squeeze reaches §19 or §20 at all**, because their β, γ and ζ are packed statement words
-and their sponge is a fresh one over `finSpTape`. Three independent strata, one evaluation, no loop.
+✅ ⚑⚑ **55 AND 56 ARE CLOSED, AND THE WAY THEY CLOSED IS THE ANSWER TO HOW THE OTHER FOUR WILL.**
+Both are `exists ~request:Req.Messages_for_next_wrap_proof` on the step side — sourceless, no row
+writes them — so the step circuit was free to publish whatever it is told, and it was telling itself
+a deterministic fixture while this file computed a squeeze. `KimchiStepMainCore.stmtWrapMsgVal` is
+`KimchiWrapMain.whPrevDigest` now, the step circuit was re-emitted and re-proved, and the tie holds
+against the public input of a proof `kimchi::verifier::batch_verify` accepted. ⚠ **The derivation
+closed; the SOUNDNESS did not** — `whOldChals` is still a `wrapFixtureQ`, which is what upstream's
+untyped `old_bp_chals` honestly is, so what a prover may choose is unchanged.
 
-⚠ **AND THE ORDER MATTERS LESS THAN WHAT IT UNCOVERED.** Of the six, only 55 and 56 are FREE on the
-step side (`vStmtWrapMsg0` / `vStmtWrapMsgs`, sourceless, no row writes them). Words 27, 28, 37 and 54
-are `bpDiv2`/`bpOdd`, `vXiStmt` and `hmOutDigestVar` — values the STEP circuit derives — so writing
-the wrap's numbers there makes the step circuit unsatisfiable. The disagreement at 27/28/37 is
-therefore two derivations of one quantity, and the wrap's runs on `finColVal`/`finPZetaVal`/
-`finPZetaWVal`/`finFtEval1Val`, which are `wrapFixtureQ` fixtures standing where
-`prev_proof.openings.evals` belongs. Wiring those to the step proof's real evaluations is the repair,
-and it crosses a FIELD BOUNDARY — the evaluations are **Fp** and this circuit is native **Fq**, so
-they enter only through `Other_field` (`impls.ml:167-217`). That encoding, not a fixpoint, is what
-stands between `w9_prev` and the top of the ladder.
+⚠ ⚑⚑ **AND THE COST OF RE-EMITTING WAS PRICED AS A FIXPOINT AND MEASURED AS TWO ENTRIES.** This
+paragraph used to say the step proof must be re-proved and "that is a FIXPOINT, because each of the
+six is an x_hat MSM entry, so re-proving moves `x_hat`, moves every challenge below it, and moves the
+derivation." The first clause is true. The inference is not, and it is what kept the repair from
+happening: `whPrevDigest` reads no packed statement word at all (`KimchiWrapMain.the_wraphack_tape
+_reads_no_published_statement_entry`), so it is computable BEFORE the re-prove and unmoved BY it.
+MEASURED: exactly **two of the sixty-seven** published entries changed, and every other packed word
+is byte-identical.
+
+⚠ **WHAT IS LEFT IS FOUR, AND ONLY ONE OF THEM IS THE SAME KIND OF THING.** Words 27, 28, 37 and 54
+are `bpDiv2`/`bpOdd`, `vXiStmt` and `hmOutDigestVar` — values the STEP circuit DERIVES — so writing
+the wrap's numbers there makes the step circuit unsatisfiable rather than this one satisfiable. The
+disagreement at 27/28/37 is two derivations of one quantity. Word 54 is not even that: the step
+circuit's segment D and the marshaller's `MessagesForNextStepProof::hash()` hash preimages of
+DIFFERENT ARITY (see `KimchiWrapMainPins10`), so nothing on either side can move onto the other
+without wiring the two together first.
 
 ⚑ **WHAT IS NOT AFFECTED, MEASURED RATHER THAN ASSERTED.** None of the six is absorbed by the
 transcript and none is read at or below `w4_bind`, which is why the twenty-two slots that rung
-derives are unmoved — the last two conjuncts say the six words are exactly the derived ones and that
-the other 51 carry the published statement unaltered. -/
-theorem the_published_statement_does_not_carry_the_derived_words :
+derives are unmoved — the conjuncts below say the four remaining words are exactly the disagreeing
+ones and that the other 53 carry the published statement unaltered. -/
+theorem the_published_statement_carries_two_of_the_six_derived_words :
     prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK) ≠ FIN_DEFERRED_CIP
   ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1) ≠ FIN_DEFERRED_B
   ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10) ≠ FIN_DEFERRED_XI
-  -- ⚑ …and the six are the ONLY words at issue: every other packed word is a published entry and
+  -- ⚑⚑ …and 55/56 CLOSED on 2026-08-06, so the set is FOUR and this conjunct is what keeps the
+  -- count honest: the two W-WRAPHACK words now agree, and a regression that un-published them reds
+  -- here before it reaches `w11_wraphack`. `KimchiWrapMainPins09.wraphack_digest_is_the_emitted
+  -- _squeeze` is the equality; this is its complement said at the word map.
+  ∧ prevWordVal (PREV_MSG_NEXT_STEP + 1) = whPrevDigest 0
+  ∧ prevWordVal (PREV_MSG_NEXT_STEP + 2) = whPrevDigest 1
+  -- ⚑ …and the four are the ONLY words at issue: every other packed word is a published entry and
   -- nothing in this file claims a value for it.
   ∧ ((List.range PREV_WORDS).filter (fun w =>
       w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK
       || w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1
       || w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10
-      || w == PREV_MSG_NEXT_STEP || w == PREV_MSG_NEXT_STEP + 1
-      || w == PREV_MSG_NEXT_STEP + 2)).length = 6
-  ∧ PREV_WORDS - 6 = 51
-  -- ⚑ …and what the statement DOES carry there, exhibited rather than only denied: three small
-  -- structured numerals where three Fq derivations belong. A reader can see the gap's shape.
-  ∧ (prevWordVal PREV_MSG_NEXT_STEP.succ, prevWordVal (PREV_MSG_NEXT_STEP + 2))
-      = (160000365, 77001823)
-  ∧ decide (prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10) < 2 ^ WQ_CHAL) = true := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+      || w == PREV_MSG_NEXT_STEP)).length = 4
+  ∧ PREV_WORDS - 4 = 53
+  -- ⚑ …and what the statement carries at the four, exhibited rather than only denied: word 54 is a
+  -- 255-bit Fq digest that disagrees with Mina's slot 12, and word 37 is a `Challenge`-width word
+  -- where the wrap's own raw ξ′ belongs. A reader can see each gap's shape.
+  ∧ decide (prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10) < 2 ^ WQ_CHAL) = true
+  ∧ decide (2 ^ 250 < prevWordVal PREV_MSG_NEXT_STEP) = true := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> first | decide | native_decide
 
 set_option maxRecDepth 1000000 in
 /-- ⚑ **THE SCALARS MOVED.** The red control for `w9_prev`, kept for the same reason
