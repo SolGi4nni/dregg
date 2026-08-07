@@ -222,6 +222,23 @@ if [ -x "$(dirname "$0")/check-lean-seed-closure.sh" ]; then
   fi
 fi
 
+# ── ⚠ PER-MEMBER FRESHNESS IS *NOT* CHECKED HERE, AND THAT IS DELIBERATE (2026-08-07) ────
+# `scripts/check-lean-seed-member-freshness.py` refuses an archive whose objects are OLDER than
+# the Lean they were compiled from — the check that would have caught the week of green over a
+# 2026-07-25 `Dregg2_Exec_DeployedConstraint.o`. It reads `ar` member mtimes against `.lean` /
+# `.lake/build/ir/*.c` mtimes, so it is a statement about ONE BOX'S CLOCK.
+#
+# A DOWNLOADED asset has no such frame. `git clone` stamps every `.lean` at clone time, and any
+# published seed was necessarily built before you cloned — so that check refuses EVERY fetch on
+# a fresh checkout, including the correct one. Do not add it here on the grounds that it is
+# stricter; a gate that cannot distinguish a stale asset from a recent clone is a wall.
+#
+# The instrument that IS sound for a fetched asset is the CONTENT KEY, and it is already above:
+# the asset name is `sha256(platform, toolchain, mathlib rev, the boundary-closure SOURCES)`, so
+# a seed whose Lean does not match this checkout is not reachable by name at all. Mtime is the
+# instrument for the OTHER failure — a seed that was right when it landed and went stale in
+# place while the tree moved around it — and that one is a local-gates row.
+
 mv -f "$TMP/libdregg_lean.a" "$DEST"
 
 # ── ⚑ THE EVIDENCE RECORD ────────────────────────────────────────────────────

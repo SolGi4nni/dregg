@@ -5,8 +5,12 @@
 //! reported `8 passed` every day from 2026-07-30 to 08-06 while SIX of its eight assertions were
 //! false. The admission wire's header grew from 6 tokens to 17 on 07-30/08-01; the probe's builder
 //! still emitted six. The evaluator refused every one of those wires, and
-//! `DeployedConstraint.admitsWire` renders a refusal-to-parse as `"1"` — the same string as
-//! `ConstraintViolated` — so the probe could not tell. It went green anyway because the archive
+//! `DeployedConstraint.admitsWire` THEN rendered a refusal-to-parse as `"1"` — the same string as
+//! `ConstraintViolated` — so the probe could not tell. (That collision is closed as of the same
+//! day: an unreadable wire renders `"7 <stage>"` and decodes to
+//! `ProgramError::ConstraintOracleWireMalformed`. This gate is still the one that catches a STALE
+//! object, which is a different failure — a stale evaluator can be perfectly self-consistent.)
+//! It went green anyway because the archive
 //! linked on the box carried a **2026-07-25** `Dregg2_Exec_DeployedConstraint.o`: a six-token
 //! evaluator, agreeing with a six-token builder. Re-splicing the archive refreshed the evaluator
 //! alone and the six reds surfaced at once.
@@ -22,15 +26,28 @@
 //! `.lean` it was compiled from?** `ar` records a member's mtime; `metatheory/` records the
 //! source's. One `ar tv` and a stat answer it in about a second.
 //!
+//! ── AND THE SEED, WHICH THIS TEST CANNOT REACH ───────────────────────────────────────────────
+//! This test's subject is whatever archive `build.rs` LINKED. That is the right subject for a
+//! build, and it left the SEED (`dregg-lean-ffi/libdregg_lean.a`) unwatched — the artifact every
+//! new `OUT_DIR` is copied from, that arrives by fetch/rsync/bootstrap and is inherited across
+//! checkouts, and that NO process links directly. On 2026-08-07 the working archive was clean and
+//! the seed was 56 stale of 188 against this comparison (174 of 197 once the emitted `.c` counts
+//! too). The seed's gate is `scripts/check-lean-seed-member-freshness.py` — same question, fixed
+//! path, no cargo, and a local-gates row (`lean-seed-member-freshness`) with its own `-red` run.
+//! Its comparison is `max(.lean, .lake/build/ir/*.c)`: the `.lean` half is this file's, unchanged;
+//! the `.c` half only ever fires more, because lake regenerates a module's C when its compiled
+//! image changes for reasons the module's own source file cannot show.
+//!
 //! ── WHAT THIS REFUSES ────────────────────────────────────────────────────────────────────────
 //! Every `Dregg2_<Mod>.o` member of the archive `build.rs` actually linked, mapped back to
 //! `metatheory/Dregg2/<Mod>.lean` by inverting the flattened object name against the real source
 //! tree (so a module name containing `_` cannot be mis-split). A member older than its source is
 //! named, with both timestamps, and the run FAILS. Measured on this checkout at landing: the
 //! per-`OUT_DIR` working archive is CLEAN (0 of 323), and the git-ignored SEED at
-//! `dregg-lean-ffi/libdregg_lean.a` carries **56 stale members of 188** — `Dregg2_Exec_
+//! `dregg-lean-ffi/libdregg_lean.a` carried **56 stale members of 188** — `Dregg2_Exec_
 //! DeployedConstraint.o` among them. That is the artifact that hid the six reds, and this test
-//! names it whenever a build links it un-refreshed.
+//! names it whenever a build links it un-refreshed. (The seed itself was re-spliced to 0 stale
+//! the same day and now has its own always-on gate; see the section above.)
 //!
 //! ⚠ A GATE WHOSE INPUT IS ABSENT IS A FAULT, NOT A PASS. An unset `DREGG_LEAN_LINKED_ARCHIVE`,
 //! an unresolvable `metatheory/`, an unreadable archive, no `ar` on PATH, a member listing this

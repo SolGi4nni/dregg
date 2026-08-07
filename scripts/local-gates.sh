@@ -426,15 +426,36 @@ GATES=(
   # correctness, and build.rs's PROVENANCE DOWNGRADE could not see it: that gate is whole-archive
   # and fires when the Lean build did not run. The Lean build ran. The `.c` was current. The splice
   # ran. ONE object was old.
-  # The check is `dregg-lean-ffi/tests/linked_archive_freshness.rs`, NOT a script and deliberately
-  # so: the only process that knows WHICH archive was linked is the one that linked it, so build.rs
-  # hands the path over (`DREGG_LEAN_LINKED_ARCHIVE`) and the test walks its `Dregg2_*.o` members
-  # against `metatheory/`. A script here would have to guess among the per-OUT_DIR working copies,
-  # and `rerun-if-changed` refreshes those before a link anyway — so a stale one merely resident in
-  # `target/` is not evidence of anything, and a row that reddened on it would be noise.
-  # RUN IT WITH: `cargo nextest run -p dregg-lean-ffi --features lean-lib` (any invocation that
-  # links the archive runs it). Measured at landing: a freshly-spliced working archive is CLEAN
-  # (0 of 323 members); the seed in this checkout carries 56 stale members of 188.
+  # For the archive a BUILD LINKED, the check is `dregg-lean-ffi/tests/linked_archive_freshness.rs`,
+  # NOT a script and deliberately so: the only process that knows WHICH archive was linked is the
+  # one that linked it, so build.rs hands the path over (`DREGG_LEAN_LINKED_ARCHIVE`) and the test
+  # walks its `Dregg2_*.o` members against `metatheory/`. A script here would have to guess among
+  # the per-OUT_DIR working copies, and `rerun-if-changed` refreshes those before a link anyway —
+  # so a stale one merely resident in `target/` is not evidence of anything.
+  # RUN IT WITH: `cargo nextest run -p dregg-lean-ffi --features lean-lib`.
+  #
+  # ⚑ AND FOR THE SEED, WHICH NO PROCESS LINKS — THIS ROW (added 2026-08-07). The paragraph above
+  # is exactly why the SEED went unwatched: `libdregg_lean.a` is copied into every new `OUT_DIR`,
+  # arrives by fetch/rsync/bootstrap, is inherited across checkouts, and is linked by NOTHING, so
+  # the test above never has it as its subject. Measured the day this row landed: the working
+  # archive was CLEAN (0 of 323) and the seed carried **56 stale members of 188** against the
+  # `.lean` comparison — and **174 of 197** once the emitted `.c` is counted too, which is the
+  # comparison this row makes. It is the same question, one subject wider, and it is a script
+  # because the seed's path is FIXED (`dregg-lean-ffi/libdregg_lean.a`), needs no cargo, and takes
+  # about a second.
+  # STRICTLY STRONGER, NOT WIDER: a member must be at least as new as `max(.lean, .lake/build/ir/
+  # *.c)`. The `.lean` half is the Rust test's comparison unchanged; the `.c` half only ever makes
+  # it fire MORE (lake regenerates a module's C when its compiled image changes for reasons its own
+  # source cannot show — an import moved). ⚠ Never raise SLACK_SECS to clear a finding; a member
+  # that may legitimately lag is an ALLOWLIST entry with a written reason, and there are none.
+  "lean-seed-member-freshness|120|python3 scripts/check-lean-seed-member-freshness.py"
+  # The `-red` row is not optional: the headline is a NEGATIVE assertion and passes just as happily
+  # on a broken reader. It plants a member stamped 2026-07-25 in a synthesized archive, ASSERTS THE
+  # PLANT IS PRESENT, then reads the verdict; it also proves both `ar` long-name dialects parse, that
+  # a `_` inside a module name still maps, that the `.c` leg fires where the `.lean` leg cannot, that
+  # an hour is not inside the slack, and that every absent/unreadable/timestamp-stripped input FAULTS
+  # rather than reading clean. ~1s, no cargo.
+  "lean-seed-member-freshness-red|60|python3 scripts/check-lean-seed-member-freshness.py --self-test"
   "nightly-verdict|120|bash scripts/check-nightly-verdict.sh"
   # A function that DECIDES something — `verify_*`, `check_*`, `*_admits` — with no
   # production caller. `dregg_circuit::effect_vm::verify_balance_limb_pis` was the
@@ -984,6 +1005,16 @@ GATES_ALL=(
 
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }
 
+# ── SCOPE ─ THE RUNNER'S OWN. Every gate below now prints its own ANSWERS / DOES NOT ANSWER
+# pair as its first two lines of output, because the nine instrument-defects of 2026-08-01..07
+# were every one of them a check that was CORRECT and MISREAD — and the misreads happened to
+# people reading RESULTS, not source. This block is the same statement for the TABLE.
+# ⚠ It is printed twice on purpose (here and in the summary): a reader who scrolls to the
+# bottom for `passed N · failed M` is exactly the reader who was misled.
+SCOPE_ANSWERS='would each named gate, RUN HERE, on THIS checkout, right now, reach exit 0?'
+SCOPE_DENIES='whether the repo is correct, whether CI is green, or whether the gates COVER anything. Each row is as narrow as its own scope line says; a full-green table is the conjunction of ~110 narrow questions and nothing wider. Rows under --all are NOT run by default and are printed SKIP, never counted as passing.'
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n\n' "$SCOPE_ANSWERS" "$SCOPE_DENIES"
+
 printf '%-28s %-6s %-8s %s\n' GATE RESULT TIME NOTE
 printf '%.0s─' {1..96}; echo
 
@@ -1071,6 +1102,7 @@ else
 fi
 
 echo
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' "$SCOPE_ANSWERS" "$SCOPE_DENIES"
 echo "passed $pass · failed $fail · skipped $skip"
 [ "$timedout" -gt 0 ] && echo "  ⚠ $timedout failure(s) produced NO VERDICT (timeout) — that wants a budget or a phase split, not a repair"
 [ "$blocked" -gt 0 ] && echo "  ⚠ $blocked failure(s) are BLOCKED (exit 3) — an INPUT is absent or stale, not a divergence. Produce the input; do not 'fix' the gate"
