@@ -1096,7 +1096,7 @@ is true and the inference does not follow. `whPrevDigest` reads no packed statem
 the re-prove and unmoved by it — a STRATIFICATION, not a loop. MEASURED on 2026-08-06: the emit moved
 exactly **two of the sixty-seven** entries, the re-prove cost 21.5 s, and 55/56 closed. What is left
 at 27/28/37 and 54 is not this shape of thing; see `KimchiWrapMainField
-.the_published_statement_carries_two_of_the_six_derived_words`.
+.the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one`.
 
 ⚠ The legs are the CLOSURE first — the statement is a real 57-word packed statement whose expansion
 is the 67 entries — and then the blocker, exhibited on the one word this file owns the value of. -/
@@ -1125,7 +1125,7 @@ theorem the_chain_stops_at_the_statements_derived_words :
 DELETION RATHER THAN A SECOND COPY.** A `the_emitted_forty_agree_with_minas_at_every_slot_but_twelve`
 stood here for about an hour on 2026-08-06 — same subject, same `wrapPublicAt (mkWrap shapeWrap)
 .close`, same `WRAP_PUBLIC_INPUT_MEASURED` — written by this lane while a sibling was writing
-`the_forty_disagree_only_at_the_step_statement_words` in §20b⁵. Two lanes measuring one thing in two
+`the_forty_agree_but_for_the_arity_mismatched_slot` in §20b⁵. Two lanes measuring one thing in two
 modules is the defect this whole campaign has been deleting, and the sibling's is the better
 statement: it grades the set `{0..39} \ {11, 12}` rather than a total (so a lane CLOSING a slot does
 not red the pin that tracks the closing), it normalises `Int → Fq` before comparing, and its

@@ -215,12 +215,14 @@ something else entirely — `finSpTape` is the tape §20's rows actually build, 
 own cells, and the two were never compared. A sponge pinned against a tape nobody feeds it is the
 `whOldChals` hazard one level up: every instrument agreeing with itself.
 
-⚑ **SO THIS SECTION COMPARES THEM, SLOT BY SLOT, AND THE ANSWER IS NINETY OF NINETY-ONE.** Slot 1
-closed on 2026-08-07: `whOldChals` is `MinaRealBlockTranscript.CHALS_FLAT` now, so §20's nested
-challenge-digest sponge squeezes the value kimchi's own verifier computed at `verifier.rs:290-299`
-rather than a mixer's. The one that is left is slot **6**, and the theorems below say which it is,
-what it costs, and — the part that makes this a gate rather than a caveat — what the tape gives
-WITHOUT it. -/
+✅ ⚑⚑⚑ **SO THIS SECTION COMPARES THEM, SLOT BY SLOT, AND THE ANSWER IS NINETY-ONE OF NINETY-ONE.**
+Slot 1 closed earlier on 2026-08-07 — `whOldChals` is `MinaRealBlockTranscript.CHALS_FLAT`, so §20's
+nested challenge-digest sponge squeezes the value kimchi's own verifier computed at
+`verifier.rs:290-299` rather than a mixer's. Slot **6** closed later the same day, and NOT on this
+side: `KimchiStepMainCore` §1f stopped publishing the live per-proof block's `perm` out of
+`ftcDiv2 0` — §6b's own Fp ft-comm scalar, the WRAP statement's word 4 — and gave it its own cell
+carrying `Shifted_value.Type2.of_field` of the derived `perm`. `finZW0`'s ratio is 1 now, so the
+solve is the identity and the tape it presents the sponge is the block's own. -/
 
 /-- The 91-element tape §20's rows build at the live block, with the challenge digest the emitter's
 own nested sponge squeezes. -/
@@ -267,11 +269,13 @@ layer — `finBlockVal` (the published step statement), `finChalSponge` (this fi
 EQUAL, element for element, to `MinaRealBlockTranscript.fqTape2`, which was extracted from the
 block's bytes on a path that has never seen this assembly. Two constructions, ninety-one numbers.
 
-⚠ **WHAT IT DOES NOT SAY.** It does not say `w11_finsponge` proves, and it does not say the EMITTED
-tape is this one: `the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot` says it differs
-at slot 6. What it does say is that the distance between the two is a single statement word, and
-that on the far side of that word §20's sponge is upstream's — which is why the residue below is a
-wiring item and not a research one. Closed in the KERNEL. -/
+✅ **WHAT IT SAYS NOW.** When this was written it did not say the EMITTED tape was this one —
+`the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot` said it differed at slot 6, and
+the content here was that the distance between the two was a single statement word. That word is
+published (`KimchiStepMainCore` §1f), so `the_emitted_finalize_tape_is_minas` closes the gap and
+this theorem is the KERNEL half of it: the compiled one is about the emitter's `finZW0` probe, this
+one is `rfl` over the value layer. Two constructions, ninety-one numbers, and no bend between
+them. -/
 theorem the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges :
     unbentFinTape = Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2
     ∧ (chalSqueezes (finFrSpongeOf 0 unbentFinTape)).map (fun e => e.2 % 2 ^ 128)
@@ -279,69 +283,76 @@ theorem the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges :
           , Dregg2.Circuit.Emit.MinaRealBlockTranscript.U_CHAL ] := by
   refine ⟨rfl, rfl⟩
 
-/-- ⚑⚑ **THE EMITTED TAPE, AGAINST MINA'S, SLOT BY SLOT: ONE DISAGREEMENT, AND IT IS `finZW0`'s.**
+/-- ✅ ⚑⚑⚑ **THE EMITTED TAPE, AGAINST MINA'S, SLOT BY SLOT: NO DISAGREEMENT AT ALL.**
 
-⚠ **`= [6]` RATHER THAN `.length = 1`.** A count says a number; this says WHICH, so a future edit
-that fixes slot 6 and breaks slot 40 reds here instead of staying green. Slot 6 is `z` at ζω — the
-first column of `finEvalTape`, at its second point — and the last two conjuncts exhibit both sides:
-Mina's is the raw evaluation column, and the emitter's is not.
+⚠ **`= []` RATHER THAN `.length = 0`, for the same reason it was `= [6]` and not `.length = 1`.** A
+count says a number; the list says WHICH, so a future edit that breaks slot 40 reds here with the
+slot named instead of with an integer that moved.
+
+⚑ **WHAT THIS SAYS THAT `the_unbent_finalize_tape_…` DOES NOT.** That theorem is about a tape built
+by hand from `finColVal`; this one is about the tape §20's ROWS actually build — the emitter's own
+value layer, `finZW0` included. Until 2026-08-07 the two were different objects and the difference
+was slot 6. They coincide now, which is the whole content: the emitter absorbs the block's own
+`z(ζω)` because packed word 31 carries the derived `perm` and the solve's ratio is 1.
 
 ⚑ Compiler-trusted, because `finZW0` runs §19's 1047-op probe and `whnf` models an `Array` as its
 `List` model (`KimchiWrapMainPins12` §20b measured the same wall). -/
-theorem the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot :
+theorem the_emitted_finalize_tape_is_minas :
     ((List.range 91).filter (fun i =>
         emittedFinTape.getD i 0
-          != Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2.getD i 0)) = [6]
+          != Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2.getD i 0)) = []
+    ∧ emittedFinTape = Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2
+    ∧ emittedFinTape = unbentFinTape
     ∧ emittedFinTape.getD 6 0 = finZW0 tW.sh tW.sp FIN_LIVE_BLOCK
-    ∧ Dregg2.Circuit.Emit.MinaRealBlockTranscript.fqTape2.getD 6 0
-        = finColVal FIN_LIVE_BLOCK FIN_IDX_Z 1
-    ∧ finZW0 tW.sh tW.sp FIN_LIVE_BLOCK ≠ finColVal FIN_LIVE_BLOCK FIN_IDX_Z 1 := by
+    ∧ finZW0 tW.sh tW.sp FIN_LIVE_BLOCK = finColVal FIN_LIVE_BLOCK FIN_IDX_Z 1
+    -- ⚑ …and §20's two squeezes over the EMITTED tape are that block's ξ′ and r′.
+    ∧ (chalSqueezes (finFrSpongeOf 0 emittedFinTape)).map (fun e => e.2 % 2 ^ 128)
+        = [ Dregg2.Circuit.Emit.MinaRealBlockTranscript.V_CHAL
+          , Dregg2.Circuit.Emit.MinaRealBlockTranscript.U_CHAL ] := by
   native_decide
 
-/-- ⚑⚑⚑ **AND THE BEND IS A STATEMENT WORD'S FAULT, NOT AN EVALUATION'S — WHICH IS THE WHOLE
-REMAINING BLOCKER OF `w11_finsponge`, EXHIBITED.**
+/-- ✅ ⚑⚑⚑ **AND THE BEND IS GONE, BECAUSE THE LIVE BLOCK PUBLISHES THE DERIVED `perm` — THE
+BLOCKER OF `w11_finsponge`, CLOSED WHERE IT WAS EXHIBITED.**
 
-`finZW0` scales `z(ζω)` by `permUsed / perm` so that §19's `Field.equal` leg holds on the block that
-claims `should_finalize`. `perm` is the derivation over Mina's own evaluations — the one
+`finZW0` scaled `z(ζω)` by `permUsed / perm` so that §19's `Field.equal` leg would hold on the block
+that claims `should_finalize`. `perm` is the derivation over Mina's own evaluations — the one
 `finalize_reproduces_minas_own_ft_eval0` grounds against `FT0`, `LCT` and `PVP`. `permUsed` is
-packed word `27·FIN_LIVE_BLOCK + 4` = **31**, read through `Shifted_value.Type2`. They disagree, so
-the emitter bends the evaluation rather than the word, and the bent evaluation is what the sponge
-above it absorbs.
+packed word `27·FIN_LIVE_BLOCK + 4` = **31**, read through `Shifted_value.Type2`. They AGREE now, so
+the ratio is 1, the solve is the identity, and the sponge above it absorbs the block's own value.
 
-⚠ **THE PREMISE THAT CHOICE WAS MADE ON HAS EXPIRED, AND THAT IS SAID HERE RATHER THAN LEFT IN THE
-DOCBLOCK THAT MADE IT.** §19e's own note argues "the free cell to move is not the statement word …
-`z` at ζω is a `Req.Evals` witness this sub-circuit alone reads" — true while the evaluations were
-`wrapFixtureQ`, and bending a fixture costs nothing. Since 2026-08-06 they are Mina devnet block
-539508's own `es` columns, so the same solve now presents the sponge an evaluation that block does
-not have. What was a free witness became a real measurement under a docblock that did not move.
+⚠ ⚑ **WHAT THE PREVIOUS VERSION OF THIS THEOREM GOT RIGHT, AND WHAT IT GOT WRONG.** It said, and
+this was correct: *"word 31 must be `Shifted_value.Type2.of_field` of `perm` — `qSub perm
+FIN_SHIFT2`."* It also said *"it is not free on the step side: `stepStmtVar` maps the live block's
+`perm` hi/parity to `ftcDiv2 0`/`ftcOdd 0`, the split of §6b's OWN ft-comm `perm` scalar, which the
+step assembly derives natively in Fp"* — true as a reading of the map, and the WRONG conclusion
+drawn from it. Those cells are the **WRAP statement's** word 4; the step statement's word 31 was
+merely aliased onto them and was never derived at all. Un-aliasing it (`KimchiStepMainCore` §1f) is
+one cell, not a re-derivation, and the containment `finZW0` had become is retired rather than kept
+alongside its replacement.
 
-⚑ **AND THE REPAIR IS NAMED, WITH ITS TARGET VALUE.** Word 31 must be
-`Shifted_value.Type2.of_field` of `perm` — `qSub perm FIN_SHIFT2`. It is not free on the step side:
-`KimchiStepMainCore.stepStmtVar` maps the live block's `perm` hi/parity to `ftcDiv2 0`/`ftcOdd 0`,
-the split of §6b's OWN ft-comm `perm` scalar, which the step assembly derives natively in **Fp**.
-So the live block's `unfinalized_proofs` deferred words hold the step circuit's own
-`finalize_other_proof` outputs — an Fp object about the STEP proof — where an Fq object about the
-WRAP proof belongs, and packed words 27, 28 and 37 are the same aliasing at
-`vCipShift`/`vBShift`/`vXiStmt`. That is one wiring defect with four instances, not four gaps. -/
-theorem the_bend_is_the_live_blocks_own_perm_word :
+⚑ **THE LAST TWO CONJUNCTS ARE THE ANTI-VACUITY AND THEY ARE THE ONES THAT COULD GO RED.** A
+`finZW0` that returned `e1z` unconditionally would satisfy everything above; the PADDING block's own
+perm word is NOT its derived one and its solve is therefore still guarded off — which is what keeps
+`Field.equal`'s `(d⁻¹, 0)` branch instantiated by this same emission. -/
+theorem the_bend_is_gone_because_the_live_block_publishes_the_derived_perm :
     (let d := finProbeData tW.sh tW.sp FIN_LIVE_BLOCK
      d.vals.getD d.fp.slots.permUsed 0
          = qAdd (finBlockVal FIN_LIVE_BLOCK 4) FIN_SHIFT2
-     ∧ d.vals.getD d.fp.slots.perm 0 ≠ d.vals.getD d.fp.slots.permUsed 0
-     ∧ finZW0 tW.sh tW.sp FIN_LIVE_BLOCK
-         = qMul (finColVal FIN_LIVE_BLOCK FIN_IDX_Z 1)
-             (qMul (d.vals.getD d.fp.slots.permUsed 0)
-                   (qInv (d.vals.getD d.fp.slots.perm 0)))
-     -- ⚑ …and the gap said at the WORD MAP rather than at the gadget: the value packed word 31
-     -- would have to carry is `Shifted_value.Type2.of_field perm`, and it is not what the published
-     -- step statement carries there. A round-trip identity in this slot would say nothing; this
-     -- reds the moment the step side publishes the derived word, which is the event it is for.
-     ∧ qSub (d.vals.getD d.fp.slots.perm 0) FIN_SHIFT2
-         ≠ finBlockVal FIN_LIVE_BLOCK 4) := by
+     ∧ d.vals.getD d.fp.slots.perm 0 = d.vals.getD d.fp.slots.permUsed 0
+     -- ⚑ …the value the word map has to carry, and it does: `Shifted_value.Type2.of_field perm`.
+     ∧ qSub (d.vals.getD d.fp.slots.perm 0) FIN_SHIFT2 = finBlockVal FIN_LIVE_BLOCK 4
+     -- ⚑ …so the solve is the identity on the evaluation it used to bend.
+     ∧ finZW0 tW.sh tW.sp FIN_LIVE_BLOCK = finColVal FIN_LIVE_BLOCK FIN_IDX_Z 1)
+    -- ⚑ ANTI-VACUITY: the OTHER block is unchanged — its published `perm` is NOT its derivation, so
+    -- `Field.equal` still runs at a nonzero difference somewhere in this emission.
+    ∧ (let d := finProbeData tW.sh tW.sp (1 - FIN_LIVE_BLOCK)
+       d.vals.getD d.fp.slots.perm 0 ≠ d.vals.getD d.fp.slots.permUsed 0
+       ∧ qSub (d.vals.getD d.fp.slots.perm 0) FIN_SHIFT2
+           ≠ finBlockVal (1 - FIN_LIVE_BLOCK) 4) := by
   native_decide
 
-#assert_compiled the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot
-#assert_compiled the_bend_is_the_live_blocks_own_perm_word
+#assert_compiled the_emitted_finalize_tape_is_minas
+#assert_compiled the_bend_is_gone_because_the_live_block_publishes_the_derived_perm
 
 -- ⚠ The four named below are the ONLY compiler-trusted facts in this namespace, each pinned by
 -- `#assert_compiled` at its own site (a RED path in both directions). Everything else — both
@@ -350,7 +361,7 @@ theorem the_bend_is_the_live_blocks_own_perm_word :
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapFinalizeSpongeGate
   except cip_fold_reproduces_the_accepted_block
          cip_fold_direction_and_every_entry_are_load_bearing
-         the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot
-         the_bend_is_the_live_blocks_own_perm_word
+         the_emitted_finalize_tape_is_minas
+         the_bend_is_gone_because_the_live_block_publishes_the_derived_perm
 
 end Dregg2.Circuit.Emit.KimchiWrapFinalizeSpongeGate

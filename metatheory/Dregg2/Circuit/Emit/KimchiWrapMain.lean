@@ -578,16 +578,19 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      then TWO squeezes out of ONE permutation at lanes 0 and 1. `xi_correct` (`:895-902`),
      `b_correct` (`:1015-1026`, over `compute_challenges`' fifteen 128-bit lifts) and
      `combined_inner_product_correct` (`:951-1009`, a 47-entry Horner fold in ξ per point) are three
-     real `Field.equal` gadgets. ⚠⚑ **AND SINCE 2026-08-06 NONE OF THE THREE IS SATISFIED**:
-     `finsponge_has_no_witness_on_the_published_statement` measures both blocks at NONZERO
-     differences, so `(1 − finalized)·should_finalize` is `1` on the finalizing block and this rung
-     is UNSATISFIABLE on `stepmain_step_r8_finalize`. It passed while `prevWordVal` had override arms
-     answering `FIN_DEFERRED_*` at the three words — the statement contained the derivation because
-     this file put it there — and the step proof publishes its own statement now. That is undone work
-     on the STEP side and it is **NOT a fixpoint**: `the_deferred_derivation_does_not_read_the_words
-     _it_checks` (§20c) computes the transitive input cone of the two values this rung derives, over
-     its own 1732-op emitted program, and the three cells it checks are absent from it — no transcript
-     squeeze reaches §19 or §20 at all. Three strata, one pass. This line said "and a fixpoint" until
+     real `Field.equal` gadgets. ✅ ⚑⚑ **AND SINCE 2026-08-07 ALL THREE ARE SATISFIED**:
+     `finsponge_has_a_witness_on_the_published_statement` measures the finalizing block's three
+     differences at ZERO and the other block's at NONZERO, so `(1 − finalized)·should_finalize` is
+     `0` and this rung is SATISFIABLE on `stepmain_step_r8_finalize` while the gadget's other branch
+     stays exercised. Between 2026-08-06 and 08-07 it was UNSATISFIABLE, and the reason was NOT the
+     one three docblocks gave: the step statement's live per-proof block published its deferred words
+     out of `bpDiv2`/`bpOdd`/`ftcDiv2`/`ftcOdd`/`vXiStmt` — **the WRAP statement's own Fp deferred
+     values** — where the Fq ones about the wrap proof belong. `KimchiStepMainCore` §1f gave them
+     their own cells. It was **NOT a fixpoint** either: `the_deferred_derivation_does_not_read_the
+     _words_it_checks` (§20c) computes the transitive input cone of the two values this rung derives,
+     over its own 1732-op emitted program, and the three cells it checks are absent from it — no
+     transcript squeeze reaches §19 or §20 at all. Three strata, one pass. This line said "and a
+     fixpoint" until
      2026-08-06, superseded the same day by a theorem in its own tree.
      ⛑ **AND IT IS WHERE WRAP'S LARGEST REMAINING GATE GAP WAS.** The census that motivated this
      rung read **137 `(Poseidon × 11, Zero)` blocks of Mina's 261**; the two sponges are **61 per
@@ -600,7 +603,7 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      finalizing block's `combined_inner_product`, `b` and `xi` are `FIN_DEFERRED_*`, a memo closed by
      `fin_deferred_words_are_the_derivation` and refused at every emission — but those are DERIVED
      values, and the published statement's words 27, 28 and 37 are not them. They reach `xhatScalar`
-     no longer; `KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words` names
+     no longer; `KimchiWrapMainField.the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one` names
      all six words at issue across this rung, `w11_wraphack` and `w9_prev`.
      ⚠ **AND THE `EndoMulScalar` DIVERGENCE IS THIS RUNG'S SHAPE, NOT ITS COUNT.** Mina's blob has
      `EndoMulScalar × 120` twice — `compute_challenges` (`:1012-1013`) lifting all fifteen
@@ -769,7 +772,7 @@ measurement that sizes it. None of them is a value this file fakes and calls der
   except bullet_solves_g_on_curve_and_equal_g_is_one
          close_witness_is_the_bullet_verdict
          fin_deferred_words_are_the_derivation
-         finsponge_has_no_witness_on_the_published_statement
+         finsponge_has_a_witness_on_the_published_statement
          finsponge_assert_reds_if_the_other_block_claims_should_finalize
          -- ⚑ Joined 2026-08-06. It computes the TRANSITIVE INPUT CONE of the two values
          -- W-FINSPONGE derives, over the emitted 1732-op `FOp` program, and shows the three
@@ -813,9 +816,9 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          the_finalize_evaluations_are_minas_own_wrap_proof
          the_finalize_evaluations_need_no_encoding
          finalize_reproduces_minas_own_ft_eval0
-         -- ⚑ …and `the_forty_disagree_only_at_the_step_statement_words`, the agreement grade
+         -- ⚑ …and `the_forty_agree_but_for_the_arity_mismatched_slot`, the agreement grade
          -- itself: `wrapPublicAt (mkWrap shapeWrap) .close` against openmina's forty, forty
          -- comparisons over a vector whose closing rung runs `bullData`'s 67 endo ladders.
-         the_forty_disagree_only_at_the_step_statement_words
+         the_forty_agree_but_for_the_arity_mismatched_slot
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

@@ -17,7 +17,7 @@ namespace Dregg2.Circuit.Emit.KimchiStepMain
 
 open Dregg2.Circuit.Emit.KimchiPlacement
 open Dregg2.Circuit.Emit.WitnessBuilder (envIndex envLookupAt)
-open Dregg2.Circuit.Emit.PastaField (pN)
+open Dregg2.Circuit.Emit.PastaField (pN qN)
 open Dregg2.Circuit.Emit.PicklesStepStatement
   (PP_WORDS STMT_WORDS STMT_PREVS PP_FIELDS PP_BP_LOG2 SLOT_MSG_NEXT_STEP
    Slot slotOf slotBits realBlocks)
@@ -48,16 +48,32 @@ theorem the_committed_shape_carries_a_statement_and_the_smoke_shape_says_it_does
 block against `Per_proof.In_circuit.to_data` (`composition_types.ml:1279-1315`) and
 `Step_verifier.verify` (`step_verifier.ml:1224-1286`), which is what ties each of them to the
 transcript. Block **1** is the real one — `Vector.extend_front` puts the padding at the FRONT
-(`step_main.ml:568-570`) — so these are slots `32 + j`. -/
+(`step_main.ml:568-570`) — so these are slots `32 + j`.
+
+⚠ ⚑⚑ **SLOTS 32–41 AND 47 MOVED ON 2026-08-07, AND THE MOVE IS THE POINT OF THIS THEOREM NOW.**
+They read `bpDiv2/bpOdd 0,1`, `ftcDiv2/ftcOdd 1`, `ftcDiv2/ftcOdd 0` and `vXiStmt` — every one of
+them a **WRAP statement** word (`stmtVar 0,1,2,3,4,9`), i.e. the Fp deferred values of the wrap
+proof-state THIS circuit verifies, published where the Fq deferred values ABOUT that wrap proof
+belong. `KimchiStepMainCore` §1f is the de-aliasing; the last two conjuncts here are the refusal
+that the old cells are back, so a revert cannot pass by re-satisfying the shape. -/
 theorem the_public_vector_is_to_datas_order_slot_by_slot :
-    (((exposedVars shapeStep).getD 32 (xv 0) == bpDiv2 shapeStep 0)          -- cip, hi
-     && ((exposedVars shapeStep).getD 33 (xv 0) == bpOdd shapeStep 0)        -- cip, parity
-     && ((exposedVars shapeStep).getD 34 (xv 0) == bpDiv2 shapeStep 1)       -- b, hi
-     && ((exposedVars shapeStep).getD 35 (xv 0) == bpOdd shapeStep 1)        -- b, parity
-     && ((exposedVars shapeStep).getD 36 (xv 0) == ftcDiv2 shapeStep 1)      -- zeta_to_srs_length
-     && ((exposedVars shapeStep).getD 38 (xv 0) == ftcDiv2 shapeStep 1)      -- zeta_to_domain_size
-     && ((exposedVars shapeStep).getD 40 (xv 0) == ftcDiv2 shapeStep 0)      -- perm, hi
-     && ((exposedVars shapeStep).getD 41 (xv 0) == ftcOdd shapeStep 0)       -- perm, parity
+    (((exposedVars shapeStep).getD 32 (xv 0) == vStmtDef shapeStep 0)        -- cip, hi
+     && ((exposedVars shapeStep).getD 33 (xv 0) == vStmtDef shapeStep 1)     -- cip, parity
+     && ((exposedVars shapeStep).getD 34 (xv 0) == vStmtDef shapeStep 2)     -- b, hi
+     && ((exposedVars shapeStep).getD 35 (xv 0) == vStmtDef shapeStep 3)     -- b, parity
+     && ((exposedVars shapeStep).getD 36 (xv 0) == vStmtDef shapeStep 4)     -- zeta_to_srs_length
+     && ((exposedVars shapeStep).getD 37 (xv 0) == vStmtDef shapeStep 5)
+     && ((exposedVars shapeStep).getD 38 (xv 0) == vStmtDef shapeStep 6)     -- zeta_to_domain_size
+     && ((exposedVars shapeStep).getD 39 (xv 0) == vStmtDef shapeStep 7)
+     && ((exposedVars shapeStep).getD 40 (xv 0) == vStmtDef shapeStep 8)     -- perm, hi
+     && ((exposedVars shapeStep).getD 41 (xv 0) == vStmtDef shapeStep 9)     -- perm, parity
+     -- ⚑ …and NOT the wrap statement's words, which is the defect this replaced. A `vStmtDef` map
+     -- that happened to alias one of them again would satisfy every line above.
+     && ((List.range (2 * PP_FIELDS)).all (fun j =>
+           !((List.range 40).map (stmtVar shapeStep)).contains
+              ((exposedVars shapeStep).getD (32 + j) (xv 0))))
+     && !((List.range 40).map (stmtVar shapeStep)).contains
+           ((exposedVars shapeStep).getD 47 (xv 0))
      && ((exposedVars shapeStep).getD 42 (xv 0) == digestBeforeEvalsVar shapeStep)
      && ((exposedVars shapeStep).getD 43 (xv 0)
            == vN shapeStep shapeStep.betaChal shapeStep.emsRows)
@@ -67,7 +83,7 @@ theorem the_public_vector_is_to_datas_order_slot_by_slot :
            == vN shapeStep shapeStep.alphaChal shapeStep.emsRows)
      && ((exposedVars shapeStep).getD 46 (xv 0)
            == vN shapeStep shapeStep.zetaChal shapeStep.emsRows)
-     && ((exposedVars shapeStep).getD 47 (xv 0) == vXiStmt shapeStep)
+     && ((exposedVars shapeStep).getD 47 (xv 0) == vStmtDef shapeStep (2 * PP_FIELDS))
      && ((List.range PP_BP_LOG2).all (fun k =>
            (exposedVars shapeStep).getD (48 + k) (xv 0)
              == vN shapeStep (shapeStep.bulletChal k) shapeStep.emsRows))
@@ -79,25 +95,35 @@ theorem the_public_vector_is_to_datas_order_slot_by_slot :
 
 #assert_compiled the_public_vector_is_to_datas_order_slot_by_slot
 
-/-- **`the_statement_slots_are_distinct_except_the_shared_zeta_power`** — ⚑ the distinctness pin
-`…Pins01` used to carry as a `#guard` against `pubWords`, restated so the ONE legitimate coincidence
-is named and every other one still reds. Sixty-seven slots over sixty-five variables: slots 4/6 and
-5/7 are `zeta_to_srs_length` and `zeta_to_domain_size`, which upstream carries as two unconstrained
-words that agree at `log2n = srs_length_log2` (`plonk_checks.ml:496-497`) and which this assembly
-derives from one `ζ^n` cell (§2c's divergence, one level up). The same pair repeats in the padding
-block at 36/38 and 37/39 — ⚠ no: the padding block's ten `B Field` halves are ten DISTINCT
-`vStmtDummy` cells, because a padding block has no `ζ^n` to share. So the count is `67 − 2`. -/
-theorem the_statement_slots_are_distinct_except_the_shared_zeta_power :
-    (((exposedVars shapeStep).map varIx).eraseDups.length + 2 == STMT_WORDS
-     && (exposedVars shapeStep).getD 36 (xv 0) == (exposedVars shapeStep).getD 38 (xv 0)
-     && (exposedVars shapeStep).getD 37 (xv 0) == (exposedVars shapeStep).getD 39 (xv 0)
-     -- …and the padding block's ten `B Field` halves are ten different cells
+/-- ⚑⚑ **`the_statement_slots_are_all_distinct`** — the distinctness pin `…Pins01` used to carry as
+a `#guard` against `pubWords`, and it is a STRICTLY STRONGER statement than the one it replaced
+(2026-08-07).
+
+It was `the_statement_slots_are_distinct_except_the_shared_zeta_power`: `67 − 2`, with slots 36/38
+and 37/39 named as one legitimate coincidence, because `zeta_to_srs_length` and
+`zeta_to_domain_size` were one derived `ftcDiv2 1` cell and upstream "carries two unconstrained
+words that agree at `log2n = srs_length_log2`". ⚠ **Both halves of that were wrong about this
+object.** `ftcDiv2 1` is §6b's own **Fp** `ζ^n` — the WRAP statement's word 2/3 — so the shared cell
+was an ALIAS across two statements and two fields, not a faithful sharing; and the wrap proof these
+slots are about sits at `domain_log2 = 14` under a `2^15` tock SRS, so its two words are two
+DIFFERENT field elements (`MinaWrapProofDeferredWords.the_two_zeta_powers_differ`) and no single
+cell could have carried both. Sixty-seven slots over sixty-seven variables now, with no exception to
+name. -/
+theorem the_statement_slots_are_all_distinct :
+    (((exposedVars shapeStep).map varIx).eraseDups.length == STMT_WORDS
+     -- …the pair that used to be the exception is two cells and two values
+     && (exposedVars shapeStep).getD 36 (xv 0) != (exposedVars shapeStep).getD 38 (xv 0)
+     && (stepPublic tStep).getD 36 0 != (stepPublic tStep).getD 38 0
+     -- …and BOTH blocks' ten `B Field` halves are ten different cells apiece
      && (((List.range (2 * PP_FIELDS)).map (fun j =>
            varIx ((exposedVars shapeStep).getD j (xv 0)))).eraseDups.length
+         == 2 * PP_FIELDS)
+     && (((List.range (2 * PP_FIELDS)).map (fun j =>
+           varIx ((exposedVars shapeStep).getD (PP_WORDS + j) (xv 0)))).eraseDups.length
          == 2 * PP_FIELDS)) = true := by
   native_decide
 
-#assert_compiled the_statement_slots_are_distinct_except_the_shared_zeta_power
+#assert_compiled the_statement_slots_are_all_distinct
 
 /-- **`the_step_statements_wrap_message_is_the_wrap_statements_word_eleven`** — ⚑ ONE object where
 upstream has one. `step_main.ml:85` substitutes `verify_one`'s `messages_for_next_wrap_proof`
@@ -134,11 +160,17 @@ def splitHalves (rows : List SRow) (x hi : PVar) : Nat :=
         && r.coeffs.drop 5 == cSplit 1))).length)
 
 /-- **`the_statement_split_rows_are_emitted_exactly_once`** — ⚑ MOVED, not duplicated. Ladders 0 and
-1's `Shifted_value.Type2` split rows left `bpRows` (`r9_opening`) for `stmtRows` (`r5_full`) because
-their cells are statement slots 32–35 and the public vector is tied at the closing rung. A row
-emitted in both places would put two `Field.Assert.equal`s on one class and read as harmless; a row
-emitted in neither would leave four public words on cells nothing defines. This counts them in the
-TOP rung's row list, where both mistakes are visible. -/
+1's `Shifted_value.Type2` split rows left `bpRows` (`r9_opening`) for `stmtRows` (`r5_full`), and a
+row emitted in both places would put two `Field.Assert.equal`s on one class and read as harmless.
+This counts them in the TOP rung's row list and at `r5_full`, where both mistakes are visible.
+
+⚠ ⚑ **THE REASON THEY ARE HOISTED CHANGED ON 2026-08-07, THOUGH THE COUNT DID NOT.** It was *"their
+cells are statement slots 32–35 and the public vector is tied at the closing rung"*; those slots are
+`vStmtDef 0..3` now (`KimchiStepMainCore` §1f) and no public word names `bpDiv2`/`bpOdd 0,1` at all.
+What holds the hoist up is `vCipBit = bpOdd 0`, absorbed by the transcript at every rung while the
+EMITTED rung is `r8_finalize` — see §24a. Keeping the theorem while its premise changed is exactly
+what this repo calls a cost verdict outliving its premise, so the premise is restated at both ends
+rather than left to a reader to notice. -/
 theorem the_statement_split_rows_are_emitted_exactly_once :
     (splitHalves (rungRows tStep .opening true) (vCipShift shapeStep) (bpDiv2 shapeStep 0) == 1
      && splitHalves (rungRows tStep .opening true) (vBShift shapeStep) (bpDiv2 shapeStep 1) == 1
@@ -164,41 +196,82 @@ theorem the_public_words_respect_their_slot_widths :
 
 #assert_compiled the_public_words_respect_their_slot_widths
 
-/-- **`the_split_pairs_recompose_their_packed_word`** — `split_field`'s identity `2·hi + is_odd = x`
-(`wrap_main.ml:51-81`; `Step.Other_field.typ_unchecked`'s `~there` at `impls.ml:94-101`;
-openmina's `to_high_low` at `to_field_elements.rs:226-230`) holds on the EMITTED words for all ten
-`B Field` pairs — five in the real block, five in the padding one. This is what makes `w7_split` an
-identity on the step proof's own public input rather than a definition of a downward-derived cell. -/
+/-- ⚑⚑ **`the_split_pairs_recompose_their_packed_word`** — `split_field`'s identity
+`2·hi + is_odd = x` (`wrap_main.ml:51-81`; `Step.Other_field.typ_unchecked`'s `~there` at
+`impls.ml:94-101`; openmina's `to_high_low` at `to_field_elements.rs:226-230`) on the EMITTED words,
+for all ten `B Field` pairs.
+
+⚠ ⚑⚑ **AND WHAT THE PAIR RECOMPOSES TO IS AN `Fq` ELEMENT, WHICH IS WHY THE SPLIT EXISTS AT ALL.**
+The version of this theorem that stood until 2026-08-07 ended with two conjuncts saying the real
+block's slots 32–35 recompose to `vCipShift` and `vBShift` — and those are **the WRAP statement's**
+`combined_inner_product` and `b`, Fp values this circuit derives. That is the aliasing
+`KimchiStepMainCore` §1f retired, written down as a green pin: *the theorem was true, about the
+wrong object.* `Other_field.typ_unchecked` splits because `q > p` and an Fq word does not fit one Fp
+cell; a pair whose recomposition is an Fp value it could have carried whole is the tell.
+
+The legs, in order: every `hi` slot's successor is a BIT; every pair recomposes below `qN`, the
+field the word belongs to; the live block's five recompose to `MinaWrapProofDeferredWords`' five, by
+name; ⚑ and none of the five is a wrap-statement word any more — the refusal that makes a revert
+red rather than merely different. The ladders' own split is a separate object and stays one:
+`2·bpDiv2 0 + bpOdd 0` is still `vCipShift`, at cells no public word names. -/
 theorem the_split_pairs_recompose_their_packed_word :
-    (-- every `hi` slot's successor is its parity, and the pair recomposes inside `Fp`
+    (-- every `hi` slot's successor is its parity, and the pair recomposes inside `Fq`
      ((List.range STMT_WORDS).all (fun i =>
         match slotOf i with
         | .fieldHi _ _ =>
             decide ((stepPublic tStep).getD (i + 1) 0 == 0
                     || (stepPublic tStep).getD (i + 1) 0 == 1)
               && decide (2 * ((stepPublic tStep).getD i 0).toNat
-                           + ((stepPublic tStep).getD (i + 1) 0).toNat < pN)
+                           + ((stepPublic tStep).getD (i + 1) 0).toNat < qN)
         | _ => true))
-     -- …and for the REAL block's `combined_inner_product` and `b` the recomposition IS the value the
-     -- ladder multiplies by — `Field.Assert.equal (2·s_div_2 + s_odd) s`, `plonk_curve_ops.ml:290-291`
-     && (2 * (stepPublic tStep).getD 32 0 + (stepPublic tStep).getD 33 0
+     -- …and the LIVE block's five ARE the wrap proof's own deferred words, by name
+     && ((List.range PP_FIELDS).all (fun f =>
+          2 * ((stepPublic tStep).getD (PP_WORDS + 2 * f) 0).toNat
+            + ((stepPublic tStep).getD (PP_WORDS + 2 * f + 1) 0).toNat
+          == Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.FIELD_WORDS.getD f 0))
+     && ((stepPublic tStep).getD 47 0
+           == (Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.W_XI : Int))
+     -- ⚑ REFUSAL: not one of them is a WRAP statement word's value. The old theorem asserted the
+     -- opposite of this for two of them and read as a tie.
+     && ((List.range PP_FIELDS).all (fun f =>
+          !((List.range 40).map (fun i =>
+              envLookupAt (envIndex (circuitEnv tStep)) (stmtVar shapeStep i))).contains
+            ((2 * ((stepPublic tStep).getD (PP_WORDS + 2 * f) 0)
+               + ((stepPublic tStep).getD (PP_WORDS + 2 * f + 1) 0)))))
+     -- …while the ladder's own split is untouched: `Field.Assert.equal (2·s_div_2 + s_odd) s`,
+     -- `plonk_curve_ops.ml:290-291`, on cells no public word names.
+     && (2 * envLookupAt (envIndex (circuitEnv tStep)) (bpDiv2 shapeStep 0)
+           + envLookupAt (envIndex (circuitEnv tStep)) (bpOdd shapeStep 0)
            == envLookupAt (envIndex (circuitEnv tStep)) (vCipShift shapeStep))
-     && (2 * (stepPublic tStep).getD 34 0 + (stepPublic tStep).getD 35 0
+     && (2 * envLookupAt (envIndex (circuitEnv tStep)) (bpDiv2 shapeStep 1)
+           + envLookupAt (envIndex (circuitEnv tStep)) (bpOdd shapeStep 1)
            == envLookupAt (envIndex (circuitEnv tStep)) (vBShift shapeStep))) = true := by
   native_decide
 
 #assert_compiled the_split_pairs_recompose_their_packed_word
 
-/-- **`the_padding_block_is_the_only_witnessed_one`** — ⚑ the honest census, so "every field derived"
-is a claim with a number attached rather than a mood. The REAL block's thirty-two slots and the
-`messages_for_next_step_proof` digest are variables OTHER rows define; the padding block's
-thirty-two are `vStmtDummy` cells, exactly as upstream's `Unfinalized.Constant.dummy ()`
-(`step_main.ml:568-570`) is a witness discharged by `wrap_main.ml:333`; and
+/-- ⚑⚑ **`the_witnessed_slots_are_the_padding_block_and_the_live_blocks_deferred_values`** — the
+honest census, so "every field derived" is a claim with a number attached rather than a mood.
+
+⚠ ⚑ **IT WAS `the_padding_block_is_the_only_witnessed_one` AND THAT NAME BECAME FALSE ON
+2026-08-07, so it is renamed rather than left to describe a tree it no longer describes.** Eleven of
+the live block's thirty-two slots are witnesses now (`vStmtDef`, `KimchiStepMainCore` §1f) — the
+five `B Field` deferred values and ξ. That is not a loss of derivation: it is the recognition that
+those words are **Fq** deferred values about the wrap proof, which a step circuit cannot compute
+(`exists ~request:Req.Proof_state` upstream) and whose checker is `wrap_main.ml:335`'s
+`Boolean.Assert.any [finalized; not should_finalize]`. Deriving them here was deriving a DIFFERENT
+statement's words into these slots.
+
+The census now: the padding block's thirty-two are `vStmtDummy`, exactly as upstream's
+`Unfinalized.Constant.dummy ()` (`step_main.ml:568-570`) is a witness discharged by
+`wrap_main.ml:333`; the live block's eleven deferred slots are `vStmtDef`; its other twenty-one and
+the `messages_for_next_step_proof` digest are variables OTHER rows define; and
 `messages_for_next_wrap_proof` is a requested witness on BOTH sides (`step_main.ml:364-366`).
 
 ⚠ **THE ONE OBLIGATION A PADDING BLOCK CARRIES IS ITS BIT, AND IT IS NOT WITNESSED HERE**: slot 31
-is `cConst 0`. The last conjunct is that. -/
-theorem the_padding_block_is_the_only_witnessed_one :
+is `cConst 0`. ⚑ And BOTH blocks' five parity halves carry `b² = b`, which is the whole in-circuit
+obligation on a witnessed deferred word — the last two conjuncts. -/
+theorem the_witnessed_slots_are_the_padding_block_and_the_live_blocks_deferred_values :
     -- the padding block is EXACTLY slots 0..PP_WORDS−1, in order, and nowhere else
     (((List.range PP_WORDS).all (fun j =>
         (exposedVars shapeStep).getD j (xv 0) == vStmtDummy shapeStep j))
@@ -214,9 +287,27 @@ theorem the_padding_block_is_the_only_witnessed_one :
      -- …and the five parity halves it publishes carry `b² = b`
      && ((List.range PP_FIELDS).all (fun f =>
           (stepPublic tStep).getD (2 * f + 1) 0 * (stepPublic tStep).getD (2 * f + 1) 0
-            == (stepPublic tStep).getD (2 * f + 1) 0))) = true := by
+            == (stepPublic tStep).getD (2 * f + 1) 0))
+     -- ⚑ …and so do the LIVE block's, which are witnesses too since §1f
+     && ((List.range PP_FIELDS).all (fun f =>
+          (stepPublic tStep).getD (PP_WORDS + 2 * f + 1) 0
+            * (stepPublic tStep).getD (PP_WORDS + 2 * f + 1) 0
+            == (stepPublic tStep).getD (PP_WORDS + 2 * f + 1) 0))
+     -- ⚑ …the live block's eleven deferred slots are `vStmtDef` cells, in order, and nowhere else
+     && ((List.range N_STMT_DEF).all (fun j =>
+          (exposedVars shapeStep).getD (PP_WORDS + (if j == 2 * PP_FIELDS then 15 else j)) (xv 0)
+            == vStmtDef shapeStep j))
+     && ((List.range N_STMT_DEF).all (fun j =>
+          ((exposedVars shapeStep).filter (fun v => v == vStmtDef shapeStep j)).length == 1))
+     -- ⚑ …and the `b² = b` rows for both blocks' ten parity halves are emitted, ten of them
+     && ((List.range PP_FIELDS).all (fun f =>
+          ((rungRows tStep .full true).filter (fun r =>
+             (r.perm.getD 0 none == some (vStmtDef shapeStep (2 * f + 1))
+                && r.coeffs.take 5 == cMul)
+             || (r.perm.getD 3 none == some (vStmtDef shapeStep (2 * f + 1))
+                && r.coeffs.drop 5 == cMul))).length == 1))) = true := by
   native_decide
 
-#assert_compiled the_padding_block_is_the_only_witnessed_one
+#assert_compiled the_witnessed_slots_are_the_padding_block_and_the_live_blocks_deferred_values
 
 end Dregg2.Circuit.Emit.KimchiStepMain

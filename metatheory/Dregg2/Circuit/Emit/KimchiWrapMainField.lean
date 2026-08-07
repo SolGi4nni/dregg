@@ -58,6 +58,12 @@ import Dregg2.Circuit.Emit.PastaCurve
 -- instead of cycling SRS Lagrange bases.
 import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 import Dregg2.Circuit.Emit.KimchiWrapHackDigest
+-- ⚑ the live per-proof block's six Fq deferred words — the object `FIN_DEFERRED_*` project from
+-- since 2026-08-07, so the step statement and the wrap derivation cannot hold two copies.
+import Dregg2.Circuit.Emit.MinaWrapProofDeferredWords
+-- ⚑ the marshalled forty, for the ONE word the step statement still does not carry: slot 12,
+-- `messages_for_next_step_proof`, where the two sides hash preimages of different arity.
+import Dregg2.Circuit.Emit.MinaWrapDeferredWords
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 
@@ -557,7 +563,7 @@ circuit while wrong is a memo; one that can is a fixture.
 FINDING.** `prevWordVal` used to answer with this triple at words 27, 28 and 37 — x_hat entries
 32/33, 34/35 and 47 — so the statement the MSM consumed CONTAINED the derivation by construction.
 The scalars are the step proof's own published `Types.Step.Statement` now, and that statement does
-**not** carry these three values. `the_published_statement_carries_two_of_the_six_derived_words` states
+**not** carry these three values. `the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one` states
 which words and refuses the claim that it does.
 
 ⚠ **THE PRICE, SAID PLAINLY.** `w12_finsponge`'s `Field.equal` legs on the finalizing block have no
@@ -592,40 +598,40 @@ one whose deferred values must be derived and block 0 is the one that keeps `Fie
 branch live. -/
 def FIN_LIVE_BLOCK : Nat := 1
 
+/-! ### ⚑⚑⚑ THE THREE DEFERRED WORDS — **PROJECTIONS SINCE 2026-08-07, NOT LITERALS.**
+
+⚠ **WHAT THEY WERE, AND WHY THE LITERALS ARE GONE.** They were three baked numbers here, pinned by
+`fin_deferred_words_are_the_derivation` against `finSpDerivedWords` and refused at every emission by
+`EmitWrapMainJson`. That pair kept the memo honest about the EMISSION and could say nothing about
+the STEP statement, which carried different values at packed words 27, 28 and 37 —
+`the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one` is the theorem that said so.
+
+⚑ **THE STEP STATEMENT CARRIES THEM NOW** (`KimchiStepMainCore` §1f), and it reads them out of
+`MinaWrapProofDeferredWords`, which imports nothing but `PastaField` and therefore sits below both
+emitters. So these three are DEFINED as that module's words: one copy of each number, and a drift
+between the step statement and the wrap derivation is not expressible rather than merely detected.
+
+⚠ **THE VALUES MOVED WITH THE DE-ALIASING AND THAT IS THE FLAG DAY.** Packed word 31 now carries the
+derived `perm`, so `finZW0`'s solve is the identity, the 91-element tape IS
+`MinaRealBlockTranscript.fqTape2`, and §20's two squeezes ARE that block's `V_CHAL` and `U_CHAL`.
+Everything downstream of ξ′ and r′ followed: `FIN_DEFERRED_XI` was
+`197534800635343856236960545375938665224` and is `V_CHAL`; `FIN_DEFERRED_CIP` was
+`10021882907998845644915206977161460146706016958919569096310478871579688078414` and is
+`Shifted_value.Type2.of_field` of `MinaRealBlockGate.CIP` — the number kimchi's own verifier
+computed for that block. -/
+
 /-- `Shifted_value.Type2.of_field` of the derived `combined_inner_product` — the fold
-`combine ζ + r · combine ζω` less `2^255`.
-
-⚠ ⚑ **ALL THREE MOVED ON 2026-08-06 AND THE MOVE IS THE POINT.** §19c stopped reading `wrapFixtureQ`
-evaluation columns and started reading Mina devnet block 539508's own Wrap-proof evaluations
-(`MinaRealBlockGate.EVZ`/`EVZW`), so this triple is a derivation over a REAL proof for the first
-time. `EmitWrapFinDeferred` prints it; `fin_deferred_words_are_the_derivation` and
-`EmitWrapMainJson`'s refusal are what stop the literal drifting from the emission.
-
-⚠ ⚑ **AND ALL THREE MOVED AGAIN ON 2026-08-07, WHEN THE FINALIZE SPONGE'S CHALLENGE DIGEST BECAME
-THE REAL BLOCK'S.** `whOldChals` was a `wrapFixtureQ` and is `MinaRealBlockTranscript.CHALS_FLAT`
-now, so tape slot 1 — `finChalSponge`'s squeeze — is the value kimchi's own verifier computed
-(`verifier.rs:290-299`), and every value downstream of the 91-element sponge follows it. -/
-def FIN_DEFERRED_CIP : Nat :=
-  10021882907998845644915206977161460146706016958919569096310478871579688078414
+`combine ζ + r · combine ζω` less `2^255`. -/
+def FIN_DEFERRED_CIP : Nat := Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.W_CIP
 /-- …and of the derived `b` — `challenge_polynomial ζ + r · challenge_polynomial ζω`. -/
-def FIN_DEFERRED_B : Nat :=
-  9945670164352444464970210418481673149355280056751624682618623052360906475543
-/-- …and the RAW 128-bit ξ′, the finalize sponge's first squeeze.
-
-⚠ **THIS IS NOT MINA'S ξ′, AND THE GAP IS DOWN TO ONE SLOT OF NINETY-ONE.**
-`MinaRealBlockTranscript.V_CHAL` — the real block's own first phase-2 squeeze — is
-`330305781815358857211111367912836029937`. The finalize sponge eats five things ahead of the 43
-columns, and until 2026-08-07 two of them were not that proof's. The challenge digest is that
-proof's now. What is left is tape slot **6**: `finZW0` moves `z(ζω)` off the real value because
-packed word 31 — the live block's own `perm` — is not the derived one.
-
-⚑ **AND THAT LAST SLOT IS MEASURED RATHER THAN DESCRIBED.**
-`KimchiWrapFinalizeSpongeGate.the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot`
-names it `[6]`, and `…the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges` shows the
-same tape with that one bend removed IS `MinaRealBlockTranscript.fqTape2` and squeezes to `V_CHAL`
-and `U_CHAL`. So the distance from this literal to Mina's own ξ′ is exactly one statement word. -/
-def FIN_DEFERRED_XI : Nat :=
-  197534800635343856236960545375938665224
+def FIN_DEFERRED_B : Nat := Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.W_B
+/-- …and the RAW 128-bit ξ′, the finalize sponge's first squeeze — `V_CHAL`. -/
+def FIN_DEFERRED_XI : Nat := Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.W_XI
+/-- ⚑ …and the fourth, which had no name here at all because no cell could carry it: the derived
+`perm`, `Shifted_value.Type2`. It is packed word `27·FIN_LIVE_BLOCK + 4`, and until the de-aliasing
+that word held `ftcDiv2 0`/`ftcOdd 0` — §6b's own **Fp** ft-comm scalar, the WRAP statement's word 4
+— which is what `finZW0` was bending an evaluation to compensate for. -/
+def FIN_DEFERRED_PERM : Nat := Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.W_PERM
 
 /-- ⚑⚑ **ENTRY `i`'s SCALAR IS MEASURED SINCE 2026-08-06 — it is the value the prover handed
 `kimchi::verifier`.** `STEP_PUBLIC_IN` is `stepmain_step_r8_finalize.json`'s `public_input` as the
@@ -658,7 +664,7 @@ copy of the statement disagreeing with the one the MSM consumes — the exact sh
 ⚠⚑ **WHAT THAT COSTS IS REAL AND IS NAMED, NOT ABSORBED.** The published statement's words 27, 28,
 37, 54, 55 and 56 are NOT the values the wrap circuit derives for them, so the ties at `w9_prev`,
 `w11_wraphack` and `w12_finsponge` have no satisfying witness on this step proof.
-`the_published_statement_carries_two_of_the_six_derived_words` states exactly which six and refuses the
+`the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one` states exactly which six and refuses the
 claim that it does; §15c‴ prices the repair. It is undone work on the STEP side, not a theorem of
 this model. -/
 def prevWordVal (w : Nat) : Nat :=
@@ -1493,59 +1499,77 @@ _reads_no_published_statement_entry`), so it is computable BEFORE the re-prove a
 MEASURED: exactly **two of the sixty-seven** published entries changed, and every other packed word
 is byte-identical.
 
-⚠ **WHAT IS LEFT IS FOUR, AND ONLY ONE OF THEM IS THE SAME KIND OF THING.** Words 27, 28, 37 and 54
-are `bpDiv2`/`bpOdd`, `vXiStmt` and `hmOutDigestVar` — values the STEP circuit DERIVES — so writing
-the wrap's numbers there makes the step circuit unsatisfiable rather than this one satisfiable. The
-disagreement at 27/28/37 is two derivations of one quantity. Word 54 is not even that: the step
-circuit's segment D and the marshaller's `MessagesForNextStepProof::hash()` hash preimages of
-DIFFERENT ARITY (see `KimchiWrapMainPins10`), so nothing on either side can move onto the other
-without wiring the two together first.
+✅ ⚑⚑⚑ **AND ON 2026-08-07 THE SET WENT FROM FOUR TO ONE, WHICH IS WHY THIS THEOREM IS NOW AN
+EQUALITY AND NOT A DENIAL.** The paragraph that stood here read: *"words 27, 28, 37 and 54 are
+`bpDiv2`/`bpOdd`, `vXiStmt` and `hmOutDigestVar` — values the STEP circuit DERIVES — so writing the
+wrap's numbers there makes the step circuit unsatisfiable rather than this one satisfiable. The
+disagreement at 27/28/37 is two derivations of one quantity."*
+
+⚠ **THAT DIAGNOSIS WAS THE DEFECT MISREAD AS A CONFLICT.** There were never two derivations of one
+quantity. `bpDiv2`/`bpOdd`/`vXiStmt` are the **WRAP statement's** deferred values — Fp,
+`Shifted_value.Type1`, about the STEP proof — and packed words 27/28/37 are a **STEP statement's**,
+which are Fq `Type2` values about the WRAP proof. One set of cells, two statements, in two fields.
+`KimchiStepMainCore` §1f gave the step statement's block its own eleven cells; nothing was made
+unsatisfiable, because the step circuit never derived these words in the first place — it DEFERS
+them, and this file is their checker.
+
+⚑ **WHAT IS LEFT IS ONE, AND IT IS THE ONE THAT WAS NEVER THE SAME KIND OF THING: word 54.** The
+step circuit's segment D and the marshaller's `MessagesForNextStepProof::hash()` hash preimages of
+DIFFERENT ARITY — 56+20 against 56+36 (`KimchiWrapMainPins10`) — so nothing on either side can move
+onto the other without wiring the two together first. That is an arity gap, not a wiring one, and
+deriving harder on either side does not close it.
 
 ⚑ **WHAT IS NOT AFFECTED, MEASURED RATHER THAN ASSERTED.** None of the six is absorbed by the
 transcript and none is read at or below `w4_bind`, which is why the twenty-two slots that rung
-derives are unmoved — the conjuncts below say the four remaining words are exactly the disagreeing
-ones and that the other 53 carry the published statement unaltered. -/
-theorem the_published_statement_carries_two_of_the_six_derived_words :
-    prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK) ≠ FIN_DEFERRED_CIP
-  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1) ≠ FIN_DEFERRED_B
-  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10) ≠ FIN_DEFERRED_XI
-  -- ⚑⚑ …and 55/56 CLOSED on 2026-08-06, so the set is FOUR and this conjunct is what keeps the
-  -- count honest: the two W-WRAPHACK words now agree, and a regression that un-published them reds
-  -- here before it reaches `w11_wraphack`. `KimchiWrapMainPins09.wraphack_digest_is_the_emitted
-  -- _squeeze` is the equality; this is its complement said at the word map.
+derives are unmoved. -/
+theorem the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one :
+    -- ⚑ the five the step statement's live block now carries, by name and by value
+    prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK) = FIN_DEFERRED_CIP
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1) = FIN_DEFERRED_B
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 4) = FIN_DEFERRED_PERM
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10) = FIN_DEFERRED_XI
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 2)
+      = Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.W_ZETA_TO_SRS_LENGTH
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 3)
+      = Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.W_ZETA_TO_DOMAIN_SIZE
+  -- ⚑⚑ …and 55/56, which CLOSED on 2026-08-06. A regression that un-published them reds here
+  -- before it reaches `w11_wraphack`. `KimchiWrapMainPins09.wraphack_digest_is_the_emitted_squeeze`
+  -- is the equality; this is its complement said at the word map.
   ∧ prevWordVal (PREV_MSG_NEXT_STEP + 1) = whPrevDigest 0
   ∧ prevWordVal (PREV_MSG_NEXT_STEP + 2) = whPrevDigest 1
-  -- ⚑ …and the four are the ONLY words at issue: every other packed word is a published entry and
-  -- nothing in this file claims a value for it.
-  ∧ ((List.range PREV_WORDS).filter (fun w =>
-      w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK
-      || w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 1
-      || w == PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10
-      || w == PREV_MSG_NEXT_STEP)).length = 4
-  ∧ PREV_WORDS - 4 = 53
-  -- ⚑ …and what the statement carries at the four, exhibited rather than only denied: word 54 is a
-  -- 255-bit Fq digest that disagrees with Mina's slot 12, and word 37 is a `Challenge`-width word
-  -- where the wrap's own raw ξ′ belongs. A reader can see each gap's shape.
-  ∧ decide (prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 10) < 2 ^ WQ_CHAL) = true
-  ∧ decide (2 ^ 250 < prevWordVal PREV_MSG_NEXT_STEP) = true := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> first | decide | native_decide
+  -- ⚑ …and word 54 is the ONE that does not, stated as the refusal it is rather than omitted.
+  ∧ prevWordVal PREV_MSG_NEXT_STEP
+      ≠ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
+  ∧ PREV_WORDS - 1 = 56
+  -- ⚑ …and the ONE, exhibited: a 255-bit Fq digest, so the gap's shape is visible and a reader
+  -- cannot mistake it for the `Challenge`-width kind the deferred words are.
+  ∧ decide (2 ^ 250 < prevWordVal PREV_MSG_NEXT_STEP) = true
+  -- ⚑ …and the live block's deferred words really are the OTHER field's now: the two zeta powers
+  -- DIFFER, where one aliased `ftcDiv2 1` cell made them one number.
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 2)
+      ≠ prevWordVal (PREV_PER_PROOF_WORDS * FIN_LIVE_BLOCK + 3) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> first | decide | native_decide
 
 set_option maxRecDepth 1000000 in
 /-- ⚑ **THE SCALARS MOVED.** The red control for `w9_prev`, kept for the same reason
 `xhat_derived_is_not_the_old_fixture` keeps `RC_XHAT`: the value the MSM used to consume, exhibited
 rather than merely asserted to be gone. `wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i` was §15c's filler.
 
-⚠ **THE HONEST COUNT IS 63 OF 67, NOT 67 OF 67**, and the residue is not a hole: a one-bit entry has
-two possible values, so four of the twelve `Cond_add` scalars coincide with the old filler by
+⚠ **THE HONEST COUNT IS 62 OF 67, NOT 67 OF 67**, and the residue is not a hole: a one-bit entry has
+two possible values, so five of the twelve `Cond_add` scalars coincide with the old filler by
 arithmetic and not by inheritance. Every entry the MSM runs a LADDER over — all **55** — moved.
 Quoting 67 here would be the flattering number of a pair.
 
 ⚑ **THE GENERAL FACTS COME FIRST AND THE COUNT IS THE INSTANCE THEY IMPLY.** The first two conjuncts
 are what this control is actually for — *no ladder entry agrees with the old filler*, and *every
-entry that does agree is a one-bit one* — and neither moves when a packed word's value changes. The
-count does: it was measured at 62 while a candidate repair derived packed word 31, because that
-word's parity landed on the filler's bit. A statement whose only content is a count reds on a
-coincidence and says nothing about what changed.
+entry that does agree is a one-bit one* — and neither moves when a packed word's value changes.
+
+⚠ ⚑ **THE COUNT DOES, AND IT MOVED ON 2026-08-07 EXACTLY AS THIS PARAGRAPH PREDICTED IT WOULD.** It
+read: *"it was measured at 62 while a candidate repair derived packed word 31, because that word's
+parity landed on the filler's bit."* That repair landed (`KimchiStepMainCore` §1f), packed word 31
+carries the derived `perm`, and the count is **62**. A statement whose only content is a count reds
+on a coincidence and says nothing about what changed — which is why the two general legs above are
+the ones that carry this control, and both are unchanged.
 
 ⚠ The depth budget is §15c″'s, exactly as in `xhat_scalars_fit_their_widths`. -/
 theorem xhat_scalars_are_not_the_old_per_entry_fixture :
@@ -1555,7 +1579,7 @@ theorem xhat_scalars_are_not_the_old_per_entry_fixture :
       xhatScalar i == wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).all
         (fun i => xhatBits i == WQ_BOOL) = true
   ∧ ((List.range XHAT_TERMS_FULL).filter (fun i =>
-      xhatScalar i != wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).length = 63 := by
+      xhatScalar i != wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).length = 62 := by
   decide
 
 /-- ⚑ …and each `should_finalize` is a REAL bit of the statement, which is what makes `Boolean.typ`'s
@@ -1568,6 +1592,7 @@ theorem prev_should_finalize_words_are_bits :
   ∧ prevWordVal PREV_SHOULD_FINALIZE ≠ prevWordVal (PREV_PER_PROOF_WORDS + PREV_SHOULD_FINALIZE)
   ∧ ((List.range PREV_WORDS).filter (fun w => prevWordWidth w == WQ_BOOL)).length = XHAT_PREVS := by
   decide
+
 
 /-! ### §19c — the pins on this value layer, as NAMED THEOREMS. -/
 

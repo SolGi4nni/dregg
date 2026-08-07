@@ -192,12 +192,13 @@ buys the same factor and costs each pin its own failure site. -/
 #guard (exposedVars shapeStep).length == shapeStep.pubWords
 -- ⚠ ⚑ **THE COMMITTED SHAPE'S DISTINCTNESS PIN MOVED TO `KimchiStepStatementPins` (§24) AND IS NOW
 -- A NAMED THEOREM.** `exposedVars shapeStep` is a `Types.Step.Statement` since §24, and its count is
--- 65 rather than 67 — a STATED divergence and not a collision: slots 4–7 are `zeta_to_srs_length`
--- and `zeta_to_domain_size`, two unconstrained words upstream that agree at
--- `log2n = srs_length_log2` (`plonk_checks.ml:496-497`) and ONE derived `ζ^n` cell here (§2c, one
--- level up). A guard reading `== pubWords` would now be false, and reading `+ 2 == pubWords` would
--- be a literal nobody could check; `the_statement_slots_are_distinct_except_the_shared_zeta_power`
--- says which two are shared and that every other pair is not.
+-- ⚠ ⚑ 65 rather than 67 UNTIL 2026-08-07, and the reason given here was wrong. It read: "a STATED
+-- divergence and not a collision: slots 4–7 are `zeta_to_srs_length` and `zeta_to_domain_size`, two
+-- unconstrained words upstream that agree at `log2n = srs_length_log2` and ONE derived `ζ^n` cell
+-- here." That cell was `ftcDiv2 1` — §6b's own **Fp** scalar, i.e. the WRAP statement's word 2/3 —
+-- so it was an alias across two statements, and the wrap proof those slots are about sits at a
+-- `2^14` domain under a `2^15` SRS, where the two words are two different field elements. It is 67
+-- over 67 now; `the_statement_slots_are_all_distinct` is the pin, with no exception to name.
 
 -- ── The CROSS-SUB-CIRCUIT WIRES (the claim this file exists to make) ───────────────────────────
 -- ⚑ ONE VARIABLE, THREE GATE TYPES. Challenge `c`'s value cell is in the `EndoMulScalar` chain

@@ -245,14 +245,23 @@ still hold their own cells, each occurring at exactly one statement index.
 ⚠ ⚑ **THE `N_STMT = 22` CONJUNCT IS NOW `N_STMT_WRAP` AND THE REGION GREW, WHICH IS §24 AND NOT A
 REGRESSION.** The number this theorem was about is the WRAP statement's cell count, and its point was
 that word 10's deletion was a deletion. That is still `N_STMT_WRAP = 22`. What changed is that the
-same region now also holds the STEP statement's own cells — the padding block's `PP_WORDS` and
-`messages_for_next_wrap_proof.(0)` — so `N_STMT` is `N_STMT_WRAP + PP_WORDS + 1`. Reading the
-deletion off `N_STMT` would now report the growth as a failure of the deletion; reading it off
-`N_STMT_WRAP` says what it always meant, and the second conjunct pins the arithmetic so a future
-widening of either half cannot be mistaken for the other. -/
+same region now also holds the STEP statement's own cells — the padding block's `PP_WORDS`,
+`messages_for_next_wrap_proof.(0)`, and (2026-08-07) the LIVE block's `N_STMT_DEF = 11` deferred
+cells — so `N_STMT` is `N_STMT_WRAP + PP_WORDS + 1 + N_STMT_DEF`. Reading the deletion off `N_STMT`
+would now report the growth as a failure of the deletion; reading it off `N_STMT_WRAP` says what it
+always meant, and the conjuncts pin the arithmetic so a future widening of any part cannot be
+mistaken for another.
+
+⚠ ⚑⚑ **THE ELEVEN ARE §1f'S DE-ALIASING, AND THEY ARE THE ONE GROWTH THAT WAS NOT OPTIONAL.**
+Before them the live `unfinalized_proofs` block's five `B Field` words and its ξ were published out
+of `bpDiv2`/`bpOdd`/`ftcDiv2`/`ftcOdd`/`vXiStmt` — cells this very theorem's `stmtVar` map also
+names, i.e. **the WRAP statement's own deferred values, in the wrong field**. The last conjunct is
+the other end of that from this side: the wrap statement's forty still fold onto 39 cells and no
+more, so the step statement's eleven did not come out of this region's budget. -/
 theorem the_residue_is_two_words_and_the_statement_region_shrank :
     (N_STMT_WRAP = 22
-     ∧ N_STMT = N_STMT_WRAP + Dregg2.Circuit.Emit.PicklesStepStatement.PP_WORDS + 1
+     ∧ N_STMT_DEF = 11
+     ∧ N_STMT = N_STMT_WRAP + Dregg2.Circuit.Emit.PicklesStepStatement.PP_WORDS + 1 + N_STMT_DEF
      ∧ (List.range 40).countP (fun i => stmtVar shapeStep i == vStmtWrapMsgs shapeStep) = 1
      ∧ (List.range 40).countP (fun i => stmtVar shapeStep i == vStmtLookup shapeStep) = 1
      ∧ (List.range 40).countP (fun i => stmtVar shapeStep i == digestBeforeEvalsVar shapeStep) = 1

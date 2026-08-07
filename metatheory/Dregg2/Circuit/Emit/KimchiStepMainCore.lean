@@ -28,6 +28,10 @@ import Dregg2.Circuit.Emit.PicklesStepStatement
 -- `step_main.ml:364-366` requests them, so they are ONE object across two circuits; §2c's value
 -- side imports the derivation rather than transcribing its output.
 import Dregg2.Circuit.Emit.KimchiWrapHackDigest
+-- ⚑ §24's live per-proof block's deferred values — the **Fq** ones about the WRAP proof, which this
+-- circuit defers and `wrap_main`'s `finalize_other_proof` checks. They are a VALUE, not a
+-- derivation: the derivation is two modules above and imports this one.
+import Dregg2.Circuit.Emit.MinaWrapProofDeferredWords
 
 namespace Dregg2.Circuit.Emit.KimchiStepMain
 
@@ -1222,7 +1226,59 @@ Req.Messages_for_next_wrap_proof)`).
 allocated. Giving it a second cell would be two objects where upstream has one, and
 `the_step_statements_wrap_message_is_the_wrap_statements_word_eleven` is the tie. -/
 def vStmtWrapMsg0 (s : StepShape) : PVar := xv (baseStmt s + N_STMT_WRAP + PP_WORDS)
-def N_STMT : Nat := N_STMT_WRAP + PP_WORDS + 1
+
+/-! ### ⚑⚑⚑ §1f — **THE LIVE BLOCK'S OWN DEFERRED CELLS, AND WHY THEY HAVE TO BE THEIR OWN.**
+
+Until 2026-08-07 §24 published the live `unfinalized_proofs` block's five `B Field` words and its
+ξ out of cells that already held the **WRAP statement's** deferred values — `bpDiv2`/`bpOdd 0,1`
+(the splits of `vCipShift`/`vBShift`), `ftcDiv2`/`ftcOdd 0,1` (§6b's own `perm` and `ζ^n` scalars)
+and `vXiStmt`. **One set of cells, two statements**, and the two statements are not even in the
+same field:
+
+  * `vCipShift`, `vBShift`, `vPermShift`, `vXiStmt` are the *Wrap proof-state's* deferred values —
+    **Fp**, `Shifted_value.Type1` (§8f's own docblock: *"A Type1 shift keys on the VALUE's own
+    field … these three are the Wrap proof-state's `fp` block"*). Their checker IS this circuit:
+    R5/R6/R8 recompute them and `Boolean.all` binds them. They stay exactly where they are.
+  * A step statement's `unfinalized_proofs.(p).deferred_values` are the deferred values *about the
+    wrap proof `verify_one` verified* — **Fq**, `Shifted_value.Type2`, the same-field shift
+    (`impls.ml:135`). This circuit cannot compute them at all — that is what *deferred* means — and
+    `wrap_main.ml:335`'s `Boolean.Assert.any [finalized; not should_finalize]` over
+    `finalize_other_proof` is their checker (`KimchiWrapMainCore` §19/§20).
+
+⚑ **SO THESE ARE WITNESSES, AND THAT IS UPSTREAM'S SHAPE AND NOT A WEAKENING.** They arrive through
+`exists ~request:Req.Proof_state`; the only in-circuit obligations a step circuit puts on them are
+`Boolean.typ` on the five parity halves (§24a's rows) and the WIDTH each slot's `scale_fast2`
+ladder enforces one level up (`KimchiStepStatementPins.the_public_words_respect_their_slot_widths`).
+What they buy is that §19/§20's four `Field.equal` legs now have a satisfying witness at all — the
+aliased cells could not have one, because no single value is simultaneously an Fp `ft_comm` scalar
+and an Fq `finalize_other_proof` output.
+
+⚠ **AND `zeta_to_srs_length` AND `zeta_to_domain_size` ARE TWO CELLS NOW, NOT ONE.** §24's own
+docblock priced the shared `ftcDiv2 1` as a faithful divergence ("upstream carries two
+unconstrained words that happen to agree at `log2n = srs_length_log2`"). The proof this block is
+about does not sit there: its domain is `2^14` and the tock SRS is `2^15`
+(`Common.Max_degree.wrap_log2`, openmina `step.rs:2416`), so upstream's two words are two DIFFERENT
+field elements here and one cell could not carry both
+(`MinaWrapProofDeferredWords.the_two_zeta_powers_differ`). -/
+
+/-- The live block's ten `B Field` halves and its ξ. Slot `2·f`/`2·f+1` is field word `f`'s
+`(hi, is_odd)`; slot `2·PP_FIELDS` is ξ. -/
+def vStmtDef (s : StepShape) (j : Nat) : PVar :=
+  xv (baseStmt s + N_STMT_WRAP + PP_WORDS + 1 + j)
+/-- …how many: five `(hi, parity)` pairs and the raw ξ. -/
+def N_STMT_DEF : Nat := 2 * PP_FIELDS + 1
+
+/-- ⚑ Slot `j`'s VALUE — `MinaWrapProofDeferredWords` split by `Spec.pack`'s `split_field`
+(`spec.ml:374-392`; openmina's `to_high_low`, `to_field_elements.rs:226-230`): a `B Field` word `x`
+of the OTHER field becomes `(x / 2, x % 2)`, two Fp cells, because `q > p` and `x` does not fit one.
+ξ is a `Scalar Challenge` and is published raw. -/
+def stmtDefVal (j : Nat) : Nat :=
+  if j == 2 * PP_FIELDS then Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.W_XI
+  else
+    let w := Dregg2.Circuit.Emit.MinaWrapProofDeferredWords.WORD (j / 2)
+    if j % 2 == 0 then w / 2 else w % 2
+
+def N_STMT : Nat := N_STMT_WRAP + PP_WORDS + 1 + N_STMT_DEF
 
 /-! ### ⚑ `prev_challenges` — the PREVIOUS proofs' carried bulletproof challenges.
 
@@ -4767,21 +4823,21 @@ RE-LAYOUT of what the assembly derives, not a new set of witnesses.** Read again
 the transcript) and `step_main.ml:26-110`:
 
     slot (block 1)  statement field                     this assembly's variable      why it is that
-    0,1     combined_inner_product  hi,parity   `bpDiv2 0`, `bpOdd 0`   §19 ladder 0 IS
-                                                `scale_fast2 u advice.combined_inner_product`
-                                                (`step_verifier.ml:317`), whose `Shifted_value.Type2`
-                                                split row (`plonk_curve_ops.ml:290-291`) is exactly
-                                                the pair the statement publishes
-    2,3     b                       hi,parity   `bpDiv2 1`, `bpOdd 1`   §19 ladder 1 = `b_u`, same
-    4,5     zeta_to_srs_length      hi,parity   `ftcDiv2 1`, `ftcOdd 1` §6b's `ζ^n` scalar split
-    6,7     zeta_to_domain_size     hi,parity   `ftcDiv2 1`, `ftcOdd 1` ⚠ ONE cell for two words —
-                                                see below
-    8,9     perm                    hi,parity   `ftcDiv2 0`, `ftcOdd 0` §6b's `perm` scalar split
+    0,1     combined_inner_product  hi,parity   `vStmtDef 0`, `vStmtDef 1`   ⚑ DEFERRED (§1f) —
+                                                an **Fq** value about the WRAP proof, which this
+                                                circuit cannot compute and `wrap_main`'s
+                                                `finalize_other_proof` checks
+    2,3     b                       hi,parity   `vStmtDef 2`, `vStmtDef 3`   same
+    4,5     zeta_to_srs_length      hi,parity   `vStmtDef 4`, `vStmtDef 5`   same, `ζ′^(2^15)`
+    6,7     zeta_to_domain_size     hi,parity   `vStmtDef 6`, `vStmtDef 7`   same, `ζ′^(2^14)` —
+                                                ⚑ a DIFFERENT cell and a different number
+    8,9     perm                    hi,parity   `vStmtDef 8`, `vStmtDef 9`   same
     10      sponge_digest_before_evaluations    `digestBeforeEvalsVar`  `Field.Assert.equal` at
                                                 `step_verifier.ml:1271-1272`
     11,12   beta, gamma                         `vN β/γ emsRows`        R2's decoded prechallenge
     13,14   alpha, zeta                         `vN α/ζ emsRows`        R2's decoded prechallenge
-    15      xi                                  `vXiStmt`               R8's `xi_correct`
+    15      xi                                  `vStmtDef 10`           ⚑ DEFERRED, the wrap
+                                                proof's own ξ′
     16..30  bulletproof_challenges ×15          `vN (5+k) emsRows`      `Field.Assert.equal` at
                                                 `step_verifier.ml:1273-1285`, one per
                                                 `bullet_reduce` squeeze
@@ -4800,13 +4856,18 @@ the WRAP proof's, **15** (`composition_types.ml:1352`). Reaching for `bRounds` h
 not_ticks` is that number as a theorem, and the fifteen slots below are `s.zetaChal + 2 + k`, i.e.
 the squeezes AFTER β γ α ζ and `u`, which are `bullet_reduce`'s own.
 
-⚠ **WORDS 4–7 ARE ONE CELL AND FOUR WORDS, and it is the divergence §2c already states**, one level
-up: at `log2n = srs_length_log2` upstream's `zeta_to_srs_length` and `zeta_to_domain_size` are the
-same field element (`plonk_checks.ml:496-497`) and are two unconstrained statement words that happen
-to agree; here they are one DERIVED cell, so this assembly has one σ class where Snarky has two and
-the value is computed where upstream's is claimed. Strictly more constrained, stated rather than
-elided, and `KimchiStepStatementPins.the_statement_slots_are_distinct_except_the_shared_zeta_power`
-names the two slots that share and refuses a collision anywhere else. -/
+⚠ ⚑⚑ **WORDS 4–7 USED TO BE ONE CELL AND FOUR WORDS, AND THAT PARAGRAPH IS RETIRED (2026-08-07),
+NOT SOFTENED.** It read: *"at `log2n = srs_length_log2` upstream's `zeta_to_srs_length` and
+`zeta_to_domain_size` are the same field element (`plonk_checks.ml:496-497`) … here they are one
+DERIVED cell … strictly more constrained."* Both halves are wrong about this block. The cell was
+`ftcDiv2 1`, §6b's own **Fp** `ζ^n` — the WRAP statement's word 2/3, a different statement's
+deferred value — so it was not "more constrained", it was ALIASED (§1f). And the wrap proof these
+words are about sits at `domain_log2 = 14` under a `2^15` tock SRS, so upstream's two words are two
+DIFFERENT field elements here: one cell could not carry both, whatever it was.
+
+They are `vStmtDef 4..7` now, two cells and two values, and
+`KimchiStepStatementPins.the_statement_slots_are_all_distinct` is the strengthened pin that replaced
+the one naming the exception. -/
 
 /-- ⚑ Which `bullet_reduce` squeeze carries `bulletproof_challenges.(k)` — the squeezes after
 β γ α ζ and `u` (`sqScheduled`'s own order, §2b). -/
@@ -4830,15 +4891,9 @@ def stepStmtVar (s : StepShape) (i : Nat) : PVar :=
   | .msgNextWrap _ => vStmtWrapMsgs s
   | .outOfRange => xv 0
   | .fieldHi b f =>
-      if (realBlocks 1).contains b then
-        (if f == 0 then bpDiv2 s 0 else if f == 1 then bpDiv2 s 1
-         else if f == 4 then ftcDiv2 s 0 else ftcDiv2 s 1)
-      else vStmtDummy s (2 * f)
+      if (realBlocks 1).contains b then vStmtDef s (2 * f) else vStmtDummy s (2 * f)
   | .fieldOdd b f =>
-      if (realBlocks 1).contains b then
-        (if f == 0 then bpOdd s 0 else if f == 1 then bpOdd s 1
-         else if f == 4 then ftcOdd s 0 else ftcOdd s 1)
-      else vStmtDummy s (2 * f + 1)
+      if (realBlocks 1).contains b then vStmtDef s (2 * f + 1) else vStmtDummy s (2 * f + 1)
   | .digest b =>
       if (realBlocks 1).contains b then digestBeforeEvalsVar s
       else vStmtDummy s (2 * PP_FIELDS)
@@ -4850,7 +4905,7 @@ def stepStmtVar (s : StepShape) (i : Nat) : PVar :=
       if (realBlocks 1).contains b then
         (if c == 0 then vN s s.alphaChal s.emsRows
          else if c == 1 then vN s s.zetaChal s.emsRows
-         else vXiStmt s)
+         else vStmtDef s (2 * PP_FIELDS))
       else vStmtDummy s (2 * PP_FIELDS + 3 + c)
   | .bpChallenge b k =>
       if (realBlocks 1).contains b then vN s (s.bulletChal k) s.emsRows
@@ -4900,12 +4955,24 @@ def exposedVars (s : StepShape) : List PVar :=
 /-! ### §24a — the rows the statement adds, and the two it MOVES.
 
 ⚑ **THE TWO IT MOVES.** §19's `bpRows` emitted the `Shifted_value.Type2` split for all four
-`check_bulletproof` ladders, and `bpRows` is `r9_opening`'s. But ladders 0 and 1 are
-`combined_inner_product` and `b` — statement slots 0–3 — and the public vector is tied at the
-CLOSING rung, `r5_full`. A public word tied to a cell whose defining row appears four rungs later is
-defect class 5 wearing a public vector. So the two split rows (and ladder 1's `b² = b`; ladder 0's is
-already `cipRows`') are emitted HERE and `bpRows` no longer emits them — MOVED, not duplicated,
-which `KimchiStepStatementPins.the_statement_split_rows_are_emitted_exactly_once` is about. -/
+`check_bulletproof` ladders, and `bpRows` is `r9_opening`'s. Ladders 0 and 1's are emitted HERE and
+`bpRows` no longer emits them — MOVED, not duplicated, which
+`KimchiStepStatementPins.the_statement_split_rows_are_emitted_exactly_once` is about.
+
+⚠ ⚑ **THE REASON FOR THE HOIST CHANGED ON 2026-08-07 AND THE OLD ONE IS RETIRED RATHER THAN LEFT
+STANDING.** It read: *"ladders 0 and 1 are `combined_inner_product` and `b` — statement slots 0–3 —
+and the public vector is tied at the CLOSING rung, `r5_full`. A public word tied to a cell whose
+defining row appears four rungs later is defect class 5 wearing a public vector."* Slots 0–3 are
+`vStmtDef 0..3` now (§1f) and NO public word names `bpDiv2`/`bpOdd 0,1`, so that argument no longer
+applies to anything. What still holds the hoist up is a different cell and a different rung:
+`vCipBit` IS `bpOdd s 0`, the transcript absorbs it at EVERY rung
+(`step_verifier.ml:256-259`), and the rung that is EMITTED and PROVED is `r8_finalize` — four below
+`.opening`. Put the split back in `bpRows` and the emitted proof absorbs a parity no row defines.
+
+⚑ **AND §24a NOW OWES BOOLEANITY ON TEN PARITY HALVES, NOT FIVE.** The live block's five are
+witnesses since §1f, exactly as the padding block's are, so `Boolean.typ`'s `b² = b` is owed on
+both — and it is the ONLY in-circuit obligation this circuit puts on a deferred word, the rest being
+the wrap's (`wrap_main.ml:335`) and the widths' (`scale_fast2`'s top-bit asserts). -/
 
 /-- ⚑ The PADDING block's filler, width-respecting BY CONSTRUCTION. Slot `j` of block 0 gets a value
 inside `slotBits`' width: a parity bit and `should_finalize` are `0`/`1`, a challenge is `< 2^128`, a
@@ -4924,19 +4991,28 @@ to what it was. -/
 def stmtRows (s : StepShape) (wired : Bool) : List SRow :=
   if !carriesStatement s then [] else
   packHalves
-    -- the two hoisted `Shifted_value.Type2` splits — statement slots 0–3
+    -- the two hoisted `Shifted_value.Type2` splits — §19 ladders 0 and 1, hoisted because ladder
+    -- 0's `s_odd` IS `vCipBit`, which the transcript absorbs at every rung while the emitted rung
+    -- is `r8_finalize`, four below `.opening`.
     -- ⚠ `vCipShift`/`vBShift` and NOT `bpScalV 0`/`bpScalV 1`, which are declared below this point;
     -- `the_statement_split_reads_the_ladders_own_scalar` is the tie, so this is a gate between two
     -- expressions rather than a second name for one.
     ([ ([some (vCipShift s), some (bpDiv2 s 0), some (bpOdd s 0)], cSplit 1)
      , ([some (vBShift s), some (bpDiv2 s 1), some (bpOdd s 1)], cSplit 1)
      , ([some (bpOdd s 1), some (bpOdd s 1), some (bpOdd s 1)], cMul) ]
-     -- the padding block: `should_finalize = 0` (`step_main.ml:405-425`'s `should_verify` vector),
-     -- and `Boolean.typ`'s `b² = b` on the five parity halves it publishes.
+    -- the padding block: `should_finalize = 0` (`step_main.ml:405-425`'s `should_verify` vector),
+    -- and `Boolean.typ`'s `b² = b` on the five parity halves it publishes.
      ++ [ ([some (vStmtDummy s (PP_WORDS - 1)), none, none], cConst 0) ]
      ++ (List.range PP_FIELDS).map (fun f =>
           ([some (vStmtDummy s (2 * f + 1)), some (vStmtDummy s (2 * f + 1)),
-            some (vStmtDummy s (2 * f + 1))], cMul)))
+            some (vStmtDummy s (2 * f + 1))], cMul))
+     -- ⚑ …and the LIVE block's five, which are witnesses for the same reason the padding block's
+     -- are (§1f) and therefore owe the same bit. Without these five rows a prover could publish a
+     -- parity half of 7 and `wrap_main.ml:69-81`'s `2·y + is_odd = x` would recompose a different
+     -- Fq element than the one this statement claims.
+     ++ (List.range PP_FIELDS).map (fun f =>
+          ([some (vStmtDef s (2 * f + 1)), some (vStmtDef s (2 * f + 1)),
+            some (vStmtDef s (2 * f + 1))], cMul)))
   -- one σ probe, so a tamper isolates the padding block's bit rather than only its tie row
   ++ [ probeRow wired (vStmtDummy s (PP_WORDS - 1)) (vStmtDummy s 1) ]
 
@@ -5374,10 +5450,14 @@ def bpRows (s : StepShape) (v : BpData) (wired : Bool) : List SRow :=
   -- ⚑ Ladder 0's `s_odd` IS `vCipBit`, whose `b² = b` `cipRows` already emits (it is absorbed at
   -- every rung, and this one is emitted only at `r9_opening`). Emitting it twice would be one
   -- redundant `Generic` half, so the booleanity here is the three ladders that do not have one.
-  -- ⚑ **LADDERS 0 AND 1'S SPLITS MOVED TO §24a ON A STATEMENT-CARRYING SHAPE**, because their
-  -- `s_div_2`/`s_odd` cells ARE step-statement slots 0–3 and the public vector is tied at `r5_full`,
-  -- four rungs below this one. Ladder 1's `b² = b` moved with it; ladder 0's has always been
-  -- `cipRows`'. On a shape that carries no statement nothing moves and this list is what it was.
+  -- ⚑ **LADDERS 0 AND 1'S SPLITS ARE §24a's ON A STATEMENT-CARRYING SHAPE**, and since 2026-08-07
+  -- for a DIFFERENT reason than the one written here before. It said their `s_div_2`/`s_odd` cells
+  -- ARE step-statement slots 0–3 — they are `vStmtDef 0..3` now (§1f) and no public word names
+  -- these. What still holds the hoist up is `vCipBit`: `bpOdd s 0` IS that bit, the transcript
+  -- absorbs it at EVERY rung (`step_verifier.ml:256-259`), and the emitted circuit is
+  -- `r8_finalize` — four rungs below this one. Left here, ladder 0's defining split row would sit
+  -- above the rung that is proved, and the absorbed parity would be free in the emitted proof.
+  -- Ladder 1's rides along for symmetry. On a shape that carries no statement nothing moves.
   ++ packHalves ((List.range N_SF).flatMap (fun k =>
        (if decide (k < 2) && carriesStatement s then []
         else [ ([some (bpScalV s k), some (bpDiv2 s k), some (bpOdd s k)], cSplit 1) ]
@@ -5485,7 +5565,7 @@ there, and what it is told is the wrap circuit's squeeze.
 `KimchiWrapMain.whPrevDigest` computed the squeeze — so `whRows`' two `Field.Assert.equal` rows tied
 a derived cell to a synthetic one and had **no satisfying witness on dregg's own step proof**. That
 is why `w11_wraphack` was in `pickles-wrapmain-harness`'s `STATEMENT_BLOCKED` set, and
-`KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words` named 55 and 56 as
+`KimchiWrapMainField.the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one` named 55 and 56 as
 two of its six. Two constructions of one object, agreeing about nothing.
 
 ⚑ **AND THE CYCLE IS NOT ONE.** `whPrevDigest p` reads `whOldChals p` (⚑ **Mina devnet block
@@ -5904,7 +5984,11 @@ def circuitEnv (t : StepData) : VarEnv :=
         -- ⚑ …and `messages_for_next_wrap_proof.(0)` — the PADDING block's — is instance 0's
         -- `hash_messages_for_next_wrap_proof` squeeze, for the same reason word 11 is instance 1's.
         -- It was `(13 + 5000011 * PP_WORDS) % pN` until 2026-08-06; see `stmtWrapMsgVal`.
-        ++ [ (vStmtWrapMsg0 s, (stmtWrapMsgVal 0 : Int)) ])
+        ++ [ (vStmtWrapMsg0 s, (stmtWrapMsgVal 0 : Int)) ]
+        -- ⚑ §1f — the LIVE block's eleven deferred cells. `Req.Proof_state` witnesses upstream and
+        -- witnesses here; the value is the wrap proof's own Fq deferred words, which
+        -- `KimchiWrapMainCore` §19/§20 derive and `wrap_main.ml:335` checks.
+        ++ (List.range N_STMT_DEF).map (fun j => (vStmtDef s j, (stmtDefVal j : Int))))
   ++ aEnvOf (baseFin s t.ft) t.fin.fp.prog t.fin.vals
 
 /-- The full environment: the circuit's variables, then the `pubWords` public words, whose values

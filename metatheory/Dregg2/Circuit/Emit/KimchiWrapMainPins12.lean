@@ -141,11 +141,25 @@ words — its Fq-sponge digest and its β, γ, α′, ζ′ — ARE Mina devnet 
 the digit, and they came from `STEP_PUBLIC_IN`, the step proof's own public input, not from this
 file. A block that says "I am that proof" must be finalized against that proof's evaluations.
 
-⚠ **AND THE SAME BLOCK'S FIELD WORDS ARE NOT** — last four conjuncts. `combined_inner_product`, `b`
-and ξ′ disagree with the derivation, and ξ′ disagrees with `V_CHAL`, the real block's own first
-phase-2 squeeze. So the residue is not "the wrap reads a fixture" any more; it is that the STEP
-assembly published a real block's challenges beside its own mixer's scalars. `KimchiStepMainCore`'s
-`evVal` is that mixer and `MinaWrapDeferredWeld.EVALS` is the object it stands in for. -/
+✅ ⚑⚑⚑ **AND SINCE 2026-08-07 THE SAME BLOCK'S FIELD WORDS ARE THAT PROOF'S TOO — the conjuncts
+that used to be `≠` are `=`.** They read: *"`combined_inner_product`, `b` and ξ′ disagree with the
+derivation, and ξ′ disagrees with `V_CHAL` … the STEP assembly published a real block's challenges
+beside its own mixer's scalars."*
+
+⚠ **THE DIAGNOSIS IN THAT SENTENCE WAS WRONG AND IS RETIRED WITH IT.** It named
+`KimchiStepMainCore.evVal` as the mixer and `MinaWrapDeferredWeld.EVALS` as the object it stands in
+for. `evVal` IS a mixer and `EVALS` IS what it stands in for — but that is the **step** circuit's
+own `finalize_other_proof`, over the WRAP statement's Fp deferred values, and pointing it at `EVALS`
+would not have moved packed words 27/28/37 by one digit. Those words were **aliased onto the wrap
+statement's cells**: `bpDiv2`/`bpOdd 0,1` and `vXiStmt`, R5/R6/R8's Fp outputs, published where the
+Fq deferred values about the wrap proof belong. `KimchiStepMainCore` §1f gave them their own cells
+and this theorem is the measurement of that: the live block now declares itself Mina's proof in its
+challenges AND in its field words, ξ′ IS `V_CHAL`, and `combined_inner_product` unshifts to
+`MinaRealBlockGate.CIP` — the number kimchi's own verifier computed.
+
+⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY AND IT IS THE ONE THAT COULD GO RED**: the OTHER block
+declares nothing of the kind, so this is a fact about a pairing and not about every block agreeing
+with everything. -/
 theorem the_live_block_declares_itself_minas_own_wrap_proof :
     finBlockVal FIN_LIVE_BLOCK FIN_W_DIGEST
       = Dregg2.Circuit.Emit.MinaRealBlockTranscript.FQ_DIGEST
@@ -153,12 +167,12 @@ theorem the_live_block_declares_itself_minas_own_wrap_proof :
   ∧ finBlockVal FIN_LIVE_BLOCK 7 = Dregg2.Circuit.Emit.MinaRealBlockTranscript.GAMMA_N
   ∧ finBlockVal FIN_LIVE_BLOCK 8 = Dregg2.Circuit.Emit.MinaRealBlockTranscript.ALPHA_CHAL
   ∧ finBlockVal FIN_LIVE_BLOCK 9 = Dregg2.Circuit.Emit.MinaRealBlockTranscript.ZETA_CHAL
-  -- ⚑ …and the SAME block's ξ′ is NOT that proof's, which is the step-side gap, located.
+  -- ✅ ⚑ …and the SAME block's ξ′ IS that proof's, which is the step-side gap, CLOSED.
   ∧ finBlockVal FIN_LIVE_BLOCK FIN_W_XI
-      ≠ Dregg2.Circuit.Emit.MinaRealBlockTranscript.V_CHAL
-  -- ⚑ …nor is its `combined_inner_product`, read through `Shifted_value.Type2.to_field`.
+      = Dregg2.Circuit.Emit.MinaRealBlockTranscript.V_CHAL
+  -- ✅ ⚑ …as is its `combined_inner_product`, read through `Shifted_value.Type2.to_field`.
   ∧ qAdd (finBlockVal FIN_LIVE_BLOCK FIN_W_CIP) FIN_SHIFT2
-      ≠ ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.CIP
+      = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.CIP
   -- ⚑ …and the OTHER block declares nothing of the kind, so this is not a property of every block.
   ∧ finBlockVal (1 - FIN_LIVE_BLOCK) FIN_W_DIGEST
       ≠ Dregg2.Circuit.Emit.MinaRealBlockTranscript.FQ_DIGEST := by
@@ -253,11 +267,13 @@ carries from the block's `oracles(...)`:
 independently written formula over the same inputs. Two implementations, one number, one real
 proof.
 
-⚠ ⚑ **WHAT THIS DOES NOT SAY, AND THE SEQUEL IT LOCATES.** It does not say `w11_finsponge` proves;
-`finsponge_has_no_witness_on_the_published_statement` says it does not. The `ft_eval0` leg is real
-and the sponge above it was not: `finSpTape`'s challenge digest was over `whOldChals`, a
-`wrapFixtureQ` where `MinaRealBlockGate.CHALS0`/`CHALS1` belong, and `finZW0` moves `z(ζω)` off the
-real value because packed word `27·FIN_LIVE_BLOCK + 4` is not the derived `perm`.
+⚠ ⚑ **WHAT THIS DOES NOT SAY, AND THE SEQUEL IT LOCATED.** It does not say `w11_finsponge` proves —
+that is `finsponge_has_a_witness_on_the_published_statement`, and it says so as of 2026-08-07. When
+this paragraph was written the `ft_eval0` leg was real and the sponge above it was not: `finSpTape`'s
+challenge digest was over `whOldChals`, a `wrapFixtureQ` where `MinaRealBlockGate.CHALS0`/`CHALS1`
+belong, and `finZW0` moved `z(ζω)` off the real value because packed word `27·FIN_LIVE_BLOCK + 4`
+was not the derived `perm`. ✅ Both are closed: the digest is that block's, and word 31 carries
+`Shifted_value.Type2.of_field perm`, so `finZW0`'s ratio is 1 and the bend is the identity.
 
 ✅ ⚑ **THE FIRST OF THOSE TWO CLOSED ON 2026-08-07 AND THE SPONGE HAS ITS OWN REALITY GATE NOW.**
 `whOldChals` is `MinaRealBlockTranscript.CHALS_FLAT`, and `KimchiWrapFinalizeSpongeGate` measures
@@ -265,13 +281,16 @@ what that bought, against a referee this file cannot influence:
 
   * `the_emitted_challenge_digest_is_the_accepted_blocks` — §20's own nested sponge squeezes
     `PREV_CHAL_DIGEST`, and the mixer it replaced does not;
-  * `the_emitted_finalize_tape_differs_from_minas_in_exactly_one_slot` — the emitted 91-element tape
-    against `MinaRealBlockTranscript.fqTape2` is `[6]`, WHICH slot rather than how many;
+  * `the_emitted_finalize_tape_is_minas` — the emitted 91-element tape against
+    `MinaRealBlockTranscript.fqTape2` disagrees in `[]` slots, and the emitted tape's own two
+    squeezes ARE `V_CHAL` and `U_CHAL`. ⚠ It read `[6]` — WHICH slot rather than how many — until
+    the step statement stopped aliasing packed word 31;
   * `the_unbent_finalize_tape_is_minas_and_squeezes_to_its_challenges` — with that one bend removed
     the tape IS `fqTape2` and §20's two squeezes ARE `V_CHAL` and `U_CHAL`.
 
-⚠ So `FIN_DEFERRED_XI` is still not `V_CHAL`, and the reason is now a SINGLE named statement word
-rather than two unlocated ones: `the_bend_is_the_live_blocks_own_perm_word`. -/
+✅ **AND `FIN_DEFERRED_XI` IS `V_CHAL` SINCE 2026-08-07**, because the single named statement word
+that stood in the way — packed 31, the live block's `perm` — is the derived one now:
+`the_bend_is_gone_because_the_live_block_publishes_the_derived_perm`. -/
 theorem finalize_reproduces_minas_own_ft_eval0 :
     (let d := finProbeData tW.sh tW.sp FIN_LIVE_BLOCK
      d.vals.getD d.fp.slots.ftEval0 0 = ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.FT0
@@ -288,57 +307,65 @@ theorem finalize_reproduces_minas_own_ft_eval0 :
      ∧ d.vals.getD d.fp.slots.zkp 0 ≠ ZMod.val Dregg2.Circuit.Emit.MinaRealBlockGate.PVP) := by
   native_decide
 
-/-- ⚑⚑⚑ **W-FINSPONGE HAS NO SATISFYING WITNESS ON THE PUBLISHED STEP STATEMENT, AND THAT IS THE
-STATEMENT OF THIS THEOREM RATHER THAN A CAVEAT ATTACHED TO A GREEN ONE.**
+/-- ✅ ⚑⚑⚑ **W-FINSPONGE HAS A SATISFYING WITNESS ON THE PUBLISHED STEP STATEMENT (2026-08-07), AND
+THAT IS THE STATEMENT OF THIS THEOREM RATHER THAN A CAVEAT REMOVED FROM A RED ONE.**
 
 `finalize_other_proof` is `Boolean.all [xi_correct; b_correct; combined_inner_product_correct;
 plonk_checks_passed]`, W-FINSPONGE emits the first three, and `wrap_main.ml:335` asserts
 `(1 − finalized)·should_finalize = 0`. Measured on `stepmain_step_r8_finalize`'s own public input:
 
 * `FIN_LIVE_BLOCK` — the block whose packed word 53 IS `should_finalize = 1` — has all three
-  differences **NONZERO**, all three bits **zero**, `finalized` **zero**, and therefore the emitted
-  assert evaluates to **`1 · 1 = 1 ≠ 0`**. The rung is **UNSATISFIABLE**.
-* the other block is unchanged: `should_finalize = 0`, so its own assert is 0 whatever its legs say.
+  differences **ZERO**, all three bits **one**, `finalized` **one**, and the emitted assert
+  evaluates to **`0 · 1 = 0`**. The rung is **SATISFIABLE**.
+* the other block is unchanged: its three differences are NONZERO, its bits are zero, and its own
+  assert is 0 because `should_finalize` is 0. Both `Field.equal` branches stay live, which is what
+  keeps the gadget falsifiable.
 
-⚠ ⚑ **WHAT CHANGED ON 2026-08-06 AND WHY THE OLD THEOREM WAS WEAKER THAN IT LOOKED.** This used to
-read `finSpLegsAt FIN_LIVE_BLOCK = (1,1,1,1,0)` and `finSpDiffsAt FIN_LIVE_BLOCK = (0,0,0)` — the
-finalizing block's legs PASS. They passed because `KimchiWrapMainField.prevWordVal` had three
-override arms answering `FIN_DEFERRED_CIP/_B/_XI` at exactly words 27, 28 and 37: the statement
-CONTAINED the derivation because this file put it there. `xhatScalar` reads the step proof's own
-`STEP_PUBLIC_IN` now, the overrides are gone, and the legs are a question for the first time.
+⚠ ⚑⚑ **WHAT IT WAS, AND WHAT THE WRONG DIAGNOSIS COST.** Until this commit it read
+`finSpLegsAt FIN_LIVE_BLOCK = (0,0,0,0,1)`, an honest measurement of a rung with no witness, under a
+paragraph that priced the repair as *"two derivations of one quantity … those three words are not
+free on the step side — they are `bpDiv2`/`bpOdd` and `vXiStmt`, the step circuit's OWN
+`combined_inner_product`, `b` and `xi`, so a statement carrying the wrap's numbers would make the
+STEP circuit unsatisfiable rather than this one satisfiable."*
 
-⚠ **THE ANSWER IS NO, AND IT IS UNDONE WORK — BUT NOT ON THE SIDE THIS PARAGRAPH USED TO NAME.** It
-said the step proof had to be re-proved with a statement carrying the wrap's own
-`combined_inner_product`, `b` and `xi`, "and that is a FIXPOINT, because those three words are x_hat
-MSM entries 32/33, 34/35 and 47, so writing them moves `x_hat`, which moves every challenge below it,
-which moves the derivation." §20c below refutes both halves: no transcript challenge reaches this
-rung at all, so there is no loop; and those three words are **not free on the step side** — they are
-`bpDiv2`/`bpOdd` and `vXiStmt`, the step circuit's OWN `combined_inner_product`, `b` and `xi`, so a
-statement carrying the wrap's numbers would make the STEP circuit unsatisfiable rather than this one
-satisfiable. What actually disagrees is two derivations of one quantity, one of which runs on
-`wrapFixtureQ` evaluation columns where `prev_proof.openings.evals` belongs.
-`KimchiWrapMainField.the_published_statement_carries_two_of_the_six_derived_words` names all six words at
-issue; §20c names which of them can move and what the other four are waiting on.
+**Both clauses were true sentences about the wrong object.** `bpDiv2`/`bpOdd`/`vXiStmt` are the
+step circuit's own deferred values — of the **WRAP proof-state it verifies**, Fp,
+`Shifted_value.Type1`. Packed words 27/28/37 are a **step statement's** `unfinalized_proofs`
+deferred values — Fq, `Type2`, about the wrap proof — which the step circuit cannot compute and
+therefore DEFERS. They were never two derivations of one quantity; they were one set of cells
+carrying two statements' words, in two fields. `KimchiStepMainCore` §1f gave the step statement's
+live block its own eleven cells; nothing became unsatisfiable, and the step proof still verifies
+(`pickles_kimchi_marshal`: `batch_verify = Ok`).
+
+⚑ **AND THE PREVIOUS PARAGRAPH'S OWN PREDECESSOR WAS WRONG THE OTHER WAY** — it had priced the
+repair as a FIXPOINT over `x_hat`. §20c refuted that (a stratification, no edges), and the
+stratification is what made this land in ONE emit-and-re-prove pass rather than an iteration.
 
 ⚑ **WHAT IS PRESERVED IS THE FALSIFIABILITY, and it is why the `(d⁻¹, 0)` branch conjuncts stay.**
-`d7d0a150e` shipped a §19 whose `Field.equal` witness was HARDCODED to the agreeing answer, and every
-σ-pin and both ladder theorems stayed green while the prover said `Prover("rest of division by
-vanishing polynomial")`. A leg that can only be 1 is not a leg — and a leg that can only be 0 is not
-one either, which is what the last conjunct is for: `finSpLegsAt` reaches `1` in its fifth component
-here, so the tuple is not a constant zero. -/
-theorem finsponge_has_no_witness_on_the_published_statement :
-    finSpLegsAt FIN_LIVE_BLOCK = (0, 0, 0, 0, 1)
-    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).1 ≠ 0
-    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).2.1 ≠ 0
-    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).2.2 ≠ 0
+`d7d0a150e` shipped a §19 whose `Field.equal` witness was HARDCODED to the agreeing answer, and
+every σ-pin stayed green while the prover said `Prover("rest of division by vanishing polynomial")`.
+A leg that can only be 1 is not a leg. Block 0's three differences are nonzero here, so both
+branches of the gadget are exercised by the same emission — and giving block 0 a `should_finalize`
+of 1 makes this rung unsatisfiable, which is the instance that keeps the assert real. -/
+theorem finsponge_has_a_witness_on_the_published_statement :
+    finSpLegsAt FIN_LIVE_BLOCK = (1, 1, 1, 1, 0)
+    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).1 = 0
+    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).2.1 = 0
+    ∧ (finSpDiffsAt FIN_LIVE_BLOCK).2.2 = 0
     ∧ finSpLegsAt (1 - FIN_LIVE_BLOCK) = (0, 0, 0, 0, 0)
     ∧ (finSpDiffsAt (1 - FIN_LIVE_BLOCK)).1 ≠ 0
     ∧ (finSpDiffsAt (1 - FIN_LIVE_BLOCK)).2.1 ≠ 0
     ∧ (finSpDiffsAt (1 - FIN_LIVE_BLOCK)).2.2 ≠ 0
-    -- ⚑ …and this is the emitted assert, evaluated: `(1 − finalized)·should_finalize = 1`.
+    -- ⚑ …and this is the emitted assert, evaluated: `(1 − finalized)·should_finalize = 0`.
     ∧ (let l := finSpLegsAt FIN_LIVE_BLOCK
-       qMul (qSub 1 l.2.2.2.1) (finBlockVal FIN_LIVE_BLOCK PREV_SHOULD_FINALIZE) = 1) := by
+       qMul (qSub 1 l.2.2.2.1) (finBlockVal FIN_LIVE_BLOCK PREV_SHOULD_FINALIZE) = 0)
+    -- ⚑⚑ …and the SAME assert on the OTHER block, at `should_finalize` forced to 1: `1 · 1 = 1`.
+    -- The rung this emission proves is one whose assert CAN fail, and here is the input that fails
+    -- it. Without this the tuple above is a green reading of a gadget that might accept anything.
+    ∧ (let l := finSpLegsAt (1 - FIN_LIVE_BLOCK)
+       qMul (qSub 1 l.2.2.2.1) 1 = 1) := by
   native_decide
+
 
 /-! ### §20c — ⚑⚑⚑ **THE DEPENDENCY ORDER, AS A DATAFLOW FACT ABOUT THE EMITTED PROGRAM.**
 
@@ -469,7 +496,7 @@ order, over the transitive cone.
 
   * **legs 1–3** — the three cells the rung CHECKS are absent from the cone of the two it DERIVES.
     Those cells are packed words `27·FIN_LIVE_BLOCK + {0, 1, 10}` = **27, 28 and 37**, the three
-    `the_published_statement_carries_two_of_the_six_derived_words` names.
+    `the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one` names.
   * **leg 4** — and ξ's two sides are different cells, so `xi_correct` is not an identity either.
   * **legs 5–9, THE ANTI-VACUITY** — the cone is not empty and not a handful: it contains ζ, r, ξ,
     the first `compute_challenges` lift and the first evaluation column, and runs to more than
@@ -602,39 +629,60 @@ and W-FINSPONGE derives no public word, so no slot of the forty reads the finali
 The number is recorded here because it is the measurement the ladder is graded on, not because this
 rung moved it. -/
 
-/-- ⚑⚑ **THE EMITTED FORTY DISAGREES WITH MINA'S ONLY AT SLOTS 11 AND 12.**
+/-- ⚑⚑⚑ **THE EMITTED FORTY DISAGREES WITH MINA'S AT SLOT 12 ALONE — 39 OF 40, AT `shapeWrap`.**
 
 Graded the strict way — `emitted[i] == WRAP_PUBLIC_INPUT_MEASURED[i]`, not "does the assembly put a
 derivation there". Both sides are about the SAME step proof (`stepmain_step_r8_finalize`): Mina's
 side is openmina's `PreparedStatement::to_public_input(40)`, ours is `wrapPublicAt … .close`, so a
 disagreement is a measurement and not a preference.
 
+⚠ ⚑ **THE NUMBER IS `shapeWrap`'s AND ONLY `shapeWrap`'s.** The smoke-shape fixtures grade **17 of
+40** against the same forty, because a smoke shape derives a fraction of the ladder — quoting that
+one as "the agreement" is the misquote `KimchiWrapMainPins10`'s docblock warns about, and the reason
+this theorem names `mkWrap shapeWrap` explicitly rather than reading `tW`.
+
+⚑ **IT WAS `≠ 11 && ≠ 12` AND IT IS NOW A FILTER OVER ALL FORTY**, which is strictly stronger: slot
+11 was excluded so that a lane closing it would not red this, and it closed (2026-08-06,
+`wraphack_closing_sponge_reproduces_minas_slot_eleven`). Leaving the exclusion in would have hidden a
+regression at 11 behind a green line about 38.
+
+⚠ **WHAT SLOT 12 IS, so the one is not read as almost-nothing.** `messages_for_next_step_proof` is an
+ARITY mismatch on both sides — segment D hashes 56+20 where the marshaller's
+`MessagesForNextStepProof::hash()` hashes 56+36 (`KimchiWrapMainPins10`) — and neither side closes it
+by deriving harder. It is the last item, and it is a different KIND of item from the six that closed.
+
 ⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY**, and it is what makes this a fact about VALUES rather
 than about a list of zeros: ten of the forty are `Spec.T.Constant` padding and the lookup `Opt` and
 are zero on both sides, so an all-zero emission would satisfy the first conjunct at those ten.
 Twenty-nine of the agreements are NONZERO. -/
-theorem the_forty_disagree_only_at_the_step_statement_words :
+theorem the_forty_agree_but_for_the_arity_mismatched_slot :
     (let em := (wrapPublicAt (mkWrap shapeWrap) .close).map (fun z => (z % (qN : Int)).toNat)
      let mn := Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED
-     -- ⚑ EVERY slot outside {11, 12} agrees — all thirty-eight of them, named as a set rather
-     -- than as a total, so a lane closing 11 does not red this while a lane breaking slot 7 does.
-     ((List.range 40).filter (fun i => i != 11 && i != 12 && em.getD i 0 != mn.getD i 0)) = []
+     -- ⚑ WHICH slot disagrees, over ALL forty — a count says a number, this says which.
+     ((List.range 40).filter (fun i => em.getD i 0 != mn.getD i 0)) = [12]
+     ∧ ((List.range 40).filter (fun i => em.getD i 0 == mn.getD i 0)).length = 39
      -- ⚑ …and slot 12 still disagrees, so this is a refusal shaped to shrink and not a tautology.
      ∧ em.getD 12 0 != mn.getD 12 0
      -- ⚑ ANTI-VACUITY: the agreeing set is not the padding. Ten of the forty are `Spec.T.Constant`
-     -- padding and the lookup `Opt` and are zero on both sides; twenty-eight agreements are NONZERO.
+     -- padding and the lookup `Opt` and are zero on both sides; twenty-nine agreements are NONZERO.
      ∧ ((List.range 40).filter (fun i =>
-          em.getD i 0 == mn.getD i 0 && em.getD i 0 != 0)).length = 29) := by
+          em.getD i 0 == mn.getD i 0 && em.getD i 0 != 0)).length = 29
+     -- ⚠ ⚑ …and the SMOKE shape grades 17, carried here so the two numbers cannot be confused by a
+     -- reader who finds only one of them. It is not a worse measurement of the same thing; it is a
+     -- measurement of a different, smaller circuit.
+     ∧ ((List.range 40).filter (fun i =>
+          ((wrapPublicAt tW .close).map (fun z => (z % (qN : Int)).toNat)).getD i 0
+            == mn.getD i 0)).length = 17) := by
   native_decide
 
-#assert_compiled the_forty_disagree_only_at_the_step_statement_words
+#assert_compiled the_forty_agree_but_for_the_arity_mismatched_slot
 
 #assert_compiled fin_deferred_words_are_the_derivation
 #assert_compiled the_live_block_declares_itself_minas_own_wrap_proof
 #assert_compiled the_finalize_evaluations_are_minas_own_wrap_proof
 #assert_compiled the_finalize_evaluations_need_no_encoding
 #assert_compiled finalize_reproduces_minas_own_ft_eval0
-#assert_compiled finsponge_has_no_witness_on_the_published_statement
+#assert_compiled finsponge_has_a_witness_on_the_published_statement
 #assert_compiled finsponge_assert_reds_if_the_other_block_claims_should_finalize
 #assert_compiled finsponge_emits_one_hundred_and_twenty_two_poseidon_blocks
 
