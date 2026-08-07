@@ -73,6 +73,7 @@ use crate::gpu_backend::{
     prove_recursion_aggregation_auto_with_expose, prove_recursion_layer_auto_with_expose,
 };
 use crate::ivc_turn_chain::{expose_claim_instance_index, ir2_leaf_wrap_config};
+use crate::mina_fold_vk_pin::FoldVkPins;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
@@ -271,16 +272,21 @@ fn prove_ir2_leaf(
 /// * exposes `endo.v' ‖ conj.zeta ‖ conj.zetaw ‖ conj.r ‖ conj.b0` — ξ itself is deliberately NOT
 ///   re-published: it is now an internal wire of the aggregation, and a root that re-published it
 ///   would read as though the two halves were still separately checkable.
+/// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child's preprocessed commitment in-circuit
+/// ([`crate::mina_fold_vk_pin`]). Without it the two `require_claim` lane-count checks are the only
+/// gate, and a same-shape/different-constants endo-lift or conjunction descriptor passes them.
 pub fn fold_endo_into_finalize(
     endo: &RecursionOutput<DreggRecursionConfig>,
     conj: &RecursionOutput<DreggRecursionConfig>,
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     let endo_idx = require_claim(endo, "endo-lift leaf", ENDO_PI_COUNT)?;
     let conj_idx = require_claim(conj, "conjunction leaf", CONJ_PI_COUNT)?;
 
-    let endo_input = endo.into_recursion_input::<BatchOnly>();
-    let conj_input = conj.into_recursion_input::<BatchOnly>();
+    // ⚠ No host pre-flight against `pins` — the refusal must be the circuit's.
+    let endo_input = endo.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let conj_input = conj.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        endo_apt: &[Vec<Target>],

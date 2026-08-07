@@ -72,6 +72,7 @@ use crate::ivc_turn_chain::{
     SEG_DIGEST_WIDTH, expose_claim_instance_index, ir2_leaf_wrap_config, seg_poseidon_commit,
     seg_poseidon_commit_host,
 };
+use crate::mina_fold_vk_pin::FoldVkPins;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
@@ -230,16 +231,28 @@ pub fn prove_chain_link_leaf_with(
 ///   cannot be swapped.
 /// * exposes `left.in_state ‖ right.out_state ‖ parent.acc` — the same 200-lane shape a leaf
 ///   exposes, which is what makes the node composable with itself to any depth.
+///
+/// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child's preprocessed commitment in-circuit
+/// ([`crate::mina_fold_vk_pin`]). Without it the two `require_chain_claim` lane-count checks are the
+/// ONLY thing standing between this fold and a leaf of a *different* chain-link descriptor:
+/// `dregg-pasta-fp-chainlink::v1` has the same 469 columns, the same 256 public inputs and the same
+/// 200-lane claim, so it passes the shape gate and folds — proving *"some sponge chain ran"* rather
+/// than *"the Fq sponge chain ran"*. `circuit-prove/tests/mina_fold_vk_pin.rs` builds that adversary
+/// and requires the pinned fold to refuse it.
 pub fn fold_chain_links(
     left: &RecursionOutput<DreggRecursionConfig>,
     right: &RecursionOutput<DreggRecursionConfig>,
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     let left_idx = require_chain_claim(left, "left sub-chain")?;
     let right_idx = require_chain_claim(right, "right sub-chain")?;
 
-    let left_input = left.into_recursion_input::<BatchOnly>();
-    let right_input = right.into_recursion_input::<BatchOnly>();
+    // ⚠ NO host comparison of `pins` against the children's actual commitments — deliberately. A
+    // pre-flight here would fire before the circuit does and the in-circuit constraint would never
+    // be the thing under test. The refusal below is the witness solver's.
+    let left_input = left.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right_input = right.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
@@ -372,7 +385,12 @@ pub fn prove_chain_fold_with(
         progress(i, "leaf");
         let leaf = prove_chain_link_leaf_with(desc, trace, pis, config)?;
         progress(i, "fold");
-        acc = fold_chain_links(&acc, &leaf, config)?;
+        // ⚑ TRACKED pins (see `mina_fold_vk_pin`): the running node's VK genuinely changes across
+        // the first folds of the transient, so a frozen constant would falsely refuse honest depth.
+        // What the tracked pin buys is that the pinned values land in the parent's `RecursionVk`, so
+        // a substituted child cannot reach the anchored root fingerprint.
+        let pins = FoldVkPins::tracked(&acc, &leaf)?;
+        acc = fold_chain_links(&acc, &leaf, &pins, config)?;
     }
     Ok(acc)
 }

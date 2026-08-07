@@ -89,6 +89,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::mina_fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     ABSORBED_PI_LO, ABSORBED_WIDTH, CHAIN_CLAIM_LEN, CHAIN_PI_COUNT, OUT_PI_LO, SK, STATE_WIDTH,
     chain_config, fold_chain_links, fp_chain_link_descriptor, host_chain_transcript_acc,
@@ -378,7 +379,13 @@ fn two_body_hash_links_fold_into_one_claim() {
     let leaves_ms = t0.elapsed().as_millis();
 
     let t1 = Instant::now();
-    let node = fold_chain_links(&l0, &l1, &config).expect("body links 0..1 fold");
+    let node = fold_chain_links(
+        &l0,
+        &l1,
+        &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
+        &config,
+    )
+    .expect("body links 0..1 fold");
     let fold_ms = t1.elapsed().as_millis();
 
     verify_recursive_batch_proof_with_config(&node.0, &config).expect("the folded node verifies");
@@ -483,7 +490,12 @@ fn a_skipped_body_link_is_refused_by_the_folds_connect() {
         .expect("link 2 is honest and its leaf MUST prove -- the lie is only the JOIN");
 
     let err = expect_refusal(
-        fold_chain_links(&l0, &l2, &config),
+        fold_chain_links(
+            &l0,
+            &l2,
+            &FoldVkPins::tracked(&l0, &l2).expect("both children carry a preprocessed commitment"),
+            &config,
+        ),
         "a body-hash chain that skips link 1 must be REFUSED by the fold",
     );
     println!("\n§2b ⚑ BROKEN JOIN REFUSED BY THE FOLD: {err}");
@@ -494,7 +506,13 @@ fn a_skipped_body_link_is_refused_by_the_folds_connect() {
 
     let l1 =
         prove_chain_link_leaf_with(&desc, &link_trace(1), &pis[1], &config).expect("link 1 leaf");
-    fold_chain_links(&l0, &l1, &config).expect("the HONEST join must still fold");
+    fold_chain_links(
+        &l0,
+        &l1,
+        &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
+        &config,
+    )
+    .expect("the HONEST join must still fold");
     println!("  …and the honest join (0,1) folds, so the refusal is the join and not the link.");
 }
 
@@ -540,7 +558,13 @@ fn the_body_hash_folds_recursion_vk_is_deterministic() {
     let build = || {
         let l0 = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &config).expect("l0");
         let l1 = prove_chain_link_leaf_with(&desc, &link_trace(1), &pis[1], &config).expect("l1");
-        fold_chain_links(&l0, &l1, &config).expect("links 0..1 fold")
+        fold_chain_links(
+            &l0,
+            &l1,
+            &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("links 0..1 fold")
     };
 
     let a = build();
@@ -586,8 +610,14 @@ fn the_whole_body_hash_chain_folds() {
     for j in 1..BODY_LINKS {
         let leaf = prove_chain_link_leaf_with(&desc, &link_trace(j), &pis[j], &config)
             .unwrap_or_else(|e| panic!("body link {j} leaf: {e}"));
-        acc = fold_chain_links(&acc, &leaf, &config)
-            .unwrap_or_else(|e| panic!("fold at body link {j}: {e}"));
+        acc = fold_chain_links(
+            &acc,
+            &leaf,
+            &FoldVkPins::tracked(&acc, &leaf)
+                .expect("both children carry a preprocessed commitment"),
+            &config,
+        )
+        .unwrap_or_else(|e| panic!("fold at body link {j}: {e}"));
         println!(
             "  folded {}/{BODY_LINKS} ({} s)",
             j + 1,

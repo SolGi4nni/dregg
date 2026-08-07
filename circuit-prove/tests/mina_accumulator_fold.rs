@@ -136,6 +136,7 @@ use dregg_circuit_prove::mina_accumulator_fold::{
     fold_accumulator_segments, prove_accumulator_fold, prove_accumulator_segment,
     read_accumulator_claim, segment_public_inputs,
 };
+use dregg_circuit_prove::mina_fold_vk_pin::FoldVkPins;
 
 const DISCHARGING: &str =
     include_str!("../../circuit/tests/fixtures/mina-accumulator-discharging-trace.txt");
@@ -501,7 +502,12 @@ fn the_fold_refuses_two_segments_that_do_not_chain() {
         }
     }
 
-    let r = fold_accumulator_segments(&leaf, &leaf, &cfg);
+    let r = fold_accumulator_segments(
+        &leaf,
+        &leaf,
+        &FoldVkPins::tracked(&leaf, &leaf).expect("both children carry a preprocessed commitment"),
+        &cfg,
+    );
     let err = r.err().expect(
         "folding a segment with itself connects `5G` to `G` — there is no satisfying assignment, \
          so there must be no parent proof. A fold that accepts this is re-pinning public inputs \

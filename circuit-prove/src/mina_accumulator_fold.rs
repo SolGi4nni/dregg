@@ -171,6 +171,7 @@ use crate::gpu_backend::{
     prove_recursion_aggregation_auto_with_expose, prove_recursion_layer_auto_with_expose,
 };
 use crate::ivc_turn_chain::{expose_claim_instance_index, ir2_leaf_wrap_config};
+use crate::mina_fold_vk_pin::FoldVkPins;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
@@ -352,16 +353,23 @@ pub fn prove_accumulator_segment_split(
 /// ⚠ There is deliberately no host comparison here and no re-pinned public input. If the connect
 /// were replaced by "both children publish the same PI vector", a prover would pick both sides and
 /// the fold would close nothing.
+///
+/// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child's preprocessed commitment in-circuit
+/// ([`crate::mina_fold_vk_pin`]). This fold was the FOURTH in the Mina tower and the one a
+/// three-item follow-up list missed — the substitution it was open to is the same one the chain and
+/// finalize folds were open to.
 pub fn fold_accumulator_segments(
     left: &RecursionOutput<DreggRecursionConfig>,
     right: &RecursionOutput<DreggRecursionConfig>,
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     let left_idx = require_accumulator_claim(left, "left sub-chain")?;
     let right_idx = require_accumulator_claim(right, "right sub-chain")?;
 
-    let left_input = left.into_recursion_input::<BatchOnly>();
-    let right_input = right.into_recursion_input::<BatchOnly>();
+    // ⚠ No host pre-flight against `pins` — the refusal must be the circuit's.
+    let left_input = left.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let right_input = right.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
@@ -458,7 +466,9 @@ pub fn prove_accumulator_fold(
         progress(i, "leaf");
         let leaf = prove_accumulator_segment(rung_of(i), trace, pis, config)?;
         progress(i, "fold");
-        acc = fold_accumulator_segments(&acc, &leaf, config)?;
+        // ⚑ TRACKED pins — see `mina_fold_vk_pin` for what a tracked pin does and does not say.
+        let pins = FoldVkPins::tracked(&acc, &leaf)?;
+        acc = fold_accumulator_segments(&acc, &leaf, &pins, config)?;
     }
     Ok(acc)
 }

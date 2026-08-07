@@ -67,6 +67,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::mina_fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_kimchi_verifier_gadget::{
     CHAIN_ACC_LO, CHAIN_ACC_WIDTH, CHAIN_OUT_LANE0, GADGET_CONNECTS, KIMCHI_CLAIM_LEN, KV_B0,
     KV_VPRIME, V_PRIME_LIMBS, fold_transcript_into_finalize, kimchi_config, read_kimchi_claim,
@@ -218,7 +219,13 @@ fn finalize_root(config: &DreggRecursionConfig) -> RecursionOutput<DreggRecursio
     let conj = prove_conjunction_leaf(&conj_trace, &conj_pis, config).expect("conjunction leaf");
     println!("    conjunction leaf {:>7} ms", t.elapsed().as_millis());
     let t = Instant::now();
-    let root = fold_endo_into_finalize(&endo, &conj, config).expect("endo -> finalize fold");
+    let root = fold_endo_into_finalize(
+        &endo,
+        &conj,
+        &FoldVkPins::tracked(&endo, &conj).expect("both children carry a preprocessed commitment"),
+        config,
+    )
+    .expect("endo -> finalize fold");
     println!("    finalize fold    {:>7} ms", t.elapsed().as_millis());
     root
 }
@@ -413,7 +420,13 @@ fn each_forged_chain_root_is_refused_by_the_group_that_should_refuse_it() {
     );
 
     let e = expect_refusal("forgery A (fresh sponge, wrong terminal squeeze)", || {
-        fold_transcript_into_finalize(&leaf0, &fin, &config)
+        fold_transcript_into_finalize(
+            &leaf0,
+            &fin,
+            &FoldVkPins::tracked(&leaf0, &fin)
+                .expect("both children carry a preprocessed commitment"),
+            &config,
+        )
     });
     println!("    §3a REFUSED (only group 2, the v' weld, can refuse this): {e}");
 
@@ -427,7 +440,13 @@ fn each_forged_chain_root_is_refused_by_the_group_that_should_refuse_it() {
         .expect("FORGERY B must verify STANDALONE");
 
     let e = expect_refusal("forgery B (correct terminal squeeze, warm sponge)", || {
-        fold_transcript_into_finalize(&leaf45, &fin, &config)
+        fold_transcript_into_finalize(
+            &leaf45,
+            &fin,
+            &FoldVkPins::tracked(&leaf45, &fin)
+                .expect("both children carry a preprocessed commitment"),
+            &config,
+        )
     });
     println!("    §3b REFUSED (only group 1, the fresh-sponge pin, can refuse this): {e}");
 
@@ -494,8 +513,13 @@ fn the_whole_kimchi_verifier_tower_proves_over_block_539508() {
 
     // ── THE GADGET ───────────────────────────────────────────────────────────────────────────
     let t = Instant::now();
-    let root = fold_transcript_into_finalize(&chain, &fin, &config)
-        .expect("the kimchi verifier gadget fold");
+    let root = fold_transcript_into_finalize(
+        &chain,
+        &fin,
+        &FoldVkPins::tracked(&chain, &fin).expect("both children carry a preprocessed commitment"),
+        &config,
+    )
+    .expect("the kimchi verifier gadget fold");
     let gadget_ms = t.elapsed().as_millis();
     verify_recursive_batch_proof_with_config(&root.0, &config)
         .expect("the kimchi verifier gadget root verifies");

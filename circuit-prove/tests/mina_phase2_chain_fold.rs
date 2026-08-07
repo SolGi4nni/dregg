@@ -50,6 +50,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::mina_fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     ABSORBED_PI_LO, ABSORBED_WIDTH, CHAIN_CLAIM_LEN, CHAIN_LINKS, CHAIN_PI_COUNT, OUT_PI_LO, SK,
     STATE_WIDTH, chain_config, chain_link_descriptor, fold_chain_links, host_chain_transcript_acc,
@@ -278,7 +279,13 @@ fn two_links_fold_into_one_claim() {
     let leaves_ms = t0.elapsed().as_millis();
 
     let t1 = Instant::now();
-    let node = fold_chain_links(&l0, &l1, &config).expect("links 0..1 fold");
+    let node = fold_chain_links(
+        &l0,
+        &l1,
+        &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
+        &config,
+    )
+    .expect("links 0..1 fold");
     let fold_ms = t1.elapsed().as_millis();
 
     verify_recursive_batch_proof_with_config(&node.0, &config).expect("the folded node verifies");
@@ -318,8 +325,14 @@ fn four_links_fold_into_one_claim() {
     for j in 1..4 {
         let leaf = prove_chain_link_leaf(&link_trace(j), &pis[j], &config)
             .unwrap_or_else(|e| panic!("link {j} leaf: {e}"));
-        acc = fold_chain_links(&acc, &leaf, &config)
-            .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
+        acc = fold_chain_links(
+            &acc,
+            &leaf,
+            &FoldVkPins::tracked(&acc, &leaf)
+                .expect("both children carry a preprocessed commitment"),
+            &config,
+        )
+        .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
     }
     let total_ms = t0.elapsed().as_millis();
 
@@ -364,7 +377,12 @@ fn a_skipped_link_is_refused_by_the_folds_connect() {
         .expect("link 2 is an honest link and its leaf MUST prove -- the lie is only the JOIN");
 
     let err = expect_refusal(
-        fold_chain_links(&l0, &l2, &config),
+        fold_chain_links(
+            &l0,
+            &l2,
+            &FoldVkPins::tracked(&l0, &l2).expect("both children carry a preprocessed commitment"),
+            &config,
+        ),
         "a chain that skips link 1 must be REFUSED by the fold",
     );
     println!("\n§3 ⚑ BROKEN JOIN REFUSED BY THE FOLD: {err}");
@@ -375,7 +393,13 @@ fn a_skipped_link_is_refused_by_the_folds_connect() {
     );
     // The honest join proves, so the refusal above is about the JOIN and not about link 2.
     let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
-    fold_chain_links(&l0, &l1, &config).expect("the HONEST join must still fold");
+    fold_chain_links(
+        &l0,
+        &l1,
+        &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
+        &config,
+    )
+    .expect("the HONEST join must still fold");
     println!("  …and the honest join (0,1) folds, so the refusal is the join and not the link.");
 }
 
@@ -444,7 +468,13 @@ fn the_chain_folds_recursion_vk_is_deterministic() {
     let build = || {
         let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
         let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
-        fold_chain_links(&l0, &l1, &config).expect("links 0..1 fold")
+        fold_chain_links(
+            &l0,
+            &l1,
+            &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
+            &config,
+        )
+        .expect("links 0..1 fold")
     };
 
     let a = build();
@@ -507,8 +537,14 @@ fn the_whole_phase2_transcript_folds_into_one_claim() {
             .unwrap_or_else(|e| panic!("link {j} leaf: {e}"));
         let leaf_ms = t.elapsed().as_millis();
         let t = Instant::now();
-        acc = fold_chain_links(&acc, &leaf, &config)
-            .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
+        acc = fold_chain_links(
+            &acc,
+            &leaf,
+            &FoldVkPins::tracked(&acc, &leaf)
+                .expect("both children carry a preprocessed commitment"),
+            &config,
+        )
+        .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
         println!(
             "  link {j:>2}/46 leaf {leaf_ms:>6} ms  fold {:>6} ms  (elapsed {:.1} min)",
             t.elapsed().as_millis(),

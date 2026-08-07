@@ -92,6 +92,7 @@ use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::mina_fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_wrap_finalize_fold::{
     CLAIM_B0, CLAIM_R, CLAIM_VPRIME, CLAIM_ZETA, CLAIM_ZETAW, CONJ_PI_B0, CONJ_PI_COUNT, CONJ_PI_R,
     CONJ_PI_XI, CONJ_PI_ZETA, CONJ_PI_ZETAW, CONJ_ROWS, ENDO_PI_COUNT, ENDO_PI_VPRIME, ENDO_PI_XI,
@@ -342,7 +343,13 @@ fn the_endo_and_the_conjunction_fold_into_one_claim() {
     let t_conj = t1.elapsed();
 
     let t2 = Instant::now();
-    let root = fold_endo_into_finalize(&endo, &conj, &cfg).expect("the honest fold lands");
+    let root = fold_endo_into_finalize(
+        &endo,
+        &conj,
+        &FoldVkPins::tracked(&endo, &conj).expect("both children carry a preprocessed commitment"),
+        &cfg,
+    )
+    .expect("the honest fold lands");
     let t_fold = t2.elapsed();
 
     verify_recursive_batch_proof_with_config(&root.0, &cfg).expect("the fold root verifies");
@@ -407,7 +414,13 @@ fn a_conjunction_at_another_xi_cannot_be_folded() {
         .expect("the forged leaf is honest in its own right and wraps as a leaf");
 
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        fold_endo_into_finalize(&endo, &conj, &cfg)
+        fold_endo_into_finalize(
+            &endo,
+            &conj,
+            &FoldVkPins::tracked(&endo, &conj)
+                .expect("both children carry a preprocessed commitment"),
+            &cfg,
+        )
     }));
     let refused = match r {
         Err(_) => true,

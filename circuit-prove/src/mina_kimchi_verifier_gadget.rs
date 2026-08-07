@@ -95,24 +95,39 @@
 //!    child forces TWO conjuncts (`xiCorrect`, `bCorrect`). `cipCorrect` and `plonkChecksPassed` are
 //!    absent BY CONSTRUCTION, not stubbed — `MinaWrapConjunctionAir` §"WHAT THIS OBJECT FORCES"
 //!    states that comparing `cip` against a ξ-fold with a FREE `ft_eval0` column forces nothing.
-//! 3. ⚑ **NEITHER CHILD'S VK IDENTITY IS PINNED IN-CIRCUIT — measured at source, not inferred.**
+//! 3. ⚑ **THE CHILD-VK PIN IS NOW TAKEN AT EVERY FOLD — and the entry that stood here said the
+//!    opposite, so read what changed and what did not.** The hole was real:
 //!    [`RecursionOutput::into_recursion_input`] passes `expected_preprocessed_commit: None`
-//!    (`recursion/src/recursion.rs`, the `into_recursion_input` body), and `RecursionInput::
-//!    BatchStark`'s own docblock on that field says what that costs: *"without this pin its VALUE is
-//!    unconstrained — a from-scratch prover could fold a proof of a DIFFERENT circuit."* The parent
-//!    circuit's SHAPE is still derived from each child's `CommonData`, so a child with different
-//!    AIRs moves the parent's VK and a consumer's fingerprint pin refuses it. What is NOT excluded
-//!    is a child of **identical table shape and different preprocessed CONTENT** — and since
-//!    `ConstAir` puts constant values in the preprocessed commitment
-//!    (`circuit-prover/src/air/const_air.rs`), that means a chain-link descriptor with the same
-//!    constraint structure and **different sponge round constants** would be accepted here.
-//!    ⚠ This is **not new to this gadget** — no fold in this tower pins
-//!    (`fold_chain_links`, `fold_endo_into_finalize`, this one) — and pinning only the TOP fold
-//!    would close almost nothing, because the substitution is available at any of the 45 chain folds
-//!    beneath it. The fix is `into_recursion_input_pinned` at EVERY fold, with each layer's own
-//!    [`RecursionOutput::running_preprocessed_commit`] extracted once from a reference honest run.
-//!    That is **wiring across four call sites plus a reference-extraction step**, not research, and
-//!    it is the first item of follow-on work rather than a later phase.
+//!    (`recursion/src/recursion.rs`), and `RecursionInput::BatchStark`'s own docblock on that field
+//!    says what it costs — *"without this pin its VALUE is unconstrained — a from-scratch prover
+//!    could fold a proof of a DIFFERENT circuit."* Since `ConstAir` puts constant values in the
+//!    preprocessed commitment at the pinned fork rev, a chain-link descriptor with the same
+//!    constraint structure and **different sponge round constants** was accepted.
+//!    ⚠ That entry undercounted: it named three folds and **four** call sites. `git grep` finds
+//!    **four** fold functions and **eight** call sites — `fold_chain_links`,
+//!    `fold_endo_into_finalize`, `fold_transcript_into_finalize` and
+//!    [`crate::mina_accumulator_fold::fold_accumulator_segments`], the last of which the list
+//!    missed entirely. All four now take a [`crate::mina_fold_vk_pin::FoldVkPins`] and pin both
+//!    children.
+//!    ⚑ **What that closes, at the resolution it holds at.** A child whose preprocessed commitment
+//!    differs from the pinned value makes the parent circuit UNSAT — there is no parent proof — and
+//!    the pinned VALUE reaches the parent's `RecursionVk`, so a prover who pins a different child
+//!    cannot reach the fingerprint a consumer anchored. `circuit-prove/tests/mina_fold_vk_pin.rs`
+//!    exhibits the substitution the pin refuses and it is not synthetic:
+//!    `dregg-pasta-fp-chainlink::v1` is the Fq chain-link descriptor's structural twin with
+//!    `fp_kimchi`'s constants, so it passes every lane-count gate this tower has.
+//!    ⚑ **AND ONE MEASUREMENT THAT CORRECTS WHERE THE HOLE WAS.** A *leaf-wrap* `RecursionVk`
+//!    already separates the Fp and Fq chain links — the leaf-wrap circuit compiles the inner AIR's
+//!    constants into its own op list. What does NOT separate them unpinned is the *fold's parent*
+//!    VK, because the child's commitment rides as a runtime PUBLIC input and `PublicAir`'s value
+//!    columns are main-trace only. A fold root is what a consumer anchors, so that is where it bit.
+//!    ⚠ **What is READ rather than measured, and what is not touched at all.** Consequence (1) —
+//!    UNSAT for a foreign child — is measured. Consequence (2) is READ off `ConstAir`'s preprocessed
+//!    row plus `recursion_vk_fingerprint`'s `preprocessed_commitment` field (the single-layer
+//!    capability was measured in `const_pin_probe.rs`); what the test measures is the weaker fact
+//!    that two folds over different child circuits mint different parent VKs. Nothing here touches
+//!    the FRI/STARK soundness floor, and a pin is not a proof that the child's AIR says what its
+//!    name says.
 //! 4. **ζ, ζω and `r` are still published and derived by nothing.** The chain root's outgoing lane 1
 //!    is the block's `u′` (evalscale prechallenge) and its low 128 bits are available on the left
 //!    child at exactly the same cost as `v′` — but the endo lift `u′ → r` needs a SECOND instance of
@@ -183,6 +198,7 @@ use p3_recursion::{BatchOnly, RecursionOutput, Target};
 
 use crate::gpu_backend::prove_recursion_aggregation_auto_with_expose;
 use crate::ivc_turn_chain::expose_claim_instance_index;
+use crate::mina_fold_vk_pin::FoldVkPins;
 use crate::mina_phase2_chain_leaf::{CHAIN_CLAIM_LEN, STATE_WIDTH};
 use crate::mina_wrap_finalize_fold::{
     CLAIM_VPRIME, FINALIZE_CLAIM_LEN, SK, connect_chain_root_v_prime,
@@ -240,9 +256,14 @@ pub const GADGET_CONNECTS: usize = STATE_WIDTH + V_PRIME_LIMBS + (SK - V_PRIME_L
 /// 200-lane left child and a 160-lane right child are the only shapes whose lane offsets this
 /// module's index arithmetic is about, and folding some other root would be reading a claim as a
 /// sentence it does not say.
+/// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child root's preprocessed commitment in-circuit
+/// ([`crate::mina_fold_vk_pin`]) — the top of a tower whose every fold now takes one. Pinning only
+/// here would have closed almost nothing: the substitution was available at each of the 45 chain
+/// folds beneath it.
 pub fn fold_transcript_into_finalize(
     chain_root: &RecursionOutput<DreggRecursionConfig>,
     finalize_root: &RecursionOutput<DreggRecursionConfig>,
+    pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     let chain_idx = require_claim(chain_root, "phase-2 chain root", CHAIN_CLAIM_LEN)?;
@@ -252,8 +273,9 @@ pub fn fold_transcript_into_finalize(
         FINALIZE_CLAIM_LEN,
     )?;
 
-    let chain_input = chain_root.into_recursion_input::<BatchOnly>();
-    let fin_input = finalize_root.into_recursion_input::<BatchOnly>();
+    // ⚠ No host pre-flight against `pins` — the refusal must be the circuit's.
+    let chain_input = chain_root.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
+    let fin_input = finalize_root.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        chain_apt: &[Vec<Target>],

@@ -65,6 +65,11 @@ pub mod merge_pool;
 /// `dregg-mina-accumulator-{seg,final}::v1` leaves, and the fold that carries the accumulator POINT
 /// from segment to segment INSIDE the recursion. The leg upstream's verifier does natively.
 pub mod mina_accumulator_fold;
+/// ⚑ THE CHILD-VK IDENTITY PIN every fold of the Mina tower takes: the expected preprocessed
+/// commitment of each child, `connect`ed in-circuit to `alloc_const`s of that value, so a child of
+/// identical table shape and different preprocessed CONTENT (a descriptor with the same constraint
+/// structure and different round constants) is refused by the parent circuit rather than folded.
+pub mod mina_fold_vk_pin;
 /// ⚑⚑ **A KIMCHI VERIFIER GADGET, IN PLONKY3'S OWN RECURSION.** The top fold that welds the
 /// phase-2 transcript chain ROOT to the endo/conjunction finalize ROOT, so the ξ the finalize
 /// conjuncts check is the one the block's OWN sponge squeezed. ⚠ **An implementation, unverified,
