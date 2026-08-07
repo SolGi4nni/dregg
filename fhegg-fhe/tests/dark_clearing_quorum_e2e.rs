@@ -55,7 +55,9 @@ fn quorum_keygen(
     let mut public = Vec::with_capacity(KEY_N);
     let mut inboxes: Vec<Vec<PrivateDealerShare>> = (0..KEY_N).map(|_| Vec::new()).collect();
     for dealer in 0..KEY_N {
-        let (contribution, private) = deal(&session, dealer, params)
+        // This quorum runs no ct*ct multiply, so it needs no relin key and keeps
+        // no dealer secret: `_relin_secret` drops here.
+        let (contribution, private, _relin_secret) = deal(&session, dealer, params)
             .expect("semi-honest DKG dealer")
             .into_parts();
         public.push(contribution);

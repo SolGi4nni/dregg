@@ -134,6 +134,14 @@ pub const SEQUENCE_COMMIT_RESPONSE: u64 = 6;
 pub const SEQUENCE_FINALIZE_REQUEST: u64 = 7;
 /// Sequence number of a custody party's finalize acknowledgement.
 pub const SEQUENCE_FINALIZE_RESPONSE: u64 = 8;
+/// Relying party -> party: the relinearization ceremony's round-1 request.
+pub const SEQUENCE_RELIN_ROUND_1_REQUEST: u64 = 9;
+/// Party -> relying party: its round-1 relin share.
+pub const SEQUENCE_RELIN_ROUND_1_RESPONSE: u64 = 10;
+/// Relying party -> party: the round-1 AGGREGATE, to compute round 2 against.
+pub const SEQUENCE_RELIN_ROUND_2_REQUEST: u64 = 11;
+/// Party -> relying party: its round-2 relin share.
+pub const SEQUENCE_RELIN_ROUND_2_RESPONSE: u64 = 12;
 
 /// Canonical enrollment record for one slot: the public half of a native-PQ
 /// transport identity.

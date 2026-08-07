@@ -43,21 +43,29 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 use fhe::bfv::PublicKey;
-use fhe_traits::DeserializeParametrized;
+use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
 
 use crate::bfv_lean::LeanCiphertext;
 use crate::mpc_party::transport::NativePqTransportIdentity;
+use fhe::bfv::RelinearizationKey;
+
 use crate::threshold::chunked::{chunk_domain, ChunkReassembler, ChunkStream};
 use crate::threshold::distributed::{
     decode_commit_response, encode_finalize_request, DistributedCommitteeError, DistributedDkg,
     SEQUENCE_COMMIT_RESPONSE, SEQUENCE_FINALIZE_REQUEST, SEQUENCE_FINALIZE_RESPONSE,
     SEQUENCE_OPEN_REQUEST, SEQUENCE_OPEN_RESPONSE, SEQUENCE_PUBLIC_KEY_RESPONSE,
+    SEQUENCE_RELIN_ROUND_1_REQUEST, SEQUENCE_RELIN_ROUND_1_RESPONSE,
+    SEQUENCE_RELIN_ROUND_2_REQUEST, SEQUENCE_RELIN_ROUND_2_RESPONSE,
+};
+use crate::threshold::distributed_relin::{
+    aggregate_round_1, assemble_relin_key, relin_acceptance_gate,
 };
 use crate::threshold::quorum::{
     assemble_distributed_transcript, AggregateRowBindingProof, AuthenticatedQuorumCombiner,
     AuthenticatedQuorumRoster, DealerVssCommitment, QuorumError, QuorumOpeningSession,
     VerifiedDkgTranscript,
 };
+use crate::threshold::relin::{RelinError, RelinKeySession};
 use crate::threshold::{BfvParams, CollectivePublicKey};
 
 /// The public frame kinds a party process answers. The header is public routing
@@ -71,6 +79,12 @@ pub const KIND_PUBLIC_KEY_REQUEST: u8 = 4;
 pub const KIND_SHUTDOWN: u8 = 5;
 pub const KIND_COMMIT_REQUEST: u8 = 6;
 pub const KIND_FINALIZE_REQUEST: u8 = 7;
+/// Relinearization round 1: the relying party names the ceremony, the party
+/// answers with its round-1 share.
+pub const KIND_RELIN_ROUND_1: u8 = 8;
+/// Relinearization round 2: the relying party carries the round-1 aggregate, the
+/// party answers with its round-2 share.
+pub const KIND_RELIN_ROUND_2: u8 = 9;
 
 /// The largest frame either side will send or accept.
 ///
@@ -79,6 +93,39 @@ pub const KIND_FINALIZE_REQUEST: u8 = 7;
 /// response grows as `O(n^2 * degree)` straight into it. See [`super::chunked`];
 /// both oversized rounds are chunked under that smaller ceiling.
 pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// One relin round request body: the ceremony's public entropy and timeout so the
+/// party can rebuild the EXACT same [`RelinKeySession`], plus the round-1
+/// aggregate for round 2 (empty in round 1).
+///
+/// The session is rebuilt rather than trusted from the wire: the party derives
+/// it from its OWN keygen session and collective key, so a relying party cannot
+/// name a ceremony over a committee the party is not in.
+pub fn encode_relin_request(session: &RelinKeySession, aggregate: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(48 + aggregate.len());
+    out.extend_from_slice(&session.public_entropy());
+    out.extend_from_slice(&(session.timeout().as_nanos() as u64).to_le_bytes());
+    out.extend_from_slice(&(aggregate.len() as u64).to_le_bytes());
+    out.extend_from_slice(aggregate);
+    out
+}
+
+/// Strictly parse a relin round request: `(public entropy, timeout, aggregate)`.
+pub fn decode_relin_request(
+    bytes: &[u8],
+) -> std::result::Result<([u8; 32], Duration, &[u8]), &'static str> {
+    if bytes.len() < 48 {
+        return Err("relin request is truncated");
+    }
+    let entropy: [u8; 32] = bytes[..32].try_into().expect("checked length");
+    let nanos = u64::from_le_bytes(bytes[32..40].try_into().expect("checked length"));
+    let len = u64::from_le_bytes(bytes[40..48].try_into().expect("checked length"));
+    let len = usize::try_from(len).map_err(|_| "relin aggregate length overflow")?;
+    if bytes.len() != 48 + len {
+        return Err("relin request length disagrees with its body");
+    }
+    Ok((entropy, Duration::from_nanos(nanos), &bytes[48..]))
+}
 
 /// Chunk-stream domain for the commit response (party -> relying party).
 /// Single-sourced here for the same reason the frame kinds are: the party binary
@@ -154,6 +201,8 @@ pub enum RelyingPartyError {
     /// A quorum/opening/certificate refusal. THIS is where a share missing or
     /// carrying an invalid decrypt-share certificate lands.
     Quorum(QuorumError),
+    /// The distributed relinearization ceremony refused.
+    Relin(RelinError),
 }
 
 impl std::fmt::Display for RelyingPartyError {
@@ -164,6 +213,8 @@ impl std::fmt::Display for RelyingPartyError {
             Self::Disagreement(why) => write!(f, "committee parties disagreed: {why}"),
             Self::Committee(error) => write!(f, "committee refusal: {error}"),
             Self::Quorum(error) => write!(f, "quorum/opening refusal: {error:?}"),
+
+            Self::Relin(error) => write!(f, "{error}"),
         }
     }
 }
@@ -420,6 +471,134 @@ impl DistributedCommitteeClient {
             }
         }
         Ok(transcript)
+    }
+
+    /// Drive the DISTRIBUTED relinearization ceremony and return the collective
+    /// relinearization key, gated.
+    ///
+    /// # What this is, and what it is not
+    ///
+    /// It is `n`-of-`n` over the committee's DEALERS, not `t`-of-`n`: relin runs
+    /// on the additive structure `s = sum_d s_d`, because the Lagrange custody
+    /// rows provably cannot carry it (see [`super::distributed_relin`] for the
+    /// derivation). Every party must therefore be live for this call. That does
+    /// not touch the `t`-of-`n` OPENING, which still tolerates `n - t` offline.
+    ///
+    /// `public_entropy` is public and binds the ceremony identity together with
+    /// the keygen session and the collective key digest, so two ceremonies over
+    /// the same committee cannot have their shares interchanged.
+    ///
+    /// The returned key has PASSED [`super::distributed_relin::relin_acceptance_gate`]:
+    /// `trials` fresh random `ct x ct` products, each required to decrypt to the
+    /// exact plaintext product through a REAL `t`-of-`n` certified opening of
+    /// this committee. Aggregation checks no well-formedness proof, so without
+    /// that gate a single malformed contribution yields a key that is silently
+    /// wrong at multiply time. Detection under an honest coordinator, NOT
+    /// attribution.
+    pub fn relin_key(
+        &self,
+        collective: &CollectivePublicKey,
+        transcript: &VerifiedDkgTranscript,
+        public_entropy: [u8; 32],
+        timeout: Duration,
+        trials: usize,
+        opening_roster: &[usize],
+    ) -> Result<RelinearizationKey> {
+        let n = self.dkg.n_parties();
+        let session = RelinKeySession::from_public_entropy(
+            self.dkg.session().public_key_session(),
+            collective,
+            public_entropy,
+            timeout,
+        )
+        .map_err(RelyingPartyError::Relin)?;
+
+        // ROUND 1: every party's share, under the exact ceremony identity.
+        let mut round_1 = Vec::with_capacity(n);
+        for party in 0..n {
+            round_1.push(self.relin_round(
+                party,
+                KIND_RELIN_ROUND_1,
+                SEQUENCE_RELIN_ROUND_1_REQUEST,
+                SEQUENCE_RELIN_ROUND_1_RESPONSE,
+                &encode_relin_request(&session, &[]),
+            )?);
+        }
+        let aggregate = aggregate_round_1(&session, self.dkg.params(), &round_1)
+            .map_err(RelyingPartyError::Relin)?;
+
+        // ROUND 2: each party answers the aggregate the coordinator published.
+        let mut round_2 = Vec::with_capacity(n);
+        for party in 0..n {
+            round_2.push(self.relin_round(
+                party,
+                KIND_RELIN_ROUND_2,
+                SEQUENCE_RELIN_ROUND_2_REQUEST,
+                SEQUENCE_RELIN_ROUND_2_RESPONSE,
+                &encode_relin_request(&session, &aggregate),
+            )?);
+        }
+        let key = assemble_relin_key(&session, self.dkg.params(), &aggregate, &round_2)
+            .map_err(RelyingPartyError::Relin)?;
+
+        // THE GATE. Opens through this committee's real certified `t`-of-`n`
+        // path, so a key that does not relinearize cannot escape.
+        let mut nonce_counter = 0u64;
+        relin_acceptance_gate(&key, self.dkg.params(), collective, trials, |bounded| {
+            nonce_counter += 1;
+            let mut nonce = [0u8; 32];
+            nonce[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+            nonce[8..40.min(32)].copy_from_slice(&public_entropy[..24]);
+            let opened = self
+                .open_verified(
+                    transcript,
+                    &bounded.ct.to_bytes(),
+                    bounded.plain_bound,
+                    opening_roster,
+                    nonce,
+                )
+                .map_err(|_| RelinError::Fhe {
+                    phase: "acceptance opening",
+                })?;
+            Ok(opened.first().copied().unwrap_or(u64::MAX))
+        })
+        .map_err(RelyingPartyError::Relin)?;
+        Ok(key)
+    }
+
+    /// One relin round-trip with one party: seal the request, open the answer.
+    ///
+    /// An empty answer is the party's refusal (it has no dealer secret, or the
+    /// ceremony does not match the DKG it belongs to), and it is reported as one
+    /// rather than parsed as a share.
+    fn relin_round(
+        &self,
+        party: usize,
+        kind: u8,
+        request_sequence: u64,
+        response_sequence: u64,
+        body: &[u8],
+    ) -> Result<Vec<u8>> {
+        let sealed_request = self.dkg.seal(
+            &self.identity,
+            self.dkg.relying_party(),
+            party,
+            request_sequence,
+            body,
+        )?;
+        let sealed = self.request(party, kind, &sealed_request)?;
+        if sealed.is_empty() {
+            return Err(RelyingPartyError::Transport(format!(
+                "party {party} refused to take part in the relinearization ceremony"
+            )));
+        }
+        Ok(self.dkg.open(
+            &self.identity,
+            party,
+            self.dkg.relying_party(),
+            response_sequence,
+            &sealed,
+        )?)
     }
 
     /// Open one ciphertext under a `t`-party quorum, REFUSING any share without a

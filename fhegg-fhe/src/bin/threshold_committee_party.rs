@@ -56,6 +56,8 @@ use dregg_pq::{
     MlDsaSignCoreRealInstall, MlDsaVerifyCoreInstall,
 };
 use ed25519_dalek::SigningKey;
+use fhe::bfv::PublicKey;
+use fhe_traits::DeserializeParametrized;
 use fhe_traits::Serialize as FheSerialize;
 use fhegg_fhe::bfv_lean::LeanCiphertext;
 use fhegg_fhe::mpc_party::transport::{
@@ -67,15 +69,19 @@ use fhegg_fhe::threshold::distributed::{
     AcceptedDealing, DistributedDkg, DistributedPendingCustody, DistributedVerifiedCustody,
     SEQUENCE_COMMIT_RESPONSE, SEQUENCE_CROSS_EVALUATION, SEQUENCE_FINALIZE_REQUEST,
     SEQUENCE_FINALIZE_RESPONSE, SEQUENCE_OPEN_REQUEST, SEQUENCE_OPEN_RESPONSE,
-    SEQUENCE_PUBLIC_KEY_RESPONSE,
+    SEQUENCE_PUBLIC_KEY_RESPONSE, SEQUENCE_RELIN_ROUND_1_REQUEST, SEQUENCE_RELIN_ROUND_1_RESPONSE,
+    SEQUENCE_RELIN_ROUND_2_REQUEST, SEQUENCE_RELIN_ROUND_2_RESPONSE,
 };
+use fhegg_fhe::threshold::distributed_relin::RelinDealerParty;
 use fhegg_fhe::threshold::quorum::{AuthenticatedQuorumRoster, QuorumOpeningSession};
+use fhegg_fhe::threshold::relin::RelinKeySession;
 use fhegg_fhe::threshold::relying_party::{
-    commit_response_chunk_domain, decode_open_request, finalize_request_chunk_domain,
-    FINALIZE_ACK_FINALIZED, FINALIZE_ACK_INCOMPLETE, KIND_COMMIT_REQUEST, KIND_CROSS, KIND_DEALING,
-    KIND_FINALIZE_REQUEST, KIND_OPEN_REQUEST, KIND_PUBLIC_KEY_REQUEST, KIND_SHUTDOWN,
+    commit_response_chunk_domain, decode_open_request, decode_relin_request,
+    finalize_request_chunk_domain, FINALIZE_ACK_FINALIZED, FINALIZE_ACK_INCOMPLETE,
+    KIND_COMMIT_REQUEST, KIND_CROSS, KIND_DEALING, KIND_FINALIZE_REQUEST, KIND_OPEN_REQUEST,
+    KIND_PUBLIC_KEY_REQUEST, KIND_RELIN_ROUND_1, KIND_RELIN_ROUND_2, KIND_SHUTDOWN,
 };
-use fhegg_fhe::threshold::{BfvParams, MIN_SMUDGE_BITS};
+use fhegg_fhe::threshold::{BfvParams, CollectivePublicKey, MIN_SMUDGE_BITS};
 use rand::rngs::OsRng;
 use rand::RngCore;
 
@@ -514,6 +520,9 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
     // ceremony; it has no serializer or coefficient accessor and overwrites
     // itself on drop.
     let _relin_secret = relin_secret;
+    // Bound to a ceremony on the first relin request and reused for round 2, so
+    // the ephemeral `u` is the SAME across both rounds (the protocol requires it).
+    let mut relin_party: Option<RelinDealerParty> = None;
     let mut pending: Option<DistributedPendingCustody> = None;
     let mut custody: Option<Custody> = None;
     // Chunked-round state. The commit response is built once and served by
@@ -694,6 +703,19 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
                     }
                 }
             }
+            KIND_RELIN_ROUND_1 | KIND_RELIN_ROUND_2 => {
+                let answer = answer_relin_round(
+                    &dkg,
+                    &identity,
+                    party,
+                    &_relin_secret,
+                    collective_pk_bytes.as_deref(),
+                    &mut relin_party,
+                    message.kind,
+                    &message.payload,
+                );
+                let _ = message.reply.send(answer);
+            }
             KIND_SHUTDOWN => {
                 let _ = message.reply.send(vec![1]);
                 return Ok(());
@@ -701,6 +723,124 @@ fn serve(dir: &Path, party: usize, n_parties: usize, threshold: usize) -> Result
             _ => {
                 let _ = message.reply.send(Vec::new());
             }
+        }
+    }
+}
+
+/// Answer one relinearization round.
+///
+/// The party rebuilds the ceremony identity from the PUBLIC entropy plus its OWN
+/// keygen session and collective key, rather than trusting a session named on the
+/// wire — so a relying party cannot make this party sign into a ceremony over a
+/// committee it is not in, and a share can never be produced for a collective key
+/// other than the one this DKG actually established.
+///
+/// Refuses (empty answer) before the collective key exists, on a malformed
+/// request, and if round 2 arrives for a ceremony this party never began round 1
+/// for.
+#[allow(clippy::too_many_arguments)]
+fn answer_relin_round(
+    dkg: &DistributedDkg,
+    identity: &NativePqTransportIdentity,
+    party: usize,
+    relin_secret: &fhegg_fhe::threshold::quorum::DealerRelinSecret,
+    collective_pk_bytes: Option<&[u8]>,
+    relin_party: &mut Option<RelinDealerParty>,
+    kind: u8,
+    sealed: &[u8],
+) -> Vec<u8> {
+    let (request_sequence, response_sequence) = if kind == KIND_RELIN_ROUND_1 {
+        (
+            SEQUENCE_RELIN_ROUND_1_REQUEST,
+            SEQUENCE_RELIN_ROUND_1_RESPONSE,
+        )
+    } else {
+        (
+            SEQUENCE_RELIN_ROUND_2_REQUEST,
+            SEQUENCE_RELIN_ROUND_2_RESPONSE,
+        )
+    };
+    let Some(pk_bytes) = collective_pk_bytes else {
+        eprintln!("party {party}: relin REFUSED, no collective key yet");
+        return Vec::new();
+    };
+    let body = match dkg.open(
+        identity,
+        dkg.relying_party(),
+        party,
+        request_sequence,
+        sealed,
+    ) {
+        Ok(body) => body,
+        Err(error) => {
+            eprintln!("party {party}: relin open REFUSED: {error}");
+            return Vec::new();
+        }
+    };
+    let (public_entropy, timeout, aggregate) = match decode_relin_request(&body) {
+        Ok(parts) => parts,
+        Err(error) => {
+            eprintln!("party {party}: relin decode REFUSED: {error}");
+            return Vec::new();
+        }
+    };
+
+    let share = if kind == KIND_RELIN_ROUND_1 {
+        let collective = match PublicKey::from_bytes(pk_bytes, dkg.params().arc()) {
+            Ok(pk) => CollectivePublicKey { pk },
+            Err(error) => {
+                eprintln!("party {party}: relin collective key REFUSED: {error}");
+                return Vec::new();
+            }
+        };
+        // Derived HERE, from this party's own session and key.
+        let session = match RelinKeySession::from_public_entropy(
+            dkg.session().public_key_session(),
+            &collective,
+            public_entropy,
+            timeout,
+        ) {
+            Ok(session) => session,
+            Err(error) => {
+                eprintln!("party {party}: relin session REFUSED: {error}");
+                return Vec::new();
+            }
+        };
+        let built = match RelinDealerParty::new(&session, dkg.params(), relin_secret) {
+            Ok(built) => built,
+            Err(error) => {
+                eprintln!("party {party}: relin party REFUSED: {error}");
+                return Vec::new();
+            }
+        };
+        let share = built.round_1();
+        *relin_party = Some(built);
+        share
+    } else {
+        let Some(built) = relin_party.as_ref() else {
+            eprintln!("party {party}: relin round 2 REFUSED, no round 1 was begun");
+            return Vec::new();
+        };
+        built.round_2(aggregate)
+    };
+    let share = match share {
+        Ok(share) => share,
+        Err(error) => {
+            eprintln!("party {party}: relin share REFUSED: {error}");
+            return Vec::new();
+        }
+    };
+    match dkg.seal(
+        identity,
+        party,
+        dkg.relying_party(),
+        response_sequence,
+        &share,
+    ) {
+        Ok(sealed) => sealed,
+        Err(error) => {
+            eprintln!("party {party}: seal relin share: {error}");
+            Vec::new()
         }
     }
 }

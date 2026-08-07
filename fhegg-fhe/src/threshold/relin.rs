@@ -157,6 +157,7 @@ impl std::error::Error for RelinError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelinKeySession {
     keygen: KeygenSession,
+    public_entropy: [u8; 32],
     collective_public_key_digest: [u8; 32],
     crp_seed: [u8; 32],
     session_id: [u8; 32],
@@ -207,6 +208,7 @@ impl RelinKeySession {
 
         Ok(Self {
             keygen: keygen.clone(),
+            public_entropy,
             collective_public_key_digest,
             crp_seed,
             session_id,
@@ -220,6 +222,16 @@ impl RelinKeySession {
 
     pub fn collective_public_key_digest(&self) -> [u8; 32] {
         self.collective_public_key_digest
+    }
+
+    /// The PUBLIC entropy this ceremony identity was derived from.
+    ///
+    /// Public by construction — it is not consumed as polynomial randomness, it
+    /// is domain-separated and bound to the collective key before expansion. A
+    /// distributed party needs it to rebuild the EXACT same session locally
+    /// rather than trust a session handed to it over the wire.
+    pub fn public_entropy(&self) -> [u8; 32] {
+        self.public_entropy
     }
 
     pub fn crp_seed(&self) -> [u8; 32] {

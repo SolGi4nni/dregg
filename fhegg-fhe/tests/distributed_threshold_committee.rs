@@ -37,6 +37,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use fhe_traits::Serialize as FheSerializeCt;
+use fhegg_fhe::bfv_mul::{BoundedCiphertext, MulEngine};
+
 use dregg_pq::hybrid_kem::{
     install_verified_mlkem_decaps_core, install_verified_mlkem_encaps_core,
     install_verified_mlkem_keygen_core, MlKemDecapsCoreInstall, MlKemEncapsCoreInstall,
@@ -361,6 +364,105 @@ fn three_party_processes_reach_verified_custody() {
         client.shutdown(party);
     }
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// The DISTRIBUTED relinearization ceremony, end to end across three PROCESSES.
+///
+/// This is the step that had no distributed counterpart at all: the committee
+/// could open, but nothing could multiply, so no caller needing a `ct x ct`
+/// could move onto it. The ceremony is `n`-of-`n` over DEALERS — relin runs on
+/// `s = sum_d s_d` because the Lagrange custody rows provably cannot carry it —
+/// and each party's short secret never leaves the process that sampled it.
+///
+/// The key returned has already passed its acceptance gate, which decrypts fresh
+/// random products through this committee's REAL `t`-of-`n` certified opening.
+/// So the single `expect` below is not "a key came back"; it is "a key came back
+/// that relinearizes, checked by decrypting products across three processes".
+#[test]
+#[ignore = "degree-4096 relin ceremony plus its acceptance gate over three processes: minutes; run with --release --ignored"]
+fn three_party_processes_run_the_relinearization_ceremony() {
+    install_verified_pq_cores();
+    let dir = session_dir("relin");
+    let identity = enroll_relying_party(&dir);
+    let deadline = Instant::now() + SETUP_TIMEOUT;
+
+    let mut parties = (0..N_PARTIES)
+        .map(|party| spawn_party(&dir, party, None))
+        .collect::<Vec<_>>();
+    assert_separate_processes(&parties);
+    let ready = ready_paths(&dir);
+    wait_for_ready(&mut parties, &ready, deadline);
+
+    let params = BfvParams::fold_set();
+    let addresses = parties
+        .iter()
+        .map(|party| party.address)
+        .collect::<Vec<_>>();
+    let client = committee_client(&dir, identity, addresses, &params);
+
+    let collective = client.collective_public_key().expect("collective key");
+    let transcript = client
+        .verified_transcript(&collective)
+        .expect("verified commit + finalize");
+
+    let opening_roster: Vec<usize> = (0..THRESHOLD).collect();
+    let key = client
+        .relin_key(
+            &collective,
+            &transcript,
+            [0x5c; 32],
+            SETUP_TIMEOUT,
+            2,
+            &opening_roster,
+        )
+        .expect("the distributed relin ceremony must produce a key that passes its own gate");
+
+    // Independently of the gate: a product built with this key opens correctly
+    // through the same t-of-n committee.
+    let engine = MulEngine::new(&key, params.arc()).expect("multiplicator");
+    let (left, right) = (7u64, 9u64);
+    let product = engine
+        .multiply(
+            &BoundedCiphertext::new(encrypt_value(&collective, &params, left), 32),
+            &BoundedCiphertext::new(encrypt_value(&collective, &params, right), 32),
+        )
+        .expect("ct x ct multiply under the distributed relin key");
+    let opened = client
+        .open_verified(
+            &transcript,
+            &product.ct.to_bytes(),
+            product.plain_bound,
+            &opening_roster,
+            [0x5d; 32],
+        )
+        .expect("certified opening of the relinearized product");
+    assert_eq!(
+        opened.first().copied(),
+        Some(left * right),
+        "the distributed relin key did not relinearize across three processes"
+    );
+
+    for party in 0..N_PARTIES {
+        client.shutdown(party);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn encrypt_value(
+    collective: &fhegg_fhe::threshold::CollectivePublicKey,
+    params: &BfvParams,
+    value: u64,
+) -> fhe::bfv::Ciphertext {
+    use fhe::bfv::{Encoding, Plaintext};
+    use fhe_traits::{FheEncoder, FheEncrypter};
+    let mut slots = vec![0u64; params.degree()];
+    slots[0] = value;
+    let plaintext =
+        Plaintext::try_encode(&slots, Encoding::simd(), params.arc()).expect("SIMD encode");
+    collective
+        .pk
+        .try_encrypt(&plaintext, &mut rand_09::rng())
+        .expect("collective encrypt")
 }
 
 #[test]
