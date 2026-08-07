@@ -520,7 +520,10 @@ theorem the_tie_is_the_whole_element :
 4. **`pack_to_fields` is not here and does not need to be.** Phase 1 absorbs WHOLE field elements
    (`absorb_g` pushes `x` then `y`); the chunked `Random_oracle.Input` packing belongs to the
    STATE-HASH derivation (`Bridge.MinaStateHashDerive`), a different preimage. Its price is in that
-   file's §1 and in `docs/`, and it is 3.7% of the permutation cost of the object it belongs to.
+   file's §1 and in `docs/`, and it is just under 4% of the permutation cost of the object it
+   belongs to. ⚑ That object is now BUILT — `Circuit.Emit.MinaStateBodyHashChain`, **25 links of
+   THIS descriptor** (`bodyChainDesc = chainDesc`, by `rfl`) from the `MinaProtoStateBody` salt over
+   the block's packed preimage. The packing itself is still not in circuit.
 5. **27 witnesses, one descriptor.** As with phase 2, the residual is witnesses, not algebra.
 -/
 

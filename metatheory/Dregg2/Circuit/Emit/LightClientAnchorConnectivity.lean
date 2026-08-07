@@ -136,11 +136,19 @@ commitment the prover can afford, and derive the anchor instead of publishing it
   the heights tick by one from a first-row anchor height, a boolean `IS_REAL` is monotone and its
   running sum is published as the segment length — and the anchor and tip it publishes are the two
   ends of that chain.*
-  ⚠ **AND THAT IS STILL NOT A BINDING TO MINA.** `OWNHASH` is a free witness: nothing forces it to be
-  `Poseidon(stateRow)` (`LinkHashResidual`, `LightClientMinaLinkAir` §6, priced at ~5·10⁵ BabyBear
-  constraints per block hash). Every lane pair is its own island — lane `j` chains to lane `j` and
-  never crosses. **Connectivity is co-occurrence, not derivation.** This descriptor relates its
-  publications to its evidence; its evidence is numbers the prover chose.
+  ⚑ **2026-08-06 — `OWNHASH` STOPPED BEING A FREE WITNESS.** This bullet used to read *"nothing
+  forces it to be `Poseidon(stateRow)` (`LinkHashResidual`, priced at ~5·10⁵ BabyBear constraints per
+  block hash)"*; the price was wrong by 26× and the rung landed as a `proof_bind` against
+  `dregg-pasta-fp-absorb::v1` (`minaLink_the_seam_joins_the_preimage_to_the_image`, below). Every lane
+  pair is still its own island for the CHAINING gates — lane `j` chains to lane `j` and never crosses
+  — but the seam names all thirty-six columns of the row in ONE constraint.
+  ⚠ **AND THAT IS STILL NOT A BINDING TO MINA.** What the seam takes as an ARGUMENT is `BODYHASH`,
+  which this descriptor neither derives nor publishes. ⚑ 2026-08-07 it acquired a derivation —
+  `MinaStateBodyHashChain`, 25 links of `dregg-pasta-fp-chainlink::v1` from the pinned
+  `MinaProtoStateBody` salt — but **OFF THIS DESCRIPTOR**, so no constraint here relates the nonet to
+  that chain's root and `minaLink_body_hash_is_joined_but_not_published` did NOT fire. **Connectivity
+  is co-occurrence, not derivation**, and the tie that would upgrade this one needs `BODYHASH`
+  PUBLISHED so a fold can reach it.
 
 ## ⚑ WHY THESE ARE THEOREMS AND NOT A COMMENT — they are meant to go RED
 
@@ -638,17 +646,44 @@ theorem minaLink_the_seam_joins_the_preimage_to_the_image :
         relatedCols) := by
   decide
 
-/-- ⚑ **THE NARROWER TRIPWIRE THAT REPLACES IT.** `BODYHASH` is the one nonet the seam does not
-DERIVE — it is an ARGUMENT of the hash, a free witness whose attestation is
-`PICKLES_OPENING_WITNESSED` (⚑ `PICKLES_WITNESSED` until 2026-08-06).
-This says so on the emitted object: the nine body-hash columns are read and joined, and NOT
-PI-bound, so nothing in this descriptor publishes them and nothing derives them. It reds the day
-`state_body_hash` acquires its own sub-proof, which is the next rung. -/
+/-- ⚑ **THE NARROWER TRIPWIRE THAT REPLACES IT — AND ITS TRIGGER IS RE-AIMED, 2026-08-07.**
+`BODYHASH` is the one nonet the seam does not DERIVE: it is an ARGUMENT of the hash. The nine
+body-hash columns are read and joined, and NOT PI-bound.
+
+⚑⚑ **REPORT: THIS DID NOT FIRE WHEN THE SUB-PROOF LANDED, AND THAT IS THE FINDING.** Its docstring
+said *"it reds the day `state_body_hash` acquires its own sub-proof, which is the next rung."* That
+rung landed (`Circuit.Emit.MinaStateBodyHashChain` — 25 links of the deployed
+`dregg-pasta-fp-chainlink::v1` from the pinned `MinaProtoStateBody` salt over the block's packed
+`Body.to_input`, proved and folded) and **every literal here is unchanged**, because the derivation
+is a SIBLING CHAIN welded executor-side rather than a constraint in this descriptor. The tripwire was
+watching the right column and the wrong event.
+
+⚑ **RE-AIMED, and the new trigger is the one that matters:** `isPiBound = false` is now the SPECIFIC
+gap, not an incidental observation. A `proofBind`'s `commit`/`vk` name PUBLISHED values and a
+recursion fold reads `air_public_targets`, so **an unpublished `BODYHASH` cannot be `cb.connect`ed to
+the body-hash chain's root at all** — the executor comparison is not a choice, it is what an
+unpublished column forces. This reds the day `BODYHASH` is PI-bound, which is exactly the flag day
+`LightClientMinaLinkAir`'s §"WHAT THIS BREAKS" costs (piCount 20 → 37, both Mina descriptors re-VK).
+
+⚠ And what would STILL be owed after that: publishing the nonet buys a weld to a chain, not a weld
+to a BLOCK. The chain's absorbed stream is named by its fold accumulator, and tying THAT to the
+block whose `PARENT`/`HEIGHT` this row carries is a comparison the node makes from wire bytes. -/
 theorem minaLink_body_hash_is_joined_but_not_published :
     ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
       isRead LightClientMinaLinkAir.minaLinkDesc col = true ∧
       isRelated LightClientMinaLinkAir.minaLinkDesc col = true ∧
       isPiBound LightClientMinaLinkAir.minaLinkDesc col = false := by
+  decide
+
+/-- ⚑ **THE POSITIVE HALF, STATED SO THE GAIN IS A TERM.** The nine body-hash columns are not
+inert: they are named by the state-hash seam's `proof_bind` — the SAME constraint that names the
+parent, the own hash and the attested program — so what is missing is PUBLICATION, not membership in
+the component. Without this the theorem above reads as "BODYHASH is unconnected", which is false and
+would misdirect the repair. -/
+theorem minaLink_body_hash_is_named_by_the_seam :
+    ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
+      col ∈ (((LightClientMinaLinkAir.minaLinkDesc.constraints.drop 51).take 1).flatMap
+        relatedCols) := by
   decide
 
 /-- …and the count is exactly the twenty the descriptor declares, so the `[]` above is a statement
@@ -774,6 +809,7 @@ theorem the_five_verify_descriptors_carry_fifty_three_decorative_anchors :
 #assert_axioms minaLink_decorative_anchors
 #assert_axioms minaLink_the_seam_joins_the_preimage_to_the_image
 #assert_axioms minaLink_body_hash_is_joined_but_not_published
+#assert_axioms minaLink_body_hash_is_named_by_the_seam
 #assert_axioms minaLink_has_twenty_pi_bound_columns
 #assert_axioms solStakeFold_decorative_anchors
 #assert_axioms solStakeFold_has_twelve_pi_bound_columns

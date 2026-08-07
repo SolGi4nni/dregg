@@ -19,12 +19,23 @@ Priced. **Two answers, and the first one is the load-bearing one.**
      and `MinaRealBlockTranscript.wrapPhase1` reproducing block 539508's published β/γ/α′/ζ′/digest
      from exactly those 53 numbers is the reality gate on it: no packing step could be missing from
      a derivation that already lands on o1-labs' own oracle output.
-  2. **Where it DOES live — the STATE-HASH preimage — it costs 3.8% of the object it belongs to.**
-     `Body.to_input` on the real devnet block is **38 whole field elements + 819 packed chunks
-     (2 381 bits)**, packing to **49 field elements** (38 + 11), absorbed at rate 2 as **26 Kimchi
-     permutations**. On the deployed machine a permutation is **1 650 instructions**
-     (`MinaWrapVerifierSponge.ROWS_PER_ROUND = 30`), so the sponge is **42 900 rows** and the
+  2. **Where it DOES live — the STATE-HASH preimage — it costs just under 4% of the object it
+     belongs to.** `Body.to_input` on the real devnet block is **38 whole field elements + 819
+     packed chunks (2 381 bits)**, packing to **49 field elements** (38 + 11), absorbed at rate 2 as
+     **25 Kimchi permutations**. On the deployed machine a permutation is **1 650 instructions**
+     (`MinaWrapVerifierSponge.ROWS_PER_ROUND = 30`), so the sponge is **41 250 rows** and the
      packing's shift-and-add chain is **2 × 819 = 1 638**. `pack_to_fields_does_not_dominate`.
+
+⚠ **THE 25 WAS 26 UNTIL 2026-08-07, AND THE `+1` WAS A DOUBLE-COUNTED SQUEEZE.** `PERMS_FOR_BODY`
+was written `(49 + 1) / 2 + 1` — rate blocks plus a closing permutation. The upstream absorb loop
+permutes **only when an element ARRIVES and finds the rate full**; a final partial block is left
+unpermuted and **the squeeze supplies ITS permutation**, rather than adding one after a completed
+block (`PastaPoseidonFq.Core.absorbFrom`'s `[]` clause, and the reason `PastaPoseidon` §5's
+double-permute bug was restructured out of existence). It is 25, and it is now DERIVED rather than
+written down: `MinaStateBodyHashChain.pairsOf_length` gives `⌈n/2⌉` at every list,
+`MinaPhase1Chain.the_pairs_are_the_absorb_schedule` proves that pairing is the state machine's own
+at every `Params`, and **`MinaStateBodyHashChain.the_price_files_count_is_the_schedules` welds this
+file's constant to that chain's link count** so the two cannot drift apart again.
 
 ⚑ **AND THE PACKING IS A STRAIGHT-LINE PROGRAM, WHICH IS WHY 1 638 IS THE WHOLE ANSWER.**
 `packStep`'s boundary test is `n + accN < 255` on the DECLARED WIDTH, evaluated before the item is
@@ -142,8 +153,11 @@ theorem the_preimage_packs_to_49_field_elements :
 
 open Dregg2.Circuit.Emit.MinaWrapVerifierSponge (ROWS_PER_ROUND ROWS_PER_PERM_MEASURED)
 
-/-- Absorbing `n` elements at rate 2 costs `⌈n/2⌉` permutations plus the closing squeeze. -/
-def PERMS_FOR_BODY : Nat := (49 + 1) / 2 + 1
+/-- ⚑ Absorbing `n` elements at rate 2 costs `⌈n/2⌉` permutations — **the closing squeeze IS the
+last block's permutation, not an extra one after it.** Corrected 2026-08-07 (it read `… + 1`); the
+derivation lives in `Circuit.Emit.MinaStateBodyHashChain` and
+`the_price_files_count_is_the_schedules` pins this constant to that chain's link count. -/
+def PERMS_FOR_BODY : Nat := (49 + 1) / 2
 
 /-- The sponge half of a state-body hash, in emitted instructions. -/
 def SPONGE_ROWS : Nat := PERMS_FOR_BODY * ROWS_PER_PERM_MEASURED
@@ -152,13 +166,13 @@ def SPONGE_ROWS : Nat := PERMS_FOR_BODY * ROWS_PER_PERM_MEASURED
 per chunk on the machine that already exists.** No branch, by §1; no new gate shape. -/
 def PACK_ROWS : Nat := 2 * 819
 
-/-- ⚑⚑ **THE ANSWER: `pack_to_fields` DOES NOT DOMINATE — it is 3.8% of the sponge it feeds.**
-26 permutations at 1 650 instructions is 42 900 rows; the packing is 1 638. Stated as the two
-brackets rather than a rounded percentage, so the claim is checkable in the kernel. -/
+/-- ⚑⚑ **THE ANSWER: `pack_to_fields` DOES NOT DOMINATE — it is just under 4% of the sponge it
+feeds.** 25 permutations at 1 650 instructions is 41 250 rows; the packing is 1 638. Stated as the
+two brackets rather than a rounded percentage, so the claim is checkable in the kernel. -/
 theorem pack_to_fields_does_not_dominate :
-    PERMS_FOR_BODY = 26
+    PERMS_FOR_BODY = 25
     ∧ ROWS_PER_PERM_MEASURED = 1650
-    ∧ SPONGE_ROWS = 42900
+    ∧ SPONGE_ROWS = 41250
     ∧ PACK_ROWS = 1638
     ∧ 100 * PACK_ROWS < 4 * SPONGE_ROWS
     ∧ 3 * SPONGE_ROWS < 100 * PACK_ROWS := by
@@ -166,10 +180,11 @@ theorem pack_to_fields_does_not_dominate :
 
 /-- ⚑ **AND THE COMPARISON THAT MATTERS MORE**: the whole state-hash derivation, packing included,
 is **comparable to the phase-1 transcript chain this cone just emitted** — 27 links at 1 650 is
-44 550 rows against 44 538. So the state-hash leg is not a different order of magnitude from a leg
-that proves in minutes; it is the same size. -/
+44 550 rows against 42 888. So the state-hash leg is not a different order of magnitude from a leg
+that proves in minutes; it is the same size. ⚑ And it is now BUILT, at 25 links of the SAME
+descriptor: `Circuit.Emit.MinaStateBodyHashChain`. -/
 theorem the_state_hash_is_the_size_of_the_phase1_chain :
-    SPONGE_ROWS + PACK_ROWS = 44538
+    SPONGE_ROWS + PACK_ROWS = 42888
     ∧ 27 * ROWS_PER_PERM_MEASURED = 44550
     ∧ SPONGE_ROWS + PACK_ROWS < 27 * ROWS_PER_PERM_MEASURED := by
   refine ⟨?_, ?_, ?_⟩ <;> decide

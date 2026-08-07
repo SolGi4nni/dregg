@@ -1,0 +1,16 @@
+# The 25 Lean-emitted body-hash chain witnesses (`Dregg2.Circuit.Emit.MinaStateBodyHashChain`):
+# ~80 MB of trace text against a repository whose largest tracked file is 10 MB. GENERATED, not
+# tracked — emit them with the COMPILED exe (the interpreter costs minutes PER LINK):
+#
+#     cd metatheory && lake build mina_fp_chain_emit \
+#       && ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 0 25
+#
+# ⚑ The two counts are separate deliberately: `0 25` skips the 25 phase-1 chainlink traces this
+# gate does not need. A gate that costs an extra 25 minutes of rendering before it can run at all
+# is a gate every machine reports RED and everyone learns to ignore.
+#
+# The 25 PUBLIC-INPUT vectors ARE tracked one directory up (`../pasta-fp-bodyhash-pis.txt`) — they
+# are small, and they are the object the head weld, the tail weld and the continuity claim are
+# about, so §0/§1 of both gates run with no emit at all.
+link-*-trace.txt
+link-*-pis.txt

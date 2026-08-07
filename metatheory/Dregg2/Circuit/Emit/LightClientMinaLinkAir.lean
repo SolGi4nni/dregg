@@ -189,6 +189,28 @@ refuses one structurally (`LimbsLeg.mainRailOk`).
 `check-descriptor-drift.sh` is already RED; this adds a row to that ledger and the stamp remains the
 operator's ceremony.
 
+**2026-08-07 — THE FLAG DAY THIS RUNG DID *NOT* TAKE, NAMED SO IT IS FINDABLE AND COSTED.**
+
+`MinaStateBodyHashChain` derives `state_body_hash` and folds it, but **nothing in this descriptor
+relates `BODYHASH` to that chain's root** — a `proofBind`'s `commit`/`vk` name PUBLISHED values, and
+these nine columns are read and joined and NOT PI-bound. What would close it, in circuit:
+
+* publish `BODYHASH 0..8` as PI slots 20..28 and the body chain's 8-lane transcript accumulator as
+  29..36 (`piCount` **20 → 37**), so a recursion fold can reach them from `air_public_targets`;
+* weld this leaf to the body-hash chain's fold root with `cb.connect`, the way
+  `mina_wrap_finalize_fold.rs` welds ξ — **not** by re-pinning public inputs, which closes nothing;
+* the accumulator's own tie to *this block's* preimage stays an executor comparison against
+  `packToFields (bodyI decoded)`, which is a hash the node already computes from bytes it already
+  holds.
+
+⚠ **A BIND OF `(salt, BODYHASH)` ALONE WOULD BE VACUOUS** and that is why the accumulator is in the
+list rather than optional: `perm` is a permutation, so 25 links from a fixed head with free absorbed
+inputs reach every field element. Naming the stream is the whole content.
+
+Cost: this descriptor re-emits and re-VKs; `LightClientMinaAir.LINK_VK_LANES` moves, so
+`dregg-mina-lightclient-verify::v1` re-emits and re-VKs; every `MinaHeadProofWire` fails to decode.
+Three descriptors, one chain — the same cascade the 2026-08-06 seam paid.
+
 ## Scope — do NOT overclaim
 
 ⚠ This does **not** make the Mina light client's linkage verified. What a STARK over this descriptor
@@ -203,10 +225,17 @@ whole chain — the tip included — is a FORWARD computation from the pinned an
 hashes. To publish a tip of its choosing a prover must invert Poseidon; to open one tip to two
 histories it must collide it.
 
-⚠ **WHAT IT CAN STILL CHOOSE IS `BODYHASH`**, and that is the honest residual: nothing here says a
-body hash is a real Mina block body. That is `PICKLES_OPENING_WITNESSED` (⚑ renamed and narrowed
-2026-08-06), still a witness, and
-`state_body_hash`'s own preimage (~38 field elements under a second salt) is the next rung.
+⚠ **WHAT THIS DESCRIPTOR CAN STILL CHOOSE IS `BODYHASH`**, and the residual moved on 2026-08-07
+rather than closing. `state_body_hash`'s own preimage IS derived now — `MinaStateBodyHashChain`, 25
+links of the deployed `dregg-pasta-fp-chainlink::v1` from the pinned `MinaProtoStateBody` salt over
+the block's packed `Body.to_input`, proved and folded — so **the value a prover chooses moved from
+one felt to that felt's 2 381-bit preimage.** Say it in those words: relocated, not eliminated.
+⚠ **And the tie to THESE columns is not a constraint.** A `proofBind` can only name published
+values and `BODYHASH` is not PI-bound here (`LightClientAnchorConnectivity.
+minaLink_body_hash_is_joined_but_not_published`), so what relates this nonet to that chain's root is
+an EXECUTOR comparison. The flag day that would make it in-circuit is named in §"WHAT THIS BREAKS".
+Nothing here says a body hash is a real Mina block body either; that is
+`PICKLES_OPENING_WITNESSED` (⚑ renamed and narrowed 2026-08-06), still a witness.
 ⚠ Three further limits, none of them repealed: the seam's off-row half is the FRI/recursion
 obligation this whole stack carries; the limb re-encoding between this descriptor's `Faithful9`
 lanes and the absorb descriptor's 32 eight-bit limbs is an EXECUTOR check, not a constraint; and
@@ -266,7 +295,17 @@ PREIMAGE THE ROW DID NOT HAVE.** `OWNHASH` could not be the image of its row whi
 no preimage: Mina's identity is
 `state_hash = Poseidon_Fp(salt "MinaProtoState")[previous_state_hash ; state_body_hash]`
 (`Bridge/MinaStateHashDerive.lean:31`, `:392`), and the second argument was in no column. It is one
-now, and it is a WITNESS — what makes it a real block body is `PICKLES_OK`, unchanged. -/
+now.
+
+⚑ **AND SINCE 2026-08-07 IT IS DERIVED — OFF THIS DESCRIPTOR, AND SAY WHICH.**
+`Circuit/Emit/MinaStateBodyHashChain` computes it as a **25-link chain** of the deployed
+`dregg-pasta-fp-chainlink::v1`, from the pinned `MinaProtoStateBody` salt over the block's own packed
+`Body.to_input` preimage. ⚠ **The tie to THIS column is EXECUTOR-side, not a constraint**: nothing
+below relates `BODYHASH` to that chain's root, because a `proofBind` can only name PUBLIC INPUTS and
+these nine columns are not published. That is the flag day this rung leaves and §"WHAT THIS BREAKS"
+names it. What makes it a real block BODY — as opposed to a preimage somebody chose — is
+`PICKLES_OPENING_WITNESSED` (⚑ `PICKLES_WITNESSED` until 2026-08-06, `PICKLES_OK` until 08-05), and
+that is unchanged. -/
 def BODYHASH (j : Nat) : Nat := 2 * STATE_LIMBS + 4 + j
 
 /-- ⚑ **`HASH_VK i`** — lane `i` of the attested state-hash program's fingerprint. Columns 31..39,

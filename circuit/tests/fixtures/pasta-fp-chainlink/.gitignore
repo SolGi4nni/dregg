@@ -1,0 +1,14 @@
+# The 27 Lean-emitted PHASE-1 chain-link witnesses (`Dregg2.Circuit.Emit.MinaPhase1Chain`):
+# ~90 MB of trace text against a repository whose largest tracked file is 10 MB. GENERATED, not
+# tracked — emit them with the COMPILED exe (`lake env lean --run` costs 9m20s PER LINK, measured):
+#
+#     cd metatheory && lake build mina_fp_chain_emit \
+#       && ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures
+#
+# ⚠ This file was missing until 2026-08-07, so a partial emit left ~20 MB of untracked trace text
+# sitting in `git status` with nothing to stop a `git add -A` from committing it. The sibling
+# `pasta-fq-chainlink/` has had one since it was created.
+#
+# The 27 PUBLIC-INPUT vectors ARE tracked one directory up (`../pasta-fp-chainlink-pis.txt`).
+link-*-trace.txt
+link-*-pis.txt

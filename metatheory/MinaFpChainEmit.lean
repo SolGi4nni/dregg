@@ -14,14 +14,21 @@ Renders, from the Lean interpreters and nothing else:
     devnet blockchain Wrap verifier index's 28 commitments, whose link 27 OUTPUT LANE 0 is
     `VKDIGEST`, the element the phase-1 tape *starts* with. ⚑ **THE SAME DESCRIPTOR**
     (`vkChainDesc = MinaPhase1Chain.chainDesc`, by `rfl`): 28 more witnesses, no new AIR.
+  * the **25 body-hash links** of `Dregg2.Circuit.Emit.MinaStateBodyHashChain` — Mina devnet block
+    540221's own `state_body_hash`, from the `MinaProtoStateBody` salt over the block's packed
+    `Body.to_input` preimage, whose link 24 OUTPUT LANE 0 is `BODYHASH`. ⚑ **THE SAME DESCRIPTOR
+    AGAIN** (`bodyChainDesc = MinaPhase1Chain.chainDesc`, by `rfl`). ⚑ **AND THE HEAD IS NOT THE
+    FRESH SPONGE** — link 0's incoming PI block is the SALT, which is what makes the chain a *Mina
+    body* hash rather than a generic Poseidon run.
 
 ⚠ **COMPILED FOR A MEASURED REASON**, the same one `MinaChainEmit` records: one 2 048×469 trace
 costs **9 min 20 s** through `lake env lean --run` (Lean's INTERPRETER). That is a codegen cost, not
 a cost of the chain. Same objects, `leanc`.
 
     lake build mina_fp_chain_emit
-    ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 1   # round + absorb + link 26
-    ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures     # …and all 27 links
+    ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 1 0  # round + absorb + link 26
+    ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 0 25 # …and the 25 body links
+    ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures      # …and everything
 
 It authors nothing. Every cell comes from `runRowsVecAt` — the STRICT generator
 `runRowsVecAt_is_runRowsAt` welds to `runRowsAt` — and every public input from `chainPIs`/
@@ -36,6 +43,7 @@ harness `include_str!`s — the round trace, the absorb trace and link 26's trac
 -/
 import Dregg2.Circuit.Emit.MinaPhase1Chain
 import Dregg2.Circuit.Emit.MinaWrapVkDigestChain
+import Dregg2.Circuit.Emit.MinaStateBodyHashChain
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.MinaPhase1Chain
@@ -43,7 +51,11 @@ open Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp
 
 def render (r : List Int) : String := String.intercalate " " (r.map toString)
 
-/-- `mina_fp_chain_emit <dir> [count]` — `count` defaults to all 27 chain traces.
+/-- `mina_fp_chain_emit <dir> [count] [bodyCount]` — `count` defaults to all 27 phase-1 chain
+traces, `bodyCount` to all 25 body-hash traces. ⚑ **THE TWO COUNTS ARE SEPARATE, AND MEASURED:**
+one 2 048×469 trace costs ~1–5 min of rendering depending on machine load, so a caller that wants
+only the body-hash chain must not be made to pay for 25 phase-1 traces first. `… <dir> 0 25` is
+exactly the body-hash gate's prerequisite.
 
 ⚑ **THE DEFAULT ARTIFACTS ARE THE THREE THE HARNESS NEEDS**: the 32-row round, the 2 048-row
 absorption, and **link 26** — the link whose second outgoing lane IS `fq_digest`. Those three are
@@ -54,6 +66,9 @@ def main (args : List String) : IO UInt32 := do
   let count := match args.drop 1 with
     | c :: _ => min 27 (c.toNat!)
     | [] => 27
+  let bodyCount := match args.drop 2 with
+    | c :: _ => min Dregg2.Circuit.Emit.MinaStateBodyHashChain.BODY_LINKS (c.toNat!)
+    | [] => Dregg2.Circuit.Emit.MinaStateBodyHashChain.BODY_LINKS
   IO.FS.createDirAll dir
 
   -- ── the round instance (32 rows) ────────────────────────────────────────────────
@@ -94,6 +109,15 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"VK-chain link {vkDigestLink} (the index-digest link) \
     -> {dir}/pasta-fp-vkchain-27-trace.txt"
 
+  -- ── ⚑ the BODY-HASH chain: 25 links from the `MinaProtoStateBody` SALT ─────────
+  -- `Dregg2.Circuit.Emit.MinaStateBodyHashChain`. THE SAME DESCRIPTOR — no new AIR, 25 more
+  -- witnesses. Link 24's OUTGOING LANE 0 is `state_body_hash`, the value the light-client link
+  -- rung carried as a free witness nonet until 2026-08-07.
+  let bodyPis := (List.range Dregg2.Circuit.Emit.MinaStateBodyHashChain.BODY_LINKS).map
+    (fun j => render (Dregg2.Circuit.Emit.MinaStateBodyHashChain.bodyChainPIs j))
+  IO.FS.writeFile (dir ++ "/pasta-fp-bodyhash-pis.txt") (String.intercalate "\n" bodyPis ++ "\n")
+  IO.println s!"all 25 body-hash public-input vectors -> {dir}/pasta-fp-bodyhash-pis.txt"
+
   -- ── the remaining links, on demand ──────────────────────────────────────────────
   IO.FS.createDirAll (dir ++ "/pasta-fp-chainlink")
   for j in [0:count] do
@@ -103,6 +127,16 @@ def main (args : List String) : IO UInt32 := do
       (String.intercalate "\n" rows ++ "\n")
     IO.println s!"link {j}/{count} emitted ({rows.length} rows)"
 
+  -- ── ⚑ the 25 body-hash traces, on demand ────────────────────────────────────────
+  IO.FS.createDirAll (dir ++ "/pasta-fp-bodyhash")
+  for j in [0:bodyCount] do
+    IO.FS.writeFile s!"{dir}/pasta-fp-bodyhash/link-{j}-pis.txt" (bodyPis.getD j "" ++ "\n")
+    let rows := (Dregg2.Circuit.Emit.MinaStateBodyHashChain.bodyChainTrace j).map render
+    IO.FS.writeFile s!"{dir}/pasta-fp-bodyhash/link-{j}-trace.txt"
+      (String.intercalate "\n" rows ++ "\n")
+    IO.println s!"body-hash link {j}/{bodyCount} emitted ({rows.length} rows)"
+
   if count < 27 then
-    IO.println s!"⚠ PARTIAL: {count}/27 chain traces (the three tracked fixtures are complete)."
+    IO.println s!"⚠ PARTIAL: {count}/27 chain traces and {bodyCount}/25 body-hash traces \
+      (the tracked fixtures are complete)."
   return 0

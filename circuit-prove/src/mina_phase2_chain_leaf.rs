@@ -81,6 +81,13 @@ type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericCon
 const CHAINLINK_DESC_JSON: &str =
     include_str!("../../circuit/descriptors/by-name/pasta-fq-chainlink.json");
 
+/// ⚑ **THE Fp TWIN.** `dregg-pasta-fp-chainlink::v1` — same 2 048 instructions, same 469 columns,
+/// same `chainPins` layout, `fp_kimchi`'s constants instead of `fq_kimchi`'s. Three Lean chains ride
+/// it (`MinaPhase1Chain`'s 27 transcript links, `MinaWrapVkDigestChain`'s 28 index links,
+/// `MinaStateBodyHashChain`'s 25 body-hash links) and the leaf/fold below is generic over which.
+const FP_CHAINLINK_DESC_JSON: &str =
+    include_str!("../../circuit/descriptors/by-name/pasta-fp-chainlink.json");
+
 // ⚑ THE CLAIM SHAPE AND ITS READER LIVE IN `dregg-recursion-verify`, NOT HERE. A node that
 // consumes a fold ROOT must read the claim without linking this crate; a second copy of the
 // layout on the verify side is the "two shapes that agree today" failure in its purest form. The
@@ -109,7 +116,17 @@ pub const CHAIN_PI_COUNT: usize = ABSORBED_PI_LO + ABSORBED_WIDTH;
 
 /// Parse the Lean-emitted chain-link descriptor. Rust authors none of it.
 pub fn chain_link_descriptor() -> Result<EffectVmDescriptor2, String> {
-    let desc = parse_vm_descriptor2(CHAINLINK_DESC_JSON)
+    parse_chain_link_descriptor(CHAINLINK_DESC_JSON)
+}
+
+/// ⚑ Parse the Lean-emitted **Fp** chain-link descriptor — the one the phase-1 transcript, the
+/// VK-digest chain and the state-body-hash chain all run on.
+pub fn fp_chain_link_descriptor() -> Result<EffectVmDescriptor2, String> {
+    parse_chain_link_descriptor(FP_CHAINLINK_DESC_JSON)
+}
+
+fn parse_chain_link_descriptor(json: &str) -> Result<EffectVmDescriptor2, String> {
+    let desc = parse_vm_descriptor2(json)
         .map_err(|e| format!("chain-link descriptor parse failed: {e}"))?;
     if desc.public_input_count != CHAIN_PI_COUNT {
         return Err(format!(
@@ -132,16 +149,28 @@ pub fn prove_chain_link_leaf(
     public_inputs: &[BabyBear],
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    prove_chain_link_leaf_with(&chain_link_descriptor()?, trace, public_inputs, config)
+}
+
+/// ⚑ The same leaf, over a CALLER-SUPPLIED chain-link descriptor. The claim shape, the exposed
+/// slice and the transcript commitment are identical — `dregg-pasta-fp-chainlink::v1` and
+/// `dregg-pasta-fq-chainlink::v1` share `MinaPhase2Chain.chainPins` byte for byte, so a second copy
+/// of this function per field would be two shapes that agree today.
+pub fn prove_chain_link_leaf_with(
+    desc: &EffectVmDescriptor2,
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     if public_inputs.len() != CHAIN_PI_COUNT {
         return Err(format!(
             "a chain link carries exactly {CHAIN_PI_COUNT} public inputs, got {}",
             public_inputs.len()
         ));
     }
-    let desc = chain_link_descriptor()?;
 
     let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
-        &desc,
+        desc,
         trace,
         public_inputs,
         &MemBoundaryWitness::default(),
@@ -152,7 +181,7 @@ pub fn prove_chain_link_leaf(
     .map_err(|e| format!("chain-link inner IR-v2 prove failed: {e}"))?;
 
     let (airs, table_public_inputs, common) =
-        ir2_airs_and_common_for_config(&desc, &inner, public_inputs, config)
+        ir2_airs_and_common_for_config(desc, &inner, public_inputs, config)
             .map_err(|e| format!("chain-link verify-triple build failed: {e}"))?;
 
     let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
@@ -321,16 +350,27 @@ pub fn host_chain_transcript_acc(link_pis: &[Vec<BabyBear>]) -> [BabyBear; SEG_D
 pub fn prove_chain_fold(
     link_witnesses: &[(Vec<Vec<BabyBear>>, Vec<BabyBear>)],
     config: &DreggRecursionConfig,
+    progress: impl FnMut(usize, &str),
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    prove_chain_fold_with(&chain_link_descriptor()?, link_witnesses, config, progress)
+}
+
+/// ⚑ The same whole-chain fold, over a caller-supplied chain-link descriptor.
+pub fn prove_chain_fold_with(
+    desc: &EffectVmDescriptor2,
+    link_witnesses: &[(Vec<Vec<BabyBear>>, Vec<BabyBear>)],
+    config: &DreggRecursionConfig,
     mut progress: impl FnMut(usize, &str),
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     if link_witnesses.is_empty() {
         return Err("a chain fold needs at least one link".into());
     }
     progress(0, "leaf");
-    let mut acc = prove_chain_link_leaf(&link_witnesses[0].0, &link_witnesses[0].1, config)?;
+    let mut acc =
+        prove_chain_link_leaf_with(desc, &link_witnesses[0].0, &link_witnesses[0].1, config)?;
     for (i, (trace, pis)) in link_witnesses.iter().enumerate().skip(1) {
         progress(i, "leaf");
-        let leaf = prove_chain_link_leaf(trace, pis, config)?;
+        let leaf = prove_chain_link_leaf_with(desc, trace, pis, config)?;
         progress(i, "fold");
         acc = fold_chain_links(&acc, &leaf, config)?;
     }

@@ -1,5 +1,82 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑ AUGUST 7 (`BODYHASH`) — **DERIVED**: 25 links, no new AIR, and the standing permutation count was 26
+
+`LightClientMinaLinkAir` derived `OWNHASH` on 08-06 and named the residual in the same breath:
+*"**WHAT IT CAN STILL CHOOSE IS `BODYHASH`** … `state_body_hash`'s own preimage is **the next
+rung**."* Built: `Dregg2.Circuit.Emit.MinaStateBodyHashChain`.
+
+**⛑ THE PRICE WAS RE-DERIVED AND THE INHERITED FIGURE WAS OFF BY ONE.**
+`MinaStateHashPackPrice.PERMS_FOR_BODY` read `(49 + 1) / 2 + 1 = 26` — rate blocks plus a closing
+permutation. The upstream absorb loop permutes **only when an element ARRIVES at a full rate
+block**, so a final partial block is left unpermuted and **the squeeze supplies ITS permutation**
+rather than adding one after a completed block. It is **25**. That is the same off-by-one
+`PastaPoseidon` §5's double-permute bug was restructured out of existence in 07-27; it survived in a
+*price*, which is arithmetic nobody runs the sponge for. ⚑ And it is DERIVED now, not written down:
+`pairsOf_length` proves `⌈n/2⌉` at every list, `MinaPhase1Chain.the_pairs_are_the_absorb_schedule`
+proves that pairing IS the upstream state machine's at every `Params`, and
+`the_price_files_count_is_the_schedules` welds the price file's constant to the chain's link count
+so they cannot drift apart again. Downstream: `SPONGE_ROWS` 42 900 → **41 250**, the packing's share
+3.8% → just under 4%, both still bracketed in the kernel.
+
+**⛑ NO NEW AIR.** `bodyChainDesc = MinaPhase1Chain.chainDesc` by `rfl` — `dregg-pasta-fp-chainlink::v1`
+unchanged, the third chain to ride it after the 27 phase-1 transcript links and the 28 VK-digest
+links. **Nothing emits, no VK rotates, nothing re-genesises.** The artifact cost is 25 witnesses.
+
+**⛑⛑ THE HEAD IS THE SALT, AND THAT IS THE LOAD-BEARING PART.** With a free incoming state the rung
+is vacuous and not weakly so: `perm` is a permutation, so 25 links from a chosen head reach every
+field element. `the_body_chain_head_is_the_salt` pins link 0's 96 incoming felts to
+`Random_oracle.salt "MinaProtoStateBody"`, and the Rust gate compares the **wire** against
+openmina's own regression constants rather than against the Lean file that emitted it.
+`the_fresh_sponge_head_gives_a_different_body_hash` exhibits the copy-paste it refuses.
+
+**BOTH POLARITIES, RELEASE, REFUSING GATE NAMED.**
+
+| tamper | rail | refusing gate | result |
+|---|---|---|---|
+| a body element moved, the CLAIM untouched (right hash, wrong body) | `prove_vm_descriptor2_unchecked` | the **AIR** (`OodEvaluationMismatch { index: Some(0) }`) | REFUSED |
+| the incoming head moved off the salt | `prove_vm_descriptor2_unchecked` | the **AIR** | REFUSED |
+| the third outgoing lane forged | `prove_vm_descriptor2_unchecked` | the **AIR** | REFUSED |
+| link 2 folded onto link 0 (link 1 skipped) | recursion fold | the 96 in-circuit `cb.connect`s (`WitnessConflict`) | REFUSED |
+
+**MEASURED, laptop, release, `--test-threads=1`:** 25 leaves + 24 folds, root verified, in **514 s**
+— one leaf **8.6 s**, one fold **8.2 s**; whole file 709.7 s, **8/8**. Root `in_state` = the salt,
+root `out_state` lane 0 = block 540221's `state_body_hash`, root `transcript_acc` = the host mirror
+of the 49 absorbed elements. ⚑ Footprint, in the unit that binds: **469 declared / 1 037 committed**
+columns — the same shape whose Fq twin folds 46 leaves + 45 folds in 1 037 s. The wall clock is the
+BOX; the committed width is the SHAPE.
+
+⚑ The three AIR refusals go through the **unchecked** rail deliberately: `prove_vm_descriptor2`
+replays the witness in Rust and refuses eagerly, and a falsifier that stops there has measured a
+Rust `assert`, not a circuit. `circuit/tests/mina_body_hash_chain_proves.rs` **6/6**;
+`circuit-prove/tests/mina_body_hash_chain_fold.rs` (25 leaves + 24 folds, state inside the
+recursion).
+
+**⚠ WHAT A PROVER STILL CHOOSES — THE CHOICE MOVED, IT DID NOT DISAPPEAR.** From `BODYHASH` — one
+felt — to its **2 381-bit preimage**: 38 whole field elements and 819 width-declared chunks, each of
+which the daemon's consensus rules constrain and this circuit does not. Say it in those words.
+
+**Named follow-ups this leaves:**
+1. ⚑ **`minaLink_body_hash_is_joined_but_not_published` DID NOT FIRE, and that is the finding.**
+   Its docstring said *"it reds the day `state_body_hash` acquires its own sub-proof."* The sub-proof
+   landed and every literal is unchanged, because the derivation is a SIBLING CHAIN welded
+   executor-side rather than a constraint in `dregg-mina-lightclient-link::v1`. Re-aimed:
+   `isPiBound = false` is the specific gap, because a `proofBind`'s `commit`/`vk` name PUBLISHED
+   values and a fold reads `air_public_targets` — **an unpublished column cannot be `cb.connect`ed
+   at all.** Added `minaLink_body_hash_is_named_by_the_seam` so the theorem is not read as
+   "BODYHASH is unconnected", which would misdirect the repair.
+2. **The flag day, costed in `LightClientMinaLinkAir` §"WHAT THIS BREAKS":** publish `BODYHASH 0..8`
+   and the chain's 8-lane transcript accumulator (piCount **20 → 37**), weld with `cb.connect`.
+   ⚠ A bind of `(salt, BODYHASH)` alone would be **VACUOUS** — naming the absorbed stream is the
+   whole content. Cascade: both Mina descriptors re-emit and re-VK; every `MinaHeadProofWire` fails
+   to decode.
+3. **`pack_to_fields` is still not in circuit** — nothing forces each chunk `< 2^n`, without which
+   the packing is not injective. Cheap: 781 of the 819 chunks are ONE BIT.
+4. **The limb re-encoding** between this chain's 32 eight-bit limbs and the link rung's nine
+   `Faithful9` lanes is an executor check, not a constraint — the same obligation the 08-06 seam
+   already carries.
+
+
 ## ⛑⛑⛑ AUGUST 7 (PI COMPACTION) — **REFUSED**: four of the "dead eleven" are read by a deployed AIR, the census could not see it, and it can now (`368f5340e`)
 
 The August 6 entry below priced eleven published felts as dead and named one VK rotation to remove
