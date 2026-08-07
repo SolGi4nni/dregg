@@ -176,9 +176,9 @@ fn honest_settle_proves_and_verifies_end_to_end() {
         "leg B Consumed after"
     );
     assert_eq!(
-        dpis[46],
+        dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT],
         BabyBear::ONE,
-        "PI 46 = the pinned escrow selector"
+        "PI ROT_PI_COUNT (was 46) = the pinned escrow selector"
     );
 
     let mem_boundary = MemBoundaryWitness::default();

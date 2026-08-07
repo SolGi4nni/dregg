@@ -22,13 +22,13 @@
 //! (`Boundary{First}`) so it is INERT on padding ⟹ the honest settle is SATISFIABLE while the `sel = 0`
 //! dodge stays closed on the settle row; (2) add four cross-row caveat-uniformity `windowGate`s
 //! (`nxt(tag_k) − loc(tag_k) == 0`) coupling the row-0 decode to the LAST-row-pinned committed caveat
-//! (PI 45). This file proves, in real `--release` STARKs:
+//! (PI V1_PI_COUNT+3 (was 45)). This file proves, in real `--release` STARKs:
 //!   * the honest escrow-declared settle PROVES + VERIFIES (the satisfiability positive control — the
 //!     keystone: an honest settle must *prove*, not merely "no false reject");
 //!   * the no-escrow settle still PROVES + VERIFIES (the inert control);
 //!   * a forged PARTIAL / PHANTOM settle on a declared-escrow cell is REFUSED (the satisfaction teeth);
 //!   * the `sel = 0` dodge on the settle row is REFUSED (the first-row force tooth);
-//!   * a forged NON-UNIFORM caveat manifest (no-escrow on the settle row, escrow committed to PI 45) is
+//!   * a forged NON-UNIFORM caveat manifest (no-escrow on the settle row, escrow committed to PI V1_PI_COUNT+3 (was 45)) is
 //!     REFUSED (the uniformity tooth — the decode/commit decoupling closed).
 //!
 //! SLOW (full batch STARKs). Run:
@@ -130,7 +130,7 @@ fn carrier_inputs() -> (CellState, RotatedBlockWitness, RotatedBlockWitness) {
 }
 
 /// An escrow-DECLARING caveat manifest: slot 0 type tag = `SLOT_CAVEAT_TAG_SETTLE_ESCROW` (17), so the
-/// bound type-tag column `caveat_tag_col(0)` (= 291) reads 17 and the genuine `caveatCommit` (PI 45)
+/// bound type-tag column `caveat_tag_col(0)` (= 291) reads 17 and the genuine `caveatCommit` (PI V1_PI_COUNT+3 (was 45))
 /// reflects it.
 fn escrow_manifest() -> RotatedCaveatManifest {
     let mut m = RotatedCaveatManifest::default();
@@ -378,10 +378,10 @@ fn carrier_forged_phantom_settle_refused() {
 fn carrier_sel_zero_dodge_on_settle_row_refused() {
     let m = escrow_manifest();
     let (mut trace, mut dpis, desc) = carrier_trace(&m);
-    // Forge the selector OFF on the settle row + drop the PI 46 pin to match (so the PI binding does not
+    // Forge the selector OFF on the settle row + drop the PI ROT_PI_COUNT (was 46) pin to match (so the PI binding does not
     // independently reject — isolate the first-row force tooth).
     trace[0][ESCROW_SEL_COL] = BabyBear::ZERO;
-    dpis[46] = BabyBear::ZERO;
+    dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT] = BabyBear::ZERO;
     assert_eq!(
         trace[0][FLOOR_ESCROW_COL],
         BabyBear::ONE,
@@ -396,7 +396,7 @@ fn carrier_sel_zero_dodge_on_settle_row_refused() {
 
 // ====================================================================================================
 // TOOTH 4 — a forged NON-UNIFORM caveat manifest is REFUSED. A forger commits the cell's REAL escrow
-// manifest to PI 45 (the last row), but lights a NO-escrow manifest on the SETTLE row (so the row-0
+// manifest to PI V1_PI_COUNT+3 (was 45) (the last row), but lights a NO-escrow manifest on the SETTLE row (so the row-0
 // decode reads FLOOR = 0 and the first-row force goes inert) — the caveat-uniformity windowGate
 // `nxt(tag_0) − loc(tag_0)` bites between the settle row (no-escrow) and the next row (escrow). This
 // closes the decode/commit decoupling (the secondary defect).
@@ -415,7 +415,7 @@ fn carrier_nonuniform_caveat_refused() {
         BabyBear::ZERO,
         "forged no-escrow decode on the settle row"
     );
-    // ...while the committed manifest (PI 45, last row) still declares escrow.
+    // ...while the committed manifest (PI V1_PI_COUNT+3 (was 45), last row) still declares escrow.
     assert_eq!(
         trace[trace.len() - 1][caveat_tag_col(0)],
         BabyBear::new(SLOT_CAVEAT_TAG_SETTLE_ESCROW),

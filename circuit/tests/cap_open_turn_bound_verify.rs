@@ -7,7 +7,8 @@
 //! opened leaf's `target`, and the depth-16 membership open chains that leaf to the committed cap
 //! root. The verifier ANCHORS that PI to the TRUSTED turn it holds (`anchor_cap_open_turn_pins`,
 //! the deployment realization of the named `TurnIdentityAnchored` predicate), exactly as the
-//! record-pin family anchors `dpis[46]` from the trusted post-cell.
+//! record-pin family anchors `dpis[ROT_PI_COUNT]` from the trusted post-cell (the literal was
+//! `dpis[46]` until the 2026-08-07 seven-slot PI compaction took it to 39).
 //!
 //! THE FORCING (the light-client-relevant tooth): a ledgerless light client, holding only the
 //! trusted turn, can conclude the published turn's `src` MATCHES the proven transition. This test

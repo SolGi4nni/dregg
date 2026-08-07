@@ -190,7 +190,7 @@ fn no_cell_write_audit(effect: Effect, name: &str) -> (bool, bool, bool) {
     assert_eq!(
         desc.public_input_count, 50,
         "{name}: a no-cell-write passthrough carries the rotated 46-PI vector + the 4 dsl rc pins \
-         (withDfaRcPins: rc at PI 46..49; no per-effect fifth pin) = 50"
+         (withDfaRcPins: rc at PI ROT_PI_COUNT (was 46)..49; no per-effect fifth pin) = 50"
     );
 
     // The rotated descriptor binds NONE of PI[16..20] (the effects_hash): the produced output is
@@ -257,7 +257,7 @@ fn no_cell_write_audit(effect: Effect, name: &str) -> (bool, bool, bool) {
     // BINDING TOOTH (the genuine no-cell-write binding): forge a WITNESS-CARRIED rotated limb of
     // the AFTER block — the authority digest (the perms residue, NOT one of the welded
     // balance/nonce/fields columns) — so the AFTER block publishes a DIFFERENT committed limb (and a
-    // different commit) while we keep the HONEST published PIs. The rotated NEW_COMMIT pin (PI 43)
+    // different commit) while we keep the HONEST published PIs. The rotated NEW_COMMIT pin (PI V1_PI_COUNT+1 (was 43))
     // then disagrees with the forged AFTER commit carrier → UNSAT. This is the same shape as the
     // perms/vk template: a self-consistent forged post-cell that differs in a committed (non-welded)
     // limb is caught by the commit chain.
@@ -410,7 +410,7 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
     assert_eq!(
         desc.public_input_count, 58,
         "makeSovereign descriptor DECLARES all 8 authority record-pins + the 4 dsl rc pins \
-         (46 rotated + H1 record-pin8 at PI 46..53 + withDfaRcPins rc at PI 54..57 = 58)"
+         (46 rotated + H1 record-pin8 at PI ROT_PI_COUNT (was 46)..53 + withDfaRcPins rc at PI 54..57 = 58)"
     );
 
     let st = CellState::new(balance as u64, 0);
@@ -487,7 +487,7 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
          Some(B_AUTHORITY_DIGEST) → record-pin8 at 46..53, then the rc tail at 54..57)"
     );
     assert_eq!(
-        dpis[46],
+        dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT],
         last[AFTER_BASE + B_AUTHORITY_DIGEST],
         "PI[46] is the AFTER block's committed authority-digest limb (the record pin)"
     );
@@ -535,7 +535,8 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
     )
     .expect("generator builds the forged-residue trace");
     // The light client is shown the HONEST record pin (PI[46]); the committed AFTER limb is forged.
-    forged_dpis[46] = dpis[46];
+    forged_dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT] =
+        dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT];
 
     assert_eq!(
         forged_trace[forged_trace.len() - 1][AFTER_BASE + B_AUTHORITY_DIGEST],
@@ -544,7 +545,7 @@ fn makesovereign_forced_on_wire_rejects_forged_authority_digest_anchor_disabled(
     );
     assert_ne!(
         forged_trace[forged_trace.len() - 1][AFTER_BASE + B_AUTHORITY_DIGEST],
-        forged_dpis[46],
+        forged_dpis[dregg_circuit::effect_vm::trace_rotated::ROT_PI_COUNT],
         "the committed AFTER authority-digest != the published record pin — the weld's UNSAT precondition"
     );
 
@@ -603,7 +604,7 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
         parse_vm_descriptor2(rotated_descriptor_json(name)).expect("setFieldDyn descriptor parses");
     assert_eq!(
         desc.public_input_count, 51,
-        "setFieldDyn DECLARES 46 rotated + the fields-root weld fifth PIN at PI 46 + the 4 \
+        "setFieldDyn DECLARES 46 rotated + the fields-root weld fifth PIN at PI ROT_PI_COUNT (was 46) + the 4 \
          `withDfaRcPins` rc tail SLOTS at PI 47..50 = 51. ⚑ SLOTS, not pins: `dropUnforcedPins` \
          deleted the four rc `.piBinding`s (their columns are read by nothing) and left `piCount` \
          untouched, so those four are now verifier-supplied inputs the AIR ignores. The fifth pin \

@@ -11,7 +11,8 @@
 //!     the chip-faithful 8-felt commit (`poseidon2::wire_commit_8_chip` — the byte-twin of the
 //!     circuit's `fill_wide_block`) over each cell's `compute_rotated_pre_limbs`, OVERRIDES the 16
 //!     wide PIs with those trusted commits, and `verify_vm_descriptor2` ACCEPTS — exactly the wide
-//!     analog of the live executor's `dpis[42]/[43]` override (the 1-felt-retire the flip performs).
+//!     analog of the live executor's `dpis[V1_PI_COUNT]/[+1]` override (the 1-felt-retire the flip
+//!     performs). Those were `[42]/[43]` until the 2026-08-07 seven-slot PI compaction.
 //!   * **THE FORGERY TOOTH**: a forged trusted commit (a state the kernel never produced) makes the
 //!     anchored 16 wide PIs disagree with the proof's bound carrier ⇒ `verify_vm_descriptor2` UNSAT.
 //!
@@ -152,7 +153,8 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     let wide_pi_base = desc.public_input_count - WIDE_COMMIT_PI_COUNT;
 
     // -- EXECUTOR LEG: anchor the 16 wide PIs to the TRUSTED before/after cell chip-commits (the wide
-    //    analog of the live `dpis[42]/[43]` override — the 1-felt-retire the flip performs). --
+    //    analog of the live `dpis[V1_PI_COUNT]/[+1]` override — the 1-felt-retire the flip
+    //    performs; `[42]/[43]` before the 2026-08-07 seven-slot PI compaction). --
     let before_ctx = V9RotationContext {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
