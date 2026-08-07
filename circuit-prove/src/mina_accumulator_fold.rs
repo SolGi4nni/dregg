@@ -18,6 +18,18 @@
 //!
 //! ## ⚑⚑ AND MOST OF THAT IS GONE — the leaf minted at its OWN blowup, measured 2026-08-07
 //!
+//! ⚑ **AND IT IS THE DEPLOYED PATH NOW, NOT A SIBLING FUNCTION.**
+//! [`prove_accumulator_segment`] no longer passes one config for both FRI roles: it takes the
+//! engine its CHILD is minted at and DERIVES its own wrap engine with
+//! [`dregg_recursion_verify::config::recursion_layer_over`]. [`prove_accumulator_fold`] derives
+//! the fold engine the same way (one more application — the fixed point), so every node above a
+//! leaf runs at `create_recursion_config`'s knobs.
+//!
+//! ⚠ **WHAT ROTATES:** the recursion VK of every accumulator leaf, every fold, and the root. A
+//! root is now a `(log_blowup 3, 38 query)` proof and [`accumulator_root_config`] — **not**
+//! `ir2_leaf_wrap_config()` — is what verifies it. Nothing is re-emitted: no AIR, no descriptor
+//! JSON, no trace, no public input. Only the recursion tree's shape.
+//!
 //! [`prove_accumulator_segment_split`] with
 //! [`dregg_recursion_verify::config::ir2_leaf_wrap_split_config`] verifies the child at the
 //! IDENTICAL `(lb 6, q 19, qpow 16)` engine and mints this layer's own output at
@@ -204,7 +216,7 @@ use crate::gpu_backend::{
     prove_recursion_aggregation_auto_with_expose, prove_recursion_layer_auto_with_expose,
 };
 use crate::ivc_turn_chain::{expose_claim_instance_index, ir2_leaf_wrap_config};
-use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
+use crate::plonky3_recursion_impl::recursive::{DreggRecursionConfig, recursion_layer_over};
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
 
@@ -295,13 +307,25 @@ pub fn accumulator_descriptor(rung: Rung) -> Result<EffectVmDescriptor2, String>
 /// PIs the inner batch proof binds — so a prover cannot expose an accumulator that disagrees with
 /// the chain it just proved. The two blocks are CONTIGUOUS by the Lean pin layout, which is why
 /// this is one slice rather than two.
+/// ⚑ `config` is the engine the INNER descriptor batch is minted at (and therefore the engine the
+/// wrap's in-circuit verifier checks it against). The wrap's OWN minting engine is **derived**
+/// from it by [`recursion_layer_over`] — it is not this config, and it is not a hardcoded one
+/// either. That derivation is the whole 13.8×: the wrap commits its verification circuit at
+/// `log_blowup 3` instead of inheriting its child's `6`, while the child's in-circuit
+/// verification stays bit-for-bit what it was.
 pub fn prove_accumulator_segment(
     rung: Rung,
     trace: &[Vec<BabyBear>],
     public_inputs: &[BabyBear],
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
-    prove_accumulator_segment_split(rung, trace, public_inputs, config, config)
+    prove_accumulator_segment_split(
+        rung,
+        trace,
+        public_inputs,
+        config,
+        &recursion_layer_over(config),
+    )
 }
 
 /// ⚑⚑ **THE LEAF WITH ITS TWO FRI ROLES NAMED SEPARATELY** — and they were never one.
@@ -492,6 +516,12 @@ pub fn prove_accumulator_fold(
         }
     };
 
+    // ⚑ The fold layer's config is DERIVED from the leaf's, not asserted: a leaf now emits at
+    // `recursion_layer_over(config)`'s mint knobs, so every node above it verifies at those. One
+    // more application of the same rule reaches the fixed point (`create_recursion_config`), and
+    // reaching it by derivation is what keeps this honest if `config` is ever retuned.
+    let fold_config = recursion_layer_over(&recursion_layer_over(config));
+
     progress(0, "leaf");
     let mut acc = prove_accumulator_segment(rung_of(0), &segments[0].0, &segments[0].1, config)?;
     for (i, (trace, pis)) in segments.iter().enumerate().skip(1) {
@@ -500,15 +530,35 @@ pub fn prove_accumulator_fold(
         progress(i, "fold");
         // ⚑ TRACKED pins — see `fold_vk_pin` for what a tracked pin does and does not say.
         let pins = FoldVkPins::tracked(&acc, &leaf)?;
-        acc = fold_accumulator_segments(&acc, &leaf, &pins, config)?;
+        acc = fold_accumulator_segments(&acc, &leaf, &pins, &fold_config)?;
     }
     Ok(acc)
 }
 
-/// The default config every accumulator leaf, fold and verify runs at.
-pub fn accumulator_config() -> DreggRecursionConfig {
+/// ⚑ **THE ENGINE THE ACCUMULATOR'S INNER DESCRIPTOR BATCH IS MINTED AT** — and therefore the
+/// engine the leaf wrap's in-circuit verifier checks it against. Pass this to
+/// [`prove_accumulator_segment`] / [`prove_accumulator_fold`]; the wrap and fold configs are
+/// derived from it by [`recursion_layer_over`].
+///
+/// ⚠ It is **NOT** the config a root verifies under any more — that is
+/// [`accumulator_root_config`]. The single `accumulator_config()` that used to answer both
+/// questions is deleted rather than kept as an alias: it was only ever right because the two
+/// answers coincided, and a name that silently means the wrong one of a pair is how the GPU
+/// dispatch minted at a constant for two months.
+pub fn accumulator_inner_config() -> DreggRecursionConfig {
     ir2_leaf_wrap_config()
 }
+
+/// ⚑ **THE ENGINE EVERY LAYER ABOVE AN ACCUMULATOR LEAF RUNS AT** — every fold, and the native
+/// verify of the root. The fixed point of [`recursion_layer_over`], i.e.
+/// `create_recursion_config()`: a leaf wrap emits at the recursion engine, so its parent verifies
+/// at the recursion engine, and so does its parent's parent.
+///
+/// ⚑ RE-EXPORTED, not redefined. The prove side and the verify side must not each own a "the
+/// config a root runs at" — that is the two-shapes-that-agree-today failure the claim reader four
+/// items above this is re-exported to avoid, and a fold config is exactly the kind of thing that
+/// would drift silently (both sides would still build; only the FRI would disagree).
+pub use dregg_recursion_verify::accumulator_root::accumulator_root_config;
 
 // ============================================================================
 // THE HOST MIRROR — what a caller derives the leaf public inputs from.

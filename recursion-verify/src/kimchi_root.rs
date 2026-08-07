@@ -190,9 +190,8 @@ pub fn verify_kimchi_root_bytes(
 
 /// The config every leaf, fold and root in the kimchi-verifier tower runs at.
 ///
-/// The SAME one [`crate::chain_root::chain_root_config`] returns — both children of this gadget's
-/// top fold are roots of that tower, and an aggregation of two proofs minted at different FRI
-/// engines does not build.
+/// ⚠ Deliberately LEFT at the single-engine shape by the leaf-wrap mint split; see
+/// [`crate::chain_root::chain_root_config`].
 pub fn kimchi_root_config() -> DreggRecursionConfig {
     crate::config::ir2_leaf_wrap_config()
 }

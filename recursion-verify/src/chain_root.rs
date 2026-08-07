@@ -100,9 +100,8 @@ pub fn read_chain_claim_from_proof(
 
 /// The config a Mina phase-2 chain leaf, fold and root verify all run at.
 ///
-/// Verifying a chain root under [`crate::config::create_recursion_config`] instead simply fails
-/// (the inner FRI engine is log_blowup 6, not 3) — this exists so a consumer takes the config
-/// rather than assembling knobs.
+/// ⚠ This tower was deliberately LEFT at the single-engine shape by the IR-v2 leaf-wrap mint
+/// split, so this is still `ir2_leaf_wrap_config()` and nothing here rotated.
 pub fn chain_root_config() -> DreggRecursionConfig {
     crate::config::ir2_leaf_wrap_config()
 }

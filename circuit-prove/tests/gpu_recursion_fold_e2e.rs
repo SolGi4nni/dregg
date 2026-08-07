@@ -21,6 +21,25 @@
 //! 5. MEASURE the config-dependent PROVE phase (the GPU lever) CPU vs GPU, plus
 //!    the whole-layer wall clock, parity re-asserted.
 //!
+//! ## ⚑⚑ AND THE HOLE THE FIRST TWO TESTS COULD NOT SEE
+//!
+//! Both of them **hand-pair the configs**: they build `cpu_config` and `gpu_config` themselves and
+//! call `prove_recursion_layer_cpu` / `prove_recursion_layer_gpu` directly. That is a claim about
+//! the two BACKENDS. Production does not call either — it calls
+//! `prove_recursion_layer_auto_with_expose`, which PICKS a branch and derives the GPU branch's
+//! minting config from the caller's. And that derivation was the bug: for two months the GPU
+//! branch took its mint engine from a hardcoded `create_gpu_ir2_leaf_wrap_config()` and never read
+//! its argument, so *the two halves of one dispatch minted different proofs for the same call* —
+//! while this file was green, because it never went through the dispatch. Byte-identity was **true
+//! of the backends and false through the dispatch**.
+//!
+//! `both_dispatch_branches_mint_the_same_bytes` closes that: it drives
+//! `prove_recursion_layer_auto` with `DREGG_GPU_RECURSION` pinned to `cpu` and then `gpu`, at TWO
+//! configs whose mint engines differ — the split leaf wrap `(lb 3, q 38 / verify lb 6, q 19)` and
+//! `create_recursion_config` `(lb 3, q 38 / verify lb 3)` — and requires the two branches' bytes to
+//! agree at each. A branch that ignores its argument fails it by construction, because a hardcoded
+//! engine cannot be right for two different callers.
+//!
 //! Two tests, two regimes:
 //!   * `real_fold_layer_..` — the small leaf-wrap (~2^13 tables), cross-checked
 //!     byte-identical to the recursion library's own `build_and_prove_next_layer`.
@@ -437,4 +456,138 @@ fn recursion_tower_large_regime_byte_identical_on_gpu() {
         "byte-identical to CPU fold : YES ({} bytes)",
         cpu_bytes.len()
     );
+}
+
+/// ⚑⚑ **THE SAME CLAIM, THROUGH THE DISPATCH THE PRODUCTION LEAVES ACTUALLY TAKE.**
+///
+/// The two tests above prove CPU/GPU byte-identity by hand-pairing `cpu_config` with `gpu_config`
+/// and calling the two backends directly. Production calls neither: it calls
+/// `prove_recursion_layer_auto_with_expose`, which selects a branch from
+/// `DREGG_GPU_RECURSION` and derives the GPU branch's minting engine from the caller's config
+/// through `gpu_recursion_config_for`. That derivation is where the defect lived — a hardcoded
+/// `create_gpu_ir2_leaf_wrap_config()` that never read its argument — and no amount of backend
+/// parity could see it.
+///
+/// So this drives the DISPATCH, twice, at two configs whose mint engines are reached from
+/// different arguments:
+///
+/// * `recursion_layer_over(&ir2_leaf_wrap_config())` — the split leaf wrap, verify `(lb 6, q 19,
+///   qpow 16)` / mint `(lb 3, q 38, qpow 14)`. This is the config every production leaf now
+///   derives, and the one the old hardcode got wrong.
+/// * `create_recursion_config()` — verify and mint both `(lb 3, q 38, qpow 14)`.
+///
+/// One hardcoded engine cannot serve both, so a branch that ignores its argument fails here by
+/// construction rather than by a reviewer noticing. The assertions are on the EMITTED BYTES and on
+/// the emitted FRI shape, and the dispatch counters are read so the test knows which branch it
+/// just judged.
+///
+/// ⚠ `gpu` is honoured only when a native adapter exists; on a CPU-only box both legs take the CPU
+/// branch and the byte-identity assertion is trivially true. The test says so out loud rather than
+/// reporting a pass it did not earn — but the `cpu` leg's counter assertion is unconditional, so a
+/// dead policy knob is still caught everywhere.
+#[test]
+#[ignore = "GPU + slow: four real recursion layers through the production dispatch; run with --ignored --nocapture"]
+fn both_dispatch_branches_mint_the_same_bytes() {
+    use dregg_circuit_prove::gpu_backend::{
+        prove_recursion_layer_auto, recursion_dispatch_counters,
+    };
+    use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::recursion_layer_over;
+
+    // The child: a Lean-emitted membership descriptor batch at the IR-v2 descriptor engine — the
+    // engine BOTH configs under test verify at, so ONE child serves both.
+    let inner_config = ir2_leaf_wrap_config();
+    let leaf: Digest8 = core::array::from_fn(|i| BabyBear::new(1_234_567 + i as u32));
+    let (siblings, positions, _root) = create_test_witness(leaf, 2);
+    let desc = membership_descriptor_of_depth_4ary(siblings.len());
+    let (trace, public_inputs) =
+        membership_witness_4ary(leaf, &siblings, &positions).expect("membership witness");
+    let inner_proof = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        &desc,
+        &trace,
+        &public_inputs,
+        &MemBoundaryWitness::default(),
+        &[],
+        &UMemBoundaryWitness::default(),
+        &inner_config,
+    )
+    .expect("inner IR2 proof mints");
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(&desc, &inner_proof, &public_inputs, &inner_config)
+            .expect("verify triple");
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner_proof,
+            common_data: &common,
+            table_public_inputs,
+        };
+
+    // The split leaf wrap is reached by DERIVATION from the child's config, exactly as the
+    // production leaves reach it — not by naming a constant, which is what made the old assertion
+    // pass over an inert change.
+    for (label, config) in [
+        ("split leaf wrap", recursion_layer_over(&inner_config)),
+        (
+            "create_recursion_config",
+            dregg_circuit_prove::plonky3_recursion_impl::recursive::create_recursion_config(),
+        ),
+    ] {
+        let mut bytes: Vec<(&str, Vec<u8>, usize)> = Vec::new();
+        for policy in ["cpu", "gpu"] {
+            // SAFETY: read by `production_gpu_recursion_enabled()`; nothing else in this binary
+            // dispatches concurrently and nextest gives each test its own process.
+            unsafe { std::env::set_var("DREGG_GPU_RECURSION", policy) };
+            let (g0, c0) = recursion_dispatch_counters();
+            let out = prove_recursion_layer_auto(&input, &config)
+                .unwrap_or_else(|e| panic!("{label}/{policy}: dispatch failed: {e}"));
+            let (g1, c1) = recursion_dispatch_counters();
+            let (gpu_ran, cpu_ran) = (g1 - g0, c1 - c0);
+            if policy == "cpu" {
+                assert_eq!(
+                    (gpu_ran, cpu_ran),
+                    (0, 1),
+                    "{label}: DREGG_GPU_RECURSION=cpu must take the CPU branch — a dead policy \
+                     knob would make this loop judge one branch twice"
+                );
+            } else if gpu_ran == 0 {
+                println!(
+                    "  ⚠ {label}/gpu: no native adapter, fell back to CPU — the byte-identity \
+                     assertion below is trivially true on this box"
+                );
+            }
+            let q = out.0.proof.opening_proof.query_proofs.len();
+            // The emitted artifact must carry THIS config's engine on BOTH branches. This is the
+            // assertion the hand-paired tests structurally cannot make.
+            assert_eq!(
+                q,
+                config.mint_knobs().num_queries,
+                "{label}/{policy}: the dispatch emitted {q} query proofs against a config that \
+                 mints {} — the branch is not reading the config it was handed",
+                config.mint_knobs().num_queries
+            );
+            bytes.push((
+                policy,
+                postcard::to_allocvec(&out.0).expect("serializes"),
+                q,
+            ));
+        }
+        unsafe { std::env::remove_var("DREGG_GPU_RECURSION") };
+        assert_eq!(
+            bytes[0].1,
+            bytes[1].1,
+            "{label}: the two branches of ONE dispatch minted DIFFERENT proofs for the same call \
+             ({} vs {} bytes, {} vs {} query proofs)",
+            bytes[0].1.len(),
+            bytes[1].1.len(),
+            bytes[0].2,
+            bytes[1].2
+        );
+        println!(
+            "{label:<24} both branches: {} bytes, {} query proofs, mint lb {}",
+            bytes[0].1.len(),
+            bytes[0].2,
+            config.mint_knobs().log_blowup
+        );
+    }
 }

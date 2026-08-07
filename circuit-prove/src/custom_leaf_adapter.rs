@@ -244,7 +244,7 @@ use p3_uni_stark::StarkGenericConfig;
 use crate::custom_proof_bind::{CUSTOM_PROOF_PI_DOMAIN, ProofBindCommitment};
 use crate::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config;
 use crate::plonky3_recursion_impl::recursive::{
-    DreggRecursionConfig, create_recursion_backend_with_coeff_lookups,
+    DreggRecursionConfig, create_recursion_backend_with_coeff_lookups, recursion_layer_over,
 };
 
 /// The recursion config's challenge (extension) field — the field every leaf-wrap verifier
@@ -595,7 +595,7 @@ pub fn prove_custom_leaf_with_commitment(
 
     build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),
@@ -732,7 +732,7 @@ pub fn prove_custom_leaf_with_state_commitment(
 
     build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),
@@ -847,7 +847,7 @@ pub fn prove_custom_leaf_descriptor_with_state_commitment(
 
     build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),
@@ -1002,7 +1002,7 @@ pub fn prove_custom_leaf_descriptor_with_board_window(
 
     build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),
@@ -1142,7 +1142,7 @@ pub fn prove_custom_leaf_with_app_root_commitment(
 
     build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),
@@ -1257,7 +1257,7 @@ pub fn prove_direct_ir2_leaf_with_app_root_commitment(
 
     build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),
@@ -1371,7 +1371,7 @@ pub fn prove_direct_ir2_leaf_with_app_and_fields_root_commitment(
 
     build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),

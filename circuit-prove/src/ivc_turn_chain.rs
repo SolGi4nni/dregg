@@ -433,7 +433,7 @@ use crate::joint_turn_aggregation::{
     CarrierWitness, DescriptorParticipant, verify_descriptor_participant,
 };
 use crate::plonky3_recursion_impl::recursive::{
-    DreggRecursionConfig, create_recursion_backend, recursion_vk_fingerprint,
+    DreggRecursionConfig, create_recursion_backend, recursion_layer_over, recursion_vk_fingerprint,
     verify_recursive_batch_proof_with_config,
 };
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
@@ -1689,6 +1689,20 @@ pub fn prove_descriptor_leaf_rotated(
 /// call site resolves to the SAME function — not a second one that happens to agree.
 pub use dregg_recursion_verify::config::ir2_leaf_wrap_config;
 
+/// ⚑⚑ **THE ENGINE EVERY LAYER ABOVE A TURN-CHAIN LEAF RUNS AT** — every aggregation node, the
+/// root, and the native verify of that root. It is the fixed point of
+/// [`recursion_layer_over`], i.e. `create_recursion_config()`.
+///
+/// ⚠ **This is what [`ir2_leaf_wrap_config`] used to answer, and it is no longer the same
+/// object.** A leaf wrap verifies its child (the IR-v2 descriptor batch) at
+/// `ir2_leaf_wrap_config`'s engine but MINTS at this one, so the child's in-circuit verification
+/// is bit-for-bit unchanged while the wrap's own committed LDE falls 8×. A consumer that pins a
+/// root's config must pin THIS one; `ir2_leaf_wrap_config()` names an engine that no proof in a
+/// whole-chain artifact is minted under any more.
+pub fn turn_chain_root_config() -> DreggRecursionConfig {
+    dregg_recursion_verify::config::recursion_tower_root_config()
+}
+
 /// [`prove_descriptor_leaf_rotated`] under an explicit recursion config (the inner proof must
 /// have been minted under the SAME config — same FRI engine). Exposed so the smoke test +
 /// future chain wiring share one config object for mint + wrap + output-verify.
@@ -1722,7 +1736,7 @@ pub fn prove_descriptor_leaf_rotated_with_config(
 
     build_and_prove_next_layer::<DreggRecursionConfig, dregg_circuit::descriptor_ir2::Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
     )
@@ -1805,7 +1819,7 @@ pub fn prove_descriptor_leaf_with_pi_slice_expose(
         D,
     >(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),
@@ -1920,7 +1934,7 @@ pub fn prove_descriptor_leaf_rotated_with_segment(
         cb.expose_as_public_output(&seg);
     };
 
-    prove_recursion_layer_auto_with_expose(&input, config, Some(&expose))
+    prove_recursion_layer_auto_with_expose(&input, &recursion_layer_over(config), Some(&expose))
         .map_err(|e| format!("rotated native-batch segment leaf-wrap failed: {e}"))
 }
 
@@ -2085,7 +2099,7 @@ pub fn prove_descriptor_leaf_dual_expose_at(
         cb.expose_as_public_output(&claim);
     };
 
-    prove_recursion_layer_auto_with_expose(&input, config, Some(&expose))
+    prove_recursion_layer_auto_with_expose(&input, &recursion_layer_over(config), Some(&expose))
         .map_err(|e| format!("rotated dual-expose custom leaf-wrap failed: {e}"))
 }
 
@@ -2197,7 +2211,7 @@ pub fn prove_descriptor_leaf_expose_segment_and_claims(
         cb.expose_as_public_output(&claim);
     };
 
-    prove_recursion_layer_auto_with_expose(&input, config, Some(&expose))
+    prove_recursion_layer_auto_with_expose(&input, &recursion_layer_over(config), Some(&expose))
         .map_err(|e| format!("rotated multi-claim dual-expose leaf-wrap failed: {e}"))
 }
 
@@ -3012,6 +3026,10 @@ pub fn prove_welded_umem_turn_chain_recursive_staged(
     let chain_digest = root_seg.acc;
 
     let config = ir2_leaf_wrap_config();
+    // ⚑ THE FOLD ENGINE, DERIVED. A leaf wrap now emits at `recursion_layer_over(config)`'s mint
+    // knobs, so every node above it verifies at those — one more application of the same rule,
+    // which is its fixed point. See [`turn_chain_root_config`].
+    let fold_config = recursion_layer_over(&recursion_layer_over(&config));
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
 
@@ -3032,7 +3050,7 @@ pub fn prove_welded_umem_turn_chain_recursive_staged(
         .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
         batch_leaves.push(wrapped);
     }
-    let root = aggregate_tree(batch_leaves, &config, &backend, &params)?;
+    let root = aggregate_tree(batch_leaves, &fold_config, &backend, &params)?;
 
     Ok(WholeChainProof {
         root,
@@ -3273,7 +3291,7 @@ pub fn prove_descriptor_leaf_rotated_with_wide_segment(
         cb.expose_as_public_output(&seg);
     };
 
-    prove_recursion_layer_auto_with_expose(&input, config, Some(&expose))
+    prove_recursion_layer_auto_with_expose(&input, &recursion_layer_over(config), Some(&expose))
         .map_err(|e| format!("rotated native-batch WIDE segment leaf-wrap failed: {e}"))
 }
 
@@ -3467,6 +3485,10 @@ pub fn prove_wide_welded_umem_turn_chain_recursive_staged(
     let chain_digest = root_seg.acc;
 
     let config = ir2_leaf_wrap_config();
+    // ⚑ THE FOLD ENGINE, DERIVED. A leaf wrap now emits at `recursion_layer_over(config)`'s mint
+    // knobs, so every node above it verifies at those — one more application of the same rule,
+    // which is its fixed point. See [`turn_chain_root_config`].
+    let fold_config = recursion_layer_over(&recursion_layer_over(&config));
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
 
@@ -3487,7 +3509,7 @@ pub fn prove_wide_welded_umem_turn_chain_recursive_staged(
     }
     // (5) aggregate to ONE root, combining the wide segments in-circuit (8-felt continuity + count
     //     + ordered-digest fold). The root's exposed wide segment is the whole-chain claim.
-    let root = aggregate_tree_wide(batch_leaves, &config, &backend, &params)?;
+    let root = aggregate_tree_wide(batch_leaves, &fold_config, &backend, &params)?;
 
     Ok(WideWholeChainProof {
         root,
@@ -3504,7 +3526,9 @@ pub fn prove_wide_welded_umem_turn_chain_recursive_staged(
 ///
 ///   1. **VK pin** — the presented root's verifier-key fingerprint must equal `expected_vk`
 ///      (a root of a different circuit is refused).
-///   2. **The root** — the single root batch-STARK proof verifies under [`ir2_leaf_wrap_config`].
+///   2. **The root** — the single root batch-STARK proof verifies under
+///      [`turn_chain_root_config`] (⚠ it used to be [`ir2_leaf_wrap_config`]; a leaf wrap now
+///      mints at its own engine, so every node above it does too).
 ///   3. **The WIDE segment tooth** — the root's exposed ordered WIDE segment
 ///      `[first_old8, last_new8, count, acc]` (built BY CONSTRUCTION from the real wide
 ///      descriptor leaves and combined up the tree with 8-felt continuity) must equal the carried
@@ -3538,9 +3562,10 @@ pub fn verify_wide_turn_chain_recursive(
         });
     }
 
-    // (2) the root (at the rotated leaf-wrap config — the SAME FRI engine the whole wide tree
-    //     runs at).
-    verify_recursive_batch_proof_with_config(&proof.root.0, &ir2_leaf_wrap_config())
+    // (2) the root — at [`turn_chain_root_config`], the engine every node ABOVE a leaf mints
+    //     and verifies at. ⚠ NOT `ir2_leaf_wrap_config()`: that is the engine the leaf's CHILD
+    //     (the IR-v2 descriptor batch) is minted at, and no proof in this artifact carries it.
+    verify_recursive_batch_proof_with_config(&proof.root.0, &turn_chain_root_config())
         .map_err(|reason| TurnChainError::RecursionFailed { reason })?;
 
     // (3) THE WIDE SEGMENT TOOTH.
@@ -3910,7 +3935,9 @@ fn prove_chain_core_rotated(
 }
 
 /// The rotated fold core: like [`prove_chain_core`] but mints rotated native-batch leaves and
-/// runs the whole tree at [`ir2_leaf_wrap_config`], scheduling leaf proving + aggregation per the
+/// runs LEAVES at [`ir2_leaf_wrap_config`]'s VERIFY role and every node above them at
+/// [`turn_chain_root_config`] (⚠ it was ONE config for the whole tree until the leaf-wrap mint
+/// split), scheduling leaf proving + aggregation per the
 /// given [`ChainFoldStrategy`].
 fn prove_chain_core_rotated_with_fold(
     turns: &[&FinalizedTurn],
@@ -3961,6 +3988,10 @@ fn prove_chain_core_rotated_with_fold(
     // The ONE FRI engine the whole rotated tree runs at (inner proof + leaf-wrap +
     // aggregation), so the in-circuit FRI verifier params match every child's FRI engine.
     let config = ir2_leaf_wrap_config();
+    // ⚑ THE FOLD ENGINE, DERIVED. A leaf wrap now emits at `recursion_layer_over(config)`'s mint
+    // knobs, so every node above it verifies at those — one more application of the same rule,
+    // which is its fixed point. See [`turn_chain_root_config`].
+    let fold_config = recursion_layer_over(&recursion_layer_over(&config));
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
 
@@ -4008,7 +4039,7 @@ fn prove_chain_core_rotated_with_fold(
                 turns.len(),
                 window,
                 |i| mint_rotated_turn_leaf(i, turns[i], &config),
-                &config,
+                &fold_config,
                 &backend,
                 &params,
             )?
@@ -4026,7 +4057,7 @@ fn prove_chain_core_rotated_with_fold(
             if crate::merge_pool::parallel_aggregation_enabled() {
                 crate::merge_pool::aggregate_tree_scan_state_configured(batch_leaves)?
             } else {
-                aggregate_tree(batch_leaves, &config, &backend, &params)?
+                aggregate_tree(batch_leaves, &fold_config, &backend, &params)?
             }
         }
     };
@@ -4051,6 +4082,15 @@ fn mint_rotated_turn_leaf(
     t: &FinalizedTurn,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, TurnChainError> {
+    // ⚑⚑ TWO ROLES, TWO CONFIGS — this function is a mini tower, not a leaf minter. `config` is
+    // the engine the inner IR-v2 descriptor batches are minted at; every LEAF below derives its
+    // own wrap engine from it (`recursion_layer_over`, inside the leaf functions), so a leaf now
+    // emits at `create_recursion_config`'s knobs. The BINDING NODES fold those leaves, so they
+    // must verify at what the leaves emit — one more application of the same rule, which is its
+    // fixed point. Handing a binding node `config` instead is how a fold ends up verifying its
+    // children at an engine they were not minted at.
+    let fold_config = recursion_layer_over(&recursion_layer_over(config));
+
     // One rotated descriptor leaf per finalized turn, EACH carrying its ordered segment
     // (first_old/last_new bound to the descriptor's real roots, count=1, acc=H(old,new)).
     //
@@ -4232,7 +4272,7 @@ fn mint_rotated_turn_leaf(
                                 &dual,
                                 &custom_leaf,
                                 &carrier_fold_pins(&dual, &custom_leaf, i)?,
-                                config,
+                                &fold_config,
                                 bw.window_len(),
                             )
                             .map_err(|e| TurnChainError::TurnProofInvalid {
@@ -4245,7 +4285,7 @@ fn mint_rotated_turn_leaf(
                                 &dual,
                                 &custom_leaf,
                                 &carrier_fold_pins(&dual, &custom_leaf, i)?,
-                                config,
+                                &fold_config,
                             )
                             .map_err(|e| TurnChainError::TurnProofInvalid {
                                 index: i,
@@ -4332,7 +4372,7 @@ fn mint_rotated_turn_leaf(
                         &dual,
                         &custom_leaf,
                         &carrier_fold_pins(&dual, &custom_leaf, i)?,
-                        config,
+                        &fold_config,
                         binding.app_root_len,
                     )
                     .map_err(|e| TurnChainError::TurnProofInvalid {
@@ -4415,7 +4455,7 @@ fn mint_rotated_turn_leaf(
                         &dual,
                         &direct_leaf,
                         &carrier_fold_pins(&dual, &direct_leaf, i)?,
-                        config,
+                        &fold_config,
                         binding.app_root_len,
                     )
                     .map_err(|e| TurnChainError::TurnProofInvalid {
@@ -4474,7 +4514,7 @@ fn mint_rotated_turn_leaf(
                             &dual,
                             &direct_leaf,
                             &carrier_fold_pins(&dual, &direct_leaf, i)?,
-                            config,
+                            &fold_config,
                             binding.app_root_len,
                         )
                         .map_err(|e| TurnChainError::TurnProofInvalid {
@@ -4535,7 +4575,7 @@ fn mint_rotated_turn_leaf(
                 &dual,
                 &backing,
                 &carrier_fold_pins(&dual, &backing, i)?,
-                config,
+                &fold_config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4588,7 +4628,7 @@ fn mint_rotated_turn_leaf(
                 &dual,
                 &backing,
                 &carrier_fold_pins(&dual, &backing, i)?,
-                config,
+                &fold_config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4666,7 +4706,7 @@ fn mint_rotated_turn_leaf(
                 &dual,
                 &dsl_leaf,
                 &carrier_fold_pins(&dual, &dsl_leaf, i)?,
-                config,
+                &fold_config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4716,7 +4756,7 @@ fn mint_rotated_turn_leaf(
                 &dual,
                 &backing,
                 &carrier_fold_pins(&dual, &backing, i)?,
-                config,
+                &fold_config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4758,7 +4798,7 @@ fn mint_rotated_turn_leaf(
                 &dual,
                 &attestation,
                 &carrier_fold_pins(&dual, &attestation, i)?,
-                config,
+                &fold_config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4801,7 +4841,7 @@ fn mint_rotated_turn_leaf(
                 &dual,
                 &authority,
                 &carrier_fold_pins(&dual, &authority, i)?,
-                config,
+                &fold_config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -4843,7 +4883,7 @@ fn mint_rotated_turn_leaf(
                 &dual,
                 &membership,
                 &carrier_fold_pins(&dual, &membership, i)?,
-                config,
+                &fold_config,
             )
             .map_err(|e| TurnChainError::TurnProofInvalid {
                 index: i,
@@ -5844,6 +5884,10 @@ pub fn prove_clean_handoff_chain_recursive(
 
     // The ONE FRI engine the whole rotated tree runs at (inner proof + leaf-wrap + aggregation).
     let config = ir2_leaf_wrap_config();
+    // ⚑ THE FOLD ENGINE, DERIVED. A leaf wrap now emits at `recursion_layer_over(config)`'s mint
+    // knobs, so every node above it verifies at those — one more application of the same rule,
+    // which is its fixed point. See [`turn_chain_root_config`].
+    let fold_config = recursion_layer_over(&recursion_layer_over(&config));
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
 
@@ -5878,7 +5922,7 @@ pub fn prove_clean_handoff_chain_recursive(
         conflict_leaves,
         clean_leaves,
         handoff,
-        &config,
+        &fold_config,
         &backend,
         &params,
     )?;
@@ -6234,12 +6278,16 @@ pub fn verify_turn_chain_recursive_from_parts_with_board_window(
         }
     })?;
 
-    // (3) The root. The root batch proof is produced by `aggregate_tree` at the rotated
-    // leaf-wrap config (`ir2_leaf_wrap_config`, log_blowup 6 / 19 queries — the SAME FRI engine
-    // the whole rotated tree runs at), NOT the default `create_recursion_config` (log_blowup 3 /
-    // 38 queries). It MUST be verified under that same config, else FRI reconstruction expects
-    // the wrong query count (`QueryProofCountMismatch { expected: 38, got: 19 }`).
-    verify_recursive_batch_proof_with_config(root_proof, &ir2_leaf_wrap_config())
+    // (3) The root. ⚑ **THIS MOVED, AND IT IS THE ONE THING A CONSUMER MUST RE-PIN.** The root
+    // batch proof is produced by `aggregate_tree`, and every node above a leaf now mints at
+    // [`turn_chain_root_config`] — `create_recursion_config`'s `(log_blowup 3, 38 queries,
+    // query_pow 14)`. It used to be `ir2_leaf_wrap_config`'s `(6, 19, 16)`, because a leaf wrap
+    // inherited its CHILD's engine and handed that engine to the whole tower. Verifying under
+    // the old one now fails `QueryProofCountMismatch { expected: 19, got: 38 }` — the honest
+    // failure, in the direction opposite to the one this comment used to warn about. ⚠ The
+    // recursion VK fingerprint rotates with it: a fold circuit that verifies a 38-query child at
+    // a 2^23 domain is a DIFFERENT circuit from one that verifies a 19-query child at 2^26.
+    verify_recursive_batch_proof_with_config(root_proof, &turn_chain_root_config())
         .map_err(|reason| TurnChainError::RecursionFailed { reason })?;
 
     // (4) THE SEGMENT TOOTH (the close of the IVC mixed-root hole). The root proof carries an

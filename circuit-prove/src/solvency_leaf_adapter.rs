@@ -438,7 +438,11 @@ pub const STRUCTURED_PRODUCT_CLAIM_LEN: usize =
 /// is proven here; the n-level composition is `prove_claim_union_fold` applied
 /// recursively (each level folds two claim leaves into one, exposing the union).
 ///
-/// `config` must be [`crate::ivc_turn_chain::ir2_leaf_wrap_config`].
+/// ⚠ `config` is a FOLD config — it must verify its children at the engine those leaves were
+/// MINTED at, which since the leaf-wrap mint split is `create_recursion_config`'s, not
+/// `ir2_leaf_wrap_config`'s. Take it from
+/// [`crate::ivc_turn_chain::turn_chain_root_config`]. (The docline here used to say
+/// `ir2_leaf_wrap_config`, which was right only while a leaf inherited its child's engine.)
 pub fn prove_structured_product_fold(
     note_spend_leaf: &RecursionOutput<DreggRecursionConfig>,
     solvency_leaf: &RecursionOutput<DreggRecursionConfig>,

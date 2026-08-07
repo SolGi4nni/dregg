@@ -393,11 +393,14 @@ pub mod fold {
         // parent VK did not move. ⚠ No host comparison: the refusal is the circuit's.
         let pins = dregg_circuit_prove::fold_vk_pin::FoldVkPins::tracked(&dual, &app_leaf)
             .map_err(|e| format!("app-root fold child VK pin unavailable: {e}"))?;
+        // ⚑ THE FOLD VERIFIES WHAT THE LEAVES EMIT. Since the IR-v2 leaf-wrap mint split, a leaf
+        // mints at `create_recursion_config`'s engine, not at the engine its CHILD was minted at —
+        // so the binding node above it takes the tower's root config, not `config`.
         prove_direct_ir2_binding_node_app_root_segmented(
             &dual,
             &app_leaf,
             &pins,
-            &config,
+            &dregg_circuit_prove::ivc_turn_chain::turn_chain_root_config(),
             binding.app_root_len,
         )
         .map(|_| ())

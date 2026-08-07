@@ -182,6 +182,20 @@ impl DreggRecursionConfig {
     pub const fn mint_knobs(&self) -> &MintKnobs {
         &self.mint
     }
+
+    /// ⚑ The knobs this config's IN-CIRCUIT verifier checks its CHILD against — the other half of
+    /// the pair [`recursion_layer_over`] separates, `pub` for the same reason
+    /// [`MintKnobs`] is: a gate that can only read the mint side cannot tell a config that moved
+    /// its child's acceptance from one that did not. `(log_blowup, log_final_poly_len,
+    /// commit_pow_bits, query_pow_bits)`; arity and query count come off the child's proof.
+    pub const fn verify_knobs(&self) -> (usize, usize, usize, usize) {
+        (
+            self.fri_verifier_params.log_blowup,
+            self.fri_verifier_params.log_final_poly_len,
+            self.fri_verifier_params.commit_pow_bits,
+            self.fri_verifier_params.query_pow_bits,
+        )
+    }
 }
 
 impl core::ops::Deref for DreggRecursionConfig {
@@ -467,11 +481,20 @@ pub fn create_recursion_config_split_fri(
     }
 }
 
-/// ⚑ **THE CONFIG EVERY IR-v2 LEAF WRAP, FOLD AND ROOT VERIFY RUNS AT.** The inner descriptor
-/// batch is minted at log_blowup 6 / 19 queries / 16 query-PoW, so the wrap's in-circuit FRI
-/// verifier must be retargeted to those knobs — verifying a root under
-/// [`create_recursion_config`] instead simply fails, which is the honest failure mode but a
-/// confusing one, so callers should take this function rather than assemble knobs.
+/// ⚑ **THE ENGINE THE IR-v2 DESCRIPTOR BATCH IS MINTED AT** — `log_blowup 6 / 19 queries /
+/// 16 query-PoW`, arity 2. A leaf wrap's in-circuit FRI verifier is retargeted to these knobs so
+/// an `ir2_config` proof verifies as-is; pass this to a leaf, which derives its own minting engine
+/// from it via [`recursion_layer_over`].
+///
+/// ⚠ **ITS NAME IS A HISTORICAL ARTEFACT AND ITS OLD DOC SENTENCE IS RETRACTED.** It read *"THE
+/// CONFIG EVERY IR-v2 LEAF WRAP, FOLD AND ROOT VERIFY RUNS AT"*, and that was true only because a
+/// leaf wrap used to inherit its child's minting engine and hand it to the whole tower — which is
+/// the 64× this repricing removed. A leaf wrap now VERIFIES here and MINTS at
+/// `create_recursion_config`'s engine, so **no fold and no root runs at this config any more**.
+/// A consumer verifying a root wants the tower's root config
+/// (`ivc_turn_chain::turn_chain_root_config`, `accumulator_root::accumulator_root_config`,
+/// `chain_root::chain_root_config`), and the honest failure for taking this one instead is
+/// `QueryProofCountMismatch { expected: 19, got: 38 }`.
 pub fn ir2_leaf_wrap_config() -> DreggRecursionConfig {
     thread_local! {
         static LEAF_WRAP_CONFIG: DreggRecursionConfig = create_recursion_config_for_inner_fri(
@@ -515,4 +538,85 @@ pub fn ir2_leaf_wrap_split_config() -> DreggRecursionConfig {
         );
     }
     SPLIT_WRAP_CONFIG.with(|c| c.clone())
+}
+
+/// ⚑⚑ **THE ONE RULE THE WHOLE TOWER RUNS BY: a layer VERIFIES its child at the child's own
+/// engine and MINTS at the recursion engine.**
+///
+/// Every recursion layer in this workspace used to be handed ONE config that played both roles,
+/// which worked only because the two roles happened to coincide: an IR-v2 leaf wrap verified a
+/// child minted at `(lb 6, q 19, qpow 16)` and minted its own output at those same knobs, so its
+/// parent could verify it with the same object. The coincidence cost the tower 64× on every
+/// committed cell of a verification circuit ~10^3 times larger than the descriptor it verifies.
+///
+/// This function is the coincidence, broken and then made structural. Given the config a child
+/// proof was MINTED under, it returns the config the layer ABOVE that child must run at:
+///
+/// * **verify engine** = `child.mint_knobs()`, exactly — so the in-circuit verification of that
+///   child is bit-for-bit the one that ran before and **no child proof's acceptance moves**;
+/// * **mint engine** = [`create_recursion_config`]'s `(lb 3, arity 2, q 38, qpow 14)`, the knob
+///   set every non-IR-v2 recursion layer already runs at.
+///
+/// ⚑ **It has a FIXED POINT, and the fixed point is [`create_recursion_config`].** Over a child
+/// minted at the IR-v2 descriptor engine it is [`ir2_leaf_wrap_split_config`] (the leaf wrap);
+/// over anything minted at the recursion engine — which is what a leaf wrap now emits — it is
+/// `create_recursion_config()` itself. So one rule generates the whole tower: leaf wrap, then
+/// every fold and the root verify, and iterating it a second time changes nothing. Both facts are
+/// theorems of this function rather than knobs someone remembers to pass:
+/// `tests/tower_config_law.rs`.
+///
+/// ⚠ `max_log_arity` and `num_queries` are deliberately absent from the verify side: the
+/// in-circuit verifier reads a child's folding arity and query count off the child's proof
+/// STRUCTURE, so only blowup / final-poly-len / the two PoW knobs need matching.
+pub fn recursion_layer_over(child: &DreggRecursionConfig) -> DreggRecursionConfig {
+    let k = child.mint_knobs();
+    // Memoised on the four verify knobs: this is called once per leaf and once per fold, and the
+    // Poseidon2 round constants + DFT twiddles behind a config are not free. `thread_local`
+    // sidesteps any `Sync` requirement on the config, exactly as the fixed builders above do.
+    thread_local! {
+        static LAYERS: std::cell::RefCell<
+            std::collections::HashMap<(usize, usize, usize, usize), DreggRecursionConfig>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let key = (
+        k.log_blowup,
+        k.log_final_poly_len,
+        k.commit_pow_bits,
+        k.query_pow_bits,
+    );
+    LAYERS.with(|m| {
+        m.borrow_mut()
+            .entry(key)
+            .or_insert_with(|| {
+                create_recursion_config_split_fri(
+                    RECURSION_FRI_LOG_BLOWUP,
+                    RECURSION_FRI_LOG_FINAL_POLY_LEN,
+                    RECURSION_FRI_MAX_LOG_ARITY,
+                    RECURSION_FRI_NUM_QUERIES,
+                    RECURSION_FRI_COMMIT_POW_BITS,
+                    RECURSION_FRI_QUERY_POW_BITS,
+                    key.0,
+                    key.1,
+                    key.2,
+                    key.3,
+                )
+            })
+            .clone()
+    })
+}
+
+/// ⚑⚑ **THE ONE OBJECT AT THE TOP OF EVERY IR-v2 RECURSION TOWER** — the config every fold node
+/// above a leaf mints at, every root is minted at, and every native root verify runs at.
+///
+/// It is [`recursion_layer_over`]'s fixed point reached from the IR-v2 descriptor engine: leaf
+/// wrap, then the layer above that, and no further. Every tower-specific accessor
+/// (`ivc_turn_chain::turn_chain_root_config`, [`crate::accumulator_root::accumulator_root_config`])
+/// **delegates here rather than recomputing** — a prove-side and a verify-side answer to "what
+/// config is a root at" that agree today are two answers that disagree the first time one is
+/// retuned, and both sides would still BUILD; only the FRI would refuse.
+///
+/// ⚠ It is not a new posture: it is `create_recursion_config()`, the knob set every non-IR-v2
+/// recursion layer in this workspace already ran at.
+pub fn recursion_tower_root_config() -> DreggRecursionConfig {
+    recursion_layer_over(&recursion_layer_over(&ir2_leaf_wrap_config()))
 }

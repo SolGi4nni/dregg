@@ -213,6 +213,30 @@ pub struct ApexVkIdentity {
 /// Go mirror); until then, identity loads fail closed. The trust model is
 /// weak subjectivity — "trust a governance-pinned recent fingerprint" — not
 /// "trust whoever compiled the artifact at HEAD".
+/// ⚑⚑ **STALE AS OF THE LEAF-WRAP MINT SPLIT — THIS ANCHOR ROTATES, AND SO DOES THE GO MIRROR.**
+///
+/// The value below is the fingerprint of an apex whose every fold verified a **19-query child
+/// committed on a 2^26 domain**. A turn-chain leaf now mints at `create_recursion_config`'s engine
+/// (`ivc_turn_chain::turn_chain_root_config`), so every fold above it verifies a **38-query child
+/// on a 2^23 domain** — a different verifier circuit, hence a different preprocessed commitment,
+/// hence a different [`RecursionVk`]. Nothing about the descriptor, the AIR, the trace or the
+/// claim moved; the recursion *shape* did.
+///
+/// **The flag day, named:** re-derive with
+/// `cargo test -p dregg-circuit-prove --release --test apex_shrink_gnark_fixture derive_deployed
+/// -- --ignored --nocapture`, then update, together and in one commit:
+///   1. this constant,
+///   2. `chain/gnark/settlement_circuit.go`'s `DreggApexRecursionVk`,
+///   3. `chain/gnark/fixtures/apex_vk_identity.json` (`recursion_vk_hex` **and** the 8
+///      `apex_preprocessed_commit` lanes — the derivation lane rewrites it),
+///   4. `chain/gnark/fixtures/apex_shrink_fri_real.json`'s `apex_preprocessed_commit`, which the
+///      Go cross-artifact differential (`TestApexPinFixtureMatchesDerivedDeployedIdentity`)
+///      requires to equal (3).
+///
+/// ⚠ The derivation lane asserts this pin BEFORE it emits, so it fails closed with the two
+/// fingerprints in the message rather than silently re-stamping the artifact — which is the
+/// behaviour to keep. Until all four move together, every consumer of the identity artifact
+/// refuses to load, which is the correct posture and not a bug.
 pub const DREGG_APEX_RECURSION_VK: &str =
     "3ad1c9c601686a0983ed8df43a4a145e729d985194386ec22156029b92fc5503";
 

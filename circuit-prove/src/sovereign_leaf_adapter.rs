@@ -73,7 +73,9 @@ use p3_recursion::{
 use p3_uni_stark::StarkGenericConfig;
 
 use crate::ivc_turn_chain::prove_descriptor_leaf_rotated_with_config;
-use crate::plonky3_recursion_impl::recursive::{DreggRecursionConfig, create_recursion_backend};
+use crate::plonky3_recursion_impl::recursive::{
+    DreggRecursionConfig, create_recursion_backend, recursion_layer_over,
+};
 
 type RecursionChallenge = <DreggRecursionConfig as StarkGenericConfig>::Challenge;
 const D: usize = 4;
@@ -279,7 +281,7 @@ pub fn prove_sovereign_leaf_with_key_claim(
 
     build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
         &input,
-        config,
+        &recursion_layer_over(config),
         &backend,
         &ProveNextLayerParams::default(),
         Some(&expose),

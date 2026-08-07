@@ -108,8 +108,8 @@ use dregg_circuit::membership_descriptor_4ary::{
 use dregg_circuit_prove::gpu_backend::{prove_recursion_layer_auto, recursion_dispatch_counters};
 use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
 use dregg_circuit_prove::mina_accumulator_fold::{
-    ACC_PI_COUNT, Rung, accumulator_descriptor, prove_accumulator_segment,
-    prove_accumulator_segment_split, read_accumulator_claim, segment_public_inputs,
+    ACC_PI_COUNT, Rung, accumulator_descriptor, prove_accumulator_segment_split,
+    read_accumulator_claim, segment_public_inputs,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, create_recursion_backend, ir2_leaf_wrap_split_config,
@@ -576,8 +576,14 @@ fn the_deployed_mint_is_the_measured_wall() {
     let pis = segment_public_inputs(&t).expect("public inputs");
     let cfg = ir2_leaf_wrap_config();
 
+    // ⚑⚑ **THE BASELINE MUST NAME BOTH ROLES EXPLICITLY NOW.** `prove_accumulator_segment` is the
+    // PRODUCTION entry point and it SPLITS: it derives its wrap engine from the config it is
+    // handed. Calling it here would silently measure the split and label the number "deployed" —
+    // the falsifier-that-stopped-falsifying shape, and the exact way this file's own 13.8× would
+    // become a comparison of one object against itself. The old single-engine tower is reached
+    // only by passing the same config for both roles, which is what this line does.
     let start = Instant::now();
-    let root = prove_accumulator_segment(Rung::Final, &t, &pis, &cfg)
+    let root = prove_accumulator_segment_split(Rung::Final, &t, &pis, &cfg, &cfg)
         .expect("the deployed leaf wrap proves");
     let wall = start.elapsed().as_secs_f64();
 
@@ -629,6 +635,9 @@ fn the_split_mint_proves_the_same_eight_additions() {
     let inner = ir2_leaf_wrap_config();
     let wrap = ir2_leaf_wrap_split_config();
 
+    // ⚑ This is now what `prove_accumulator_segment(rung, t, pis, &inner)` does on its own — the
+    // wrap config is DERIVED (`recursion_layer_over`) rather than named. Kept explicit here so the
+    // measurement says which object it timed even if the derivation is later retuned.
     let start = Instant::now();
     let root = prove_accumulator_segment_split(Rung::Final, &t, &pis, &inner, &wrap)
         .expect("the split leaf wrap proves");

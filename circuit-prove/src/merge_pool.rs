@@ -202,7 +202,11 @@ fn merge_worker_loop(
     jobs_rx: Arc<Mutex<mpsc::Receiver<MergeJob>>>,
     results_tx: mpsc::Sender<MergeResult>,
 ) {
-    let config = crate::ivc_turn_chain::ir2_leaf_wrap_config();
+    // ⚑ A MERGE IS A FOLD, SO IT RUNS AT THE FOLD ENGINE. `ir2_leaf_wrap_config()` is the engine
+    // the leaves' CHILD (the IR-v2 descriptor batch) is minted at — no proof this pool ever sees
+    // carries it. Taking it here would verify every child at an engine it was not minted at, and
+    // this driver is the one that has to stay byte-identical to serial `aggregate_tree`.
+    let config = crate::ivc_turn_chain::turn_chain_root_config();
     let backend = crate::plonky3_recursion_impl::recursive::create_recursion_backend();
     let params = ProveNextLayerParams::default();
     loop {
@@ -428,7 +432,11 @@ pub fn aggregate_tree_scan_state(
     let right = available
         .remove(&root.right)
         .expect("root right input available");
-    let config = crate::ivc_turn_chain::ir2_leaf_wrap_config();
+    // ⚑ A MERGE IS A FOLD, SO IT RUNS AT THE FOLD ENGINE. `ir2_leaf_wrap_config()` is the engine
+    // the leaves' CHILD (the IR-v2 descriptor batch) is minted at — no proof this pool ever sees
+    // carries it. Taking it here would verify every child at an engine it was not minted at, and
+    // this driver is the one that has to stay byte-identical to serial `aggregate_tree`.
+    let config = crate::ivc_turn_chain::turn_chain_root_config();
     let backend = crate::plonky3_recursion_impl::recursive::create_recursion_backend();
     let params = ProveNextLayerParams::default();
     let root_out = merge_two_segment_proofs(&left, &right, &config, &backend, &params)?;

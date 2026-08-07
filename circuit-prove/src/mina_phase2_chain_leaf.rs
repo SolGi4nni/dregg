@@ -396,6 +396,12 @@ pub fn prove_chain_fold_with(
 }
 
 /// The default config every chain leaf, fold and verify runs at.
+///
+/// ⚠ This tower was deliberately LEFT at the deployed single-engine shape when the IR-v2 leaf
+/// wrap's mint was split (`recursion_layer_over`): its leaf, its folds and its root all still run
+/// at `ir2_leaf_wrap_config()`, so nothing here rotates and nothing here got the 8× either. The
+/// change is one line — the wrap call in `prove_chain_link_leaf_with` — plus a fold config in
+/// `prove_chain_fold`, and the cost is re-fixing this tower's `#[ignore]`d proving tests.
 pub fn chain_config() -> DreggRecursionConfig {
     ir2_leaf_wrap_config()
 }

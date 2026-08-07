@@ -120,10 +120,16 @@ pub fn read_accumulator_claim_from_proof(
     })
 }
 
-/// The config an accumulator leaf, fold and root verify all run at — the same one the phase-2
-/// chain uses, taken from one place rather than re-assembled from knobs.
+/// ⚑ **THE ENGINE EVERY LAYER ABOVE A LEAF RUNS AT** — every fold and the native verify of a
+/// root. It is the fixed point of [`crate::config::recursion_layer_over`], i.e.
+/// `create_recursion_config()`.
+///
+/// ⚠ It USED to be `ir2_leaf_wrap_config()`, because a leaf wrap inherited its child's FRI engine
+/// and handed it to the whole tower. A leaf wrap now VERIFIES its child at that engine
+/// (bit-for-bit unchanged) and MINTS at this one, so a root is a `(log_blowup 3, 38 query)`
+/// proof. **Every consumer's pinned recursion VK rotates with it.**
 pub fn accumulator_root_config() -> DreggRecursionConfig {
-    crate::config::ir2_leaf_wrap_config()
+    crate::config::recursion_tower_root_config()
 }
 
 /// ⚑ **VERIFY AN ACCUMULATOR FOLD ROOT AND READ ITS CLAIM, IN THE ONLY ORDER THAT MEANS ANYTHING.**

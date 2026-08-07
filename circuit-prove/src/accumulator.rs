@@ -196,7 +196,9 @@ use crate::ivc_turn_chain::{
     verify_turn_chain_recursive,
 };
 use crate::joint_turn_aggregation::verify_descriptor_participant;
-use crate::plonky3_recursion_impl::recursive::{DreggRecursionConfig, create_recursion_backend};
+use crate::plonky3_recursion_impl::recursive::{
+    DreggRecursionConfig, create_recursion_backend, recursion_layer_over,
+};
 use dregg_circuit::field::BabyBear;
 
 const D: usize = 4;
@@ -581,7 +583,11 @@ impl Accumulator {
         expected_running_vk: RecursionCommit,
     ) -> Result<(), AccError> {
         let running = self.running.as_ref().ok_or(AccError::Empty)?;
+        // ⚑ `config` is the engine the leaf's CHILD (the IR-v2 descriptor batch) is minted at;
+        // the leaf derives its own wrap engine from it, and the FOLD below verifies what the leaf
+        // emits — the fixed point of `recursion_layer_over`.
         let config = ir2_leaf_wrap_config();
+        let fold_config = recursion_layer_over(&recursion_layer_over(&config));
         let backend = create_recursion_backend();
         let params = ProveNextLayerParams::default();
 
@@ -605,7 +611,12 @@ impl Accumulator {
                 .map_err(|reason| AccError::RecursionFailed { reason })?,
         );
         build_and_prove_aggregation_layer::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
-            &left, &right, &config, &backend, &params, None,
+            &left,
+            &right,
+            &fold_config,
+            &backend,
+            &params,
+            None,
         )
         .map(|_| ())
         .map_err(|e| AccError::RecursionFailed {
@@ -665,7 +676,12 @@ impl Accumulator {
             });
         }
 
+        // ⚑ TWO ENGINES. `config` mints the inner descriptor batch and is what the leaf wrap's
+        // in-circuit verifier checks it against; the leaf wrap derives its OWN minting engine
+        // from it. The running AGGREGATION verifies what the leaf emits, which is one more
+        // application of the same rule — its fixed point.
         let config = ir2_leaf_wrap_config();
+        let fold_config = recursion_layer_over(&recursion_layer_over(&config));
         let backend = create_recursion_backend();
         let params = ProveNextLayerParams::default();
         // **THE WRAP STEP.** The running fold is proven under a FIXED trace-height ceiling
@@ -850,7 +866,7 @@ impl Accumulator {
                 >(
                     &left,
                     &right,
-                    &config,
+                    &fold_config,
                     &backend,
                     &fold_params,
                     None,

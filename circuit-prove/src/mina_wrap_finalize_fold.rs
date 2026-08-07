@@ -409,6 +409,9 @@ pub fn read_finalize_claim(
 
 /// The config every leaf, fold and verify in this module runs at — the same one the phase-2 chain
 /// uses, so a root produced here and a root produced there are consumable by one reader.
+///
+/// ⚠ Deliberately LEFT at the deployed single-engine shape by the leaf-wrap mint split; see
+/// `mina_phase2_chain_leaf::chain_config`.
 pub fn finalize_config() -> DreggRecursionConfig {
     ir2_leaf_wrap_config()
 }

@@ -156,9 +156,9 @@
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_accumulator_fold::{
-    ACC_CLAIM_LEN, POINT_WIDTH, Rung, SK, accumulator_config, accumulator_descriptor,
-    fold_accumulator_segments, prove_accumulator_fold, prove_accumulator_segment,
-    read_accumulator_claim, segment_public_inputs,
+    ACC_CLAIM_LEN, POINT_WIDTH, Rung, SK, accumulator_descriptor, accumulator_inner_config,
+    accumulator_root_config, fold_accumulator_segments, prove_accumulator_fold,
+    prove_accumulator_segment, read_accumulator_claim, segment_public_inputs,
 };
 
 const DISCHARGING: &str =
@@ -431,7 +431,7 @@ fn the_op_kind_census_matches_the_lean_listing() {
 #[test]
 #[ignore = "RUNS: 500 s, 118.3 GiB peak footprint / 61.4 GiB maxrss — ignored for cost, not failure"]
 fn the_split_chain_folds_and_the_root_carries_both_endpoints() {
-    let cfg = accumulator_config();
+    let cfg = accumulator_inner_config();
     let segs = segments();
 
     let root = prove_accumulator_fold(&segs, &cfg, |i, phase| {
@@ -480,7 +480,7 @@ fn the_split_chain_folds_and_the_root_carries_both_endpoints() {
 #[test]
 #[ignore = "RUNS: 250 s, 117.8 GiB peak footprint / 50.1 GiB maxrss — ignored for cost, not failure"]
 fn the_fold_refuses_two_segments_that_do_not_chain() {
-    let cfg = accumulator_config();
+    let cfg = accumulator_inner_config();
     let segs = segments();
     let (a, pa) = &segs[0];
 
@@ -525,11 +525,15 @@ fn the_fold_refuses_two_segments_that_do_not_chain() {
         }
     }
 
+    // ⚑ A FOLD VERIFIES WHAT A LEAF EMITS, and since the leaf-wrap mint split that is
+    // `accumulator_root_config()` — NOT the `cfg` the leaf's CHILD was minted at. Passing `cfg`
+    // here would make the fold refuse for a FRI-shape reason and this tooth would be green about
+    // the wrong refusal.
     let r = fold_accumulator_segments(
         &leaf,
         &leaf,
         &FoldVkPins::tracked(&leaf, &leaf).expect("both children carry a preprocessed commitment"),
-        &cfg,
+        &accumulator_root_config(),
     );
     let err = r.err().expect(
         "folding a segment with itself connects `5G` to `G` — there is no satisfying assignment, \
@@ -585,7 +589,7 @@ fn the_fold_refuses_two_segments_that_do_not_chain() {
 #[test]
 #[ignore = "SLOW (223 s) and 117.9 GiB peak footprint / 48.9 GiB maxrss — but it COMPLETES; see the docblock"]
 fn a_one_segment_chain_is_the_final_rung() {
-    let cfg = accumulator_config();
+    let cfg = accumulator_inner_config();
     let t = full_trace();
     let pis = segment_public_inputs(&t).expect("public inputs");
     let root = prove_accumulator_fold(&[(t, pis)], &cfg, |_, _| {})
