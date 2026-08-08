@@ -227,8 +227,9 @@ pub use effect::{AttenuateWitness, Effect, RevokeWitness};
 // ---- Re-export helpers ----
 pub use helpers::{
     PUBKEY_NONET_LANE_COL, bytes32_to_8_limbs, compute_effects_hash, compute_effects_hash_4,
-    field_from_lanes9, field_limbs9, fold_bytes32_to_bb, key_from_lanes9, key_limbs9,
-    refusal_reason_bytes, split_u64, u64_from_4_limbs_16, u64_to_4_limbs_16,
+    field_from_lanes9, field_limbs9, fold_bytes32_to_bb, key_commit_teeth,
+    key_commit_teeth_from_nonet, key_from_lanes9, key_limbs9, refusal_reason_bytes, split_u64,
+    u64_from_4_limbs_16, u64_to_4_limbs_16,
 };
 // Re-export so sibling modules can write `use super::fill_reserved_bits`
 // (mirrors the pre-decomp module-level visibility).

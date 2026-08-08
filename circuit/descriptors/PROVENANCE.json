@@ -1,9 +1,9 @@
 {
   "version": 1,
   "mode": "emit",
-  "dregg2_tree_hash": "da5eb3503291d115cbd2e4d390d69f150cdf13ed",
-  "repo_head": "9bdab9b5b5e5bccb8cc2963b6bff920b70208ee2",
-  "source_dirty": false,
+  "dregg2_tree_hash": "493afd3d42a588a305a7304bdc61c82437d50bb4",
+  "repo_head": "4c354750f507900271294aa6a2ff922bd3fd81e6",
+  "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
     "Dregg2/Circuit/Emit/EmitAllJson.lean",
@@ -19,7 +19,7 @@
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-08-07T17:44:36Z",
+  "generated_utc": "2026-08-08T16:02:18Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "a7feccb16138895df5e05a967c0caa7d3f97a07a138914bbc780a37bf8051ec7",
@@ -92,7 +92,7 @@
     "rotation-caveat-layout-v3-staged.json": "8cfcaf978f7123f9f159f9ae05ab85ef9a245c93d9d9e1b6e2ce7b9500c890a8",
     "rotation-layout-v3-staged.json": "418064625e5e4b77d851c7b114be37cc4a7c8f547352771209dca3c33ebc366f",
     "rotation-v3-staged-registry.tsv": "de39fe8075a83ceb3943953fb094fc43b5153b273b9ac7890260834c87ebe7ab",
-    "rotation-wide-registry-staged.tsv": "e5d6e6aa53b2b63b997478dd00b9b561b7543f6258fe501319b21f9e99cd348c"
+    "rotation-wide-registry-staged.tsv": "f35a9fe114f12e83af5bd12b0e347c027bf9f936a095a76c026e5ca83a4a6c1c"
   },
   "by_name_sha256": {
     "accumulator-nonrev.json": "4d90e4a367d0a16215254041431841790068714ee665f63488969cf511bee919",
@@ -122,8 +122,9 @@
     "dfa-routing.json": "2483ecc0aae0c411c72f9081ea0ebfe095e3d68ef3b72e38cbefb169baa36e2a",
     "dregg-eth-lightclient-verify-v1.json": "5a341866073f9a60eb951c4953461a4072d2d448164516b943249b790931bbce",
     "dregg-midnight-lightclient-verify-v1.json": "188bdf64c939f3b9159f7f5622f5306eab5e5fd4118b1455de23b033daf98b1f",
-    "dregg-mina-lightclient-link-v1.json": "f3da0e95c6f1430b80c9d5b79e56743cec855cc7a50f80ac4eaf793c57a8e8d4",
-    "dregg-mina-lightclient-verify-v1.json": "39f56dac754bf5635db416e931c90dbee8b310f8877ad0bd6d7a45eac1660c4f",
+    "dregg-mina-body-preimage-bits-v1.json": "7512e27b8f4f4f4518e626ed09bc48f5084273bbc0a68361ecb40e2297261921",
+    "dregg-mina-lightclient-link-v1.json": "b196259fa2dd3c36bddffa57383f94f587135c867b46b9e7354d032f2c57ae24",
+    "dregg-mina-lightclient-verify-v1.json": "f67b69b8d49f206a870dbd100439859b5e330e6c4064407e8722f1cb43e1b488",
     "dregg-shielded-spend-pinned-root-v1.json": "739ab00fbd772e063eb8c1149bc7886f095d8a1eb01a06ca0ca149d78b968c8b",
     "dregg-shielded-value-link-conserve-ranged-v1.json": "b93be23c0155a323528066143a2ad7a57a3567322db3494538b31492e59043e9",
     "dregg-shielded-wide-value-link-conserve-v1.json": "070d36219559be97fca05187f2f230ab4d0d6dc19682f65e3cfdf87cd67c15ca",
@@ -235,10 +236,10 @@
     "dregg-ir2-umemory-v1.json": "4ee9b7bf717ad5da25e6da6ffb321a039d0f85b6818359600c97e48e0bdf6b79"
   },
   "fp_file_sha256": {
-    "circuit/src/bilateral_aggregation_air.rs": "62ea81cd57ed19d41e00989be44081694fa1e0db43bed42abad96a951011e3b8",
-    "circuit/src/cap_delegation_nonamp_descriptor.rs": "3e92c5eae0b895084031b5d9e5ca99afb5a9b3855902a5333125abd49f206109",
+    "circuit/src/bilateral_aggregation_air.rs": "2f7d263d9191621d26c5da2e8be39438a6d52df58c77c3dbd48afb81b73d726b",
+    "circuit/src/cap_delegation_nonamp_descriptor.rs": "7d4f5584e370bff83a73bd4ed4c943c1a1e25e895302fb009c4a98e796a4a3d1",
     "circuit/src/cap_reshape_descriptor.rs": "dde91b8af93dada783dbb4851108e779e4b285e46d6aa60171aaf44ad857a128",
-    "circuit/src/effect_vm_descriptors.rs": "f7b662aebee885df336da089740cbde139c056f8a3bb3672ba65e20cff333f09",
-    "circuit/src/lean_descriptor_air.rs": "d28cf0acff6c282a657b57ea8b0681a16cc7c01300a14fbf4c3075d3e50a4e4f"
+    "circuit/src/effect_vm_descriptors.rs": "b51fbcbd6f4e28f35e80b518bfd4f2a5887485d25a1af24ad4e68711ee85b8ea",
+    "circuit/src/lean_descriptor_air.rs": "1aaa38b80446fe638edc67c5f1665ccb389c31ed151e735b7bcb64aa3c0a209a"
   }
 }

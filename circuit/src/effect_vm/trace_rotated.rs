@@ -5095,21 +5095,28 @@ pub const SOVEREIGN_KEY_COMMIT_SPAN: usize = 32;
 ///   * the 4 teeth claim PIs are SPLICED ahead of the 16 wide anchors (`insert_at =
 ///     dpis.len() − 16` = the committed `SOVEREIGN_KEY_COMMIT_PI_LO`, post-rc-wrap).
 ///
-/// The teeth values are DERIVED FROM THE COMMITTED TRACE, never caller-supplied: `kc[q] =
-/// chip_absorb_all_lanes(4, octet[quadIdx q])[0]` over the BEFORE-block `pubkey8` octet (limbs
-/// `B_IROOT − 8 ..`, filled UNCONDITIONALLY from the operated cell's owner key in the 30-bit
-/// canonical form). This IS `TurnExecutor::pubkey_to_witness_key_commit` /
-/// `dregg_commit::typed::canonical_32_to_felts_4` of the owner key (the Lean executor-compress
-/// verdict: `hash_4_to_1(x) == chip_absorb_all_lanes(4, x)[0]`, interleave quads
-/// `[0,1,2,3]·[4,5,6,7]·[0,4,2,6]·[1,5,3,7]`), so the fill satisfies the in-AIR chip gate AND
-/// matches the executor's check — a producer that committed a forged octet gets teeth the
-/// executor refuses (the third edge stays fail-closed).
+/// The teeth values are DERIVED FROM THE COMMITTED TRACE, never caller-supplied:
+/// `kc = key_commit_teeth_from_nonet(committed BEFORE-block pubkey NONET)`, i.e. the NINE columns
+/// [`super::PUBKEY_NONET_LANE_COL`] names — lanes 0..7 at `B_PUBKEY_OCTET`, lane 8 at
+/// `B_PUBKEY_NINTH_LANE`, all nine ABSORBED pre-limbs the operated cell's owner key fills. That
+/// function is the ONE denotation `TurnExecutor::pubkey_to_witness_key_commit` also calls, and its
+/// interleave matrix is generated from the AIR's own `CarrierOctetGates.quadIdx`, so the fill
+/// satisfies the in-AIR chip gate AND matches the executor's check by construction — a producer
+/// that committed a forged nonet gets teeth the executor refuses (the third edge stays
+/// fail-closed).
+///
+/// ⚑ **2026-08-08.** This read the EIGHT octet columns through a hand-typed
+/// `const QUAD_IDX = [[0,1,2,3],[4,5,6,7],[0,4,2,6],[1,5,3,7]]` and called
+/// `dregg_commit::typed::canonical_32_to_felts_4` "the executor's function". Both halves were
+/// false: `6441705e8` had already re-pointed that executor function at a single arity-16 nonet
+/// absorb (so the two DISAGREED and `makeSovereign` no longer verified), and the octet cover left
+/// lane 8 — an Ed25519 key's x-sign — out of every quad, so a key and its NEGATION published
+/// identical teeth. The matrix is now emitted, not typed, and it covers all nine lanes.
 pub fn append_sovereign_key_commit_rider(
     trace: &mut [Vec<BabyBear>],
     dpis: &mut Vec<BabyBear>,
 ) -> Result<(), String> {
     use super::columns::{AUX_BASE, aux_off};
-    use crate::descriptor_ir2::chip_absorb_all_lanes;
 
     let dg_base = trace
         .first()
@@ -5127,18 +5134,13 @@ pub fn append_sovereign_key_commit_rider(
             dpis.len()
         ));
     }
-    // The executor-compress interleave quads (Lean `CarrierOctetGates.quadIdx` — the byte twin of
-    // `canonical_32_to_felts_4`'s four `hash_4_to_1` folds).
-    const QUAD_IDX: [[usize; 4]; 4] = [[0, 1, 2, 3], [4, 5, 6, 7], [0, 4, 2, 6], [1, 5, 3, 7]];
-    // The committed BEFORE-block pubkey octet at the FIXED limb `B_PUBKEY_OCTET` (104). (v13: this is
-    // NO LONGER `B_IROOT − 8` — B_IROOT moved 112→169 with the fields-octet grow, so `B_IROOT − 8`=161
-    // now reads past the pubkey; the octet limb is geometry-invariant at 104.)
-    let b_pubkey8 = B_PUBKEY_OCTET;
-    let octet: [BabyBear; 8] = std::array::from_fn(|i| trace[0][BEFORE_BASE + b_pubkey8 + i]);
-    let kc: [BabyBear; 4] = std::array::from_fn(|q| {
-        let inputs: [BabyBear; 4] = std::array::from_fn(|j| octet[QUAD_IDX[q][j]]);
-        chip_absorb_all_lanes(4, &inputs)[0]
-    });
+    // The committed BEFORE-block pubkey NONET. ⚠ NOT a stride and NOT `B_IROOT − 8`: lanes 0..7 sit
+    // at `B_PUBKEY_OCTET` and lane 8 sits at `B_PUBKEY_NINTH_LANE`, 81 columns past the octet's end
+    // and past the whole completion band. `PUBKEY_NONET_LANE_COL` is the Lean-emitted table that
+    // says so; `[B_PUBKEY_OCTET + i; 9]` would silently read `fields[0]`'s completion window.
+    let nonet: [BabyBear; 9] =
+        std::array::from_fn(|i| trace[0][BEFORE_BASE + super::PUBKEY_NONET_LANE_COL[i]]);
+    let kc: [BabyBear; 4] = super::key_commit_teeth_from_nonet(&nonet);
 
     let kc_col = AUX_BASE + aux_off::WITNESS_KEY_COMMIT_0;
     for row in trace.iter_mut() {

@@ -280,6 +280,41 @@ def emitter_modules() -> list[str]:
     return mods
 
 
+def build_emitter_modules() -> None:
+    """⚑ **BUILD THE EMITTERS' IMPORTS BEFORE RUNNING THEM. THE SOURCE OF TRUTH IS THE `.lean`, NOT
+    WHATEVER `.olean` HAPPENS TO BE ON DISK.**
+
+    `lake env lean --run <emitter>` compiles the EMITTER SCRIPT fresh and then resolves its imports
+    from COMPILED oleans — it does not rebuild them. So on a tree whose Lean sources are ahead of
+    `.lake`, this driver silently emits the OLD descriptors while
+    `install_and_stamp` records the CURRENT `HEAD:metatheory/Dregg2` tree hash in
+    `PROVENANCE.json` and appends an audit row saying so. Nothing goes red: the emitters exit 0, the
+    bytes are self-consistent, and the stamp claims a source tree that did not mint them.
+
+    Measured 2026-08-08. A ninth-lane repair to `Emit/CarrierOctetGates.quadIdx` was elaborated,
+    proved and its 12 dependents built — in a scratch clone. The shared `metatheory/.lake` was a day
+    stale, so the authorized regen installed a `layout_generated.rs` carrying the RETIRED `[0,4,2,6]`
+    interleave and reported `1 changed descriptor file`, having "emitted" 208 from the old tree. The
+    only reason it was caught is that the emitted table was small enough to read.
+
+    `check-descriptor-drift.sh` already builds `--list-emitter-modules` before comparing, i.e. the
+    DRIFT gate knew this and the INSTALL driver did not — the more dangerous half was the unguarded
+    one. Exits 2 (the emitter-failure code) on a red build: a regen off an incoherent Lean tree must
+    not proceed."""
+    mods = emitter_modules()
+    print(f"emit_descriptors: building {len(mods)} emitter modules (oleans must match the sources)...")
+    r = subprocess.run(["lake", "build", *mods], cwd=META, capture_output=True, text=True)
+    if r.returncode != 0:
+        errs = [ln for ln in (r.stdout + r.stderr).splitlines() if ln.startswith("error")]
+        sys.stderr.write(
+            "\nEMIT REFUSED: `lake build` of the emitter modules failed, so the oleans "
+            "`lake env lean --run` would load do NOT correspond to the Lean sources this run would "
+            "stamp as their origin. Fix the Lean build; do not emit from stale oleans.\n"
+            "--- first errors ---\n" + "\n".join(errs[:20]) + "\n"
+        )
+        sys.exit(2)
+
+
 def emit(lean_file: str) -> str:
     """Run a Lean emitter, return its raw stdout.
 
@@ -428,7 +463,38 @@ def fp_bearing_sources() -> list[Path]:
             }
             if bases & set(fp_const.findall(text)):
                 found.append(path)
-    return found
+    return _drop_git_ignored(found)
+
+
+def _drop_git_ignored(paths: list[Path]) -> list[Path]:
+    """Filter out paths git IGNORES — one batched `git check-ignore`, no per-file subprocess.
+
+    ⚑ IGNORED, not merely UNTRACKED. An FP-bearing source a lane has written but not yet `git
+    add`-ed is exactly the case `assert_fp_files_declared` must still catch, so untracked files stay
+    in. What must go are scratch checkouts that are ignored BY THE REPO'S OWN RULES: a lane parked a
+    full second checkout at `headver/` (`.gitignore:147`), whose three FP-bearing sources wedged the
+    whole ack-gated emit — a flag day blocked by another lane's scratch, with nothing wrong in the
+    repo. An ignored tree is not part of the change-set this driver guards; `--list-guarded-paths`
+    never names it and the provenance stamp never covers it.
+
+    If `git` is unavailable the list is returned unfiltered — the gate stays STRICT on failure."""
+    if not paths:
+        return paths
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(ROOT), "check-ignore", "--stdin"],
+            input="\n".join(str(p) for p in paths),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return paths
+    # exit 0 = some ignored, 1 = none ignored, 128 = not a repo / error -> keep everything.
+    if proc.returncode not in (0, 1):
+        return paths
+    ignored = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    return [p for p in paths if str(p) not in ignored]
 
 
 def assert_fp_files_declared() -> None:
@@ -3533,6 +3599,7 @@ def main():
     c2f = const_to_file(rs_evd)
     dn2file = ir2_defname_to_file(rs_evd, c2f)
 
+    build_emitter_modules()
     print("emit_descriptors: running Lean emitters (source of truth)...")
     for lean in EMITTERS:
         print(f"  -> {lean}")

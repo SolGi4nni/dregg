@@ -2899,13 +2899,29 @@ impl TurnExecutor {
     }
 
     /// Compute the AIR-bound 4-felt commitment to a 32-byte Ed25519 owner pubkey
-    /// (SOVEREIGN-WITNESS-AIR-DESIGN.md §3.2). Uses `canonical_32_to_felts_4`
-    /// so it matches the in-trace witness column. Domain separation from the
-    /// state-commitment encoding is provided by the surrounding PI slot
-    /// (different position in PI), not by a tag — both inputs are 32 bytes
-    /// of opaque commitment material.
+    /// (SOVEREIGN-WITNESS-AIR-DESIGN.md §3.2).
+    ///
+    /// ⚑ **THIS IS ON-AIR, and it is one of THREE callers of ONE denotation.**
+    /// `effect_vm::key_commit_teeth` is what the Lean-authored gate
+    /// (`Emit.CarrierOctetGates.keyCommitSpec` / `withSovereignKeyCommit`) forces the four
+    /// published `SOVEREIGN_WITNESS_KEY_COMMIT` teeth to equal, and what
+    /// `trace_rotated::append_sovereign_key_commit_rider` fills them with. Its interleave matrix is
+    /// GENERATED from the AIR's `quadIdx`, so this side cannot drift from the descriptor by a
+    /// hand-edit.
+    ///
+    /// ⚠ It read `dregg_commit::typed::canonical_32_to_felts_4` until 2026-08-08. On 2026-08-01
+    /// `6441705e8` rewrote THAT function into one arity-16 absorb over the key nonet, on a census
+    /// that recorded the four-felt id fold as off-AIR — "no descriptor width, no PI count, no VK".
+    /// This call site is exactly the on-AIR consumer that census missed, so from that commit the
+    /// executor checked a different function than the AIR forced: transcript divergence and
+    /// `InvalidPowWitness` on every honest `makeSovereign`. Do not re-point this at a
+    /// general-purpose 32-byte fold; it must be the AIR's teeth function and nothing else.
+    ///
+    /// Domain separation from the state-commitment encoding is provided by the surrounding PI slot
+    /// (different position in PI), not by a tag — both inputs are 32 bytes of opaque commitment
+    /// material.
     pub fn pubkey_to_witness_key_commit(pubkey: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 4] {
-        dregg_commit::typed::canonical_32_to_felts_4(pubkey)
+        dregg_circuit::effect_vm::key_commit_teeth(pubkey)
     }
 
     /// Compute the AIR-bound 4-felt commitment to a transition_proof's

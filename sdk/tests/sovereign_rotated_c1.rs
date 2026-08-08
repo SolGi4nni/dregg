@@ -667,6 +667,127 @@ mod record_pin_anchor {
     /// the executor REJECTS it via the anchor. The `before_cell` is the trusted registration state;
     /// `honest_after` is the post-state the effect genuinely produces (used only to assert the forgery
     /// actually moves the forced limb off the honest value — the bite witness).
+    /// ⚑ **THE HONEST POLE OF THE FORGE DRIVER** — prove the HONEST after-block and drive it all the
+    /// way to `Committed` through the executor, on a CLONE of the ledger, BEFORE any verdict is read
+    /// off the forgery.
+    ///
+    /// Without it `assert_forged_after_rejected` cannot tell a correctly-refusing member from a
+    /// BROKEN one: every arm of that driver — the prove-time UNSAT early return, the `catch_unwind`
+    /// early return, the `Rejected` match — is satisfied just as well by a member that refuses
+    /// EVERYTHING. That is exactly the state this repair found the tree in: from `6441705e8` the
+    /// deployed `makeSovereign` teeth and the executor's teeth were different functions, so every
+    /// honest promotion diverged in the transcript, and
+    /// `rotated_sovereign_forged_after_make_sovereign_is_rejected` stayed GREEN throughout while
+    /// `rotated_sovereign_make_sovereign_proves_and_verifies` was the only thing red.
+    ///
+    /// ⚠ **WHAT LANDING THIS TOOTH IMMEDIATELY FOUND (2026-08-08) — read this before assuming your
+    /// change broke it.** Six of the seven `assert_forged_after_rejected` callers go RED here, and
+    /// the reason is NOT the forgery and NOT the AIR:
+    ///
+    /// > `proof bound NO descriptor (welded twin present, bare wide DROPPED (welded required — G4
+    /// > flip)) … IR v2 proof carries 3 instances but the descriptor's present-table set is 5`
+    ///
+    /// This driver mints with `prove_effect_vm_rotated_ir2_with_caveat` — the BARE rotated prover —
+    /// while the deployed executor requires the umem-WELDED twin. So for those six the executor
+    /// rejects the honest witness and the forged one ALIKE, on prover routing, and the driver's
+    /// `Rejected` arm (which accepts any reason containing `ProofVerificationFailed` or `rotated`)
+    /// reads that as "the record-pin anchor bit". **Those six forgery assertions were never
+    /// exercising the anchor they name.** `..._permissions_` and `..._vk_` are the two that do.
+    ///
+    /// The repair is to route BOTH poles through the same welded prover the cipherclerk uses
+    /// (`full_turn_proof::prove_wide_umem_welded_staged`, which additionally needs the
+    /// `UProjection` / `UmemOp` / `TurnIdentity` this driver does not build) — a driver rewrite, not
+    /// a one-line swap, and deliberately NOT bundled into the ninth-lane flag day that surfaced it.
+    /// ⚑ Do not "fix" this by deleting the honest pole: a forge test that cannot commit an honest
+    /// turn is indistinguishable from a broken member, which is the exact state the ninth-lane wound
+    /// hid in for a week.
+    ///
+    /// Returns `Ok(())` when the honest turn committed. The ledger it mutates is a clone, so the
+    /// forgery below still meets the untouched registration state.
+    fn assert_honest_pole_commits(
+        cell_id: dregg_cell::CellId,
+        before_cell: &Cell,
+        effects: &[Effect],
+        honest_after: &Cell,
+        ledger: &Ledger,
+        what: &str,
+    ) {
+        use dregg_sdk::full_turn_proof::prove_effect_vm_rotated_ir2_with_caveat;
+
+        let vm_effects = AgentCipherclerk::convert_effects_to_vm(&cell_id, effects);
+        let receipt_hashes: Vec<[u8; 32]> = Vec::new();
+        let mut ctx_ledger = Ledger::new();
+        let _ = ctx_ledger.insert_cell(before_cell.clone());
+        let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_hashes, Default::default());
+
+        let before_w = turn_ctx.witness(before_cell);
+        let after_w = turn_ctx.witness(honest_after);
+
+        let initial_vm_state =
+            dregg_circuit::effect_vm::CellState::with_capability_root_and_record_digest(
+                u64::try_from(before_cell.state.balance()).unwrap(),
+                before_cell.state.nonce() as u32,
+                dregg_cell::compute_canonical_capability_root_felt(&before_cell.capabilities),
+                dregg_cell::compute_authority_digest_felt(before_cell),
+            );
+        let caveat = dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest();
+        let proof = prove_effect_vm_rotated_ir2_with_caveat(
+            &initial_vm_state,
+            &vm_effects,
+            &before_w,
+            &after_w,
+            &caveat,
+            None,
+        )
+        .unwrap_or_else(|e| {
+            panic!(
+                "{what}: THE HONEST POLE IS UNPROVABLE ({e}). The paired forgery assertion below is \
+                 therefore vacuous — it would 'reject' every witness, honest or not."
+            )
+        });
+        let proof_bytes = postcard::to_allocvec(&proof).expect("serialize honest proof");
+        let new_commitment =
+            dregg_cell::commitment::felt_to_bytes32(turn_ctx.commitment_felt(honest_after));
+
+        let mut forest = dregg_turn::forest::CallForest::new();
+        let action = dregg_sdk::raw::unsigned_action_named(
+            cell_id,
+            "sovereign_execute_proven",
+            effects.to_vec(),
+        );
+        forest.add_root(action);
+        let turn = Turn {
+            agent: cell_id,
+            nonce: 0,
+            call_forest: forest,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: Vec::new(),
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: Some(proof_bytes),
+            execution_proof_cell: Some(cell_id),
+            execution_proof_new_commitment: Some(new_commitment),
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+
+        let mut honest_ledger = ledger.clone();
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        match executor.execute(&turn, &mut honest_ledger) {
+            TurnResult::Committed { .. } => {}
+            other => panic!(
+                "{what}: THE HONEST POLE WAS REJECTED ({other:?}). The paired forgery assertion below \
+                 is therefore vacuous — the member refuses everything, which is indistinguishable \
+                 from refusing the forgery."
+            ),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn assert_forged_after_rejected(
         cell_id: dregg_cell::CellId,
@@ -685,6 +806,11 @@ mod record_pin_anchor {
             flavor.felt(honest_after),
             "{what}: the forgery must move the forced limb off the honest post-value (the bite witness)"
         );
+
+        // ⚑ THE HONEST POLE FIRST, ALWAYS. Every rejection arm below is also satisfied by a broken
+        // member, so no verdict may be read off the forgery until the honest witness has proved AND
+        // committed.
+        assert_honest_pole_commits(cell_id, before_cell, effects, honest_after, &ledger, what);
 
         let vm_effects = AgentCipherclerk::convert_effects_to_vm(&cell_id, effects);
 

@@ -226,6 +226,20 @@ pub const ROTATED_FIELD_LANE_COL: [[usize; 9]; 8] = [
 /// Completion lanes per committed field slot (lanes 1..=8 — the VALUE8/nonet weld width).
 pub const ROTATED_FIELD_COMPLETION_LANES: usize = 8;
 
+/// `KEY_COMMIT_QUAD_IDX[q][j]` — quad `q`'s `j`-th input LANE of the committed owner-key
+/// NONET, emitted from the AIR's own `CarrierOctetGates.quadIdx`. The four published KEY_COMMIT
+/// teeth are `chip_absorb_all_lanes(4, [nonet[KEY_COMMIT_QUAD_IDX[q][j]]; 4])[0]`.
+///
+/// ⚑ EVERY lane 0..=8 appears (`quadIdx_covers_every_lane`), and lane 8 appears ONLY at `[2][0]`
+/// (`quadIdx_row2_reads_the_ninth_lane`). Lane 8 carries source bit 255 = an Ed25519 key's
+/// x-sign, so a matrix that omits it publishes identical teeth for a key and its negation — which
+/// is exactly what the deployed member did until 2026-08-08. NEVER hand-edit this table.
+pub const KEY_COMMIT_QUAD_IDX: [[usize; 4]; 4] =
+    [[0, 1, 2, 3], [4, 5, 6, 7], [8, 0, 4, 2], [1, 5, 3, 7]];
+
+/// The nonet lane count the KEY_COMMIT quads index into.
+pub const KEY_NONET_LANES: usize = 9;
+
 /// Derive the app-root field OCTET INDEX from a state register slot: the AFTER-block
 /// `fields[0..8]` octet holds field register `r(FIELD_BASE + i)` at octet index `i`, so
 /// `octet_index_of_register(r) == r - FIELD_BASE` — the single Lean-authored query the fold's
