@@ -334,71 +334,90 @@ Row 0 is the prime-field argument; every other row is the shift, walked forward.
 separated on purpose: if the register ever changes shape, the induction is where the change lands
 and §1 is untouched. -/
 
-/-- ⚑⚑ **ROW 0: EXACTLY PHASE 0 IS LIVE.** `sel_first` gives `s₀ ≡ 1`; `bits_onehot` gives
-`sᵢ ≡ 0` for every other `i`, and it is here and only here that primality is spent. -/
-theorem phase_row_zero {tr : RowTrace} {tf : TraceFamily} {pub chal : Assignment}
-    (h : LegsHold tr tf pub chal selectorLegs) :
+/-- ⚑⚑ **ROW 0: EXACTLY PHASE 0 IS LIVE.** `hfirst` gives `s₀ ≡ 1`; `bits_onehot` gives `sᵢ ≡ 0`
+for every other `i`, and it is here and only here that primality is spent. -/
+theorem phase_row_zero {tr : RowTrace}
+    (hbool : ∀ t, t < 33 → ∀ i, i < 34 → tr t i * (tr t i + (-1)) ≡ 0 [ZMOD P])
+    (honehot : ∀ t, t < 33 → ((List.range 34).map (tr t)).sum ≡ 1 [ZMOD P])
+    (hfirst : tr 0 0 ≡ 1 [ZMOD P]) :
     ∀ i, i < 34 → tr 0 i ≡ (if i = 0 then 1 else 0) [ZMOD P] := by
-  have h1 : tr 0 0 ≡ 1 [ZMOD P] := sel_first h
   have hb : ∀ i ∈ List.range 34, tr 0 i * (tr 0 i + (-1)) ≡ 0 [ZMOD P] :=
-    fun i hi => sel_boolean h (by omega) (List.mem_range.mp hi)
+    fun i hi => hbool 0 (by omega) i (List.mem_range.mp hi)
   have hzero := bits_onehot (tr 0) (List.range 34) hb (by simp)
-    (sel_onehot h (by omega)) (List.mem_range.mpr (by omega)) h1
+    (honehot 0 (by omega)) (List.mem_range.mpr (by omega)) hfirst
   intro i hi
   by_cases hi0 : i = 0
-  · subst hi0; simpa using h1
+  · subst hi0; simpa using hfirst
   · rw [if_neg hi0]
     exact hzero i (List.mem_range.mpr hi) hi0
 
-/-- ⚑⚑⚑ **THE PHASE REGISTER READS AS THE ONE-HOT ROW INDICATOR — `PhaseIndicator` DISCHARGED.**
+/-- ⚑⚑⚑ **THE PHASE REGISTER READS AS THE ONE-HOT ROW INDICATOR, FROM SIX FACTS.**
 
-The premise `AirCrossRow` §5 and §7 consumed is a theorem of the emitted block's own selector legs.
-⚠ Mod `P`, which is the only reading a window leg can supply and the one every lemma downstream is
-already in. -/
-theorem phaseIndicator_of_selectorLegs {tr : RowTrace} {tf : TraceFamily} {pub chal : Assignment}
-    (h : LegsHold tr tf pub chal selectorLegs) : PhaseIndicator tr := by
+⚑ Parametric in the register's own legs on purpose. `PastaCurveScheduled`'s register is ONE-SHOT
+(`nxt(s₀) ≡ 0` outright) and a CHAIN's is cyclic (`nxt(s₀) ≡ loc(s₃₂)·loc(GO)`) — but over the first
+block, rows `0 … 32`, the two agree, because `hnoReturn` and `hidle` are handed `tr t 32 ≡ 0` and
+that is what a cyclic register needs to collapse to the one-shot one. Stating the induction over the
+FACTS rather than over one leg list is what lets a second register reuse it instead of copying it.
+
+⚠ Mod `P`, which is the only reading a window leg can supply. -/
+theorem phaseIndicator_of_phaseFacts {tr : RowTrace}
+    (hbool : ∀ t, t < 33 → ∀ i, i < 34 → tr t i * (tr t i + (-1)) ≡ 0 [ZMOD P])
+    (honehot : ∀ t, t < 33 → ((List.range 34).map (tr t)).sum ≡ 1 [ZMOD P])
+    (hfirst : tr 0 0 ≡ 1 [ZMOD P])
+    (hnoReturn : ∀ t, t < 32 → tr t 32 ≡ 0 [ZMOD P] → tr (t + 1) 0 ≡ 0 [ZMOD P])
+    (hidle : ∀ t, t < 32 → tr t 32 ≡ 0 [ZMOD P] → tr t 33 ≡ 0 [ZMOD P] →
+              tr (t + 1) 33 ≡ 0 [ZMOD P])
+    (hshift : ∀ t, t < 33 → ∀ i, i < 32 → tr (t + 1) (i + 1) + -1 * tr t i ≡ 0 [ZMOD P]) :
+    PhaseIndicator tr := by
   intro t
   induction t with
-  | zero => intro _ i hi; exact phase_row_zero h i hi
+  | zero => intro _ i hi; exact phase_row_zero hbool honehot hfirst i hi
   | succ n ih =>
       intro hn i hi
       have hn33 : n < 33 := by omega
       have hn32 : n < 32 := by omega
       have ihn := ih (by omega)
+      have h32 : tr n 32 ≡ 0 [ZMOD P] := by
+        have := ihn 32 (by omega)
+        rwa [if_neg (by omega : ¬ ((32 : Nat) = n))] at this
       rcases Nat.eq_zero_or_pos i with rfl | hipos
       · rw [if_neg (by omega : ¬ ((0 : Nat) = n + 1))]
-        exact sel_zero_never_returns h hn33
+        exact hnoReturn n hn32 h32
       obtain ⟨j, rfl⟩ : ∃ j, i = j + 1 := ⟨i - 1, by omega⟩
       by_cases hj33 : j = 32
       · subst hj33
-        have h32 : tr n 32 ≡ 0 [ZMOD P] := by
-          have := ihn 32 (by omega)
-          rwa [if_neg (by omega : ¬ ((32 : Nat) = n))] at this
         have h33 : tr n 33 ≡ 0 [ZMOD P] := by
           have := ihn 33 (by omega)
           rwa [if_neg (by omega : ¬ ((33 : Nat) = n))] at this
-        have hidle := sel_idle h hn33
-        have hs : tr n 32 + tr n 33 ≡ 0 [ZMOD P] := by simpa using h32.add h33
-        have hc : tr (n + 1) 33 + -1 * (tr n 32 + tr n 33)
-            ≡ tr (n + 1) 33 + -1 * 0 [ZMOD P] :=
-          (Int.ModEq.refl _).add ((Int.ModEq.refl (-1 : ℤ)).mul hs)
-        have hfin : tr (n + 1) 33 ≡ 0 [ZMOD P] := by
-          have := hc.symm.trans hidle
-          simpa using this
         rw [if_neg (by omega : ¬ ((32 : Nat) + 1 = n + 1))]
-        exact hfin
+        exact hidle n hn32 h32 h33
       · have hj32 : j < 32 := by omega
-        have hshift := sel_shift h hn33 hj32
-        have hprev := ihn j (by omega)
         have hstep : tr (n + 1) (j + 1) ≡ tr n j [ZMOD P] := by
-          have := hshift.add_right (tr n j)
+          have := (hshift n hn33 j hj32).add_right (tr n j)
           simpa using this
-        have hcomb := hstep.trans hprev
+        have hcomb := hstep.trans (ihn j (by omega))
         by_cases hje : j = n
         · rw [if_pos (by omega : j + 1 = n + 1)]
           rwa [if_pos hje] at hcomb
         · rw [if_neg (by omega : ¬ (j + 1 = n + 1))]
           rwa [if_neg hje] at hcomb
+
+/-- ⚑⚑⚑ **`PhaseIndicator` DISCHARGED FOR THE ONE-SHOT REGISTER** — the premise `AirCrossRow` §5 and
+§7 consumed, from `PastaCurveScheduled`'s own selector legs. `sel_zero_never_returns` and `sel_idle`
+do not need the `tr t 32 ≡ 0` they are handed; a cyclic register does, and that is the only
+difference. -/
+theorem phaseIndicator_of_selectorLegs {tr : RowTrace} {tf : TraceFamily} {pub chal : Assignment}
+    (h : LegsHold tr tf pub chal selectorLegs) : PhaseIndicator tr := by
+  refine phaseIndicator_of_phaseFacts
+    (fun t ht i hi => sel_boolean h ht hi) (fun t ht => sel_onehot h ht) (sel_first h)
+    (fun t ht _ => sel_zero_never_returns h (by omega)) (fun t ht h32 h33 => ?_)
+    (fun t ht i hi => sel_shift h ht hi)
+  have hidle := sel_idle h (by omega : t < 33)
+  have hs : tr t 32 + tr t 33 ≡ 0 [ZMOD P] := by simpa using h32.add h33
+  have hc : tr (t + 1) 33 + -1 * (tr t 32 + tr t 33) ≡ tr (t + 1) 33 + -1 * 0 [ZMOD P] :=
+    (Int.ModEq.refl _).add ((Int.ModEq.refl (-1 : ℤ)).mul hs)
+  have := hc.symm.trans hidle
+  simpa using this
 
 /-! ## §4 — ⚑⚑⚑ `RowsSat` IS A THEOREM.
 
@@ -569,6 +588,7 @@ theorem vestaScheduledBlock_forces_the_rcb_formula (tr : RowTrace) (tf : TraceFa
 #assert_axioms legsHold_refuses_a_constant_trace
 #assert_axioms sel_shift
 #assert_axioms phase_row_zero
+#assert_axioms phaseIndicator_of_phaseFacts
 #assert_axioms phaseIndicator_of_selectorLegs
 #assert_axioms gate_of_gateBy
 #assert_axioms rowsSat_of_scheduleLegs
