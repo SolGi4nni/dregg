@@ -57,6 +57,16 @@ pub fn install_recorder() -> PrometheusHandle {
                 counter!("dregg_consensus_order_polls_total", "source" => source).increment(0);
             }
             counter!("dregg_consensus_order_over_budget_total").increment(0);
+            // Pre-seed the ROOT-DISAGREEMENT series at 0 so a ledger fork is a
+            // detector going RED from a visible green, not a series appearing out
+            // of "No data" — the 2026-08 3-vs-1 root fork ran 27 h with every
+            // instrument reading healthy precisely because no armed series
+            // existed for it. `verified_total > 0` is the real alarm (both sides
+            // hybrid-signed); `unverified_claim_total` is attacker-inflatable
+            // noise that names nobody and must never page anyone by itself.
+            counter!("dregg_finalization_root_disagreement_verified_total").increment(0);
+            counter!("dregg_finalization_root_disagreement_unverified_claim_total").increment(0);
+            gauge!("dregg_finalization_root_split_blocks").set(0.0);
             // Pre-seed the gossip stream-rejection series at 0 so the federation
             // dashboard's gossip-rejection panel renders a healthy "0" from boot
             // (a flat green line) and lights up as a RATE spike during a gossip
@@ -202,6 +212,50 @@ pub fn inc_tau_prefix_shift() {
 /// observable so the mixed-network differential is a SAFETY NET, not a silent drop.
 pub fn inc_consensus_differential_divergence() {
     counter!("dregg_consensus_differential_divergence_total").increment(1);
+}
+
+// ─── Finalization-root disagreement — DETECTION, NOT ATTRIBUTION ─────────────
+//
+// The 2026-08 ledger fork was a 3-vs-1 disagreement between HONEST nodes about
+// what was COMPUTED (the finalized `merkle_root`), not about what was said; no
+// component compared the two roots and nothing fired
+// (`docs/reference/READING-ACCOUNTABILITY-2026-08-08.md`). These series make
+// that state loud. They deliberately carry NO member label: a verified split
+// does not identify a culprit (a diverging executor is not Byzantine under
+// `byz(B)` — correctly), and an unverified claim must never turn into an
+// accusation. The WARN log line names the verified signers on each side; the
+// metric only counts.
+
+/// A hybrid-VERIFIED finalization vote attests a different
+/// `(merkle_root, receipt_stream_root)` pair than another hybrid-verified
+/// committee vote for the same block. Emitted only after `verify_hybrid`
+/// (ed25519 ∧ ML-DSA) in `finalization_votes::VoteCollector::record`, so both
+/// sides of every counted disagreement are cryptographically signed — forging
+/// this signal requires forging a hybrid signature. Non-zero means two
+/// committee members REALLY computed/attested different finalized states:
+/// serious, and exactly what the 3-vs-1 fork looked like.
+pub fn inc_finalization_root_disagreement_verified() {
+    counter!("dregg_finalization_root_disagreement_verified_total").increment(1);
+}
+
+/// Vote BYTES whose claimed pair disagrees with a counted verified vote, where
+/// the claim's signature was NOT checked (the inert-repeat fast path) or FAILED
+/// (`verify_hybrid` refused). This is a claim, not evidence: any on-path
+/// adversary can mint these from chosen bytes at zero cost, so the rate is
+/// attacker-controllable noise, it names no member, and nothing is retained.
+/// It exists so "somebody is injecting conflicting-vote bytes" is visible
+/// without ever becoming an accusation.
+pub fn inc_finalization_root_disagreement_unverified_claim() {
+    counter!("dregg_finalization_root_disagreement_unverified_claim_total").increment(1);
+}
+
+/// Gauge: the number of blocks whose VERIFIED vote tally currently holds
+/// conflicting attested pairs (`VoteCollector::verified_root_split_count`).
+/// Sticky per block for the collector's lifetime — a real divergence stays
+/// visible even after a majority root reaches quorum (the fork DID finalize
+/// 3-vs-1; the dissent must not vanish into the quorum).
+pub fn set_finalization_root_split_blocks(n: f64) {
+    gauge!("dregg_finalization_root_split_blocks").set(n);
 }
 
 // ─── THE VERIFIED-ORDER BUDGET — WHICH order decided each finality poll ──────────────────────

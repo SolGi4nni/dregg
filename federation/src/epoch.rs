@@ -360,7 +360,19 @@ pub fn verify_epoch_transition(transition: &EpochTransition, old_config: &EpochC
         transition.attestation.height,
         transition.attestation.view,
     );
+    // DISTINCT voters, refused not deduped: the Lean `verifyTransition`
+    // (`metatheory/Dregg2/Distributed/EpochReconfig.lean`) requires
+    // `(t.validVoters SigValid).Nodup` as a conjunct — a transition whose voter
+    // list repeats a member is INVALID outright, not "counted once". Without
+    // this, one member's valid signature repeated `threshold` times passed the
+    // `votes.len()` count above and violated the hypothesis every safety
+    // theorem over this gate assumes.
+    let mut seen_voters =
+        std::collections::HashSet::with_capacity(transition.attestation.votes.len());
     for (voter_id, sig) in &transition.attestation.votes {
+        if !seen_voters.insert(*voter_id) {
+            return false;
+        }
         match member_keys.get(*voter_id) {
             Some(pk) => {
                 if !pk.verify(&vote_message, sig) {

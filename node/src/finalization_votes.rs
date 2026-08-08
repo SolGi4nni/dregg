@@ -21,6 +21,9 @@
 //!
 //! The collector is a pure value (no I/O), so the threshold-gating logic is
 //! exercised by unit tests without a running node (see the tests at the bottom).
+//! The one exception is OBSERVATIONAL: `record` emits `tracing` events and
+//! `crate::metrics` counters for root disagreements (both are no-ops without a
+//! subscriber/recorder and never influence control flow).
 //! The gossip wiring lives in [`crate::blocklace_sync`].
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -220,6 +223,20 @@ pub fn fresh_nonce() -> u64 {
     VOTE_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Short hex tag for a 32-byte key/root in log lines (first 4 bytes — the same
+/// convention as `blocklace_sync`'s `voter_tag`; bounded label cardinality).
+fn short_tag(bytes: &[u8; 32]) -> String {
+    bytes[..4].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Render an [`AttestedPair`] as `ledgerRoot/streamRoot` short tags (`-` for a
+/// turnless block's absent stream root).
+fn pair_tag(pair: &AttestedPair) -> String {
+    let (ledger, stream) = pair;
+    let stream = stream.as_ref().map_or_else(|| "-".to_owned(), short_tag);
+    format!("{}/{}", short_tag(ledger), stream)
+}
+
 /// **What a quorum has to AGREE ON** — the finalized ledger root together with
 /// the receipt stream the block committed.
 ///
@@ -272,7 +289,30 @@ pub struct VoteCollector {
     /// a pair so agreement covers the receipt stream, not the ledger root alone.
     votes: HashMap<BlockId, HashMap<[u8; 32], (dregg_types::Signature, AttestedPair, Vec<u8>)>>,
     /// Blocks that have crossed the quorum threshold (consensus-wide Attested).
+    ///
+    /// ⚠ STICKY, and that stickiness is a stated tension: Gauss and Sui Lutris
+    /// both require a post-reconfiguration-boundary commit to be DROPPABLE,
+    /// which a never-shrinking set cannot express. The resolution is NOT to
+    /// unpick the stickiness here — it is the monotone floor over the finalized
+    /// ORDER (the `tau-faithful` lane's work): once "committed" is grounded in
+    /// an order floor rather than membership of this set, the set stops being
+    /// the thing that makes finality mean something and can become droppable at
+    /// the boundary. Until that floor lands, removing entries here would make
+    /// `is_consensus_attested` lie backwards in time.
     attested: HashSet<BlockId>,
+    /// Blocks whose VERIFIED vote tally holds conflicting
+    /// `(merkle_root, receipt_stream_root)` pairs — i.e. at least two
+    /// hybrid-verified committee votes for the block attest DIFFERENT finalized
+    /// states. This is DETECTION, not attribution: every entry is backed by
+    /// ed25519 ∧ ML-DSA signatures on BOTH sides (only `record`'s post-
+    /// `verify_hybrid` path inserts here), and no entry names a culprit — a
+    /// diverging executor is not Byzantine under the blocklace `byz(B)`
+    /// predicate, correctly. Sticky for the collector's lifetime: the 3-vs-1
+    /// fork DID reach quorum on the majority root, and the dissent must stay
+    /// visible after it does. Bounded: a split needs ≥ 2 distinct verified
+    /// member votes on one block, so this set is a subset of the multi-voter
+    /// blocks the `votes` map already tracks.
+    verified_root_splits: HashSet<BlockId>,
     /// THEME-2 #5 — per-member eviction bookkeeping: for each member, the
     /// `block_id`s it has an outstanding vote for, in insertion order (front =
     /// oldest). Bounded at `max_votes_per_member` per member by
@@ -315,6 +355,7 @@ impl VoteCollector {
             quorum_threshold,
             votes: HashMap::new(),
             attested: HashSet::new(),
+            verified_root_splits: HashSet::new(),
             voted_blocks: HashMap::new(),
             max_votes_per_member: MAX_VOTES_PER_MEMBER,
         }
@@ -530,6 +571,26 @@ impl VoteCollector {
         self.attested.iter()
     }
 
+    /// Does this block's VERIFIED tally hold conflicting attested pairs — two
+    /// hybrid-verified committee votes attesting different
+    /// `(merkle_root, receipt_stream_root)`? A real computed divergence between
+    /// members (the 3-vs-1 fork shape), NOT an accusation of either side.
+    pub fn has_verified_root_split(&self, block_id: &BlockId) -> bool {
+        self.verified_root_splits.contains(block_id)
+    }
+
+    /// How many blocks currently sit in verified root-split state. `> 0` is the
+    /// loud version of the state that was byte-identical to "still waiting"
+    /// during the live fork. Status/metrics surfaces read this.
+    pub fn verified_root_split_count(&self) -> usize {
+        self.verified_root_splits.len()
+    }
+
+    /// All blocks in verified root-split state.
+    pub fn verified_root_splits(&self) -> impl Iterator<Item = &BlockId> {
+        self.verified_root_splits.iter()
+    }
+
     /// Record a vote. The signature is verified and the signer must be a
     /// committee member; otherwise the vote is [`RecordOutcome::Rejected`] and
     /// nothing changes. A verified member vote is counted by distinct signer,
@@ -579,8 +640,32 @@ impl VoteCollector {
         // outcomes returned are exactly the ones the full path would have returned
         // for the same inert repeat, so caller metrics are unchanged.
         if let Some(signers) = self.votes.get(&vote.block_id)
-            && signers.contains_key(&vote.voter)
+            && let Some((_sig, counted_pair, _pq)) = signers.get(&vote.voter)
         {
+            // ⚠ ACCUSATION-FORGERY GUARD — this arm runs BEFORE any signature
+            // check, so nothing here may name a member or retain the bytes.
+            // If the re-received bytes CLAIM a different attested pair than
+            // this signer's counted (verified) vote, that is exactly the shape
+            // an on-path adversary can mint for free under any member's name
+            // (BFT Protocol Forensics App. D.1 / the PBFT-MAC `d = 0` failure:
+            // unverified transcripts are not evidence). We deliberately do NOT
+            // verify it either — a differing-bytes repeat would otherwise be a
+            // free trigger for the 376–1880 ms hybrid verify this fast path
+            // exists to avoid. So: one anonymous counter, a debug line with no
+            // voter field, nothing stored. A GENUINE second-signed disagreement
+            // from this member is invisible here by design; the member's FIRST
+            // vote was verified and is what the verified-split detection below
+            // compares against.
+            if (vote.merkle_root, vote.receipt_stream_root) != *counted_pair {
+                crate::metrics::inc_finalization_root_disagreement_unverified_claim();
+                tracing::debug!(
+                    block_id = %vote.block_id,
+                    "re-received vote bytes claim a different attested pair than the counted \
+                     verified vote for that signer — signature deliberately NOT checked (inert-\
+                     repeat fast path), so this is a claim, not evidence: no member is named and \
+                     nothing is retained"
+                );
+            }
             let distinct_votes = signers.len();
             return if self.attested.contains(&vote.block_id) {
                 RecordOutcome::AlreadyQuorum { distinct_votes }
@@ -590,7 +675,82 @@ impl VoteCollector {
         }
 
         if !vote.verify_hybrid(pq_pubkey) {
+            // Verification REFUSED the bytes. If they claimed a pair that
+            // disagrees with the verified tally, count the claim anonymously —
+            // same rule as the fast path above: an unverified disagreement must
+            // never become an accusation, so no member is named and nothing is
+            // retained. (The adversary can inflate this counter at zero cost;
+            // that is priced in — it accuses nobody.)
+            if let Some(signers) = self.votes.get(&vote.block_id) {
+                let claimed: AttestedPair = (vote.merkle_root, vote.receipt_stream_root);
+                if signers.values().any(|(_, counted, _)| *counted != claimed) {
+                    crate::metrics::inc_finalization_root_disagreement_unverified_claim();
+                    tracing::debug!(
+                        block_id = %vote.block_id,
+                        "verification-failed vote bytes claimed a disagreeing attested pair — \
+                         rejected; not evidence, no member named"
+                    );
+                }
+            }
             return RecordOutcome::Rejected;
+        }
+
+        // ── VERIFIED ROOT DISAGREEMENT — the loud, unforgeable signal ────────
+        //
+        // Placement is the security argument: this sits strictly AFTER
+        // `verify_hybrid` succeeded (ed25519 ∧ ML-DSA over the signed message
+        // that BINDS `block_id`, `merkle_root` and `receipt_stream_root`), and
+        // every pair it compares against entered the tally through this same
+        // path — the `or_insert` below is the only write into `votes`. Both
+        // sides of any disagreement reported here therefore carry a valid
+        // hybrid signature from a current committee member; forging the signal
+        // requires forging one. Contrast the fast path above, where a
+        // disagreement CLAIM is counted namelessly precisely because it is
+        // unverified.
+        //
+        // And it is DETECTION, not attribution. The 2026-08 fork was three
+        // honest nodes against one honest node whose EXECUTOR computed a
+        // different root — under the blocklace `byz(B)` predicate nobody was
+        // Byzantine, correctly, and this signal accuses nobody: it names the
+        // verified signers on each side symmetrically and says the committee
+        // has diverged, which is the fact no component surfaced for 27 hours.
+        let fresh_pair: AttestedPair = (vote.merkle_root, vote.receipt_stream_root);
+        if let Some(signers) = self.votes.get(&vote.block_id)
+            && signers
+                .values()
+                .any(|(_, counted, _)| *counted != fresh_pair)
+        {
+            // Render each verified side as `root/stream=>signer,signer,…`
+            // (short hex tags; cardinality bounded by committee size).
+            let mut sides: HashMap<AttestedPair, Vec<String>> = HashMap::new();
+            for (voter, (_s, counted, _p)) in signers {
+                sides.entry(*counted).or_default().push(short_tag(voter));
+            }
+            sides
+                .entry(fresh_pair)
+                .or_default()
+                .push(short_tag(&vote.voter));
+            let mut rendered: Vec<String> = sides
+                .iter()
+                .map(|(pair, tags)| format!("{}=>{}", pair_tag(pair), tags.join(",")))
+                .collect();
+            rendered.sort();
+            self.verified_root_splits.insert(vote.block_id);
+            crate::metrics::inc_finalization_root_disagreement_verified();
+            crate::metrics::set_finalization_root_split_blocks(
+                self.verified_root_splits.len() as f64
+            );
+            tracing::warn!(
+                block_id = %vote.block_id,
+                voter = %short_tag(&vote.voter),
+                sides = %rendered.join(" | "),
+                "VERIFIED ledger-root disagreement: hybrid-verified committee votes for this \
+                 block attest DIFFERENT (merkle_root, receipt_stream_root) pairs — a real \
+                 computed divergence between members. Detection, NOT attribution: every side \
+                 carries a valid ed25519+ML-DSA signature, and no side is thereby Byzantine \
+                 (a diverging executor is outside `byz(B)`). This is the signal the 3-vs-1 \
+                 fork never produced."
+            );
         }
 
         let signers = self.votes.entry(vote.block_id).or_default();
@@ -1673,5 +1833,139 @@ mod tests {
             col.is_consensus_attested(&blk),
             "a block finalized in the old epoch stays finalized across the boundary"
         );
+    }
+
+    /// ⚑ THE FORK SIGNAL, GENUINE POLE — the exact 3-vs-1 shape of the 2026-08
+    /// ledger fork: three verified members attest root X, one verified member
+    /// attests root Y. The split must be DETECTED (marked, warned, counted),
+    /// must survive the majority root reaching quorum (the live fork DID
+    /// finalize — the dissent must not vanish into the quorum), and agreeing
+    /// votes alone must never mark it.
+    #[test]
+    fn verified_root_disagreement_is_detected_and_sticky_through_quorum() {
+        let (committee, pq) = committee_of(&[1, 2, 3, 4]);
+        let quorum = dregg_blocklace::ordering::supermajority_threshold(4); // = 3
+        let mut col = VoteCollector::new(committee, pq, quorum);
+        let blk = BlockId([0xF0; 32]);
+        let root_x = [0x11; 32];
+        let root_y = [0x22; 32];
+
+        // Agreement alone: no split state, ever.
+        col.record(&signed_vote(1, blk, FinalityLevel::Ordered, root_x));
+        col.record(&signed_vote(2, blk, FinalityLevel::Ordered, root_x));
+        assert!(
+            !col.has_verified_root_split(&blk),
+            "agreeing verified votes must not mark a split"
+        );
+        assert_eq!(col.verified_root_split_count(), 0);
+
+        // The dissenting VERIFIED vote — a genuine hybrid signature over a
+        // different finalized root. This is the moment the live fork was silent.
+        let dissent = signed_vote(3, blk, FinalityLevel::Ordered, root_y);
+        assert!(dissent.verify_hybrid(&pq_keypair(3).0));
+        assert!(matches!(
+            col.record(&dissent),
+            RecordOutcome::Counted { distinct_votes: 3 }
+        ));
+        assert!(
+            col.has_verified_root_split(&blk),
+            "a verified disagreeing vote must mark the block's verified root split"
+        );
+        assert_eq!(col.verified_root_split_count(), 1);
+
+        // The majority root still reaches quorum (3 of 4 on root_x) — and the
+        // split stays visible THROUGH it. That is the live-fork outcome: the
+        // chain finalized 3-vs-1 and nothing said anything.
+        assert!(matches!(
+            col.record(&signed_vote(4, blk, FinalityLevel::Ordered, root_x)),
+            RecordOutcome::ReachedQuorum { distinct_votes: 4 }
+        ));
+        assert!(col.is_consensus_attested(&blk));
+        assert!(
+            col.has_verified_root_split(&blk),
+            "quorum on the majority root must NOT erase the verified split"
+        );
+        assert_eq!(col.verified_root_splits().collect::<Vec<_>>(), vec![&blk]);
+    }
+
+    /// ⚑ THE FORK SIGNAL, FORGED POLE — a disagreeing vote whose signature does
+    /// NOT verify must produce NOTHING that names a member: rejected, no split
+    /// marked, tally untouched. The mutation is asserted present before the
+    /// verdict is read (the falsifier stays a falsifier).
+    #[test]
+    fn forged_disagreeing_vote_produces_no_split() {
+        let (committee, pq) = committee_of(&[1, 2, 3]);
+        let quorum = dregg_blocklace::ordering::supermajority_threshold(3); // = 3
+        let mut col = VoteCollector::new(committee, pq, quorum);
+        let blk = BlockId([0xF1; 32]);
+        col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT));
+
+        // An on-path adversary rewrites member 2's vote to claim a conflicting
+        // root. MUTATION ASSERTED PRESENT: the pair disagrees with the tally
+        // and the signature no longer verifies.
+        let mut forged = signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT);
+        forged.merkle_root = [0xEE; 32];
+        assert_ne!(forged.merkle_root, TEST_ROOT, "mutation present");
+        assert!(!forged.verify(), "mutation broke the ed25519 half");
+        assert!(
+            !forged.verify_hybrid(&pq_keypair(2).0),
+            "mutation broke the hybrid signature"
+        );
+
+        assert_eq!(
+            col.record(&forged),
+            RecordOutcome::Rejected,
+            "a forged disagreeing vote is rejected outright"
+        );
+        assert!(
+            !col.has_verified_root_split(&blk),
+            "an UNVERIFIED disagreement claim must never mark a verified split \
+             (that would be the accusation-forgery oracle)"
+        );
+        assert_eq!(col.verified_root_split_count(), 0);
+        assert_eq!(col.vote_count(&blk), 1, "the tally is untouched");
+    }
+
+    /// ⚑ THE FORK SIGNAL, REPLAY POLE — the exact oracle shape from the
+    /// accountability reading (App. D.1 / PBFT-MAC): re-received bytes under an
+    /// ALREADY-COUNTED member's name, with the root rewritten. The fast path
+    /// returns before any signature check — and the proof it did NOT verify is
+    /// the outcome itself: the mutated signature is invalid, so verification
+    /// would have Rejected; instead the repeat is inertly Counted. No split may
+    /// be marked and the counted vote must be undisturbed.
+    #[test]
+    fn unverified_replay_with_rewritten_root_marks_nothing() {
+        let (committee, pq) = committee_of(&[1, 2, 3]);
+        let quorum = dregg_blocklace::ordering::supermajority_threshold(3); // = 3
+        let mut col = VoteCollector::new(committee, pq, quorum);
+        let blk = BlockId([0xF2; 32]);
+        col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT));
+
+        // Replay member 1's counted vote with the root rewritten — chosen bytes
+        // under a member's name, exactly what an on-path adversary can mint.
+        // MUTATION ASSERTED PRESENT before the verdict.
+        let mut replay = signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT);
+        replay.merkle_root = [0xDD; 32];
+        assert_ne!(replay.merkle_root, TEST_ROOT, "mutation present");
+        assert!(!replay.verify(), "the replayed signature is stale");
+
+        assert_eq!(
+            col.record(&replay),
+            RecordOutcome::Counted { distinct_votes: 1 },
+            "the inert-repeat fast path answers WITHOUT verifying (a verify \
+             would have Rejected this stale signature)"
+        );
+        assert!(
+            !col.has_verified_root_split(&blk),
+            "unverified replayed bytes must never mark a verified split"
+        );
+        // The counted (verified) vote is undisturbed: first-write-wins.
+        let (pair, _sigs) = {
+            col.record(&signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT));
+            col.record(&signed_vote(3, blk, FinalityLevel::Ordered, TEST_ROOT));
+            col.assembled_quorum(&blk)
+                .expect("the genuine votes still quorum on the ORIGINAL root")
+        };
+        assert_eq!(pair, (TEST_ROOT, TEST_STREAM));
     }
 }

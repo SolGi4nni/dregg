@@ -341,3 +341,28 @@ fn negative_non_sequential_rejected() {
     transition.from_epoch = 5; // != config.current_epoch (0)
     assert!(!verify_epoch_transition(&transition, &config));
 }
+
+#[test]
+fn negative_duplicate_voter_rejected() {
+    // Lean `verifyTransition` requires `(t.validVoters SigValid).Nodup`
+    // (`EpochReconfig.lean` §3) — the quorum is of DISTINCT old members. The Rust
+    // gate must therefore refuse a "quorum" that is ONE member's perfectly valid
+    // signature repeated to the threshold count (which the bare `votes.len()`
+    // check alone would admit, violating the hypothesis of every safety theorem
+    // over this gate).
+    let (config, mut transition, (sk0, _, _)) = build_verifiable();
+    let vote_message = QuorumCertificate::vote_message(
+        &transition.attestation.block_hash,
+        transition.attestation.height,
+        transition.attestation.view,
+    );
+    let s0 = sign(&sk0, &vote_message);
+    transition.attestation.votes = vec![(0, s0.clone()), (0, s0.clone()), (0, s0)];
+    // Mutation asserted present: the duplicated list DOES clear the bare count,
+    // and each copy individually carries a valid member-0 signature.
+    assert!(transition.attestation.votes.len() >= config.threshold);
+    assert!(
+        !verify_epoch_transition(&transition, &config),
+        "one member's signature repeated to threshold must NOT verify (Nodup)"
+    );
+}

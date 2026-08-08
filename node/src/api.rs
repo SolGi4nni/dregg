@@ -111,6 +111,16 @@ pub struct StatusResponse {
     /// which has no cross-node quorum to lose.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finality_stalled: Option<bool>,
+    /// Blocks whose VERIFIED finalization-vote tally holds conflicting
+    /// `(merkle_root, receipt_stream_root)` pairs — hybrid-verified committee
+    /// members really attested different finalized states
+    /// (`finalization_votes::VoteCollector::verified_root_split_count`).
+    /// `> 0` is the loud form of the state the 2026-08 3-vs-1 root fork spent
+    /// 27 h in while this endpoint said `healthy: true`. Detection, NOT
+    /// attribution: both sides are signature-backed and neither is thereby
+    /// Byzantine; unverified disagreement CLAIMS never reach this number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_root_splits: Option<usize>,
     /// Turns this node has accepted for consensus and not yet resolved to a
     /// durable verdict. Ask `GET /api/turn/{hash}/verdict` about any one of them.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2830,6 +2840,13 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
         Some(handle) => Some(handle.federation_liveness().await),
         None => None,
     };
+    // A verified committee divergence (two hybrid-verified votes on different
+    // finalized roots for one block) — the state the 3-vs-1 fork sat in
+    // invisibly. Read from the collector; `None` when no consensus handle.
+    let verified_root_splits = match &blocklace {
+        Some(handle) => Some(handle.votes.read().await.verified_root_split_count()),
+        None => None,
+    };
     let turns_in_flight = blocklace
         .as_ref()
         .map(|handle| handle.in_flight_turns.len());
@@ -2910,6 +2927,7 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
         ever_reached_quorum: liveness.map(|l| l.ever_reached_quorum),
         seconds_since_quorum: liveness.map(|l| l.seconds_since_quorum),
         finality_stalled: liveness.map(|l| l.finality_stalled),
+        verified_root_splits,
         turns_in_flight,
         latest_height,
         dag_height,
