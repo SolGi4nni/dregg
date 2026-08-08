@@ -131,6 +131,18 @@ pub const DELEG_HELD_MASK_RECON_COL: usize = 75;
 /// = 72. The granted-mask recon now binds exactly this column ([`DELEG_GRANTED_MASK_RECON_COL`]).
 pub const DELEG_HASHED_RIGHTS_COL: usize = 72;
 
+/// ⚑ **THE HASHED RIGHTS FELT IS IN THE PARAM BLOCK — CHECKED AGAINST THE LAYOUT, AT BUILD TIME.**
+/// The literal `72` above is a transcription of `PARAM_BASE + 4`; `PARAM_BASE` comes from
+/// `effect_vm::columns`, which the layout owns. If the layout moved the param block and this
+/// literal did not follow, the forgery test below would be poking an effect-selector column and
+/// still passing — which is the exact state this file was in until 2026-07-17, when the recon bound
+/// col 4. It stood as an `assert!` inside a `#[test]`, over two constants.
+const _: () = assert!(
+    DELEG_HASHED_RIGHTS_COL >= crate::effect_vm::columns::PARAM_BASE,
+    "the hashed rights felt is no longer inside the param block — re-derive this pin against the \
+     layout, do not re-type the literal"
+);
+
 /// The full EffectVM base trace width — re-exported from the canonical layout
 /// (`effect_vm::columns`, which Lean `EffectVmEmit` mirrors), NOT re-typed here. A literal `188`
 /// would drift silently the moment the layout moved; this way a layout change is a compile error.
@@ -442,10 +454,8 @@ mod tests {
             "the granted recon and the edge-leaf rights felt must be the SAME column — that identity IS \
              the interlock this test exercises. If they differ, the emit regressed."
         );
-        assert!(
-            DELEG_HASHED_RIGHTS_COL >= PARAM_BASE,
-            "the hashed rights felt must be in the param block — re-derive this pin"
-        );
+        // (`DELEG_HASHED_RIGHTS_COL >= PARAM_BASE` is const-asserted at the constant's definition:
+        //  it is two constants, so it is a build obligation, not something a test can discover.)
 
         // THE FORGERY: honest granted BITS (⊑ held), but the hashed `rights` felt confers EVERYTHING.
         // Because the granted bits now reconstruct col 72, setting col 72 = 0xFF while the bits decode

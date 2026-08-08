@@ -358,7 +358,10 @@ fn the_bent_lane_is_itself_canonical() {
         bent < (1u32 << 29),
         "the bent lane must still pass the 29-bit lane table"
     );
-    assert!(
+    // Both fixtures' top lanes are constants, so their canonicality is a BUILD obligation: a
+    // fixture edited past the 22-bit table would make every linkage tooth in this file a range
+    // tooth, and a runtime assert reports that only when this one test runs.
+    const _: () = assert!(
         DEVNET_TIP_LANES[8] < (1u32 << 22) && GENESIS_ANCHOR_LANES[8] < (1u32 << 22),
         "both real top lanes must pass the 22-bit Pasta-canonical table"
     );

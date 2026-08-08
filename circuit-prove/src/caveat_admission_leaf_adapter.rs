@@ -106,6 +106,16 @@ const LIMB_BASE: i64 = 1 << LIMB_BITS;
 /// The full operand bit budget (`= 130`).
 pub const OPERAND_BITS: usize = NUM_LIMBS * LIMB_BITS;
 
+/// ⚑ **BIGNUM, NOT ATOMS — AT BUILD TIME.** `OPERAND_BITS` is `NUM_LIMBS * LIMB_BITS`; if either
+/// narrowed to the point where an operand fits a `u128`, this whole adapter would be paying for a
+/// bignum decomposition it no longer needs *and* every caveat comparison it emits would be over a
+/// domain smaller than the one callers hand it. Both operands are constants — it stood as an
+/// `assert!` inside a `#[test]`.
+const _: () = assert!(
+    OPERAND_BITS >= 128,
+    "operands must be at least u128-wide (bignum, not atoms)"
+);
+
 // ---- The 8 bignum operands (each `NUM_LIMBS` limbs, all PI-bound) --------------------------
 /// The request's logical time (the `validUntil` view).
 pub const OP_REQ_TIME: usize = 0;
@@ -810,10 +820,7 @@ mod tests {
         assert_eq!(ranges, (NUM_OPERANDS + NUM_COMPARISONS) * NUM_LIMBS);
         assert!(within_caveat().admits());
         assert!(within_caveat_bignum().admits());
-        assert!(
-            OPERAND_BITS >= 128,
-            "operands must be at least u128-wide (bignum, not atoms)"
-        );
+        // (`OPERAND_BITS >= 128` is const-asserted at the constant's definition)
     }
 
     /// THE POSITIVE POLE: a within-caveat trade's admission proves as a foldable leaf.

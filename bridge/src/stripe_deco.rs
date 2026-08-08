@@ -557,8 +557,15 @@ mod tests {
         );
         // Test / test-utils: a missing proof falls through (binding-only).
         assert!(check_deco_stark(&att, recomputed, false).is_ok());
-        // This IS a test build, so the compile-time policy allows the None path here.
-        assert!(!DECO_REQUIRES_STARK_PROOF);
+        // This IS a test build, so the compile-time policy allows the None path here — and that
+        // is a property of the CFG this file was compiled under, not of anything that runs. If
+        // `DECO_REQUIRES_STARK_PROOF` ever stopped being cfg-derived, the fixture leg above would
+        // start exercising the production path under a test name and nobody would be told.
+        const _: () = assert!(
+            !DECO_REQUIRES_STARK_PROOF,
+            "a TEST build must not require the STARK carrier, or the `None` fixture path above is \
+             not the path it claims to exercise"
+        );
 
         // A garbage STARK carrier is refused regardless of the requirement flag.
         let mut garbage = att.clone();

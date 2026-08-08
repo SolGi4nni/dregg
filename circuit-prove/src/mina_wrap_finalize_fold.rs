@@ -502,6 +502,7 @@ mod tests {
         assert_eq!(CLAIM_B0 + SK, FINALIZE_CLAIM_LEN);
         // ⚑ ξ is NOT in the root claim — it is internal to the aggregation.
         assert_eq!(FINALIZE_CLAIM_LEN, CONJ_PI_COUNT);
-        assert!(V_PRIME_LIMBS < SK, "v' is 128 of 255 bits");
+        // Constant-only: a build obligation (see the same pin in `mina_kimchi_verifier_gadget`).
+        const _: () = assert!(V_PRIME_LIMBS < SK, "v' is 128 of 255 bits");
     }
 }

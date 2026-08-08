@@ -948,6 +948,17 @@ mod tests {
     /// The AIR's field-lane count, as the projection door must read it.
     const LANES: usize = dregg_circuit::effect_vm::state::NUM_FIELDS;
 
+    /// ⚑ **THE GAP IS A BUILD OBLIGATION.** `NUM_FIELDS` (the AIR's lane count) and `STATE_SLOTS`
+    /// (the cell's slot count) come from two different crates, and every refusal below is dead code
+    /// the moment the first reaches the second. Both are constants, so this stood as an `assert!`
+    /// inside one `#[test]`: an obligation the whole crate was already built against, reported only
+    /// if that test ran. Now the crate does not compile.
+    const _: () = assert!(
+        LANES < dregg_cell::state::STATE_SLOTS,
+        "the AIR carrying at least as many lanes as the cell has slots would make this whole \
+         refusal dead code — re-derive the gap before deleting anything"
+    );
+
     /// **THE #61 POLE (refusal).** The first slot the deployed AIR has no column for —
     /// slot 8, the exact index the helm fleet's whisper-payload writes reported
     /// (`SetField field_idx out of bounds: 8`) — must be refused BY VARIANT here, where
@@ -1051,11 +1062,7 @@ mod tests {
     /// shorter range) goes red here against `STATE_SLOTS`.
     #[test]
     fn the_provable_ceiling_is_below_the_cells_slot_count_and_the_gap_is_named() {
-        assert!(
-            LANES < dregg_cell::state::STATE_SLOTS,
-            "the AIR carrying at least as many lanes as the cell has slots would make this whole \
-             refusal dead code — re-derive the gap before deleting anything"
-        );
+        // (`LANES < STATE_SLOTS` is const-asserted where `LANES` is defined — a build obligation.)
         let cell = CellId([0x52; 32]);
         assert!(
             try_convert_turn_effects_to_vm(&cell, &turn_with_set_field(cell, LANES as u64 - 1))

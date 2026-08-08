@@ -1453,8 +1453,12 @@ mod tests {
              play: {SESSION_WRITES_PER_PLAYER_PER_MINUTE} against {whole_run}"
         );
         // And it is not so loose as to be decorative: it must be under what the shared
-        // per-IP window already permits, or it bounds nothing the per-IP one did not.
-        assert!(SESSION_WRITES_PER_PLAYER_PER_MINUTE < SESSION_REQUESTS_PER_MINUTE);
+        // per-IP window already permits, or it bounds nothing the per-IP one did not. Two
+        // constants, so this is a build obligation and is discharged as one.
+        const _: () = assert!(
+            SESSION_WRITES_PER_PLAYER_PER_MINUTE < SESSION_REQUESTS_PER_MINUTE,
+            "a per-key budget at or above the per-IP window bounds nothing the per-IP one did not"
+        );
     }
 
     /// ⚑ ONE KEY'S BUDGET IS ONE KEY'S. Exhausting one leaves every other untouched —

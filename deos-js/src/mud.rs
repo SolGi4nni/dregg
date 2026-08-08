@@ -579,7 +579,10 @@ fn mk_cell(engine: &mut DreggEngine, seq: u64, balance: i64) -> CellId {
         .ledger_mut()
         .insert_cell(cell)
         .expect("seed mud cell onto embedded ledger");
-    debug_assert!(STATE_SLOTS >= 5, "mud uses slots 0..4");
+    // ⚑ This was `debug_assert!`, i.e. compiled OUT of every release build — the slot-count
+    // premise this module indexes on was unchecked in exactly the binaries that ship. Both
+    // operands are constants, so it belongs to the build in every profile.
+    const _: () = assert!(STATE_SLOTS >= 5, "mud uses slots 0..4");
     id
 }
 

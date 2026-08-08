@@ -775,13 +775,70 @@ mod tests {
         assert!(durable_vouch_edges(&store).unwrap().is_empty());
     }
 
+    /// The bond arm of [`PoaAdmissionPolicyV1::validate`], measured at every boundary a bonded
+    /// policy could enter through: the constructors (which must zero the field), `install_policy`,
+    /// and — the one an attacker actually reaches — a snapshot written straight into the config key
+    /// and read back by `decode`.
+    ///
+    /// ⚑ **THIS REPLACED A TAUTOLOGY.** `assert!(POA_BOND_ADMISSION_DISABLED)` stood in the test
+    /// below and restated `pub const POA_BOND_ADMISSION_DISABLED: bool = true` — the constant's own
+    /// definition, typed a second time. It was true on every state this module could ever be in,
+    /// including one with `validate`'s bond arm deleted, so the half of the test name that says
+    /// "no bond surface exists" was carried by nothing. The constant stays (it is the reviewable
+    /// policy declaration) but it is no longer mistaken for its own enforcement.
+    fn no_bond_bearing_policy_survives_any_entry_point(federation: [u8; 32], seed: [u8; 32]) {
+        const REFUSAL: &str =
+            "PoA bond admission is disabled until a slashable quote-asset lock exists";
+
+        let mut bonded = PoaAdmissionPolicyV1::enforced(federation, [seed]).unwrap();
+        assert!(
+            !bonded.bond_admission,
+            "the constructors must leave the bond field zero"
+        );
+        bonded.bond_admission = true;
+
+        assert_eq!(
+            bonded.validate(),
+            Err(PoaAdmissionError::InvalidPolicy(REFUSAL)),
+            "validate must refuse a bond-bearing policy"
+        );
+
+        let fresh = PersistentStore::open_in_memory().unwrap();
+        assert_eq!(
+            install_policy(&fresh, bonded.clone()),
+            Err(PoaAdmissionError::InvalidPolicy(REFUSAL)),
+            "install_policy must refuse a bond-bearing policy"
+        );
+
+        // The path that bypasses every constructor: postcard bytes straight into the config key.
+        let planted = PersistentStore::open_in_memory().unwrap();
+        let snapshot = DurablePoaAdmissionV1 {
+            format_version: FORMAT_VERSION,
+            policy: bonded,
+            rows: Vec::new(),
+        };
+        planted
+            .set_config(CONFIG_KEY, &encode(&snapshot).unwrap())
+            .unwrap();
+        assert_eq!(
+            durable_vouch_edges(&planted),
+            Err(PoaAdmissionError::InvalidPolicy(REFUSAL)),
+            "a planted bond-bearing snapshot must refuse to LOAD, not project"
+        );
+        assert_eq!(
+            project_admitted(&planted, POA_DEPLOYMENT_DOMAIN_V1, federation, &[seed]),
+            Err(PoaAdmissionError::InvalidPolicy(REFUSAL)),
+            "…and the projection must refuse rather than build a roster on it"
+        );
+    }
+
     #[test]
     fn rootless_sybil_ring_cannot_bootstrap_and_no_bond_surface_exists() {
         require_lean_admission();
-        assert!(POA_BOND_ADMISSION_DISABLED);
         let store = PersistentStore::open_in_memory().unwrap();
         let federation = [0x49; 32];
         let (_, seed) = key();
+        no_bond_bearing_policy_survives_any_entry_point(federation, seed);
         let (sk_x, x) = key();
         let (sk_y, y) = key();
         let (sk_z, z) = key();

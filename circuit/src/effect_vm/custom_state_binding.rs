@@ -102,6 +102,15 @@ pub const CUSTOM_PI_NEW_COMMIT_LEN: usize = 8;
 /// Total felts the state-binding prefix occupies. Application public inputs start here.
 pub const CUSTOM_PI_STATE_PREFIX_LEN: usize = CUSTOM_PI_NEW_COMMIT_BASE + CUSTOM_PI_NEW_COMMIT_LEN;
 
+/// ⚑ **THE PREFIX FITS THE DEPLOYED CAP — AT BUILD TIME.** A state prefix that outgrew
+/// `MAX_PUBLIC_INPUTS` would leave the application a negative allowance, and every sub-program
+/// built on the weld would be unprovable. Both operands are constants; this used to be an
+/// `assert!` inside one `#[test]` in this file, i.e. checked after the whole crate had compiled.
+const _: () = assert!(
+    CUSTOM_PI_STATE_PREFIX_LEN < crate::dsl::circuit::MAX_PUBLIC_INPUTS,
+    "the custom state-binding prefix no longer fits the deployed public-input cap"
+);
+
 /// Domain separator for the custom sub-proof's public-input commitment.
 ///
 /// **Byte-identical to `dregg_circuit_prove::custom_proof_bind::CUSTOM_PROOF_PI_DOMAIN`**
@@ -544,12 +553,7 @@ mod tests {
             "the weld introduced no PI slot before the custom entries"
         );
 
-        // The prefix fits the deployed program-validation caps with room to spare.
-        assert!(
-            CUSTOM_PI_STATE_PREFIX_LEN < MAX_PUBLIC_INPUTS,
-            "the state-binding prefix ({CUSTOM_PI_STATE_PREFIX_LEN}) must fit the deployed \
-             {MAX_PUBLIC_INPUTS}-PI cap"
-        );
+        // (the prefix fitting `MAX_PUBLIC_INPUTS` is const-asserted at the constant's definition)
         assert_eq!(
             MAX_PUBLIC_INPUTS - CUSTOM_PI_STATE_PREFIX_LEN,
             48,

@@ -3126,6 +3126,15 @@ const UBC_IS_REAL: usize = 7;
 const UBC_ADDR_MULT: usize = 8;
 const UBC_WIDTH: usize = UBC_ADDR_MULT + 1; // 9
 
+/// ⚑ **THE PERF LEVER IS A BUILD OBLIGATION.** The specialized cohort boundary exists only because
+/// it drops the general boundary's inter-row comparator; if it ever stopped being a quarter of the
+/// general width the specialization would be buying nothing while still carrying its own soundness
+/// argument. Both operands are constants — this stood as an `assert!` inside one `#[test]`.
+const _: () = assert!(
+    UBC_WIDTH * 4 <= UB_WIDTH,
+    "the cohort boundary is no longer at most a quarter of the general boundary's columns"
+);
+
 /// ⚑ **THE COHORT LAYOUT IS THE GENERAL LAYOUT'S 9-COLUMN PREFIX** — pinned, not implied.
 ///
 /// The two boundaries are now authored in DIFFERENT places: the general one is the
@@ -10669,10 +10678,7 @@ mod tests {
     fn ir2_umem_cohort_proves_through_specialized_air() {
         // Width: the dropped comparator is real — the cohort boundary is a quarter of the columns.
         assert_eq!(UBC_WIDTH, 9);
-        assert!(
-            UBC_WIDTH * 4 <= UB_WIDTH,
-            "cohort boundary {UBC_WIDTH} is not ≤ a quarter of the general {UB_WIDTH}"
-        );
+        // (`UBC_WIDTH * 4 <= UB_WIDTH` is const-asserted at `UBC_WIDTH`'s definition)
 
         let desc = umem_cohort_desc();
         let layout = check_descriptor2(&desc).expect("cohort desc checks");

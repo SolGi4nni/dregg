@@ -110,6 +110,19 @@ pub fn verify_state_integrity(state: &CellState) -> Result<(), String> {
 /// `trace_rotated::V1_PI_COUNT` — the deployed rotated leg always satisfies it.
 pub const BALANCE_LIMB_PI_MIN_LEN: usize = pi::NET_DELTA_SIGN + 1;
 
+/// ⚑ **THE REACHABILITY OBLIGATION, AT BUILD TIME.** The sentence above ("well under
+/// `V1_PI_COUNT`") is the whole reason this gate is on the live path at all: it shipped demanding
+/// `pi::BASE_COUNT` (201) while the deployed `"effect-vm-rotated"` leg publishes 35, so every real
+/// PI vector was turned away as *too short* before a single limb was examined. That regression was
+/// caught by a `#[test]` in `circuit/tests/balance_limb_pi_gate.rs` — i.e. only once the crate had
+/// already built and only if that test ran. Both operands are constants, so it is a build
+/// obligation and it is now discharged as one.
+const _: () = assert!(
+    BALANCE_LIMB_PI_MIN_LEN <= super::trace_rotated::V1_PI_COUNT,
+    "the balance-limb gate's own precondition exceeds the width of the deployed rotated leg; it \
+     would be unreachable on the only leg that ships"
+);
+
 /// P2-2 / P0-1 helper: range-check the INIT_BAL_* and FINAL_BAL_* PIs that
 /// were added in the P0-1 fix.
 ///

@@ -134,7 +134,9 @@ pub mod exit_code {
 /// The shortest PI vector [`check_receipt_pi_binding`] can decide, DERIVED from the
 /// highest offset the body reads rather than written down. Every offset it touches
 /// lives in the v1 PI prefix a rotated leg publishes in full
-/// (`trace_rotated::V1_PI_COUNT` = 42), so the deployed leg always satisfies it.
+/// (`trace_rotated::V1_PI_COUNT`), so the deployed leg always satisfies it — and that is now
+/// asserted below rather than said here, so the number cannot go stale again. (It DID: this line
+/// read `= 42` until 2026-08-08, four weeks after the seven-slot PI compaction took it to 35.)
 ///
 /// The previous precondition was `pi::ACTIVE_BASE_COUNT` (206 today, 213 when this was
 /// measured), which did not make
@@ -147,6 +149,17 @@ pub mod exit_code {
 /// precondition is computed from the reads so it cannot drift away from them again.
 pub const RECEIPT_PI_BINDING_MIN_LEN: usize =
     dregg_circuit::effect_vm::pi::TURN_HASH_BASE + dregg_circuit::effect_vm::pi::TURN_HASH_LEN;
+
+/// ⚑ **AND THE REACHABILITY OBLIGATION IS DISCHARGED AT BUILD TIME.** The failure above was not a
+/// wrong number, it was a precondition that had drifted ABOVE the width of the only leg that
+/// ships — so the binding answered a *length* complaint about every proof it was meant to bind.
+/// Both operands are constants; this refuses the BUILD rather than one `#[test]` in this file's
+/// test module, which is where it used to live.
+const _: () = assert!(
+    RECEIPT_PI_BINDING_MIN_LEN <= dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT,
+    "the receipt PI binding's precondition exceeds the v1 PI window a rotated leg publishes; \
+     above it the check is unreachable on the only leg that ships"
+);
 
 /// Cross-bind a rotated leg's claimed public inputs against the receipt it attests
 /// (and the prior receipt's hash, for the chain-walk invariant).
@@ -200,7 +213,8 @@ pub const RECEIPT_PI_BINDING_MIN_LEN: usize =
 /// ships and keeping them would have been worse than useless:
 ///
 /// * `PREVIOUS_RECEIPT_HASH_BASE` is **42**, and the rotated producer slices the v1
-///   PI vector at exactly `V1_PI_COUNT` = **42** before appending its four rotated
+///   PI vector at exactly `V1_PI_COUNT` (**42** at the time of this measurement; 35 since the
+///   2026-08-07 seven-slot compaction) before appending its four rotated
 ///   pins (`trace_rotated`: OLD commit / NEW commit / committed height / caveat
 ///   commit). So indices 42..46 of a real leg are those pins — measured
 ///   `[0, 0, 0, 531325421]` on a live proof whose receipt's
@@ -425,17 +439,13 @@ mod tests {
     /// check on a real leg fails HERE.
     #[test]
     fn pi_binding_precondition_is_exactly_the_highest_offset_it_reads() {
-        use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
         let mut r = sample_receipt();
         r.turn_hash = [0x42u8; 32];
         let piv = rotated_pi_from_receipt(&r);
 
-        assert!(
-            RECEIPT_PI_BINDING_MIN_LEN <= V1_PI_COUNT,
-            "the precondition ({RECEIPT_PI_BINDING_MIN_LEN}) must fit inside the v1 PI window a \
-             rotated leg publishes ({V1_PI_COUNT}); above it, the check is unreachable on the \
-             only leg that ships"
-        );
+        // ⚑ The reachability half is const-asserted beside `RECEIPT_PI_BINDING_MIN_LEN`'s own
+        // definition above — a build obligation over two constants, not a runtime one. What is
+        // left here is the part only a running check can decide: both POLES of the precondition.
         let short = piv[..RECEIPT_PI_BINDING_MIN_LEN - 1].to_vec();
         assert!(
             check_receipt_pi_binding(&r, &short, None).is_some_and(|m| m.contains("too short")),

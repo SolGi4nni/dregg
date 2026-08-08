@@ -1134,7 +1134,7 @@ fn cross_cutting_all_pi_fields_trace_bound() {
 
     // `IS_AGENT_CELL` sits past the deployed PI window entirely: no member can
     // bind it, because no member publishes that many public inputs.
-    assert!(
+    const _: () = assert!(
         pi::IS_AGENT_CELL >= V1_PI_COUNT,
         "IS_AGENT_CELL moved into the deployed PI window; its off-AIR-only status \
          (asserted by cross_cutting_verifier_checks_all_pi) must be re-derived"
@@ -1412,7 +1412,7 @@ fn cross_cutting_verifier_checks_all_pi() {
          INSIDE the published window, the rotated leg carries it and the verifier should \
          bind it directly instead of transitively"
     );
-    assert!(
+    const _: () = assert!(
         pi::IS_AGENT_CELL >= V1_PI_COUNT,
         "IS_AGENT_CELL moved into the published rotated PI window; bind it directly"
     );

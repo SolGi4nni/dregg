@@ -267,16 +267,19 @@ fn every_emitted_registry_carries_exactly_one_member_per_field_lane() {
 /// slots 8..11, nameservice, vat, dungeon meta, gear respec, trustlines).
 #[test]
 fn the_cell_holds_more_slots_than_the_air_can_attest_and_the_gap_is_stated() {
-    assert!(
+    // ⚑ THE GAP IS A BUILD OBLIGATION. Both operands are constants from two crates, so a flag day
+    // that closed the band — by widening the AIR or by narrowing `STATE_SLOTS` — is something this
+    // test target must refuse to COMPILE, not something it reports once somebody runs it. The two
+    // widths cannot be interpolated into a const-assert message (formatting is not const), so the
+    // message names the flag day and the reader gets the numbers from the two definitions.
+    const _: () = assert!(
         state::NUM_FIELDS < STATE_SLOTS,
-        "\nTHE UNPROVABLE BAND CLOSED WITHOUT A FLAG DAY.\n\
-         \n  circuit  state::NUM_FIELDS          = {}\n  \
-           cell     state::STATE_SLOTS          = {STATE_SLOTS}\n\n\
+        "THE UNPROVABLE BAND CLOSED WITHOUT A FLAG DAY. \
+         circuit `state::NUM_FIELDS` has reached cell `state::STATE_SLOTS`. \
          If these became equal by WIDENING the AIR, say so: that re-emits all three registries \
          and rotates all three fingerprints, and this assertion should be replaced by one that \
          says the bands now coincide. If they became equal by NARROWING STATE_SLOTS, a live band \
-         of committed cell state was deleted.\n",
-        state::NUM_FIELDS
+         of committed cell state was deleted."
     );
 
     // The band is exactly what the executor routes to the fixed register file and the authority

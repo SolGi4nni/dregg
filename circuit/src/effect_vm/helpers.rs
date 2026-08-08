@@ -306,8 +306,12 @@ pub const PUBKEY_NONET_LANE_COL: [usize; 9] = {
     // The ninth lane must be an ABSORBED pre-limb or `wireCommitR` never folds it and the column
     // carries nothing — the exact condition Lean states as `lane8_is_absorbed_iff`.
     assert!(B_PUBKEY_NINTH_LANE < super::layout_generated::NUM_PRE_LIMBS);
-    // …and it must not alias the octet band it completes.
-    assert!(B_PUBKEY_NINTH_LANE >= B_PUBKEY_OCTET + 8);
+    // …and it must not alias the octet band it completes, NOR sit flush against it. ⚑ This read
+    // `>= B_PUBKEY_OCTET + 8` until 2026-08-08, which ADMITS the one geometry the docblock above
+    // forbids: at exactly `B_PUBKEY_OCTET + 8` the nonet IS contiguous and `[base + i; 9]` — the
+    // stride reconstruction this whole table exists to make impossible — silently becomes correct,
+    // so the next reader who writes one is not stopped. STRICT.
+    assert!(B_PUBKEY_NINTH_LANE > B_PUBKEY_OCTET + 8);
     [
         B_PUBKEY_OCTET,
         B_PUBKEY_OCTET + 1,

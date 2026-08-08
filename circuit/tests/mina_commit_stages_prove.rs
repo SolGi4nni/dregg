@@ -319,7 +319,8 @@ fn the_commitment_machine_has_the_shape_lean_emitted() {
     // `MinaWrapCommitMachine.the_one_hot_word_fits_the_raised_cap_and_the_index_word_still_wins`.
     // carries indices and three decode gates carry the one-hot vectors.
     assert_eq!(ROM_ARITY, 40);
-    assert!(1 + 4 + 3 * NREG + SK > 64, "the one-hot word does not fit");
+    // Constant-only: the one-hot word's width against the cap OF THE DAY. A build obligation.
+    const _: () = assert!(1 + 4 + 3 * NREG + SK > 64, "the one-hot word does not fit");
 }
 
 /// ⚑ **§1 — THE ξ SCALAR VECTOR, at FULL fidelity.** 46 multiplies over the Pallas SCALAR field,

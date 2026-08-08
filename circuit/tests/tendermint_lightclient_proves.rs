@@ -204,7 +204,20 @@ const VACUOUS_BITS: usize = 32;
 /// and the pins are first-row, so every row is the same logical row.
 const TRACE_ROWS: usize = 8;
 
-const P: i64 = 2_013_265_921;
+/// The BabyBear modulus. ⚑ **READ FROM THE FIELD MODULE, NOT RETYPED.** It was
+/// `const P: i64 = 2_013_265_921;` — a second spelling of `BABYBEAR_P`, and the pin below is a
+/// claim about THE FIELD, not about a number that happens to sit in this file.
+const P: i64 = dregg_circuit::field::BABYBEAR_P as i64;
+
+/// ⚑ **THE VACUITY CONTROL REALLY IS VACUOUS — PINNED AT BUILD TIME.** Both operands are
+/// constants, so this stood as `assert!` inside whichever `#[test]` happened to carry it: a
+/// build-time obligation reported only after every other leg in this file had already been
+/// compiled against it, and only when that one test ran. `const _` refuses the BUILD instead.
+const _: () = assert!(
+    (1u64 << VACUOUS_BITS) > P as u64,
+    "the control width must actually be vacuous — its interval must cover the field, or every \
+     paired-polarity leg in this file silently degrades into a one-sided assertion"
+);
 
 fn desc() -> EffectVmDescriptor2 {
     descriptor_by_name(TM_LC_VERIFY_DESCRIPTOR).unwrap_or_else(|| {
@@ -1487,10 +1500,7 @@ fn the_exactly_two_thirds_sub_quorum_is_refused() {
 
     // ⚑ The inverted control: a time-range width whose interval covers the field. It admits every
     // wrapped TIME slack — and the threshold does not care, because the threshold left that table.
-    assert!(
-        (1u64 << VACUOUS_BITS) > P as u64,
-        "the control width must actually be vacuous — its interval must cover the field"
-    );
+    // (the vacuity of VACUOUS_BITS is pinned at the top of this file by a `const _` assert)
     let vacuous = desc_with_time_range_width(VACUOUS_BITS);
     let e2 = must_refuse_out_of_range(
         "⚑ the exactly-2/3 sub-quorum at a VACUOUS time-range width",
@@ -1611,10 +1621,7 @@ fn the_shipped_64_bit_width_is_refused_at_load_and_no_longer_masks_the_honest_he
 #[test]
 fn the_vacuity_controls_bypass_the_load_gate() {
     // The control width really does cover the whole field — otherwise it is not a vacuity control.
-    assert!(
-        (1u64 << VACUOUS_BITS) > P as u64,
-        "the control width must be vacuous — its interval must cover the field"
-    );
+    // (the vacuity of VACUOUS_BITS is pinned at the top of this file by a `const _` assert)
 
     // On the WIRE the same width is refused …
     let mutated = TM_LC_JSON.replace("\"bits\":29", &format!("\"bits\":{VACUOUS_BITS}"));

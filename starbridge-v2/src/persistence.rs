@@ -1051,7 +1051,11 @@ mod tests {
         let mut rng = 0x0DDB_1A5E_5BAD_5EEDu64;
 
         const STEPS: usize = 600;
-        assert!(
+        // Both operands are constants, so "the walk is long enough" is a BUILD obligation: a
+        // `LEAF_CACHE_AUDIT_EVERY` raised past `STEPS / 4` would leave this test silently never
+        // exercising the full-audit path it exists to exercise, and a runtime `assert!` reports
+        // that only when the test runs.
+        const _: () = assert!(
             STEPS as u64 > 4 * LEAF_CACHE_AUDIT_EVERY,
             "the walk must be long enough for the full audit to fire repeatedly"
         );

@@ -415,6 +415,35 @@ all = { level = "warn", priority = -2 }
 # `expect`, not `allow`, so it self-retires when the shape changes. Verified over
 # `cargo clippy --workspace --all-targets --keep-going` on 2026-07-25.
 correctness = { level = "deny", priority = -1 }
+
+# `deny` (escalated from the `all = warn` blanket, 2026-08-08). NOT a correctness lint — it is
+# `style` — so it needs its own row.
+#
+# ⚑ `assertions_on_constants` prints TWO messages and both are this lint: "this assertion has a
+# constant value" (a named-constant condition) and "this assertion is always `true`/`false`" (a
+# literal one). An `assert!` whose condition is decided entirely by constants is not a test. It
+# reports — after the whole crate has already compiled against the fact, and only if somebody runs
+# that test — something the BUILD could have refused outright.
+#
+# What the 2026-08-08 sweep found in 227 members: 45 + 3 sites, and they were not decoration.
+#   · `circuit/src/effect_vm/verify.rs` — the balance-limb PI gate's reachability precondition,
+#     which had ALREADY SHIPPED broken (demanding 201 felts of a 35-felt leg, so the range check
+#     answered a length complaint about every proof it was meant to police).
+#   · two range-gadget non-vacuity guards (shielded attest, solvency) wearing
+#     `#[allow(clippy::assertions_on_constants)]` — the `allow` WAS the wrong answer to the lint.
+#   · `deos-js/src/mud.rs` — a `debug_assert!` over a slot-count premise, compiled out of every
+#     release binary.
+#   · `node/src/poa_strand_admission.rs` — `assert!(POA_BOND_ADMISSION_DISABLED)` restating
+#     `pub const POA_BOND_ADMISSION_DISABLED: bool = true`, in a test whose name promises "no bond
+#     surface exists".
+#   · `game-turn-slice` — `assert!(3i128 - 5i128 < 0)` standing in for a forged range head.
+#
+# ⚠ The lint's OWN suggestion is the fix ("consider moving this to an anonymous constant:
+# `const _: () = { assert!(..); }`"), so an `expect` at a site is almost never right here: if the
+# condition really is constant, the obligation really does belong to the build, and `const _`
+# is strictly stronger than the `#[test]` it replaces. Cost measured at escalation over
+# `cargo clippy --workspace --all-targets --keep-going`: ZERO remaining sites, ZERO `expect`s.
+assertions_on_constants = "deny"
 assign_op_pattern = "allow"
 # Stylistic `chunks_exact(N)` -> `as_chunks::<N>()` nudge; a fresh clippy flags it
 # but it's a readability preference, not a correctness lint — allowed like the rest.

@@ -123,10 +123,12 @@ fn the_alias_pair_is_genuinely_two_different_attestations() {
         "the pair must still be indistinguishable to `bytes32_to_8_limbs` — otherwise this test \
          is not exercising the projection the wound was about"
     );
-    // The construction needs no grind: `c` and `c + p` for any `c < 2^32 - p`.
-    assert!(
+    // The construction needs no grind: `c` and `c + p` for any `c < 2^32 - p`. That the pair
+    // EXISTS at all is two constants — a build obligation, and one that decides whether every
+    // assertion above is about a real alias or about a value that cannot be constructed.
+    const _: () = assert!(
         (1u64 + P as u64) < u32::MAX as u64,
-        "c + p must still fit a u32, or this pair does not exist"
+        "c + p must still fit a u32, or the alias pair this file is about does not exist"
     );
 }
 

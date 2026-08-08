@@ -2050,7 +2050,15 @@ mod tests {
         fn rebalance_at_256_iterations_is_rejected_at_compile() {
             let mut p = rebalance(Visibility::Committed);
             p.with_iterations(256);
-            assert!(256 <= MAX_ITERATIONS, "premise: inside the resource budget");
+            // The PREMISE of this tooth: 256 is inside the resource budget, so the rejection
+            // below must come from the noise ceiling and not from the budget gate. Two constants,
+            // hence a build obligation — if `MAX_ITERATIONS` ever dropped under 256 this test
+            // would still pass while measuring the wrong refusal.
+            const _: () = assert!(
+                256 <= MAX_ITERATIONS,
+                "premise broken: 256 iterations is no longer inside the resource budget, so this \
+                 tooth is measuring the budget gate rather than the noise ceiling"
+            );
             // The old part-5 single-step bound would have passed too: 2·τ_den·X = 600 « (t−1)/2.
             let r = admissible(&p);
             assert_eq!(

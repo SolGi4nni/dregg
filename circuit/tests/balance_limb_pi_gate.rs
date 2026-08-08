@@ -47,18 +47,18 @@ fn honest_rotated_pis() -> Vec<BabyBear> {
 /// check off the live path.
 #[test]
 fn deployed_rotated_pi_width_is_decided_not_refused_on_length() {
-    assert!(
-        BALANCE_LIMB_PI_MIN_LEN <= V1_PI_COUNT,
-        "the gate's own precondition ({BALANCE_LIMB_PI_MIN_LEN}) exceeds the width of the \
-         deployed rotated leg ({V1_PI_COUNT}); it is unreachable on the only leg that ships"
-    );
+    // ⚑ `BALANCE_LIMB_PI_MIN_LEN <= V1_PI_COUNT` is const-asserted beside the constant's own
+    // definition in `circuit/src/effect_vm/verify.rs`, so a precondition that drifted back above
+    // the deployed leg's width could not COMPILE. It stood here as a runtime `assert!` over two
+    // constants: a build obligation reported after the build, and only when this test ran.
     // And the guard is derived from the reads, not written down beside them.
     assert_eq!(BALANCE_LIMB_PI_MIN_LEN, pi::NET_DELTA_SIGN + 1);
     // The old guard. Kept as a live number so the regression is legible: this is
     // the width that was demanded, against the width that exists.
-    assert!(
+    const _: () = assert!(
         pi::BASE_COUNT > V1_PI_COUNT,
-        "the historical BASE_COUNT guard is expected to be wider than the deployed leg"
+        "the historical BASE_COUNT guard is expected to be wider than the deployed leg — if it \
+         is not, this file's whole regression story no longer describes anything"
     );
 
     verify_balance_limb_pis(&honest_rotated_pis())

@@ -792,7 +792,7 @@ mod tests {
         // (2) The destination bounds the width. p < 2^32, so mod-p is surjective
         //     onto [0, p) from a 32-bit key AND from any wider one: widening the
         //     key cannot add classes.
-        assert!(
+        const _: () = assert!(
             crate::field::BABYBEAR_P < u32::MAX,
             "p < 2^32: a u32 key already covers every class; a wider key adds none"
         );

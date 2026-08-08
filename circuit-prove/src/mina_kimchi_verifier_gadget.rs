@@ -410,7 +410,9 @@ mod tests {
     fn the_gadget_issues_one_hundred_and_twenty_eight_connects() {
         assert_eq!(GADGET_CONNECTS, 128);
         assert_eq!(GADGET_CONNECTS, STATE_WIDTH + SK);
-        assert!(
+        // Constant-only, and it decides whether group 3 forces anything at all — so it is a
+        // BUILD obligation, not something one `#[test]` discovers.
+        const _: () = assert!(
             V_PRIME_LIMBS < SK,
             "v' is 128 of 255 bits — if it were the whole field the truncation pin would be empty \
              and group 3 would force nothing"

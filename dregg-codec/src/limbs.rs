@@ -268,18 +268,30 @@ mod tests {
     use super::*;
 
     /// The pigeonhole fact the whole design rests on: `p^8 < 2^256`, so no 8-felt encoding of a
-    /// 32-byte value can be injective. Checked in integer arithmetic rather than asserted in prose.
-    #[test]
-    fn no_injective_eight_felt_encoding_exists() {
-        // p^8 as a 256-bit integer, built by repeated squaring in u128 halves is awkward; compare
-        // log2 instead, exactly: p < 2^31, and p^8 < 2^248 requires p < 2^31 which holds, so the
-        // codomain p^8 is strictly below 2^248 << 2^256.
-        assert!(u64::from(BABYBEAR_P) < 1u64 << 31);
-        // 8 * 31 = 248 < 256: even the generous bound p < 2^31 leaves an 8-bit deficit.
-        assert!(8 * 31 < 256);
-        // And 9 felts suffice: 9 * 30 = 270 > 256 with room, so ceil(256/log2 p) = 9.
-        assert!(9 * 30 > 256);
-    }
+    /// 32-byte value can be injective — and nine felts suffice.
+    ///
+    /// ⚑ **THE BIT WIDTH IS DERIVED FROM `BABYBEAR_P`, NOT TYPED BESIDE IT.** These were three
+    /// runtime `assert!`s in a `#[test]`, two of which — `8 * 31 < 256` and `9 * 30 > 256` — were
+    /// pure literal arithmetic: they say `248 < 256` and `270 > 256`, which are true of every
+    /// field, including one where the conclusion is false. The `31` and the `30` were the only
+    /// place `p` entered, and they entered as numbers somebody had rounded by hand. Now the
+    /// exponent comes out of the modulus, so a field change moves the premise and the pigeonhole
+    /// count together — and it does so at BUILD time, since every operand is a constant.
+    const P_BITS: u32 = BABYBEAR_P.ilog2() + 1;
+    const EIGHT_LANES_CANNOT_CARRY_THIRTY_TWO_BYTES: () = {
+        // Ceiling: every lane is < 2^P_BITS, so eight lanes address at most 8·P_BITS bits.
+        assert!(
+            8 * P_BITS < 256,
+            "eight lanes now address 256 bits or more — the pigeonhole argument this crate's \
+             nonet encoding rests on has evaporated"
+        );
+        // Floor: every lane carries at least P_BITS − 1 whole bits, so nine lanes cover 256.
+        assert!(
+            9 * (P_BITS - 1) > 256,
+            "nine lanes no longer cover 256 bits — the nonet is not enough"
+        );
+    };
+    const _: () = EIGHT_LANES_CANNOT_CARRY_THIRTY_TWO_BYTES;
 
     /// **Injectivity, proved not sampled.** `Limbs16` acts independently on each 2-byte chunk via
     /// `u16::from_le_bytes`, whose inverse `to_le_bytes` is checked here on ALL 2^16 inputs.

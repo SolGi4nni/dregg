@@ -180,10 +180,13 @@ fn the_two_saturating_range_arms_are_structurally_unreachable() {
         assert!(lo < (1 << 30), "split_u64's low limb escaped 30 bits: {lo}");
     }
 
-    // `BabyBear::new` reduces mod p, so the `hi >= 2^31` arm has no input either.
-    assert!(
+    // `BabyBear::new` reduces mod p, so the `hi >= 2^31` arm has no input either. Two constants,
+    // hence a build obligation: a modulus at or above 2^31 would make the arm REACHABLE, and this
+    // whole test — which exists to say it is unreachable — would then be asserting the opposite of
+    // the truth until somebody happened to run it.
+    const _: () = assert!(
         BABYBEAR_P < (1u32 << 31),
-        "the field modulus no longer bounds the hi arm"
+        "the field modulus no longer bounds the hi arm — the saturating arm is reachable again"
     );
     for probe in [u32::MAX, 1u32 << 31, BABYBEAR_P, BABYBEAR_P - 1] {
         assert!(

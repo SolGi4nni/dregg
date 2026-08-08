@@ -1003,7 +1003,11 @@ mod tests {
     /// cofactor is 1 and G generates the whole group.
     #[test]
     fn generator_cofactor_is_one() {
-        assert!(!GENERATOR.is_infinity, "G must not be O");
+        // `GENERATOR` is a constant, so "G is not the point at infinity" is a BUILD obligation —
+        // and a decisive one: at `G = O` every multiple below is `O` too, so the loop's own
+        // refusals would all fire for the wrong reason and this test would still be measuring
+        // something. It stood as a runtime `assert!`.
+        const _: () = assert!(!GENERATOR.is_infinity, "G must not be O");
         // No small multiple collapses to O.
         for k in 2u32..50 {
             let kp = GENERATOR.scalar_mul_small(k);

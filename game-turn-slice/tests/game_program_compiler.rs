@@ -412,17 +412,44 @@ fn range_head_signs() {
     // We don't need their exact column indices — assert the honest heads are in [0, 2^bits) and
     // the forged heads are negative by recomputing them directly.
     let honest = honest_assignment();
-    // FieldGte head = new[HP] - 1 = 9; Monotonic head = new[LEVEL] - old[LEVEL] = 1.
-    assert_eq!(honest.new_slots[&SLOT_HP] as i128 - HP_FLOOR as i128, 9);
+    // ⚑ THE HEADS ARE COMPUTED, NOT RETYPED. Until 2026-08-08 the three sign checks below read
+    // `contains(&9)`, `contains(&1)` and `assert!(3i128 - 5i128 < 0)` — literals standing in for
+    // the heads, so the range legs re-checked two numbers this file had typed and the FORGED leg
+    // was `-2 < 0`, a statement with no free variable at all. It could not have gone red for any
+    // assignment, including one where the forged level went UP. `assertions_on_constants` was
+    // printing it, at warn level, in every build.
+    let honest_gte_head = honest.new_slots[&SLOT_HP] as i128 - HP_FLOOR as i128;
+    let honest_mono_head =
+        honest.new_slots[&SLOT_LEVEL] as i128 - honest.old_slots[&SLOT_LEVEL] as i128;
+    assert_eq!(honest_gte_head, 9, "FieldGte head = new[HP] - floor");
     assert_eq!(
-        honest.new_slots[&SLOT_LEVEL] as i128 - honest.old_slots[&SLOT_LEVEL] as i128,
-        1
+        honest_mono_head, 1,
+        "Monotonic head = new[LEVEL] - old[LEVEL]"
     );
-    // Both are ≥ 0 and < 2^RANGE_BITS.
-    assert!((0..(1i128 << RANGE_BITS)).contains(&9));
-    assert!((0..(1i128 << RANGE_BITS)).contains(&1));
-    // Forged Monotonic head 3 - 5 = -2 (negative ⇒ unrepresentable).
-    assert!(3i128 - 5i128 < 0);
+    // Both honest heads are ≥ 0 and < 2^RANGE_BITS, so both recompose.
+    let window = 0..(1i128 << RANGE_BITS);
+    assert!(window.contains(&honest_gte_head));
+    assert!(window.contains(&honest_mono_head));
+
+    // …and the FORGED head is negative, computed from the same forgery
+    // `forged_ordering_rejects` drives through the prover (level DECREASES 5 → 3).
+    let forged_mono = SlotAssignment::new()
+        .set_new(SLOT_HP, 10)
+        .set_new(SLOT_LEVEL, 3)
+        .set_old(SLOT_LEVEL, 5)
+        .set_new(SLOT_ALIVE, 1)
+        .set_new(SLOT_SCORE, 120)
+        .set_old(SLOT_SCORE, 100)
+        .set_new(SLOT_POINTS, 20)
+        .set_new(SLOT_SCENE, SCENE_ID);
+    let forged_mono_head =
+        forged_mono.new_slots[&SLOT_LEVEL] as i128 - forged_mono.old_slots[&SLOT_LEVEL] as i128;
+    assert!(
+        forged_mono_head < 0,
+        "the forged Monotonic head must be NEGATIVE (⇒ no {RANGE_BITS}-bit recomposition); got \
+         {forged_mono_head}"
+    );
+    assert!(!window.contains(&forged_mono_head));
     // Keep the compiler alive so the build wiring is exercised.
     let _ = compiler.width();
 }

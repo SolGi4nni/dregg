@@ -189,7 +189,20 @@ const VACUOUS_BITS: usize = 32;
 /// nothing to the tally and is part of what the anchor root commits to.
 const TRACE_ROWS: usize = 8;
 
-const P: i64 = 2_013_265_921;
+/// The BabyBear modulus. ⚑ **READ FROM THE FIELD MODULE, NOT RETYPED.** It was
+/// `const P: i64 = 2_013_265_921;` — a second spelling of `BABYBEAR_P`, and the pin below is a
+/// claim about THE FIELD, not about a number that happens to sit in this file.
+const P: i64 = dregg_circuit::field::BABYBEAR_P as i64;
+
+/// ⚑ **THE VACUITY CONTROL REALLY IS VACUOUS — PINNED AT BUILD TIME.** Both operands are
+/// constants, so this stood as `assert!` inside whichever `#[test]` happened to carry it: a
+/// build-time obligation reported only after every other leg in this file had already been
+/// compiled against it, and only when that one test ran. `const _` refuses the BUILD instead.
+const _: () = assert!(
+    (1u64 << VACUOUS_BITS) > P as u64,
+    "the control width must actually be vacuous — its interval must cover the field, or every \
+     paired-polarity leg in this file silently degrades into a one-sided assertion"
+);
 
 /// `LightClientSolStakeFoldAir.FOLD_TAG` — ASCII `SSTF`, lane 0 of the pinned initial state.
 const FOLD_TAG: u32 = 0x5353_5446;
@@ -1179,10 +1192,7 @@ fn one_lamport_below_the_quorum_is_refused_at_live_active_stake() {
 /// differing in exactly one integer: the tally-limb table's declared width, moved from 16 to 32.
 #[test]
 fn the_sub_quorum_is_admitted_when_the_limb_table_is_vacuous() {
-    assert!(
-        (1u64 << VACUOUS_BITS) > P as u64,
-        "the control width must actually be vacuous — its interval must cover the field"
-    );
+    // (the vacuity of VACUOUS_BITS is pinned at the top of this file by a `const _` assert)
     let u = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM - 1);
     must_prove_under(
         "⚑ the SAME sub-quorum at a VACUOUS tally-limb width",
@@ -1474,10 +1484,14 @@ const FORGED_TOTAL: u64 = LIVE_ACTIVE_STAKE / 100;
 /// The minimal STRICT quorum of the forged universe (`3·R > 2·T`).
 const FORGED_QUORUM: u64 = (2 * FORGED_TOTAL) / 3 + 1;
 
-/// ⚑⚑ **THE SHRUNK STAKE UNIVERSE PROVES ON ITS OWN TERMS — and that is the whole attack.**
-#[test]
-fn a_swapped_stake_table_is_arithmetically_perfect() {
-    let forged = honest(FORGED_TOTAL, FORGED_QUORUM);
+/// ⚑⚑ **WHAT MAKES THE FORGERY A FORGERY — AT BUILD TIME.** Two facts, and if either failed the
+/// test below would be measuring something else entirely: the shrunk universe must CLEAR agave's
+/// strict 2/3 on its own terms (otherwise the prover refuses it for the ordinary reason and the
+/// tooth proves nothing about the anchor), and it must NOT clear 2/3 of the real active stake
+/// (otherwise it is a legitimate quorum, not a forgery). Both are integer arithmetic over
+/// constants — including a floor division whose off-by-one is exactly the kind of thing that
+/// silently makes `FORGED_QUORUM` one short — so the obligation is discharged against the BUILD.
+const THE_SHRUNK_UNIVERSE_IS_A_FORGERY: () = {
     assert!(
         2 * FORGED_TOTAL < 3 * FORGED_QUORUM,
         "the forged tally must clear agave's STRICT 2/3 in its own universe"
@@ -1486,6 +1500,14 @@ fn a_swapped_stake_table_is_arithmetically_perfect() {
         3 * FORGED_QUORUM < 2 * LIVE_ACTIVE_STAKE,
         "…and must NOT clear 2/3 of the REAL active stake — otherwise it is not a forgery"
     );
+};
+const _: () = THE_SHRUNK_UNIVERSE_IS_A_FORGERY;
+
+/// ⚑⚑ **THE SHRUNK STAKE UNIVERSE PROVES ON ITS OWN TERMS — and that is the whole attack.**
+#[test]
+fn a_swapped_stake_table_is_arithmetically_perfect() {
+    let forged = honest(FORGED_TOTAL, FORGED_QUORUM);
+    // (both premises are const-asserted at `FORGED_QUORUM`'s definition — a build obligation)
     let cells = trace_cells(&forged);
     prove_and_verify(&desc(), &cells, &pis_from(&cells, &forged))
         .expect("the shrunk stake universe satisfies every arithmetic gate in the descriptor");

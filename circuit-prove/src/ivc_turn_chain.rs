@@ -7112,10 +7112,12 @@ mod board_window_seam_tests {
         // The generic recovery `exposed_board_window` performs: (lanes - SEG_SPINE_WIDTH) / 2.
         assert_eq!((SEG_SPINE_WIDTH + 2 * RS - SEG_SPINE_WIDTH) / 2, RS);
         assert_eq!(HANDOFF, 18, "the clean handoff carries board(9) ‖ marks(9)");
-        assert!(
+        // The clean handoff must be STRICTLY narrower than the round-state window — it drops
+        // `locked ‖ waiting ‖ auto`, and a handoff as wide as the window would mean it dropped
+        // nothing and the two seams are the same seam. Two constants: a build obligation.
+        const _: () = assert!(
             HANDOFF < RS,
-            "the clean handoff drops locked ‖ waiting ‖ auto (RS - HANDOFF = {} lanes)",
-            RS - HANDOFF
+            "the clean handoff must be strictly narrower than the RoundState window"
         );
     }
 

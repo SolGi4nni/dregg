@@ -1258,14 +1258,14 @@ mod tests {
         // projection actually needs and this literal never did: the 49-felt block is CONTIGUOUS and
         // lands inside the v1 PI vector.
         assert_eq!(sched::WIDTH, 49);
-        assert!(
+        // Three constants from two modules — a BUILD obligation, and the one
+        // `schedule_block_from_inner_pi` actually relies on. (Its predecessor here was the
+        // `assert_eq!(SCHEDULE_PI_BASE, 33)` the comment above describes; replacing a stale
+        // literal with a live relation is only half the repair if the live relation is still
+        // reported by a test run rather than by the build.)
+        const _: () = assert!(
             SCHEDULE_PI_BASE + sched::WIDTH <= inner_pi::BASE_COUNT,
-            "the {}-felt bilateral-schedule window `[{}, {})` must fit inside the v1 PI vector \
-             (BASE_COUNT {})",
-            sched::WIDTH,
-            SCHEDULE_PI_BASE,
-            SCHEDULE_PI_BASE + sched::WIDTH,
-            inner_pi::BASE_COUNT
+            "the bilateral-schedule window must fit inside the v1 PI vector"
         );
         assert_eq!(
             inner_pi::TURN_HASH_BASE,
