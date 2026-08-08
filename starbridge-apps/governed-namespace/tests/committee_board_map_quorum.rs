@@ -67,7 +67,7 @@ fn make_cipherclerk(seed: u8) -> AppCipherclerk {
 /// relaxed permissions so the self-signed turns commit. Returns the board cell.
 fn seed_board(executor: &EmbeddedExecutor) -> CellId {
     let cell_id = executor.cell_id();
-    let program = committee_board_program(THRESHOLD);
+    let program = committee_board_program(MEMBERS, THRESHOLD);
     executor.install_program(cell_id, program.clone());
 
     executor.with_ledger_mut(|ledger| {

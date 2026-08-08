@@ -1342,10 +1342,20 @@ pub mod committee_board {
     /// Element-relative offset of the member's vote (`1` = approve the swap).
     pub const VOTE_OFF: u32 = 1;
 
-    /// The fuel (upper element-count bound) the quorum gate reads to — an
-    /// explicit ceiling so the map read is bounded. Large enough for any
-    /// governance committee a single cell would hold.
-    pub const MAX_FUEL: u32 = 4096;
+    /// The largest committee this program can declare — **derived from the verified evaluator's
+    /// published capacity**, never written down here.
+    ///
+    /// ⚑ **IT WAS THE LITERAL `4096`, AND IT WAS ALSO THE GATE'S `fuel`.** Measured 2026-08-08:
+    /// `committee_quorum_gate` pinned `fuel: MAX_FUEL` regardless of the committee, so a
+    /// FIVE-member board declared a 4096-element grid — 8193 resolved cells — which
+    /// `dregg-exec-lean`'s marshaller declined, which `dregg_cell`'s
+    /// `undecided_subset_disposition` turns into `ConstraintOracleUnavailable`: every route-table
+    /// swap on a native release node was refused. At that size the verified evaluator does not
+    /// merely decline, it **aborts the process with a stack overflow**
+    /// (`dregg_cell::program::MAX_AGGREGATE_CELLS` carries the measurement). Same wound, same
+    /// week, as `starbridge-polis`'s `large_council` — the keystone was reused verbatim and so
+    /// was the defect.
+    pub const MAX_FUEL: u32 = dregg_cell::program::max_aggregate_fuel(VOTE_STRIDE, MEMBER_OFF);
 
     /// The map key holding committee member `index`'s identity element.
     pub fn member_id_key(index: usize) -> u64 {
@@ -1364,11 +1374,19 @@ pub mod committee_board {
     /// not vote `1`) is filtered before the count. Both biting teeth ride the
     /// proven `mOfNDistinct`. The proven council keystone, READING the
     /// executor-reachable `fields_map`.
-    pub fn committee_quorum_gate(threshold: u64) -> StateConstraint {
+    ///
+    /// ⚑ **`fuel` IS THE COMMITTEE SIZE, NOT A CEILING** — see [`MAX_FUEL`] for what pinning it
+    /// at the ceiling cost. The gate reads exactly the slots `member_id_key`/`member_vote_key`
+    /// define for `i < members`, so a smaller fuel drops no vote it could ever have counted.
+    ///
+    /// ⚠ **FLAG DAY:** the emitted `StateConstraint` moves, hence the cell program, hence
+    /// `child_program_vk` and every `committee_board_factory_descriptor`. Re-emit; a board born
+    /// under the old program will not match the new one.
+    pub fn committee_quorum_gate(members: usize, threshold: u64) -> StateConstraint {
         StateConstraint::FieldsCollectionAggregate {
             base: VOTE_BASE,
             stride: VOTE_STRIDE,
-            fuel: MAX_FUEL,
+            fuel: u32::try_from(members).unwrap_or(MAX_FUEL).min(MAX_FUEL),
             pred: CollPred::MOfNDistinct {
                 m: threshold as u32,
                 key_offset: MEMBER_OFF,
@@ -1411,7 +1429,7 @@ pub mod committee_board {
     /// turn — while the full two-case shape (the swap-scoped quorum gate) is
     /// committed by `child_program_vk` and is the program a host installs on the
     /// born cell. [`committee_board_program`] is that full program.
-    pub fn committee_board_program(threshold: u64) -> CellProgram {
+    pub fn committee_board_program(members: usize, threshold: u64) -> CellProgram {
         CellProgram::Cases(vec![
             TransitionCase {
                 guard: TransitionGuard::Always,
@@ -1421,7 +1439,7 @@ pub mod committee_board {
                 guard: TransitionGuard::SlotChanged {
                     index: VERSION_SLOT,
                 },
-                constraints: vec![committee_quorum_gate(threshold)],
+                constraints: vec![committee_quorum_gate(members, threshold)],
             },
         ])
     }
@@ -1431,8 +1449,8 @@ pub mod committee_board {
     /// the full two-case program is committed by `child_program_vk`, the flat
     /// invariants ride in the descriptor and install on birth (mirrors
     /// [`large_council_factory_descriptor`](starbridge_polis::large_council::large_council_factory_descriptor)).
-    pub fn committee_board_factory_descriptor(threshold: u64) -> FactoryDescriptor {
-        let program = committee_board_program(threshold);
+    pub fn committee_board_factory_descriptor(members: usize, threshold: u64) -> FactoryDescriptor {
+        let program = committee_board_program(members, threshold);
         // `child_vk` IS the canonical content-address of the FULL two-case
         // program (postcard ‖ blake3-derive-key, `canonical_program_vk`). The
         // factory vk is a domain-tagged digest of it, so two boards with

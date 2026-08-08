@@ -940,11 +940,22 @@ pub mod large_council {
     /// Element-relative offset of the member's vote (`1` = approve).
     pub const VOTE_OFF: u32 = 1;
 
-    /// The fuel (upper element-count bound) the quorum gate reads to — an
-    /// explicit ceiling so the read is bounded. Large enough for any council a
-    /// single cell would hold; a charter with more members than this fails at
-    /// build ([`LargeCouncilCharter::validate`]).
-    pub const MAX_FUEL: u32 = 4096;
+    /// The largest council this program can declare — **derived from the verified evaluator's
+    /// published capacity**, never written down here. A charter with more members than this fails
+    /// at build ([`LargeCouncilCharter::validate`]).
+    ///
+    /// ⚑ **IT WAS THE LITERAL `4096`, AND IT WAS ALSO THE GATE'S `fuel`, AND BOTH WERE WRONG.**
+    /// Measured 2026-08-08: `quorum_gate` pinned `fuel: MAX_FUEL` regardless of the charter, so a
+    /// FIVE-member council declared a 4096-element grid — 8193 resolved cells — which
+    /// `dregg-exec-lean`'s marshaller declined, which `dregg_cell`'s
+    /// `undecided_subset_disposition` turns into `ConstraintOracleUnavailable`, which refuses the
+    /// certification turn. Every large council on every native release node was un-certifiable,
+    /// and it was invisible because the fail-closed call site is `not(debug_assertions)`-gated.
+    /// Worse: at that size the verified evaluator does not merely decline, it **aborts the process
+    /// with a stack overflow** — see `dregg_cell::program::MAX_AGGREGATE_CELLS` for the
+    /// measurement. The ceiling now comes from that capacity and the gate's fuel from the actual
+    /// charter, so neither can name a council the evaluator cannot decide.
+    pub const MAX_FUEL: u32 = dregg_cell::program::max_aggregate_fuel(STRIDE, MEMBER_OFF);
 
     pub use super::council::{
         APPROVED_FLAG_SLOT, MEMBERS_COMMIT_SLOT, PROPOSAL_HASH_SLOT, RESERVED_SLOT, STATE_APPROVED,
@@ -1030,11 +1041,24 @@ pub mod large_council {
     /// The dynamic-N quorum gate: `MOfNDistinct` over the map-borne approval
     /// collection. The proven council keystone, READING the executor-reachable
     /// `fields_map`.
-    pub fn quorum_gate(threshold: u64) -> StateConstraint {
+    ///
+    /// ⚑ **`fuel` IS THE CHARTER'S MEMBER COUNT, NOT A CEILING.** It used to be `MAX_FUEL` for
+    /// every charter, which made a five-member council scan 4096 element slots and marshal 8193
+    /// resolved cells to the verified evaluator on every touching turn — past the evaluator's
+    /// capacity, so the turn was refused (see [`MAX_FUEL`]). The gate reads exactly the slots the
+    /// charter defines (`member_approval_key(i)` for `i < members`), so a smaller fuel changes no
+    /// approval it could ever have counted; approvals written past the charter were never in the
+    /// charter's slots and were never countable.
+    ///
+    /// ⚠ **FLAG DAY:** this changes the emitted `StateConstraint`, hence the cell program, hence
+    /// `canonical_program_vk` — every large-council `child_program_vk` and every
+    /// `large_council_factory_descriptor` moves. Re-emit the descriptors; a cell born under the
+    /// old program will not match the new one.
+    pub fn quorum_gate(members: usize, threshold: u64) -> StateConstraint {
         StateConstraint::FieldsCollectionAggregate {
             base: APPROVAL_BASE,
             stride: STRIDE,
-            fuel: MAX_FUEL,
+            fuel: u32::try_from(members).unwrap_or(MAX_FUEL).min(MAX_FUEL),
             pred: CollPred::MOfNDistinct {
                 m: threshold as u32,
                 key_offset: MEMBER_OFF,
@@ -1146,7 +1170,7 @@ pub mod large_council {
                 guard: TransitionGuard::SlotChanged {
                     index: APPROVED_FLAG_SLOT,
                 },
-                constraints: vec![quorum_gate(charter.threshold)],
+                constraints: vec![quorum_gate(charter.members.len(), charter.threshold)],
             },
         ]))
     }

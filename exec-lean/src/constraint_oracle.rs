@@ -84,10 +84,28 @@ const MAX_AFFINE_COEFF: i64 = 1 << 32;
 /// Maximum length of any marshalled list (allowlists, edge sets, transition tables, member sets).
 /// Bounds the wire so a pathological program cannot turn one admission into a megabyte of tokens.
 const MAX_LIST: usize = 4096;
-/// Maximum number of RESOLVED heap / field-map cells marshalled for the aggregate arms. The
-/// collection read is `fuel × stride` cells plus the anchor probe; beyond this the marshaller
-/// DECLINES and the Rust evaluator runs (sound — no silent half-read).
-const MAX_COLL_CELLS: u64 = 8192;
+/// Maximum number of RESOLVED heap / field-map cells marshalled for the aggregate arms — the
+/// PUBLISHED capacity of the verified evaluator, `dregg_cell::program::MAX_AGGREGATE_CELLS`, and
+/// not a number chosen here.
+///
+/// ⚑ **IT USED TO BE THE LITERAL `8192`, AND THAT WAS ABOVE THE EVALUATOR'S ACTUAL CAPACITY.**
+/// Measured 2026-08-08 through this very oracle in `--release`: a `stride = 2` `MOfNDistinct`
+/// aggregate DECIDES at 4097 resolved cells and dies with `fatal runtime error: stack overflow,
+/// aborting` at 8193. So a program declaring `stride = 2, fuel = 4095` — 8191 cells, comfortably
+/// INSIDE the old envelope — reached an aborting FFI call, and the envelope in front of that abort
+/// was the only thing standing between an admitted cell program and a dead node process. The bound
+/// now comes from the crate that publishes the capacity, so an app can derive its own ceiling from
+/// the SAME number (`dregg_cell::program::max_aggregate_fuel`) instead of restating it.
+///
+/// ⚠ **AND A DECLINE HERE IS NOT A FALLBACK.** This constant's comment used to end "beyond this the
+/// marshaller DECLINES and the Rust evaluator runs (sound — no silent half-read)". That
+/// justification was retired by the fail-closed disposition: `CollectionAggregate` /
+/// `FieldsCollectionAggregate` are in the Lean subset, so `dregg_cell`'s
+/// `undecided_subset_disposition` turns a decline into `ConstraintOracleUnavailable` and REFUSES
+/// the turn outright. Outside this envelope a native release node cannot serve such a cell at all.
+/// `exec-lean/tests/constraint_envelope_admits_deployed_programs.rs` holds both poles: the tree's
+/// deployed programs must be inside it, and the evaluator must survive its upper edge.
+const MAX_COLL_CELLS: u64 = dregg_cell::program::MAX_AGGREGATE_CELLS;
 
 /// The number of RESOLVED cells the Lean side needs to reproduce `read_collection` /
 /// `read_collection_fields` for a `(stride, fuel, anchor)` shape: the row-major `fuel × stride`
@@ -95,7 +113,7 @@ const MAX_COLL_CELLS: u64 = 8192;
 ///
 /// ⚑ The deployed anchor probe reads key `i*stride + anchor` — NOT the element's `stride`-bounded
 /// slice — so an `anchor >= stride` probes past the grid. `+ anchor + 1` covers that faithfully.
-/// `None` = outside the marshalling envelope (the caller declines to Rust).
+/// `None` = outside the marshalling envelope, which for these arms is a REFUSAL, not a fallback.
 fn coll_cell_count(stride: u32, fuel: u32, anchor: u32) -> Option<u64> {
     let n = (fuel as u64)
         .checked_mul(stride as u64)?
@@ -1139,5 +1157,38 @@ mod tests {
         assert!(decode_verdict("9", &c).is_none());
         assert!(decode_verdict("", &c).is_none());
         assert!(decode_verdict("nonsense", &c).is_none());
+    }
+
+    /// **THE ENVELOPE IS THE PUBLISHED CAPACITY, AND THE FENCEPOST IS ON THE RIGHT SIDE OF IT.**
+    ///
+    /// The largest `fuel` `dregg_cell::program::max_aggregate_fuel` hands an app must MARSHAL, and
+    /// one past it must DECLINE. That is the property the two constants have to satisfy jointly;
+    /// an app that derives its ceiling from `max_aggregate_fuel` and then gets declined here is
+    /// the exact shape of the outage this pair exists to prevent — `MAX_COLL_CELLS` was `8192` and
+    /// both deployed M-of-N councils declared `stride = 2, fuel = 4096`, resolving to 8193, so
+    /// every certification turn on a native release node was refused.
+    #[test]
+    fn the_published_fuel_ceiling_marshals_and_one_past_it_declines() {
+        use dregg_cell::program::max_aggregate_fuel;
+        for (stride, anchor) in [(1u32, 0u32), (2, 0), (2, 1), (3, 2), (4, 7)] {
+            let f = max_aggregate_fuel(stride, anchor);
+            assert!(
+                f > 0,
+                "stride {stride} anchor {anchor}: no fuel is declarable"
+            );
+            assert!(
+                coll_cell_count(stride, f, anchor).is_some(),
+                "stride {stride} anchor {anchor}: the marshaller DECLINES the very ceiling \
+                 `max_aggregate_fuel` tells an app it may declare — an app that trusts the \
+                 published bound then ships a cell no release node can ever certify"
+            );
+            assert_eq!(
+                coll_cell_count(stride, f + 1, anchor),
+                None,
+                "stride {stride} anchor {anchor}: one past the published ceiling must decline"
+            );
+        }
+        // Overflow stays fail-closed rather than wrapping into a small count.
+        assert_eq!(coll_cell_count(u32::MAX, u32::MAX, 0), None);
     }
 }

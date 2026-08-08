@@ -1,5 +1,54 @@
 use super::*;
 
+/// **THE LARGEST COLLECTION AGGREGATE THE VERIFIED EVALUATOR CAN ACTUALLY DECIDE**, counted in
+/// RESOLVED cells (`fuel × stride` plus the anchor probe of the last element).
+///
+/// This is a CAPACITY, not a taste: it is published here — in the crate both the marshaller and
+/// every app that declares an aggregate already depend on — so a program can DERIVE the largest
+/// grid it may declare instead of naming a number that has to agree with one somewhere else.
+///
+/// ⚑ **MEASURED 2026-08-08, on `dregg-exec-lean`'s `LeanConstraintOracle` in `--release`, through
+/// the real FFI.** A `MOfNDistinct` aggregate at `stride = 2`:
+///
+/// | declared `fuel` | resolved cells | verdict |
+/// |---|---|---|
+/// | 2048 | 4097 | DECIDED |
+/// | 4096 | 8193 | **`fatal runtime error: stack overflow, aborting` (SIGABRT)** |
+///
+/// So an aggregate large enough is not a slow decision, it is an **aborting process** — and the
+/// marshaller's envelope is the only thing in front of it. `dregg-exec-lean`'s `MAX_COLL_CELLS`
+/// was `8192`, *above* the measured abort point, so a program declaring `stride = 2, fuel = 4095`
+/// (8191 cells) was INSIDE the envelope and reached that abort. This constant is set with roughly
+/// a factor of two of margin below the nearest measured survivor, because the exact boundary moves
+/// with the thread's stack and is not a number anything should be pinned to.
+///
+/// ⚠ **AND THE ENVELOPE IS NOT A FALLBACK ANY MORE.** `dregg_cell::program::eval`'s
+/// `undecided_subset_disposition` turns a marshaller decline into `ConstraintOracleUnavailable`
+/// for every Lean-subset constraint, so a program that declares more than this is not "evaluated
+/// in Rust instead" — it is REFUSED, forever, on every native release node. An app must therefore
+/// declare a grid within this bound, and refuse to build a charter that would exceed it, rather
+/// than shipping a cell nothing can ever certify. [`max_aggregate_fuel`] is that derivation.
+pub const MAX_AGGREGATE_CELLS: u64 = 4096;
+
+/// The largest `fuel` a collection-aggregate program may declare at a given `stride` and anchor
+/// offset and still be inside [`MAX_AGGREGATE_CELLS`] — the resolved-cell count is
+/// `fuel × stride + anchor + 1`.
+///
+/// Apps derive their member ceiling from this instead of writing a literal: the literal is what
+/// drifted. `0` means the shape cannot be marshalled at all at that stride/anchor.
+pub const fn max_aggregate_fuel(stride: u32, anchor: u32) -> u32 {
+    if stride == 0 {
+        return 0;
+    }
+    let budget = MAX_AGGREGATE_CELLS.saturating_sub(anchor as u64 + 1);
+    let n = budget / stride as u64;
+    if n > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        n as u32
+    }
+}
+
 /// A per-element decision predicate over the felt fields of one collection
 /// element (the Rust mirror of the Lean `ElemPred := Value → Bool`, built
 /// from `elemScalar`/`elemSym`). An element is its heap stride

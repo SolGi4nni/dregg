@@ -55,6 +55,12 @@ dregg-cell = { path = "../cell", features = [
     "test-stubs",
     "test-stubs-release-test-target",
 ] }
+# `tests/constraint_envelope_admits_deployed_programs.rs` asks the marshaller whether it can decide
+# the constraints a REAL deployed cell program declares, rather than a transcription of them — a
+# mirror of the shape would drift from the app exactly as `MAX_COLL_CELLS` drifted from it.
+# Acyclic: `starbridge-polis`'s only non-dev dependency is `dregg-cell`, which this crate already
+# depends on; nothing reachable from it depends on `dregg-exec-lean`.
+starbridge-polis = { path = "../starbridge-apps/polis" }
 
 [lints]
 workspace = true
