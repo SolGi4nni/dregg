@@ -32,6 +32,32 @@
 //! ⚠ The chainlink half is SKIPPED (loudly, not substituted) when its emitted fixture is absent;
 //! regenerate with metatheory's `mina_chain_emit`.
 //!
+//! ## ⚑⚑ CORRECTION 2026-08-08 — THIS FILE PRICED THE WRAP AT A CONFIG THE TOWER NO LONGER RUNS
+//!
+//! `census_leaf_wrap` built the wrap at `ir2_leaf_wrap_config()` — which VERIFIES *and* MINTS at
+//! `log_blowup 6` — and multiplied every committed cell by `2^6`. That was true only while the two
+//! roles coincided. Since the FRI split (`recursion_layer_over`, `recursion-verify/src/config.rs:571`)
+//! a layer VERIFIES at its child's mint knobs and MINTS at `RECURSION_FRI_LOG_BLOWUP = 3`, and every
+//! production leaf wrap derives its engine that way (`blinded_membership_leaf_adapter.rs:240`,
+//! `accumulator.rs:590`). So the **`wrap LDE cells` column was 8x the deployed wrap's.**
+//!
+//! Fixed by building at `recursion_layer_over(&child_config)` and reading the blowup off
+//! `config.mint_knobs().log_blowup` instead of naming a constant. ⚠ The `wrap ops` column does NOT
+//! move — the in-circuit verification of the child is bit-for-bit the one that ran before, which is
+//! the whole point of the split. Only the LDE column does.
+//!
+//! Re-measured 2026-08-08 (`--ignored --release`, `test result: ok. 1 passed`):
+//!
+//! ```text
+//!   descriptor                                  declared  committed  rows   wrap ops   wrap LDE cells
+//!   pasta-fq-chainlink  (FOLDS in production)        469      1,037  2048    248,555      116,614,528
+//!   dregg-mina-accumulator-seg  (33 ops/row)       3,048     10,756     8  2,878,069    1,863,984,128
+//! ```
+//!
+//! ⚠ **Never name a config constant here again.** A figure computed from a named knob instead of
+//! `recursion_layer_over(child)` is measuring a config nothing runs, and it reads exactly like a
+//! measurement.
+//!
 //! ## ⚑⚑ AND THE DENOMINATOR THIS FILE USED WAS THE WRONG ONE
 //!
 //! The sweep below reads `6.5×` the *declared* columns costing `11.5×` the wrap ops and calls the
@@ -78,6 +104,7 @@ use dregg_circuit_prove::mina_accumulator_fold::{
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, create_recursion_backend,
 };
+use dregg_recursion_verify::config::recursion_layer_over;
 use p3_air::BaseAir;
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_circuit::{AluOpKind, Op};
@@ -91,16 +118,9 @@ use p3_recursion::{RecursionInput, Target, build_next_layer_circuit_with_expose}
 
 const D: usize = 4;
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
-/// ⚑ The blowup the WRAP's own tables are committed at — `IR2_INNER_LOG_BLOWUP = 6`, i.e. **64×**
-/// (`recursion-verify/src/config.rs:88`). Read from that constant rather than written as a literal,
-/// because a literal here was wrong by 32× in this file's first draft and made every committed-cell
-/// figure flatteringly small.
-///
-/// ⚠ It is worth knowing WHY the wrap mints at the INNER proof's blowup: `create_recursion_config_
-/// with_fri` sets the minting `StarkConfig` PCS and the in-circuit `FriVerifierParams` from ONE
-/// argument, so "the blowup my child was minted at" and "the blowup I mint at" are the same number
-/// by construction. They are two different proofs' knobs.
-const LOG_BLOWUP: usize = dregg_recursion_verify::config::IR2_INNER_LOG_BLOWUP;
+// ⚑⚑ THE BLOWUP THE WRAP MINTS AT IS NOT A CONSTANT THIS FILE MAY NAME — it is read off the config
+// `recursion_layer_over` returns, in `census_leaf_wrap`. See that function's ⚠ block for why the
+// named constant that used to sit here was wrong by 8×.
 
 const DISCHARGING: &str =
     include_str!("../../circuit/tests/fixtures/mina-accumulator-discharging-trace.txt");
@@ -129,15 +149,17 @@ struct Census {
     build_secs: f64,
     /// `(table name, log2 rows, main width)` at the leaf-wrap packing.
     shapes: Vec<(String, usize, usize)>,
+    /// ⚑ The blowup THIS WRAP MINTS AT, read off `recursion_layer_over(child)` rather than named.
+    mint_log_blowup: usize,
 }
 
 impl Census {
-    /// Committed LDE cells the prover must materialise, at the leaf wrap's blowup — the quantity a
-    /// peak-RSS figure tracks. Reported per table and summed.
+    /// Committed LDE cells the prover must materialise, at the blowup the wrap MINTS at — the
+    /// quantity a peak-RSS figure tracks.
     fn committed_cells(&self) -> u64 {
         self.shapes
             .iter()
-            .map(|(_, log_rows, w)| (1u64 << (*log_rows + LOG_BLOWUP)) * (*w as u64))
+            .map(|(_, log_rows, w)| (1u64 << (*log_rows + self.mint_log_blowup)) * (*w as u64))
             .sum()
     }
 }
@@ -149,7 +171,21 @@ fn census_leaf_wrap(
     public_inputs: &[BabyBear],
     expose_len: usize,
 ) -> Census {
-    let config = ir2_leaf_wrap_config();
+    // ⚑⚑ THE TWO ROLES, SEPARATED — and this file used to conflate them.
+    //
+    // `child_config` is the engine the IR-v2 descriptor batch is MINTED at; `config` is the engine
+    // the layer ABOVE that child runs at, and the ONLY honest way to name it is
+    // `recursion_layer_over(child)` (`recursion-verify/src/config.rs:571`), which is the rule every
+    // production leaf wrap uses (`blinded_membership_leaf_adapter.rs:240`, `accumulator.rs:590`).
+    //
+    // ⚠ **THIS FILE PRICED THE WRAP AT A CONFIG THE TOWER NO LONGER RUNS.** It built at
+    // `ir2_leaf_wrap_config()` — which verifies AND mints at `log_blowup 6` — and multiplied every
+    // committed cell by `2^6`. Since the FRI split a leaf wrap VERIFIES at its child's knobs and
+    // MINTS at `RECURSION_FRI_LOG_BLOWUP = 3`, so the "wrap LDE cells" column was **8× the
+    // deployed wrap's**. The in-circuit `ops` count does not move (the verify side is bit-for-bit
+    // the same, which is the whole point of the split); the LDE column does.
+    let child_config = ir2_leaf_wrap_config();
+    let config = recursion_layer_over(&child_config);
 
     let t_inner = Instant::now();
     let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
@@ -159,13 +195,13 @@ fn census_leaf_wrap(
         &MemBoundaryWitness::default(),
         &[],
         &UMemBoundaryWitness::default(),
-        &config,
+        &child_config,
     )
     .expect("inner IR-v2 prove");
     let inner_secs = t_inner.elapsed().as_secs_f64();
 
     let (airs, table_public_inputs, common) =
-        ir2_airs_and_common_for_config(desc, &inner, public_inputs, &config)
+        ir2_airs_and_common_for_config(desc, &inner, public_inputs, &child_config)
             .expect("verify triple");
 
     // ⚑ THE INNER PROOF'S OWN SHAPE — what the wrap has to open. This is the quantity the
@@ -341,6 +377,7 @@ fn census_leaf_wrap(
         recompose_rows,
         build_secs,
         shapes,
+        mint_log_blowup: config.mint_knobs().log_blowup,
     }
 }
 
@@ -417,9 +454,16 @@ fn where_the_accumulator_leaf_wrap_cost_goes() {
             c.build_secs
         );
     }
+    let mint_lb = sweep
+        .last()
+        .map(|(_, _, c)| c.mint_log_blowup)
+        .expect("the sweep ran");
     println!(
-        "\n(wrap LDE cells = Σ_table 2^(log2 rows + {LOG_BLOWUP}) × (main + preprocessed width) — \
-         the cells `prove_all_tables` materialises, which is what a peak-RSS figure tracks.)"
+        "\n(wrap LDE cells = Σ_table 2^(log2 rows + {mint_lb}) × (main + preprocessed width) — the \
+         cells `prove_all_tables` materialises, which is what a peak-RSS figure tracks. ⚑ {mint_lb} \
+         is READ OFF `recursion_layer_over(child).mint_knobs()`, not named: the wrap VERIFIES its \
+         child at the child's knobs and MINTS at its own, and this file used to price it at the \
+         child's — 8x too large.)"
     );
 }
 
