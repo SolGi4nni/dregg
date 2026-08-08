@@ -1,0 +1,15 @@
+# Papers are FETCHED, not committed — same pattern as `fetch-lean-seed.sh`.
+#
+# WHY: 41 papers is 76 MB against a .git that is already 1.7 GB, and every one of
+# them is a published paper anyone can re-download. What must be reproducible is
+# WHICH paper and WHICH bytes — that is `MANIFEST.json` (sha256 + URL), ~10 KB.
+#
+# ⚠ Lanes read these by path (`pdfs/cordial-miners-shapiro-2205.09174.pdf`), so a
+# fresh clone MUST run `scripts/fetch-papers.py` before any reader lane will work.
+#
+# The three FRI papers below predate this policy and are tracked; left alone
+# rather than rewritten out of history.
+*.pdf
+!bciks20-proximity-gaps-2020-654.pdf
+!improved-line-point-ldt-2311-12752.pdf
+!kopparty-improved-rs-proximity-2025.pdf

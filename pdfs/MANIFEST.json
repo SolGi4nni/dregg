@@ -1,0 +1,292 @@
+{
+ "schema": "dregg-paper-manifest-v1",
+ "papers": [
+  {
+   "file": "accountability-bft-2105.04909.pdf",
+   "sha256": "d85c75ba7c4482cd640ae31c2e8df6ff2520f1de9f2e9bfae05fc58f6d792540",
+   "bytes": 751109,
+   "url": "https://arxiv.org/pdf/2105.04909",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "async-reconfiguration-byzantine-failures-disc2020.pdf",
+   "sha256": "063ec6f3e643489e165a179635688791a00fa9878315e0e3ef1075d86e43f40c",
+   "bytes": 557750,
+   "url": "https://drops.dagstuhl.de/storage/00lipics/lipics-vol179-disc2020/LIPIcs.DISC.2020.27/LIPIcs.DISC.2020.27.pdf",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "banyan-fast-rotating-leader-bft-2312.05869.pdf",
+   "sha256": "b6ac8f1ff858617cb5d5438e9032195ac2bc3aebdbf0cbac92f0d6957d6ae6b0",
+   "bytes": 2514398,
+   "url": "https://arxiv.org/pdf/2312.05869",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "bciks20-proximity-gaps-2020-654.pdf",
+   "sha256": "8819572b225bff6621aae33a45c93e7855fbb186c16a3b7ced7fbef680716dff",
+   "bytes": 1079838,
+   "url": "",
+   "source": "unrecorded"
+  },
+  {
+   "file": "bft-protocol-forensics-2010.06785.pdf",
+   "sha256": "de03bc9fa4a63f8170c5d6b583145b524dc61a508402638f222adf9674a388ed",
+   "bytes": 3603845,
+   "url": "https://arxiv.org/pdf/2010.06785",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "blocklace-byzantine-repelling-crdt-almeida-shapiro-2402.08068.pdf",
+   "sha256": "327f15a7f5d780486c6ed9d53a94768f608bc2c4c50b52ee74c13a43589ec105",
+   "bytes": 200476,
+   "url": "https://arxiv.org/pdf/2402.08068",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "bullshark-dag-bft-protocols-made-practical-2201.05677.pdf",
+   "sha256": "319caf3f6b48abd317654a66f90a4984ca63ae153645bd9c107198ccf1d08ae8",
+   "bytes": 1448084,
+   "url": "https://arxiv.org/pdf/2201.05677",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "cordial-miners-shapiro-2205.09174.pdf",
+   "sha256": "b1c47f649576fe5e5d39e54444e367cbbfe3d8ffc9938adba40d3f7e0b060237",
+   "bytes": 1797910,
+   "url": "https://arxiv.org/pdf/2205.09174",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "dag-rider-all-you-need-is-dag-2102.08325.pdf",
+   "sha256": "abd52c9ea09af320669517af9749c28d81ab3c36c500a054bb6cb08830b94c0c",
+   "bytes": 813178,
+   "url": "https://arxiv.org/pdf/2102.08325",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "dbrb-dynamic-byzantine-reliable-broadcast-2001.06271.pdf",
+   "sha256": "bfd55c7eca4580cfef251e54ad407e37a7725fcc73db35587ae17b568124363a",
+   "bytes": 1664443,
+   "url": "https://arxiv.org/pdf/2001.06271",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "dirty-logs-reconfiguration-smr-2602.09441.pdf",
+   "sha256": "7b21fde18fa87995486386d787002d2a76eeb7eb13b8d65d5317cfe05794802f",
+   "bytes": 598681,
+   "url": "https://arxiv.org/pdf/2602.09441",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "dynamic-reconfiguration-optimal-async-disc2017.pdf",
+   "sha256": "a93329664521c9ce0dd8ddbed38c2e94e2b460296b056aa28e35d71ca85fbd95",
+   "bytes": 644794,
+   "url": "https://drops.dagstuhl.de/storage/00lipics/lipics-vol091-disc2017/LIPIcs.DISC.2017.40/LIPIcs.DISC.2017.40.pdf",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "formally-verifying-pipelined-moonshot-2403.16637.pdf",
+   "sha256": "daf7eed771c097eae43e3ac6788ed00c0a7ff9f76983616b9b6c301bf990099f",
+   "bytes": 600123,
+   "url": "https://arxiv.org/pdf/2403.16637",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "grassroots-architecture-digital-democracy-2404.13468.pdf",
+   "sha256": "c3834d6d095ed1aa7c16a5aefd14f4627b7bb8eee0e89232bef3b8728f80612c",
+   "bytes": 2541495,
+   "url": "https://arxiv.org/pdf/2404.13468",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "grassroots-currencies-shapiro-2202.05619.pdf",
+   "sha256": "78bd5acf239569894a5442d0c7a9265cf6e8a205b05a434160da7dba3fa77ebe",
+   "bytes": 26595004,
+   "url": "https://arxiv.org/pdf/2202.05619",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "grassroots-flash-lewispye-naor-shapiro-2309.13191.pdf",
+   "sha256": "f5e81201ec2d2442eee850cdec76bbe0c05bc946cbe8b9843e7caf0f007fca51",
+   "bytes": 990739,
+   "url": "https://arxiv.org/pdf/2309.13191",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "grassroots-social-networking-shapiro-2306.13941.pdf",
+   "sha256": "63380e4249e9a3ca0854624211591d76bfea2b7942a5cec01af9895e9c605249",
+   "bytes": 692720,
+   "url": "https://arxiv.org/pdf/2306.13941",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "grassroots-systems-shapiro-2301.04391.pdf",
+   "sha256": "7c587e9598e62277097cf21bd3d7ea5881bc9871fc4ec56ab6f64c4dfa0d8a2b",
+   "bytes": 1250509,
+   "url": "https://arxiv.org/pdf/2301.04391",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "improved-line-point-ldt-2311-12752.pdf",
+   "sha256": "729747ebe6ee54b12da3804ddf0bc897f14706c89efd2d32a8d3f943ddd82e75",
+   "bytes": 644465,
+   "url": "",
+   "source": "unrecorded"
+  },
+  {
+   "file": "kopparty-improved-rs-proximity-2025.pdf",
+   "sha256": "4added3e55b83c15fcc8a698fb57e137f5bd83e79ea25ce79382817c1ad26a46",
+   "bytes": 751888,
+   "url": "",
+   "source": "unrecorded"
+  },
+  {
+   "file": "mysticeti-uncertified-dags-2310.14821.pdf",
+   "sha256": "bf829c8c84543d11bcf8469b2d633a3486a150c4fb094e8c6a269b3ed22d9776",
+   "bytes": 1758215,
+   "url": "https://arxiv.org/pdf/2310.14821",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "narwhal-and-tusk-2105.11827.pdf",
+   "sha256": "6b3d3bd4b56ef2df8fb0d7b18b9c9acb7b8332da2ab06839fd86e128d1785f58",
+   "bytes": 1408020,
+   "url": "https://arxiv.org/pdf/2105.11827",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "nist-smr-consensus-byzantine-8460.pdf",
+   "sha256": "bba8f961e255d6610c1647c7196fd18d000d041093a5ed2f7d5edecfb17f8d3e",
+   "bytes": 9546677,
+   "url": "https://nvlpubs.nist.gov/nistpubs/ir/2023/NIST.IR.8460.ipd.pdf",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "polygraph-accountable-byzantine-agreement-disc2020.pdf",
+   "sha256": "b82f4c2901587d6ae74452da7cd9f0503eb7aba4fcdd751266489f3248123bd1",
+   "bytes": 459641,
+   "url": "https://drops.dagstuhl.de/storage/00lipics/lipics-vol179-disc2020/LIPIcs.DISC.2020.45/LIPIcs.DISC.2020.45.pdf",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "shoal-dag-bft-latency-2306.03058.pdf",
+   "sha256": "d2f19215794d5d2eb10322b273da2c074da1b78423efeaba89b52d8d1c5af834",
+   "bytes": 2602459,
+   "url": "https://arxiv.org/pdf/2306.03058",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "shoal-plus-plus-2405.20488.pdf",
+   "sha256": "202e4d73a044d095747e526d8c99e8aba0ac54b3a9c4b2aaef9457c9d2f8ea53",
+   "bytes": 1334042,
+   "url": "https://arxiv.org/pdf/2405.20488",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "sui-lutris-broadcast-and-consensus-2310.18042.pdf",
+   "sha256": "5c497a8b80e857c99bfa0640ff51d4e485deb90f21b19096163ef33c0dfff1c6",
+   "bytes": 1067789,
+   "url": "https://arxiv.org/pdf/2310.18042",
+   "source": "arxiv/drops"
+  },
+  {
+   "file": "zot-asynchronous-bft-asset-transfer-quasi-anonymous-light-and-consen.pdf",
+   "sha256": "d3884547dbd5554dbeb5ce6eab988c9611e4f362275b45aad18eb4d5e1391e0b",
+   "bytes": 466797,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-byzantine-reliable-broadcast-with-low-communication-and-time-com.pdf",
+   "sha256": "21eb653bc534d5ac6784c91d9ee1dcca3900a1c00e85ad2014f058ec3d26ee43",
+   "bytes": 277663,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-cryptoconcurrency-almost-consensusless-asset-transfer-with-share.pdf",
+   "sha256": "aba64db70bdd93189f8ad915d0adb699d7f095c1ea1d401b0de87e6f23ada02b",
+   "bytes": 1519730,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-dynamic-probabilistic-reliable-broadcast.pdf",
+   "sha256": "4d2b86f1bf849153517dad972a18581156d9dce2db6ee56614573694225726c3",
+   "bytes": 1580572,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-foundations-of-dynamic-bft.pdf",
+   "sha256": "6be31848dfc193a6dc35f7d5caba8b54e6103e3330a4c18545c731481c74af15",
+   "bytes": 665821,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-hammerhead-leader-reputation-for-dynamic-scheduling.pdf",
+   "sha256": "ddf02e7817327de94dbe0894bc9c0084f04b68220aa85524f60a7e30866d7fcf",
+   "bytes": 521930,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-minicast-minimizing-the-communication-complexity-of-reliable-bro.pdf",
+   "sha256": "1021a0b7d6bd33bb92b958e9230a813dfcf5ef403b59ba1d3328777d7ba2e285",
+   "bytes": 403561,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-near-optimal-communication-byzantine-reliable-broadcast-under-a-.pdf",
+   "sha256": "5f877fdd77bf79ce2e37e1e1b3cb8d9f5a19593b4d80e6ca32ff4a4a5eb6aa36",
+   "bytes": 1031171,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-ouroboros-genesis-composable-proof-of-stake-blockchains-with-dyn.pdf",
+   "sha256": "17bf28d4526acc138da2eb65e62bac2eea7e8dea142da0edf72ec2378237ba08",
+   "bytes": 995813,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-pdf-minicast-minimizing-the-communication-complexity-of-reliable.pdf",
+   "sha256": "1021a0b7d6bd33bb92b958e9230a813dfcf5ef403b59ba1d3328777d7ba2e285",
+   "bytes": 403561,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-permissionless-and-asynchronous-asset-transfer.pdf",
+   "sha256": "62e22da5e8de14dfb05a7c0440c73ba79773cde733bd602db4070b3f4711172e",
+   "bytes": 783309,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-permissionless-consensus.pdf",
+   "sha256": "bcc2d3a20dcf9cb3af41b23d33c4d78796df39a01822b70140433ffe101803d4",
+   "bytes": 985105,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-reconfigurable-heterogeneous-quorum-systems.pdf",
+   "sha256": "b86f5baf72abe6e7d2e221410e738028bb20e1c3453cdf8849bd4ceabd197c7a",
+   "bytes": 1206686,
+   "url": "",
+   "source": "zotero"
+  },
+  {
+   "file": "zot-rondo-scalable-and-reconfiguration-friendly-randomness-beacon.pdf",
+   "sha256": "72c7df6ece4509fce6e855c1d65478a5f59cefaa59734a14fb3271382a12a925",
+   "bytes": 975598,
+   "url": "",
+   "source": "zotero"
+  }
+ ]
+}
