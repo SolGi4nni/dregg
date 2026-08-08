@@ -482,6 +482,12 @@ fn boundary_blocklace_dag_is_permissionless_membership_is_constitution_layer() {
                 // same label `block.creator` carries and `is_participant` keys
                 // by) — not bare ed25519 keys.
                 node_id: Block::hybrid_id(&stranger),
+                // The PQ half is irrelevant to what this test asserts (a
+                // stranger's membership block is refused before any payload
+                // field is read); a zero key keeps the payload well-formed.
+                ml_dsa_pubkey: dregg_blocklace::pq::MlDsaPublicKey(
+                    [0u8; dregg_blocklace::pq::PK_LEN],
+                ),
             },
         },
         vec![],

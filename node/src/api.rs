@@ -60,8 +60,61 @@ pub struct StatusResponse {
     /// false` on a correct node. The cadence now anchors an empty lace on its
     /// first tick (`blocklace_sync::cadence_decision`), so the window is a tick,
     /// not a window.
+    ///
+    /// ⚑ 2026-08-08 — TWO MORE CONJUNCTS, because those three could not go
+    /// false for the failure that matters. Measured on a 4-node federation at
+    /// threshold 3: `healthy: true` and `consensus_live: true` persisted through
+    /// the whole of a quorum-losing 2-of-4 partition, `latest_height` frozen at 1
+    /// for 210 s while `dag_height` climbed on local heartbeats. Every one of the
+    /// three original conjuncts was TRUE, and none of them was about the other
+    /// members. `healthy` now also requires `quorum_reachable` and
+    /// `!finality_stalled` — see those fields.
     pub healthy: bool,
+    /// CONFIGURED peers: the length of the `--federation-peers` list this
+    /// process was launched with. It is a constant of the deployment and says
+    /// NOTHING about reachability — it read 3 with two of those three frozen.
+    /// For links that are actually carrying traffic read `connected_peers`; for
+    /// members actually participating in consensus read `live_committee_voters`.
     pub peer_count: usize,
+    /// Peers with an OPEN gossip transport right now (`GossipNetwork`). A
+    /// measurement, not a launch flag. Absent when no consensus handle is
+    /// attached (there is no gossip layer to ask).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connected_peers: Option<usize>,
+    /// Distinct OTHER committee members whose finalization vote this node
+    /// admitted within the last
+    /// `blocklace_sync::COMMITTEE_LIVENESS_WINDOW` (60 s). This is the count
+    /// that collapses under a partition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_committee_voters: Option<usize>,
+    /// The vote collector's live 2f+1. Tracks committee reconfiguration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quorum_threshold: Option<usize>,
+    /// `live_committee_voters + 1 >= quorum_threshold` — could this node
+    /// assemble a quorum from the members currently reaching it? THE ANSWER TO
+    /// "can I finalize at all". False on the minority side of a partition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quorum_reachable: Option<bool>,
+    /// Has any block EVER crossed consensus-wide quorum on this node? `false` on
+    /// a joiner that never got into the committee — which used to report
+    /// `healthy: true` forever.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ever_reached_quorum: Option<bool>,
+    /// Seconds since the last consensus-wide quorum here, or since consensus
+    /// started if there has never been one. This is the number that climbs
+    /// during a stall while `dag_height` keeps rising on local heartbeats.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seconds_since_quorum: Option<u64>,
+    /// `seconds_since_quorum` past `blocklace_sync::FINALITY_STALL_THRESHOLD`
+    /// (90 s) on a federation whose threshold is greater than 1 — "I have
+    /// proposed and heard nothing". Never set on a threshold-1 deployment,
+    /// which has no cross-node quorum to lose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finality_stalled: Option<bool>,
+    /// Turns this node has accepted for consensus and not yet resolved to a
+    /// durable verdict. Ask `GET /api/turn/{hash}/verdict` about any one of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turns_in_flight: Option<usize>,
     /// Attested-root / turn height: the height of the latest finalized
     /// AttestedRoot. This advances only on turn-bearing finality, NOT on idle
     /// heartbeat blocks, so it can legitimately be 0 on a fresh node whose DAG
@@ -103,6 +156,41 @@ pub struct StatusResponse {
     /// Whether the verified Lean producer is enabled (mirrors `state_producer ==
     /// "lean"`). Convenience boolean for clients.
     pub lean_producer: bool,
+    /// THE ORDERING HALF OF THE SAME HONESTY — which order decided the most recent finality
+    /// poll. `state_producer` above says who produced the STATE; this says who produced the
+    /// ORDER, and until now there was no such field, so a node whose verified τ-order FFI was
+    /// blowing its per-poll budget looked identical on `/status` to one where the verified rule
+    /// decided every poll.
+    ///
+    ///   * `"verified_ffi"` / `"verified_cached"` — the VERIFIED Lean `dregg_tau_order` order
+    ///     decided the poll (freshly computed, or reused from the cross-poll cache that holds a
+    ///     verified order). Only these two mean "this node finalized over the verified ordering".
+    ///   * `"unverified_over_budget"` — the verified FFI EXCEEDED
+    ///     `consensus_order_budget_ms` and the un-verified Rust `ordering::tau` twin decided.
+    ///   * `"unverified_unavailable"` — the export was missing / returned ERR; the twin decided.
+    ///   * `"unverified_cached"` — a cache hit serving an un-verified order stored by an earlier
+    ///     over-budget poll.
+    ///   * `"failed_closed"` — no verified order and the twin is forbidden: the poll finalized
+    ///     NOTHING (a liveness alarm).
+    ///   * `"none"` — no multi-party finality poll has selected an order yet.
+    pub consensus_order: String,
+    /// The per-poll wall-clock budget (`DREGG_FINALITY_ORDER_TIMEOUT_MS`, default 2500) the
+    /// verified τ-order FFI must meet for `consensus_order` to be a `verified_*` value. **The
+    /// verified-ordering claim is conditional on this number**, so the number is published with
+    /// the claim rather than left in a source comment.
+    pub consensus_order_budget_ms: u64,
+    /// Finality polls whose order came from the VERIFIED Lean rule, since process start.
+    pub consensus_order_verified_polls: u64,
+    /// Finality polls whose order came from the UN-VERIFIED Rust `ordering::tau` twin. **Any
+    /// non-zero value falsifies the unqualified claim "this node finalizes over the verified
+    /// ordering"** for this process.
+    pub consensus_order_unverified_polls: u64,
+    /// Finality polls that finalized NOTHING because no verified order was available and the
+    /// twin was forbidden. Sustained growth here is a finality HALT.
+    pub consensus_order_failed_closed_polls: u64,
+    /// Finality polls whose verified τ-order FFI BLEW the budget, whatever happened next. This is
+    /// the number that says whether the budget is a real constraint on this node right now.
+    pub consensus_order_over_budget_polls: u64,
     /// Whether the node generates + verifies a full-turn STARK proof for every
     /// committed turn on the commit path (the "every transition is proven"
     /// claim). When `false`, only activity proofs are produced on submission.
@@ -841,9 +929,15 @@ pub struct AttestedRootInfo {
     pub quorum: usize,
     /// The committee vote count required for a valid finalization quorum.
     pub threshold: usize,
-    /// Structural completeness (QC present, or count >= threshold) per
-    /// `StoredAttestedRoot::is_structurally_complete` — still count-only, no
-    /// cryptographic signature verification.
+    /// Structural completeness per `StoredAttestedRoot::is_structurally_complete`:
+    /// a threshold QC, or >= `threshold` DISTINCT signers in EITHER population —
+    /// the local light-client signatures or the cross-node committee votes.
+    ///
+    /// ⚑ Until 2026-08-08 it consulted only `signatures`, which on a full-mode
+    /// node is structurally 1, so this read `false` on every finalized root the
+    /// federation had genuinely agreed. It is now the field it always looked
+    /// like. Still COUNT-ONLY: no signature is verified here, and trust still
+    /// derives from the independently recomputed ledger root.
     pub structurally_complete: bool,
 }
 
@@ -2146,6 +2240,7 @@ pub fn router_with_cors(
         )
         .route("/api/turn/{hash}/proof", get(get_turn_proof))
         .route("/api/turn/{hash}/anchor", get(get_turn_anchor))
+        .route("/api/turn/{hash}/verdict", get(get_turn_verdict))
         .route("/api/starbridge/receipts", get(get_starbridge_receipts))
         .route("/api/starbridge/events", get(get_starbridge_events))
         .route("/api/starbridge/turns", get(get_starbridge_turns))
@@ -2727,6 +2822,17 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
         Some(handle) => (handle.dag_height().await, handle.block_count().await, true),
         None => (0, 0, false),
     };
+    // CAN THIS NODE STILL FINALIZE? Measured from the members that are actually
+    // reaching it, against the vote collector's live threshold — never from the
+    // launch flags. `None` when no consensus handle is attached, in which case
+    // `consensus_live: false` already says everything there is to say.
+    let liveness = match &blocklace {
+        Some(handle) => Some(handle.federation_liveness().await),
+        None => None,
+    };
+    let turns_in_flight = blocklace
+        .as_ref()
+        .map(|handle| handle.in_flight_turns.len());
 
     let s = state.read().await;
 
@@ -2767,7 +2873,20 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     // Liveness: store reachable + consensus task running + DAG has produced at
     // least one real block. block_count > 0 (rather than dag_height > 0) so a
     // single genesis block at seq 0 still counts as "producing".
-    let healthy = store_ok && consensus_live && block_count > 0;
+    //
+    // ⚑ AND — since 2026-08-08 — the node must still be able to FINALIZE. All
+    // three conjuncts above are about this process alone, so all three stayed
+    // true for the entire 210 s of a quorum-losing 2-of-4 partition: the store
+    // was readable, the consensus task was attached, and the DAG kept growing on
+    // this node's own heartbeat blocks while not one height was agreed. A health
+    // signal that cannot go false for a total loss of finality is not a health
+    // signal. `quorum_reachable` is the "I have lost the committee" leg;
+    // `finality_stalled` is the "I have proposed and heard nothing" leg (inert on
+    // a threshold-1 deployment, which has no cross-node quorum to lose).
+    let can_finalize = liveness
+        .map(|l| l.quorum_reachable && !l.finality_stalled)
+        .unwrap_or(true);
+    let healthy = store_ok && consensus_live && block_count > 0 && can_finalize;
 
     let lean_producer = s.lean_producer_enabled;
     let full_turn_proving = s.full_turn_proving_enabled;
@@ -2777,10 +2896,21 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     // verified executor actually commits.
     let producer_root_agreeing_effects =
         dregg_exec_lean::lean_shadow::producer_root_agreeing_effects().len();
+    // WHICH ORDER decided finality — the ordering-side counterpart of `state_producer`. Read from
+    // the process-global tally `poll_finalized_blocks` writes on every order selection.
+    let order_tally = crate::metrics::consensus_order_tally();
 
     Json(StatusResponse {
         healthy,
         peer_count,
+        connected_peers: liveness.map(|l| l.connected_peers),
+        live_committee_voters: liveness.map(|l| l.live_committee_voters),
+        quorum_threshold: liveness.map(|l| l.quorum_threshold),
+        quorum_reachable: liveness.map(|l| l.quorum_reachable),
+        ever_reached_quorum: liveness.map(|l| l.ever_reached_quorum),
+        seconds_since_quorum: liveness.map(|l| l.seconds_since_quorum),
+        finality_stalled: liveness.map(|l| l.finality_stalled),
+        turns_in_flight,
         latest_height,
         dag_height,
         block_count,
@@ -2792,6 +2922,13 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
         state_producer,
         lean_producer,
         full_turn_proving,
+        consensus_order: order_tally.last_source.to_string(),
+        consensus_order_budget_ms: crate::blocklace_sync::verified_order_ffi_timeout().as_millis()
+            as u64,
+        consensus_order_verified_polls: order_tally.verified_polls,
+        consensus_order_unverified_polls: order_tally.unverified_polls,
+        consensus_order_failed_closed_polls: order_tally.failed_closed_polls,
+        consensus_order_over_budget_polls: order_tally.over_budget_polls,
         producer_root_agreeing_effects,
         producer_covered_effects: producer_root_agreeing_effects,
     })
@@ -3880,6 +4017,212 @@ async fn get_turn_anchor(
             "threshold": anchor.attested.threshold,
             "receipt_covering_signatures": anchor.attested.quorum_signatures.len(),
             "chain_position_signatures": anchor.attested.hybrid_quorum.len(),
+        })),
+    )
+}
+
+/// `GET /api/turn/{hash}/verdict` — WHAT HAPPENED TO MY TURN?
+///
+/// ⚑ THE HOLE THIS FILLS. A faucet turn returned
+/// `{"success":true,"turn_hash":"19f4da54…"}` and then vanished from all four
+/// nodes of a live federation. Consensus was right to discard it — every node
+/// independently refused it for `receipt-chain-mismatch` (it named a receipt head
+/// a concurrent turn had already claimed), unanimously and deterministically, and
+/// every node RECORDED that refusal durably. What did not exist was any way to
+/// ASK. `/api/receipts` simply lacked the turn, and the client held a turn hash,
+/// which was not a coordinate anything could be looked up by. "Rejected forever"
+/// and "still pending" were the same observation.
+///
+/// The four answers, in the order they are decided — DURABLE FIRST, so a terminal
+/// verdict always beats this node's volatile in-flight bookkeeping:
+///
+/// * `"accepted"` (200) — the commit log holds it. Carries the committed height,
+///   the receipt hash, and (when an attested root exists at that height) the
+///   committee's `quorum`/`threshold` for it.
+/// * `"rejected"` (200) — a durable finalized-rejection row names it, with the
+///   stable `reason` code and the finalized `block_id` it was carried in. THIS
+///   IS TERMINAL: consensus finalized the block, the application predicate
+///   refused the payload, and no retry of these bytes can ever change it.
+/// * `"pending"` (200) — this node took the turn on and has not yet resolved it.
+///   Carries `pending_seconds`. In-memory only: a restart forgets it and the
+///   answer honestly degrades to `unknown` rather than inventing one.
+/// * `"unknown"` (404) — this node has no record. NOT a verdict. It means "ask
+///   another node, or ask again": a turn submitted elsewhere reads `unknown` here
+///   until this node finalizes it.
+///
+/// `500` + `verdict: "indeterminate"` when the by-turn index and the block-keyed
+/// authority row disagree. The index is a pointer, never the authority; on
+/// disagreement this refuses to answer rather than serve the pointer's claim.
+///
+/// WHAT THE REASON MAY SAY. Only the stable machine code
+/// (`receipt-chain-mismatch`), never local error formatting. The shape is
+/// enforced twice — codes are `[a-z0-9-]{1,128}` at the write and again at the
+/// read (`signed_turn_validation::canonical_rejection_reason`), so a reason names
+/// the CAUSE and cannot carry a path, a key, a peer address or an operand. The
+/// turn hash itself is the caller's own value, and the block id is public
+/// consensus data already served by `/api/blocks`.
+async fn get_turn_verdict(
+    AxumPath(hash): AxumPath<String>,
+    State(state): State<NodeState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let Ok(turn_hash) = hex_decode(&hash) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "turn hash must be 64 hex characters" })),
+        );
+    };
+    let turn_hash_hex = hex_encode(&turn_hash);
+    let in_flight = state
+        .blocklace()
+        .await
+        .map(|handle| handle.in_flight_turns.clone());
+    let s = state.read().await;
+
+    // ── 1. ACCEPTED. The commit log is the authority for a turn that landed. ──
+    match s.store.lookup_turn(&turn_hash) {
+        Ok(Some(record)) => {
+            if let Some(in_flight) = in_flight.as_ref() {
+                in_flight.resolve(&turn_hash);
+            }
+            // The committee evidence at the turn's height, when a root exists.
+            // Count-only, exactly as `/api/federation/roots` reports it.
+            let attested = s
+                .store
+                .attested_root_at_height(record.height)
+                .ok()
+                .flatten();
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "turn_hash": turn_hash_hex.clone(),
+                    "verdict": "accepted",
+                    "terminal": true,
+                    "height": record.height,
+                    "block_id": hex_encode(&record.block_id),
+                    "receipt_hash": hex_encode(&record.receipt_hash),
+                    "attested": attested.as_ref().map(|root| serde_json::json!({
+                        "merkle_root": hex_encode(&root.merkle_root),
+                        "quorum": root.distinct_finalization_voters(),
+                        "threshold": root.threshold,
+                        "structurally_complete": root.is_structurally_complete(),
+                    })),
+                })),
+            );
+        }
+        Ok(None) => {}
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "turn_hash": turn_hash_hex.clone(),
+                    "verdict": "indeterminate",
+                    "error": format!("commit log could not be read: {e}"),
+                })),
+            );
+        }
+    }
+
+    // ── 2. REJECTED. The by-turn index points at the block-keyed authority row;
+    //       both must agree before a verdict is served. ──
+    let index_key =
+        crate::signed_turn_validation::FinalizedPayloadRejectionTurnIndex::storage_key(&turn_hash);
+    let indeterminate = |detail: &str| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "turn_hash": turn_hash_hex.clone(),
+                "verdict": "indeterminate",
+                "error": detail,
+            })),
+        )
+    };
+    let index_bytes = match s.store.get_config(&index_key) {
+        Ok(bytes) => bytes,
+        Err(_) => return indeterminate("the rejection index could not be read"),
+    };
+    if let Some(index_bytes) = index_bytes {
+        let index =
+            match crate::signed_turn_validation::FinalizedPayloadRejectionTurnIndex::decode_authenticated(
+                &index_bytes,
+                turn_hash,
+            ) {
+                Ok(index) => index,
+                Err(detail) => return indeterminate(detail),
+            };
+        let authority_key =
+            crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+                &index.block_id,
+            );
+        let authority_bytes = match s.store.get_config(&authority_key) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                return indeterminate(
+                    "the rejection index names a block with no durable rejection record",
+                );
+            }
+            Err(_) => return indeterminate("the rejection record could not be read"),
+        };
+        let authority =
+            match crate::signed_turn_validation::FinalizedPayloadRejectionRecord::decode_for_query(
+                &authority_bytes,
+                index.block_id,
+            ) {
+                Ok(authority) => authority,
+                Err(detail) => return indeterminate(detail),
+            };
+        // The two rows must name the SAME turn and the SAME reason. A pointer
+        // that disagrees with the authority is not evidence of anything.
+        if authority.turn_hash != Some(turn_hash) || authority.reason_code != index.reason_code {
+            return indeterminate("the rejection index and the rejection record disagree");
+        }
+        if let Some(in_flight) = in_flight.as_ref() {
+            in_flight.resolve(&turn_hash);
+        }
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "turn_hash": turn_hash_hex.clone(),
+                "verdict": "rejected",
+                "terminal": true,
+                "reason": authority.reason_code,
+                "block_id": hex_encode(&authority.block_id),
+                "detail": "consensus finalized the block carrying this turn and the application \
+                           predicate deterministically refused the payload before any state \
+                           mutation. No state changed and no retry of these exact bytes can \
+                           succeed.",
+            })),
+        );
+    }
+
+    // ── 3. PENDING. This node took it on and has not resolved it. ──
+    if let Some(pending_seconds) = in_flight
+        .as_ref()
+        .and_then(|in_flight| in_flight.pending_for_seconds(&turn_hash))
+    {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "turn_hash": turn_hash_hex.clone(),
+                "verdict": "pending",
+                "terminal": false,
+                "pending_seconds": pending_seconds,
+                "detail": "this node accepted the turn for consensus and has not yet reached a \
+                           durable verdict on it. Poll again.",
+            })),
+        );
+    }
+
+    // ── 4. UNKNOWN. Not a verdict. ──
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "turn_hash": turn_hash_hex.clone(),
+            "verdict": "unknown",
+            "terminal": false,
+            "detail": "this node holds no record of this turn hash: no commit, no durable \
+                       rejection, and it is not in flight here. A turn submitted to another node \
+                       reads unknown here until this node finalizes it, and an in-flight record \
+                       does not survive a restart.",
         })),
     )
 }
@@ -13534,19 +13877,21 @@ mod tests {
     /// `u64::MAX`. The prior code passed `u64::MAX` straight through to the
     /// coordinator with a "actual gate at execution time" comment that did not
     /// exist.
-    #[test]
-    // Intentional compile-constant regression guard (both operands are consts by design).
-    #[allow(clippy::assertions_on_constants)]
-    fn audit_f_p2_1_atomic_budget_is_bounded() {
-        assert_eq!(
-            MAX_ATOMIC_BUDGET, 1_000_000_000,
+    /// ⚑ A COMPILE-CONSTANT REGRESSION GUARD BELONGS IN A COMPILE-TIME ASSERT. This was a
+    /// `#[test]` carrying `#[allow(clippy::assertions_on_constants)]` — the lint was right and the
+    /// `allow` was the wrong answer to it: a regression that a build could not survive was being
+    /// reported by a test run, after everything downstream had already compiled against it.
+    const ATOMIC_BUDGET_IS_BOUNDED: () = {
+        assert!(
+            MAX_ATOMIC_BUDGET == 1_000_000_000,
             "MAX_ATOMIC_BUDGET regressed; prior code allowed u64::MAX"
         );
         assert!(
             MAX_ATOMIC_BUDGET < u64::MAX / 1000,
             "budget must be far below u64::MAX to defeat exhaustion attacks"
         );
-    }
+    };
+    const _: () = ATOMIC_BUDGET_IS_BOUNDED;
 
     /// F-P1-8 (mcp side): the bearer-cap signed message MUST commit to the
     /// permission level so a downstream verifier cannot accept a forged
@@ -14698,5 +15043,123 @@ mod tests {
                 .expect("legacy attenuate body must still parse");
         assert!(att.not_after.is_none());
         assert!(att.budget.is_none());
+    }
+
+    /// Read `GET /api/turn/{hash}/verdict` on a bare router.
+    async fn read_verdict(
+        app: &axum::Router,
+        turn_hash_hex: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        let addr: std::net::SocketAddr = "127.0.0.1:4444".parse().unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/turn/{turn_hash_hex}/verdict"))
+                    .extension(ConnectInfo(addr))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        (status, serde_json::from_slice(&body).expect("JSON verdict"))
+    }
+
+    /// THE VANISHED TURN, MADE QUERYABLE — and the ways it must still refuse.
+    ///
+    /// The durable rejection row was already being written on every node; what
+    /// did not exist was a coordinate a client could ask with. This pins all
+    /// three read behaviours of the by-turn route: the honest non-answer, the
+    /// real verdict with its reason, and the fail-closed refusal when the index
+    /// disagrees with the authority it points at.
+    #[tokio::test]
+    async fn a_durably_rejected_turn_is_queryable_by_hash_and_a_disagreeing_index_refuses() {
+        use crate::signed_turn_validation::{
+            FinalizedPayloadRejectionRecord, FinalizedPayloadRejectionTurnIndex,
+        };
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state.clone(), false, recorder.handle());
+
+        let turn_hash = [0x19u8; 32];
+        let turn_hash_hex = hex_encode(&turn_hash);
+        let block_id = [0xC0u8; 32];
+        let payload = b"the finalized bytes this block carried";
+
+        // ── Nothing recorded: `unknown` and a 404. NOT a verdict, and the
+        //    response says so rather than implying the turn is gone. ──
+        let (status, json) = read_verdict(&app, &turn_hash_hex).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json["verdict"], "unknown");
+        assert_eq!(json["terminal"], false);
+
+        // ── The pair of rows the consensus path writes. ──
+        {
+            let s = state.read().await;
+            let record = FinalizedPayloadRejectionRecord::new(
+                block_id,
+                payload,
+                Some(turn_hash),
+                "receipt-chain-mismatch",
+            );
+            s.store
+                .set_config(
+                    &FinalizedPayloadRejectionRecord::storage_key(&block_id),
+                    &record.encode().expect("encode rejection row"),
+                )
+                .expect("store rejection row");
+            let index = FinalizedPayloadRejectionTurnIndex::new(
+                turn_hash,
+                block_id,
+                "receipt-chain-mismatch",
+            );
+            s.store
+                .set_config(
+                    &FinalizedPayloadRejectionTurnIndex::storage_key(&turn_hash),
+                    &index.encode().expect("encode rejection index"),
+                )
+                .expect("store rejection index");
+        }
+
+        let (status, json) = read_verdict(&app, &turn_hash_hex).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["verdict"], "rejected");
+        assert_eq!(json["terminal"], true);
+        assert_eq!(json["reason"], "receipt-chain-mismatch");
+        assert_eq!(json["block_id"], hex_encode(&block_id));
+
+        // ── The index is a POINTER, never the authority. Repoint it at a block
+        //    that has no rejection record and the route must refuse rather than
+        //    serve the pointer's claim. ──
+        {
+            let s = state.read().await;
+            let liar = FinalizedPayloadRejectionTurnIndex::new(
+                turn_hash,
+                [0xEEu8; 32],
+                "receipt-chain-mismatch",
+            );
+            s.store
+                .set_config(
+                    &FinalizedPayloadRejectionTurnIndex::storage_key(&turn_hash),
+                    &liar.encode().expect("encode rejection index"),
+                )
+                .expect("store rejection index");
+        }
+        let (status, json) = read_verdict(&app, &turn_hash_hex).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(json["verdict"], "indeterminate");
+
+        // ── A malformed hash is a client error, never a verdict. ──
+        let (status, _) = read_verdict(&app, "not-a-hash").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

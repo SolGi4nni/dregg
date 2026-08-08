@@ -256,7 +256,31 @@ impl TurnArtifactBundle {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MembershipAction {
     /// Propose adding a node to the federation.
-    Join { node_id: [u8; 32] },
+    ///
+    /// ⚑ `ml_dsa_pubkey` IS LOAD-BEARING, NOT METADATA. `node_id` is the
+    /// candidate's ed25519 STRAND key — the space `Constitution::participants`
+    /// lives in — but every consensus-facing use of a member needs its
+    /// POST-QUANTUM half too: the finality roster is keyed by the HYBRID id
+    /// `H(ed25519 ‖ ml_dsa)` (`Block::creator`), the finalization-vote collector
+    /// refuses a member with no ML-DSA key, and
+    /// `blocklace_sync::project_committed_participants` DROPS an admitted member
+    /// whose ML-DSA half is not in COMMITTED state — at which point
+    /// `poll_finalized_blocks` FAILS CLOSED and the whole federation's finality
+    /// HALTS.
+    ///
+    /// A Join that carried only `node_id` therefore could not succeed even if it
+    /// were ratified: `ML-DSA.KeyGen` needs the seed, so no peer can DERIVE the
+    /// candidate's PQ key, and nothing else on the wire carries it. Carrying it
+    /// in the ratified payload is the only place every node sees the SAME bytes
+    /// at the SAME point in the order, which is what "committed" has to mean for
+    /// a value the tau leader schedule is a function of.
+    ///
+    /// It is covered by [`Block::canonical_bytes`] and therefore by the block's
+    /// hybrid signature: a relay cannot substitute a different PQ key.
+    Join {
+        node_id: [u8; 32],
+        ml_dsa_pubkey: crate::pq::MlDsaPublicKey,
+    },
     /// Propose removing a node from the federation.
     Leave { node_id: [u8; 32] },
     /// Approve (vote yes on) an existing proposal contained in `proposal_block`.
@@ -613,9 +637,17 @@ impl Block {
             Payload::MembershipVote { action } => {
                 buf.push(0x04);
                 match action {
-                    MembershipAction::Join { node_id } => {
+                    MembershipAction::Join {
+                        node_id,
+                        ml_dsa_pubkey,
+                    } => {
                         buf.push(0x01);
                         buf.extend_from_slice(node_id);
+                        // The candidate's PQ half is INSIDE the signed preimage.
+                        // Length-prefixed even though `PK_LEN` is fixed, so the
+                        // encoding stays unambiguous if the suite ever rotates.
+                        buf.extend_from_slice(&(ml_dsa_pubkey.0.len() as u32).to_le_bytes());
+                        buf.extend_from_slice(&ml_dsa_pubkey.0);
                     }
                     MembershipAction::Leave { node_id } => {
                         buf.push(0x02);

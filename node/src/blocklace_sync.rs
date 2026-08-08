@@ -389,6 +389,372 @@ impl PendingBlocklacePayload {
     }
 }
 
+// ─── Federation liveness: what `/status` needs in order to say "I CANNOT finalize" ──
+//
+// ⚑ Measured on a real 4-node federation, threshold 3 (2026-08-08): with two
+// members SIGSTOPped, the surviving 2-of-4 minority reported `healthy: true` and
+// `consensus_live: true` for the full 210 s of the partition, while
+// `latest_height` sat frozen at 1 and `dag_height` climbed 13 → 15 on its own
+// heartbeat blocks. `peer_count` read 3 the whole time, because it counts
+// CONFIGURED peers — a value read out of the launch flags, which cannot change no
+// matter what the network does.
+//
+// (The sibling failure — a joiner permanently stuck outside the committee, also
+// reporting an unqualified `healthy: true` — is covered by `JoinProgress`, not
+// by this.)
+//
+// Neither reading was wrong about the fact it named. `consensus_live` means "the
+// consensus task is attached"; `block_count > 0` means "this node has ever
+// produced a block". Both stay true while the node talks only to itself. What
+// was missing was any fact about the OTHER members: whether their votes are
+// still arriving, and whether a quorum of them is still assemblable. That is
+// what this records.
+
+/// How recently a committee member's finalization vote must have been RECORDED
+/// here for its link to count as LIVE.
+///
+/// Sized against vote CADENCE, not against a guess: every finalized block draws
+/// one vote from every honest member, and the devnet's idle heartbeat alone
+/// produces blocks every 2 s (`--idle-heartbeat-ms 2000`), with production
+/// cadence faster still under load. 60 s is therefore tens of missed
+/// opportunities — long enough that a GC pause, a slow round or a brief gossip
+/// reconnect never flaps the signal, short enough that the 210 s partition above
+/// is reported as unreachable for its last ~150 s.
+pub const COMMITTEE_LIVENESS_WINDOW: Duration = Duration::from_secs(60);
+
+/// How long this node may go without any block crossing consensus-wide quorum
+/// before `/status` stops calling it healthy.
+///
+/// This is the "I have proposed and heard nothing" leg. It is deliberately
+/// LONGER than [`COMMITTEE_LIVENESS_WINDOW`]: losing sight of a peer is a
+/// warning, failing to finalize is the injury, and the injury should be reported
+/// only once it is real rather than on a slow round.
+pub const FINALITY_STALL_THRESHOLD: Duration = Duration::from_secs(90);
+
+/// Upper bound on remembered in-flight turns. Reaching it means turns are being
+/// submitted far faster than they finalize; the map is cleared wholesale rather
+/// than grown (the same bounded-memory posture as `metrics::FINALITY_T0`). A
+/// dropped entry costs a `pending` answer that degrades to `unknown`, never a
+/// wrong one — `accepted` and `rejected` come from DURABLE rows, not from here.
+const MAX_IN_FLIGHT_TURNS: usize = 8192;
+
+/// Per-node record of who is still talking to us and when we last finalized.
+///
+/// Deliberately process-LOCAL and in-memory: it is an observation about this
+/// node's own recent experience, not consensus state, and must never be
+/// persisted or gossiped (a peer's claim about its own liveness is worth
+/// nothing). Uses `std` locks, not tokio's — every critical section is a couple
+/// of map operations with no await inside.
+#[derive(Debug)]
+pub struct FederationLiveness {
+    /// Last instant a verified finalization vote from each committee identity
+    /// was recorded here. Bounded by committee size.
+    voter_last_seen: std::sync::Mutex<HashMap<[u8; 32], std::time::Instant>>,
+    /// Last instant any block crossed the consensus-wide quorum threshold here.
+    /// `None` until the first one does — which is itself the signal that a
+    /// freshly started or permanently stuck node has never reached agreement.
+    last_quorum: std::sync::Mutex<Option<std::time::Instant>>,
+    /// When this handle was built. The baseline the stall clock runs from before
+    /// any quorum exists, so "never finalized anything" reports as a stall
+    /// instead of as an absence of evidence.
+    started: std::time::Instant,
+}
+
+impl Default for FederationLiveness {
+    fn default() -> Self {
+        Self {
+            voter_last_seen: std::sync::Mutex::new(HashMap::new()),
+            last_quorum: std::sync::Mutex::new(None),
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl FederationLiveness {
+    /// A verified, member-signed finalization vote from `voter` was recorded.
+    pub fn note_vote(&self, voter: &[u8; 32]) {
+        self.voter_last_seen
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(*voter, std::time::Instant::now());
+    }
+
+    /// A block crossed the consensus-wide quorum threshold.
+    pub fn note_quorum(&self) {
+        *self.last_quorum.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some(std::time::Instant::now());
+    }
+
+    /// Distinct committee identities OTHER than `self_key` whose vote landed
+    /// within [`COMMITTEE_LIVENESS_WINDOW`].
+    fn live_remote_voters(&self, self_key: &[u8; 32]) -> usize {
+        let now = std::time::Instant::now();
+        self.voter_last_seen
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|(voter, seen)| {
+                *voter != self_key && now.duration_since(**seen) <= COMMITTEE_LIVENESS_WINDOW
+            })
+            .count()
+    }
+
+    fn since_quorum(&self) -> Duration {
+        let last = *self.last_quorum.lock().unwrap_or_else(|p| p.into_inner());
+        std::time::Instant::now().duration_since(last.unwrap_or(self.started))
+    }
+
+    fn ever_reached_quorum(&self) -> bool {
+        self.last_quorum
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_some()
+    }
+
+    /// The federation-health facts `/status` reports, derived at read time.
+    ///
+    /// `quorum_threshold` is the collector's live 2f+1 (it tracks committee
+    /// reconfiguration), `connected_peers` the gossip layer's count of peers
+    /// with an OPEN transport right now.
+    pub fn snapshot(
+        &self,
+        self_key: &[u8; 32],
+        quorum_threshold: usize,
+        connected_peers: usize,
+    ) -> FederationLivenessSnapshot {
+        let live_committee_voters = self.live_remote_voters(self_key);
+        // This node counts toward its own quorum: it signs its own finalization
+        // votes. A threshold of 1 is therefore always reachable alone, which is
+        // exactly right for a solo/collapsed deployment.
+        let quorum_reachable = live_committee_voters + 1 >= quorum_threshold;
+        let since_quorum = self.since_quorum();
+        // With no cross-node quorum to lose there is no stall to detect: a
+        // threshold-1 node finalizes on its own signature, and some solo paths
+        // never route a vote through the collector at all. Reporting a stall
+        // there would be a false alarm, not a stricter check.
+        let finality_stalled = quorum_threshold > 1 && since_quorum > FINALITY_STALL_THRESHOLD;
+        FederationLivenessSnapshot {
+            live_committee_voters,
+            quorum_threshold,
+            quorum_reachable,
+            connected_peers,
+            ever_reached_quorum: self.ever_reached_quorum(),
+            seconds_since_quorum: since_quorum.as_secs(),
+            finality_stalled,
+        }
+    }
+}
+
+/// What this node can honestly say about its own ability to finalize.
+#[derive(Clone, Copy, Debug)]
+pub struct FederationLivenessSnapshot {
+    /// Distinct OTHER committee members whose finalization vote landed here
+    /// within [`COMMITTEE_LIVENESS_WINDOW`]. A LINK that carried consensus
+    /// traffic — not a configured address.
+    pub live_committee_voters: usize,
+    /// The live 2f+1 the vote collector enforces.
+    pub quorum_threshold: usize,
+    /// `live_committee_voters + 1 >= quorum_threshold`: could a quorum be
+    /// assembled from the members currently reaching us?
+    pub quorum_reachable: bool,
+    /// Peers with an open gossip transport right now (`GossipNetwork`).
+    pub connected_peers: usize,
+    /// Has any block EVER crossed consensus-wide quorum on this node? `false` on
+    /// a joiner that never got in.
+    pub ever_reached_quorum: bool,
+    /// Seconds since the last consensus-wide quorum — or since this handle
+    /// started, if there has never been one.
+    pub seconds_since_quorum: u64,
+    /// `seconds_since_quorum` past [`FINALITY_STALL_THRESHOLD`] on a federation
+    /// with a real (>1) threshold.
+    pub finality_stalled: bool,
+}
+
+/// Turn hashes this node has accepted for consensus and not yet seen a durable
+/// verdict for.
+///
+/// ⚑ THE STATE A CLIENT COULD NOT NAME. A submitted turn's two terminal outcomes
+/// are both durable — the commit log for accepted, the finalized-rejection row
+/// for rejected — but between "the node answered `success: true`" and either of
+/// those lies the finality lag (~30–60 s on the measured federation), and during
+/// it every durable store is silent. A client polling by turn hash could not
+/// tell that window from "dropped forever", which is the whole complaint.
+///
+/// This is the missing middle, and only that: it is in-memory (a restart forgets
+/// it, and the answer honestly degrades to `unknown`), process-local, and it is
+/// NEVER consulted for a terminal verdict. It answers exactly one question:
+/// *did this node take this turn on, and has it not resolved it yet?*
+#[derive(Debug, Default)]
+pub struct InFlightTurns {
+    submitted: std::sync::Mutex<HashMap<[u8; 32], std::time::Instant>>,
+}
+
+impl InFlightTurns {
+    /// This node accepted `turn_hash` for consensus.
+    pub fn note_submitted(&self, turn_hash: [u8; 32]) {
+        let mut map = self.submitted.lock().unwrap_or_else(|p| p.into_inner());
+        if map.len() >= MAX_IN_FLIGHT_TURNS {
+            map.clear();
+        }
+        map.entry(turn_hash).or_insert_with(std::time::Instant::now);
+    }
+
+    /// A durable verdict landed for `turn_hash`; it is no longer in flight.
+    pub fn resolve(&self, turn_hash: &[u8; 32]) {
+        self.submitted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(turn_hash);
+    }
+
+    /// Seconds this node has been carrying `turn_hash` unresolved, if it is.
+    pub fn pending_for_seconds(&self, turn_hash: &[u8; 32]) -> Option<u64> {
+        self.submitted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(turn_hash)
+            .map(|since| std::time::Instant::now().duration_since(*since).as_secs())
+    }
+
+    /// How many turns this node is carrying unresolved.
+    pub fn len(&self) -> usize {
+        self.submitted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+// ─── The narrow join channel, application half ──────────────────────────────
+//
+// ⚑ THE DEADLOCK THIS BREAKS, AT SOURCE. The federation could not grow, by
+// three interlocking rings — each of which independently made a join
+// impossible, and only the first was visible in the logs:
+//
+//  1. THE MESH. `dregg_net::gossip` resolves an envelope's `sender` in the
+//     `peer_keys` registry and refuses what it cannot find. That registry is
+//     seeded from the genesis committee (`peer_keys_map`, below) and extended in
+//     exactly ONE place — `apply_committee_change` step 3 — which runs AFTER the
+//     committee advanced. A candidate's key entered the mesh only once it was a
+//     member; it could become a member only via a block the mesh refused.
+//
+//  2. THE ROSTER. Suppose the envelope got through. `catchup::apply_with_
+//     buffering` → `Blocklace::receive_block_pinned` refuses any block whose
+//     creator has no ENROLLED ML-DSA key (`BlockError::UnenrolledCreator`, and
+//     correctly so — it must never trust a self-carried key). `enroll_pq` is
+//     called at boot for the genesis committee and, again, in
+//     `apply_committee_change`. Same shape, one layer down.
+//
+//  3. THE ORDER. Suppose the proposal were somehow ratified. A member's ML-DSA
+//     half comes from the genesis-published, index-aligned roster, and NOTHING
+//     on the wire carried a non-genesis candidate's. `project_committed_
+//     participants` drops an admitted member with no committed ML-DSA key and
+//     `poll_finalized_blocks` then FAILS CLOSED — so a SUCCESSFUL join would
+//     have halted finality on every node. The residual was named in that
+//     function's own comment and is now closed by `MembershipAction::Join`
+//     carrying `ml_dsa_pubkey`.
+//
+// The repair does NOT open the mesh. A non-member may send exactly one envelope
+// kind — a self-certifying [`JoinRequestBody`], size-capped and rate-limited —
+// and it is not a block, never enters the lace, and registers nothing. A
+// committee MEMBER validates it and authors the `Join` proposal under its OWN
+// key, so rings 2 and 3 are never even approached by an unenrolled creator.
+
+/// Domain separator for the ML-DSA proof of possession inside a join request.
+const JOIN_REQUEST_PQ_BINDING_V1: &[u8] = b"dregg-join-request-pq-binding-v1";
+
+/// The only accepted join-request version. Fail-closed on anything else.
+const JOIN_REQUEST_VERSION: u8 = 1;
+
+/// How often a non-member re-sends its join request while it waits.
+const JOIN_REQUEST_RESEND: Duration = Duration::from_secs(15);
+
+/// The application payload of a narrow-channel join request.
+///
+/// The gossip layer has already proven the sender holds the ed25519 key whose
+/// hash is the envelope's `sender` id. This body adds the PQ half and PROVES
+/// possession of it too, so the pair — and therefore the hybrid consensus id
+/// `H(ed25519 ‖ ml_dsa)` the roster and tau schedule are keyed by — is genuinely
+/// the candidate's and not a key it copied off the wire.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct JoinRequestBody {
+    /// Format version. Refused unless [`JOIN_REQUEST_VERSION`].
+    pub version: u8,
+    /// The federation this request is for. A request minted against one chain
+    /// must not be replayable into another.
+    pub federation_id: [u8; 32],
+    /// The candidate's ML-DSA-65 public key (FIPS 204 serialized, 1952 B).
+    pub ml_dsa_pubkey: Vec<u8>,
+    /// ML-DSA-65 signature over [`join_request_binding`], proving the candidate
+    /// holds the PQ secret. Without it a candidate could name someone else's PQ
+    /// key and mint a hybrid id it cannot sign blocks under — a member the
+    /// committee would admit and then never hear from, which under the
+    /// fail-closed projection is a permanent finality halt.
+    pub pq_proof: Vec<u8>,
+}
+
+/// The bytes both halves of a join request are bound to.
+fn join_request_binding(
+    federation_id: &[u8; 32],
+    ed25519: &[u8; 32],
+    ml_dsa_pubkey: &[u8],
+) -> Vec<u8> {
+    let mut m = Vec::with_capacity(JOIN_REQUEST_PQ_BINDING_V1.len() + 64 + ml_dsa_pubkey.len());
+    m.extend_from_slice(JOIN_REQUEST_PQ_BINDING_V1);
+    m.extend_from_slice(federation_id);
+    m.extend_from_slice(ed25519);
+    m.extend_from_slice(ml_dsa_pubkey);
+    m
+}
+
+/// A join request this node has validated and is holding for a sponsorship
+/// decision (automatic under `auto_approve_joins`, otherwise an operator's).
+#[derive(Clone)]
+pub struct PendingJoinRequest {
+    /// The candidate's ed25519 strand key — PROVEN, not claimed.
+    pub node_id: [u8; 32],
+    /// The candidate's ML-DSA-65 key — PROVEN by the request's `pq_proof`.
+    pub ml_dsa_pubkey: dregg_federation::frost::MlDsaPublicKey,
+    /// Where it reached us from (diagnostic only; never an authorization input).
+    pub from: SocketAddr,
+    /// When we first accepted a request from this candidate.
+    pub first_seen: std::time::Instant,
+    /// The proposal block, once some node's sponsorship of this candidate has
+    /// been observed — so a re-sent request does not open a second proposal.
+    pub proposed: Option<BlockId>,
+}
+
+/// Upper bound on candidates held awaiting sponsorship. A join is an
+/// operator-scale event; this only has to be larger than any real committee.
+const MAX_PENDING_JOIN_REQUESTS: usize = 64;
+
+/// What this node's OWN join attempt has achieved, for `/status`.
+///
+/// ⚑ THIS EXISTS BECAUSE A WEDGED JOINER REPORTED `"healthy": true`. `/status`'s
+/// `healthy` is `store_ok && consensus_live && block_count > 0`, all three of
+/// which a permanently-stuck non-member satisfies: its store is fine, its
+/// consensus task is running, and it authored its own genesis block. It sat at
+/// `dag_height=1, latest_height=0` for the life of the process, having reached
+/// no one, and said it was healthy. A node that has asked to join and heard
+/// nothing must SAY so.
+#[derive(Clone, Debug, Default)]
+pub struct JoinProgress {
+    /// True once our own key is a constitutional participant.
+    pub member: bool,
+    /// How many join requests we have sent, and to how many live peers.
+    pub requests_sent: u64,
+    pub last_request_peers: usize,
+    /// Seconds since we first asked to join, while still not a member.
+    pub waiting_secs: u64,
+    /// True once we have observed a Join proposal for OUR key in the
+    /// constitution — i.e. the request demonstrably reached a member.
+    pub proposal_seen: bool,
+}
+
 /// Thread-safe handle to the blocklace consensus state.
 ///
 /// Shared between the gossip receiver task and the HTTP API (for turn submission).
@@ -417,6 +783,22 @@ pub struct BlocklaceHandle {
     /// If true, automatically vote to approve all join proposals (devnet mode).
     /// In production, nodes should require governance or stake proofs before approving.
     pub auto_approve_joins: bool,
+    /// Candidates that reached us over the narrow join channel and passed
+    /// validation, keyed by their ed25519 strand key. This is the ONLY source of
+    /// a non-genesis candidate's ML-DSA key — `ML-DSA.KeyGen` needs the seed, so
+    /// no peer can derive it — which is why `propose_membership` refuses an add
+    /// for a candidate with no entry here and no committed key rather than
+    /// authoring a Join that would halt finality on ratification.
+    pub pending_joins: Arc<RwLock<HashMap<[u8; 32], PendingJoinRequest>>>,
+    /// This node's own join progress, surfaced by `/status` so a stuck joiner
+    /// stops reporting an unqualified `"healthy": true`.
+    pub join_progress: Arc<RwLock<JoinProgress>>,
+    /// Our OWN ML-DSA-65 public key. Needed as a VALUE (not just the signing
+    /// key) because a join request must publish the PQ half no peer can derive.
+    pub pq_public_key: dregg_federation::frost::MlDsaPublicKey,
+    /// The configured gossip peer addresses. The narrow join channel sends to
+    /// these directly: a non-member has no topic and therefore no publish path.
+    pub peer_addrs: Vec<SocketAddr>,
     /// Blocklace configurability field (populated from CLI or safe defaults).
     /// Allows operators to tune for devnet (low latency, small budgets) vs production
     /// (larger windows, conservative timeouts) without "wrong way" source hacks.
@@ -511,10 +893,25 @@ pub struct BlocklaceHandle {
     /// recompute (never a stale order for a changed lace). See
     /// `docs/VERIFIED-GATE-PERF.md`.
     pub last_order_fingerprint: Arc<RwLock<Option<u64>>>,
-    /// CROSS-POLL VERIFIED-ORDER CACHE (order half). The verified Lean tau-order
-    /// computed at the poll recorded by `last_order_fingerprint`. Reused verbatim
-    /// on a fingerprint hit; overwritten on every successful recompute.
-    pub last_lean_order: Arc<RwLock<Option<Vec<BlockId>>>>,
+    /// CROSS-POLL VERIFIED-ORDER CACHE (order half). The finalized tau-order computed at the
+    /// poll recorded by `last_order_fingerprint`, PAIRED WITH ITS PROVENANCE: `true` when the
+    /// verified Lean `dregg_tau_order` FFI produced it, `false` when it is the un-verified Rust
+    /// `ordering::tau` order a budget-missing / export-missing poll fell back to. Reused verbatim
+    /// on a fingerprint hit; overwritten on every recompute.
+    ///
+    /// ⚑ THE FLAG IS THE POINT. This was a bare `Vec<BlockId>`, so a fallback poll stored an
+    /// UN-VERIFIED order indistinguishably from a verified one — and since the cache is keyed on
+    /// the finalized ORDER (stable while finality is not advancing), every later poll served that
+    /// un-verified order under a `debug!("verified-order cache HIT")` line. One WARN at the
+    /// timeout, then an unbounded silent run. Provenance now rides the cache, so a hit is counted
+    /// and logged as what it actually is and `ordered_from_lean` cannot be laundered by it.
+    pub last_lean_order: Arc<RwLock<Option<(Vec<BlockId>, bool)>>>,
+    /// Who is still voting at us, and when we last reached quorum — the facts
+    /// `/status` needs to say "I cannot finalize". See [`FederationLiveness`].
+    pub liveness: Arc<FederationLiveness>,
+    /// Turns this node took on and has not yet resolved, so a client polling by
+    /// turn hash can be told "pending" instead of nothing. See [`InFlightTurns`].
+    pub in_flight_turns: Arc<InFlightTurns>,
 }
 
 /// A read-only view of one blocklace block, shaped to mirror the wasm
@@ -629,6 +1026,21 @@ impl BlocklaceHandle {
     pub async fn block_count(&self) -> usize {
         let lace = self.lace.read().await;
         lace.len()
+    }
+
+    /// What this node can honestly say about its own ability to finalize:
+    /// which committee members are still voting at us, over an OPEN transport,
+    /// against the collector's live 2f+1.
+    ///
+    /// Every input is a measurement, not a configuration: the threshold comes
+    /// from the vote collector (so it tracks committee reconfiguration), the
+    /// connected count from the gossip layer's open-transport set, and the voter
+    /// set from votes this node actually admitted.
+    pub async fn federation_liveness(&self) -> FederationLivenessSnapshot {
+        let quorum_threshold = self.votes.read().await.quorum_threshold();
+        let connected_peers = self.gossip.connected_peer_count().await;
+        self.liveness
+            .snapshot(&self.self_key, quorum_threshold, connected_peers)
     }
 
     /// Find the block whose creator-seq equals `height`. When several creators
@@ -987,6 +1399,16 @@ impl BlocklaceHandle {
         state: &NodeState,
         payload: Payload,
     ) -> (BlockId, FinalityLevel) {
+        // THE MOMENT THE NODE TAKES RESPONSIBILITY. Everything after this returns
+        // a `turn_hash` to the caller, so from here until a durable verdict lands
+        // the honest answer to "what happened to my turn?" is `pending` — and
+        // until now the node had no way to give it. Recorded for BOTH paths (the
+        // n>1 staging return and the solo direct production below); resolved by
+        // `persist_finalized_payload_rejection` and by the commit-log lookup that
+        // `GET /api/turn/{hash}/verdict` performs.
+        if let Some(turn_hash) = payload_signed_turn_hash(&payload) {
+            self.in_flight_turns.note_submitted(turn_hash);
+        }
         let n_participants = {
             let c = self.constitution.read().await;
             c.current.participant_count()
@@ -1794,6 +2216,31 @@ impl BlocklaceHandle {
             // FAIL-SAFE: when the verified archive lacks `dregg_tau_order` (stale/marshal-only build)
             // or the wire returns ERR, `compute_order` is `None` and we fall back to the Rust `tau`
             // order with a loud warning — the live path is never broken, only un-verified for that poll.
+            //
+            // ⚑ THE CLAIM ABOVE IS CONDITIONAL ON A WALL-CLOCK BUDGET. SAY IT HERE, NOT ONLY IN A
+            // WARN LINE. "The order the node finalizes over IS the verified rule's" holds *on a poll
+            // whose verified FFI completes within `verified_order_ffi_timeout()`* (default 2500 ms).
+            // It is NOT an unconditional property of this node, and the budget is not comfortably
+            // far away: the verified `dregg_tau_order` is super-quadratic in the lace size
+            // (`metatheory/Dregg2/Distributed/BlocklaceFinality.lean` — `tauOrderFastImpl` keeps
+            // HashMap past/round maps but the lace itself is `List Block` with an O(n) `Lace.lookup`
+            // on the hot path), a lace grows without bound on a running chain, and over-budget
+            // warnings were observed on an IDLE 4-node committee at `lace_size` 773–981.
+            //
+            // What a missed budget does, and it is NOT the same on every node:
+            //   * `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1` (what `scripts/federation-local.sh` sets):
+            //     the UN-VERIFIED Rust `ordering::tau` twin decides the poll. Safety rests entirely
+            //     on the two orders agreeing — pinned by
+            //     `node/tests/verified_order_budget.rs::the_two_orders_the_node_swaps_between_agree_exactly`,
+            //     which compares the SEQUENCE (the differential below sorts, so it compares only the
+            //     finalized SET and is blind to a pure reordering).
+            //   * Otherwise (a Lean-linked PoA node; `scripts/poa-devnet.sh` pins the escape to `0`):
+            //     the poll FINALIZES NOTHING. Repeated misses are a finality HALT, not a silent swap.
+            //
+            // Either way the poll's provenance is now RECORDED (`metrics::record_consensus_order_source`)
+            // and served on `/status` as `consensus_order*`, because a WARN line was not enough: the
+            // poll STORES its order in the cross-poll cache below, so the warning fires ONCE and every
+            // later fingerprint-matching poll takes the silent "cache HIT" path.
             let (ordering_lace, id_map) = build_ordering_blocklace(&lace);
             let rust_order: Vec<BlockId> = tau(&ordering_lace, &participants)
                 .into_iter()
@@ -1855,7 +2302,7 @@ impl BlocklaceHandle {
             let lean_order_opt = if order_gate_armed {
                 // Cache HIT: the finalized order is byte-identical to the last poll whose verified
                 // order we cached ⇒ reuse that verified order, skip the FFI.
-                let cached = {
+                let cached: Option<(Vec<BlockId>, bool)> = {
                     let fp_guard = self.last_order_fingerprint.read().await;
                     if *fp_guard == Some(order_fingerprint) {
                         self.last_lean_order.read().await.clone()
@@ -1864,13 +2311,42 @@ impl BlocklaceHandle {
                     }
                 };
                 match cached {
-                    Some(order) => {
-                        debug!(
-                            fingerprint = order_fingerprint,
-                            finalized = order.len(),
-                            "verified-order cache HIT (finality unchanged), skipped FFI"
-                        );
-                        Some(order)
+                    Some((order, cached_verified)) => {
+                        // ⚑ PROVENANCE RIDES THE CACHE. The fallback branch below stores the
+                        // UN-VERIFIED Rust order under this same fingerprint, so a bare "cache HIT"
+                        // used to serve an un-verified order while logging the word "verified" —
+                        // and, because the fingerprint is stable while finality is not advancing,
+                        // it served it on EVERY subsequent poll with no warning at all. One WARN,
+                        // then silence forever. The cached order now carries whether it was
+                        // verified, and a hit is counted as what it actually is.
+                        if cached_verified {
+                            debug!(
+                                fingerprint = order_fingerprint,
+                                finalized = order.len(),
+                                "verified-order cache HIT (finality unchanged), skipped FFI"
+                            );
+                            crate::metrics::record_consensus_order_source(
+                                crate::metrics::ConsensusOrderSource::VerifiedCached,
+                                false,
+                            );
+                        } else {
+                            warn!(
+                                fingerprint = order_fingerprint,
+                                finalized = order.len(),
+                                "consensus-order cache HIT serving an UN-VERIFIED Rust \
+                                 `ordering::tau` order (stored by an earlier over-budget/ERR poll) \
+                                 — this poll does NOT finalize over the verified ordering. \
+                                 Verified-ness does not return on a cache hit; it returns when the \
+                                 finalized order next changes and an in-budget FFI re-anchors the \
+                                 cache. (dregg_consensus_order_polls_total{{source=\
+                                 \"unverified_cached\"}} incremented.)"
+                            );
+                            crate::metrics::record_consensus_order_source(
+                                crate::metrics::ConsensusOrderSource::UnverifiedCached,
+                                false,
+                            );
+                        }
+                        Some((order, cached_verified))
                     }
                     None => {
                         let lace_ffi = lace.clone();
@@ -1904,14 +2380,29 @@ impl BlocklaceHandle {
                                 (None, false)
                             }
                             Err(_elapsed) => {
+                                // ⚑ THIS WARN USED TO ASSERT AN OUTCOME IT DOES NOT DECIDE. It read
+                                // "using the edge-faithful Rust `ordering::tau` order for THIS poll"
+                                // — but whether the Rust order is used is decided ~50 lines below by
+                                // `allow_rust_fallback`, and on a Lean-linked node without
+                                // `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1` this poll finalizes NOTHING
+                                // instead. Reading this line off a live node therefore told an
+                                // operator the unverified twin had decided finality when in fact
+                                // finality had HALTED — opposite failure, opposite remedy. The line
+                                // now reports only what it knows: the budget was missed.
                                 warn!(
                                     fingerprint = order_fingerprint,
                                     lace_size,
                                     timeout_ms = timeout.as_millis() as u64,
-                                    "verified tau-order FFI exceeded the per-poll budget — using the \
-                                     edge-faithful Rust `ordering::tau` order for THIS poll so the \
-                                     serial finality executor does not freeze; the verified order \
-                                     re-anchors on a later in-budget poll"
+                                    "verified tau-order FFI EXCEEDED THE PER-POLL BUDGET — this poll \
+                                     will NOT finalize over the verified ordering. What happens \
+                                     instead is logged next: either the un-verified Rust \
+                                     `ordering::tau` order decides it (only under \
+                                     DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 / a no-Lean build) or the \
+                                     poll FAILS CLOSED and finalizes nothing. The bound exists so a \
+                                     slow FFI cannot freeze the serial finality executor; raising \
+                                     DREGG_FINALITY_ORDER_TIMEOUT_MS moves the crossing without \
+                                     changing whether the verified path runs. \
+                                     (dregg_consensus_order_over_budget_total incremented.)"
                                 );
                                 (None, true)
                             }
@@ -1925,15 +2416,19 @@ impl BlocklaceHandle {
                         );
                         match computed {
                             Some(order) => {
-                                // Genuine verified order: cache under the finality fingerprint.
+                                // Genuine verified order: cache under the finality fingerprint,
+                                // TAGGED verified so a later hit can say so truthfully.
                                 *self.last_order_fingerprint.write().await =
                                     Some(order_fingerprint);
-                                *self.last_lean_order.write().await = Some(order.clone());
-                                Some(order)
+                                *self.last_lean_order.write().await = Some((order.clone(), true));
+                                crate::metrics::record_consensus_order_source(
+                                    crate::metrics::ConsensusOrderSource::VerifiedFfi,
+                                    false,
+                                );
+                                Some((order, true))
                             }
                             None => {
                                 // FFI unavailable (stale archive / ERR) or over-budget.
-                                let _ = timed_out;
                                 if allow_rust_fallback {
                                     // LABELED-UNAUDITED (no verified archive linked, or
                                     // DREGG_ALLOW_UNVERIFIED_CONSENSUS=1): use the edge-faithful Rust
@@ -1944,10 +2439,30 @@ impl BlocklaceHandle {
                                     // compute_order(lace)` on the same lace. A `timed_out` fallback
                                     // still re-attempts the FFI whenever finality next moves (the
                                     // fingerprint changes).
+                                    //
+                                    // ⚑ The cached entry is TAGGED UN-VERIFIED. It used to be
+                                    // stored indistinguishably from a verified one, so every later
+                                    // fingerprint-matching poll served it under a "verified-order
+                                    // cache HIT" debug line — the single WARN above was the only
+                                    // trace, and on an idle committee (stable fingerprint) it was
+                                    // followed by an unbounded run of silent un-verified polls.
+                                    // The "SOUND because `rust_order == compute_order(lace)`"
+                                    // premise is now an ASSERTED, SEQUENCE-LEVEL property:
+                                    // `node/tests/verified_order_budget.rs`. The differential below
+                                    // does NOT establish it (it sorts before comparing).
                                     *self.last_order_fingerprint.write().await =
                                         Some(order_fingerprint);
-                                    *self.last_lean_order.write().await = Some(rust_order.clone());
-                                    Some(rust_order.clone())
+                                    *self.last_lean_order.write().await =
+                                        Some((rust_order.clone(), false));
+                                    crate::metrics::record_consensus_order_source(
+                                        if timed_out {
+                                            crate::metrics::ConsensusOrderSource::UnverifiedOverBudget
+                                        } else {
+                                            crate::metrics::ConsensusOrderSource::UnverifiedUnavailable
+                                        },
+                                        timed_out,
+                                    );
+                                    Some((rust_order.clone(), false))
                                 } else {
                                     // FAIL CLOSED (#8): the verified `dregg_tau_order` export IS
                                     // linked (this is a live full node) but this poll's FFI was
@@ -1965,6 +2480,10 @@ impl BlocklaceHandle {
                                          DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 to deliberately accept the \
                                          Rust order, or raise DREGG_FINALITY_ORDER_TIMEOUT_MS."
                                     );
+                                    crate::metrics::record_consensus_order_source(
+                                        crate::metrics::ConsensusOrderSource::FailedClosed,
+                                        timed_out,
+                                    );
                                     None
                                 }
                             }
@@ -1975,7 +2494,7 @@ impl BlocklaceHandle {
                 None
             };
             match lean_order_opt {
-                Some(lean_order) => {
+                Some((lean_order, order_is_verified)) => {
                     // DIFFERENTIAL: assert the verified Lean order and the Rust `tau` order AGREE.
                     // The two id schemes differ (blake3 vs interned `Nat`), so we compare on the
                     // content-identical `(creator, seq)` coordinate — the level at which the Rust↔Lean
@@ -2015,8 +2534,17 @@ impl BlocklaceHandle {
                              Rust `ordering::tau` differential AGREES"
                         );
                     }
-                    // The VERIFIED Lean order is the one we finalize over.
-                    ordered_from_lean = true;
+                    // ⚑ `ordered_from_lean` MUST mean what its name and its consumer say it means.
+                    // It used to be set unconditionally `true` here — for the over-budget Rust
+                    // fallback and for an un-verified cache hit as well as for a genuine verified
+                    // order. Its ONE consumer (`gate_armed`, ~150 lines below) disarms the
+                    // belt-and-suspenders finality gate on it, with the comment "keep the belt ONLY
+                    // for the Rust fallback (the case it actually defends, where `ordered` is NOT
+                    // Lean-verified)". So the timeout fallback disarmed the belt in precisely the
+                    // case the belt exists for, and the justification ("`ordered` IS the verified
+                    // rule's own output, so there is no un-verified order to gate") was false on
+                    // exactly those polls. It now carries the real provenance.
+                    ordered_from_lean = order_is_verified;
                     lean_order
                 }
                 None => {
@@ -2034,6 +2562,10 @@ impl BlocklaceHandle {
                                  node with the verified archive to make the verified rule authoritative."
                             );
                         }
+                        crate::metrics::record_consensus_order_source(
+                            crate::metrics::ConsensusOrderSource::UnverifiedUnavailable,
+                            false,
+                        );
                         rust_order
                     } else {
                         // FAIL CLOSED (#8): a live full node with the verified `dregg_tau_order`
@@ -2048,6 +2580,10 @@ impl BlocklaceHandle {
                              (finalize nothing) rather than running the unverified Rust \
                              `ordering::tau` twin. Set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 to accept \
                              the Rust order deliberately."
+                        );
+                        crate::metrics::record_consensus_order_source(
+                            crate::metrics::ConsensusOrderSource::FailedClosed,
+                            false,
                         );
                         Vec::new()
                     }
@@ -2331,43 +2867,258 @@ impl BlocklaceHandle {
         finalized
     }
 
-    /// Propose joining the federation (called on first connect if not already a member).
+    /// Ask the committee to admit us, over the narrow join channel.
     ///
-    /// If this node's key is not in the current constitution, it creates a
-    /// `MembershipVote` block proposing its own Join and disseminates it.
-    /// Existing participants will vote on the proposal according to their policy
-    /// (auto-approve in devnet mode, governance-gated in production).
-    pub async fn propose_join_if_needed(&self, state: &NodeState) {
-        let constitution = self.constitution.read().await;
-        if constitution.current.is_participant(&self.self_key) {
-            return; // Already a member
-        }
-        drop(constitution);
-
-        // Fail-closed (F2): the proposal advances our self strand, so land it
-        // durably before broadcast; a persist failure withdraws it (we retry).
-        let Some(block) = self
-            .author_add_block_or_rollback(
-                state,
-                Payload::MembershipVote {
-                    action: MembershipAction::Join {
-                        node_id: self.self_key,
-                    },
-                },
-            )
-            .await
-        else {
-            warn!("join proposal failed to persist durably — not broadcast (will retry)");
+    /// ⚑ THIS USED TO AUTHOR A BLOCK, AND THAT IS EXACTLY WHY IT NEVER WORKED.
+    /// A non-member's block is refused twice over — as an `unknown_sender`
+    /// envelope at the transport, and (had it got in) as an `UnenrolledCreator`
+    /// at `receive_block_pinned`. Measured on a real 4-node federation: the
+    /// candidate logged `proposed join to federation` for a block id that
+    /// appeared in ZERO committee-node logs, while each committee member emitted
+    /// ~7,300 `unknown sender` WARNs in three minutes and `GET /api/membership`
+    /// read `participants=4, proposals=0` on all five nodes indefinitely.
+    ///
+    /// So we do not author a block we cannot deliver. We send a signed request —
+    /// the one envelope kind a non-member can get delivered — and a MEMBER
+    /// authors the proposal under its own committee key. The candidate is
+    /// evidence; the sponsor is authority.
+    ///
+    /// Re-sent on [`JOIN_REQUEST_RESEND`] until we are a participant, because a
+    /// peer may be down, the committee may not yet have quorum, or an operator
+    /// may take a while to sponsor. Returns once we are a member.
+    pub async fn run_join_requests_until_member(&self, state: &NodeState) {
+        let (federation_id, ml_dsa_pubkey) = {
+            let s = state.read().await;
+            (s.federation_id, self.pq_public_key_bytes())
+        };
+        let binding = join_request_binding(&federation_id, &self.self_key, &ml_dsa_pubkey);
+        let Some(pq_proof) = self.pq_signing_key.sign(&binding) else {
+            error!(
+                "could not sign the join request's ML-DSA proof of possession — this node cannot \
+                 ask to join and will never become a member. Consensus continues as a follower."
+            );
+            return;
+        };
+        let body = JoinRequestBody {
+            version: JOIN_REQUEST_VERSION,
+            federation_id,
+            ml_dsa_pubkey,
+            pq_proof,
+        };
+        let Ok(encoded) = postcard::to_stdvec(&body) else {
+            error!("join request failed to encode — not sent");
             return;
         };
 
+        let started = std::time::Instant::now();
+        loop {
+            if self
+                .constitution
+                .read()
+                .await
+                .current
+                .is_participant(&self.self_key)
+            {
+                let mut p = self.join_progress.write().await;
+                p.member = true;
+                p.waiting_secs = 0;
+                info!("this node is now a federation participant — join requests stop");
+                return;
+            }
+
+            // Did our request demonstrably REACH a member? A Join proposal for
+            // our own key in the constitution is proof that it did, and is the
+            // difference between "waiting for approval" and "shouting into a
+            // void" — the two states the old code could not tell apart.
+            let proposal_seen = self
+                .constitution
+                .read()
+                .await
+                .votes
+                .proposal_tallies()
+                .iter()
+                .any(|(_, p, _, _, _)| {
+                    matches!(p, MembershipProposal::Join { node_key, .. } if *node_key == self.self_key)
+                });
+
+            let peers = self
+                .gossip
+                .send_join_request(encoded.clone(), &self.peer_addrs)
+                .await;
+
+            {
+                let mut p = self.join_progress.write().await;
+                p.member = false;
+                p.requests_sent += 1;
+                p.last_request_peers = peers;
+                p.waiting_secs = started.elapsed().as_secs();
+                p.proposal_seen = proposal_seen;
+            }
+            metrics::gauge!("dregg_join_waiting_seconds").set(started.elapsed().as_secs_f64());
+            metrics::counter!("dregg_join_requests_sent_total").increment(1);
+
+            if peers == 0 {
+                warn!(
+                    waiting_secs = started.elapsed().as_secs(),
+                    "join request NOT SENT — no live gossip link to any peer. This node is not a \
+                     member and is reaching no one."
+                );
+            } else if proposal_seen {
+                info!(
+                    peers,
+                    waiting_secs = started.elapsed().as_secs(),
+                    "join request delivered; a Join proposal for our key is open and awaiting \
+                     committee approvals"
+                );
+            } else {
+                info!(
+                    peers,
+                    waiting_secs = started.elapsed().as_secs(),
+                    "join request sent to the committee — no proposal for our key is open yet"
+                );
+            }
+
+            tokio::time::sleep(JOIN_REQUEST_RESEND).await;
+        }
+    }
+
+    /// Our own ML-DSA-65 public key bytes — the SAME key `Blocklace`'s hybrid
+    /// signer stamps into every block we author, so the hybrid id the committee
+    /// derives from this request is by construction the one our blocks carry.
+    fn pq_public_key_bytes(&self) -> Vec<u8> {
+        self.pq_public_key.0.to_vec()
+    }
+
+    /// Validate and record ONE inbound join request. Member side.
+    ///
+    /// Everything the gossip layer proved is carried in `candidate`: the sender
+    /// holds that ed25519 key. Everything else is checked here, fail-closed.
+    pub async fn handle_join_request(
+        &self,
+        state: &NodeState,
+        from: SocketAddr,
+        candidate: [u8; 32],
+        body: &[u8],
+    ) {
+        let cand_hex: String = candidate[..4].iter().map(|b| format!("{b:02x}")).collect();
+        let Ok(req) = postcard::from_bytes::<JoinRequestBody>(body) else {
+            warn!(from = %from, candidate = %cand_hex, "join request refused: undecodable body");
+            metrics::counter!("dregg_join_request_refused_total", "reason" => "decode")
+                .increment(1);
+            return;
+        };
+        if req.version != JOIN_REQUEST_VERSION {
+            warn!(from = %from, candidate = %cand_hex, version = req.version,
+                  "join request refused: unsupported version");
+            metrics::counter!("dregg_join_request_refused_total", "reason" => "version")
+                .increment(1);
+            return;
+        }
+        // Chain binding: a request minted against another federation is not a
+        // request to join THIS one.
+        let our_federation_id = { state.read().await.federation_id };
+        if req.federation_id != our_federation_id {
+            warn!(from = %from, candidate = %cand_hex,
+                  "join request refused: it names a different federation");
+            metrics::counter!("dregg_join_request_refused_total", "reason" => "wrong_federation")
+                .increment(1);
+            return;
+        }
+        let Ok(pq_bytes): Result<[u8; dregg_pq::ML_DSA_PK_LEN], _> =
+            req.ml_dsa_pubkey.clone().try_into()
+        else {
+            warn!(from = %from, candidate = %cand_hex,
+                  "join request refused: ML-DSA public key is the wrong length");
+            metrics::counter!("dregg_join_request_refused_total", "reason" => "pq_key_length")
+                .increment(1);
+            return;
+        };
+        let ml_dsa = dregg_federation::frost::MlDsaPublicKey(pq_bytes);
+        // PROOF OF POSSESSION of the PQ half. Without it a candidate could name
+        // a key it cannot sign under; the committee would admit a member whose
+        // hybrid id never authors a block, and under the fail-closed projection
+        // that is a permanent finality halt for everyone.
+        let binding = join_request_binding(&our_federation_id, &candidate, &req.ml_dsa_pubkey);
+        if !ml_dsa.verify(&binding, &req.pq_proof) {
+            warn!(from = %from, candidate = %cand_hex,
+                  "join request REFUSED: the ML-DSA proof of possession does not verify — the \
+                   candidate does not hold the post-quantum key it named");
+            metrics::counter!("dregg_join_request_refused_total", "reason" => "pq_proof")
+                .increment(1);
+            return;
+        }
+
+        {
+            let c = self.constitution.read().await;
+            if c.current.is_participant(&candidate) {
+                debug!(candidate = %cand_hex, "join request from an existing participant — ignored");
+                return;
+            }
+        }
+
+        let mut pending = self.pending_joins.write().await;
+        if let Some(existing) = pending.get(&candidate) {
+            // A re-send is expected (the candidate retries until ratified) and
+            // must not open a second proposal.
+            debug!(
+                candidate = %cand_hex,
+                waiting_secs = existing.first_seen.elapsed().as_secs(),
+                "join request re-sent by a candidate we are already holding"
+            );
+            return;
+        }
+        if pending.len() >= MAX_PENDING_JOIN_REQUESTS {
+            warn!(
+                candidate = %cand_hex,
+                held = pending.len(),
+                "join request refused: this node is already holding the maximum number of \
+                 candidates awaiting sponsorship"
+            );
+            metrics::counter!("dregg_join_request_refused_total", "reason" => "pending_full")
+                .increment(1);
+            return;
+        }
+        pending.insert(
+            candidate,
+            PendingJoinRequest {
+                node_id: candidate,
+                ml_dsa_pubkey: ml_dsa,
+                from,
+                first_seen: std::time::Instant::now(),
+                proposed: None,
+            },
+        );
+        drop(pending);
+        metrics::counter!("dregg_join_request_accepted_total").increment(1);
         info!(
-            block_id = %block.id(),
-            "proposed join to federation (awaiting threshold approvals)"
+            from = %from,
+            candidate = %cand_hex,
+            auto_approve = self.auto_approve_joins,
+            "join request ACCEPTED: both key halves proven. Awaiting sponsorship by this committee \
+             member (automatic under auto-approve-joins; otherwise `propose-epoch-transition --add`)"
         );
 
-        // Disseminate to peers via gossip.
-        self.push_new_blocks().await;
+        // Sponsorship. Only a CURRENT participant can author a proposal that
+        // counts, so a non-member that somehow received a request holds it and
+        // does nothing.
+        if !self.auto_approve_joins {
+            return;
+        }
+        let we_are_participant = {
+            let c = self.constitution.read().await;
+            c.current.is_participant(&self.self_key)
+        };
+        if !we_are_participant {
+            return;
+        }
+        match self.propose_membership(state, candidate, true).await {
+            Some(block_id) => info!(
+                candidate = %cand_hex,
+                proposal_block = %block_id,
+                "SPONSORED a join request under this member's key (auto-approve-joins)"
+            ),
+            None => warn!(candidate = %cand_hex, "sponsorship of the join request did not land"),
+        }
     }
 
     /// Cast an approval vote for a membership proposal.
@@ -2547,6 +3298,24 @@ impl BlocklaceHandle {
         );
     }
 
+    /// The ML-DSA-65 key to put in a `Join` proposal for `node_id`.
+    ///
+    /// Two sources, in order, and NEITHER is derivable or guessable:
+    ///  * a validated narrow-channel join request from the candidate itself
+    ///    (proof of possession already checked in `handle_join_request`);
+    ///  * committed state, for a member the roster already knows — the re-add
+    ///    case after a `Leave`.
+    async fn resolve_candidate_pq_key(
+        &self,
+        state: &NodeState,
+        node_id: &[u8; 32],
+    ) -> Option<dregg_federation::frost::MlDsaPublicKey> {
+        if let Some(p) = self.pending_joins.read().await.get(node_id) {
+            return Some(p.ml_dsa_pubkey.clone());
+        }
+        state.read().await.ml_dsa_key_for(node_id).cloned()
+    }
+
     /// OPERATOR-DRIVEN epoch transition: propose adding or removing a validator
     /// on a RUNNING node (the live, chain-continuing path — distinct from the
     /// offline `add-validator` genesis re-roll).
@@ -2560,6 +3329,14 @@ impl BlocklaceHandle {
     ///
     /// `add = true` proposes `Join(node_id)`; `add = false` proposes
     /// `Leave(node_id)`. A rotation is two calls: `Leave(old)` then `Join(new)`.
+    ///
+    /// ⚑ AN ADD REFUSES WITHOUT THE CANDIDATE'S ML-DSA KEY, and that refusal is
+    /// the point. `MembershipAction::Join` must carry the PQ half or a
+    /// ratification HALTS finality on every node (see the module header, ring 3).
+    /// The key cannot be derived — `ML-DSA.KeyGen` needs the seed — so it comes
+    /// from the candidate's own narrow-channel join request, or from committed
+    /// state for a member being re-added. With neither, authoring the proposal
+    /// would be authoring a wedge, so we refuse and say why.
     pub async fn propose_membership(
         &self,
         state: &NodeState,
@@ -2567,7 +3344,28 @@ impl BlocklaceHandle {
         add: bool,
     ) -> Option<BlockId> {
         let action = if add {
-            MembershipAction::Join { node_id }
+            let ml_dsa = match self.resolve_candidate_pq_key(state, &node_id).await {
+                Some(k) => k,
+                None => {
+                    let hex: String = node_id[..4].iter().map(|b| format!("{b:02x}")).collect();
+                    error!(
+                        candidate = %hex,
+                        "REFUSING to propose this validator: no ML-DSA-65 public key is known for \
+                         it. A Join without the PQ half cannot be projected into the tau \
+                         participant set, so ratifying it would halt finality on every node. The \
+                         candidate must first reach this committee over the narrow join channel \
+                         (start it with `dregg-node join --bootstrap <member>:<gossip-port>`), \
+                         which is what publishes its post-quantum key."
+                    );
+                    metrics::counter!("dregg_join_request_refused_total", "reason" => "operator_add_without_pq_key")
+                        .increment(1);
+                    return None;
+                }
+            };
+            MembershipAction::Join {
+                node_id,
+                ml_dsa_pubkey: dregg_blocklace::pq::MlDsaPublicKey(ml_dsa.0),
+            }
         } else {
             MembershipAction::Leave { node_id }
         };
@@ -2597,13 +3395,29 @@ impl BlocklaceHandle {
 /// (`VerifiedFinality::compute_order`). The single serial finality executor
 /// awaits this FFI before the next poll can start, so an O(history) recompute on
 /// a large cross-linked lace that exceeds a round of block production freezes ALL
-/// finalization. `poll_finalized_blocks` bounds the FFI by this budget and, on
-/// timeout, uses the edge-faithful Rust `ordering::tau` order for that poll (it
-/// equals `compute_order` after the topological `build_ordering_blocklace` fix),
-/// so one slow poll cannot stall the executor. Default 2500 ms; operators can
-/// tune it via `DREGG_FINALITY_ORDER_TIMEOUT_MS` (a value of 0 falls back to the
-/// default rather than disabling the bound).
-fn verified_order_ffi_timeout() -> Duration {
+/// finalization. `poll_finalized_blocks` bounds the FFI by this budget so one slow poll cannot
+/// stall the executor. Default 2500 ms; operators can tune it via
+/// `DREGG_FINALITY_ORDER_TIMEOUT_MS` (a value of 0 falls back to the default rather than
+/// disabling the bound).
+///
+/// ⚑ WHAT A MISS COSTS DEPENDS ON THE NODE, and this doc used to state only one of the two
+/// outcomes ("on timeout, uses the edge-faithful Rust `ordering::tau` order for that poll"). That
+/// is true ONLY where the Rust twin is permitted (`rust_tau_fallback_allowed`: no verified archive
+/// at all, or `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`). On a Lean-linked node without the escape —
+/// the deployed PoA posture, which `scripts/poa-devnet.sh` pins — a miss FAILS CLOSED and the poll
+/// finalizes nothing. Same trigger, opposite failure mode, opposite remedy.
+///
+/// ⚑ RAISING THIS IS NOT A FIX. The verified `dregg_tau_order` is super-quadratic in the lace size
+/// and a lace grows without bound, so any constant budget is crossed by a long-enough-lived chain;
+/// a larger one only moves the crossing. The fix is to make the verified path cheaper — the
+/// dominating cost is `Lace.lookup` (`metatheory/Dregg2/Authority/Blocklace.lean`), a `List.find?`
+/// over the whole lace, called inside the innermost loops of `tauOrderFastImpl`
+/// (`metatheory/Dregg2/Distributed/BlocklaceFinality.lean`), which already builds `Std.HashMap`
+/// past/round maps but has no `BlockId → Block` index. See `docs/VERIFIED-GATE-PERF.md`.
+///
+/// `pub` so `/status` can report the budget alongside the provenance tally: a claim that holds
+/// only under a budget has to publish the budget.
+pub fn verified_order_ffi_timeout() -> Duration {
     let ms = std::env::var("DREGG_FINALITY_ORDER_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -2943,7 +3757,11 @@ fn belt_gate_fault_injected() -> bool {
 ///
 /// Returns the ordering blocklace and a mapping from ordering BlockIds to
 /// finality BlockIds (needed because the two types use different hash schemes).
-pub(crate) fn build_ordering_blocklace(
+/// ⚑ `pub` (was `pub(crate)`) so `node/tests/verified_order_budget.rs` can measure and
+/// differentially compare the REAL projection the node runs. A test that rebuilds this
+/// construction itself would be testing its own mirror, not the node's path — and the
+/// topological-insertion fix documented above is precisely the part a mirror gets wrong.
+pub fn build_ordering_blocklace(
     finality_lace: &Blocklace,
 ) -> (
     dregg_blocklace::Blocklace,
@@ -3552,6 +4370,51 @@ pub(crate) async fn run_blocklace_sync_with_membership_policy(
         restored_blocks = blocklace.len(),
         "consensus-time-v1 active; authenticated causal frontier rebuilt"
     );
+
+    // ⚑ RESTORE LIVE-JOINED MEMBERS' POST-QUANTUM KEYS FROM THE CHAIN.
+    //
+    // `known_federation_keys` / `known_federation_ml_dsa_keys` are re-read from
+    // `genesis.json` on EVERY boot, so a validator admitted by a live join has no
+    // committed ML-DSA key after a restart — while `committee_replay` faithfully
+    // restores it as a PARTICIPANT. That mismatch is exactly the
+    // `projected < admitted` condition `poll_finalized_blocks` fails closed on:
+    // the node would come back up with the right committee and HALT.
+    //
+    // The Join payload carries the key, in the same signed block that carries the
+    // membership claim, so both halves are restorable from the same source. We
+    // scan the restored lace rather than the finalized order because this only
+    // LEARNS a key — it grants nothing, and `learn_committee_member_hybrid_key`
+    // refuses to rebind a key that disagrees with one already committed, so a
+    // stale or unratified proposal cannot displace a genesis member's key.
+    {
+        let mut restored_keys = 0usize;
+        let mut s = state.write().await;
+        for (_, block) in blocklace.iter() {
+            if let Payload::MembershipVote {
+                action:
+                    MembershipAction::Join {
+                        node_id,
+                        ml_dsa_pubkey,
+                    },
+            } = &block.payload
+                && s.learn_committee_member_hybrid_key(
+                    node_id,
+                    dregg_federation::frost::MlDsaPublicKey(ml_dsa_pubkey.0),
+                )
+            {
+                restored_keys += 1;
+            }
+        }
+        if restored_keys > 0 {
+            info!(
+                restored_keys,
+                "restored live-joined members' ML-DSA-65 keys from the chain — the committed \
+                 roster now covers every admitted participant, so finality does not fail closed \
+                 on this restart"
+            );
+        }
+    }
+
     // Create the PeerNode (QUIC endpoint) for gossip.
     let bind_addr_str = format!("0.0.0.0:{gossip_port}");
     let peer_node = match PeerNode::new(PeerNodeConfig {
@@ -3771,6 +4634,10 @@ pub(crate) async fn run_blocklace_sync_with_membership_policy(
         cursor,
         finality_notify: finality_notify.clone(),
         auto_approve_joins, // F-CRIT-2: gated by main.rs on --auto-approve-joins CLI flag OR .devnet marker
+        pending_joins: Arc::new(RwLock::new(HashMap::new())),
+        join_progress: Arc::new(RwLock::new(JoinProgress::default())),
+        pq_public_key: pq_public_key.clone(),
+        peer_addrs: peer_addrs.clone(),
         checkpoint_interval: blocklace_checkpoint_interval,
         orphans: Arc::new(RwLock::new(crate::catchup::OrphanBuffer::new())),
         // Missing-block re-request backoff: base 1s, capped at 30s. A fresh gap
@@ -3789,6 +4656,8 @@ pub(crate) async fn run_blocklace_sync_with_membership_policy(
         pending_payloads: Arc::new(RwLock::new(std::collections::VecDeque::new())),
         last_order_fingerprint: Arc::new(RwLock::new(None)),
         last_lean_order: Arc::new(RwLock::new(None)),
+        liveness: Arc::new(FederationLiveness::default()),
+        in_flight_turns: Arc::new(InFlightTurns::default()),
     };
 
     info!("blocklace gossip layer initialized, processing messages");
@@ -3910,23 +4779,44 @@ pub(crate) async fn run_blocklace_sync_with_membership_policy(
         frontier_handle.send_frontier().await;
     });
 
+    // ─── Spawn the Narrow-Join-Channel Receiver ─────────────────────────────
+    //
+    // THE COMMITTEE SIDE of the growth fix. Join requests arrive on their own
+    // channel, NOT on a topic — an unregistered key has no topic and no
+    // spanning-tree slot, which is precisely why the old design could not work.
+    // Each request has already been proven self-certified by the gossip layer;
+    // everything about MEANING (is this our federation, does the candidate hold
+    // the PQ key it names, is it already a member, do we sponsor it) is decided
+    // here, in the layer that knows what a committee is.
+    if let Some(mut join_rx) = gossip.take_join_requests() {
+        let jr_handle = handle.clone();
+        let jr_state = state.clone();
+        tokio::spawn(async move {
+            while let Some(req) = join_rx.recv().await {
+                jr_handle
+                    .handle_join_request(&jr_state, req.from, req.candidate_public_key.0, &req.body)
+                    .await;
+            }
+        });
+    }
+
     match membership_proposal_policy {
         MembershipProposalPolicy::ProposeIfNonMember => {
-            // If we're not already a federation participant, propose joining.
-            // This enables new nodes to join at runtime via the constitutional amendment
-            // protocol. Existing participants will vote (auto-approve in devnet mode).
+            // THE CANDIDATE SIDE. Not a block — a narrow-channel request, retried
+            // until a member sponsors it. See `run_join_requests_until_member`
+            // for why authoring a block here could never have reached anyone.
             let join_handle = handle.clone();
             let join_state = state.clone();
             tokio::spawn(async move {
                 // Brief delay to allow gossip connections to establish.
                 tokio::time::sleep(Duration::from_secs(2)).await;
-                join_handle.propose_join_if_needed(&join_state).await;
+                join_handle
+                    .run_join_requests_until_member(&join_state)
+                    .await;
             });
         }
         MembershipProposalPolicy::FollowOnly => {
-            info!(
-                "follow-only membership policy active — history sync will not author a Join proposal"
-            );
+            info!("follow-only membership policy active — history sync will not ask to join");
         }
     }
 
@@ -4513,8 +5403,18 @@ async fn record_finalization_vote(
     // a freshness heartbeat from its signer. Bounded label cardinality (one per
     // committee member).
     let voter_tag = hex_encode(&vote.voter[..4]);
+    // The SAME freshness fact, kept where `/status` can read it back. The
+    // Prometheus gauge above is for a dashboard; the node itself had no in-process
+    // notion of which members were still reaching it, which is why it kept
+    // answering `healthy: true` while two of four peers were frozen. Recorded only
+    // for outcomes the collector ADMITTED — a vote it rejected as unsigned or
+    // non-member is not evidence that its claimed signer is alive.
+    if !matches!(outcome, RecordOutcome::Rejected) {
+        handle.liveness.note_vote(&vote.voter);
+    }
     match outcome {
         RecordOutcome::ReachedQuorum { distinct_votes } => {
+            handle.liveness.note_quorum();
             crate::metrics::inc_consensus_attested();
             crate::metrics::set_validator_last_seen(&voter_tag);
             crate::metrics::inc_validator_votes(&voter_tag);
@@ -6021,6 +6921,18 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                     match outcome {
                         FinalizedExecutionOutcome::Committed { .. }
                         | FinalizedExecutionOutcome::DeterministicallyRejected { .. } => {
+                            // A TERMINAL verdict exists in a durable store now,
+                            // so the turn is no longer "in flight" — the verdict
+                            // route answers from the commit log or the rejection
+                            // row from here on. Retiring it here (rather than only
+                            // when someone happens to ask) is what keeps
+                            // `/status`'s `turns_in_flight` a real backlog gauge
+                            // instead of a monotone count of submissions.
+                            if let FinalizedBlock::Turn { data, .. } = block
+                                && let Some(turn_hash) = signed_turn_hash_from_bytes(data)
+                            {
+                                handle.in_flight_turns.resolve(&turn_hash);
+                            }
                             let advanced =
                                 handle.cursor.write().await.acknowledge_terminal(outcome);
                             debug_assert!(
@@ -6564,6 +7476,25 @@ fn finalized_turn_bytes(payload: &Payload) -> Option<&[u8]> {
     }
 }
 
+/// The turn hash a turn-bearing payload carries — the SAME value a submit
+/// response hands the caller (`signed_turn.turn.hash()`), so a client's handle
+/// and the node's bookkeeping are the same coordinate by construction rather
+/// than by convention.
+///
+/// `None` for a non-turn payload or bytes that do not decode; a payload the node
+/// cannot read as a signed turn is simply not tracked as in-flight, which costs
+/// a `pending` answer and never a wrong one.
+fn payload_signed_turn_hash(payload: &Payload) -> Option<[u8; 32]> {
+    signed_turn_hash_from_bytes(finalized_turn_bytes(payload)?)
+}
+
+/// [`payload_signed_turn_hash`] for bytes already extracted from a payload.
+fn signed_turn_hash_from_bytes(bytes: &[u8]) -> Option<[u8; 32]> {
+    postcard::from_bytes::<dregg_sdk::SignedTurn>(bytes)
+        .ok()
+        .map(|signed| signed.turn.hash())
+}
+
 /// Reconcile the best-effort executed-id projection with terminal turn
 /// authority reconstructed from the commit/rejection logs.
 ///
@@ -6633,6 +7564,12 @@ fn persist_finalized_payload_rejection(
     };
     match s.store.get_config(&key) {
         Ok(Some(existing)) if existing == encoded => {
+            // Already recorded — a crash replay or duplicate delivery of a
+            // verdict this node already reached. The COUNTER deliberately does
+            // NOT move here: a rejection counter that climbs on restart is a
+            // counter of restarts. The by-turn index is still reconciled, so a
+            // row written before the index existed becomes queryable.
+            record_rejection_turn_index(s, turn_hash, block_id, reason_code);
             return FinalizedExecutionOutcome::DeterministicallyRejected {
                 block_id,
                 reason_code: reason_code.to_owned(),
@@ -6670,10 +7607,19 @@ fn persist_finalized_payload_rejection(
         }
     }
     match s.store.set_config(&key, &encoded) {
-        Ok(()) => FinalizedExecutionOutcome::DeterministicallyRejected {
-            block_id,
-            reason_code: reason_code.to_owned(),
-        },
+        Ok(()) => {
+            // COUNT IT. This is the one place a deterministic post-finalization
+            // refusal becomes durable for the first time, so it is the one place
+            // that may move the counter. Before this line the path that
+            // unanimously and correctly discarded a turn on four nodes left
+            // `dregg_turns_rejected_total` reading 0 on all four.
+            crate::metrics::note_finalized_payload_rejected(reason_code);
+            record_rejection_turn_index(s, turn_hash, block_id, reason_code);
+            FinalizedExecutionOutcome::DeterministicallyRejected {
+                block_id,
+                reason_code: reason_code.to_owned(),
+            }
+        }
         Err(error) => {
             error!(
                 block_id = %block_id,
@@ -6683,6 +7629,80 @@ fn persist_finalized_payload_rejection(
             );
             retryable(format!("failed to persist durable rejection row: {error}"))
         }
+    }
+}
+
+/// Write the reciprocal `turn_hash → (block_id, reason)` index for a recorded
+/// rejection, and retire the turn from this node's in-flight set.
+///
+/// SURFACE THE VERDICT. The block-keyed authority row was already durable on all
+/// four nodes of the measured federation and reachable by nothing: `/api/receipts`
+/// simply lacked the turn, and the only coordinate the client held was the turn
+/// hash. This is the index that closes that.
+///
+/// Best-effort by construction, and that is the right posture: the AUTHORITY is
+/// the block-keyed row, which is written first and whose failure already fails
+/// the whole outcome. A missing or unwritable index makes the verdict
+/// unqueryable-by-hash (it reads `unknown`, the honest answer), never wrong —
+/// `GET /api/turn/{hash}/verdict` re-reads the authority row and refuses to
+/// answer if the two disagree. First-write-wins: an existing index row is never
+/// replaced.
+fn record_rejection_turn_index(
+    s: &crate::state::NodeStateInner,
+    turn_hash: Option<[u8; 32]>,
+    block_id: BlockId,
+    reason_code: &str,
+) {
+    let Some(turn_hash) = turn_hash else {
+        // A payload that never decoded to a signed turn has no turn hash to
+        // index by. The block-keyed row still records the refusal.
+        return;
+    };
+    if let Some(handle) = s.blocklace_handle.as_ref() {
+        handle.in_flight_turns.resolve(&turn_hash);
+    }
+    if !crate::signed_turn_validation::canonical_rejection_reason(reason_code) {
+        error!(
+            block_id = %block_id,
+            reason_code,
+            "refusing to index a finalized rejection under a non-canonical reason code"
+        );
+        return;
+    }
+    let index = crate::signed_turn_validation::FinalizedPayloadRejectionTurnIndex::new(
+        turn_hash,
+        block_id.0,
+        reason_code,
+    );
+    let index_key =
+        crate::signed_turn_validation::FinalizedPayloadRejectionTurnIndex::storage_key(&turn_hash);
+    match s.store.get_config(&index_key) {
+        Ok(Some(_)) => return,
+        Ok(None) => {}
+        Err(error) => {
+            warn!(
+                turn_hash = %hex_encode(&turn_hash),
+                error = %error,
+                "could not read the finalized-rejection turn index; the verdict stays durable \
+                 under its block id but is not queryable by turn hash"
+            );
+            return;
+        }
+    }
+    let Ok(encoded) = index.encode() else {
+        error!(
+            turn_hash = %hex_encode(&turn_hash),
+            "failed to encode the finalized-rejection turn index"
+        );
+        return;
+    };
+    if let Err(error) = s.store.set_config(&index_key, &encoded) {
+        warn!(
+            turn_hash = %hex_encode(&turn_hash),
+            error = %error,
+            "could not persist the finalized-rejection turn index; the verdict stays durable \
+             under its block id but is not queryable by turn hash"
+        );
     }
 }
 
@@ -10533,6 +11553,81 @@ mod tests {
     use super::*;
     use dregg_circuit::field::BabyBear;
     use dregg_types::CellId;
+
+    /// THE SIGNAL THAT COULD NOT GO FALSE. `/status` reported `healthy: true`
+    /// through a quorum-losing 2-of-4 partition because nothing it consulted was
+    /// about the other members. These are the facts it consults now, asserted as
+    /// a pure value — no network, no clock beyond `now`.
+    #[test]
+    fn federation_liveness_reports_quorum_reachability_from_who_is_actually_voting() {
+        let me = [0x01u8; 32];
+        let liveness = FederationLiveness::default();
+
+        // Nobody has voted at us. At the N=4 threshold of 3 we cannot finalize
+        // even though this process is perfectly healthy in every local sense.
+        let alone = liveness.snapshot(&me, 3, 0);
+        assert_eq!(alone.live_committee_voters, 0);
+        assert!(!alone.quorum_reachable);
+        assert!(!alone.ever_reached_quorum);
+        // ... and a threshold-1 (solo / collapsed) deployment is unaffected: it
+        // finalizes on its own signature and must not be called unhealthy.
+        let solo = liveness.snapshot(&me, 1, 0);
+        assert!(solo.quorum_reachable);
+        assert!(!solo.finality_stalled);
+
+        // OUR OWN vote is not evidence that anyone else is reachable. It arrives
+        // through the same funnel as a peer's, so this distinction is load-bearing.
+        liveness.note_vote(&me);
+        assert_eq!(liveness.snapshot(&me, 3, 0).live_committee_voters, 0);
+
+        // One peer back: still short of 3 (2 of 3 counting ourselves).
+        liveness.note_vote(&[0x02u8; 32]);
+        let one_peer = liveness.snapshot(&me, 3, 1);
+        assert_eq!(one_peer.live_committee_voters, 1);
+        assert!(!one_peer.quorum_reachable);
+
+        // A SECOND vote from the SAME member is not a second member.
+        liveness.note_vote(&[0x02u8; 32]);
+        assert_eq!(liveness.snapshot(&me, 3, 1).live_committee_voters, 1);
+
+        // Two distinct peers + ourselves = 3 = threshold. Quorum reachable.
+        liveness.note_vote(&[0x03u8; 32]);
+        let quorate = liveness.snapshot(&me, 3, 2);
+        assert_eq!(quorate.live_committee_voters, 2);
+        assert!(quorate.quorum_reachable);
+        assert_eq!(quorate.connected_peers, 2);
+
+        // A fresh handle has not stalled yet (the clock runs from `started`), and
+        // crossing quorum records that it happened.
+        assert!(!quorate.finality_stalled);
+        liveness.note_quorum();
+        assert!(liveness.snapshot(&me, 3, 2).ever_reached_quorum);
+    }
+
+    /// A submitted turn has a name for the window between "accepted for
+    /// consensus" and a durable verdict, so a client polling by hash is told
+    /// `pending` rather than nothing.
+    #[test]
+    fn in_flight_turns_name_the_window_between_submission_and_a_verdict() {
+        let in_flight = InFlightTurns::default();
+        let turn = [0x19u8; 32];
+        assert!(in_flight.is_empty());
+        assert_eq!(in_flight.pending_for_seconds(&turn), None);
+
+        in_flight.note_submitted(turn);
+        assert_eq!(in_flight.len(), 1);
+        assert!(in_flight.pending_for_seconds(&turn).is_some());
+
+        // Re-submission of the same hash keeps ONE entry and does not reset the
+        // clock to zero on every poll.
+        in_flight.note_submitted(turn);
+        assert_eq!(in_flight.len(), 1);
+
+        // A durable verdict retires it; the route then answers from the store.
+        in_flight.resolve(&turn);
+        assert!(in_flight.is_empty());
+        assert_eq!(in_flight.pending_for_seconds(&turn), None);
+    }
 
     fn sample_receipt(tag: u8) -> dregg_turn::TurnReceipt {
         dregg_turn::TurnReceipt {
@@ -15294,6 +16389,10 @@ mod tests {
             gossip,
             topic,
             self_key,
+            pq_public_key: dregg_federation::frost::MlDsaSigningKey::from_seed(
+                &signing_key.to_bytes(),
+            )
+            .0,
             pq_signing_key: dregg_federation::frost::MlDsaSigningKey::from_seed(
                 &signing_key.to_bytes(),
             )
@@ -15304,6 +16403,11 @@ mod tests {
             cursor: Arc::new(RwLock::new(crate::execution_cursor::ExecutionCursor::new())),
             finality_notify: Arc::new(Notify::new()),
             auto_approve_joins: false,
+            // The narrow join channel is not exercised by the in-process test
+            // handle: no candidate reaches it and it dials nobody.
+            pending_joins: Arc::new(RwLock::new(HashMap::new())),
+            join_progress: Arc::new(RwLock::new(JoinProgress::default())),
+            peer_addrs: Vec::new(),
             checkpoint_interval: 100,
             orphans: Arc::new(RwLock::new(crate::catchup::OrphanBuffer::new())),
             pull_backoff: Arc::new(RwLock::new(dregg_net::peer_score::RequestBackoff::new(
@@ -15319,6 +16423,8 @@ mod tests {
             pending_payloads: Arc::new(RwLock::new(std::collections::VecDeque::new())),
             last_order_fingerprint: Arc::new(RwLock::new(None)),
             last_lean_order: Arc::new(RwLock::new(None)),
+            liveness: Arc::new(FederationLiveness::default()),
+            in_flight_turns: Arc::new(InFlightTurns::default()),
         }
     }
 
@@ -16222,7 +17328,12 @@ mod tests {
                     1,
                     0,
                     Payload::MembershipVote {
-                        action: MembershipAction::Join { node_id: ed_d },
+                        action: MembershipAction::Join {
+                            node_id: ed_d,
+                            ml_dsa_pubkey: dregg_blocklace::pq::MlDsaPublicKey(
+                                [0u8; dregg_blocklace::pq::PK_LEN],
+                            ),
+                        },
                     },
                 )],
             );
@@ -16237,7 +17348,12 @@ mod tests {
                         1,
                         0,
                         Payload::MembershipVote {
-                            action: MembershipAction::Join { node_id: ed_d },
+                            action: MembershipAction::Join {
+                                node_id: ed_d,
+                                ml_dsa_pubkey: dregg_blocklace::pq::MlDsaPublicKey(
+                                    [0u8; dregg_blocklace::pq::PK_LEN],
+                                ),
+                            },
                         },
                     ),
                     (
@@ -17634,7 +18750,45 @@ async fn execute_finalized_membership(
     action: &MembershipAction,
 ) {
     match action {
-        MembershipAction::Join { node_id } => {
+        MembershipAction::Join {
+            node_id,
+            ml_dsa_pubkey,
+        } => {
+            // ⚑ COMMIT THE CANDIDATE'S POST-QUANTUM HALF, HERE, BEFORE ANYTHING
+            // ELSE. This is ring 3 of the growth deadlock (module header): the
+            // genesis roster was the only writer of the index-aligned
+            // `known_federation_keys` / `known_federation_ml_dsa_keys` pair, so a
+            // live-joined validator had no committed ML-DSA key,
+            // `project_committed_participants` DROPPED it, and
+            // `poll_finalized_blocks` FAILED CLOSED — a successful join would
+            // have stopped finality on every node in the federation.
+            //
+            // The write is deterministic on every node because its input is the
+            // RATIFIED block payload, seen identically at the same point in the
+            // finalized order — never a node-local key view, which is what the
+            // F-CO-1 projection comment forbids and would fork on.
+            //
+            // Done at proposal-registration time (not at apply time) so the key
+            // is committed BEFORE `apply_passed_proposal` reads it back through
+            // `pq_committee_for_participants`, including the n=1 case where the
+            // proposal passes in the very next statement.
+            {
+                let mut s = state.write().await;
+                let learned = s.learn_committee_member_hybrid_key(
+                    node_id,
+                    dregg_federation::frost::MlDsaPublicKey(ml_dsa_pubkey.0),
+                );
+                if !learned {
+                    let hex: String = node_id[..4].iter().map(|b| format!("{b:02x}")).collect();
+                    warn!(
+                        candidate = %hex,
+                        "the Join payload's ML-DSA key was NOT committed (hybrid unconfigured, or \
+                         it disagrees with the key already committed for this member). If this \
+                         proposal passes, the projection will drop the member and finality will \
+                         halt."
+                    );
+                }
+            }
             // A node is proposing to join the federation.
             let proposal = MembershipProposal::Join {
                 node_key: *node_id,

@@ -2695,6 +2695,57 @@ impl NodeStateInner {
         self.known_federation_ml_dsa_keys.get(idx)
     }
 
+    /// Learn a LIVE-JOINED committee member's `(ed25519, ML-DSA-65)` pair, so
+    /// [`Self::ml_dsa_key_for`] resolves for a validator that was not in genesis.
+    ///
+    /// ⚑ WITHOUT THIS A SUCCESSFUL JOIN HALTS THE FEDERATION. The genesis roster
+    /// is the only writer of the index-aligned key pair, so an admitted
+    /// non-genesis member had no committed ML-DSA half. `blocklace_sync::
+    /// project_committed_participants` DROPS such a member, and
+    /// `poll_finalized_blocks` then FAILS CLOSED (correctly — ordering over a
+    /// subset would fork) and finalizes NOTHING, on every node, forever. The
+    /// deadlock this repairs is therefore not only "the join never arrives" but
+    /// "and if it had, the chain would stop".
+    ///
+    /// The source of truth is the RATIFIED `MembershipAction::Join` payload,
+    /// which every node sees identically at the same point in the order — the
+    /// only thing that makes this deterministic rather than a node-local key
+    /// view (which would fork). Never call it from an unratified path.
+    ///
+    /// Idempotent. A pair already present is left alone; a DIFFERENT ML-DSA key
+    /// for a known ed25519 is REFUSED (returns `false`) rather than overwritten:
+    /// silently rebinding a member's PQ half would change its hybrid id and its
+    /// tau slot underneath a running committee.
+    ///
+    /// `federation_id` / `committee_epoch` are deliberately untouched — a
+    /// committee change never re-points the stable chain root.
+    pub fn learn_committee_member_hybrid_key(
+        &mut self,
+        ed25519: &[u8; 32],
+        ml_dsa: dregg_federation::frost::MlDsaPublicKey,
+    ) -> bool {
+        // Hybrid must be CONFIGURED for the alignment to mean anything: with an
+        // empty ML-DSA vector the indices do not correspond and appending would
+        // manufacture a bogus alignment.
+        if self.known_federation_ml_dsa_keys.len() != self.known_federation_keys.len() {
+            return false;
+        }
+        if let Some(idx) = self
+            .known_federation_keys
+            .iter()
+            .position(|k| k.0 == *ed25519)
+        {
+            return self
+                .known_federation_ml_dsa_keys
+                .get(idx)
+                .is_some_and(|existing| *existing == ml_dsa);
+        }
+        self.known_federation_keys
+            .push(dregg_types::PublicKey(*ed25519));
+        self.known_federation_ml_dsa_keys.push(ml_dsa);
+        true
+    }
+
     /// Register a peer federation in [`Self::known_federations`].
     ///
     /// This is the canonical entry point for cross-federation receipt

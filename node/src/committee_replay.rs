@@ -88,7 +88,7 @@ pub fn fold_membership_block(
     action: &MembershipAction,
 ) -> bool {
     match action {
-        MembershipAction::Join { node_id } => {
+        MembershipAction::Join { node_id, .. } => {
             cm.submit_proposal(
                 block_id,
                 MembershipProposal::Join {
@@ -302,6 +302,13 @@ mod tests {
         sk.verifying_key().to_bytes()
     }
 
+    /// A placeholder ML-DSA-65 public key for building `Join` payloads. These
+    /// tests exercise the CONSTITUTION fold, which is keyed entirely by the
+    /// ed25519 strand key and never reads the post-quantum half.
+    fn pq_placeholder() -> dregg_blocklace::pq::MlDsaPublicKey {
+        dregg_blocklace::pq::MlDsaPublicKey([0u8; dregg_blocklace::pq::PK_LEN])
+    }
+
     /// A lace owned by `owner` that accepts hand-built rounds from a set of
     /// signers via `receive_block`.
     fn lace_for(owner: &SigningKey, quorum: usize) -> Blocklace {
@@ -350,7 +357,10 @@ mod tests {
 
         // Round 3: A proposes Join(D).
         let join_payload = Payload::MembershipVote {
-            action: MembershipAction::Join { node_id: pk(&d) },
+            action: MembershipAction::Join {
+                node_id: pk(&d),
+                ml_dsa_pubkey: pq_placeholder(),
+            },
         };
         let r3 = round(&mut lace, &signers, 2, &r2, &[(0, join_payload)]);
         let join_block_id = r3[0];
@@ -402,7 +412,10 @@ mod tests {
         let mut lace = lace_for(&a, 3);
         let r1 = round(&mut lace, &signers, 0, &[], &[]);
         let join_payload = Payload::MembershipVote {
-            action: MembershipAction::Join { node_id: pk(&d) },
+            action: MembershipAction::Join {
+                node_id: pk(&d),
+                ml_dsa_pubkey: pq_placeholder(),
+            },
         };
         let r2 = round(&mut lace, &signers, 1, &r1, &[(0, join_payload)]);
         let join_block_id = r2[0];
@@ -458,7 +471,10 @@ mod tests {
         // Solo blocks via the owner's own add_block (auto-preds, signed).
         lace.add_block(Payload::Ack);
         lace.add_block(Payload::MembershipVote {
-            action: MembershipAction::Join { node_id: pk(&b) },
+            action: MembershipAction::Join {
+                node_id: pk(&b),
+                ml_dsa_pubkey: pq_placeholder(),
+            },
         });
         lace.add_block(Payload::Ack);
 
