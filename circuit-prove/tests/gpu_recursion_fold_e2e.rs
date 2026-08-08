@@ -471,15 +471,26 @@ fn recursion_tower_large_regime_byte_identical_on_gpu() {
 /// So this drives the DISPATCH, twice, at two configs whose mint engines are reached from
 /// different arguments:
 ///
-/// * `recursion_layer_over(&ir2_leaf_wrap_config())` — the split leaf wrap, verify `(lb 6, q 19,
+/// * `recursion_layer_over(&ir2_leaf_wrap_config())` — the split leaf wrap, verify `(lb 6,
 ///   qpow 16)` / mint `(lb 3, q 38, qpow 14)`. This is the config every production leaf now
 ///   derives, and the one the old hardcode got wrong.
-/// * `create_recursion_config()` — verify and mint both `(lb 3, q 38, qpow 14)`.
+/// * `ir2_leaf_wrap_config()` — the SAME verify engine, mint `(lb 6, q 19, qpow 16)`: the
+///   single-engine leaf wrap the tower ran at before the split, and exactly the engine the old
+///   hardcode baked.
 ///
 /// One hardcoded engine cannot serve both, so a branch that ignores its argument fails here by
 /// construction rather than by a reviewer noticing. The assertions are on the EMITTED BYTES and on
 /// the emitted FRI shape, and the dispatch counters are read so the test knows which branch it
 /// just judged.
+///
+/// ⚠ **The two configs must share a VERIFY engine and differ in their MINT engine**, and that is
+/// the whole design of the pair — asserted below rather than assumed. A config that verifies at
+/// some OTHER engine cannot consume this child at all: paired here until 2026-08-08,
+/// `create_recursion_config()` (verify `lb 3`) made the second leg die in
+/// `InvalidProofShape("More siblings in proof than op_ids provided")` before any byte was
+/// compared — and it minted at the split's own `(lb 3, q 38, qpow 14)` anyway, so even had it run
+/// it would have judged one mint engine twice. The gate had never been executed, so neither
+/// showed.
 ///
 /// ⚠ `gpu` is honoured only when a native adapter exists; on a CPU-only box both legs take the CPU
 /// branch and the byte-identity assertion is trivially true. The test says so out loud rather than
@@ -526,13 +537,27 @@ fn both_dispatch_branches_mint_the_same_bytes() {
     // The split leaf wrap is reached by DERIVATION from the child's config, exactly as the
     // production leaves reach it — not by naming a constant, which is what made the old assertion
     // pass over an inert change.
-    for (label, config) in [
+    let pair = [
         ("split leaf wrap", recursion_layer_over(&inner_config)),
-        (
-            "create_recursion_config",
-            dregg_circuit_prove::plonky3_recursion_impl::recursive::create_recursion_config(),
-        ),
-    ] {
+        ("single-engine leaf wrap", inner_config.clone()),
+    ];
+    // ⚑ THE PAIR MUST BE A PAIR. Shared verify engine (or the second leg cannot consume this
+    // child at all), DIFFERENT mint engine (or a hardcoded engine could be right for both and the
+    // whole gate is one engine judged twice). Both were false before 2026-08-08 and nothing said
+    // so, because the test had never run.
+    assert_eq!(
+        pair[0].1.verify_knobs(),
+        pair[1].1.verify_knobs(),
+        "the two configs must verify the ONE child at the same engine"
+    );
+    assert_ne!(
+        pair[0].1.mint_knobs(),
+        pair[1].1.mint_knobs(),
+        "the two configs must MINT at different engines — otherwise a branch that ignores its \
+         argument and hardcodes one engine passes this gate"
+    );
+
+    for (label, config) in pair {
         let mut bytes: Vec<(&str, Vec<u8>, usize)> = Vec::new();
         for policy in ["cpu", "gpu"] {
             // SAFETY: read by `production_gpu_recursion_enabled()`; nothing else in this binary
