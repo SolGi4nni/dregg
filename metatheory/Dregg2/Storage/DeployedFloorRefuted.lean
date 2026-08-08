@@ -1,7 +1,9 @@
 /-
 # The deployed storage hash REFUTES the floor its own theorem assumes
 
-`Dregg2.Storage.contentRootDeployed_injective` is gated on
+`Dregg2.Storage.contentRootDeployed_injective` (since DELETED — this refutation is why; the
+live floor is the game form, `contentRootDeployed_binds_or_collides`, per
+`DeployedFloorRegrounded`) was gated on
 `Poseidon2Binding.Poseidon2SpongeCR poseidon2Hash`. That floor is **literal injectivity**
 
     Poseidon2SpongeCR (sponge : List ℤ → ℤ) : Prop := ∀ xs ys, sponge xs = sponge ys → xs = ys

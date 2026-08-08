@@ -611,8 +611,10 @@ pub fn project_slot_caveat_manifest(
 }
 
 /// **The REQUIRED-TAG re-derivation (constraint-binding weld, the soundness core).**
-/// The capacity caveat tags a cell's declared constraint-set REQUIRES — the Rust
-/// twin of the Lean `Dregg2.Deos.ConstraintBinding.requiredTags`. A capacity
+/// The capacity caveat tags a cell's declared constraint-set REQUIRES. ⚠ There is
+/// NO concrete Lean counterpart: `Dregg2/Deos/ConstraintBinding.lean` takes
+/// `requiredTags : Decl → List Tag` as an ABSTRACT parameter and proves only the
+/// binding floor (`DeclCommitBinds`) over it — this derivation exists only in Rust. A capacity
 /// `StateConstraint` (`SettleEscrow` / `DischargeObligation` / `VaultDeposit`) is a
 /// JOINT invariant whose manifest entry MUST be present for a turn on the cell to be
 /// sound (omitting it would leave the atomicity / on-schedule / no-dilution gate

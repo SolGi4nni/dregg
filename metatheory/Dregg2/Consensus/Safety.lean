@@ -14,7 +14,10 @@ Every consensus-safety theorem already in the tree fixes ONE lace / ONE state:
 * `Distributed.BlocklaceFinality.finalLeaders_one_per_wave` / `tauOrder_deterministic` — over
   ONE `Lace`: a wave has ≤ 1 final leader; the order is a function of (lace, participants).
 * `Consensus.TauPrefixMonotone.tau_finalized_prefix_monotone` — over ONE lace's GROWTH: the
-  finalized prefix is append-only *under* `FinalizedRegionStable` (and refuted unconditionally).
+  finalized prefix is append-only *under* `ClosedExtension` + `ChainExtends` (CM Prop. 3's
+  leader-safety, imported from the paper, owed a Lean proof). The former three-field
+  `FinalizedRegionStable` is deleted and its unconditional refutation RETRACTED — the
+  counterexample was a fact about a τ that had deviated from CM Def. 6, not about the CM rule.
 
 What NONE of them state is the property a LIGHT CLIENT'S CHAIN-CHOICE actually rests on:
 **two honest nodes, holding DIFFERENT (partial) laces `S₁ ≠ S₂`, cannot finalize conflicting
@@ -439,7 +442,8 @@ cross-node honest-majority BFT model), the histories are CONSISTENT — never di
 client following either node's finalized chain lands on the same history. -/
 
 /-- A node's finalized history: per wave index, the leader block it committed (the `tauOrder`
-anchors of `findAllFinalLeaders`, keyed by wave). -/
+anchors — since `d182d10fc`, the ratified-leader chain walked back from `lastFinalLeader`'s
+head, keyed by wave; `findAllFinalLeaders` supplies only the head). -/
 abbrev FinalizedHistory := List (Nat × Block)
 
 /-- The leader a history finalized at wave `w` (the first entry tagged `w`, if any). -/

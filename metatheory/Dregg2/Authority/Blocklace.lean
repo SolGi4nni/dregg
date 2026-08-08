@@ -6,8 +6,8 @@ the same append-only partial order seen three ways. The blocklace is the concret
 mirroring dregg1's `blocklace/` crate (`finality.rs`, `ordering.rs`, `dissemination.rs`) — and is the
 face that carries the byzantine-repelling guarantee: a Byzantine author who forks (equivocates) is caught.
 
-Literature anchor: Almog–Lewis–Naor–Shapiro, *"The Blocklace: A Byzantine-repelling and Universal CRDT"*
-(arXiv 2402.08068, `pdfs/blocklace-byzantine-repelling-universal-2402.08068.pdf`). We formalize:
+Literature anchor: Almeida–Shapiro, *"The Blocklace: A Byzantine-repelling and Universal CRDT"*
+(arXiv 2402.08068, `pdfs/blocklace-byzantine-repelling-crdt-almeida-shapiro-2402.08068.pdf`). We formalize:
 
 * **Def 2.x (observation / `≺`).** `≺` is the transitive closure of the direct predecessor/ack relation `←`.
   `a ≺ b` reads "`b` observes `a`" — `a` is in `b`'s causal past. (`finality.rs::causal_past` / `is_predecessor`.)
@@ -156,8 +156,9 @@ def Equivocator (B : Lace) (p : AuthorId) : Prop :=
 
 The §5 byzantine-repelling guarantee in its *witnessed* form: the fork is not a hidden state
 of the network — it is **present in `B` as a checkable pair**. `finality.rs::detect_equivocation`
-scans for two same-creator/same-seq blocks of different content; the paper's stronger,
-content-independent witness is the **incomparable pair** itself. We give the observer's-eye
+implements exactly the paper's content-independent witness — the **incomparable pair** — by
+testing both `causal_past` directions over every stored same-creator block (its earlier
+`(creator, seq, id≠)` heuristic was a strict subset and is gone). We give the observer's-eye
 form (`approved_by` / `has_equivocation_in_past`): if an observer's causal past contains both
 forked blocks, the observer holds the proof. -/
 

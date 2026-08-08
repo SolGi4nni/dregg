@@ -1349,7 +1349,7 @@ impl Default for AtomicForestBuilder {
 //   * the commit-path verify-gate `MixedAdmissible` (every private leg's proof verifies +
 //     binds the shared `jid`), and
 //   * state-root continuity across turns (`commit_post[i] == commit_pre[i+1]`, mirroring
-//     `Dregg2/HistoryAggregation.lean::ChainBound`).
+//     `Dregg2/Distributed/HistoryAggregation.lean::ChainBound`).
 // LIVENESS is explicitly out of scope (Lean §7, doc §7): a private participant that goes
 // dark aborts the all-or-none turn, exactly as a public participant voting No does. That
 // is a safety-preserving failure; data-availability of the offline cell is the maintainer's

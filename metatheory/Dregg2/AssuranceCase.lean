@@ -360,8 +360,9 @@ DAG:
     Argus circuit term commits to exactly one receipt, determined by the post-state.
   • `Circuit.Argus.Receipt.argus_circuit_executor_receipts_agree` — the cross-corner: the
     circuit's receipt and the executor's receipt AGREE (one semantics, two readings).
-  • `Circuit.CommitmentCrossBind.runnable_binds_same_system_roots` — the state-commitment
-    binds cells AND the rest-of-state: equal seam roots ⇒ equal full state.
+  • `Circuit.CommitmentCrossBind.runnable_binds_same_system_roots_or_collides` — the
+    state-commitment binds cells AND the rest-of-state: equal seam roots ⇒ equal full
+    state, OR a genuine extracted sponge collision.
   • `Circuit.CommitmentCrossBind.chC_bad_not_bridge` — the TEETH: a commitment that drops a
     field is NOT a faithful bridge (so the binding is not vacuous; a tampered field can be
     detected because the honest commitment recovers it).

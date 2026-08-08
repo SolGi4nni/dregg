@@ -109,8 +109,9 @@ pubkey), **requires a committee `genesis.json`** to be present (it refuses, with
 the exact next steps, rather than start a node that trusts nobody), then starts
 the daemon in full (BFT-quorum) mode peered to the bootstrap. The blocklace
 catches up the DAG from the bootstrap; if this node's key is **in** the committee
-it casts finalization votes, otherwise it syncs as a **follower** and
-auto-proposes membership (`propose_join_if_needed`) until an operator admits it.
+it casts finalization votes, otherwise it syncs as a **follower** and announces
+itself on the join-request channel (`run_join_requests_until_member`) until a
+committee member's Join proposal for it passes the quorum.
 
 - `--bind` should be the box's **overlay IP** (your private overlay address) so authorized
   peers can sync. **Not** `127.0.0.1` (loopback-only — peers can't reach it) and

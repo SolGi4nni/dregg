@@ -46,9 +46,10 @@
 //!   dir + `node.key` exist (auto-generating the key, printing the pubkey) and a
 //!   committee `genesis.json` is present, then hand the daemon the bootstrap
 //!   peer. The node syncs the blocklace from the bootstrap and — if its key is
-//!   in the committee — votes; if not, it follows and normally auto-proposes
-//!   membership (`propose_join_if_needed`). `join --follow-only` suppresses the
-//!   proposal so observation is not an admission request.
+//!   in the committee — votes; if not, it follows and normally announces itself
+//!   on the join-request channel until admitted (`run_join_requests_until_member`).
+//!   `join --follow-only` suppresses the announcement so observation is not an
+//!   admission request.
 
 use std::path::{Path, PathBuf};
 
@@ -807,7 +808,7 @@ pub fn prepare_join(data_dir: &str, bootstrap: &str, json: bool) -> Result<JoinP
         let pk = generate_key_file(&key_path)?;
         if !json {
             println!(
-                "Generated this box's validator keypair: {}\n  (give it to the operator for `add-validator`)\n",
+                "Generated this box's validator keypair: {}\n  (give it to a committee operator — `propose-epoch-transition --add` on a live federation,\n   or `add-validator` only when assembling a NEW federation's genesis)\n",
                 hex32(&pk)
             );
         }
@@ -821,8 +822,10 @@ pub fn prepare_join(data_dir: &str, bootstrap: &str, json: bool) -> Result<JoinP
              You cannot follow a federation without its committee descriptor.\n\
              Steps:\n  \
                1. your validator pubkey is {pk}\n  \
-               2. the operator runs `dregg-node add-validator --pubkey {pk}` and sends you the resulting genesis.json\n  \
-               3. drop it in {data} and re-run `dregg-node join --bootstrap {bs}`.",
+               2. ask a federation operator for the committee's CURRENT genesis.json (do NOT have them run\n     \
+                  `add-validator` for this — that mints a NEW federation_id; it is only for assembling a new federation)\n  \
+               3. drop it in {data} and re-run `dregg-node join --bootstrap {bs}`; admission itself happens\n     \
+                  on-chain afterwards (join request -> committee Join proposal -> quorum).",
             data = data_path.display(),
             pk = hex32(&self_pubkey),
             bs = bootstrap,
@@ -861,9 +864,10 @@ pub fn announce_join(plan: &JoinPlan, data_dir: &str, bind: &str, follow_only: b
         );
     } else {
         println!(
-            "  Committee member  : no — this node will sync as a FOLLOWER and auto-propose membership.\n  \
-             It anchors no finality until an operator runs `add-validator` for your pubkey and\n  \
-             re-distributes the committee genesis.json (the federation_id changes on admission)."
+            "  Committee member  : no — this node will sync as a FOLLOWER and send join requests.\n  \
+             It anchors no finality until a committee member's Join proposal for your pubkey\n  \
+             passes the committee quorum on-chain (the federation_id does NOT change on admission;\n  \
+             nobody re-distributes genesis.json)."
         );
     }
     if bind == "0.0.0.0" || bind == "::" {

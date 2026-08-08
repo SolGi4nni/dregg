@@ -1,6 +1,6 @@
 //! # prompt_template — the committed prompt TEMPLATE + slot-confinement (the INPUT-side tooth).
 //!
-//! The Rust realization of `metatheory/Dregg2/Crypto/ZkHandlebars.lean`'s `slot_confinement`.
+//! The Rust realization of `metatheory/Dregg2/Crypto/SlotConfinement.lean`'s `slot_confinement`.
 //! The DM's prompt to the model is not free text: it is `render(committed_template, {world,
 //! player})`, where the template is an ordered list of [`Segment`]s — fixed [`Segment::Lit`]
 //! bytes (the DM's system instructions + world rules, published and hashed) and
@@ -104,7 +104,7 @@ fn dm_bindings(world: &str, player: &str) -> BTreeMap<String, String> {
 /// in the crate so a template hash can never be confused with a receipt / chain-link id.
 const PROMPT_TEMPLATE_DOMAIN: &[u8] = b"attested-dm-prompt-template-v1";
 
-/// A prompt-template **segment** — the Rust `Seg` of `ZkHandlebars.lean`. Fixed template bytes
+/// A prompt-template **segment** — the Rust `Seg` of `SlotConfinement.lean`. Fixed template bytes
 /// ([`Self::Lit`], the DM's own instructions / world-rules, which MAY themselves carry `{{`
 /// delimiters), or a [`Self::Slot`] hole where a named binding is interpolated at render.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -186,7 +186,7 @@ impl PromptTemplate {
 
     /// **`render`** — the rendered prompt: concatenate the template, substituting each
     /// `Slot n` with `bindings[n]` (an absent binding renders as empty). The exact bytes the
-    /// model is handed. Mirrors `ZkHandlebars.lean::render`.
+    /// model is handed. Mirrors `SlotConfinement.lean::render`.
     pub fn render(&self, bindings: &BTreeMap<String, String>) -> String {
         let mut out = String::new();
         for seg in &self.segments {
@@ -239,7 +239,7 @@ impl PromptTemplate {
 
     /// **`lit_only`** — the template's LITERAL bytes alone (drop every slot). The committed
     /// system-prompt / world-rules the DM published; the reference the player must not perturb.
-    /// Mirrors `ZkHandlebars.lean::litOnly`.
+    /// Mirrors `SlotConfinement.lean::litOnly`.
     pub fn lit_only(&self) -> String {
         let mut out = String::new();
         for seg in &self.segments {
@@ -639,7 +639,7 @@ mod tests {
         assert!(!verify_prompt_rendering(&t, &world, malicious, &rendered));
     }
 
-    /// NON-VACUITY (both polarities, mirroring `ZkHandlebars.lean::Demo`): a slot-confined
+    /// NON-VACUITY (both polarities, mirroring `SlotConfinement.lean::Demo`): a slot-confined
     /// player adds ZERO control tokens to the render; a `{{`-bearing player WOULD inject one —
     /// so the [`slot_confined`] guard is load-bearing, not decorative.
     #[test]

@@ -2,8 +2,10 @@
 //! round-trip at the executor altitude (`docs/deos/VK-EPOCH-CONSTRAINT-BINDING-DESIGN.md`).
 //!
 //! `required_capacity_caveat_tags` re-derives the capacity caveat tags a cell's
-//! declared constraint-set REQUIRES — the Rust twin of the Lean
-//! `Dregg2.Deos.ConstraintBinding.requiredTags`. This test pins the mapping and
+//! declared constraint-set REQUIRES. ⚠ There is NO concrete Lean counterpart:
+//! `Dregg2/Deos/ConstraintBinding.lean` takes `requiredTags : Decl → List Tag` as an
+//! ABSTRACT parameter and proves only the binding floor (`DeclCommitBinds`) over it —
+//! the concrete tag derivation exists ONLY in this Rust. This test pins the mapping and
 //! closes the omission-proof loop: the SAME declaration both PROJECTS its manifest
 //! entry (`project_slot_caveat_manifest`) AND yields its required tag, and coverage
 //! (`verify_slot_caveat_coverage`) accepts the honest projection but rejects a turn

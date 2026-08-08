@@ -1,5 +1,16 @@
 # Consensus from source: what the papers actually specify
 
+> ⚑ **STATUS (2026-08-08, evening): §0's τ deviation is FIXED — `d182d10fc` landed the CM Def. 6
+> rule.** The code this doc quotes for the deviation (`leaderCoverage`, the fold over
+> `findAllFinalLeaders`, `FinalizedRegionStable`, `stableCheck`) is a correct read of the MORNING
+> tree and is now HISTORICAL: `leaderCoverage`/`FinalizedRegionStable`/`stableCheck` are deleted,
+> segments are the anchor's own closure `[l] \ prev`, and the fold walks `previousRatifiedLeader`
+> from ONE head. Prefix-monotonicity is proved under `ClosedExtension` (structural) +
+> `ChainExtends` (CM Prop. 3, imported from the paper, owed a Lean proof). NOT fixed: the
+> `finalLeaderAt` retraction non-monotonicity (§0's second mismatch) — `ChainExtends` absorbs it.
+> `auto_evict_equivocator` (§5.5) is also deleted in flight. Rows below marked ❌ for these items
+> describe the pre-`d182d10fc` tree.
+
 **Date:** 2026-08-08
 **Method:** 11 papers read from `pdfs/`. Every claim about a protocol carries paper + section/algorithm/line.
 Every claim about our code carries `file:line`, verified at source.
@@ -482,7 +493,7 @@ no counterpart in the paper to agree or disagree with. Two narrower mismatches a
 | equivocations retained in the lace, not filtered at receipt (§1, §4.1) | offender recorded in `equivocators`, block **retained as evidence** (`finality.rs:1540`–`1557`) | ✅ faithful |
 | anchor decides segment inclusion via `approves` (Alg. 2 lines 39–40) | `hasEquivInPast` filter in `leaderSegment` (`BlocklaceFinality.lean:431`; `ordering.rs:691`–`693`) | ✅ role preserved |
 | equivocating leader anchors nothing (Lem. 31 ensures ≤1 ratified) | `finalLeaderAt` singleton rule (`BlocklaceFinality.lean:384`), theorem `finalLeaderAt_needs_unique_candidate` (`:1043`) | ⚠ same intent, **stronger and non-monotone** — see §0 |
-| repel/excommunicate the equivocator (§3, Def. 29, Prop. 39) | `auto_evict_equivocator` (`blocklace/src/constitution.rs:174`), wired at `node/src/blocklace_sync.rs:5566`; plus slashing (`federation/src/court.rs:191`), which CM does not specify at all | ✅ **exceeds** the paper |
+| repel/excommunicate the equivocator (§3, Def. 29, Prop. 39) | `auto_evict_equivocator` (`blocklace/src/constitution.rs:174`), wired at `node/src/blocklace_sync.rs:5566`; plus slashing (`federation/src/court.rs:191`), which CM does not specify at all | ❌ **not the paper's mechanism** — an in-memory, off-chain, restart-reverted, UNRATIFIED roster mutation: no lace record, thresholds and τ participant sets diverge across peers (FEDERATION-DESIGN-GAPS-2026-08-08.md §2.1; READING-BLOCKLACE-2026-08-08.md §0.1). Only the slashing half is genuinely beyond CM's spec |
 
 ### Mismatch 1 — two equivocation detectors with different scopes
 
@@ -667,10 +678,20 @@ CM App. D:
 > decreases. As a result, the supermajority needed for finality is not `(n+f)/2` … but
 > `(n+f−2f′)/(2(n−f′))`, where `f′` is the number of exposed faulty miners.
 
-CM files this as future work. `auto_evict_equivocator` (`blocklace/src/constitution.rs:174`–`185`)
-removes the equivocator and calls `compute_threshold(self.participants.len())` — i.e. we already do
-the thing the paper contemplates. Worth knowing that this is *ahead of* the paper rather than a
-deviation from it.
+CM files this as future work — and it is future work for a reason: the shrunken roster is an input
+to τ and to quorum, so the exclusion must itself be part of the agreed state before anyone may
+recount. `auto_evict_equivocator` (`blocklace/src/constitution.rs:174`–`185`) removes the
+equivocator and calls `compute_threshold(self.participants.len())` **locally**: no lace record
+(`committee_replay` folds only `MembershipVote` blocks), silently reverted on restart, never
+mirrored into `FinalizationVoteCollector`, threshold and τ participant set divergent across peers
+(FEDERATION-DESIGN-GAPS-2026-08-08.md §2.1). That is NOT the thing the paper contemplates — it is
+LL §5's reconfiguration attack in cardinality form. An earlier revision of this document called it
+"ahead of the paper"; that verdict is withdrawn. Until the eviction rides the ratified membership
+path (or the self-certifying proof is on-chain and the recount deterministic from the lace), the
+App. D threshold shrink is a fork generator, not a head start. (In-flight as of 08-08 late:
+`auto_evict_equivocator` is DELETED in the working tree — exclusion moves inside τ as a predicate
+over each block's causal closure, carried by the `CreatorTips` two-tips evidence floor, with
+membership changes remaining voted proposals; see `blocklace/src/constitution.rs`'s header.)
 
 ### 5.6 Garbage collection: the papers say we cannot have fairness and GC together in asynchrony
 
@@ -712,10 +733,10 @@ anchored** when a second leader-slot block arrives late. CM's rule is both more 
 
 | # | Question | Papers say | We do | Agree? |
 |---|---|---|---|---|
-| **0/1** | Ordering input | Anchor's causal past `[b1] \ [b2]`, fixed by signed pointers (CM Def. 6, Alg. 2:37) | Union of causal pasts of live-lace ratifiers at wave end (`BlocklaceFinality.lean:409`) | ❌ **DEVIATION** — bug fix, ours to do |
-| **2** | Prefix-monotonicity | **Guaranteed** (CM Prop. 9) under cordial + closed + supermajority-correct — all established *by construction* | Assumed as `FinalizedRegionStable` (`TauPrefixMonotone.lean:102`), **evaluated nowhere** (zero executable refs repo-wide) | ❌ we assume what CM proves |
+| **0/1** | Ordering input | Anchor's causal past `[b1] \ [b2]`, fixed by signed pointers (CM Def. 6, Alg. 2:37) | ~~Union of causal pasts of live-lace ratifiers at wave end~~ **FIXED `d182d10fc`**: anchor's own closure `[l] \ prev` | ✅ **was ❌; landed same day** |
+| **2** | Prefix-monotonicity | **Guaranteed** (CM Prop. 9) under cordial + closed + supermajority-correct — all established *by construction* | ~~Assumed as `FinalizedRegionStable`~~ **`d182d10fc`**: proved under `ClosedExtension` (structural) + `ChainExtends` (CM Prop. 3, imported from the paper, owed a Lean proof) | ⚠ **was ❌; leader-safety still an import** |
 | **2** | Prefix caching | Explicitly authorised **because of Prop. 9** (CM §5 p. 9) | `ExecutionCursor` does it without Prop. 9 → two honest nodes apply different sequences (`execution_cursor.rs:437`, asserted) | ❌ optimisation without its premise |
-| **3** | Equivocation, blocklace layer | Retain both; anchor decides via `approves`; repel (CM Alg. 1:17, Alg. 2:39, Def. 29) | `detect_equivocation` faithful; retained as evidence; anchor filter present; evict **and slash** | ✅ mostly, and exceeds on slashing |
+| **3** | Equivocation, blocklace layer | Retain both; anchor decides via `approves`; repel (CM Alg. 1:17, Alg. 2:39, Def. 29) | `detect_equivocation` faithful; retained as evidence; anchor filter present; evict **and slash** | ⚠ detector/retention/anchor-filter faithful; the EVICT is an unratified local roster mutation — ❌, see §5.5 and FEDERATION-DESIGN-GAPS-2026-08-08.md §2.1; slashing is beyond CM's spec |
 | **3** | Equivocation, ordering index | Round-independent incomparability (CM Def. 17) | `(creator, round)` groups (`ordering.rs:205`) — sound, **incomplete** | ⚠ narrower; needs a test |
 | **3** | Finalization votes | **No such channel exists in CM** — ratification is ordinary blocks | First-write-wins collector, unconnected to blocklace equivocators (`finalization_votes.rs:596`) | ⚠ no counterpart; invented surface |
 | **4** | Federation membership | **Not settled.** CM is named as *not grassroots* (GS §2.1, ref [16]); grassroots consensus is **future work** | Permissioned: sponsor + `⌊2n/3⌋+1` ratification | — invention, and legitimately so |

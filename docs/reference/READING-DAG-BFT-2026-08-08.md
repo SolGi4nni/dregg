@@ -1,5 +1,14 @@
 # Reading the DAG-BFT lineage: where Cordial Miners sits, and what came after
 
+> ⚑ **STATUS (2026-08-08, evening): C1 LANDED as `d182d10fc`.** Everything below describing OUR τ
+> as coverage-based — `leaderCoverage` (deleted), the fold over `find_all_final_leaders` (now feeds
+> only head selection; the chain walks ratified leaders inside the head's closure), and
+> `FinalizedRegionStable` (deleted; the surviving hypothesis is `ChainExtends`, with
+> `ClosedExtension` structural) — is a correct read of the MORNING tree and is historical now.
+> The `finalLeaderAt` retraction defect (§3.3's "the more fundamental of the two") is NOT fixed;
+> `ChainExtends` absorbs it. C2 (cordiality at admission) is now DEFINED (`isCordialBlock`,
+> BlocklaceFinality §5c) but NOT wired to the receive path.
+
 **Date:** 2026-08-08
 **Method:** 10 papers read as text from `pdfs/`. Every claim about a paper carries paper +
 section/lemma/algorithm-line. Every claim about our code carries `file:line`, verified at source.

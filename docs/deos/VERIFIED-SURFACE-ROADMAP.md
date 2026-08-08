@@ -47,9 +47,11 @@ cryptographic-floors section below classifies each floor's, because several Bool
 
 ### Chain consistency under growth — finalization is append-only (conditionally)
 - **`tau_finalized_prefix_monotone`** (`Dregg2/Consensus/TauPrefixMonotone.lean`) — the finalized
-  prefix is append-only UNDER `FinalizedRegionStable` (closed finalized region), with the
-  unconditional claim REFUTED by an explicit honest-laggard counterexample. A soundness FINDING,
-  not a clean win: the node's `executed_up_to` slicing is missing the stability check this names.
+  prefix is append-only UNDER `ClosedExtension` + `ChainExtends` (CM Prop. 3 leader-safety,
+  imported from the paper, owed a Lean proof). The former `FinalizedRegionStable` is deleted and
+  the old honest-laggard refutation RETRACTED — it refuted a τ that had deviated from CM Def. 6,
+  not the CM rule; node side, the bare `executed_up_to` slicing was replaced by the identity
+  cursor (`node/src/execution_cursor.rs`).
 
 ### Whole-history light client — the aggregate attests a FINALIZED history
 - **`light_client_verifies_whole_history`** + the three-leg headline

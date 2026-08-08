@@ -2,6 +2,14 @@
 
 **Date** 2026-08-08 · **Tree** `/Users/ember/dev/breadstuffs` at `1dd15dd09` (shared tree, live lanes —
 line numbers verified at read time, drift is expected)
+
+> ⚑ **UPDATE (same day, evening — `d182d10fc` + the citation-truth pass):** the stale-citation items
+> below moved. `isCordialBlock` NOW EXISTS (BlocklaceFinality §5c — authored AFTER being cited; it is
+> still NOT wired to the receive path and has no `@[export]`, so "and exports" remains false).
+> `FinalizedRegionStable`'s citing files were repaired or queued as patches; the name (with
+> `stableCheck`, `leaderCoverage`, and friends) is now enforced dead by
+> `scripts/check-lean-citations.py` + `.github/dead-lean-names.txt`. Cordiality at ADMISSION is
+> still unenforced — the finding stands; only the "does not exist" clauses are dated.
 **Papers** all in `pdfs/`, cited by section. **Code** verified at source; every line number below was
 opened, not inferred.
 

@@ -185,7 +185,7 @@ theorem merge_monotone_delta (B Δ : Lace) : laceIds Δ ⊆ laceIds (mergeLace B
 /-- **`merge_least_upper_bound` (the JOIN universal property).** `mergeLace B Δ`'s keyset is the
 LEAST keyset containing both `B`'s and `Δ`'s: any lace `U` whose keyset contains both contains the merge's.
 So `mergeLace` computes the genuine lattice JOIN `⊔` — not merely an upper bound — which is what makes the
-blocklace a join-semilattice CRDT (Almog–Lewis–Naor–Shapiro §3, "universal CRDT"). -/
+blocklace a join-semilattice CRDT (Almeida–Shapiro §3, "universal CRDT"). -/
 theorem merge_least_upper_bound (B Δ U : Lace)
     (hB : laceIds B ⊆ laceIds U) (hΔ : laceIds Δ ⊆ laceIds U) :
     laceIds (mergeLace B Δ) ⊆ laceIds U := by
@@ -332,10 +332,11 @@ and this module does not derive it. Stated at the resolution it deserves:
 `B₁.Canonical → B₂.Canonical → laceIds B₁ = laceIds B₂ → CrossCanonical B₁ B₂ →
 tauOrder B₁ p w = tauOrder B₂ p w`, and no theorem in this tree proves it. Two things stand in the way,
 and neither is a formality:
-* `BlocklaceFinality.computeRounds` and `xsortBy` are both `Array.qsort` folds, and this toolchain has no
-  `qsort` permutation lemma (`BlocklaceFinality.lean:337` says so at the definition site). Every step of
-  the argument has to be threaded through `computeRounds`' accumulator fold and the `xsortBy`
-  linearization.
+* `BlocklaceFinality.computeRounds` is an `Array.qsort` fold, and this toolchain has no `qsort`
+  permutation lemma (the definition site says so). Every step of the argument has to be threaded
+  through `computeRounds`' accumulator fold and the `xsortBy` linearization. (Since `d182d10fc`,
+  `xsortBy` is a `List.mergeSort`, which DOES carry `mergeSort_perm` — that half of the obstacle
+  is materially smaller now; the `qsort` half stands.)
 * `computeRounds` sorts by `(seq, creator)`, a comparator with genuine TIES — and a tie is exactly an
   EQUIVOCATING pair (two blocks by one creator at one seq, which is the adversary this module's witness
   lace exhibits). So `qsort`'s output order on the tied blocks is a function of the INPUT order, and the

@@ -1,26 +1,30 @@
 //! Identity-tracking execution cursor over the tau-finalized block order.
 //!
-//! # Why this exists (the TauPrefixMonotone soundness finding)
+//! # Why this exists (the TauPrefixMonotone soundness finding, and what became of it)
 //!
 //! `blocklace_sync::poll_finalized_blocks` used to keep a bare INDEX
 //! (`executed_up_to`) into the finalized order computed by `ordering::tau` and
 //! slice `ordered[executed_up_to..]` each poll. That is sound **iff** the
-//! already-executed prefix of the order is bit-identical across polls — and the
-//! machine-checked theorem `metatheory/Dregg2/Consensus/TauPrefixMonotone.lean`
-//! REFUTES that unconditionally: an honest lagging validator that catches up can
-//! emit a wave-end block ratifying an ALREADY-FINAL leader, growing that wave's
-//! coverage, and the late blocks sort into the MIDDLE of the already-executed
-//! region (`lagBase → lagGrown`, `#guard`-pinned: insert-valid, equivocation-free,
-//! yet the old order is not a prefix of the new). Under index slicing the node
-//! then (a) RE-EXECUTES a block past the cursor and (b) NEVER executes a
-//! finalized honest block that fell behind the cursor. No Byzantine step needed;
-//! any n>1 deployment can hit it.
+//! already-executed prefix of the order is bit-identical across polls — and at the
+//! time, `metatheory/Dregg2/Consensus/TauPrefixMonotone.lean` REFUTED that
+//! unconditionally: an honest lagging validator that caught up could emit a
+//! wave-end block ratifying an ALREADY-FINAL leader, growing that wave's
+//! coverage, and the late blocks sorted into the MIDDLE of the already-executed
+//! region. ⚠ HISTORY, as of `d182d10fc`: that refutation was a fact about a τ that
+//! had DEVIATED from CM Def. 6 (segments were live-lace ratifier coverage, which
+//! grows with arrivals). The deviation is FIXED — a segment is now the anchor's
+//! OWN closure, fixed by its signed pointers — and on the same lag trace the old
+//! order IS a prefix of the new; the counterexample is retained in the Lean
+//! INVERTED, as the positive exhibit.
 //!
-//! # The closure (this module)
+//! # Why the identity cursor STAYS (the closure, on the corrected theorem)
 //!
-//! The corrected theorem (`tau_finalized_prefix_monotone`) shows prefix stability
-//! was a CONDITIONAL property the node could not discharge
-//! locally. So the cursor must not depend on it: this module tracks executed
+//! The corrected theorem (`tau_finalized_prefix_monotone`) makes prefix stability
+//! CONDITIONAL on `ClosedExtension` + `ChainExtends` (CM Prop. 3 leader-safety —
+//! imported from the paper, owed a Lean proof), and the node cannot discharge
+//! `ChainExtends` locally: `finalLeaderAt` is non-monotone where CM's
+//! `final_leader` is, so a live equivocating leader can still RETRACT an anchored
+//! wave and shorten τ. So the cursor must not depend on it: this module tracks executed
 //! blocks **by identity** (`BlockId` = blake3 of signed content; one id per
 //! `(creator, seq)` by the verified insert's equivocation exclusion) and each
 //! poll executes exactly the finalized blocks **not yet executed, in the CURRENT
@@ -31,10 +35,10 @@
 //!
 //! The prefix-shift event itself is surfaced as OBSERVABILITY (not correctness):
 //! [`ExecutionCursor::observe_order`] diffs the previously computed order
-//! against the new one — the executable conclusion-level mirror of the Lean
-//! `stableCheck` (the theorem header names "diffed the recomputed prefix against
-//! the executed one" as exactly this check) — so operators see
-//! reorgs-by-catchup happen (loud log + `dregg_tau_prefix_shifts_total`).
+//! against the new one so operators see reorgs happen (loud log +
+//! `dregg_tau_prefix_shifts_total`). (The Lean-side runtime mirror this once
+//! cited, `stableCheck`, was deleted as never-called; the observability signal
+//! is this module's own.)
 //!
 //! # Memory & durability (honest accounting)
 //!
@@ -195,10 +199,11 @@ impl ExecutionCursor {
             .collect()
     }
 
-    /// Observability (the `stableCheck` signal, conclusion-level): record the
+    /// Observability (the prefix-shift signal, conclusion-level): record the
     /// newly computed finalized order and report whether the previously
     /// computed one is still a prefix of it. `false` = the finalized region
-    /// shifted under us — the Lean counterexample happening live. The identity
+    /// shifted under us — e.g. an equivocating leader retracting an anchored
+    /// wave (the `ChainExtends` failure mode still live post-`d182d10fc`). The identity
     /// cursor ABSORBS the shift correctly; this only makes it visible.
     pub fn observe_order(&mut self, ordered: &[BlockId]) -> bool {
         let stable = ordered.len() >= self.last_order.len()
@@ -227,13 +232,17 @@ mod tests {
         [i; 32]
     }
 
-    /// The TauPrefixMonotone §4 counterexample (`lagBase → lagGrown`), ported
-    /// block-for-block to the REAL Rust `ordering::tau` (default wavelength 3):
-    /// 4 validators (supermajority 3); validator 4 publishes genesis then LAGS;
-    /// validators 1–3 complete rounds 2–3 and wave 0 finalizes all 10 blocks;
-    /// THEN validator 4 catches up with its round-2 block ("41") and a round-3
-    /// block ("42") that RATIFIES the already-final wave-0 leader — growing the
-    /// wave's coverage so the late blocks sort into the executed region.
+    /// ⚠ STALE FIXTURE — encodes the PRE-`d182d10fc` coverage-τ, which no longer
+    /// exists. This was the TauPrefixMonotone §4 counterexample (`lagBase →
+    /// lagGrown`) ported block-for-block to the then-deployed `ordering::tau`:
+    /// validator 4 lags, catches up, and its late ratifier GREW the wave's
+    /// coverage so late blocks sorted into the executed region. Against the
+    /// landed CM Def. 6 τ (segments = the anchor's OWN closure) the same trace
+    /// is PREFIX-STABLE — the Lean retains it inverted as the positive exhibit —
+    /// and this helper's mid-prefix search cannot succeed (a 3-round lace now
+    /// emits exactly the anchor), so the five tests consuming it need a RE-ARM
+    /// against the new rule (e.g. the still-real `ChainExtends` failure: an
+    /// equivocating leader's late leader-slot block retracting an anchored wave).
     ///
     /// Returns `(base_order, grown_order, id41, id42)` as finality-layer ids
     /// (the coordinate `poll_finalized_blocks` cursors over).
@@ -430,10 +439,11 @@ mod tests {
     /// This is the boundary `TauPrefixMonotone.lean` names. Its
     /// `tau_executed_prefix_fixed` — "the executed region is bit-identical" —
     /// holds under `ClosedExtension` + `ChainExtends`, and the trace below WAS a
-    /// witness that the hypothesis fails. The identity cursor's answer to that
-    /// failure preserves LIVENESS (exactly-once) and abandons the ORDER
-    /// AGREEMENT the theorem was supplying. The node checks `stableCheck`
-    /// nowhere; `observe_order` only counts the shift and logs it.
+    /// witness that the (pre-`d182d10fc`) hypothesis failed. The identity
+    /// cursor's answer to that failure preserves LIVENESS (exactly-once) and
+    /// abandons the ORDER AGREEMENT the theorem was supplying. The node cannot
+    /// discharge `ChainExtends` locally; `observe_order` only counts a shift
+    /// and logs it.
     #[test]
     fn two_honest_nodes_that_polled_at_different_times_apply_a_different_sequence() {
         let (base, grown, id41, _id42) = lag_trace_orders();
@@ -518,7 +528,7 @@ mod tests {
         );
     }
 
-    /// The stableCheck observability signal: a pure extension is stable; the
+    /// The prefix-shift observability signal: a pure extension is stable; the
     /// catch-up reorg trips the signal exactly once and is absorbed.
     #[test]
     fn prefix_shift_signal_fires_on_catchup_reorg_only() {

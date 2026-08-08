@@ -33,11 +33,15 @@
 > payloads changed: **re-genesis any devnet carrying membership history.** An old-shape Join block
 > no longer decodes. `dregg-node propose-epoch-transition --add <pk>` now **refuses** unless the
 > candidate's ML-DSA key is known (from its own join request, or from committed state) — because
-> authoring a Join without it would author the finality halt in (3).
+> authoring a Join without it would author the finality halt in (3). (⚠ The refusal is real in the
+> authoring decision but does not currently reach the CLI's exit status or message — see the Known
+> defect box in the operator walk below.)
 
 A dregg federation admits a new validator as an **on-chain operation**: the
-candidate proposes, the current committee's quorum approves, and the running
-committee advances at the next wave boundary. The chain keeps advancing
+candidate announces itself over the self-certifying join-request channel, a
+current committee member authors the Join proposal under its own key, the
+committee's quorum approves, and the running committee advances at the next
+wave boundary. The chain keeps advancing
 throughout; the `federation_id` does not change, so bots, bridges, and light
 clients never re-point; nobody restarts anything. This page is the complete
 walk for both sides of that handshake.
@@ -139,9 +143,20 @@ dregg-node propose-epoch-transition --add <candidate-pubkey>
 An add needs the candidate's ML-DSA-65 key, and nothing can derive it —
 `ML-DSA.KeyGen` needs the seed. It arrives exactly one way: in the candidate's
 own join request, whose proof of possession this node checked. With no such
-request (and no committed key, i.e. the re-add-a-former-member case) the command
-refuses and says so, rather than authoring a Join whose ratification would halt
-finality on every node in the federation.
+request (and no committed key, i.e. the re-add-a-former-member case) the node
+refuses to author the Join, rather than authoring one whose ratification would
+halt finality on every node in the federation.
+
+> ⚠ **Known defect — the refusal does not reach your terminal.** The refusal is
+> real in the authoring decision (`blocklace_sync.rs::propose_membership` returns
+> `None` and logs the reason at `error!` level on the NODE), but the HTTP handler
+> (`node/src/api.rs:10122`–`10151`) collapses it into `success: true` with the
+> string `"error: durable persist failed; proposal not created"` in the proposal
+> column, and the CLI prints a success line and exits 0. Until that is fixed, a
+> "successful" `--add` whose proposal column reads `error: durable p…` means the
+> ML-DSA key was missing — check `/api/membership` for the proposal, and the
+> node's log for the true reason. The misattributed diagnosis is the bug, not
+> the refusal.
 
 The same verbs do removal and rotation: `--remove <pubkey>`,
 `--rotate <old> <new>` — each is a proposal the committee's quorum must pass.
@@ -157,8 +172,10 @@ The same verbs do removal and rotation: `--remove <pubkey>`,
   in-flight proposal tallies) from its persisted chain and anchors recovery
   against the committee that actually signed each attested root — an admitted
   validator never reverts to "unknown" because someone rebooted.
-- **Proposing is not authority.** Anyone can put a Join proposal on-chain;
-  only CURRENT participants' approval votes count, and the quorum rule is the
+- **Proposing is not authority.** Only a CURRENT committee member can author a
+  Join proposal (an unenrolled key's blocks are dropped at the transport and
+  refused at ingest — the candidate's only voice is the join-request channel),
+  and only CURRENT participants' approval votes count; the quorum rule is the
   same supermajority that finalizes blocks.
 - **Devnet shortcut.** `--auto-approve-joins` (or a `.devnet` marker) makes a
   node approve every Join automatically. Never in production — any peer could

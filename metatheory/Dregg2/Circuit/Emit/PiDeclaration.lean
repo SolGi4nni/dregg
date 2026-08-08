@@ -67,8 +67,10 @@ thing a producer can have.
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; no crypto hypothesis anywhere — every
 statement here is about the constraint system's SHAPE, not about a hash.
 
-The armed half — the refusals, which are the part that can go RED — is
-`Dregg2.Circuit.PiDispositionBite`.
+The armed half — the refusals, which are the part that can go RED — was to be
+`Dregg2.Circuit.PiDispositionBite`: NEVER AUTHORED (cited at its own birth in `65a035706`
+and never landed). What exists is the census half (`UnforcedPiPins`, imported below, whose
+exhibits show the pins refuse NOTHING); the disposition bite is still owed.
 -/
 import Dregg2.Circuit.Emit.UnforcedPiPins
 

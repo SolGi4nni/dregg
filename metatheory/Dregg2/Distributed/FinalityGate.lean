@@ -32,12 +32,16 @@ is now, by construction, one the verified model finalizes.
    `gateAdmits B P w (c, s)` — "the verified rule finalizes the block `(creator=c, seq=s)`" — and
    `gate_admits_iff_verified_finalizes`: the gate ADMITS a `(creator, seq)` iff that pair is in the
    verified `tauGolden` order. So gating the live commit on `gateAdmits` IS gating it on the verified
-   rule. Plus `gate_excludes_equivocator` at n=3: the gate REFUSES to admit any block from a leader
-   that equivocated at its slot — the live-path safety tooth, proved over the gate.
+   rule. Plus the concrete n=3 safety instances: an equivocating leader's lace anchors NOTHING
+   (`the_equivocating_lace_anchors_nothing`) and a present-but-unanchored block is refused
+   (`gate_refuses_a_present_unanchored_block`) — the live-path safety teeth, proved over the gate.
 
-4. **n>1 non-vacuity** (`#guard`): on the concrete 3-node lace the gate admits exactly the verified
-   nine `(creator, seq)` finalized blocks, and on the equivocating-leader lace it admits NOTHING from
-   the equivocator — the gate reproduces the verified rule at n=3.
+4. **n>1 non-vacuity** (named `native_decide` theorems + `#assert_compiled`, per
+   `metatheory/docs/GUARD-DISCIPLINE.md`): on the concrete 3-node laces the gate anchors exactly
+   what the verified ANCHOR-CHAIN rule (CM Alg. 2, `BlocklaceFinality` §5b) finalizes — one wave
+   delivers its leader's closure (`F=1:0`), two waves deliver the first wave's whole cohort plus
+   the second anchor (ten blocks) — and on the equivocating-leader lace it admits NOTHING: the
+   gate reproduces the verified rule at n=3.
 
 ## SCOPE.
 
@@ -55,7 +59,10 @@ is now, by construction, one the verified model finalizes.
 * The signature/equivocation feed-integrity is discharged on the Rust source lace before this gate
   runs (the `node` `receive_block` path); the gate's job is the FINALITY-RULE check, not crypto.
 
-`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}).
+`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}) for the spec theorems;
+concrete-trace instances are `native_decide` + `#assert_compiled` (`tauGolden`/`tauOrder` ride
+`sortedLace`'s `Array.qsort`, which does not kernel-reduce under `decide` — the boundary
+`BlocklaceFinality` §9 records for its own trace pins).
 Verified with `lake build Dregg2.Distributed.FinalityGate`.
 -/
 import Dregg2.Distributed.BlocklaceFinality
@@ -67,7 +74,7 @@ open Dregg2.Authority.Blocklace (Block Lace BlockId AuthorId)
 open Dregg2.Distributed.BlocklaceFinality
   (tauOrder tauGolden tauOrderFast tauGoldenFast tauOrderFast_eq tauGoldenFast_eq
    findAllFinalLeaders finalLeaderAt leaderCandidates hasEquivInPast
-   trace3 trace3Participants traceEquiv)
+   trace3 trace3Participants trace6 traceEquiv)
 
 /-! ## 1. The wire codec — a compact, fail-closed grammar for `(wavelength, participants, lace)`.
 
@@ -118,7 +125,7 @@ def parseLace? (s : String) : Option Lace :=
 
 /-- Strip a required `prefix` from `s`, returning the remainder, or `none` if absent. -/
 def stripReq? (pfx s : String) : Option String :=
-  if s.startsWith pfx then some ((s.toList.drop pfx.length).asString) else none
+  if s.startsWith pfx then some (String.ofList (s.toList.drop pfx.length)) else none
 
 /-- **`decodeLaceWire`** — parse the full `INPUT` grammar into `(wavelength, participants, lace)`.
 Fail-closed on any deviation. -/
@@ -211,20 +218,22 @@ theorem gate_admits_subset_verified (B : Lace) (P : List AuthorId) (w : Nat) (cs
 
 The anti-equivocation tooth at n>1 is the GENERAL statement: the gate's admitted set is exactly the
 verified `tauGolden` order (`gate_admits_iff_verified_finalizes`), and that order is the output of the
-verified `tauOrder`/`findAllFinalLeaders` rule whose safety (`finalLeaderAt_needs_unique_candidate`:
+verified `tauOrder` rule (head from `findAllFinalLeaders`/`lastFinalLeader`, chain via
+`previousRatifiedLeader` since `d182d10fc`) whose safety (`finalLeaderAt_needs_unique_candidate`:
 an equivocating leader anchors nothing) is proved in `BlocklaceFinality`. So the gate inherits, by the
 iff, the rule's equivocation exclusion. We state the inheritance generally and witness it at n=3 via
-the `#guard`s below (`qsort`-laden `tauGolden` does not kernel-reduce under `decide`, so the concrete
-exclusion is a machine-checked `#guard`, the project's sanctioned tooth — a false `#guard` is a build
-error). -/
+the NAMED `native_decide` theorems below (`qsort`-laden `tauGolden` does not kernel-reduce under
+`decide`, so each concrete exclusion is a named compiled pin + `#assert_compiled`, per
+`metatheory/docs/GUARD-DISCIPLINE.md` — a false pin is a build error, and now it has a name and an
+axiom record too). -/
 
 /-- **`gate_admit_is_rule_output` (the gate carries the verified rule's safety).** Whatever
 the gate admits is an element of the verified finalized order `tauGolden B P w`, which is the
-projection of the verified `tauOrder` (`findAllFinalLeaders`) the safety theorems constrain. So any
+projection of the verified `tauOrder` the safety theorems constrain. So any
 safety fact about `tauGolden` (e.g. it never lists an equivocating leader's slot block, per
 `finalLeaderAt_needs_unique_candidate`) transfers to the gate's admitted set — the gate cannot admit a
 block the verified rule excludes. This is the general n>1 anti-equivocation inheritance; the concrete
-n=3 witness is the equivocator `#guard` in §6. -/
+n=3 witness is `the_equivocating_lace_anchors_nothing` in §6. -/
 theorem gate_admit_is_rule_output (B : Lace) (P : List AuthorId) (w : Nat) (cs : AuthorId × Nat)
     (h : gateAdmits B P w cs = true) :
     ∃ ys, tauGolden B P w = ys ∧ cs ∈ ys :=
@@ -233,28 +242,83 @@ theorem gate_admit_is_rule_output (B : Lace) (P : List AuthorId) (w : Nat) (cs :
 /-! ## 5. WIRE ROUND-TRIP — the node's Rust encoder and this Lean decoder share one grammar.
 
 `decodeLaceWire`/`encodeLaceWire` use `String.splitOn` and the kernel cannot reduce them under
-`decide` at the sizes here, so codec faithfulness on the concrete trace is a `#guard` (§6). The
-GENERAL structural correctness we DO prove: the output encoder is injective enough that distinct
-finalized orders encode to distinct wires — captured by `encodeFinalWire` being a function (any wire
-ambiguity would surface as a failed round-trip `#guard`). -/
+`decide` at the sizes here, so codec faithfulness on the concrete trace is a named `native_decide`
+theorem (§6). The GENERAL structural correctness we DO prove: the output encoder is injective
+enough that distinct finalized orders encode to distinct wires — captured by `encodeFinalWire`
+being a function (any wire ambiguity would surface as a failed round-trip pin). -/
 
-/-! ## 6. NON-VACUITY `#guard`s — the gate reproduces the verified rule at n=3, on the wire. -/
+/-! ## 6. NON-VACUITY — NAMED, not `#guard`ed. The gate reproduces the verified rule at n=3, on the
+wire, in both polarities. These were seven `#guard`s; each is now a theorem with a name, a term and
+an axiom record, per `metatheory/docs/GUARD-DISCIPLINE.md` (the concrete traces ride `Array.qsort`,
+so they are `native_decide` + `#assert_compiled`, the same boundary `BlocklaceFinality` §9 records).
 
--- the gate, run on the ENCODED 3-node lace, returns the verified nine-block finalized order.
-#guard finalizeGate (encodeLaceWire 3 trace3Participants trace3)
-        == "F=1:0,2:0,3:0,1:1,2:1,3:1,1:2,2:2,3:2"
--- the gate ADMITS each of the nine verified blocks (n>1 satisfiability of admission).
-#guard (tauGolden trace3 trace3Participants 3).all (fun cs => gateAdmits trace3 trace3Participants 3 cs)
--- the gate REFUSES a block NOT finalized by the verified rule (here a phantom (creator 1, seq 9)).
-#guard ¬ gateAdmits trace3 trace3Participants 3 (1, 9)
--- on the equivocating lace the gate admits NOTHING from the equivocator (creator 1): live-path safety.
-#guard (tauGolden traceEquiv trace3Participants 3).all (fun cs => cs.1 != 1)
--- the wire codec round-trips on the concrete trace (Rust-encoder ⟷ Lean-decoder shared grammar).
-#guard decodeLaceWire (encodeLaceWire 3 trace3Participants trace3)
-        == some (3, trace3Participants, trace3)
--- a malformed wire is FAIL-CLOSED to the ERR sentinel (the node finalizes NOTHING).
-#guard finalizeGate "not a wire" == "ERR"
-#guard finalizeGate "w=3;P=1,2,3;B=bad:block" == "ERR"
+⚑ **THE EXPECTATIONS MOVED 2026-08-08, WITH THE RULE.** τ is CM Alg. 2's ANCHOR CHAIN now
+(`BlocklaceFinality` §5b): the head is the DEEPEST final leader and the delivered history is that
+anchor's own CLOSURE — so one 9-block wave (`trace3`) finalizes exactly its leader's closure,
+`[(1,0)]`, and wave 0's ratifying rounds are delivered when the NEXT wave's leader anchors
+(`trace6`: ten blocks). The previous expectation here — the nine-block order off one wave — was
+the fold-over-final-leaders delivery whose non-prefix-monotonicity `Consensus.TauPrefixMonotone`
+refuted; `BlocklaceFinality` §9 pins the same moved values on the raw rule. -/
+
+/-- One wave anchors exactly its leader's closure: the round-0 leader block, alone. The
+ratifying rounds are SUPPORT, not yet HISTORY — they are what `trace6` delivers. -/
+theorem gate_finalizes_the_anchor_closure_at_one_wave :
+    finalizeGate (encodeLaceWire 3 trace3Participants trace3) = "F=1:0" := by native_decide
+
+/-- ⚑ Two waves deliver wave 0's WHOLE cohort plus the wave-1 anchor — the multi-block
+non-vacuity tooth (ten blocks, every round-1/2 block of wave 0 included, order pinned). -/
+theorem gate_finalizes_two_waves_on_the_wire :
+    finalizeGate (encodeLaceWire 3 trace3Participants trace6)
+      = "F=1:0,2:0,3:0,1:1,2:1,3:1,1:2,2:2,3:2,2:3" := by native_decide
+
+/-- the gate ADMITS each of the ten verified finalized blocks (n>1 satisfiability of admission). -/
+theorem gate_admits_every_finalized_block :
+    (tauGolden trace6 trace3Participants 3).all
+      (fun cs => gateAdmits trace6 trace3Participants 3 cs) = true := by native_decide
+
+/-- the gate REFUSES a block NOT finalized by the verified rule (a phantom `(creator 1, seq 9)`). -/
+theorem gate_refuses_a_phantom :
+    gateAdmits trace6 trace3Participants 3 (1, 9) = false := by native_decide
+
+/-- ⚑ the gate REFUSES a block that is PRESENT and SUPPORTING but not yet ANCHORED: `(2,0)` is in
+`trace3` and ratifies the wave-0 leader, and the old fold-delivery rule admitted it off one wave;
+the anchor-chain rule delivers it only at the next anchor (`gate_admits_every_finalized_block`
+has it at `trace6`). This is the instance that separates the two rules — it turns red if the
+eager delivery ever comes back. -/
+theorem gate_refuses_a_present_unanchored_block :
+    gateAdmits trace3 trace3Participants 3 (2, 0) = false := by native_decide
+
+/-- the equivocating lace anchors NOTHING — no final leader, empty order (live-path safety; the
+general theorem is `finalLeaderAt_needs_unique_candidate`). Non-vacuous against
+`gate_finalizes_two_waves_on_the_wire`: the same rule demonstrably CAN anchor, and here refuses. -/
+theorem the_equivocating_lace_anchors_nothing :
+    tauGolden traceEquiv trace3Participants 3 = [] := by native_decide
+
+/-- the wire codec round-trips on the concrete traces (Rust-encoder ⟷ Lean-decoder shared grammar). -/
+theorem wire_roundtrips_on_trace3 :
+    decodeLaceWire (encodeLaceWire 3 trace3Participants trace3)
+      = some (3, trace3Participants, trace3) := by native_decide
+
+theorem wire_roundtrips_on_trace6 :
+    decodeLaceWire (encodeLaceWire 3 trace3Participants trace6)
+      = some (3, trace3Participants, trace6) := by native_decide
+
+/-- a malformed wire is FAIL-CLOSED to the ERR sentinel (the node finalizes NOTHING). -/
+theorem gate_garbage_is_err : finalizeGate "not a wire" = "ERR" := by native_decide
+
+theorem gate_bad_block_is_err :
+    finalizeGate "w=3;P=1,2,3;B=bad:block" = "ERR" := by native_decide
+
+#assert_compiled gate_finalizes_the_anchor_closure_at_one_wave
+#assert_compiled gate_finalizes_two_waves_on_the_wire
+#assert_compiled gate_admits_every_finalized_block
+#assert_compiled gate_refuses_a_phantom
+#assert_compiled gate_refuses_a_present_unanchored_block
+#assert_compiled the_equivocating_lace_anchors_nothing
+#assert_compiled wire_roundtrips_on_trace3
+#assert_compiled wire_roundtrips_on_trace6
+#assert_compiled gate_garbage_is_err
+#assert_compiled gate_bad_block_is_err
 
 /-! ## 7. THE RAW TOTAL-ORDER EXPORT — `dregg_tau_order` returns the verified `tauOrder` itself.
 
@@ -293,10 +357,10 @@ the wire-encoded lace and reads back the verified `tauOrder` (the ordered `Block
 def dregg_tau_order (s : String) : String := tauOrderGate s
 
 /-- **`decodeOrderWire`** — parse a `T=`-prefixed output back to the `BlockId` list. The inverse the
-node's Rust decoder mirrors; the `decode ∘ encode = id` round-trip is `#guard`-witnessed on the
-concrete order (`splitOn`/`toString` are `decide`-opaque at general length, the project's TCB-codec
-discipline), and the EXPORT-EQUALITY proof below is stated at the structural `encodeOrderWire` level
-so it is order-faithful. -/
+node's Rust decoder mirrors; the `decode ∘ encode = id` round-trip is witnessed by the named
+compiled pins below (`splitOn`/`toString` are `decide`-opaque at general length, the project's
+TCB-codec discipline), and the EXPORT-EQUALITY proof below is stated at the structural
+`encodeOrderWire` level so it is order-faithful. -/
 def decodeOrderWire (s : String) : Option (List BlockId) := do
   let body ← stripReq? "T=" s
   parseNatList? ',' body
@@ -306,8 +370,8 @@ def decodeOrderWire (s : String) : Option (List BlockId) := do
 `encodeOrderWire` of the verified `BlocklaceFinality.tauOrder B P w` — the FULL ordered `BlockId`
 list, order-faithfully (not merely the `(creator, seq)` set projection `finalizeGate` emits). So the
 total order the node reads off the export IS the verified `tauOrder`, by construction (the output
-codec is a deterministic injective encoder, `#guard`-round-tripped). Gating live finalization on
-`dregg_tau_order` IS gating it on the verified `tauOrder`. -/
+codec is a deterministic injective encoder, round-tripped by `order_wire_roundtrips`). Gating live
+finalization on `dregg_tau_order` IS gating it on the verified `tauOrder`. -/
 theorem tau_order_export_eq (s : String) (w : Nat) (parts : List AuthorId) (B : Lace)
     (h : decodeLaceWire s = some (w, parts, B)) :
     dregg_tau_order s = encodeOrderWire (tauOrder B parts w) := by
@@ -333,19 +397,44 @@ theorem tau_order_gate_deterministic (s : String) (o₁ o₂ : String)
     (h₁ : tauOrderGate s = o₁) (h₂ : tauOrderGate s = o₂) : o₁ = o₂ := by
   rw [← h₁, ← h₂]
 
-/-! ### Raw-order export non-vacuity `#guard`s — the export emits the verified total order at n=3. -/
+/-! ### Raw-order export non-vacuity — NAMED, not `#guard`ed (same recipe and same moved
+expectations as §6; the two-wave `trace6` is the non-vacuous fixture, ten ids). -/
 
--- the raw-order export, on the ENCODED 3-node lace, returns the verified nine-id finalized order.
-#guard dregg_tau_order (encodeLaceWire 3 trace3Participants trace3)
-        == encodeOrderWire (tauOrder trace3 trace3Participants 3)
--- the emitted total order decodes back to the verified `tauOrder` EXACTLY (order-faithful).
-#guard decodeOrderWire (dregg_tau_order (encodeLaceWire 3 trace3Participants trace3))
-        == some (tauOrder trace3 trace3Participants 3)
--- the output codec round-trips on the concrete order.
-#guard decodeOrderWire (encodeOrderWire (tauOrder trace3 trace3Participants 3))
-        == some (tauOrder trace3 trace3Participants 3)
--- a malformed wire is FAIL-CLOSED to ERR (the node finalizes NOTHING).
-#guard dregg_tau_order "not a wire" == "ERR"
+/-- the raw-order export, on the ENCODED two-wave lace, returns the encoding of the verified
+total order… -/
+theorem tau_order_export_matches_the_verified_order :
+    dregg_tau_order (encodeLaceWire 3 trace3Participants trace6)
+      = encodeOrderWire (tauOrder trace6 trace3Participants 3) := by native_decide
+
+/-- …and CONCRETELY: ten ids — wave 0's whole cohort, then the wave-1 anchor. A wrong ORDER,
+not merely a wrong set, reds this pin. -/
+theorem tau_order_export_is_the_ten_id_order :
+    dregg_tau_order (encodeLaceWire 3 trace3Participants trace6)
+      = "T=10,20,30,11,21,31,12,22,32,23" := by native_decide
+
+/-- the one-wave lace emits exactly the anchor's closure: one id, the leader block. -/
+theorem tau_order_export_at_one_wave_is_the_anchor :
+    dregg_tau_order (encodeLaceWire 3 trace3Participants trace3) = "T=10" := by native_decide
+
+/-- the emitted total order decodes back to the verified `tauOrder` EXACTLY (order-faithful). -/
+theorem tau_order_export_decodes_back :
+    decodeOrderWire (dregg_tau_order (encodeLaceWire 3 trace3Participants trace6))
+      = some (tauOrder trace6 trace3Participants 3) := by native_decide
+
+/-- the output codec round-trips on the concrete order. -/
+theorem order_wire_roundtrips :
+    decodeOrderWire (encodeOrderWire (tauOrder trace6 trace3Participants 3))
+      = some (tauOrder trace6 trace3Participants 3) := by native_decide
+
+/-- a malformed wire is FAIL-CLOSED to ERR (the node finalizes NOTHING). -/
+theorem tau_order_garbage_is_err : dregg_tau_order "not a wire" = "ERR" := by native_decide
+
+#assert_compiled tau_order_export_matches_the_verified_order
+#assert_compiled tau_order_export_is_the_ten_id_order
+#assert_compiled tau_order_export_at_one_wave_is_the_anchor
+#assert_compiled tau_order_export_decodes_back
+#assert_compiled order_wire_roundtrips
+#assert_compiled tau_order_garbage_is_err
 
 /-! ## 8. Axiom hygiene. -/
 

@@ -150,7 +150,8 @@ chain, however fine it is for a single-turn liveness witness.
 
 **D2 (perf, semantics-ADJACENT — design, do not fire blind) — window the tau input to the unfinalized
 suffix.** tau is monotone once a prefix is finalized (`TauPrefixMonotone`, conditional under
-`FinalizedRegionStable`), so the finality poll does not need to re-derive the order of already-committed
+`ClosedExtension` + `ChainExtends`; the former `FinalizedRegionStable` hypothesis is deleted with
+the τ-CM Def. 6 rewrite), so the finality poll does not need to re-derive the order of already-committed
 history every time. Feed `compute_order` only the causal frontier above the last durably-finalized
 cut (with a bounded overlap so an honest late block that sorts mid-prefix is still absorbed by the
 identity cursor). This makes the poll O(unfinalized suffix) instead of O(history) and removes the

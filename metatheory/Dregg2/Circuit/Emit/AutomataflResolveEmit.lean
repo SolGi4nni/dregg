@@ -12,7 +12,7 @@ nodes, byte-pinned by an `emitVmJson2` `#guard`, on the same template `Automataf
 for the step half.
 
 The SEMANTIC target this descriptor refines (Stage 2, NOT in this file) is
-`Dregg2.Games.Automatafl.resolve_mid` / `applyMoves` / `conflictResolve` — the m=2 reference
+`Dregg2.Games.Automatafl.resolveMid` / `applyMoves` / `conflictResolve` — the m=2 reference
 resolution. This file is Stage 1: the descriptor STRUCTURE + byte-pin.
 
 ## SCOPE — COMPLETE. All eight `emit_resolution` legs are authored here.

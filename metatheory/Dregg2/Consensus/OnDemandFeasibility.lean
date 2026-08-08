@@ -37,11 +37,14 @@ you contend.*
   * T2 (`FrameCommutes` for `recKExecAsset`) — wave: per-verb frame lemmas.
   * T3 (Mazurkiewicz trace convergence: linear extensions agreeing on conflicting pairs
     fold equal) — epoch: T1 is its empty-conflict case.
-  * T5 — RESOLVED in `Dregg2.Consensus.TauPrefixMonotone`: REFUTED unconditionally (an
-    honest laggard's late wave-end ratifier grows a final wave's coverage mid-prefix —
-    the node's `executed_up_to` slicing does NOT sit inside the truth) and PROVED
-    conditional (`tau_finalized_prefix_monotone` under `FinalizedRegionStable`, the
-    stability check the node is missing).
+  * T5 — RESOLVED in `Dregg2.Consensus.TauPrefixMonotone`: the old unconditional
+    refutation (an honest laggard's late wave-end ratifier growing a final wave's
+    coverage mid-prefix) is RETRACTED as a fact about CM — it refuted a τ that had
+    deviated from CM Def. 6. Against the CM-faithful anchor-closure τ the same trace is
+    prefix-stable, and `tau_finalized_prefix_monotone` is PROVED under `ClosedExtension`
+    (structural; receive-path buffering) + `ChainExtends` (CM Prop. 3 leader-safety,
+    imported from the paper, owed a Lean proof). The former `FinalizedRegionStable` and
+    its never-called runtime mirror `stableCheck` are deleted.
 
 No import of the executor or the blocklace: this module is the pure order-theoretic
 core, deliberately dependency-light so the fast-path argument is reusable against any
@@ -213,11 +216,13 @@ theorem frame_fastpath_sound {step : S → T → S} (fc : FrameCommutes step)
   * **T3** — trace convergence: two linear extensions of happened-before agreeing on the
     relative order of every NON-commuting pair fold equal (T1 = the all-commuting case).
     EPOCH; unlocks the executor dual-frontier.
-  * **T5** — RESOLVED (`Dregg2.Consensus.TauPrefixMonotone`): the unconditional claim is
-    REFUTED by an insert-valid honest-laggard counterexample; the corrected theorem
-    `tau_finalized_prefix_monotone` holds under `FinalizedRegionStable` (executable
-    mirror `stableCheck`), which `blocklace_sync.rs::poll_finalized_blocks` does NOT
-    check — a reported node-side soundness gap, not a wall.
+  * **T5** — RESOLVED (`Dregg2.Consensus.TauPrefixMonotone`): the old insert-valid
+    honest-laggard refutation is RETRACTED as a fact about CM (it refuted a τ deviating
+    from CM Def. 6); the theorem `tau_finalized_prefix_monotone` holds under
+    `ClosedExtension` + `ChainExtends` (CM Prop. 3 leader-safety — the one named import
+    from the paper, owed a Lean proof). Node side, the bare-index cursor was replaced by
+    the identity cursor (`node/src/execution_cursor.rs`), which never assumes the
+    hypothesis.
   * **T6** — supermajority ack-depth ⇒ eventual tau membership (after T5; the
     quorum-intersection arithmetic is `EpochReconfig.quorums_intersect`'s shape).
 -/

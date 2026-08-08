@@ -1,8 +1,8 @@
 /-
 # Dregg2.Verify.KeystoneAuditSystemRoots — the keystone-audit for the Wave-4 HARD
-`runnable_binds_same_system_roots` (R1 closed for the side-table state; AC:520).
+`runnable_binds_same_system_roots_or_collides` (R1 closed for the side-table state; AC:520).
 
-The keystone `Dregg2.Circuit.CommitmentCrossBind.runnable_binds_same_system_roots` says: two rows of
+The keystone `Dregg2.Circuit.CommitmentCrossBind.runnable_binds_same_system_roots_or_collides` says: two rows of
 the WIDE runnable EffectVm descriptor that publish the SAME `state_commit`, whose `sysRootsDigestCol`
 carriers ARE the `systemRootsDigest` of their `system_roots` sub-blocks, agree on EVERY side-table
 root — OR exhibits a genuine sponge collision at a pair a total extractor returns. It carries the wide

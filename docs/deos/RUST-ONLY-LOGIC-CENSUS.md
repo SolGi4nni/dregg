@@ -305,23 +305,26 @@ tip *assumed*; it extends unfoolability along the revocation axis, not the conse
 SOUNDNESS-CRITICAL for finalized-canonicity (Property B), with precise Rust-only gaps.** For a
 value-bearing client, a Property-B break (settle on a non-finalized fork) is economically a
 soundness break. The Property-B gaps:
-- **Gap B1 — index slicing REFUTED; the identity cursor is the deployed closure; the residual is
-  its proof.** `metatheory/Dregg2/Consensus/TauPrefixMonotone.lean` proves prefix monotonicity
-  only under `FinalizedRegionStable`, with an **honest (non-Byzantine) laggard counterexample**:
-  a late validator's blocks pass every `insert` check yet `xsort` into the middle of the
-  already-executed prefix — under a bare `executed_up_to` index the node re-executes one block
-  and **skips a finalized honest turn forever** (the FinalityGate admits by `(creator,seq)`
-  membership, not position, so it doesn't catch it). The deployed code does not slice by index:
+- **Gap B1 — index slicing REFUTED (against the old coverage-τ); the identity cursor is the
+  deployed closure; the residual is its proof.** `metatheory/Dregg2/Consensus/TauPrefixMonotone.lean`
+  proves prefix monotonicity under `ClosedExtension` + `ChainExtends` (the former three-field
+  `FinalizedRegionStable` is deleted; its honest-laggard counterexample is RETRACTED as a fact
+  about CM — it refuted a τ that had deviated from CM Def. 6, and the CM-faithful anchor-closure
+  τ is prefix-stable on the same trace). Historically, under the deviated coverage-τ a late
+  validator's blocks passed every `insert` check yet `xsort`ed into the middle of the
+  already-executed prefix — under a bare `executed_up_to` index the node re-executed one block
+  and **skipped a finalized honest turn forever** (the FinalityGate admits by `(creator,seq)`
+  membership, not position, so it didn't catch it). The deployed code does not slice by index:
   `poll_finalized_blocks` runs the "TAU-PREFIX-MONOTONE CLOSURE (identity cursor, not an
   index)" — `cursor.pending(&ordered)` set-difference plus `cursor.mark_executed(block_id)`
   (`node/src/blocklace_sync.rs:1360-1468`), boot-restored (`:2101`) and durably persisted
   (`persist_executed_block_ids`). `node/src/execution_cursor.rs`'s own header ("# The closure")
-  states the cursor **must not depend on** `FinalizedRegionStable`: executed blocks are tracked
+  states the cursor must not assume prefix stability: executed blocks are tracked
   by `BlockId` identity, so a mid-prefix insertion executes late exactly once and nothing already
   executed is re-served; the prefix-shift event surfaces as observability (loud log +
-  `dregg_tau_prefix_shifts_total`, the executable mirror of the Lean `stableCheck`). **The
-  residual is the Rust↔Lean bridge:** no Lean theorem yet connects the deployed identity cursor
-  to the corrected `tau_finalized_prefix_monotone`.
+  `dregg_tau_prefix_shifts_total`; the Lean-side runtime mirror `stableCheck` was deleted as
+  never-called). **The residual is the Rust↔Lean bridge:** no Lean theorem yet connects the
+  deployed identity cursor to the corrected `tau_finalized_prefix_monotone`.
 - **Gap B2 — `FinalityCert` signature verification — CLOSED since this census.** As written in
   2026-06-26 the cert checked signer COUNT over bare pubkeys, with no Ed25519 verification. That
   is now fixed: `FinalityCert` carries the Ed25519 signatures, and `distinct_signers`

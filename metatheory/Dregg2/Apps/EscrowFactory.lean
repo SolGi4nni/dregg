@@ -367,10 +367,13 @@ escrow lifecycle + the off-ledger measure `escrowHeldAsset` "is GONE"), `Exec/Ha
   ordering below is DISCHARGED: no `def createEscrowKAsset`/`releaseEscrowKAsset`/`refundEscrowKAsset`
   exists anywhere in the tree, so nothing can still be reading the verbs):
     • `Dregg2.Apps.BountyBoardGated`  — DONE in this wave (re-points to `escrowFactoryEntry`).
-    • `Dregg2.Apps.BountyBoard`       — the ungated dual (same re-point pattern; W2 follow-up).
+    • `Dregg2.Apps.BountyBoard`       — the ungated dual: module NOT in the tree (never authored),
+                                        so there is nothing to re-point; if it lands, it starts on
+                                        `escrowFactoryEntry` (W2 follow-up).
     • `Dregg2.Apps.ComputeExchange{,Gated}` — escrow-verb consumers (order/settle/refund); re-point.
-    • `Dregg2.Apps.AtomicSwap`        — multi-party escrow swap on the verbs; re-point (uses the lock
-                                        as a 2-party move pair — fits the factory shape directly).
+    • `Dregg2.Apps.AtomicSwap`        — multi-party escrow swap on the verbs: module NOT in the tree
+                                        (never authored); nothing to re-point. If it lands it uses the
+                                        lock as a 2-party move pair — fits the factory shape directly.
     • the BRIDGE/OBLIGATION twins that SHARE `EscrowRecord`'s store (`bridge`/`queueDep` tags,
       `StakedSlaGated`/`CrossChainBridgeGated`) — DECIDE per-family whether they re-land as factories
       (obligation/swiss DO, per the probe §VERDICT) or keep a distinct store BEFORE deleting the shared

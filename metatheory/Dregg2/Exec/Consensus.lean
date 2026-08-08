@@ -289,22 +289,22 @@ theorem cross_tier_join_on_net {H : Type u}
 
 /-! ## 5. The Byzantine-safety / GST-liveness frontier — cited, not re-stated.
 
-The two DEEP theorems are open research; they need an adversary model (which
-voters are Byzantine), a conflict relation on blocks, and a partial-synchrony / GST bound —
-none of which the bare `World` interface commits to. `World.lean` already states them as
-honest open obligations; this module does NOT attempt them and does NOT re-introduce an
-unproven hole. We name the existing OPEN theorems here so the frontier is explicit:
+The two theorems this section used to file as OPEN are since PROVED in `World.lean`, under
+their real names (no `_OPEN` suffix), each with its residual stated at the theorem site;
+this module does NOT re-state them and does NOT re-introduce an unproven hole:
 
-  • `Dregg2.World.quorum_intersection_safety_OPEN` — two quorums for conflicting blocks
-    must intersect (the `n > 3f` BFT-safety seed). OPEN: needs the honest-set / conflict
-    model.
-  • `Dregg2.World.liveness_after_gst_OPEN` — after GST some block's quorum forms (τ-BFT
-    progress). OPEN: needs the GST + honest-supermajority model.
+  • `Dregg2.World.quorum_intersection_safety` — two quorums for conflicting blocks share a
+    voter (the `n > 3f` pigeonhole seed). PROVED from threshold + union bound alone;
+    honestly scoped-out THERE: that a shared voter is a CONTRADICTION for conflicting
+    blocks (the honest-vote-once discipline), which lives with the τ-BFT protocol layer.
+  • `Dregg2.World.liveness_after_gst` — after GST some block's quorum forms. PROVED from
+    the NAMED class hypothesis `World.gst_liveness` (the partial-synchrony delivery law —
+    a carried hypothesis, not an axiom).
 
 -- OPEN: a *cell-level* Byzantine safety theorem ("no two `NetCell`s for conflicting blocks
 -- are both `IsBftFinal` under an honest majority") would be the natural next obligation on
--- this cell. It is NOT provable here for the same reason as `quorum_intersection_safety_OPEN`
--- (no adversary/honesty model on `Vote`), so it is deliberately left unstated rather than
+-- this cell. It is NOT provable here for the same reason `quorum_intersection_safety`'s
+-- contradiction step is scoped out (no adversary/honesty model on `Vote`), so it is deliberately left unstated rather than
 -- stubbed with an unproven hole. It belongs with the τ-BFT protocol layer, not the ordering cell.
 -/
 
