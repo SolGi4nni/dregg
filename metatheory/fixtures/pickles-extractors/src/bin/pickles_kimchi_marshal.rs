@@ -1308,6 +1308,32 @@ fn main() {
         app_state.len(),
         gates::STEP_RULE_APP_STATE
     );
+    // ⚑⚑ **THE TWENTY NON-INDEX CELLS OF SLOT 12's PREIMAGE, PRINTED SIDE BY SIDE WITH SEGMENT D's.**
+    //
+    // The 76-cell preimage of `MessagesForNextStepProof::hash()` is `[56 index][2 app][2 G][16 chal]`
+    // and, since `MinaWrapOwnVerifierKey` was installed (2026-08-08), the first FIFTY-EIGHT agree by
+    // construction: the index is read out of the same emitted module the step assembly absorbs, and
+    // `gates::STEP_RULE_APP_STATE` is `KimchiStepMainCore.hmOVal`. So a slot-12 disagreement can now
+    // only live in the last EIGHTEEN, and quoting "slot 12 misses" without saying which cells is the
+    // move this campaign has already paid for twice. These are the wire's own numbers, in the order
+    // `to_field_elements` absorbs them, so they line up 1:1 with `wip/SegDPreimage.lean`'s 58..75.
+    {
+        let m = &wire.statement.messages_for_next_step_proof;
+        let cpc = gates::record_challenge_polynomial_commitments(m).expect("record cpc");
+        let chals = gates::record_old_bulletproof_challenges(m);
+        println!(
+            "[gate C] slot-12 preimage cells 58..75 — the wire record's own, against \
+             `wip/SegDPreimage.lean`'s segment D:"
+        );
+        for (k, p) in cpc.iter().enumerate() {
+            let a = p.to_affine();
+            println!("[gate C]   cell {:>2} G[{k}].x = {}", 58 + 2 * k, a.x);
+            println!("[gate C]   cell {:>2} G[{k}].y = {}", 59 + 2 * k, a.y);
+        }
+        for (k, v) in chals.iter().flatten().enumerate() {
+            println!("[gate C]   cell {:>2} chal[{k}] = {v}", 60 + k);
+        }
+    }
     let hashes = gates::gate_c(&wire, &vk_evals, &app_state).expect("gate C");
     println!(
         "[gate C] hash(messages_for_next_step_proof) = {:?}\n[gate C] hash(messages_for_next_wrap_proof) = {:?}",

@@ -6265,8 +6265,13 @@ def shapeSmoke : WrapShape :=
   -- lesson: it names `STEP_PUBCOMM_XY` (the fixture's own words) and moved with the re-export, while
   -- this one is a literal pair and went stale silently. `EmitWrapMainJson`'s refusal is what caught
   -- it — a memo written as a numeral is a memo that can rot.
+  -- ⚑⚑ **AND IT MOVED A THIRD TIME ON 2026-08-08, FOR THE VK INSTALL.** `MinaWrapOwnVerifierKey`
+  -- had never been re-installed after the wrap circuit was re-emitted at `8c3c341d8`, so segment D
+  -- was hashing under a superseded key; installing the emitted one moved word 54, hence published
+  -- entry **64** — which is one of this selection's five (`xhatSel 5 = [0, 1, 11, 64, 31]`) — hence
+  -- this fold's output. The refusal fired again, and again it is the only thing that would have.
   , xhatXY :=
-      (28165423449084717082481151485798317168113882370163881582671000826766251401262,
-       4549862343199917614386982613737362184182002331567877581633298615345383329301) }
+      (8170586116940669537096994111154078258233118444357711733673555607637982266177,
+       25326643678354152834376068749547717264127276036250175964846866143073819442772) }
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

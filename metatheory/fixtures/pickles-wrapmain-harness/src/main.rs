@@ -707,10 +707,18 @@ mod wrapmain_tests {
     /// (`KimchiWrapMain.finsponge_has_a_witness_on_the_published_statement`).
     ///
     /// ⚠ **WHAT IS STILL OPEN, so the emptying is not read as a total.** Packed word 54 —
-    /// `messages_for_next_step_proof` — remains an ARITY mismatch: segment D and the marshaller's
-    /// `MessagesForNextStepProof::hash()` hash preimages of 56+20 against 56+36
-    /// (`KimchiWrapMainPins10`). It blocks no rung here; it is why the emitted forty agree with
-    /// Mina's in 39 of 40 slots at `shapeWrap` and not 40.
+    /// `messages_for_next_step_proof` — still misses, and this paragraph called it an ARITY
+    /// mismatch ("56+20 against 56+36") until 2026-08-08, which had been **refuted on 2026-08-07**:
+    /// `marshal::STEP_RECURSION_SLOTS = gates::STEP_RULE_N_PREVIOUS = 1` and `gate_c` reports
+    /// `MATCH=true` on every run. Both sides hash the same seventy-six cells.
+    ///
+    /// ⚑ **MEASURED 2026-08-08, after `MinaWrapOwnVerifierKey` was installed** (it had been stale
+    /// by 29 commits, so segment D was hashing under a superseded wrap key): **58 of the 76 cells
+    /// now agree** — the 56 index coordinates and the 2 app-state words — and the disagreement is
+    /// **cells 58–75**, the `[Gx; Gy]` pair and the sixteen challenges. It blocks no rung here; it
+    /// is why the emitted forty agree with Mina's in 39 of 40 slots at `shapeWrap` and not 40, and
+    /// the residue is `KimchiWrapMainPins10`'s item #11, an undischarged assumption rather than an
+    /// edit.
     const STATEMENT_BLOCKED: [&str; 0] = [];
 
     /// ⚑ The gate that keeps `SMOKE_SWEEP` true. A comment saying "this set may only name rungs in

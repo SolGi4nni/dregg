@@ -51,7 +51,10 @@ use ledger::proofs::transaction::{InnerCurve, PlonkVerificationKeyEvals};
 use ledger::proofs::unfinalized::AllEvals;
 use ledger::proofs::util::{extract_bulletproof, extract_polynomial_commitment, two_u64_to_field};
 use mina_curves::pasta::{Fp, Fq, Pallas, Vesta};
-use mina_p2p_messages::v2::PicklesProofProofsVerified2ReprStableV2;
+use mina_p2p_messages::v2::{
+    PicklesProofProofsVerified2ReprStableV2,
+    PicklesProofProofsVerified2ReprStableV2MessagesForNextStepProof,
+};
 use poly_commitment::ipa::SRS;
 
 /// The wire object every rung is asked about.
@@ -399,6 +402,26 @@ pub fn wrap_own_vk_lean(vk: &PlonkVerificationKeyEvals<Fp>) -> String {
 /// `wrap.rs:658-666` sets the step proof's own kimchi recursion arity from it
 /// (`actual_proofs_verified = <the record>.old_bulletproof_challenges.len()`). The three have to
 /// move together or ξ stops agreeing.
+/// ⚑ **THE RECORD'S OWN `challenge_polynomial_commitments`, as the group points the sponge absorbs.**
+///
+/// Cells 58.. of slot 12's 76-cell preimage. Exposed so a caller can print them beside segment D's
+/// own — [`gate_c`] folds them straight into a digest, and a digest cannot say WHICH cell moved.
+pub fn record_challenge_polynomial_commitments(
+    m: &PicklesProofProofsVerified2ReprStableV2MessagesForNextStepProof,
+) -> anyhow::Result<Vec<InnerCurve<Fp>>> {
+    Ok(extract_polynomial_commitment(
+        &m.challenge_polynomial_commitments,
+    )?)
+}
+
+/// ⚑ **The record's own `old_bulletproof_challenges`, one `[Fp; 16]` per recursion slot.**
+/// The last sixteen cells of slot 12's preimage at `STEP_RULE_N_PREVIOUS = 1`.
+pub fn record_old_bulletproof_challenges(
+    m: &PicklesProofProofsVerified2ReprStableV2MessagesForNextStepProof,
+) -> Vec<[Fp; 16]> {
+    extract_bulletproof(&m.old_bulletproof_challenges)
+}
+
 pub fn gate_c(
     wire: &Wire,
     vk_evals: &PlonkVerificationKeyEvals<Fp>,

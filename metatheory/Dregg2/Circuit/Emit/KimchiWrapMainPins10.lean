@@ -193,7 +193,7 @@ the object it is about.
     ⚑ **WHAT IS ACTUALLY LEFT, MEASURED BY `segd_slot12_probe` RATHER THAN INFERRED.** Hand
     openmina's own `MessagesForNextStepProof::hash()` segment D's OWN preimage — 56 index
     coordinates, `N_HM_APP = 2` app-state words, ONE `[Gx; Gy]`, `bRounds = 16` lifts — and it
-    returns **12050182178576971049813971198188121605941048571897685942524995475420733365304**,
+    returns **3396651593405556290675030761129700631429897333743779176977354897227206574822**,
     which is segment D's squeeze and the emitted slot 12 **to the digit**. So there is no sponge
     gap, no arity gap and no index gap. What differs is WHICH VALUES fill the one slot: segment D
     absorbs the step assembly's own `G` (`solveG`'s output, §19) and its own sixteen
@@ -201,6 +201,31 @@ the object it is about.
     `challenge_polynomial_commitments` and `step_old_bulletproof_challenges`
     (`marshal.rs:578-608`) — the wrap proof's own kimchi recursion commitment and a chosen
     prechallenge ladder, neither of which the step assembly derived.
+
+    ⚑⚑⚑ **THE FOURTH WRONG ANSWER, AND IT WAS THE REFEREE'S OWN — CLOSED 2026-08-08, AND SLOT 12
+    SURVIVED IT.** Item 2 above says "the index agrees (`MinaWrapOwnVerifierKey`)", and that was a
+    claim about which MODULE segment D reads, not about what was IN it.
+    `MinaWrapOwnVerifierKey.lean` was last written at `8015b6f07` and the wrap circuit it is the key
+    OF was re-emitted at `8c3c341d8`, **29 commits later**, so segment D had been hashing under a
+    superseded key while `gate_c` hashed under the live one. `segd_slot12_probe` could not see it —
+    it READS the tracked module and therefore agreed with the stale install by construction — and
+    `WRAP_PUBLIC_INPUT_MEASURED`, baked on the other side of that re-emit, was stale at exactly the
+    slot under investigation. `pickles_kimchi_marshal::installed_gate` now reds on the drift, and
+    the run that first turned it red measured BOTH polarities in one pass: two tape modules
+    byte-identical, one module drifted, `PROOF_MARSHAL_RESULT=RED (1 failures)`.
+
+    ⚠ **INSTALLING IT DID NOT CLOSE SLOT 12, AND THAT IS THE MEASUREMENT AND NOT A GUESS.** The
+    whole chain was carried — VK installed, `stepmain_step_r8_finalize.json` re-emitted (public
+    entry **64** and only entry 64 moved), the step proof re-proved, `KimchiStepWrapChainFixture`
+    re-installed, `WRAP_PUBLIC_INPUT_MEASURED` re-baked from that run's own
+    `wrap-public-input.json`, `shapeSmoke.xhatXY` re-derived, all thirty wrap fixtures re-emitted —
+    and `EmitWrapFortyAgreement` at `shapeWrap` still reports **AGREE at 39 of 40**, missing at 12
+    alone. What the install bought is a SHARPER residue, not a smaller count: of slot 12's
+    seventy-six cells **fifty-eight now agree** — the 56 index coordinates and the 2 app-state
+    words — and the disagreement is confined to **cells 58–75**, the `[Gx; Gy]` pair and the
+    sixteen challenges, printed side by side by `pickles_kimchi_marshal`'s `[gate C] cell NN` lines
+    against `wip/SegDPreimage.lean`'s 58..75. That is exactly the two families the next paragraph
+    prices, and it is now a measured perimeter rather than an inferred one.
 
     ⚠ ⚑⚑ **AND THE RESIDUE, NAMED: IT IS THE ACCUMULATOR CHECK'S OPENING LEG (#11) WEARING A PUBLIC
     WORD.** The sixteen close in one pass — `prove_step`'s `step_pre` is a

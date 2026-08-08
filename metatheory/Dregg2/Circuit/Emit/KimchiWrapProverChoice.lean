@@ -12,9 +12,16 @@ Companion to `KimchiStepProverChoice`. Same question, same three instruments, di
 `WRAP_UNCONSUMED` has **8** entries and `key_closes_one_unconsumed_entry` states it. That list counts
 ITEM CLASSES — "sg_old", "w_comm", "lr". A prover does not choose a class; he chooses a **field
 element**. Measured here on the emitted schedule at the committed shape: the transcript absorbs
-**120 field elements**, and at `w5_key` **119 of them own exactly one permutation cell** — the
-sponge's own absorb row and nothing else. At `w6_xhat` the `x_hat` pair becomes the MSM's output, so
-the number is **117 of 120**.
+**118 field elements**, and at `w5_key` **117 of them own exactly one permutation cell** — the
+sponge's own absorb row and nothing else. At `w6_xhat` the `x_hat` pair becomes the MSM's output and
+two more leave; that leg is stated at the SMOKE shape (`the_xhat_rung_derives_two_of_the_absorbed_words`,
+32 items / 29 supplied / 3 consumed) because no theorem here reduces the wrap shape at `w6_xhat`.
+
+⚠ ⚑ **118 AND 117 WERE 120 AND 119 UNTIL 2026-08-08.** `8c3c341d8` made the `sg_old` block
+`2 * WH_REAL_SLOTS` rather than `2 * s.maxPrevs` — upstream masks one slot out — so the schedule
+absorbs two fewer points at both shapes. This census had copied the old field and was never
+re-derived; the three `native_decide`s below have been FALSE since that commit — **62 commits** of a
+module that could not build, measured with `git rev-list --count 8c3c341d8..HEAD`. See §W2.
 
 ⚠ §13's "WHERE FIAT–SHAMIR STANDS" says "THE INPUT IS DERIVED IN ITS FIRST WORD AND NOWHERE ELSE …
 ⚠ The other nine are not", and then names eight. Eight is the class count and it is one stale (`x_hat`
@@ -138,34 +145,44 @@ def rowsWrapKey : List WRow := rungRows tWrap .key true
 def tSm : WrapData := mkWrap shapeSmoke
 def rowsSmXhat : List WRow := rungRows tSm .xhat true
 
-/-! ## §W2 — ⚑⚑ THE TRANSCRIPT'S INPUT IS 120 FIELD ELEMENTS AND 119 OF THEM ARE THE PROVER'S. -/
+/-! ## §W2 — ⚑⚑ THE TRANSCRIPT'S INPUT IS 118 FIELD ELEMENTS AND 117 OF THEM ARE THE PROVER'S. -/
 
-/-- ⚑⚑ **THE HEADLINE.** At the committed shape the schedule absorbs `nItems = 120` field elements;
-`absorbedWordVars` has one variable each; and **119 of those variables own exactly one permutation
+/-- ⚑⚑ **THE HEADLINE.** At the committed shape the schedule absorbs `nItems = 118` field elements;
+`absorbedWordVars` has one variable each; and **117 of those variables own exactly one permutation
 cell in the whole `w5_key` circuit** — the absorb row. The one that owns more is `index_digest`,
 which W-KEY derives (`key_digest_is_the_index_digest`) and whose closing tie puts the squeeze and the
 absorb in one σ class.
 
-⚑ This is the number `WRAP_UNCONSUMED`'s 8 abbreviates. A prover choosing any one of the 119 steers
+⚑ This is the number `WRAP_UNCONSUMED`'s 8 abbreviates. A prover choosing any one of the 117 steers
 every challenge squeezed after it, and the first of them is item 1 — so **every** challenge in this
-assembly is reachable. **(a) forgery surface**, the largest one in either assembly. -/
-theorem the_wrap_transcript_absorbs_120_words_and_119_are_supplied :
-    ((absorbedWordVars tWrap).length = 120
-     ∧ nItems shapeWrap = 120
+assembly is reachable. **(a) forgery surface**, the largest one in either assembly.
+
+⚠ ⚑⚑ **IT WAS 120/119 AND 34/31 UNTIL 2026-08-08, AND NOTHING SAW IT MOVE FOR 29 COMMITS.**
+`8c3c341d8` ("the wrap arity, settled at source") made the `sg_old` block `2 * WH_REAL_SLOTS` rather
+than `2 * s.maxPrevs`, so the schedule absorbs **two fewer** points at BOTH shapes — the `keep=false`
+slot upstream masks out. This census followed that field and was never re-derived, so the module was
+red at `native_decide` from that commit on — **62 commits**, `git rev-list --count 8c3c341d8..HEAD`
+— and the failure was invisible under a tree that does not build clean. ⚑ Same commit and the same
+class as `MinaWrapOwnVerifierKey` going stale (that module was written 29 commits BEFORE this one and
+never re-installed after it): a quantity moved at source and the consumers that had copied it did not
+follow. The names carry the new numbers rather than a note explaining the old ones. -/
+theorem the_wrap_transcript_absorbs_118_words_and_117_are_supplied :
+    ((absorbedWordVars tWrap).length = 118
+     ∧ nItems shapeWrap = 118
      ∧ ((absorbedWordVars tWrap).filter
-          (fun v => occCount rowsWrapKey v == 1)).length = 119
+          (fun v => occCount rowsWrapKey v == 1)).length = 117
      ∧ occCount rowsWrapKey ((absorbedWordVars tWrap).headD (.external 0)) = 2) := by
   native_decide
-#assert_compiled the_wrap_transcript_absorbs_120_words_and_119_are_supplied
+#assert_compiled the_wrap_transcript_absorbs_118_words_and_117_are_supplied
 
 /-- …and at `w6_xhat` exactly two more leave: `wrap_verifier.ml:617`'s absorbed pair IS §15's ladder
-output. Stated at the smoke shape, where the top rung is reducible: 34 items, 31 supplied.
+output. Stated at the smoke shape, where the top rung is reducible: 32 items, 29 supplied.
 ⚠ §2c is right that this changes the SHAPE and not the SIZE of the prover's reach — the MSM's 67
 scalars are W-PREV's free witnesses — and the entry stays on `WRAP_UNCONSUMED` because of it. -/
 theorem the_xhat_rung_derives_two_of_the_absorbed_words :
-    ((absorbedWordVars tSm).length = 34
-     ∧ nItems shapeSmoke = 34
-     ∧ ((absorbedWordVars tSm).filter (fun v => occCount rowsSmXhat v == 1)).length = 31
+    ((absorbedWordVars tSm).length = 32
+     ∧ nItems shapeSmoke = 32
+     ∧ ((absorbedWordVars tSm).filter (fun v => occCount rowsSmXhat v == 1)).length = 29
      ∧ ((absorbedWordVars tSm).filter (fun v => occCount rowsSmXhat v > 1)).length = 3) := by
   native_decide
 #assert_compiled the_xhat_rung_derives_two_of_the_absorbed_words
@@ -231,13 +248,18 @@ theorem the_public_vector_gap_against_upstream_is_two_words :
 
 /-! ## §W5 — ⚑ THE HEADLINE, as one theorem. -/
 
-/-- ⚑⚑ **THE WRAP CENSUS.** 120 absorbed field elements of which 119 are supplied and unconsumed at
-`w5_key` (117 at `w6_xhat`); 21 environment cells the grid never reads, all of them the high chains'
-dead `hi`; 22 of 40 statement words exposed against upstream's 24; and `WRAP_UNCONSUMED`'s eight
-classes unchanged. -/
+/-- ⚑⚑ **THE WRAP CENSUS.** 118 absorbed field elements of which 117 are supplied and unconsumed at
+`w5_key`; 21 environment cells the grid never reads, all of them the high chains' dead `hi`; 22 of
+40 statement words exposed against upstream's 24; and `WRAP_UNCONSUMED`'s eight classes unchanged.
+
+⚠ The first two moved at `8c3c341d8` (§W2) and the parenthetical that stood here — *"(117 at
+`w6_xhat`)"* — is DELETED rather than decremented: no theorem in this file measures the wrap shape
+at `w6_xhat`, so that number was a claim with no producer, and shifting it by two would have kept it
+one. The `w6_xhat` leg that IS measured is `the_xhat_rung_derives_two_of_the_absorbed_words`, at the
+smoke shape, and it says 32/29/3. -/
 theorem the_wrap_prover_choice_census :
-    (nItems shapeWrap = 120
-     ∧ ((absorbedWordVars tWrap).filter (fun v => occCount rowsWrapKey v == 1)).length = 119
+    (nItems shapeWrap = 118
+     ∧ ((absorbedWordVars tWrap).filter (fun v => occCount rowsWrapKey v == 1)).length = 117
      ∧ (envVarsNoRowReads (circuitEnvAt tWrap .key) rowsWrapKey).length = 21
      ∧ WRAP_UNCONSUMED.length = 8
      ∧ shapeWrap.pubWords = 22) := by

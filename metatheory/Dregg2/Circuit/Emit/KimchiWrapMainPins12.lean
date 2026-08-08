@@ -681,10 +681,25 @@ FILLS it, in two families — `G` (segment D absorbs `solveG`'s solve; the wire 
 proof's recursion-slot commitment) and the sixteen challenges (segment D's transcript lifts against
 `prove_step`'s golden-ratio ladder). `KimchiStepMainPins19` §19b measures why the obvious repair does
 not work: block 539508's real `sg`/`z₁`/`z₂` are on disk, and `bpCloses` at them is FALSE, because
-this assembly squeezes its own `t`, `u` and `b`. ⚠ **And a third family is live as of 2026-08-08**:
-`MinaWrapOwnVerifierKey.lean` (56 of the 76 cells) was not re-installed when the wrap circuit was
-re-emitted at `8c3c341d8`, so `WRAP_PUBLIC_INPUT_MEASURED` below is stale at **exactly slot 12** —
-`pickles_kimchi_marshal::installed_gate` now reds on that drift.
+this assembly squeezes its own `t`, `u` and `b`.
+
+⚑⚑⚑ **A THIRD FAMILY WAS LIVE ON 2026-08-08 AND IS NOW CLOSED, AND CLOSING IT DID NOT MOVE THIS
+COUNT.** `MinaWrapOwnVerifierKey.lean` (56 of the 76 cells) had not been re-installed when the wrap
+circuit was re-emitted at `8c3c341d8` — **29 commits** after the module was last written — so
+segment D hashed under a superseded key while `gate_c` hashed under the live one, and
+`WRAP_PUBLIC_INPUT_MEASURED` below, baked before that re-emit, was stale at exactly the slot under
+investigation. ⚠ `segd_slot12_probe` was structurally blind to it: it READS the tracked module, so
+it agreed with the stale install by construction. `pickles_kimchi_marshal::installed_gate` reds on
+that drift now, and it is what caught this one.
+
+**The install landed and the whole chain was carried** — VK installed, `stepmain_step_r8_finalize`
+re-emitted (public entry 64, and only entry 64, moved), the step proof re-proved, the tape fixture
+re-installed, this referee re-baked from that run's own `wrap-public-input.json`, `shapeSmoke.xhatXY`
+re-derived and all thirty wrap fixtures re-emitted. **The count below is 39 after all of it.** What
+moved is the residue's SHAPE, not its size: fifty-eight of slot 12's seventy-six cells now agree (the
+56 index coordinates and the 2 app-state words), and the disagreement is confined to **cells 58–75**
+— the `[Gx; Gy]` pair and the sixteen challenges, the two families named above. So the stale key was
+a real defect and a real referee failure, and it was **not** the thing holding slot 12.
 
 ⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY**, and it is what makes this a fact about VALUES rather
 than about a list of zeros: ten of the forty are `Spec.T.Constant` padding and the lookup `Opt` and
