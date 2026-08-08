@@ -10,6 +10,7 @@ import Dregg2.Exec.DistributedExports
 import Dregg2.Circuit.CrossCellConserveDecision
 import Dregg2.Distributed.FinalityGate
 import Dregg2.Distributed.StrandAdmission
+import Dregg2.Distributed.RoundAdvanceGate
 import Dregg2.Deos.FlowRefine
 import Dregg2.Grain.R3Verify
 import Dregg2.Storage.Deployed
@@ -305,6 +306,8 @@ is stated on their entry rather than implied by membership in this archive.
 * `Dregg2.Distributed.FinalityGate` — `dregg_blocklace_finalize`, `dregg_finalization_quorum`,
   `dregg_tau_order`
 * `Dregg2.Distributed.StrandAdmission` — `dregg_strand_admit`
+* `Dregg2.Distributed.RoundAdvanceGate` — `dregg_round_advance` (CM Alg. 4:67–75, the ES
+  round-advance gate the round producer consults before honoring an `Advance`)
 * `Dregg2.Exec.DistributedExports` — `dregg_captp_validate_handoff`, `dregg_captp_process_drop`,
   `dregg_captp_pipeline_resolve`, `dregg_coord_2pc_decide`, `dregg_coord_causal_order`,
   `dregg_coord_shared_budget`
