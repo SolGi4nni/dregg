@@ -275,3 +275,4 @@ starbridge-web	gpui-web	T3	starbridge-v2's gpui-web plus the gpui crates directl
 starbridge-web	pty-ws-server	T3	the native PTY-over-WS terminal backend (server bin + deps), cfg(not(wasm32))-gated
 starbridge-web-surface	default	T1	default@.
 starbridge-web-surface	stream	T1	default@.
+zz-red-proof-nonexistent-crate	zz-red-proof-nonexistent-feature	T3	PLANTED REGRESSION (2026-08-08) — a row for a pair that does not exist in the tree. Reverted in the next commit.
