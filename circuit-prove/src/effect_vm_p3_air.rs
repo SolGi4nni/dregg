@@ -75,7 +75,14 @@ use dregg_circuit::field::BabyBear;
 pub struct EffectVmShapeAir;
 
 impl EffectVmShapeAir {
-    /// Width of the AIR (matches `EFFECT_VM_WIDTH = 105`).
+    /// Width of the AIR (matches `columns::EFFECT_VM_WIDTH = AUX_BASE + NUM_AUX = 90 + 98 = 188`).
+    ///
+    /// ⚠ THIS COMMENT READ `= 105` UNTIL 2026-08-07, AND NOTHING COULD SAY SO. The width has been
+    /// 188 for as long as `AUX_BASE`/`NUM_AUX` have carried their current values; the only check
+    /// under it was `assert_eq!(Self::WIDTH, EFFECT_VM_WIDTH)`, which is `X == X` by the very
+    /// line below and therefore cannot observe a drift in either direction. A stale number in
+    /// front of a pin that reduces to `rfl` is the shape this repo keeps finding: it reads as
+    /// coverage and carries none. The test now cross-checks the Lean-emitted twin instead.
     pub const WIDTH: usize = EFFECT_VM_WIDTH;
     /// Public-input count (matches the active PI v3 layout).
     pub const PUBLIC_INPUTS: usize = pi::ACTIVE_BASE_COUNT;
@@ -253,15 +260,53 @@ pub fn build_minimal_shape_trace(n_rows: usize) -> (Vec<Vec<BabyBear>>, Vec<Baby
 mod tests {
     use super::*;
 
-    /// Sanity: the shape AIR reports the same width and PI count as the
-    /// real Effect VM AIR's published constants. If this drifts, the
-    /// constraint mirroring path is no longer measuring the right shape.
+    /// The shape AIR's width and PI count must agree with the layout the Effect VM actually
+    /// deploys — measured against a SECOND, INDEPENDENT source, because a same-source pin here
+    /// cannot fail.
+    ///
+    /// ⚑ WHAT THIS TEST USED TO BE. Both of its assertions were `X == X`:
+    ///
+    /// ```ignore
+    /// assert_eq!(EffectVmShapeAir::WIDTH, EFFECT_VM_WIDTH);            // WIDTH *is* EFFECT_VM_WIDTH
+    /// assert_eq!(EffectVmShapeAir::PUBLIC_INPUTS, pi::ACTIVE_BASE_COUNT); // ditto
+    /// ```
+    ///
+    /// `WIDTH` and `PUBLIC_INPUTS` are *defined* as those two constants twenty lines above, so
+    /// each assertion reduced to `rfl` written as a runtime call. The docblock said "if this
+    /// drifts, the constraint mirroring path is no longer measuring the right shape" — naming a
+    /// failure the code had made unrepresentable. The stale `= 105` in the `WIDTH` docblock is
+    /// what that bought: the real width is 188 and no assertion in this file could notice.
+    ///
+    /// ⚑ WHAT IT IS NOW, AND WHY THAT ONE CAN GO RED. `dregg_circuit::effect_vm::EFFECT_VM_WIDTH`
+    /// re-exports `columns::EFFECT_VM_WIDTH`, which is HAND-DERIVED (`AUX_BASE + NUM_AUX`).
+    /// `layout_generated::EFFECT_VM_WIDTH` is EMITTED BY LEAN
+    /// (`metatheory/EmitLayoutManifest.lean`, "@generated … DO NOT EDIT BY HAND"). Those are two
+    /// genuinely independent sources for one number, which is exactly what
+    /// `layout_generated.rs`'s own header demands — it exists *because* the mirrors drifted, and
+    /// records that "drift here is not a lint failure — it is a soundness bug" (the perms/VK weld
+    /// read limb 37 while the producer wrote limb 38, and every honest setPermissions turn was
+    /// UNSAT). Measured 2026-08-07: the emitted width had **no consumer anywhere in the tree**.
+    /// This is now its reader, and a hand-edit to `AUX_BASE`/`NUM_AUX` that Lean does not agree
+    /// with reds here instead of silently re-shaping the AIR.
     #[test]
     fn shape_matches_effect_vm_constants() {
-        // From `effect_vm::EFFECT_VM_WIDTH`.
-        assert_eq!(EffectVmShapeAir::WIDTH, EFFECT_VM_WIDTH);
-        // From `effect_vm::pi::ACTIVE_BASE_COUNT`.
-        assert_eq!(EffectVmShapeAir::PUBLIC_INPUTS, pi::ACTIVE_BASE_COUNT);
+        // WIDTH: hand-derived `columns::` value vs the Lean-emitted manifest.
+        assert_eq!(
+            EffectVmShapeAir::WIDTH,
+            dregg_circuit::effect_vm::layout_generated::EFFECT_VM_WIDTH,
+            "the hand-derived column width (AUX_BASE + NUM_AUX) disagrees with the width Lean \
+             emitted into layout_generated.rs — regenerate with scripts/emit_descriptors.py, or \
+             the AIR is measuring a shape the descriptors do not describe"
+        );
+        // ⚠ THE PI COUNT GETS NO PIN HERE, AND THAT IS THE CORRECT ANSWER, NOT AN OMISSION.
+        // `PUBLIC_INPUTS` *is* `pi::ACTIVE_BASE_COUNT`, so re-asserting it is `rfl` — the exact
+        // vacuity this test just shed. The v3 layout has no Lean-emitted twin to cross-check
+        // against, and its ABSOLUTE anchor already lives ONCE, in the module that owns the
+        // layout: `circuit/src/effect_vm/pi.rs:1127`, `assert_eq!(v3::V3_BASE_COUNT, 206)`.
+        // Restating 206 here would be a SECOND source for one number — which is the drift
+        // `layout_generated.rs` exists to abolish, and which
+        // `circuit/src/bilateral_aggregation_air.rs:1254` already states as house convention
+        // ("the absolute anchor is not re-typed here"). So: nothing to add, deliberately.
     }
 
     /// The minimal trace produced by `build_minimal_shape_trace` should
