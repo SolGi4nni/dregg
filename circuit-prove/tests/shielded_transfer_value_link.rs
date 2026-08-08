@@ -26,11 +26,10 @@ use dregg_circuit::exact_nullifier_aafi::TaggedKeyWire;
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::poseidon2::hash_fact;
 use dregg_circuit_prove::shielded::{
-    BINDING_BLIND_LANES, DEPLOYED_INPUTS, DEPLOYED_OUTPUTS, ShieldedOutput,
-    ShieldedSpendCompleteWitness, ShieldedSpendMembership, ShieldedTransferLinkWitness,
-    ShieldedTransferWitness, TREE_DEPTH, note_commitment_felt_from_bytes, prove_shielded_transfer,
-    prove_shielded_transfer_link, shielded_transfer_value_link_descriptor,
-    verify_shielded_transfer_link,
+    BINDING_BLIND_LANES, DEPLOYED_INPUTS, SUPPORTED_OUTPUTS, ShieldedSpendCompleteWitness,
+    ShieldedSpendMembership, ShieldedTransferLinkWitness, ShieldedTransferWitness, TREE_DEPTH,
+    note_commitment_felt_from_bytes, prove_shielded_transfer, prove_shielded_transfer_link,
+    shielded_transfer_value_link_descriptor, verify_shielded_transfer_link,
 };
 
 fn blind() -> [BabyBear; BINDING_BLIND_LANES] {
@@ -248,16 +247,18 @@ fn transfer_gates_root_arity_and_commitment_encoding() {
         "a spend judged under a foreign committed root must reject (seam #15)"
     );
 
-    // The arity the descriptor states, and the refusal outside it.
-    assert_eq!((DEPLOYED_INPUTS, DEPLOYED_OUTPUTS), (1, 1));
-    let extra = ShieldedOutput {
-        note_commitment: transfer.outputs[0].note_commitment,
-        link_proof: transfer.outputs[0].link_proof.clone(),
-    };
+    // The arities the Lean family states, and the refusal outside them.
+    //
+    // ⚑ `1-in/2-out` is NO LONGER here: it is the SPLIT, admitted by
+    // `dregg-shielded-transfer-value-link-2out::v1` and gated in `shielded_transfer_split.rs`.
+    // This test's refusal moved up to the first arity with no descriptor.
+    assert_eq!((DEPLOYED_INPUTS, SUPPORTED_OUTPUTS), (1, [1, 2]));
+    let extra = transfer.outputs[0];
+    transfer.outputs.push(extra);
     transfer.outputs.push(extra);
     let err = transfer
         .verify(set.root8().limbs())
-        .expect_err("1-in/2-out has no stated conservation and must refuse");
+        .expect_err("1-in/3-out has no stated conservation and must refuse");
     assert!(
         err.to_string().contains("not stated by the deployed"),
         "the refusal must name the missing descriptor: {err}"
@@ -265,7 +266,7 @@ fn transfer_gates_root_arity_and_commitment_encoding() {
     transfer.outputs.truncate(1);
 
     // A minted commitment outside the spendable address subspace refuses before any append.
-    let good = transfer.outputs[0].note_commitment;
+    let good = transfer.outputs[0];
     assert!(note_commitment_felt_from_bytes(&good).is_ok());
     let mut bad = good;
     bad[31] = 1;

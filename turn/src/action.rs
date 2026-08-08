@@ -893,14 +893,20 @@ pub enum DelegationMode {
     SnapshotRefresh,
 }
 
-/// One MINTED note of a shielded transfer on the wire.
+/// One MINTED note of a shielded transfer on the wire: just its commitment.
 ///
 /// ⚑ FLAG DAY (value link) — this REPLACED `ShieldedLeg`, which carried a prover-chosen Ristretto
 /// Pedersen commitment `commit(v, r)` whose `v` was tied to the STARK-side `v` by a TRANSCRIPT and
 /// by nothing else. A spender who genuinely owned a note worth `1` published legs worth
 /// `1_000_000` and the conservation proof cleared over the legs. There is no check that closes
 /// that across the two systems, so the leg is gone: what a transfer publishes per output is a
-/// Poseidon2 NOTE COMMITMENT and a Lean-emitted proof binding it to the spent note's carrier.
+/// Poseidon2 NOTE COMMITMENT, bound by a Lean-emitted proof to the spent note's carrier.
+///
+/// ⚑ FLAG DAY (change outputs) — the per-output `link_proof` field is **DELETED** and lives on
+/// [`ShieldedTransferPayload::link_proof`], once per transfer. Conservation across two outputs is a
+/// JOINT statement: two independent per-output proofs would each separately claim the whole input
+/// value, and their conjunction would say `o1 = v` and `o2 = v` — a double-mint, not a split. A
+/// pre-cutover payload does not deserialize as a current one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShieldedOutputPayload {
     /// The minted note's commitment `hash_fact(v,[a,owner,rand])`, `felt_to_bytes32`-encoded —
@@ -908,17 +914,9 @@ pub struct ShieldedOutputPayload {
     /// is the SAME shape the complete-spend relation opens, so the minted note is SPENDABLE.
     ///
     /// There is no asset field: the asset is bound by the link proof to the spent note's, so a
-    /// published one would be an unchecked claim.
+    /// published one would be an unchecked claim. There is no value field either, for the same
+    /// reason and more so.
     pub note_commitment: [u8; 32],
-    /// Canonical postcard bytes of the hiding VALUE-LINK proof — an
-    /// `Ir2BatchProof<DreggZkStarkConfig>` against the Lean-emitted
-    /// `dregg-shielded-transfer-value-link::v1` relation
-    /// (`metatheory/Dregg2/Circuit/Emit/ShieldedTransferValueLinkEmit.lean`, 164 columns, 17 PIs).
-    /// Its sixteen carrier PIs are supplied by the executor from the INPUT's complete-spend proof,
-    /// never from this proof's own claim; its seventeenth is `note_commitment`. The relation reads
-    /// one set of canonical 16-bit limb columns for both, so the minted note is worth exactly the
-    /// spent one.
-    pub link_proof: Vec<u8>,
 }
 
 /// One spent input of a shielded transfer on the wire: the revealed nullifier, the sixteen-lane
@@ -977,9 +975,10 @@ pub struct ShieldedInputPayload {
 /// **What re-emits:** `dregg-shielded-transfer-value-link::v1` is a NEW descriptor; the shielded
 /// family's VK epoch rolls with it. The wide sidecar relation is no longer on this path.
 ///
-/// **Deployed arity:** one input, one output, equal value (a whole-note transfer). Anything else
-/// REFUSES — there is no descriptor whose conservation covers it. Splitting is the next member of
-/// the Lean family.
+/// **Deployed arities:** one input, and either **one** output (a whole-note transfer, equal value)
+/// or **two** (⚑ a SPLIT WITH CHANGE, `dregg-shielded-transfer-value-link-2out::v1`, conserved by a
+/// limbwise carry chain with every carry boolean-pinned and the terminal carry pinned to zero).
+/// Anything else REFUSES — there is no descriptor whose conservation covers it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShieldedTransferPayload {
     // ⚑ FLAG DAY 2026-08-07 — `merkle_root: u32` is DELETED, and its absence is the point.
@@ -991,9 +990,22 @@ pub struct ShieldedTransferPayload {
     // `note_shielded.root8()` at verification time, so there is no field in which to publish one.
     /// One hidden complete-spend proof per spent input.
     pub inputs: Vec<ShieldedInputPayload>,
-    /// One minted note per output, each with the value-link proof binding it to its input's
-    /// carrier. There is no value here that a prover chose.
+    /// The minted notes' commitments, in order. There is no value here that a prover chose.
     pub outputs: Vec<ShieldedOutputPayload>,
+    /// ⚑ Canonical postcard bytes of the hiding VALUE-LINK proof for the WHOLE transfer — an
+    /// `Ir2BatchProof<DreggZkStarkConfig>` against the Lean-emitted relation `outputs.len()`
+    /// selects:
+    ///
+    /// * 1 output → `dregg-shielded-transfer-value-link::v1`
+    ///   (`ShieldedTransferValueLinkEmit.lean`, 164 columns, 17 PIs);
+    /// * 2 outputs → `dregg-shielded-transfer-value-link-2out::v1`
+    ///   (`ShieldedTransferValueLink2OutEmit.lean`, 309 columns, 18 PIs).
+    ///
+    /// Its sixteen carrier PIs are supplied by the executor from the INPUT's complete-spend proof,
+    /// never from this proof's own claim; the remaining PIs are the minted commitments above. The
+    /// relation reads ONE set of canonical 16-bit limb columns for all of them, so what is minted
+    /// is worth exactly what was spent.
+    pub link_proof: Vec<u8>,
 }
 
 /// An effect produced by an action — what changes in the ledger.
@@ -1687,6 +1699,91 @@ pub enum Effect {
         /// worth `V` under asset `A` and that its nullifier is correctly derived.
         spending_proof: Vec<u8>,
     },
+    /// Shielded **OFF-RAMP** — the exact mirror of [`Effect::Shield`]. SPEND a hidden
+    /// shielded note, CREDIT the cleartext ledger with its value, NULLIFY the note.
+    ///
+    /// ## The gap this closes
+    ///
+    /// Value could ENTER the pool (`Shield`) and MOVE inside it (`ShieldedTransfer`).
+    /// **It could never leave.** There was no `Deshield`, so every note that entered
+    /// was trapped: the accumulator holds one leaf shape, every leaf is spendable
+    /// *within* the pool, and the only exit was another in-pool leaf. A one-way
+    /// money-mover is not a privacy pool.
+    ///
+    /// ## Where the conservation lives — IN THE AIR, not in a comparison
+    ///
+    /// The theft this must refuse is a deshield that **credits more cleartext than
+    /// the note it spends holds** — the on-ramp's mint-worth-more, pointed the other
+    /// way, and the easier one, because the credited value is a plain `u64` on the
+    /// wire while the spent note's value is hidden.
+    ///
+    /// It is refused by the Lean-emitted `dregg-shielded-deshield-value-link::v1`
+    /// (`metatheory/Dregg2/Circuit/Emit/ShieldedDeshieldValueLinkEmit.lean`, 161
+    /// columns, 24 PIs `wide[16] ++ vLimb[4] ++ aLimb[4]`). That relation reads ONE
+    /// set of canonical 16-bit limb columns for BOTH the spent note's sixteen
+    /// `cap_node8` carrier lanes and the PUBLIC credit's limbs — the same absorb
+    /// block the transfer's value link uses, imported rather than mirrored
+    /// (`absorb_block_is_the_transfer_value_links`, an `rfl`). There is no second
+    /// value cell, so an inflated credit is not *rejected*, it has no satisfying
+    /// trace (`inflated_credit_unsat`); crediting a different ASSET likewise
+    /// (`substituted_credit_asset_unsat`).
+    ///
+    /// ⚑ Note what is NOT here: the executor makes no `value == piVALUE` comparison.
+    /// `Shield` needs one (its opening publishes a value the executor then checks
+    /// against the debit). A `Deshield` has nothing to compare — the credit's limbs
+    /// ARE public inputs of the relation, pinned to the very columns the carrier
+    /// absorbs, so the executor hands the relation the two ends of the boundary and
+    /// the relation refuses unless they are one opening.
+    ///
+    /// Self-authorizing like `NoteSpend`/`ShieldedTransfer`/`Shield`: the
+    /// complete-spend proof + the value-link proof ARE the authority. It names no
+    /// cell.
+    ///
+    /// ## PRIVACY, stated
+    ///
+    /// A deshield **reveals `value` and `asset_type`** — it must, because the credit
+    /// is public and a credit nobody can read is not a credit. What stays hidden is
+    /// WHICH leaf was spent, its owner, its spending key, its randomness and its
+    /// whole membership path.
+    ///
+    /// CIRCUIT WITNESS (named residual, inherited from `Shield`/`ShieldedTransfer`):
+    /// the executor VERIFIES both proofs and conserves live, but binding them into
+    /// the `effect_vm` descriptor (so a pure LIGHT CLIENT witnesses it) is the
+    /// VK-affecting follow-up — until then the checked `EffectVM` projection REFUSES
+    /// `Deshield` BY NAME (no silent circuit residual).
+    ///
+    /// APPENDED LAST (after `Shield`): postcard enum discriminants are positional, so
+    /// new protocol variants must never be inserted among existing ones. FLAG DAY:
+    /// adds `Effect::hash` tag `69` and re-emits the verb roster
+    /// (`VerbRegistry.lean` count 37 → 38) — a rebuild, not a migration.
+    Deshield {
+        /// The PUBLIC cleartext value being credited — and, because the value link
+        /// binds it, exactly what the spent shielded note is worth. Bound as PI
+        /// `16..20` (its four canonical 16-bit limbs), not compared afterwards.
+        value: u64,
+        /// The PUBLIC cleartext asset. Bound as PI `20..24`, so a note denominated
+        /// in `A` cannot fund a credit in `A'`.
+        asset_type: u64,
+        /// The CLEARTEXT note commitment to create — the recipient's new note, landed
+        /// through the same `apply_note_create` gates an `Effect::NoteCreate` rides
+        /// (duplicate rejection, journaled insert into `note_commitments` at `value`).
+        note_commitment: NoteCommitment,
+        /// Encrypted note content for the cleartext recipient, like `NoteCreate`.
+        encrypted_note: Vec<u8>,
+        /// The SPENT shielded note: its revealed nullifier, the sixteen-lane carrier
+        /// its complete-spend proof PI-pins, and that proof. **The same
+        /// [`ShieldedInputPayload`] a `ShieldedTransfer` spends with** — shared, not
+        /// copied, so the two shielded spend paths cannot drift apart in what they
+        /// require of an input.
+        input: ShieldedInputPayload,
+        /// Canonical postcard bytes of the hiding VALUE-LINK proof — an
+        /// `Ir2BatchProof<DreggZkStarkConfig>` against
+        /// `dregg-shielded-deshield-value-link::v1`. Its sixteen carrier PIs are
+        /// supplied by the executor from `input.spend_proof` AFTER that proof verified
+        /// under the live committed root; its eight remaining PIs are the limbs of
+        /// `value`/`asset_type` above. Neither half is this proof's own claim.
+        link_proof: Vec<u8>,
+    },
 }
 
 /// ONE SOURCE for the one-byte domain tag [`Effect::hash`] absorbs first, expanding
@@ -1790,6 +1887,13 @@ effect_hash_tags! {
     // next free tag after `ShieldedTransfer`. Adding it re-emits the verb roster
     // and moves nothing existing — a Shield hashes under a fresh domain tag.
     Shield                => SHIELD                    = 68,
+    // ⚑ 2026-08-07 FLAG DAY: the shielded OFF-ramp verb. `69` is the next free tag
+    // after `Shield`. Adding it re-emits the verb roster and moves nothing existing —
+    // a Deshield hashes under a fresh domain tag. It must NOT share `Shield`'s: the
+    // two are the same money in opposite directions, so a shared tag would put an
+    // on-ramp and an off-ramp preimage in one domain, which is the `Mint`/
+    // `ShieldedTransfer` wound (fixed above) with the worst possible pair.
+    Deshield              => DESHIELD                  = 69,
 }
 
 /// Why a [`Effect::Refusal`] was issued. Refusals are *evidence of
@@ -2549,9 +2653,12 @@ impl Effect {
                 hasher.update(&(payload.outputs.len() as u64).to_le_bytes());
                 for output in &payload.outputs {
                     hasher.update(&output.note_commitment);
-                    hasher.update(&(output.link_proof.len() as u64).to_le_bytes());
-                    hasher.update(&output.link_proof);
                 }
+                // ⚑ FLAG DAY (change outputs): the link proof is absorbed ONCE, after the
+                // commitments, instead of interleaved per output. The effects hash of a shielded
+                // transfer therefore changes value for every payload, including 1-out ones.
+                hasher.update(&(payload.link_proof.len() as u64).to_le_bytes());
+                hasher.update(&payload.link_proof);
             }
             Effect::Shield {
                 value,
@@ -2576,6 +2683,32 @@ impl Effect {
                 hasher.update(note_tree_root);
                 hasher.update(&(spending_proof.len() as u64).to_le_bytes());
                 hasher.update(spending_proof);
+            }
+            Effect::Deshield {
+                value,
+                asset_type,
+                note_commitment,
+                encrypted_note,
+                input,
+                link_proof,
+            } => {
+                // Every field folds — a length prefix guards each variable-length blob
+                // so no two distinct fields can splice into one preimage. The spent
+                // input's sixteen carrier lanes fold too, so a decoupling of the
+                // carrier from the credit is visible in the effect hash itself.
+                hasher.update(&value.to_le_bytes());
+                hasher.update(&asset_type.to_le_bytes());
+                hasher.update(&note_commitment.0);
+                hasher.update(&(encrypted_note.len() as u64).to_le_bytes());
+                hasher.update(encrypted_note);
+                hasher.update(&input.nullifier.to_le_bytes());
+                for lane in input.spend_wide_binding {
+                    hasher.update(&lane.to_le_bytes());
+                }
+                hasher.update(&(input.spend_proof.len() as u64).to_le_bytes());
+                hasher.update(&input.spend_proof);
+                hasher.update(&(link_proof.len() as u64).to_le_bytes());
+                hasher.update(link_proof);
             }
             Effect::Custom {
                 cell,
@@ -2725,11 +2858,9 @@ impl Effect {
                     .iter()
                     .map(|i| 4 + 16 * 4 + 8 + i.spend_proof.len())
                     .sum::<usize>()
-                    + payload
-                        .outputs
-                        .iter()
-                        .map(|o| 32 + 8 + o.link_proof.len())
-                        .sum::<usize>()
+                    + payload.outputs.len() * 32
+                    + 8
+                    + payload.link_proof.len()
             }
             // Shield: the two public u64s + the 32-byte minted commitment + the
             // 32-byte nullifier + the 32-byte note-tree root + the three
@@ -2747,6 +2878,23 @@ impl Effect {
                     + encrypted_note.len()
                     + shield_proof.len()
                     + spending_proof.len()
+            }
+            // Deshield: the two public u64s + the 32-byte cleartext commitment + the
+            // spent input (4-byte nullifier + sixteen 4-byte carrier lanes + its
+            // complete-spend proof) + the ciphertext + the value-link proof.
+            Effect::Deshield {
+                encrypted_note,
+                input,
+                link_proof,
+                ..
+            } => {
+                8 + 8
+                    + 32
+                    + 4
+                    + 16 * 4
+                    + encrypted_note.len()
+                    + input.spend_proof.len()
+                    + link_proof.len()
             }
             // Custom: the bridge preimage only — cell + program vk_hash + the
             // 8-felt PI-commitment carrier. The sub-proof BYTES are not carried by
@@ -2877,7 +3025,10 @@ impl Effect {
             // Shield names no cell: its debit (a note nullifier) and its mint (a
             // shielded accumulator leaf) are note-domain, not a committed cell field.
             // Empty ⇒ it projects onto EVERY witnessed cell (fail-closed attribution).
-            | Effect::Shield { .. } => Vec::new(),
+            | Effect::Shield { .. }
+            // Deshield names no cell either: its spend (a shielded nullifier) and its
+            // credit (a cleartext note commitment) are both note-domain accumulators.
+            | Effect::Deshield { .. } => Vec::new(),
         }
     }
 
@@ -2935,6 +3086,12 @@ impl Effect {
             // A shield DEBITS a cleartext note (consumes a nullifier) — the same
             // note-spend facet, exactly as its `NoteSpend` debit half would gate.
             Effect::Shield { .. } => dregg_cell::EFFECT_NOTE_SPEND,
+            // A deshield SPENDS a (hidden) shielded note — the same note-spend facet
+            // `ShieldedTransfer` and `Shield` are gated with. It also creates a
+            // cleartext note, but a facet must gate on the AUTHORITY a holder needs,
+            // and the authority a deshield needs is the right to spend the note; the
+            // credit follows from it and cannot be exercised alone.
+            Effect::Deshield { .. } => dregg_cell::EFFECT_NOTE_SPEND,
             // A custom transition advances a SOVEREIGN cell's committed root under
             // an external proof — the sovereign-ops facet, the same class a faceted
             // capability would gate `MakeSovereign` / proof-carrying operation with.
@@ -3173,6 +3330,12 @@ mod effect_tag_tests {
         ShieldedTransferPayload {
             inputs: Vec::new(),
             outputs: Vec::new(),
+            // ⚑ Fixed forward by the deshield lane, 2026-08-07. The change-outputs lane moved
+            // `link_proof` from `ShieldedOutputPayload` onto the PAYLOAD (2-out conservation is a
+            // joint statement, so the proof is per-transfer), and this fixture and the
+            // `sovereign_after_cell_weld_ledger` one were the two callees left behind — the split
+            // that reds `cargo test -p dregg-turn` without touching any lane's own files.
+            link_proof: Vec::new(),
         }
     }
 

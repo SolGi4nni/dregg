@@ -94,15 +94,29 @@
 //! different `K`.
 
 pub mod attest;
+pub mod deshield;
+pub mod deshield_link;
 pub mod pool;
 pub mod shield_opening;
 pub mod spend_complete;
 mod transfer;
 pub mod transfer_link;
+pub mod transfer_link_2out;
 pub mod wide_value_binding;
 
 pub use attest::{
     AttestWitness, Predicate, attest_circuit, attest_descriptor, generate_attest_trace,
+};
+pub use deshield::{
+    DEPLOYED_DESHIELD_INPUTS, DeshieldCredit, DeshieldError, ShieldedDeshield,
+    ShieldedDeshieldWitness, prove_shielded_deshield,
+};
+pub use deshield_link::{
+    ShieldedDeshieldLinkClaim, ShieldedDeshieldLinkError, ShieldedDeshieldLinkProof,
+    ShieldedDeshieldLinkWitness, credit_from_public_limbs, credit_limbs_of,
+    generate_shielded_deshield_link_trace, prove_shielded_deshield_link,
+    shielded_deshield_value_link_descriptor, shielded_deshield_value_link_descriptor_json,
+    verify_shielded_deshield_link,
 };
 pub use pool::{
     HiddenAssetLeg, MultiAssetPoolTransfer, PoolBalanceMode, PoolInputWitness, prove_pool_transfer,
@@ -115,8 +129,9 @@ pub use spend_complete::{
     verify_shielded_spend_complete_parts,
 };
 pub use transfer::{
-    DEPLOYED_INPUTS, DEPLOYED_OUTPUTS, ShieldedError, ShieldedInputProof, ShieldedOutput,
-    ShieldedTransfer, ShieldedTransferWitness, prove_shielded_input, prove_shielded_transfer,
+    DEPLOYED_INPUTS, SUPPORTED_OUTPUTS, ShieldedError, ShieldedInputProof, ShieldedTransfer,
+    ShieldedTransferSplitWitness, ShieldedTransferWitness, prove_shielded_input,
+    prove_shielded_transfer, prove_shielded_transfer_split,
 };
 pub use transfer_link::{
     ShieldedTransferLinkClaim, ShieldedTransferLinkError, ShieldedTransferLinkProof,
@@ -124,6 +139,13 @@ pub use transfer_link::{
     note_commitment_felt_from_bytes, prove_shielded_transfer_link,
     shielded_transfer_value_link_descriptor, shielded_transfer_value_link_descriptor_json,
     verify_shielded_transfer_link,
+};
+pub use transfer_link_2out::{
+    LINK_2OUT_OUTPUTS, ShieldedLink2OutMint, ShieldedTransferLink2OutClaim,
+    ShieldedTransferLink2OutProof, ShieldedTransferLink2OutWitness,
+    generate_shielded_transfer_link_2out_trace, prove_shielded_transfer_link_2out,
+    prove_shielded_transfer_link_2out_from_trace, shielded_transfer_value_link_2out_descriptor,
+    shielded_transfer_value_link_2out_descriptor_json, verify_shielded_transfer_link_2out,
 };
 pub use wide_value_binding::{
     BINDING_BLIND_LANES, LIMB_BITS, U64_LIMBS, WIDE_VALUE_BINDING_LANES, WideValueBindingClaim,

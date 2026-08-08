@@ -848,7 +848,17 @@ impl PersistentStore {
     /// **WHAT SHAPE CHANGED.** `ShieldedTransferPayload` lost `input_legs`, `output_legs`,
     /// `output_range_proofs` and `conservation`; `ShieldedInputPayload` lost
     /// `legacy_value_binding`, `wide_value_binding` and `wide_value_proof`; `ShieldedLeg` is
-    /// DELETED and replaced by `ShieldedOutputPayload { note_commitment, link_proof }`.
+    /// DELETED and replaced by `ShieldedOutputPayload { note_commitment }`.
+    ///
+    /// ⚑ **A SECOND SHAPE CHANGE, 2026-08-07 (change outputs).** The per-output `link_proof` field
+    /// moved OFF `ShieldedOutputPayload` and onto `ShieldedTransferPayload::link_proof` — one link
+    /// proof per TRANSFER, judged against the relation `outputs.len()` selects
+    /// (`dregg-shielded-transfer-value-link::v1` for 1 output,
+    /// `dregg-shielded-transfer-value-link-2out::v1` for 2). Conservation across two outputs is a
+    /// JOINT statement, so per-output proofs cannot express a split: two of them would each
+    /// separately claim the whole input value. The effects-hash preimage changed with it (the link
+    /// proof is absorbed once, after the commitments), so a shielded transfer's effects hash
+    /// differs from its pre-cutover value even at 1 output.
     ///
     /// **WHY.** Epoch 25 closed the spend-side theft and its lane named one residual it did not
     /// hide: *"the Pedersen leg's own `v` is bound to the STARK-side `v` only through this

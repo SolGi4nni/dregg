@@ -79,7 +79,7 @@ const EMIT_LEAN: &str =
 
 /// Split a `def <NAME> : String := r#"…"#` raw-string golden out of a Lean module (the shared
 /// `wide_value_binding.rs` / `spend_complete.rs` convention — one splitter).
-fn lean_raw_golden(source: &'static str, name: &str) -> &'static str {
+pub(crate) fn lean_raw_golden(source: &'static str, name: &str) -> &'static str {
     let open = format!("def {name} : String := r#\"");
     let (_, after) = source
         .split_once(open.as_str())
@@ -174,11 +174,11 @@ pub mod pi {
     pub const COUNT: usize = 17;
 }
 
-fn u64_limbs(value: u64) -> [u16; U64_LIMBS] {
+pub(crate) fn u64_limbs(value: u64) -> [u16; U64_LIMBS] {
     core::array::from_fn(|i| ((value >> (i * LIMB_BITS)) & 0xffff) as u16)
 }
 
-fn u64_mod_p(value: u64) -> BabyBear {
+pub(crate) fn u64_mod_p(value: u64) -> BabyBear {
     BabyBear::new((value % BABYBEAR_P as u64) as u32)
 }
 

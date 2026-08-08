@@ -308,11 +308,12 @@ fn to_payload(
         outputs: transfer
             .outputs
             .iter()
-            .map(|o| ShieldedOutputPayload {
-                note_commitment: o.note_commitment,
-                link_proof: o.link_proof.clone(),
+            .map(|note_commitment| ShieldedOutputPayload {
+                note_commitment: *note_commitment,
             })
             .collect(),
+        // ⚑ ONE link proof per TRANSFER (flag day: change outputs).
+        link_proof: transfer.link_proof.clone(),
     }
 }
 
@@ -545,7 +546,7 @@ fn value_link_divergence_refuses_on_the_deployed_path() {
     );
     let forged_cm_bytes = felt_to_bytes32(forged_link.claim.out_note_commitment);
     assert_ne!(
-        forged_cm_bytes, honest.outputs[0].note_commitment,
+        forged_cm_bytes, honest.outputs[0],
         "VACUITY GUARD: the forged mint must be a DIFFERENT note commitment than the honest one"
     );
 
@@ -558,8 +559,8 @@ fn value_link_divergence_refuses_on_the_deployed_path() {
         }],
         outputs: vec![ShieldedOutputPayload {
             note_commitment: forged_cm_bytes,
-            link_proof: forged_link.proof_bytes(),
         }],
+        link_proof: forged_link.proof_bytes(),
     };
 
     // ── NON-VACUITY: the forged link proof is REAL. Verified against ITS OWN public inputs it
@@ -718,7 +719,7 @@ fn modulus_alias_output_refuses_against_the_spend_carrier() {
     );
     assert_eq!(
         felt_to_bytes32(alias_link.claim.out_note_commitment),
-        honest.outputs[0].note_commitment,
+        honest.outputs[0],
         "AND THE ONE-FELT SURFACE IS BLIND TO IT: the alias mints the very SAME note commitment, \
          because `hash_fact(value mod p, …)` cannot separate v from v + p. Every narrow binding in \
          this system agrees with the attacker here."
@@ -737,8 +738,8 @@ fn modulus_alias_output_refuses_against_the_spend_carrier() {
         }],
         outputs: vec![ShieldedOutputPayload {
             note_commitment: felt_to_bytes32(alias_link.claim.out_note_commitment),
-            link_proof: alias_link.proof_bytes(),
         }],
+        link_proof: alias_link.proof_bytes(),
     };
     let executor = shielded_executor_holding(&set);
     let reason = refusal_reason(
@@ -851,15 +852,39 @@ fn noncanonical_note_commitment_rejects_before_it_can_be_appended() {
 fn unstated_arity_refuses_rather_than_being_admitted() {
     let (set, mut payload, _w, _cm) = balanced(35);
     let executor = shielded_executor_holding(&set);
+
+    // ⚑ 2026-08-07 — THIS TEST'S BAR MOVED, and the move is the point. `1-in/2-out` used to be the
+    // canonical unstated arity; it is now the SPLIT, stated by
+    // `dregg-shielded-transfer-value-link-2out::v1` and gated in
+    // `circuit-prove/tests/shielded_transfer_split.rs`. The refusal this test guards therefore
+    // starts at the first arity the Lean family still does not state.
     let extra = payload.outputs[0].clone();
+    payload.outputs.push(extra.clone());
     payload.outputs.push(extra);
     let reason = refusal_reason(
-        run(&executor, payload).expect_err("a 1-in/2-out transfer has no stated conservation"),
+        run(&executor, payload).expect_err("a 1-in/3-out transfer has no stated conservation"),
     );
     assert!(
         reason.contains("not stated by the deployed value-link descriptor"),
         "the refusal must name the missing descriptor, so the next reader knows this is a gap in \
          the Lean family and not a bug: {reason}"
+    );
+    assert!(
+        reason.contains("[1, 2]"),
+        "and it must name the arities that ARE stated — a message frozen at the old single arity \
+         would be a documented wound rather than a detected one: {reason}"
+    );
+
+    // The empty arity refuses too, at the layer where the message is clearest.
+    let (set, mut payload, _w, _cm) = balanced(36);
+    let executor = shielded_executor_holding(&set);
+    payload.outputs.clear();
+    let reason = refusal_reason(
+        run(&executor, payload).expect_err("a transfer minting nothing has nothing to link"),
+    );
+    assert!(
+        reason.contains("no outputs"),
+        "the empty-output refusal must say so: {reason}"
     );
 }
 
@@ -882,7 +907,7 @@ fn distinct_transfers_are_unlinkable_on_the_wire() {
         "the hidden proofs reveal nothing linking the two transfers"
     );
     assert_ne!(
-        a.outputs[0].link_proof, b.outputs[0].link_proof,
+        a.link_proof, b.link_proof,
         "nor do the hidden value-link proofs"
     );
     assert_ne!(

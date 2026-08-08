@@ -44,17 +44,32 @@ impl ShieldedTransferVerifier for CircuitShieldedTransferVerifier {
         //
         // ⚑ No root parameter. `from_serialized_parts` has none, and the payload has no field that
         // could supply one — the committed root arrives as `committed_root`, from executor state.
+        // ⚑ ONE value-link proof per TRANSFER, not one per output. The retired
+        // `(commitment, link_proof)` pair shape could carry N link proofs, which cannot express a
+        // SPLIT: conservation across two outputs is a JOINT statement, and two independent
+        // per-output proofs would each separately claim the whole input value (`o1 = v` and
+        // `o2 = v` — a double-mint). So the proof is per-transfer and the relation it is judged
+        // against is selected by `outputs.len()`.
+        //
+        // The ARITY GATE lives in `ShieldedTransfer::verify` and names the supported family
+        // ([`SUPPORTED_OUTPUTS`] = 1 or 2). Only the empty case is refused here, because a payload
+        // with no minted note has nothing for the link to bind and the message is clearer at this
+        // layer than "arity 1-in/0-out".
+        if payload.outputs.is_empty() {
+            return Err(invalid(
+                "shielded transfer publishes no outputs; there is no minted note for the \
+                 value-link relation to bind"
+                    .to_string(),
+            ));
+        }
         let transfer = ShieldedTransfer::from_serialized_parts(
             payload
                 .inputs
                 .iter()
                 .map(|i| (i.nullifier, i.spend_wide_binding, i.spend_proof.clone()))
                 .collect(),
-            payload
-                .outputs
-                .iter()
-                .map(|o| (o.note_commitment, o.link_proof.clone()))
-                .collect(),
+            payload.outputs.iter().map(|o| o.note_commitment).collect(),
+            payload.link_proof.clone(),
         )
         .map_err(|e| invalid(format!("shielded transfer payload malformed: {e}")))?;
 
