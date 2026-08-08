@@ -1,5 +1,95 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 8 — `delta` was free by ONE ADDITION, and the fix is a transcript weld, not an algebraic one
+
+The closing AIR's own §3 said `delta` is free. That was PROSE. It is now an equation, and the equation is
+sharper than the prose was: **the eliminated residual sees the published accumulator and `delta` only
+through their SUM** (`the_delta_shift_is_invisible`, no hypotheses, no curve, no prime). So the forgery is
+not one witness — it is a one-parameter family indexed by the group, `acc0 -> acc0 - D`, `delta -> delta + D`,
+and every member is reached by one addition. `the_whole_shift_orbit_is_admitted` is that at Z for every
+shift; `the_transcript_ordered_chain_and_its_shift_both_prove` is **two real STARK proofs at Pallas, both
+verifying under `dregg-mina-wrap-closing-srs::v1`**, differing in exactly `delta` and `acc0`.
+
+**WHERE `delta` ENTERS UPSTREAM'S TRANSCRIPT — cited at source, and the citation this file used to carry
+was WRONG.** `poly-commitment/src/ipa.rs:382-383` is `sponge.absorb_g(&[opening.delta]);` immediately
+followed by `let c = ScalarChallenge::new(sponge.challenge()).to_field(&endo_r);`; the prover's mirror is
+`:1047-1048`; the in-circuit twin is `src/lib/pickles/wrap_verifier.ml:420-421`. **`c` is squeezed from a
+sponge that already contains `delta`** — that is the whole refusal, it is FIAT-SHAMIR, and no rearrangement
+of the closing equation expresses it. ⚠ `MinaWrapClosingAir` cited `check_bulletproof` at `:564` and the
+equation at `:600-613`; in the checkout every other citation in this tree resolves against, they are `:383`
+and `:422` (`:564` is inside the packed public-input MSM). Fixed forward. A citation that resolves to the
+wrong line is the same defect class as a theorem about the wrong object.
+
+**THE WELD — `dregg-mina-wrap-closing-fs::v1`.** `absorb_g` of ONE Pallas point is a rate-2 absorb of its
+two AFFINE coordinates, i.e. exactly `perm(state + [x, y, 0])` — which is `dregg-pasta-fp-absorb::v1`'s
+entire program, already emitted. **The circuit did not need building.** +130 legs: 64 `.first` gates pinning
+row 0's `ADD_X`/`ADD_Y` limbs to the absorbed pair, 32 forcing the projective `Z` to `1` (the sponge absorbed
+AFFINE coordinates; an unnormalised representative is a different pair for the same point), 1 guard, 32 PI
+pins publishing the squeeze, and ONE `proof_bind` whose commitment is `TR_IN || ADD_X || ADD_Y || TR_OUT` —
+**192 lanes, the EXACT public-input vector of the absorb program, limb for limb in the same 32x8-bit
+`pLimb` encoding. No digest, therefore no birthday bound.** `the_weld_names_the_chains_own_addend_cells`
+proves the commitment names the columns the RCB row FOLDS, not a copy of them.
+
+**BOTH POLARITIES, RELEASE, 16/16.** `the_welded_air_admits_the_transcripts_own_delta` PROVES.
+⚑⚑ `a_delta_that_closes_the_equation_but_is_not_the_transcripts_is_refused` is the brief's forgery exactly —
+a descriptor whose MANIFEST is the shifted one (so the addend bus BALANCES) against the HONEST transcript
+pin — **REFUSED, `OodEvaluationMismatch { index: Some(0) }`, `assert_violated_constraint_not_bus`.** The
+falsifier is checked to falsify: the moved limbs are non-zero and inside the declared 8-bit width (no range
+lookup), the terminal `X`/`Z` blocks are still canonically ZERO (not the discharge gate — this is not a
+re-run of the `sg` tooth), the projective `Z` is still `1` (not the affine gate), the guard is `1` and the
+nine attested-program lanes are the pin's (not the vk gate), and it goes through
+`prove_vm_descriptor2_unchecked` so the producer pre-flight is not what spoke.
+
+**THE EMITTER NOW BUILDS IN UPSTREAM'S ORDER**, which is the exhibit: a sponge state, then `delta` chosen
+FREELY BUT FIRST, then `TR_OUT := perm(TR_IN + [x,y,0])`, then `c := ScalarChallenge(low128(TR_OUT_0))
+.to_field(endo_r)` at `MinaRealBlockTranscript`'s own `endo_r`, then `acc0 := c*Q` (a real 255-bit ladder),
+and only THEN is a slot solved for. ⚠ With `delta` fixed by step 3 the closing slot cannot BE `delta`; here
+it is `H` at `z2 = 1`, and upstream refuses that move by the dlog/extraction argument (P10), not by a
+transcript. Labelled, not hidden.
+
+⚠ **THE RESIDUE MOVED; IT DID NOT CLOSE. SAY IT THAT WAY.** `TR_IN` is a descriptor constant and `TR_OUT` a
+published witness, so the AIR refuses a shifted `delta` against a FIXED descriptor and does NOT refuse a
+re-emission at a fresh `(TR_IN, delta, TR_OUT)` triple — all three move together and the absorb sub-proof
+exists for any of them. **The residue is `c`: ONE published field element, at `PI[192..223]`, which a
+consumer recomputes and compares against the `c` it formed `c*Q` with — `MinaAccumulatorAir` residual 1, the
+deferred MSM, circuit / emitter / nowhere.** That is a narrowing of SHAPE (a free group element chosen last,
+after seeing everything -> a published scalar), not a closure. **Do not write "`delta` is bound."** ⚠ And the
+absorb descriptor's own standing is the one every seam in this cone has: `the_absorb_program_permutes_gen`
+is general and hypothesis-free but is about the INTERPRETER, not the 858 emitted constraints; nothing joins
+those constraints to `Core.perm`. Inherited, named, undone work with a shape (`CertifiedRefines` for
+`programAir`).
+
+⚑⚑ **AND A LIVE DRIFT FELL OUT, WHICH IS NOT MINE TO FIX.** Recomputing
+`effect_vm_descriptor2_semantic_fingerprint(pasta-fp-absorb.json)` from the descriptor's own bytes gives
+`[484507606, 137849382, ...]`. `LightClientMinaLinkAir.ABSORB_VK_LANES` carries `[446814635, 83884421, ...]`,
+and `circuit/tests/mina_statehash_seam_proves.rs` is **ALREADY RED at HEAD** on exactly that comparison
+(3 of its 5 tests fail; two others fail on `exactly one seam (minaLink_proofBinds)`). So the link
+descriptor's state-hash seam currently names a program no descriptor in this tree has — the wraplink drift
+that test exists to detect, detected. The `-fs` weld carries the RECOMPUTED lanes and deliberately does not
+copy the stale number in order to agree with it. Fixing the link is a re-emit + VK rotation of the link, the
+head and the conjunction chain, and it is that lane's work.
+
+**SHAPES.** `-fs`: **3 091 declared columns / 224 PIs / 4 961 constraints** (`-srs` is 3 049 / 192 / 4 831).
+`the_weld_is_visible_in_the_shape` — unlike the Pallas/Vesta pair, a shape check DOES tell welded from
+unwelded. `+42` columns is `+1.38 %`. Eight rows, inner LDE `2^9`, whole suite 13.0 s in release.
+
+⚠ **THE ~7x IS STILL ON THE TABLE AND WAS NOT TAKEN.** The row is `PastaCurveSound`'s 3 048-column one, not
+`PastaCurveScheduled`'s 481-column one, and the weld does not change that arithmetic. `AirCrossRow`'s 47
+theorems already force the RCB formula mod `P` on the scheduled rows; its two open premises are
+`PhaseIndicator` and `RowsSat`, both selector plumbing. **Undone work, not a theorem of the model** — priced
+and declined here because the transcript weld was the brief.
+
+**⚑⚑ DAY:** none for anything deployed. `-fs` and the five new fixtures are NEW and live in
+`circuit/tests/fixtures/`, deliberately not `descriptors/by-name/` — **one descriptor per opening proof**,
+because its manifest carries that proof's `delta` AND its weld pins that proof's transcript state.
+`PROVENANCE.json` is not stamped. ⚠ Re-emitting `pasta-fp-absorb.json` moves `ABSORB_VK_LANES` and re-emits
+every `-fs` descriptor.
+
+⚠ **AND THE EMITTER IS NOT A LAKEFILE TARGET.** `EmitMinaWrapClosing.lean` is a `lake env lean --run`
+scratch driver with no `[[lean_exe]]` entry, so an API change in `MinaWrapClosingAir` stays CI-green until a
+human re-runs the emit. Named in the driver's own header as a defect, not as a convention.
+
+
 ## ⛑⛑⛑⛑ AUGUST 8 — the opening slot 12 was said to be MISSING has been on disk for a week; what is missing is a TRANSCRIPT
 
 The brief: *"give §19 a real IPA opening for block 539508's wrap proof — its L/R and `delta` are

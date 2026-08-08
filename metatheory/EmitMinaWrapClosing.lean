@@ -10,6 +10,20 @@ SCRATCH executable: emit the descriptors and the multi-row traces for
   lake env lean --run EmitMinaWrapClosing.lean free-sg          > ../circuit/tests/fixtures/mina-wrap-closing-free-sg-trace.txt
   lake env lean --run EmitMinaWrapClosing.lean free-sg-routed   > ../circuit/tests/fixtures/mina-wrap-closing-free-sg-routed-trace.txt
   lake env lean --run EmitMinaWrapClosing.lean params           > ../circuit/tests/fixtures/mina-wrap-closing-params.txt
+  lake env lean --run EmitMinaWrapClosing.lean desc seg         > ../circuit/tests/fixtures/mina-wrap-closing-seg.json
+  ⚑ the transcript-weld set (2026-08-08):
+  lake env lean --run EmitMinaWrapClosing.lean desc fs                 > ../circuit/tests/fixtures/mina-wrap-closing-fs.json
+  lake env lean --run EmitMinaWrapClosing.lean desc fs-shifted-manifest> ../circuit/tests/fixtures/mina-wrap-closing-fs-shifted-manifest.json
+  lake env lean --run EmitMinaWrapClosing.lean desc srs-fs             > ../circuit/tests/fixtures/mina-wrap-closing-srs-fs.json
+  lake env lean --run EmitMinaWrapClosing.lean desc srs-fs-shifted     > ../circuit/tests/fixtures/mina-wrap-closing-srs-fs-shifted.json
+  lake env lean --run EmitMinaWrapClosing.lean fs                      > ../circuit/tests/fixtures/mina-wrap-closing-fs-trace.txt
+  lake env lean --run EmitMinaWrapClosing.lean fs-shifted              > ../circuit/tests/fixtures/mina-wrap-closing-fs-shifted-trace.txt
+  lake env lean --run EmitMinaWrapClosing.lean srs-fs                  > ../circuit/tests/fixtures/mina-wrap-closing-srs-fs-trace.txt
+  lake env lean --run EmitMinaWrapClosing.lean srs-fs-shifted          > ../circuit/tests/fixtures/mina-wrap-closing-srs-fs-shifted-trace.txt
+
+⚠ This driver is NOT a `[[lean_exe]]` target in `lakefile.toml`, so an API change in
+`MinaWrapClosingAir` stays CI-green until a human re-runs the emit. Named as a defect, not as a
+convention.
 
 ⚑⚑ **THE FALSIFIER IS THE FORGERY THE VACUITY THEOREM NAMES, AND NOTHING ELSE.**
 
@@ -48,6 +62,7 @@ is the ALGEBRA and the two polarities; the width is the fold's problem.
 This file only RENDERS; it authors nothing.
 -/
 import Dregg2.Circuit.Emit.MinaWrapClosingAir
+import Dregg2.Circuit.Emit.MinaRealBlockTranscript
 
 open Dregg2.Circuit.Emit.PastaCurveSound (rcbSoundRow)
 open Dregg2.Circuit.Emit.PastaCurveComplete (rcbAddM curveB3 Oproj)
@@ -142,6 +157,104 @@ def FREE_SG_ADDENDS : List P3 :=
   , scaledNeg (Z1 * B0 % qN) UPT
   , scaledNeg (Z2 % qN) HPT ]
 
+/-! ## ⚑⚑ THE TRANSCRIPT-ORDERED CONSTRUCTION — the one the `-fs` weld is about.
+
+⚑ **READ THE ORDER, IT IS THE WHOLE EXHIBIT.** Everything above builds `delta` LAST, by `deltaFor`,
+from a chosen `c` — which is the FORGER's order and is why `MinaWrapClosingAir` §6 can shift it.
+This block builds in upstream's order (`ipa.rs:382-383`):
+
+    1. a sponge state `TR_IN` (chosen — it stands for the state after the fifteen IPA rounds)
+    2. `delta` — chosen FREELY, but chosen NOW, before `c` exists
+    3. `TR_OUT := perm(TR_IN + [delta.x, delta.y, 0])`   -- `absorb_g(&[opening.delta])`
+    4. `c := ScalarChallenge(low128(TR_OUT[0])).to_field(endo_r)`  -- the very next line upstream
+    5. `acc₀ := c·Q`
+    6. and only THEN is a manifest slot solved for, so the chain closes — here it is `H`, the SRS
+       blinding base, at `z₂ = 1`.
+
+Step 6 is where the residue lives and it is named rather than hidden: SOMETHING has to absorb the
+residual, and with `delta` fixed by step 3 it cannot be `delta`. Upstream refuses step 6 by the
+dlog/extraction argument (P10), not by a transcript — see `MinaWrapClosingAir` §7 caveat (c).
+
+⚠ `TR_IN` is CHOSEN and is not block 539508's. What this exhibits is the ORDER and the two
+polarities; it is not a claim about a Mina proof, exactly as the `c`/`z₁`/`z₂`/`b₀` above are not. -/
+
+/-- Binary modular exponentiation — needed only to normalise a projective point to affine, because
+`absorb_g` absorbs AFFINE coordinates. Rendering only; nothing in any AIR reads this. -/
+def powMod (b e m : Nat) : Nat :=
+  let rec go : Nat → Nat → Nat → Nat
+    | 0, _, acc => acc
+    | (k + 1), bb, acc =>
+        go ((k + 1) / 2) (bb * bb % m) (if (k + 1) % 2 = 1 then acc * bb % m else acc)
+    termination_by k => k
+    decreasing_by exact Nat.div_lt_self (Nat.succ_pos _) (by omega)
+  go e (b % m) (1 % m)
+
+/-- `(X : Y : Z) ↦ (X/Z, Y/Z, 1)` at `pN`, by Fermat. -/
+def affineP (P : P3) : P3 :=
+  let zi := powMod P.2.2 (pN - 2) pN
+  ((P.1 * zi) % pN, (P.2.1 * zi) % pN, 1)
+
+/-- ⚑ STEP 1 — the sponge state entering the `delta` absorb. CHOSEN. -/
+def TR_IN : P3 := (7, 11, 13)
+
+/-- ⚑ STEP 2 — `delta`, fixed BEFORE `c` exists, in AFFINE form because that is what `absorb_g`
+absorbs. -/
+def DELTA_FS : P3 := affineP (kG 77)
+
+/-- ⚑ STEP 3 — `sponge.absorb_g(&[opening.delta])`: one rate-2 absorb, one Kimchi permutation over
+`Fp`. This is EXACTLY `dregg-pasta-fp-absorb::v1`'s program at `fpParams`. -/
+def TR_OUT : List Nat :=
+  Dregg2.Circuit.Emit.PastaPoseidonFq.Core.perm Dregg2.Circuit.Emit.PastaPoseidonFq.fpParams
+    [(TR_IN.1 + DELTA_FS.1) % pN, (TR_IN.2.1 + DELTA_FS.2.1) % pN, TR_IN.2.2]
+
+/-- The squeezed lane — `sponge.challenge()`'s raw output before truncation. -/
+def SQUEEZE : Nat := TR_OUT.getD 0 0
+
+/-- ⚑ STEP 4 — `ScalarChallenge::new(sponge.challenge()).to_field(&endo_r)`, at the SAME `endo_r`
+`MinaRealBlockTranscript` pins from a real block. -/
+def C_FS : Nat :=
+  (Dregg2.Circuit.Emit.KimchiVerify.endoMap
+    Dregg2.Circuit.Emit.MinaRealBlockTranscript.ENDO_R
+    (Dregg2.Circuit.Emit.KimchiVerify.low128 SQUEEZE)).val
+
+/-- ⚑ STEP 5 — the accumulator entering row 0, at the transcript's own `c`. -/
+def ACC0_FS : P3 := redPtP (smulP (C_FS % qN) QPT)
+
+/-- `z₂ = 1`, so the `H` slot is exactly `−H` and step 6 is one addition rather than a dlog. -/
+def Z2_FS : Nat := 1
+
+/-- The part of the chain that is fixed once steps 1-5 are done: `acc₀`, `delta`, `−(z₁b₀)·U` and
+the five SRS slots. -/
+def FS_KNOWN_SUM : P3 :=
+  (redPtP DELTA_FS :: scaledNeg (Z1 * B0 % qN) UPT :: srsSlots GS UVEC Z1 NGEN).foldl
+    (fun acc A => rcbAddM pN curveB3 acc A) ACC0_FS
+
+/-- ⚑ STEP 6 — the SRS blinding base, DERIVED so the chain closes at a `delta` the transcript
+already fixed. ⚠ This is the inversion the exhibit is about: upstream fixes `delta` first and
+lets the SCHNORR RESPONSES `z₁`/`z₂` close the equation, and their soundness is P10. Here the
+closing slot is `H`, which is the same move at demonstration scale and is labelled as such. -/
+def H_FS : P3 := redPtP FS_KNOWN_SUM
+
+/-- The welded manifest: same shape, `delta` from step 2, `H` from step 6. -/
+def MANIFEST_FS : List P3 :=
+  closingAddends GS UVEC Z1 B0 Z2_FS DELTA_FS UPT H_FS NGEN
+
+/-! ### ⚑ THE SHIFT — `MinaWrapClosingAir.the_delta_shift_is_invisible`, CONSTRUCTED. -/
+
+/-- The group element the forgery shifts by. Any real Pallas point does. -/
+def SHIFT_PT : P3 := kG 3
+
+/-- ⚑ `delta ↦ delta + Δ`, renormalised to affine so the AFFINE pin is not what refuses it — the
+falsifier must fire on the DELTA pin, not on a normalisation gate. -/
+def DELTA_SHIFTED : P3 := affineP (rcbAddM pN curveB3 DELTA_FS SHIFT_PT)
+
+/-- ⚑ …and `acc₀ ↦ acc₀ − Δ`, the matching move. -/
+def ACC0_SHIFTED : P3 := redPtP (rcbAddM pN curveB3 ACC0_FS (negP SHIFT_PT))
+
+/-- ⚑⚑ The forger's manifest — `MANIFEST_FS` with slot 0 replaced and NOTHING else touched. -/
+def MANIFEST_SHIFTED : List P3 :=
+  closingAddends GS UVEC Z1 B0 Z2_FS DELTA_SHIFTED UPT H_FS NGEN
+
 /-! ## Rendering. -/
 
 /-- `k` honestly threaded rows over an EXPLICIT addend list, starting from `P`. -/
@@ -160,6 +273,19 @@ def chainEnd : P3 → List P3 → P3
 /-- Widen every row to the routed descriptor's `3 049` columns with the row index at `RIDX`. -/
 def withRowIndex (rows : List (List ℤ)) : List (List ℤ) :=
   rows.mapIdx (fun i r => r ++ [(i : ℤ)])
+
+/-- ⚑ Widen a ROUTED trace to the welded descriptor's `3 091` columns: the guard at `DBIND`, the
+nine attested-program lanes at `FSVK`, and the squeezed sponge lane's 32 limbs at `TROUT`. Only row
+0 carries them — `dbindStartLeg` and `trOutPinLegs` are `.first`, and on later rows the guard is a
+free bit the prover sets to zero, which makes the bind inert there. -/
+def withWeldCells (rows : List (List ℤ)) : List (List ℤ) :=
+  rows.mapIdx (fun i r =>
+    if i = 0 then
+      r ++ [1] ++ ABSORB_VK_LANES
+        ++ (List.range Dregg2.Circuit.Emit.PastaFieldSound.SK).map
+             (fun j => (((SQUEEZE / 2 ^ (8 * j)) % 256 : Nat) : ℤ))
+    else r ++ [0] ++ List.replicate 9 (0 : ℤ)
+           ++ List.replicate Dregg2.Circuit.Emit.PastaFieldSound.SK (0 : ℤ))
 
 def traceText (rows : List (List ℤ)) : String :=
   String.intercalate "\n" (rows.map (fun r => String.intercalate " " (r.map toString))) ++ "\n"
@@ -180,6 +306,19 @@ def paramsText : String :=
     , ptText "bound_end" (chainEnd ACC0 MANIFEST_HONEST)
     , ptText "free_sg_end" (chainEnd ACC0 FREE_SG_ADDENDS)
     , ptText "free_sg_routed_end" (chainEnd ACC0 MANIFEST_FORGED)
+    -- ⚑ the transcript-ordered block
+    , ptText "tr_in" TR_IN
+    , ptText "delta_fs" DELTA_FS
+    , "squeeze " ++ toString SQUEEZE
+    , "tr_out " ++ String.intercalate " " (TR_OUT.map toString)
+    , "c_fs " ++ toString C_FS
+    , ptText "acc0_fs" ACC0_FS
+    , ptText "h_fs" H_FS
+    , ptText "shift_pt" SHIFT_PT
+    , ptText "delta_shifted" DELTA_SHIFTED
+    , ptText "acc0_shifted" ACC0_SHIFTED
+    , ptText "fs_end" (chainEnd ACC0_FS MANIFEST_FS)
+    , ptText "fs_shifted_end" (chainEnd ACC0_SHIFTED MANIFEST_SHIFTED)
     ] ++ "\n"
 
 def descJson (which : String) : Option String :=
@@ -193,6 +332,23 @@ def descJson (which : String) : Option String :=
   else if which = "srs-forged" then
     some (Dregg2.Circuit.DescriptorIR2.emitVmJson2
       (closingRoutedDescNamed "dregg-mina-wrap-closing-srs::v1" MANIFEST_FORGED))
+  -- ⚑ the transcript-ordered trio
+  else if which = "fs" then
+    some (Dregg2.Circuit.DescriptorIR2.emitVmJson2
+      (closingFsDesc GS UVEC Z1 B0 Z2_FS DELTA_FS UPT H_FS TR_IN NGEN))
+  else if which = "srs-fs" then
+    some (Dregg2.Circuit.DescriptorIR2.emitVmJson2
+      (closingRoutedDescNamed "dregg-mina-wrap-closing-srs::v1" MANIFEST_FS))
+  else if which = "srs-fs-shifted" then
+    some (Dregg2.Circuit.DescriptorIR2.emitVmJson2
+      (closingRoutedDescNamed "dregg-mina-wrap-closing-srs::v1" MANIFEST_SHIFTED))
+  -- ⚑⚑ THE SURGICAL FALSIFIER'S DESCRIPTOR: the SHIFTED manifest (so the addend bus BALANCES and
+  -- a LogUp imbalance cannot be what refuses) against the HONEST transcript pin. Nothing but the
+  -- `delta` pin can fire on the shifted trace here.
+  else if which = "fs-shifted-manifest" then
+    some (Dregg2.Circuit.DescriptorIR2.emitVmJson2
+      (closingFsDescNamed "dregg-mina-wrap-closing-fs::v1" MANIFEST_SHIFTED
+        (redPtP DELTA_FS) TR_IN))
   else none
 
 def main (args : List String) : IO Unit :=
@@ -208,6 +364,16 @@ def main (args : List String) : IO Unit :=
   | ["free-sg"] => IO.print (traceText (rowsFromAddends ACC0 FREE_SG_ADDENDS))
   | ["free-sg-routed"] =>
       IO.print (traceText (withRowIndex (rowsFromAddends ACC0 MANIFEST_FORGED)))
+  -- ⚑ the transcript-ordered traces
+  | ["fs"] =>
+      IO.print (traceText (withWeldCells (withRowIndex (rowsFromAddends ACC0_FS MANIFEST_FS))))
+  | ["fs-shifted"] =>
+      IO.print (traceText (withWeldCells
+        (withRowIndex (rowsFromAddends ACC0_SHIFTED MANIFEST_SHIFTED))))
+  | ["srs-fs"] =>
+      IO.print (traceText (withRowIndex (rowsFromAddends ACC0_FS MANIFEST_FS)))
+  | ["srs-fs-shifted"] =>
+      IO.print (traceText (withRowIndex (rowsFromAddends ACC0_SHIFTED MANIFEST_SHIFTED)))
   | _ =>
       IO.eprintln
         "usage: EmitMinaWrapClosing.lean (desc <w>|params|bound|bound-routed|free-sg|free-sg-routed)"

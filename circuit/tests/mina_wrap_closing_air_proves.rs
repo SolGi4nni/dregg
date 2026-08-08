@@ -75,6 +75,9 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, TableSem, parse_vm_descriptor2, prove_vm_descriptor2,
     prove_vm_descriptor2_unchecked, verify_vm_descriptor2,
 };
+use dregg_circuit::descriptor_ir2::{ProofBindSpec, VmConstraint2};
+use dregg_circuit::descriptor_ir2_canonical::effect_vm_descriptor2_semantic_fingerprint;
+use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
 
 // -------------------------------------------------------------------------------------------
@@ -469,4 +472,476 @@ fn the_emitters_own_terminals_say_which_chain_vanishes() {
     for k in ["c", "z1", "z2", "b0"] {
         assert!(param_small(k)[0] > 1, "`{k}` is degenerate");
     }
+}
+
+// -------------------------------------------------------------------------------------------
+// §5 — ⚑⚑⚑ `delta`. THE RESIDUAL THIS FILE NAMED, MEASURED AND THEN WELDED.
+//
+// §4 above ends by saying `delta` is free. This section stops describing that and exhibits it, at
+// the emitted bytes, as a STARK proof — and then exhibits the weld that refuses it.
+//
+// ## The forgery, and it is not one witness
+//
+// `MinaWrapClosingAir.the_delta_shift_is_invisible` proves the eliminated residual depends on the
+// published accumulator and `delta` ONLY THROUGH THEIR SUM. So for every group element `Δ`,
+//
+//     acc₀ ↦ acc₀ − Δ        delta ↦ delta + Δ        (nothing else touched)
+//
+// is accepted. `the_whole_shift_orbit_is_admitted` is that at ℤ for every shift;
+// `the_transcript_ordered_chain_and_its_shift_both_prove` below is that at Pallas, as two real
+// proofs under `dregg-mina-wrap-closing-srs::v1`.
+//
+// ## Why the fix cannot be algebraic — the citation, at source
+//
+// Upstream refuses the shift by the ORDER of two adjacent lines, and by nothing else:
+//
+//     poly-commitment/src/ipa.rs:382-383   sponge.absorb_g(&[opening.delta]);
+//                                          let c = ScalarChallenge::new(sponge.challenge())
+//                                                      .to_field(&endo_r);
+//     poly-commitment/src/ipa.rs:1047-1048 the prover's mirror of the same pair
+//     src/lib/pickles/wrap_verifier.ml:420-421   absorb sponge PC delta ;
+//                                                let c = squeeze_scalar sponge in
+//
+// `c` is squeezed from a sponge that already contains `delta`, so a forger who moves `delta` moves
+// `c`, and `c·Q` moves with it in a direction nobody controls. That is Fiat–Shamir; no rearrangement
+// of the closing equation expresses it, which is why the weld is a TRANSCRIPT weld.
+//
+// ## The weld — `dregg-mina-wrap-closing-fs::v1`
+//
+// `absorb_g` of ONE Pallas point is a rate-2 absorb of its two AFFINE coordinates, i.e. exactly
+// `perm(state + [x, y, 0])` — which is `dregg-pasta-fp-absorb::v1`'s whole program. So the welded
+// descriptor adds 130 legs: 64 `.first` gates pinning row 0's `ADD_X`/`ADD_Y` limbs to the absorbed
+// pair, 32 forcing the projective `Z` to `1` (the sponge absorbed AFFINE coordinates), 1 guard, 32
+// PI pins publishing the squeeze, and ONE `proof_bind` whose commitment is
+// `TR_IN ‖ ADD_X ‖ ADD_Y ‖ TR_OUT` — **192 lanes, the EXACT public-input vector of
+// `dregg-pasta-fp-absorb::v1`, limb for limb, no digest and therefore no birthday bound.**
+//
+// ## ⚠ WHAT THE WELD DOES NOT BUY — say it before quoting any of it
+//
+// `TR_IN` is a descriptor constant and `TR_OUT` a published witness, so the AIR refuses a SHIFTED
+// `delta` against a FIXED descriptor; it does not refuse a re-emission at a fresh
+// `(TR_IN, delta, TR_OUT)` triple. What that converts is the SHAPE of the residue: from "a group
+// element chosen last, after seeing everything" to "a published scalar `c` that a consumer
+// recomputes from `PI[192..223]` and compares against the `c` it formed `c·Q` with."
+// `MinaAccumulatorAir` residual 1 is that comparison, and it is CIRCUIT (the deferred MSM) or
+// EMITTER or NOWHERE. **Do not say `delta` is bound. Say the residue moved to `c`, and that `c` is
+// one field element rather than a free group element.**
+// -------------------------------------------------------------------------------------------
+
+const FS_JSON: &str = include_str!("fixtures/mina-wrap-closing-fs.json");
+const SRS_FS_JSON: &str = include_str!("fixtures/mina-wrap-closing-srs-fs.json");
+const SRS_FS_SHIFTED_JSON: &str = include_str!("fixtures/mina-wrap-closing-srs-fs-shifted.json");
+const ABSORB_JSON: &str = include_str!("../descriptors/by-name/pasta-fp-absorb.json");
+/// ⚑ The SHIFTED manifest against the HONEST transcript pin — so the addend bus BALANCES and a
+/// LogUp imbalance cannot be what refuses the shifted trace. Nothing but the `delta` pin can fire.
+const FS_SHIFTED_MANIFEST_JSON: &str =
+    include_str!("fixtures/mina-wrap-closing-fs-shifted-manifest.json");
+
+const FS_TRACE: &str = include_str!("fixtures/mina-wrap-closing-fs-trace.txt");
+const FS_SHIFTED_TRACE: &str = include_str!("fixtures/mina-wrap-closing-fs-shifted-trace.txt");
+const SRS_FS_TRACE: &str = include_str!("fixtures/mina-wrap-closing-srs-fs-trace.txt");
+const SRS_FS_SHIFTED_TRACE: &str =
+    include_str!("fixtures/mina-wrap-closing-srs-fs-shifted-trace.txt");
+
+const FS_NAME: &str = "dregg-mina-wrap-closing-fs::v1";
+const ABSORB_NAME: &str = "dregg-pasta-fp-absorb::v1";
+
+/// `MinaWrapClosingAir.FS_WIDTH` — the routed row, the guard, nine program lanes and the squeeze.
+const FS_WIDTH: usize = ROUTED_WIDTH + 10 + SK; // 3091
+/// `MinaWrapClosingAir.FS_PI_COUNT`, APPENDED so no accumulator slot moves.
+const FS_PI_COUNT: usize = PI_COUNT + SK; // 224
+/// `MinaWrapClosingAir.the_weld_is_one_hundred_thirty_legs`.
+const FS_CONSTRAINTS: usize = ROUTED_CONSTRAINTS + 130; // 4961
+
+const DBIND: usize = ROUTED_WIDTH; // 3049
+const FSVK_0: usize = ROUTED_WIDTH + 1; // 3050
+const TROUT_0: usize = ROUTED_WIDTH + 10; // 3059
+/// `PastaLadderThread.ADD_X`/`ADD_Y` — the addend blocks the RCB row folds.
+const ADD_X: usize = 3 * SK; // 96
+const ADD_Y: usize = 4 * SK; // 128
+
+/// `MinaWrapClosingAir.ABSORB_VK_LANES`, transcribed there and recomputed here.
+const LEAN_ABSORB_VK_LANES: [i64; 9] = [
+    484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268,
+];
+
+/// Nine base-`2^29` lanes of a 32-byte value (Lean `keyToLanes9` / `Faithful9::from_key_lanes9`).
+fn key_lanes9(bytes: &[u8; 32]) -> [i64; 9] {
+    let mut v = [0i64; 9];
+    let mut acc: u128 = 0;
+    let mut bits = 0usize;
+    let mut out = 0usize;
+    for b in bytes.iter() {
+        acc |= u128::from(*b) << bits;
+        bits += 8;
+        while bits >= 29 && out < 8 {
+            v[out] = (acc & ((1u128 << 29) - 1)) as i64;
+            acc >>= 29;
+            bits -= 29;
+            out += 1;
+        }
+    }
+    v[8] = acc as i64;
+    v
+}
+
+/// `-fs` publishes 32 more slots than `-srs`: the squeezed sponge lane, read off row 0's own cells.
+fn fs_public_inputs(t: &[Vec<BabyBear>]) -> Vec<BabyBear> {
+    let mut pis = public_inputs(t);
+    for j in 0..SK {
+        pis.push(t[0][TROUT_0 + j]);
+    }
+    assert_eq!(pis.len(), FS_PI_COUNT);
+    pis
+}
+
+/// The descriptor's one `proof_bind`.
+fn the_weld(d: &EffectVmDescriptor2) -> &ProofBindSpec {
+    let mut found = None;
+    for c in &d.constraints {
+        if let VmConstraint2::ProofBind(m) = c {
+            assert!(
+                found.is_none(),
+                "exactly one `proof_bind` in the welded AIR"
+            );
+            found = Some(m);
+        }
+    }
+    found.expect("the welded descriptor carries a `proof_bind`")
+}
+
+#[test]
+/// §5a — the shapes the rest of this section reads, against the Lean theorems that state them.
+fn the_welded_artifact_declares_what_this_file_reads() {
+    let fs = descriptor(FS_JSON);
+    assert_eq!(fs.name, FS_NAME, "closingFsDesc_name");
+    assert_eq!(fs.trace_width, FS_WIDTH, "closingFsDesc_width = 3091");
+    assert_eq!(
+        fs.public_input_count, FS_PI_COUNT,
+        "closingFsDesc_piCount = 224"
+    );
+    assert_eq!(
+        fs.constraints.len(),
+        FS_CONSTRAINTS,
+        "closingFsDesc_constraint_count = 4961"
+    );
+
+    // ⚑ the_weld_is_visible_in_the_shape: a shape check DOES tell welded from unwelded.
+    let srs = descriptor(SRS_FS_JSON);
+    assert_eq!(srs.name, SRS_NAME);
+    assert_ne!(fs.trace_width, srs.trace_width);
+    assert_ne!(fs.public_input_count, srs.public_input_count);
+    assert_ne!(fs.constraints.len(), srs.constraints.len());
+}
+
+#[test]
+/// ⚑ §5b — **THE WELD PINS THE REAL ABSORB PROGRAM, AND ITS COMMITMENT IS THAT PROGRAM'S PUBLIC
+/// INPUT VECTOR.**
+///
+/// Lean cannot compute blake3, so `MinaWrapClosingAir.ABSORB_VK_LANES` is a transcription — and a
+/// transcription is only a gate if something recomputes it. This does, from
+/// `pasta-fp-absorb.json`'s own bytes. The wraplink drift is the measured reason: a head once
+/// pinned a fingerprint no descriptor in this tree had.
+fn the_weld_pins_the_real_absorb_program_and_names_its_pi_vector() {
+    let absorb = descriptor(ABSORB_JSON);
+    assert_eq!(absorb.name, ABSORB_NAME);
+    let fp = effect_vm_descriptor2_semantic_fingerprint(&absorb).expect("representable");
+    assert_eq!(
+        key_lanes9(&fp),
+        LEAN_ABSORB_VK_LANES,
+        "MinaWrapClosingAir.ABSORB_VK_LANES must be the recomputed fingerprint of {ABSORB_NAME}"
+    );
+
+    let fs = descriptor(FS_JSON);
+    let weld = the_weld(&fs);
+    assert_eq!(
+        weld.vk_pin.as_deref(),
+        Some(&LEAN_ABSORB_VK_LANES[..]),
+        "the emitted bytes pin the absorb program lane by lane"
+    );
+
+    // ⚑ 192 lanes against the sub-program's own 192 public inputs — the same 32×8-bit `pLimb`
+    // encoding on both sides, so there is no digest between the two vectors.
+    assert_eq!(weld.commit.len(), 3 * SK + 2 * SK + SK);
+    assert_eq!(
+        weld.commit.len(),
+        absorb.public_input_count,
+        "the commitment IS the absorb program's public-input vector, lane for lane"
+    );
+
+    // ⚑ …and its middle 64 lanes are the CHAIN'S OWN addend cells, not a copy of `delta`.
+    for j in 0..2 * SK {
+        assert_eq!(
+            weld.commit[3 * SK + j],
+            LeanExpr::Var(ADD_X + j),
+            "commit lane {} must be the column the RCB row folds as row 0's addend",
+            3 * SK + j
+        );
+    }
+    // The head lanes are descriptor CONSTANTS — the transcript state entering the absorb.
+    for j in 0..3 * SK {
+        assert!(
+            matches!(weld.commit[j], LeanExpr::Const(_)),
+            "the incoming sponge state is a descriptor constant, not a witness"
+        );
+    }
+    // The tail lanes are the PUBLISHED squeeze.
+    for j in 0..SK {
+        assert_eq!(weld.commit[5 * SK + j], LeanExpr::Var(TROUT_0 + j));
+    }
+    assert_eq!(
+        ADD_Y,
+        ADD_X + SK,
+        "the two addend blocks really are adjacent"
+    );
+}
+
+#[test]
+/// ⚑⚑⚑ §5c — **THE FORGERY, LIVE: A SHIFTED `delta` PROVES UNDER THE UNWELDED CLOSING AIR.**
+///
+/// Two chains at the SAME manifest shape, differing in exactly two places — the published
+/// accumulator and manifest slot 0 — by `+Δ` and `−Δ` for a real Pallas point `Δ`. **Both prove and
+/// both verify.** That is `the_delta_shift_is_invisible` as a STARK proof rather than as a theorem
+/// about a model, and it is the wound §5d closes.
+///
+/// ⚠ This test PASSING is the finding, not the fix.
+fn the_transcript_ordered_chain_and_its_shift_both_prove() {
+    // The two are genuinely different objects.
+    let d0 = param_point("delta_fs");
+    let d1 = param_point("delta_shifted");
+    let a0 = param_point("acc0_fs");
+    let a1 = param_point("acc0_shifted");
+    assert_ne!(d0, d1, "the shift really moves `delta`");
+    assert_ne!(a0, a1, "…and really moves the published accumulator");
+    assert_eq!(d0[2], "1", "`delta` is AFFINE — what `absorb_g` absorbs");
+    assert_eq!(
+        d1[2], "1",
+        "…and so is the shifted one, so the AFFINE pin is not the refusal"
+    );
+
+    // Both chains reach the canonical point at infinity.
+    for k in ["fs_end", "fs_shifted_end"] {
+        let e = param_point(k);
+        assert_eq!(e[0], "0", "{k} X vanishes");
+        assert_eq!(e[2], "0", "{k} Z vanishes");
+    }
+
+    for (json, text, label) in [
+        (SRS_FS_JSON, SRS_FS_TRACE, "transcript-ordered"),
+        (SRS_FS_SHIFTED_JSON, SRS_FS_SHIFTED_TRACE, "SHIFTED"),
+    ] {
+        let d = descriptor(json);
+        let t = trace(text, ROUTED_WIDTH, ROUTED_ROWS);
+        let pis = public_inputs(&t);
+        let proof = prove_vm_descriptor2(&d, &t, &pis, &MemBoundaryWitness::default(), &[])
+            .unwrap_or_else(|e| panic!("the {label} chain proves: {e}"));
+        verify_vm_descriptor2(&d, &proof, &pis).expect("and verifies");
+        println!("{label} chain PROVES under {SRS_NAME}");
+    }
+    println!("⚑ the closing check cannot separate them — the residual sees only acc₀ + delta");
+}
+
+#[test]
+/// §5d ACCEPT pole — the transcript's own `delta` proves under the welded AIR. Without this the
+/// refusal below would be evidence that the welded descriptor accepts nothing.
+fn the_welded_air_admits_the_transcripts_own_delta() {
+    let d = descriptor(FS_JSON);
+    let t = trace(FS_TRACE, FS_WIDTH, ROUTED_ROWS);
+    let pis = fs_public_inputs(&t);
+    let proof = prove_vm_descriptor2(&d, &t, &pis, &MemBoundaryWitness::default(), &[])
+        .expect("the transcript-ordered chain proves under the welded descriptor");
+    verify_vm_descriptor2(&d, &proof, &pis).expect("and verifies");
+    println!("transcript-ordered chain PROVES under {FS_NAME}");
+}
+
+#[test]
+/// ⚑⚑⚑ §5d REFUSE pole — **THE SHIFTED `delta` IS REFUSED BY THE WELDED AIR.**
+///
+/// The same shift §5c proves, run against the welded descriptor. A `.first` boundary gate on a
+/// pinned `delta` limb fires.
+///
+/// ⚠ Four things this asserts about the refusal, because a falsifier that stops falsifying is the
+/// failure this is built against:
+/// * the moved cells are **NON-ZERO** and **inside the declared 8-bit limb width**, so no range
+///   lookup can be what refuses;
+/// * the chain's **terminal `X`/`Z` blocks are still canonically ZERO**, so the `.last` discharge
+///   gate is *not* what refuses — this is a `delta` tooth and not a re-run of §3's;
+/// * the shifted `delta`'s projective `Z` limb is still `1`, so the AFFINE pin is not what refuses;
+/// * it is a **CONSTRAINT**, not a bus, and it comes from `prove_vm_descriptor2_unchecked`, so the
+///   producer pre-flight is not what spoke.
+fn a_shifted_delta_is_refused_by_the_welded_closing_air() {
+    let d = descriptor(FS_JSON);
+    let raw = cells(FS_SHIFTED_TRACE);
+    let honest = cells(FS_TRACE);
+    let t = trace(FS_SHIFTED_TRACE, FS_WIDTH, ROUTED_ROWS);
+    let pis = fs_public_inputs(&t);
+
+    // The falsifier moved something, in-width, on the pinned blocks.
+    let moved = (0..2 * SK)
+        .filter(|&j| raw[0][ADD_X + j] != honest[0][ADD_X + j])
+        .count();
+    assert!(
+        moved > 0,
+        "the shifted trace must differ from the honest one on the PINNED `delta` limbs — a \
+         falsifier that moved nothing refuses nothing"
+    );
+    assert!(
+        raw[0][ADD_X..ADD_X + 2 * SK].iter().any(|&v| v != 0),
+        "the moved value is non-zero"
+    );
+    for j in 0..2 * SK {
+        assert!(
+            raw[0][ADD_X + j] < 256,
+            "every pinned limb is inside the declared 8-bit width, so no range lookup refuses"
+        );
+    }
+    // The projective Z is still 1, so the AFFINE pin is not what fires.
+    assert_eq!(raw[0][5 * SK], 1, "the shifted `delta` is still affine");
+    for j in 1..SK {
+        assert_eq!(raw[0][5 * SK + j], 0);
+    }
+    // ⚑ And the chain still VANISHES, so the discharge gate is not what fires.
+    let last = ROUTED_ROWS - 1;
+    for i in 0..SK {
+        assert_eq!(
+            raw[last][OUT[0] + i],
+            0,
+            "the shifted chain's terminal X is still canonically zero"
+        );
+        assert_eq!(raw[last][OUT[2] + i], 0, "…and its terminal Z");
+    }
+
+    let refusal = must_refuse_or_unsat_panic("a shifted `delta` under the transcript weld", || {
+        prove_and_verify_adversarial(&d, &t, &pis)
+    });
+    let reason = refusal.reason();
+    assert_violated_constraint_not_bus("shifted-`delta` closing chain", &reason);
+    println!("shifted `delta` REFUSED under {FS_NAME}: {reason}");
+}
+
+#[test]
+/// §5e — the emitter's own transcript dump, re-asserted so no number is transcribed twice, and so
+/// the ORDER the exhibit is about is checkable: `TR_OUT` is a function of `TR_IN` and `delta`, and
+/// `c` is a function of `TR_OUT`.
+fn the_emitters_transcript_dump_says_delta_came_first() {
+    let tr_in = param_point("tr_in");
+    let delta = param_point("delta_fs");
+    let squeeze = param_point("squeeze");
+    let c_fs = param_point("c_fs");
+    let tr_out = param_point("tr_out");
+
+    assert_eq!(tr_in.len(), 3, "a Poseidon state over Fp is three lanes");
+    assert_eq!(tr_out.len(), 3);
+    assert_eq!(
+        squeeze[0], tr_out[0],
+        "the squeeze IS lane 0 of the permuted state — `sponge.challenge()`"
+    );
+    assert_ne!(
+        tr_in[0], tr_out[0],
+        "absorbing `delta` moved the sponge — else the weld would name a no-op"
+    );
+    assert_ne!(c_fs[0], "0");
+    assert_ne!(
+        c_fs[0], squeeze[0],
+        "`c` is the ENDO LIFT of the low 128 bits, not the raw squeeze \
+         (`ScalarChallenge::to_field`)"
+    );
+    assert_eq!(delta[2], "1", "`absorb_g` absorbs AFFINE coordinates");
+
+    // ⚑ The welded descriptor's commit head IS this `TR_IN`, decomposed into 8-bit limbs.
+    let fs = descriptor(FS_JSON);
+    let weld = the_weld(&fs);
+    let lane0: Vec<i64> = (0..SK)
+        .map(|j| match weld.commit[j] {
+            LeanExpr::Const(k) => k,
+            _ => panic!("the incoming state is a constant"),
+        })
+        .collect();
+    let mut v: u128 = 0;
+    for (j, l) in lane0.iter().enumerate() {
+        v |= (*l as u128) << (8 * j);
+    }
+    assert_eq!(
+        v.to_string(),
+        tr_in[0],
+        "commit lanes 0..32 recompose to the transcript state's lane 0"
+    );
+}
+
+#[test]
+/// ⚑⚑⚑ §5f — **THE SURGICAL FALSIFIER: THE BUS BALANCES AND THE PIN STILL REFUSES.**
+///
+/// §5d proves the shifted trace under a descriptor whose manifest is the HONEST one, so its addend
+/// lookup is also unbalanced and a reader could ask which of the two spoke. This descriptor carries
+/// the SHIFTED manifest and the HONEST transcript pin: the routing bus balances, the chain vanishes,
+/// every limb is in-width, the point is affine — **and the only thing left that can refuse is the
+/// `delta` pin.** This is exactly the brief's forgery: a `delta` that satisfies the closing equation
+/// and is not the transcript's.
+fn a_delta_that_closes_the_equation_but_is_not_the_transcripts_is_refused() {
+    let d = descriptor(FS_SHIFTED_MANIFEST_JSON);
+    assert_eq!(d.name, FS_NAME);
+    assert_eq!(d.trace_width, FS_WIDTH);
+
+    // The manifest IS the shifted one, so the exact-public bus balances on this trace.
+    let honest_desc = descriptor(FS_JSON);
+    let honest_manifest = declared_manifest(&honest_desc);
+    let shifted_manifest = declared_manifest(&d);
+    assert_eq!(shifted_manifest.len(), honest_manifest.len());
+    assert_ne!(
+        shifted_manifest[0], honest_manifest[0],
+        "the two manifests differ at slot 0 — the `delta` slot"
+    );
+    for i in 1..shifted_manifest.len() {
+        assert_eq!(
+            shifted_manifest[i], honest_manifest[i],
+            "…and NOWHERE else, so the shift is the only variable"
+        );
+    }
+    // …and the transcript pin is still the honest one: the `.first` boundary constants that name
+    // the absorbed pair have not moved with the manifest.
+    let weld_h = the_weld(&honest_desc);
+    let weld_s = the_weld(&d);
+    assert_eq!(
+        weld_h.commit, weld_s.commit,
+        "the weld's commitment expression is unchanged — the pin is the transcript's"
+    );
+    assert_eq!(weld_h.vk_pin, weld_s.vk_pin);
+
+    let raw = cells(FS_SHIFTED_TRACE);
+    let t = trace(FS_SHIFTED_TRACE, FS_WIDTH, ROUTED_ROWS);
+    let pis = fs_public_inputs(&t);
+
+    // Every discriminating cause OTHER than the pin is ruled out, on the trace itself.
+    let last = ROUTED_ROWS - 1;
+    for i in 0..SK {
+        assert_eq!(raw[last][OUT[0] + i], 0, "the chain still vanishes in X");
+        assert_eq!(
+            raw[last][OUT[2] + i],
+            0,
+            "…and in Z — not the discharge gate"
+        );
+    }
+    assert_eq!(raw[0][5 * SK], 1, "affine — not the Z normalisation gate");
+    for j in 0..2 * SK {
+        assert!(raw[0][ADD_X + j] < 256, "in-width — not a range lookup");
+    }
+    assert_eq!(
+        raw[0][DBIND], 1,
+        "the guard is set — the bind is live on row 0"
+    );
+    for (i, lane) in LEAN_ABSORB_VK_LANES.iter().enumerate() {
+        assert_eq!(
+            i64::try_from(raw[0][FSVK_0 + i]).unwrap(),
+            *lane,
+            "the attested program lanes are the pin's — not the vk gate"
+        );
+    }
+
+    let refusal = must_refuse_or_unsat_panic(
+        "a `delta` that closes the equation and is not the transcript's",
+        || prove_and_verify_adversarial(&d, &t, &pis),
+    );
+    let reason = refusal.reason();
+    assert_violated_constraint_not_bus("transcript-unbound `delta`", &reason);
+    println!("⚑ a closing-equation-satisfying, transcript-UNBOUND `delta` REFUSED: {reason}");
 }

@@ -26,13 +26,21 @@ circuit. The **closing group equation had no AIR at all** — `MinaWrapGroupGate
 
 ## ⚑ WHAT THE RELATION REQUIRES, READ AT SOURCE — and both halves are quoted
 
-* `src/lib/pickles/wrap_verifier.ml`, `check_bulletproof` at **`:564`**; the equation is the
-  comment at **`:600`** — *`(* c Q + delta = z1 (G + b U) + z2 H *)`* — with `lhs = endo q c +
-  delta` (`:601-604`) and `rhs = z_1·(challenge_polynomial_commitment + b·U) + z_2·H`
-  (`:605-613`). ⚠ `challenge_polynomial_commitment` (= `sg`), `z_1` and `z_2` arrive as fields of
+* `src/lib/pickles/wrap_verifier.ml`, `check_bulletproof` at **`:383`**; the equation is the
+  comment at **`:422`** — *`(* c Q + delta = z1 (G + b U) + z2 H *)`* — with `lhs = endo q c +
+  delta` (`:423-426`) and `rhs = z_1·(challenge_polynomial_commitment + b·U) + z_2·H`
+  (`:427-435`). ⚠ `challenge_polynomial_commitment` (= `sg`), `z_1` and `z_2` arrive as fields of
   the `openings_proof` record: **free in the circuit, and that is FAITHFUL to upstream.** The gap
   was never that Mina fails to bind `sg`; it is that Mina binds it SOMEWHERE ELSE and dregg
   bound it nowhere.
+
+  ⚠ **THESE FOUR LINE NUMBERS WERE WRONG UNTIL 2026-08-08 AND ARE FIXED FORWARD, NOT ANNOTATED.**
+  This block cited `:564` / `:600-613`. In the checkout every other citation in this tree resolves
+  against — `wrap_verifier.ml:395` is `Other_field.Packed.absorb_shifted` (`KimchiStepWrapChain`
+  §4) and `:617` is the `x_hat` absorb (`EmitWrapMainJson:205`) — `:564` is inside the packed
+  public-input MSM and `:600` is a `List.foldi` arm. A citation that resolves to the wrong line is
+  the same defect class as a theorem about the wrong object, and it was found by running
+  `git grep` on the numbers rather than on the prose.
 
 * `poly-commitment/src/ipa.rs`, `SRS::verify`. Two independent randomisers are sampled at
   **`:356-357`** (`rand_base`, `sg_rand_base`) and the two statements are folded into ONE terminal
@@ -41,6 +49,38 @@ circuit. The **closing group equation had no AIR at all** — `MinaWrapGroupGate
   comment *"we also add `-sg_rand_base_i * G` to check correctness of sg"* (`:409`). That is the
   leg this file brings in. Upstream runs the same relation out-of-circuit on the Step side as
   `batch_dlog_accumulator_check`; on the Tock/Wrap side it is folded into `SRS::verify` itself.
+
+* ⚑⚑ **AND WHERE `delta` ENTERS THE TRANSCRIPT — the citation §6 and §7 are about.** Two lines,
+  adjacent, in both implementations, and the ORDER is the whole content:
+
+  ```rust
+  // poly-commitment/src/ipa.rs:382-383   (SRS::verify, the VERIFIER)
+  sponge.absorb_g(&[opening.delta]);
+  let c = ScalarChallenge::new(sponge.challenge()).to_field(&endo_r);
+  ```
+  ```rust
+  // poly-commitment/src/ipa.rs:1047-1048 (SRS::open, the PROVER — the same pair)
+  sponge.absorb_g(&[delta]);
+  let c = ScalarChallenge::new(sponge.challenge()).to_field(&endo_r);
+  ```
+  ```ocaml
+  (* src/lib/pickles/wrap_verifier.ml:420-421, INSIDE check_bulletproof *)
+  absorb sponge PC delta ;
+  let c = squeeze_scalar sponge in
+  ```
+
+  The absorb schedule that reaches those two lines is, in order: `absorb_fr(shift_scalar(cip))`
+  (`ipa.rs:371`), `u_base := group_map(challenge_fq())` (`:373-377`),
+  `OpeningProof::challenges` (`:379` → `:1266-1274`, which absorbs `L` then `R` and squeezes a
+  prechallenge, fifteen times), **then `delta`, then `c`.** `absorb_g` of ONE Pallas point is a
+  rate-2 absorb of its two `Fp` coordinates — i.e. exactly `perm(state + [x, y, 0])`, which is
+  what `dregg-pasta-fp-absorb::v1` computes and what §7 binds against.
+
+  ⚑ **`c` IS SQUEEZED FROM A SPONGE THAT ALREADY CONTAINS `delta`.** That is the entire reason a
+  prover cannot pick `delta` after seeing `c`, and it is a FIAT–SHAMIR fact, not an algebraic one:
+  no rearrangement of the closing equation can express it. `MinaWrapOpeningGate`'s
+  `delta_leaves_the_prechallenges_alone` and `delta_moves_c_prime` are that ordering measured on
+  block 539508's own transcript — at the VALUE layer, by `native_decide`, not in any AIR.
 
 ## ⚑⚑ THE MOVE, AND IT IS NOT A WEAKENING — §2 IS THE THEOREM
 
@@ -143,10 +183,32 @@ with one adapter.
    ALGEBRAIC relation to the SRS (`sg = ⟨s, srs.g⟩`) which lives inside the closing equation and
    which nothing in dregg discharged; that one is closed here, by elimination. `delta`'s binding is
    a FIAT–SHAMIR relation — `SRS::verify` absorbs `delta` into the sponge before squeezing `c` — and
-   it lives in the transcript, which is `MinaWrapOpeningGate`'s §3 and `MinaAccumulatorAir`'s
-   residual 2, open before this file and open after it. **Retiring one free witness while another
-   stands is progress only if the second one is named, so it is named: the closing check in this
-   AIR refutes a free `sg` and does NOT refute a free `delta`.**
+   it lives in the transcript.
+
+   ⚑⚑ **UPDATED 2026-08-08 — §6 MEASURES IT AND §7 WELDS IT, AND THE RESIDUE MOVED RATHER THAN
+   CLOSED.** This paragraph used to end *"the closing check in this AIR refutes a free `sg` and does
+   NOT refute a free `delta`."* That is still true of `-seg`/`-final`/`-srs` and it is now an
+   EQUATION rather than a sentence: `the_delta_shift_is_invisible` proves the residual sees `acc₀`
+   and `delta` only through their SUM, so the forgery is a one-parameter family and every member is
+   one addition away. `the_whole_shift_orbit_is_admitted` exhibits it at ℤ and
+   `circuit/tests/mina_wrap_closing_air_proves.rs::the_transcript_ordered_chain_and_its_shift_both_
+   prove` exhibits it as TWO REAL STARK PROOFS at Pallas.
+
+   `dregg-mina-wrap-closing-fs::v1` (§7) refuses it: `delta`'s limbs are `.first`-pinned to the pair
+   a `dregg-pasta-fp-absorb::v1` sub-proof absorbed, and the bind's commitment IS that program's
+   192-lane public-input vector — no digest, no birthday bound. Both polarities run in release
+   (`the_welded_air_admits_the_transcripts_own_delta` /
+   `a_delta_that_closes_the_equation_but_is_not_the_transcripts_is_refused`, the second refused by
+   `OodEvaluationMismatch` on a trace whose addend bus BALANCES, whose chain VANISHES, whose limbs
+   are in-width and whose point is affine — so the pin is what spoke).
+
+   ⚠ **AND SAY WHERE IT WENT.** `TR_IN` is a descriptor constant and `TR_OUT` a published witness,
+   so the weld refuses a shifted `delta` against a FIXED descriptor and does not refuse a
+   re-emission at a fresh `(TR_IN, delta, TR_OUT)` triple. **The residue is `c` — ONE published
+   field element a consumer recomputes from `PI[192..223]`, against `MinaAccumulatorAir` residual
+   1's `c·Q`.** That is a narrowing, not a closure: `delta` was a free GROUP ELEMENT chosen last,
+   after seeing everything; `c` is a scalar the descriptor now publishes. Do not write "`delta` is
+   bound."
 4. **P10, the opening-soundness floor, is untouched.** That a prover which passes the closing check
    must KNOW an opening is the IPA/dlog extraction argument, undischarged here and everywhere in
    this stack. This file changes what the CHECK is, never what passing it proves.
@@ -165,6 +227,7 @@ read-only; NOT imported by the `Dregg2` root, per house practice for gates. Impo
 `import Dregg2.Circuit.Emit.MinaWrapClosingAir`
 -/
 import Dregg2.Circuit.Emit.MinaAccumulatorAir
+import Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp
 
 namespace Dregg2.Circuit.Emit.MinaWrapClosingAir
 
@@ -675,6 +738,403 @@ theorem only_the_closing_routing_leg_targets_the_addend_table :
     ((closingRoutedDescNamed "x" []).constraints.filter
       (fun c => ! MinaAccumulatorAir.notAddendLookup c)).length = 1 := by decide
 
+/-! ## §6 — ⚑⚑⚑ THE FREE `delta`, AS AN EQUATION RATHER THAN AS A SENTENCE.
+
+§"WHAT THIS DOES NOT ESTABLISH" item 3 says `delta` is free. That is prose. This section is the
+equation, and it says something sharper than the prose did: **the check does not see `acc₀` and
+`delta` separately — it sees only their SUM.** So there is not merely *a* forgery; there is a
+one-parameter family of them, one per group element, and each member is reached by an addition.
+
+    acc₀ ↦ acc₀ − Δ        delta ↦ delta + Δ        (every other slot untouched)
+
+⚠ Read against `MinaAccumulatorAir` residual 1, which says whether the published `c·Q` is the
+block's is a CONSUMER obligation. That residual and this one are THE SAME MOVE seen from two ends,
+and neither is visible from inside the descriptor: a consumer that recomputes `c·Q` from a `c` it
+trusts refuses the shift, and a consumer that reads `PI[0..95]` and the manifest does not.
+
+⚑ And this is what §7 exists to kill: the shift moves `delta`, and §7's `.first` pins force
+`delta`'s limbs to the pair a transcript absorb published. -/
+
+section Shift
+
+variable {F : Type} [CommRing F] {A : Type} [AddCommGroup A] [Module F A]
+
+/-- ⚑ **THE ELIMINATED RESIDUAL WITH THE ACCUMULATOR AS ONE GROUP ELEMENT** — which is the shape the
+descriptor actually publishes, at `PI[0..95]`. `c` and `Q` do not occur separately in any emitted
+constraint of this file, so stating the residual at `(c, Q)` overstates what the object holds. -/
+def closingResidualAt (z1 z2 b0 : F) (acc delta U H S : A) : A :=
+  acc + delta - z1 • S - (z1 * b0) • U - z2 • H
+
+/-- …and it IS §1's residual, by `rfl`, at `acc := c • Q`. So §6 is about the same object §1b is. -/
+theorem closingResidualAt_is_the_published_shape (c z1 z2 b0 : F) (Q delta U H S : A) :
+    closingResidualAt z1 z2 b0 (c • Q) delta U H S = closingResidual c z1 z2 b0 Q delta U H S :=
+  rfl
+
+/-- ⚑⚑⚑ **THE DELTA SHIFT IS INVISIBLE TO THE CLOSING CHECK.** Move the published accumulator down
+by any group element and `delta` up by the same one: the residual is UNCHANGED, so the descriptor
+accepts both. No hypotheses, no curve, no prime — it is a fact about the shape.
+
+⚠ **AND UPSTREAM REFUSES IT, BY THE ORDERING AND ONLY BY THE ORDERING.** `ipa.rs:382-383` absorbs
+`delta` and THEN squeezes `c`, so a forger who moves `delta` moves `c`, and `c·Q` moves with it —
+in a direction no adversary controls. That is a Fiat–Shamir fact; no rearrangement of this equation
+can express it, which is why the fix in §7 is a transcript weld and not an algebraic one. -/
+theorem the_delta_shift_is_invisible (z1 z2 b0 : F) (acc delta U H S Δ : A) :
+    closingResidualAt z1 z2 b0 (acc - Δ) (delta + Δ) U H S
+      = closingResidualAt z1 z2 b0 acc delta U H S := by
+  unfold closingResidualAt
+  abel
+
+/-- The same statement read as "only the sum matters": two `(acc, delta)` pairs with equal sums are
+indistinguishable here. -/
+theorem the_check_sees_only_the_sum (z1 z2 b0 : F) (acc acc' delta delta' U H S : A)
+    (h : acc + delta = acc' + delta') :
+    closingResidualAt z1 z2 b0 acc delta U H S = closingResidualAt z1 z2 b0 acc' delta' U H S := by
+  unfold closingResidualAt
+  rw [h]
+
+end Shift
+
+/-! ### §6b — ⚑ THE FORGERY EXHIBITED AT ℤ, so §6 is not a statement about an empty family.
+
+`the_delta_shift_is_invisible` is an identity and would hold even if the residual were constantly
+`0`, which §1c already refuted for the un-shifted family. These three re-run that refutation ON THE
+SHIFTED FAMILY: every member of the shift orbit vanishes, the members are DISTINCT, and a move that
+is NOT a shift still refutes. -/
+
+/-- The eliminated residual at `F = A = ℤ`, at §1c's own numbers (`z₁ = 3`, `z₂ = 5`, `b₀ = 7`,
+`U = 13`, `H = 17`, `S = 19`), with the accumulator `22 = c·Q` at `c = 2, Q = 11` and the honest
+`delta = 393`, shifted by `t`. -/
+def zShift (t : ℤ) : ℤ := closingResidualAt (F := ℤ) (A := ℤ) 3 5 7 (22 - t) (393 + t) 13 17 19
+
+/-- ⚑⚑ **EVERY MEMBER OF THE SHIFT ORBIT IS ACCEPTED.** One theorem, all `t` — the forgery is not
+one witness, it is a family indexed by the group. -/
+theorem the_whole_shift_orbit_is_admitted (t : ℤ) : zShift t = 0 := by
+  unfold zShift closingResidualAt
+  simp only [smul_eq_mul]
+  ring
+
+/-- …and its members are DISTINCT, in BOTH coordinates, so "accepted at every `t`" is not "accepted
+at one point named twice." -/
+theorem the_shift_orbit_is_not_a_point :
+    ((22 : ℤ) - 100 ≠ 22 - 0) ∧ ((393 : ℤ) + 100 ≠ 393 + 0) := by
+  refine ⟨by decide, by decide⟩
+
+/-- ⚑ **AND A MOVE THAT IS NOT A SHIFT STILL REFUTES.** Move `delta` alone — the accumulator
+untouched — and the residual is non-zero. So §6 says the check is blind to ONE direction, not that
+it is blind. -/
+theorem a_delta_move_without_the_matching_accumulator_move_refutes :
+    closingResidualAt (F := ℤ) (A := ℤ) 3 5 7 22 (393 + 100) 13 17 19 ≠ 0 := by
+  unfold closingResidualAt
+  decide
+
+/-! ## §7 — ⚑⚑⚑ THE TRANSCRIPT WELD: `delta` STOPS BEING A SLOT AND BECOMES AN ABSORBED PAIR.
+
+## The mechanism, and why it is the only one that could work here
+
+`sg`'s binding was ALGEBRAIC — a relation inside the closing equation — so §1b closed it by
+elimination, inside the equation. `delta`'s binding is not in the equation at all: it is
+`ipa.rs:382-383`'s ordering. **A weld for it must name a HASH, and the hash is Poseidon over the
+Pallas base field.** dregg has that as an emitted AIR already: `dregg-pasta-fp-absorb::v1`
+(`MinaWrapVerifierSpongeFp.fpAbsorbDesc`) computes `perm(state + [x₀, x₁, 0])` at `pLimb`, and
+`absorb_g` of ONE Pallas point is exactly a rate-2 absorb of its two affine coordinates. The
+program needed no building.
+
+## What this section adds to the routed block — four legs and a column block
+
+1. ⚑ **64 `.first` gates pinning `delta`'s X and Y limbs** to the absorbed pair. These are the
+   refusal: a shifted `delta` moves a limb and a `boundary` gate fires. They are NOT a pin against
+   the manifest — that would be `feedback-a-pin-against-its-own-definition-is-decoration` — they
+   are a pin against a value that is *also* named by leg 4's commitment.
+2. **32 `.first` gates forcing `delta`'s projective `Z` to `1`.** `absorb_g` absorbs AFFINE
+   coordinates, so an unnormalised representative would be a different absorbed pair for the same
+   group element. Without these the weld would name a point and the chain would fold another.
+3. **32 `.pin` legs publishing the squeeze**, at PI `192..223`. Published so a CONSUMER can compute
+   `c = ScalarChallenge(low128(squeeze)).to_field(endo_r)` and compare it against the `c` it used to
+   form `c·Q`. ⚠ That comparison is an EXECUTOR check and is named as one below.
+4. ⚑⚑ **ONE `.proofBind`** whose commitment is `TR_IN ‖ ADD_X ‖ ADD_Y ‖ TR_OUT` — **192 lanes, the
+   EXACT public-input vector of `dregg-pasta-fp-absorb::v1`, limb for limb, in the same 32×8-bit
+   `pLimb` encoding.** Not a digest and not a re-encoding: `SPONGE_PI_COUNT = 6·SK = 192` and this
+   commitment is `3·SK + 2·SK + SK`. There is no birthday bound because there is no hash between
+   the two vectors.
+
+⚑ **AND THE COMMIT NAMES THE CHAIN'S OWN CELLS.** `deltaCommitLanes` is `.var (ADD_X + j)` for
+`j < 2·SK` — the SAME columns `addendTuple` reads at tuple positions `1 … 64` and the same ones
+`pallasCompleteAddSoundLegs` folds as row 0's addend. `the_weld_names_the_chains_own_addend_cells`
+is that as a theorem, because a weld against a COPY of `delta` would be co-occurrence.
+
+## ⚠ WHAT THIS DOES NOT CLOSE — and one of them is where the residue moved to
+
+a. ⚑⚑ **`TR_IN` IS A DESCRIPTOR CONSTANT AND `TR_OUT` IS A PUBLISHED WITNESS.** The AIR refuses a
+   `delta` that is not the pair between them; it does NOT refuse a re-emission at a different
+   `(TR_IN, delta, TR_OUT)` triple, because all three move together and the absorb sub-proof exists
+   for any of them. **So the weld converts "the emitter may choose a group element `delta` freely,
+   last, after seeing everything" into "the emitter must choose a transcript state and publish the
+   scalar it squeezes."** The residue is `c`, ONE published field element, and the check that
+   binds it is `c·Q` — `MinaAccumulatorAir` residual 1, the deferred MSM, CIRCUIT / EMITTER /
+   NOWHERE with no fourth place. Say it that way; do not say `delta` is bound.
+b. **The absorb descriptor's own soundness is the standing every seam in this cone has.**
+   `MinaWrapVerifierSpongeFp.the_absorb_program_permutes_gen` is general and hypothesis-free but is
+   about the INTERPRETER (`runProgAt`), not about the 858 emitted constraints; nothing in this tree
+   joins those constraints to `Core.perm`. `PastaPoseidon.perm_forces` IS a constraint-level forcing
+   theorem, but for an UNEMITTED 9×30-limb gadget. That gap is inherited, not introduced here, and
+   it is undone work with a named shape: a `CertifiedRefines` for `programAir`.
+c. **`z₁`, `z₂` and `b₀` are untouched, and that is not the same kind of gap.** A forger who moves
+   `z₂` shifts the sum by `δ·H`; upstream refuses that by the dlog/extraction argument (P10), not by
+   a transcript. P10 is a FLOOR and is undischarged here and everywhere in this stack. `delta`'s was
+   NOT a floor — it was a mechanizable ordering — which is exactly why it was worth taking. -/
+
+/-- ⚑ **THE ABSORB SUB-PROGRAM'S IDENTITY, AS NINE `Faithful9` LANES.** The key lanes of
+`effect_vm_descriptor2_semantic_fingerprint(dregg-pasta-fp-absorb::v1)`.
+
+⚠ Lean cannot compute blake3, so this is a TRANSCRIPTION, and a transcription is only a gate if
+something recomputes it — `circuit/tests/mina_wrap_closing_air_proves.rs` recomputes the fingerprint from
+`circuit/descriptors/by-name/pasta-fp-absorb.json`'s own bytes and asserts these nine numbers.
+⚠ **FLAG DAY COUPLING:** re-emitting `pasta-fp-absorb.json` moves this literal and re-emits every
+`-fs` descriptor. It is the same coupling `LINK_VK_LANES` and `CHAINLINK_VK_LANES` carry.
+
+⚑⚑ **AND THIS IS NOT THE NUMBER `LightClientMinaLinkAir.ABSORB_VK_LANES` CARRIES — measured
+2026-08-08, and that one is STALE.** Its literal is `[446814635, 83884421, …]`; the recomputed
+fingerprint of the descriptor in the tree is the nine below. `circuit/tests/mina_statehash_seam_
+proves.rs::the_seam_pins_the_real_absorb_program` is ALREADY RED at HEAD on exactly that
+comparison, independently of this file — so the link descriptor's state-hash seam currently names a
+program no descriptor here has, which is the wraplink drift the seam test exists to detect,
+detected. ⚠ Fixing it is `LightClientMinaLinkAir`'s work and a re-emit + VK rotation of the link,
+the head and the conjunction chain; it is NOT done here and this file does not copy the stale
+number in order to agree with it. -/
+def ABSORB_VK_LANES : List ℤ :=
+  [484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268]
+
+/-- The bind's guard column — one past the routing's row index. -/
+def DBIND : Nat := ROUTED_WIDTH
+
+/-- The nine attested-program columns. -/
+def FSVK (i : Nat) : Nat := ROUTED_WIDTH + 1 + i
+
+/-- The 32 columns holding the squeezed sponge lane, PI-published at `192 … 223`. -/
+def TROUT (j : Nat) : Nat := ROUTED_WIDTH + 10 + j
+
+/-- The welded descriptor's declared trace width: the routed row, the guard, nine program lanes and
+the squeeze. `3 049 → 3 091`, `+1.38 %`. -/
+def FS_WIDTH : Nat := ROUTED_WIDTH + 10 + SK
+
+/-- PI slot of the `j`-th squeeze limb — APPENDED, so no accumulator slot moves. -/
+def FS_TROUT_PI (j : Nat) : Nat := ACC_PI_COUNT + j
+
+/-- `192 + 32`. -/
+def FS_PI_COUNT : Nat := ACC_PI_COUNT + SK
+
+theorem the_weld_costs_forty_two_columns_and_thirty_two_public_inputs :
+    FS_WIDTH = 3091 ∧ ROUTED_WIDTH = 3049 ∧ FS_PI_COUNT = 224 ∧ ACC_PI_COUNT = 192
+    ∧ DBIND = 3049 ∧ FSVK 0 = 3050 ∧ TROUT 0 = 3059 ∧ FS_TROUT_PI 0 = 192 := by
+  refine ⟨by decide, by decide, by decide, by decide, rfl, rfl, rfl, rfl⟩
+
+/-- The guard is `1` on the first row. `.first` lowers to a `boundary`, whose body reads `loc`
+alone. On later rows the guard is a free bit and the bind is inert there — a prover who sets it
+makes an ADDITIONAL claim, never a weaker one. -/
+def dbindStartLeg : AirLeg :=
+  .window ⟨RowSel.first, WindowExpr.add (.loc DBIND) (.const (-1))⟩
+
+/-- ⚑⚑ **THE PIN THAT REFUSES THE SHIFT.** Row 0's `j`-th addend limb equals the `j`-th limb of the
+absorbed pair. `j < 2·SK` walks `ADD_X` then `ADD_Y`, because `ADD_Y = ADD_X + SK`. -/
+def deltaPinLeg (d : Pt3) (j : Nat) : AirLeg :=
+  .window ⟨RowSel.first,
+    WindowExpr.add (.loc (ADD_X + j)) (.const (-(coordLimb d j : ℤ)))⟩
+
+def deltaPinLegs (d : Pt3) : List AirLeg := (List.range (2 * SK)).map (deltaPinLeg d)
+
+/-- ⚑ **AND THE AFFINE NORMALISATION.** `absorb_g` absorbs affine coordinates; a projective
+representative with `Z ≠ 1` is the same group element and a DIFFERENT absorbed pair. -/
+def deltaAffineLeg (j : Nat) : AirLeg :=
+  .window ⟨RowSel.first,
+    WindowExpr.add (.loc (ADD_Z + j)) (.const (if j = 0 then -1 else 0))⟩
+
+def deltaAffineLegs : List AirLeg := (List.range SK).map deltaAffineLeg
+
+/-- The squeeze, published. -/
+def trOutPinLegs : List AirLeg :=
+  (List.range SK).map (fun j => AirLeg.pin ⟨.first, TROUT j, FS_TROUT_PI j⟩)
+
+/-- The incoming sponge state, as `3 · SK` descriptor CONSTANTS — the same status the salt lanes
+have in `LightClientMinaLinkAir.seamCommitLanes`, and the same status this descriptor's manifest
+has. A `Pt3` because a Poseidon state over `Fp` is three field elements and `coordLimb` already
+decomposes exactly that. -/
+def trInLanes (st : Pt3) : List Dregg2.Circuit.Expr :=
+  (List.range (3 * SK)).map (fun j => Dregg2.Circuit.Expr.const (coordLimb st j : ℤ))
+
+/-- ⚑⚑ **THE ABSORBED PAIR, NAMED AS THE CHAIN'S OWN CELLS** — not a copy of `delta`. -/
+def deltaCommitLanes : List Dregg2.Circuit.Expr :=
+  (List.range (2 * SK)).map (fun j => Dregg2.Circuit.Expr.var (ADD_X + j))
+
+def trOutCommitLanes : List Dregg2.Circuit.Expr :=
+  (List.range SK).map (fun j => Dregg2.Circuit.Expr.var (TROUT j))
+
+def fsVkLanes : List Dregg2.Circuit.Expr :=
+  (List.range 9).map (fun i => Dregg2.Circuit.Expr.var (FSVK i))
+
+/-- ⚑⚑⚑ **THE DELTA-ABSORB BIND.** Guard `DBIND`; commitment `TR_IN ‖ delta.x ‖ delta.y ‖ squeeze`,
+which IS `dregg-pasta-fp-absorb::v1`'s public-input vector; attested program the nine `FSVK`
+columns, pinned to its fingerprint.
+
+⚑ `bound := none`, for the reason `linkBindLeg` gives: `bound` forces `commit` to equal a row-local
+expression, and every lane here is already a descriptor constant or a `.var` on this row. -/
+def deltaAbsorbBindLeg (st : Pt3) : AirLeg :=
+  .bind { guard  := .var DBIND
+        , commit := trInLanes st ++ deltaCommitLanes ++ trOutCommitLanes
+        , vk     := fsVkLanes
+        , vkPin  := some ABSORB_VK_LANES
+        , bound  := none }
+
+/-- ⚑ **THE WELDED BLOCK** — the routed block VERBATIM, plus the weld. -/
+def closingFsAirOn (As : List Pt3) (d st : Pt3) : EffectAir :=
+  { tables := routedTables As
+  , legs := closingRoutedAir.legs ++ deltaPinLegs d ++ deltaAffineLegs
+      ++ [dbindStartLeg] ++ trOutPinLegs ++ [deltaAbsorbBindLeg st] }
+
+/-- ⚑ **THE ROUTED BLOCK'S LEGS ARE A PREFIX OF THE WELDED ONE'S.** Every forcing statement in
+§3 and §5 applies unchanged; the weld APPENDS. -/
+theorem closingFsAir_extends_closingRoutedAir (As : List Pt3) (d st : Pt3) :
+    closingRoutedAir.legs <+: (closingFsAirOn As d st).legs :=
+  ⟨deltaPinLegs d ++ deltaAffineLegs ++ [dbindStartLeg] ++ trOutPinLegs ++ [deltaAbsorbBindLeg st],
+   by simp [closingFsAirOn, List.append_assoc]⟩
+
+/-- ⚑ **THE COMPILER ACCEPTS THE WELDED BLOCK.** -/
+theorem closingFsAir_mainRailOk (As : List Pt3) (d st : Pt3) :
+    (closingFsAirOn As d st).mainRailOk = true := by
+  have hR := closingRoutedAir_mainRailOk ([] : List Pt3)
+  simp only [Dregg2.Circuit.EffectAirIR.EffectAir.mainRailOk, closingRoutedAirOn] at hR ⊢
+  simp only [closingFsAirOn, List.all_append, Bool.and_eq_true]
+  refine ⟨⟨⟨⟨⟨hR, ?_⟩, ?_⟩, ?_⟩, ?_⟩, ?_⟩ <;>
+    simp [deltaPinLegs, deltaPinLeg, deltaAffineLegs, deltaAffineLeg, trOutPinLegs,
+      dbindStartLeg, deltaAbsorbBindLeg, trInLanes, deltaCommitLanes, trOutCommitLanes,
+      fsVkLanes, ABSORB_VK_LANES, List.all_eq_true,
+      Dregg2.Circuit.EffectAirIR.AirLeg.mainRailOk,
+      Dregg2.Circuit.EffectAirIR.WindowLeg.mainRailOk,
+      Dregg2.Circuit.EffectAirIR.BindLeg.mainRailOk,
+      Dregg2.Circuit.TableAirIR.readsNext,
+      Dregg2.Circuit.DescriptorIR2.PROOF_BIND_MIN_LANES, SK]
+
+/-- ⚑⚑ **THE COMMITMENT IS THE SUB-PROGRAM'S PUBLIC-INPUT VECTOR, LANE FOR LANE.** `192` against
+`MinaWrapVerifierSpongeFp.SPONGE_PI_COUNT`, in the same `32 × 8`-bit `pLimb` encoding. There is no
+digest between the two vectors and therefore no birthday bound. -/
+theorem the_weld_commit_is_the_absorb_programs_public_input_vector (st : Pt3) :
+    (trInLanes st ++ deltaCommitLanes ++ trOutCommitLanes).length
+      = Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.SPONGE_PI_COUNT
+    ∧ (trInLanes st).length = 3 * SK
+    ∧ deltaCommitLanes.length = 2 * SK
+    ∧ trOutCommitLanes.length = SK := by
+  refine ⟨by simp [trInLanes, deltaCommitLanes, trOutCommitLanes,
+                   Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp.SPONGE_PI_COUNT, SK],
+          by simp [trInLanes], by simp [deltaCommitLanes], by simp [trOutCommitLanes]⟩
+
+/-- ⚑⚑ **THE WELD NAMES THE CHAIN'S OWN ADDEND CELLS, NOT A COPY OF THEM.** Commit lane `3·SK + j`
+is `.var (ADD_X + j)`, and `ADD_X + j` is the column `addendTuple` reads at tuple position `j + 1`.
+So the object the bind commits to and the object the RCB row folds are ONE set of cells. -/
+theorem the_weld_names_the_chains_own_addend_cells (j : Nat) (hj : j < 2 * SK) :
+    deltaCommitLanes.getD j (.const 0) = Dregg2.Circuit.Expr.var (ADD_X + j)
+    ∧ addendTuple.getD (j + 1) (.const 0) = Dregg2.Circuit.Expr.var (ADD_X + j) := by
+  have h1 : j < (List.range (2 * SK)).length := by simpa using hj
+  have h2 : j < (List.range (3 * SK)).length := by
+    simp only [List.length_range]; omega
+  refine ⟨?_, ?_⟩
+  · simp [deltaCommitLanes, List.getD, List.getElem?_map, List.getElem?_eq_getElem h1,
+      List.getElem_range]
+  · simp [addendTuple, List.getD, List.getElem?_cons_succ, List.getElem?_map,
+      List.getElem?_eq_getElem h2, List.getElem_range]
+
+/-- ⚑ **THE REFUSAL, AS THE GATE BODY.** A row-0 addend limb that is not the absorbed pair's makes
+the `.first` boundary body non-zero. No hypotheses beyond the move itself. -/
+theorem the_delta_pin_refuses_a_moved_limb (d : Pt3) (j : Nat)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (h : env.loc (ADD_X + j) ≠ (coordLimb d j : ℤ)) :
+    (WindowExpr.add (.loc (ADD_X + j)) (.const (-(coordLimb d j : ℤ)))).eval env ≠ 0 := by
+  intro hz
+  apply h
+  simp only [WindowExpr.eval] at hz
+  linarith
+
+/-- …and ACCEPTS the honest one, so the pin is not refusing everything. -/
+theorem the_delta_pin_admits_the_absorbed_pair (d : Pt3) (j : Nat)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (h : env.loc (ADD_X + j) = (coordLimb d j : ℤ)) :
+    (WindowExpr.add (.loc (ADD_X + j)) (.const (-(coordLimb d j : ℤ)))).eval env = 0 := by
+  simp only [WindowExpr.eval, h]
+  ring
+
+/-- ⚑ **THE SHIFT MOVES A PINNED LIMB, WHICH IS WHY §7 KILLS §6's FAMILY.** Two points whose `X`
+differs below `2^8` differ in limb `0`, and limb `0` is pinned. Exhibited rather than asserted. -/
+theorem the_shift_moves_a_pinned_limb :
+    coordLimb (7, 11, 1) 0 ≠ coordLimb (8, 11, 1) 0 := by decide
+
+/-- The welded descriptor, emitted under its own name. ⚑ It is a THIRD name over one algebra and a
+registry that resolved it to `-srs` would verify a welded claim against an unwelded block. -/
+def closingFsDescNamed (nm : String) (As : List Pt3) (d st : Pt3) : EffectVmDescriptor2 :=
+  Dregg2.Circuit.Emit.EffectLower.lowerAir nm FS_WIDTH FS_PI_COUNT [] (closingFsAirOn As d st)
+
+/-- ⚑⚑ **THE EMITTED WELDED DESCRIPTOR.** The `sg`-free manifest, the routed algebra, and `delta`
+pinned to the pair a transcript absorb published. -/
+def closingFsDesc (Gs : List Pt3) (u : List Nat) (z1 b0 z2 : Nat)
+    (delta U H st : Pt3) (n : Nat) : EffectVmDescriptor2 :=
+  closingFsDescNamed "dregg-mina-wrap-closing-fs::v1"
+    (closingAddends Gs u z1 b0 z2 delta U H n) (redPtP delta) st
+
+theorem closingFsDesc_name (Gs : List Pt3) (u : List Nat) (z1 b0 z2 : Nat)
+    (delta U H st : Pt3) (n : Nat) :
+    (closingFsDesc Gs u z1 b0 z2 delta U H st n).name = "dregg-mina-wrap-closing-fs::v1" := rfl
+
+/-- ⚑ **THE PIN IS THE MANIFEST'S OWN SLOT 0.** `closingFsDesc` pins `redPtP delta`, which
+`the_closing_manifest_head_is_delta_then_bU_then_zH` proves is manifest entry `0` — so the weld and
+the routing name the same value and a disagreement between them is impossible by construction
+rather than by a test. -/
+theorem the_weld_pins_the_manifests_own_delta_slot
+    (Gs : List Pt3) (u : List Nat) (z1 b0 z2 : Nat) (delta U H : Pt3) (n : Nat) :
+    (closingAddends Gs u z1 b0 z2 delta U H n).getD 0 (0, 0, 0) = redPtP delta := rfl
+
+/-- ⚑ **THE WELD IS 130 LEGS, AT EVERY MANIFEST AND EVERY TRANSCRIPT STATE.** 64 delta pins, 32
+affine pins, the guard gate, 32 PI pins and ONE `proof_bind`. Stated on the LEG list because that
+is the object whose length is independent of `d` and `st`; `closingFsDesc_constraint_count` is the
+emitted-bytes twin at a concrete pair. -/
+theorem the_weld_is_one_hundred_thirty_legs (As : List Pt3) (d st : Pt3) :
+    (closingFsAirOn As d st).legs.length = closingRoutedAir.legs.length + 130
+    ∧ (deltaPinLegs d).length = 64 ∧ deltaAffineLegs.length = 32
+    ∧ trOutPinLegs.length = 32 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;>
+    simp [closingFsAirOn, deltaPinLegs, deltaAffineLegs, trOutPinLegs, SK]
+
+/-- `4 476 + 96 + 192 + 64 + 3` from `-srs`, plus the weld's 130. At a CONCRETE `(d, st)` because
+`decide` needs a closed term; the general fact is `the_weld_is_one_hundred_thirty_legs`. -/
+theorem closingFsDesc_constraint_count :
+    (closingFsDescNamed "x" [] (0, 0, 0) (0, 0, 0)).constraints.length
+      = 4476 + 96 + 192 + 64 + 3 + 64 + 32 + 1 + 32 + 1 := by decide
+
+theorem closingFsDesc_width (As : List Pt3) (d st : Pt3) :
+    (closingFsDescNamed "x" As d st).traceWidth = 3091 := rfl
+
+theorem closingFsDesc_piCount (As : List Pt3) (d st : Pt3) :
+    (closingFsDescNamed "x" As d st).piCount = 224 := rfl
+
+/-- ⚑ **A NAME IS A KEY** — and this cone now has SEVEN descriptors over one algebra shape. -/
+theorem the_welded_descriptor_does_not_share_a_name
+    (Gs : List Pt3) (u : List Nat) (z1 b0 z2 : Nat) (delta U H st : Pt3) (n : Nat) :
+    (closingFsDesc Gs u z1 b0 z2 delta U H st n).name ≠ closingSegDesc.name
+    ∧ (closingFsDesc Gs u z1 b0 z2 delta U H st n).name ≠ closingFinalDesc.name
+    ∧ (closingFsDesc Gs u z1 b0 z2 delta U H st n).name
+        ≠ (closingSrsDesc Gs u z1 b0 z2 delta U H n).name := by
+  rw [closingFsDesc_name, closingSrsDesc_name]
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- ⚑⚑ **AND THE WELD IS VISIBLE IN THE SHAPE.** `-fs` and `-srs` do NOT have the same constraint
+count, width or PI count — unlike the Pallas/Vesta pair of §2, where only the modulus separated
+them. A shape check DOES tell a welded descriptor from an unwelded one. -/
+theorem the_weld_is_visible_in_the_shape (As : List Pt3) (d st : Pt3) :
+    (closingFsDescNamed "x" As d st).traceWidth ≠ (closingRoutedDescNamed "x" As).traceWidth
+    ∧ (closingFsDescNamed "x" As d st).piCount ≠ (closingRoutedDescNamed "x" As).piCount
+    ∧ (closingFsDescNamed "x" [] (0, 0, 0) (0, 0, 0)).constraints.length
+        ≠ (closingRoutedDescNamed "x" ([] : List Pt3)).constraints.length := by
+  refine ⟨?_, ?_, ?_⟩
+  · rw [closingFsDesc_width, closingRoutedDesc_width]; decide
+  · show (224 : Nat) ≠ 192; decide
+  · rw [closingFsDesc_constraint_count, closingRoutedDesc_constraint_count]; decide
+
 #assert_axioms closing_combined_is_kimchis_fold
 #assert_axioms the_combined_check_is_constant_in_sg
 #assert_axioms the_eliminated_check_is_the_substituted_opening
@@ -714,5 +1174,27 @@ theorem only_the_closing_routing_leg_targets_the_addend_table :
 #assert_axioms the_closing_srs_descriptor_differs_only_in_its_name_and_its_manifest
 #assert_axioms closingRoutedDesc_constraint_count
 #assert_axioms only_the_closing_routing_leg_targets_the_addend_table
+
+#assert_axioms closingResidualAt_is_the_published_shape
+#assert_axioms the_delta_shift_is_invisible
+#assert_axioms the_check_sees_only_the_sum
+#assert_axioms the_whole_shift_orbit_is_admitted
+#assert_axioms the_shift_orbit_is_not_a_point
+#assert_axioms a_delta_move_without_the_matching_accumulator_move_refutes
+
+#assert_axioms the_weld_costs_forty_two_columns_and_thirty_two_public_inputs
+#assert_axioms closingFsAir_extends_closingRoutedAir
+#assert_axioms closingFsAir_mainRailOk
+#assert_axioms the_weld_commit_is_the_absorb_programs_public_input_vector
+#assert_axioms the_weld_names_the_chains_own_addend_cells
+#assert_axioms the_delta_pin_refuses_a_moved_limb
+#assert_axioms the_delta_pin_admits_the_absorbed_pair
+#assert_axioms the_shift_moves_a_pinned_limb
+#assert_axioms closingFsDesc_name
+#assert_axioms the_weld_pins_the_manifests_own_delta_slot
+#assert_axioms the_weld_is_one_hundred_thirty_legs
+#assert_axioms closingFsDesc_constraint_count
+#assert_axioms the_welded_descriptor_does_not_share_a_name
+#assert_axioms the_weld_is_visible_in_the_shape
 
 end Dregg2.Circuit.Emit.MinaWrapClosingAir
