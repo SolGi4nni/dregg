@@ -60,9 +60,23 @@ Config via env: `FED_N` (committee size), `FED_ROOT` (run root, default
 
 ## Private-access model
 
-- **Localhost only.** Every node binds `127.0.0.1`. Nothing listens on a public
-  interface; there is no firewall exception to make. Do **not** set
-  `FED_BIND=0.0.0.0`.
+- ⚠ **The HTTP API is localhost-only. The GOSSIP PORT IS NOT.** `--bind` (and so
+  `FED_BIND`) governs only the axum HTTP listener. The QUIC gossip endpoint is
+  bound at `node/src/blocklace_sync.rs:3556` as a hardcoded
+  `format!("0.0.0.0:{gossip_port}")` — `--bind` is never consulted for it. So
+  every node in this federation listens on `0.0.0.0:<gossip_port>` on every
+  interface, whatever `FED_BIND` says. Measured 2026-08-08 on a 4-node run
+  (`ss -ulpn` showed `0.0.0.0:19420..19423`; the node's own boot line reads
+  `PeerNode started: … @ 0.0.0.0:19424` under `--bind 127.0.0.1`). **There IS a
+  firewall exception to make**, or the box must not be network-reachable.
+  Still leave `FED_BIND=127.0.0.1`: it keeps the *API* off the network, which is
+  the part it can actually close.
+  What limits the exposure is authentication, not the bind: `dregg_net::gossip`
+  drops every envelope whose sender is not in the committee `peer_keys` registry
+  ("unknown sender"). That is a real gate, but it is paid per envelope and it
+  logs — one non-member peer produced 9,588 rejections (and ~7,300 WARN lines
+  per node) in minutes, so an unauthenticated reachable gossip port is a log /
+  CPU amplification surface even though it cannot inject.
 - **Ephemeral committee.** `genesis` rolls fresh keys into `FED_ROOT` each run;
   the keys are devnet-grade (`.devnet` marker), never production.
 - **Separate from any solo node.** This federation uses its own ports and its

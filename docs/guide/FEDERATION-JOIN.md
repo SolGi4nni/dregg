@@ -1,5 +1,26 @@
 # Joining a federation — live, no genesis re-roll
 
+> ⚠ **THE FLOW ON THIS PAGE DOES NOT REACH THE COMMITTEE TODAY (measured 2026-08-08, 4-node run).**
+> A candidate's Join proposal is authored and gossiped, and every committee member **drops it at the
+> transport** before any membership code sees it: `dregg_net::gossip` resolves a signed envelope's
+> `sender` in the `peer_keys` registry and refuses anything it cannot find ("unknown sender"). That
+> registry is seeded from the genesis committee (`node/src/blocklace_sync.rs:3598`) and extended in
+> exactly one place — `apply_committee_change` step 3, *after* the committee already advanced
+> (`node/src/blocklace_sync.rs:2536`). **A non-member's key enters the mesh only once it is a member,
+> and it can only become a member via a block the mesh refuses.**
+>
+> What that looks like in practice: `join` logs `proposed join to federation (awaiting threshold
+> approvals)`, and `GET /api/membership` then reports `participants=4, proposals=0` on **every** node
+> **including the joiner itself**, indefinitely. The joiner establishes QUIC links to all peers,
+> receives their frontiers, and stays at `dag_height=1, latest_height=0` — while `GET /status` on it
+> reports **`"healthy": true`**. The only committee-side signal is a `WARN` flood
+> (~7,300 lines/node in 3 minutes) and `dregg_gossip_stream_rejected_total{reason="unknown_sender"}`.
+> `--auto-approve-joins` cannot help: no Join block ever arrives to approve.
+>
+> Until the joiner's key can be admitted to the gossip mesh *before* it is a committee member, the
+> working path to add a validator is the genesis re-roll (`add-validator`, bottom of this page) with
+> a coordinated restart. Everything below describes the intended design, not current behaviour.
+
 A dregg federation admits a new validator as an **on-chain operation**: the
 candidate proposes, the current committee's quorum approves, and the running
 committee advances at the next wave boundary. The chain keeps advancing
