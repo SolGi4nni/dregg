@@ -68,6 +68,30 @@
 # ⚠ A red lib also prunes ITS OWN bins/tests/examples (they link its rlib), so a dark LIB
 # can never be fully written down here: the rows for what it pruned do not exist.
 #
+# ── ⚑ 2026-08-08: AND THEN THAT CHECK CRIED WOLF, AND THE WOLF ATE THE OTHER HALF ────
+# The cone derivation shipped with a classifier that read the kind as `.split(" ", 1)[0]`,
+# which turns cargo's `lib test` into `lib`. `PRUNING_KINDS`' own comment says the opposite
+# in the line above it — "`lib test` is NOT here" — so the constant was right and the code
+# reading it was wrong, for the whole ~4 weeks the derivation existed.
+#
+# WHAT IT LOOKED LIKE. Run 31225797697: one `clippy::correctness` lint inside
+# `#[cfg(test)] mod tests` (bridge/src/present.rs:3687, `redundant_comparisons`) made
+# `dregg-bridge (lib test)` dark, and the job announced "186 workspace package(s) were
+# NEVER ATTEMPTED". Not one of them was. MEASURED against real cargo (`--self-test` R7b):
+# break ONLY a lib's `#[cfg(test)]` module and cargo still emits `probe-dep (test "t")`'s
+# own error in the same log — nothing links a `lib test`, so it prunes nothing at all.
+#
+# ⚑ AND THE NOISE WAS THE HARMLESS HALF. `verdict()` gates staleness on `not unmeasured`
+# — deliberately, per the ⚑ block above — so a PHANTOM cone SUPPRESSES the "this row
+# compiles again" branch. One broken `#[cfg(test)]` module anywhere in 227 members turned
+# this two-sided ratchet into a one-sided one, with the job red about something else the
+# whole time. Same shape as silencer 2 up there, one layer out: the green branch was
+# unreachable then, the STALE branch was unreachable now.
+# FIXED: the kind is split on the QUOTE (cargo always quotes a target NAME and never a
+# `lib test`), and R7b asserts both halves — no lower-bound claim, and the stale row still
+# named. R7b's forbidden-substring leg is the part that fails against the old classifier;
+# the exit code was 1 either way, for the wrong reason.
+#
 # ⚠ Local sweeps see the WORKING TREE; CI sees HEAD. A live lane's uncommitted or
 # untracked test file can show up as "dark" locally and is not a row for this list —
 # check `git status` on the file before adding it.

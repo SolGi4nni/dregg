@@ -130,7 +130,7 @@ SCOPE_DOES_NOT_ANSWER = (
     "the same allowlist belong to the other two sweeps, not to this one."
 )
 SCOPE_ANSWERS_SELFTEST = (
-    "can this ratchet fire — do R1-R15 (real cargo over a three-crate temp workspace, synthetic "
+    "can this ratchet fire — do R1-R15 + R7b (real cargo over a three-crate temp workspace, synthetic "
     "logs, synthetic workflows, and R15 over the real .github/workflows/ci.yml) produce the exact "
     "exit codes and messages specified?"
 )
@@ -183,6 +183,23 @@ ACTIVITY = re.compile(
 # A target kind that, when it fails, PRUNES: cargo cannot attempt anything that depends on
 # it. `lib test` is NOT here — that unit is the lib source rebuilt with `--test`, and its
 # failure does not stop the rlib from being produced for dependents.
+#
+# ⚑ AND FOR ~ FOUR WEEKS `row_pkg_kind` BELOW SAID OTHERWISE (found 2026-08-08). It read the
+# kind with `.split(" ", 1)[0]`, which turns `lib test` into `lib` — so this comment was
+# true of the constant and false of the code that consumes it, and every `lib test` failure
+# declared its package a PRUNING one. MEASURED against real cargo on the probe workspace
+# (leg R8): break only a lib's `#[cfg(test)]` module and cargo still names
+# `probe-dep (test "t")`'s own error — the downstream unit IS attempted, because nothing
+# links a `lib test`.
+#
+# THE HALF THAT MATTERS IS NOT THE NOISE. A phantom `unmeasured` set does not merely
+# over-report: read `verdict()` — `if stale and not partial and not unmeasured` — it
+# SUPPRESSES the stale branch. So one broken `#[cfg(test)]` module anywhere converted this
+# two-sided ratchet into a one-sided one, and a row that had started compiling again could
+# sit in `.github/dark-targets.txt` indefinitely with the gate red about something else.
+# Observed in run 31225797697: `dregg-bridge (lib test)` failed on one `clippy::correctness`
+# lint inside `#[cfg(test)] mod tests`, and the job reported "186 workspace package(s) were
+# NEVER ATTEMPTED". Not one of them was pruned.
 PRUNING_KINDS = ("lib", "proc-macro", "custom-build")
 
 
@@ -206,11 +223,18 @@ def parse_dark(log_text: str) -> tuple[set[str], list[str]]:
 
 
 def row_pkg_kind(row: str) -> tuple[str, str]:
-    """`dregg-cell (lib)` -> (`dregg-cell`, `lib`); `p (test "x")` -> (`p`, `test`)."""
+    """`dregg-cell (lib)` -> (`dregg-cell`, `lib`); `p (test "x")` -> (`p`, `test`);
+    `p (bin "b" test)` -> (`p`, `bin`).
+
+    ⚑ `p (lib test)` -> (`p`, `lib test`), which is DELIBERATELY NOT `lib`. Cargo spells the
+    test-mode unit of a library `lib test`, with a space and no quoted name, so splitting the
+    kind on whitespace collapsed it onto the pruning kind — see PRUNING_KINDS. The name, when
+    cargo gives one, is always QUOTED, so the quote is the only separator that is safe here.
+    """
     m = re.match(r"^(.*) \((.*)\)$", row)
     if not m:
         return row, ""
-    return m.group(1), m.group(2).split(" ", 1)[0].split('"', 1)[0].strip()
+    return m.group(1), m.group(2).split('"', 1)[0].strip()
 
 
 def known_rows(list_path: Path) -> set[str]:
@@ -519,7 +543,8 @@ PROBE_CRATES = {
 }
 
 
-def _write_probe(root: Path, broken_libs: set[str], broken_tests: set[str]) -> None:
+def _write_probe(root: Path, broken_libs: set[str], broken_tests: set[str],
+                 broken_unit_tests: set[str] = frozenset()) -> None:
     (root / "Cargo.toml").write_text(
         '[workspace]\nresolver = "2"\nmembers = ["base", "dep", "free"]\n', encoding="utf-8"
     )
@@ -535,9 +560,17 @@ def _write_probe(root: Path, broken_libs: set[str], broken_tests: set[str]) -> N
                 f'{x} = {{ path = "../{x[len("probe-"):]}" }}\n' for x in deps
             )
         (d / "Cargo.toml").write_text(man, encoding="utf-8")
-        (d / "src" / "lib.rs").write_text(
+        lib_src = (
             'pub fn ok() -> u32 { "THIS IS THE DELIBERATE BREAK" }\n'
-            if name in broken_libs else "pub fn ok() -> u32 { 1 }\n", encoding="utf-8")
+            if name in broken_libs else "pub fn ok() -> u32 { 1 }\n")
+        # A break inside `#[cfg(test)]` is compiled ONLY into the `lib test` unit. The rlib
+        # dependents link is produced regardless, which is why this shape prunes nothing —
+        # R8 measures that against real cargo rather than asserting it.
+        if name in broken_unit_tests:
+            lib_src += (
+                "#[cfg(test)]\nmod unit {\n    #[test]\n"
+                '    fn guard() { let _: u32 = "THE DELIBERATE BREAK"; }\n}\n')
+        (d / "src" / "lib.rs").write_text(lib_src, encoding="utf-8")
         tests = d / "tests"
         tests.mkdir(exist_ok=True)
         # A broken INTEGRATION TEST prunes nothing — it is a leaf. That is what makes it
@@ -549,8 +582,9 @@ def _write_probe(root: Path, broken_libs: set[str], broken_tests: set[str]) -> N
 
 
 def _probe_verdict(root: Path, allow: str, broken_libs: set[str],
-                   broken_tests: set[str] = frozenset()) -> tuple[int, str]:
-    _write_probe(root, broken_libs, broken_tests)
+                   broken_tests: set[str] = frozenset(),
+                   broken_unit_tests: set[str] = frozenset()) -> tuple[int, str]:
+    _write_probe(root, broken_libs, broken_tests, broken_unit_tests)
     listing = root / "allow.txt"
     listing.write_text(allow, encoding="utf-8")
     log = run_sweep(root, [], ["cargo", "check", "--workspace", "--all-targets",
@@ -564,44 +598,70 @@ def _probe_verdict(root: Path, allow: str, broken_libs: set[str],
 
 
 def self_test() -> int:
-    scenarios: list[tuple[str, str, set[str], set[str], int, str | None]] = [
-        # (name, allowlist, broken libs, broken tests, expected exit, required substring)
+    scenarios: list[
+        tuple[str, str, set[str], set[str], set[str], int, str | None, str | None]
+    ] = [
+        # (name, allowlist, broken libs, broken integration tests, broken #[cfg(test)]
+        #  modules, expected exit, required substring, FORBIDDEN substring)
         ("R1 green baseline: nothing dark, empty list -> PASS",
-         "# empty\n", set(), set(), 0, "0 new, 0 stale"),
+         "# empty\n", set(), set(), set(), 0, "0 new, 0 stale", None),
         ("R2 an INDEPENDENT lib goes dark, unlisted -> FAIL",
-         "# empty\n", {"free"}, set(), 1, "NEW DARK: probe-free (lib)"),
+         "# empty\n", {"free"}, set(), set(), 1, "NEW DARK: probe-free (lib)", None),
         ("R3 a DEPENDED-ON lib goes dark -> FAIL, and the cone is NAMED",
-         "# empty\n", {"base"}, set(), 1, "UNMEASURED (downstream)  probe-dep"),
+         "# empty\n", {"base"}, set(), set(), 1, "UNMEASURED (downstream)  probe-dep", None),
         # ⚑ R4 IS THE HOLE THIS GATE EXISTS FOR. With `probe-base` allowlisted the shipped
         # ratchet computes `new = {}`, `stale = {}` and prints `0 new, 0 stale` — GREEN —
         # while probe-dep's lib and its integration test cannot be attempted at all, and
         # no row anywhere records them. This gate must refuse.
         ("R4 an ALLOWLISTED dark lib still prunes its cone -> FAIL (the shipped hole)",
          "probe-base (lib)  # deliberate\nprobe-base (lib test)  # deliberate\n",
-         {"base"}, set(), 1, "THE SWEEP IS A LOWER BOUND"),
+         {"base"}, set(), set(), 1, "THE SWEEP IS A LOWER BOUND", None),
         ("R5 a row that compiles again is STALE -> FAIL",
-         "probe-free (lib)  # deliberate\n", set(), set(), 1,
-         "NO LONGER DARK: probe-free (lib)"),
+         "probe-free (lib)  # deliberate\n", set(), set(), set(), 1,
+         "NO LONGER DARK: probe-free (lib)", None),
         # A broken INTEGRATION TEST is a leaf: it prunes nothing, so the measurement is
         # complete and a row can honestly cover it. This is the gate's only green-with-
         # darkness shape, and R7 is its other side.
         ("R6 a dark LEAF target, correctly listed -> PASS",
-         'probe-free (test "t")  # deliberate\n', set(), {"free"}, 0, "1 known, 0 new"),
+         'probe-free (test "t")  # deliberate\n', set(), {"free"}, set(), 0,
+         "1 known, 0 new", None),
         ("R7 the same dark LEAF target, unlisted -> FAIL",
-         "# empty\n", set(), {"free"}, 1, 'NEW DARK: probe-free (test "t")'),
+         "# empty\n", set(), {"free"}, set(), 1, 'NEW DARK: probe-free (test "t")', None),
+        # ⚑ R8 IS THE LEG THAT WAS MISSING, and its absence is exactly why the bug shipped.
+        # R3/R4 break the lib ITSELF, so `(lib)` and `(lib test)` both go dark and the cone
+        # really is pruned — the pruning verdict is right there for the wrong reason. NO leg
+        # broke ONLY the `#[cfg(test)]` module, which is the shape a denied `clippy::
+        # correctness` lint in a test module produces, and the one real CI hits.
+        #
+        # Two claims in one scenario, and the FORBIDDEN half is the red proof:
+        #   * `lib test` is a LEAF. `probe-dep` is not in any cone, so "THE SWEEP IS A LOWER
+        #     BOUND" must NOT appear. With the old `.split(" ", 1)[0]` classifier it did,
+        #     naming probe-dep unmeasured while cargo had diagnosed it in the same log.
+        #   * because the measurement is complete, the STALE side must still fire. `verdict`
+        #     gates it on `not unmeasured`, so a phantom cone silently disarms half the
+        #     ratchet — the needle below is what catches that, not the exit code, which was
+        #     1 either way (for the wrong reason).
+        ("R7b a broken #[cfg(test)] MODULE prunes nothing, and the stale side still fires",
+         "probe-base (lib test)  # deliberate\nprobe-free (lib)  # deliberate\n",
+         set(), set(), {"base"}, 1,
+         "NO LONGER DARK: probe-free (lib)", "THE SWEEP IS A LOWER BOUND"),
     ]
 
     ok = True
     with tempfile.TemporaryDirectory(prefix="dark-targets-selftest-") as td:
         root = Path(td)
-        for name, allow, broken, broken_t, want, needle in scenarios:
-            code, out = _probe_verdict(root, allow, broken, broken_t)
-            good = code == want and (needle is None or needle in out)
+        for name, allow, broken, broken_t, broken_u, want, needle, forbid in scenarios:
+            code, out = _probe_verdict(root, allow, broken, broken_t, broken_u)
+            good = (code == want
+                    and (needle is None or needle in out)
+                    and (forbid is None or forbid not in out))
             ok &= good
             print(f"  [{'ok ' if good else 'FAIL'}] {name}   (exit {code}, want {want})")
             if not good:
                 if needle is not None and needle not in out:
                     print(f"         expected output to contain: {needle!r}")
+                if forbid is not None and forbid in out:
+                    print(f"         expected output NOT to contain: {forbid!r}")
                 print("         --- output ---")
                 for line in out.splitlines():
                     print(f"         {line}")

@@ -3683,9 +3683,37 @@ mod tests {
 
         // Every index the verifier reads is inside the gadget's PI surface — which is why it
         // substitutes at all.
+        //
+        // ⚠ ONE ROW PER READ, deliberately, not a conjunction. Until 2026-08-08 the first two
+        // were `assert!(BOUND_FED_ROOT < width && PI_ROOT_4ARY < width)`, and
+        // `clippy::redundant_comparisons` (correctness, deny-by-default) refused it: with
+        // `FEDERATION_ROOT = 0` and `PI_ROOT_4ARY = 8`, NO input makes the left operand decide
+        // the assert — `0 < width` fails only at `width == 0`, where `8 < width` fails too.
+        // The redundancy was in the OPERAND, never in the OBLIGATION. These are three
+        // independent claims about three independent indices, and a conjunction can hold at
+        // most `n-1` of them live: whichever read sits lowest is implied by the others, so
+        // exactly one operand is always dead and the lint just moves to it when the constants
+        // move. Dropping the dead operand would have left `bound_pis[BOUND_FED_ROOT] = …`
+        // below to fail as an unattributed index-out-of-bounds instead — measured on the
+        // counterfactual `FEDERATION_ROOT = 12, PI_ROOT_4ARY = 8, width = 10`, where
+        // `assert!(PI_ROOT_4ARY < width)` alone PASSES while index 12 is outside the surface.
         let action_width = dregg_circuit::ACTION_BINDING_WIDTH;
-        assert!(BOUND_FED_ROOT < width && PI_ROOT_4ARY < width);
-        assert!(REQUEST_PREDICATE_BASE + action_width <= width);
+        for (base, len, what) in [
+            (BOUND_FED_ROOT, 1, "bound-presentation FEDERATION_ROOT"),
+            (PI_ROOT_4ARY, 1, "blinded-membership PI_ROOT_4ARY"),
+            (
+                REQUEST_PREDICATE_BASE,
+                action_width,
+                "the request-predicate felts",
+            ),
+        ] {
+            assert!(
+                base + len <= width,
+                "{what} (PI {base}..{}) must fall inside the gadget's {width}-felt PI surface, \
+                 or the substitution this test exhibits could not happen at all",
+                base + len
+            );
+        }
 
         // Forge each slot: a PI vector carrying the verifier's OWN trusted values at exactly the
         // indices it reads, and a constant trace equal to it (which satisfies both families).
