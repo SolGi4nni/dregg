@@ -1,0 +1,19 @@
+# dead-lean-names.txt — names (and attribution strings) that are DEAD and must not be
+# narrated as live in any .rs/.lean comment. Enforced by scripts/check-lean-citations.py
+# (the watchlist half of its verdict). Mentioning a dead name is LEGAL next to an explicit
+# history marker ("deleted"/"former"/"renamed"/"used to"/…) — the gate checks a ±5-line
+# window. When you delete or rename a Lean object that comments cite, ADD IT HERE in the
+# same commit; that is what turns the next stale citation into a red instead of a reader
+# discovering it six weeks later.
+#
+# format: <dead-token><TAB><what replaced it / why it is dead>
+FinalizedRegionStable	deleted 2026-08-08 with the τ-CM Def. 6 rewrite; the live hypotheses are ClosedExtension + ChainExtends (TauPrefixMonotone.lean)
+stableCheck	deleted (nothing ever called it); there is no runtime stability check and none is needed — ClosedExtension is structural, established by receive-path buffering
+fold_agrees	became THEOREM tauStep_stable (from ClosedExtension alone); it is no longer a hypothesis
+leaders_extend	survives as the ChainExtends hypothesis (TauPrefixMonotone.lean:619)
+fold_agrees_of_pointwise	deleted with FinalizedRegionStable; no pointwise side condition remains
+enrollment_agrees	became THEOREM enrolledId_stable (+ tauOrderUnfiltered_mem); no longer a hypothesis
+leaderCoverage	deleted with the τ-CM Def. 6 rewrite: a wave's segment is the anchor's OWN closure, not live-lace ratifier coverage
+propose_join_if_needed	never existed; the join mechanism is run_join_requests_until_member (node/src/blocklace_sync.rs) — a join REQUEST channel, not a self-authored proposal
+ExclusionByPast	cited (Dregg2.Distributed.ExclusionByPast) but never landed; the live predicate is BlocklaceFinality.hasEquivInPast
+Almog–Lewis–Naor–Shapiro	wrong attribution: arXiv 2402.08068 (The Blocklace) is ALMEIDA–SHAPIRO (pdfs/blocklace-byzantine-repelling-crdt-almeida-shapiro-2402.08068.pdf)

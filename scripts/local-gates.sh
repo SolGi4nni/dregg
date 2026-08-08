@@ -36,7 +36,30 @@ for a in "$@"; do case "$a" in --all) RUN_ALL=1 ;; -h|--help) sed -n '2,30p' "$0
 
 # name | timeout_s | command
 GATES=(
+  # ⚑ THE ONLY GO MODULE IN THE REPOSITORY, AND UNTIL 2026-08-08 IT WAS IN NO WORKFLOW AND NO
+  # RUNNER. `chain/gnark` holds the BN254 settlement wrap: the Lean-emitted R1CS templates under
+  # `chain/gnark/emitted/`, the apex-VK governance pin the `SettlementCircuit` bakes, and the
+  # replay drivers that run those emissions against the real apex-shrink proof fixture. Measured by
+  # grep across `.github/workflows/`: no `go`, no `gnark`, no `chain/`. When the fixture was
+  # re-minted at `94fc8e161` the emitted twin went stale and EIGHT tests went red — a red nothing
+  # in the tree could report. `ci.yml`'s `gnark` job is the CI half; this is the local one, and
+  # LOCAL is the stricter bar here.
+  # ⚠ It is a differential over committed artifacts and CANNOT see staleness on its own. The
+  # freshness instrument is `derive_deployed_apex_vk_identity_and_check_fixture` (route
+  # `armed-dark`), which folds a fresh apex at HEAD; see the header of ci.yml's `gnark` job.
+  # ~2 min warm, no proving, no network.
+  "gnark|1800|bash -c 'cd chain/gnark && go vet ./... && go test ./...'"
   "doc-refs|300|bash scripts/check-doc-refs.sh"
+  # ⚑ THE DOCUMENTATION FORM OF A DANGLING IMPORT (2026-08-08). `doc-refs` checks cited FILES;
+  # this checks cited LEAN NAMES: a comment citing a theorem/def that was deleted or renamed
+  # (`FinalizedRegionStable` — six citing files incl. production Rust doc comments;
+  # `stableCheck`; `isCordialBlock`; `propose_join_if_needed` in `join --help`) is a reader
+  # being told something false at exactly the moment they check. History is legal when NAMED
+  # ("deleted"/"former"/"renamed" near the mention); narrating a dead name as live fires.
+  # The -red row is the constructive plant: three dead citation forms MUST fire, a real one
+  # must not. Slow half is the one-time Mathlib universe scan (~2-4 min cold).
+  "lean-citations|600|python3 scripts/check-lean-citations.py"
+  "lean-citations-red|600|python3 scripts/check-lean-citations.py --self-test"
   "dark-modules|300|python3 scripts/check-dark-modules.py"
   "never-run-targets|300|python3 scripts/check-never-run-targets.py"
   # ⚑ THE COMPILE-FAIL RATCHET'S RED PROOF (2026-08-03). The two rows above are sweeps
