@@ -260,6 +260,10 @@ pub const GADGET_CONNECTS: usize = STATE_WIDTH + V_PRIME_LIMBS + (SK - V_PRIME_L
 /// ([`crate::fold_vk_pin`]) — the top of a tower whose every fold now takes one. Pinning only
 /// here would have closed almost nothing: the substitution was available at each of the 45 chain
 /// folds beneath it.
+///
+/// ⚠ `config` is [`kimchi_root_config`]. Both children are ROOTS minted at the recursion engine's
+/// fixed point, so this layer verifies there and mints there; handing it either child tower's INNER
+/// descriptor engine is a `QueryProofCountMismatch { expected: 19, got: 38 }`.
 pub fn fold_transcript_into_finalize(
     chain_root: &RecursionOutput<DreggRecursionConfig>,
     finalize_root: &RecursionOutput<DreggRecursionConfig>,
@@ -335,12 +339,14 @@ pub fn read_kimchi_claim(output: &RecursionOutput<DreggRecursionConfig>) -> Opti
     read_kimchi_claim_from_proof(&output.0)
 }
 
-/// The config every leaf, fold and root in this tower runs at — the SAME one the phase-2 chain and
-/// the finalize fold use, because an aggregation of two proofs minted at different FRI engines does
-/// not build.
-pub fn kimchi_config() -> DreggRecursionConfig {
-    kimchi_root_config()
-}
+// ⚑ THE GADGET'S CONFIG IS `kimchi_root_config`, RE-EXPORTED ABOVE, AND THERE IS NO SECOND NAME
+// FOR IT. `kimchi_config()` used to sit here delegating to it — one object, two names, which is the
+// shape that lets a caller pass the wrong one of a pair while both sides build. It is DELETED, not
+// aliased: a caller wants `kimchi_root_config()` for the fold and the root verify,
+// `mina_phase2_chain_leaf::chain_inner_config()` for a chain leaf, and
+// `mina_wrap_finalize_fold::finalize_inner_config()` for the endo/conjunction leaves. Those are
+// three different engines since the mint split reached these towers, and one name cannot mean all
+// three.
 
 fn require_claim(
     output: &RecursionOutput<DreggRecursionConfig>,

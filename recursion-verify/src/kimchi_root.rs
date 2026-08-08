@@ -188,12 +188,18 @@ pub fn verify_kimchi_root_bytes(
     })
 }
 
-/// The config every leaf, fold and root in the kimchi-verifier tower runs at.
+/// ⚑ **THE ENGINE THE KIMCHI GADGET'S FOLD RUNS AT, AND THE ONE ITS ROOT VERIFIES UNDER.**
 ///
-/// ⚠ Deliberately LEFT at the single-engine shape by the leaf-wrap mint split; see
-/// [`crate::chain_root::chain_root_config`].
+/// The gadget's two children are ROOTS — a phase-2 chain root and an endo/conjunction finalize
+/// root — and both are minted at [`crate::config::recursion_tower_root_config`]'s engine since the
+/// leaf-wrap mint split reached these towers. `recursion_layer_over` of that engine is that engine
+/// (it is the fixed point), so the gadget verifies its children at it, mints at it, and the root is
+/// read back under it. One object, three roles, and they coincide here because the fixed point is
+/// what a fixed point is — not because a coincidence was left standing.
+///
+/// ⚠ It USED to be `ir2_leaf_wrap_config()`. **The gadget root's VK rotates.**
 pub fn kimchi_root_config() -> DreggRecursionConfig {
-    crate::config::ir2_leaf_wrap_config()
+    crate::config::recursion_tower_root_config()
 }
 
 #[cfg(test)]

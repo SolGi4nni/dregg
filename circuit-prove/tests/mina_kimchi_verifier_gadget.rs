@@ -6,6 +6,28 @@
 //! that two specific forgeries were **refused by a named connect**. "It proves on a box" inherits
 //! the undischarged FRI/STARK floor and the gadget itself carries no proof at all.
 //!
+//! ## ⚑⚑ THREE ENGINES SINCE 2026-08-08, AND EVERY COST FIGURE BELOW IS A BASELINE
+//!
+//! The chain leaves verify their IR-v2 child at `chain_inner_config()`; the endo/conjunction leaves
+//! verify theirs at `finalize_inner_config()`; every leaf MINTS at the recursion engine, and the
+//! three folds — including this gadget's — run at `kimchi_root_config()`, which is
+//! `recursion_layer_over`'s fixed point. Nothing in this file names a FRI constant. §4's
+//! `report_lde_domain` asserts the emitted query count and committed Merkle depth of all three
+//! roots and their refusal at the descriptor engine, so §4 is an ARTIFACT gate and not a config
+//! read. ⚠ **All three root VKs rotate.**
+//!
+//! ⚠ **The 15 GB / 38 GiB / 14.0 s figures below were measured at the OLD single-engine shape**,
+//! where every wrap committed a 64× LDE instead of an 8× one. They are kept as the labelled
+//! baseline they are.
+//!
+//! **MEASURED 2026-08-08 at the split** (96 GiB M2 Max, load ~90, sibling lanes proving — the wall
+//! clocks are the weak column and the memory is not): §1–§3 ran **3/3 in 106.5 s**, the whole
+//! binary peaking at **15.03 GiB maxrss / 21.60 GiB peak footprint** — endo leaf 17.6 s,
+//! conjunction leaf 37.8 s, finalize fold 10.6 s, link-0 leaf 17.6 s, link-45 leaf 16.6 s, both
+//! forgeries REFUSED by their own connect group. ⚑ **§3 had never completed before**: on
+//! 2026-08-07 its watchdog killed the conjunction leaf wrap at a 30 GiB cap. It now fits, and the
+//! whole file's peak is below where one leaf used to sit.
+//!
 //! ## The shape
 //!
 //! * **§1 / §2** — cheap. Layout agreement and the NON-VACUITY of the truncation pin.
@@ -70,15 +92,15 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_kimchi_verifier_gadget::{
     CHAIN_ACC_LO, CHAIN_ACC_WIDTH, CHAIN_OUT_LANE0, GADGET_CONNECTS, KIMCHI_CLAIM_LEN, KV_B0,
-    KV_VPRIME, V_PRIME_LIMBS, fold_transcript_into_finalize, kimchi_config, read_kimchi_claim,
+    KV_VPRIME, V_PRIME_LIMBS, fold_transcript_into_finalize, kimchi_root_config, read_kimchi_claim,
 };
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
-    ABSORBED_PI_LO, CHAIN_CLAIM_LEN, CHAIN_PI_COUNT, OUT_PI_LO, STATE_WIDTH,
-    host_chain_transcript_acc, prove_chain_fold, prove_chain_link_leaf,
+    ABSORBED_PI_LO, CHAIN_CLAIM_LEN, CHAIN_PI_COUNT, OUT_PI_LO, STATE_WIDTH, chain_inner_config,
+    chain_root_config, host_chain_transcript_acc, prove_chain_fold, prove_chain_link_leaf,
 };
 use dregg_circuit_prove::mina_wrap_finalize_fold::{
-    CONJ_PI_COUNT, ENDO_PI_COUNT, ENDO_PI_VPRIME, FINALIZE_CLAIM_LEN, SK, fold_endo_into_finalize,
-    prove_conjunction_leaf, prove_endo_lift_leaf,
+    CONJ_PI_COUNT, ENDO_PI_COUNT, ENDO_PI_VPRIME, FINALIZE_CLAIM_LEN, SK, finalize_inner_config,
+    finalize_root_config, fold_endo_into_finalize, prove_conjunction_leaf, prove_endo_lift_leaf,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, verify_recursive_batch_proof_with_config,
@@ -204,7 +226,14 @@ fn expect_refusal<T>(what: &str, f: impl FnOnce() -> Result<T, String>) -> Strin
 }
 
 /// Prove the endo-lift and conjunction leaves and fold them — the gadget's RIGHT child.
-fn finalize_root(config: &DreggRecursionConfig) -> RecursionOutput<DreggRecursionConfig> {
+///
+/// ⚑ TWO ENGINES, and they are different objects: `inner` is the engine the two IR-v2 descriptor
+/// batches are minted at (and the one each leaf's in-circuit verifier checks its child against);
+/// `fold_cfg` is the engine the leaves EMIT at and therefore the one the fold verifies them at.
+fn finalize_root(
+    inner: &DreggRecursionConfig,
+    fold_cfg: &DreggRecursionConfig,
+) -> RecursionOutput<DreggRecursionConfig> {
     let endo_trace = parse_trace(ENDO_TRACE, ENDO_TRACE_WIDTH);
     let endo_pis = parse_cells(ENDO_PIS);
     let conj_trace = parse_trace(CONJ_TRACE, CONJ_TRACE_WIDTH);
@@ -213,45 +242,77 @@ fn finalize_root(config: &DreggRecursionConfig) -> RecursionOutput<DreggRecursio
     assert_eq!(conj_pis.len(), CONJ_PI_COUNT);
 
     let t = Instant::now();
-    let endo = prove_endo_lift_leaf(&endo_trace, &endo_pis, config).expect("endo-lift leaf");
+    let endo = prove_endo_lift_leaf(&endo_trace, &endo_pis, inner).expect("endo-lift leaf");
     println!("    endo leaf        {:>7} ms", t.elapsed().as_millis());
     let t = Instant::now();
-    let conj = prove_conjunction_leaf(&conj_trace, &conj_pis, config).expect("conjunction leaf");
+    let conj = prove_conjunction_leaf(&conj_trace, &conj_pis, inner).expect("conjunction leaf");
     println!("    conjunction leaf {:>7} ms", t.elapsed().as_millis());
     let t = Instant::now();
     let root = fold_endo_into_finalize(
         &endo,
         &conj,
         &FoldVkPins::tracked(&endo, &conj).expect("both children carry a preprocessed commitment"),
-        config,
+        fold_cfg,
     )
     .expect("endo -> finalize fold");
     println!("    finalize fold    {:>7} ms", t.elapsed().as_millis());
     root
 }
 
-/// `|D⁽⁰⁾| = max_height · 2^log_blowup`, read off a REAL proof's own `degree_bits` and the config's
-/// own MINT knobs — never off a constant, and never off the witness.
+/// ⚑ **`|D⁽⁰⁾|` READ OFF THE EMITTED ARTIFACT, AND ASSERTED AGAINST THE ENGINE THAT CLAIMS IT.**
 ///
 /// FRI batches every committed polynomial onto the LARGEST evaluation domain, so the tallest table
 /// sets `|D⁽⁰⁾|` for the whole proof (`p3-fri/src/two_adic_pcs.rs`, `coset_lde_batch(evals,
-/// fri.log_blowup, shift)`).
+/// fri.log_blowup, shift)`) — and the committed domain's `log2` IS the Merkle authentication-path
+/// length in the emitted query proofs, because this tower's `cap_height` is 0.
+///
+/// ⚠ Reading `config.mint_knobs()` and printing `max_h + lb` is a claim about a CONFIG OBJECT, and
+/// a config object being right is exactly what was true while the predecessor of this change was
+/// inert. So the path length and the query count are read off the PROOF and the config is only what
+/// they are checked AGAINST.
 fn report_lde_domain(
     label: &str,
     out: &RecursionOutput<DreggRecursionConfig>,
     config: &DreggRecursionConfig,
 ) {
     let db = &out.0.proof.degree_bits;
-    let lb = config.mint_knobs().log_blowup;
-    let max_h = db.iter().copied().max().unwrap_or(0);
     assert!(
         !db.is_empty(),
         "[{label}] the proof carries no degree_bits — nothing was measured"
     );
+    let k = config.mint_knobs();
+    let max_h = db.iter().copied().max().unwrap_or(0);
+    let fri = &out.0.proof.opening_proof;
+    let emitted_queries = fri.query_proofs.len();
+    let emitted_path = fri
+        .query_proofs
+        .iter()
+        .flat_map(|q| q.input_proof.iter())
+        .map(|b| b.opening_proof.len())
+        .max()
+        .unwrap_or(0);
     println!(
-        "    [{label}] degree_bits {db:?} → max height 2^{max_h} · mint log_blowup {lb} \
-         → |D⁽⁰⁾| = 2^{}",
-        max_h + lb
+        "    [{label}] degree_bits {db:?} → max height 2^{max_h}; EMITTED {emitted_queries} query \
+         proofs, committed |D⁽⁰⁾| = 2^{emitted_path}",
+    );
+    assert_eq!(
+        emitted_queries, k.num_queries,
+        "[{label}] emitted {emitted_queries} query proofs against the engine's {}; the layer did \
+         not mint at the engine this label names",
+        k.num_queries
+    );
+    assert_eq!(
+        emitted_path,
+        max_h + k.log_blowup,
+        "[{label}] committed 2^{emitted_path} over a 2^{max_h} trace; the engine's mint blowup is \
+         2^{}",
+        k.log_blowup
+    );
+    assert_eq!(
+        k.log_blowup, 3,
+        "[{label}] this tower mints at the recursion engine since the mint split; log_blowup {} \
+         means it is still inheriting its child's 64x",
+        k.log_blowup
     );
 }
 
@@ -403,18 +464,24 @@ fn every_connect_group_is_non_vacuous_on_the_real_fixtures() {
 #[test]
 fn each_forged_chain_root_is_refused_by_the_group_that_should_refuse_it() {
     let pis = all_link_pis();
-    let config = kimchi_config();
+    // ⚑ THREE ENGINES, NAMED SEPARATELY BECAUSE THEY ARE THREE OBJECTS. The chain leaves and the
+    // finalize leaves each verify their own IR-v2 child at that child's minting engine; every leaf
+    // EMITS at the recursion engine; and the gadget folds two roots there. Nothing below names a
+    // FRI constant — each accessor is generated by iterating `recursion_layer_over`.
+    let chain_inner = chain_inner_config();
+    let fin_inner = finalize_inner_config();
+    let gadget_cfg = kimchi_root_config();
 
     println!("\n§3 building the finalize root (the gadget's RIGHT child) …");
-    let fin = finalize_root(&config);
-    verify_recursive_batch_proof_with_config(&fin.0, &config)
+    let fin = finalize_root(&fin_inner, &finalize_root_config());
+    verify_recursive_batch_proof_with_config(&fin.0, &finalize_root_config())
         .expect("the finalize root verifies standalone");
 
     // ── Forgery A ────────────────────────────────────────────────────────────────────────────
     let t = Instant::now();
-    let leaf0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
+    let leaf0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &chain_inner).expect("link 0 leaf");
     println!("    link-0 leaf      {:>7} ms", t.elapsed().as_millis());
-    verify_recursive_batch_proof_with_config(&leaf0.0, &config).expect(
+    verify_recursive_batch_proof_with_config(&leaf0.0, &chain_root_config()).expect(
         "FORGERY A must verify STANDALONE, or the refusal below is attributable to it \
                  not being a proof rather than to the gadget's connect",
     );
@@ -425,7 +492,7 @@ fn each_forged_chain_root_is_refused_by_the_group_that_should_refuse_it() {
             &fin,
             &FoldVkPins::tracked(&leaf0, &fin)
                 .expect("both children carry a preprocessed commitment"),
-            &config,
+            &gadget_cfg,
         )
     });
     println!("    §3a REFUSED (only group 2, the v' weld, can refuse this): {e}");
@@ -434,9 +501,9 @@ fn each_forged_chain_root_is_refused_by_the_group_that_should_refuse_it() {
     let last = CHAIN_LINKS - 1;
     let t = Instant::now();
     let leaf45 =
-        prove_chain_link_leaf(&link_trace(last), &pis[last], &config).expect("link 45 leaf");
+        prove_chain_link_leaf(&link_trace(last), &pis[last], &chain_inner).expect("link 45 leaf");
     println!("    link-45 leaf     {:>7} ms", t.elapsed().as_millis());
-    verify_recursive_batch_proof_with_config(&leaf45.0, &config)
+    verify_recursive_batch_proof_with_config(&leaf45.0, &chain_root_config())
         .expect("FORGERY B must verify STANDALONE");
 
     let e = expect_refusal("forgery B (correct terminal squeeze, warm sponge)", || {
@@ -445,7 +512,7 @@ fn each_forged_chain_root_is_refused_by_the_group_that_should_refuse_it() {
             &fin,
             &FoldVkPins::tracked(&leaf45, &fin)
                 .expect("both children carry a preprocessed commitment"),
-            &config,
+            &gadget_cfg,
         )
     });
     println!("    §3b REFUSED (only group 1, the fresh-sponge pin, can refuse this): {e}");
@@ -473,11 +540,18 @@ fn each_forged_chain_root_is_refused_by_the_group_that_should_refuse_it() {
 #[ignore = "the whole tower: 46 chain leaves + 45 folds + 2 leaves + 2 folds. Explicit --ignored."]
 fn the_whole_kimchi_verifier_tower_proves_over_block_539508() {
     let pis = all_link_pis();
-    let config = kimchi_config();
+    // ⚑ THREE ENGINES, NAMED SEPARATELY BECAUSE THEY ARE THREE OBJECTS — see §3.
+    let chain_inner = chain_inner_config();
+    let fin_inner = finalize_inner_config();
+    let gadget_cfg = kimchi_root_config();
     let t_all = Instant::now();
 
     println!("\n═══ §4 THE KIMCHI VERIFIER GADGET OVER MINA DEVNET BLOCK 539508 ═══");
-    println!("  mint knobs: {:?}", config.mint_knobs());
+    println!(
+        "  inner (descriptor) mint knobs: {:?}\n  tower (recursion)  mint knobs: {:?}",
+        chain_inner.mint_knobs(),
+        gadget_cfg.mint_knobs()
+    );
 
     // ── the LEFT child: the whole phase-2 transcript ─────────────────────────────────────────
     let t = Instant::now();
@@ -486,7 +560,7 @@ fn the_whole_kimchi_verifier_tower_proves_over_block_539508() {
             .enumerate()
             .map(|(j, p)| (link_trace(j), p.clone()))
             .collect::<Vec<_>>(),
-        &config,
+        &chain_inner,
         |i, phase| {
             if phase == "fold" {
                 println!(
@@ -498,18 +572,19 @@ fn the_whole_kimchi_verifier_tower_proves_over_block_539508() {
     )
     .expect("the 46-link chain fold");
     let chain_ms = t.elapsed().as_millis();
-    verify_recursive_batch_proof_with_config(&chain.0, &config)
+    verify_recursive_batch_proof_with_config(&chain.0, &chain_root_config())
         .expect("the 46-link chain root verifies");
     println!("  chain root: {chain_ms} ms (46 leaves + 45 folds)");
-    report_lde_domain("chain root", &chain, &config);
+    report_lde_domain("chain root", &chain, &chain_root_config());
 
     // ── the RIGHT child: the finalize conjunction under the endo-lifted ξ ─────────────────────
     let t = Instant::now();
-    let fin = finalize_root(&config);
+    let fin = finalize_root(&fin_inner, &finalize_root_config());
     let fin_ms = t.elapsed().as_millis();
-    verify_recursive_batch_proof_with_config(&fin.0, &config).expect("the finalize root verifies");
+    verify_recursive_batch_proof_with_config(&fin.0, &finalize_root_config())
+        .expect("the finalize root verifies");
     println!("  finalize root: {fin_ms} ms");
-    report_lde_domain("finalize root", &fin, &config);
+    report_lde_domain("finalize root", &fin, &finalize_root_config());
 
     // ── THE GADGET ───────────────────────────────────────────────────────────────────────────
     let t = Instant::now();
@@ -517,14 +592,25 @@ fn the_whole_kimchi_verifier_tower_proves_over_block_539508() {
         &chain,
         &fin,
         &FoldVkPins::tracked(&chain, &fin).expect("both children carry a preprocessed commitment"),
-        &config,
+        &gadget_cfg,
     )
     .expect("the kimchi verifier gadget fold");
     let gadget_ms = t.elapsed().as_millis();
-    verify_recursive_batch_proof_with_config(&root.0, &config)
+    verify_recursive_batch_proof_with_config(&root.0, &gadget_cfg)
         .expect("the kimchi verifier gadget root verifies");
     println!("  gadget fold: {gadget_ms} ms ({GADGET_CONNECTS} in-circuit connects)");
-    report_lde_domain("gadget root", &root, &config);
+    report_lde_domain("gadget root", &root, &gadget_cfg);
+
+    // ⚑ AND THE THREE ROOTS REFUSE AT THE IR-v2 DESCRIPTOR ENGINE. Without this the query counts
+    // and domains `report_lde_domain` just asserted would be labels rather than a claim that two
+    // distinct engines exist in this tower.
+    for (label, art) in [("chain", &chain), ("finalize", &fin), ("gadget", &root)] {
+        assert!(
+            verify_recursive_batch_proof_with_config(&art.0, &chain_inner).is_err(),
+            "the {label} root is a 38-query proof and must NOT verify under the 19-query IR-v2 \
+             descriptor engine"
+        );
+    }
 
     // ── what the root says ───────────────────────────────────────────────────────────────────
     let claim = read_kimchi_claim(&root).expect("the root publishes a kimchi claim");

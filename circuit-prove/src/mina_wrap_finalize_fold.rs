@@ -49,8 +49,9 @@
 //!    vacuity has shipped in this repo before. Do not read this root as finalize.
 //! 3. **`v′` is published, not derived here.** Tying it to the block's own Fq transcript is
 //!    [`connect_chain_root_v_prime`]'s job, and that leg needs the 46-leaf chain fold
-//!    (`mina_phase2_chain_leaf`, measured 1037 s). Until a caller runs that fold and connects it,
-//!    `v′` is a prover-chosen 128-bit value and the root is quantified over it.
+//!    (`mina_phase2_chain_leaf`; ⚠ the 1 037 s once recorded for it was measured at the OLD
+//!    single-engine shape and is not this tower's price). Until a caller runs that fold and
+//!    connects it, `v′` is a prover-chosen 128-bit value and the root is quantified over it.
 //! 4. **ζ, ζω and `r` are published and derived by nothing.** ζ's provenance is the phase-1 (Fp)
 //!    transcript, which has an emitted chain (`pasta-fp-chainlink.json`) and no weld to this object.
 //!
@@ -74,7 +75,7 @@ use crate::gpu_backend::{
     prove_recursion_aggregation_auto_with_expose, prove_recursion_layer_auto_with_expose,
 };
 use crate::ivc_turn_chain::{expose_claim_instance_index, ir2_leaf_wrap_config};
-use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
+use crate::plonky3_recursion_impl::recursive::{DreggRecursionConfig, recursion_layer_over};
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
 
@@ -171,13 +172,34 @@ pub fn prove_endo_lift_leaf(
     public_inputs: &[BabyBear],
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    prove_endo_lift_leaf_split(trace, public_inputs, config, &recursion_layer_over(config))
+}
+
+/// ⚑⚑ **THE SAME LEAF WITH ITS TWO FRI ROLES NAMED SEPARATELY** — and they were never one.
+///
+/// * `inner_config` mints the IR-v2 descriptor batch AND supplies the in-circuit verifier params
+///   that check it. These two must agree: they are the same proof, minted then verified.
+/// * `wrap_config` mints the WRAP's own output proof. Its `FriVerifierParams` must still describe
+///   the child, but its PCS `log_blowup` — the number that multiplies every committed cell of the
+///   verification circuit — is a **free choice**.
+///
+/// [`prove_endo_lift_leaf`] derives the second from the first. This exists so the OLD
+/// single-engine shape stays REACHABLE for a before/after measurement in ONE binary, and for
+/// nothing else.
+pub fn prove_endo_lift_leaf_split(
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    inner_config: &DreggRecursionConfig,
+    wrap_config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     let desc = endo_lift_descriptor()?;
     prove_ir2_leaf(
         &desc,
         trace,
         public_inputs,
         ENDO_PI_COUNT,
-        config,
+        inner_config,
+        wrap_config,
         "endo-lift",
     )
 }
@@ -187,6 +209,17 @@ pub fn prove_conjunction_leaf(
     trace: &[Vec<BabyBear>],
     public_inputs: &[BabyBear],
     config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    prove_conjunction_leaf_split(trace, public_inputs, config, &recursion_layer_over(config))
+}
+
+/// ⚑ The conjunction leaf with its two FRI roles named separately — see
+/// [`prove_endo_lift_leaf_split`] for what the pair means and why it exists.
+pub fn prove_conjunction_leaf_split(
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    inner_config: &DreggRecursionConfig,
+    wrap_config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     let desc = conjunction_descriptor()?;
     if trace.len() != CONJ_ROWS {
@@ -202,19 +235,22 @@ pub fn prove_conjunction_leaf(
         trace,
         public_inputs,
         CONJ_PI_COUNT,
-        config,
+        inner_config,
+        wrap_config,
         "conjunction",
     )
 }
 
 /// The shared leaf body: prove the descriptor, wrap it as a recursion layer, and expose the whole
 /// PI vector read out of the leaf's own verified `air_public_targets`.
+#[allow(clippy::too_many_arguments)]
 fn prove_ir2_leaf(
     desc: &EffectVmDescriptor2,
     trace: &[Vec<BabyBear>],
     public_inputs: &[BabyBear],
     pi_count: usize,
     config: &DreggRecursionConfig,
+    wrap_config: &DreggRecursionConfig,
     role: &'static str,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     if public_inputs.len() != pi_count {
@@ -258,7 +294,7 @@ fn prove_ir2_leaf(
         cb.expose_as_public_output(&claim);
     };
 
-    prove_recursion_layer_auto_with_expose(&input, config, Some(&expose))
+    prove_recursion_layer_auto_with_expose(&input, wrap_config, Some(&expose))
         .map_err(|e| format!("{role} leaf wrap failed: {e}"))
 }
 
@@ -275,6 +311,11 @@ fn prove_ir2_leaf(
 /// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child's preprocessed commitment in-circuit
 /// ([`crate::fold_vk_pin`]). Without it the two `require_claim` lane-count checks are the only
 /// gate, and a same-shape/different-constants endo-lift or conjunction descriptor passes them.
+///
+/// ⚠ `config` here is [`finalize_root_config`], the FOLD engine — **not** the inner descriptor
+/// engine the two leaves are handed. Both are `DreggRecursionConfig` and nothing in the type system
+/// separates them; passing the leaves' config here is a `QueryProofCountMismatch { expected: 19,
+/// got: 38 }` at the in-circuit verifier of a 38-query child.
 pub fn fold_endo_into_finalize(
     endo: &RecursionOutput<DreggRecursionConfig>,
     conj: &RecursionOutput<DreggRecursionConfig>,
@@ -407,13 +448,29 @@ pub fn read_finalize_claim(
     )
 }
 
-/// The config every leaf, fold and verify in this module runs at — the same one the phase-2 chain
-/// uses, so a root produced here and a root produced there are consumable by one reader.
+/// ⚑ **THE ENGINE THE ENDO-LIFT'S AND THE CONJUNCTION'S INNER DESCRIPTOR BATCHES ARE MINTED AT** —
+/// and therefore the engine each leaf wrap's in-circuit verifier checks its child against. Pass
+/// this to [`prove_endo_lift_leaf`] / [`prove_conjunction_leaf`]; the wrap engine is derived from it
+/// by [`recursion_layer_over`], inside the leaf.
 ///
-/// ⚠ Deliberately LEFT at the deployed single-engine shape by the leaf-wrap mint split; see
-/// `mina_phase2_chain_leaf::chain_config`.
-pub fn finalize_config() -> DreggRecursionConfig {
+/// ⚠ It is **NOT** the config the fold runs at or the root verifies under — that is
+/// [`finalize_root_config`]. The single `finalize_config()` that used to answer both questions is
+/// DELETED rather than aliased: it was only ever right because the two answers coincided.
+pub fn finalize_inner_config() -> DreggRecursionConfig {
     ir2_leaf_wrap_config()
+}
+
+/// ⚑ **THE ENGINE THE FOLD RUNS AT AND THE ROOT VERIFIES UNDER** — the fixed point of
+/// [`recursion_layer_over`], reached by applying it twice to [`finalize_inner_config`] rather than
+/// by naming its answer. A leaf wrap emits at `recursion_layer_over(inner)`'s mint knobs, so the
+/// fold above it verifies at those; one more application lands on the fixed point and a third
+/// changes nothing.
+///
+/// ⚠ **The finalize root's VK rotates with this.** It is the same engine the phase-2 chain root and
+/// the kimchi gadget root now run at, which is what keeps the three towers foldable into each
+/// other: an aggregation of two proofs minted at different FRI engines does not build.
+pub fn finalize_root_config() -> DreggRecursionConfig {
+    recursion_layer_over(&recursion_layer_over(&finalize_inner_config()))
 }
 
 #[cfg(test)]

@@ -24,8 +24,17 @@
 //!
 //! Set it with `DREGG_MINA_CHAIN_ROOT_VK=<64 hex chars>`. The value is printed by
 //! `circuit-prove/tests/mina_phase2_chain_fold.rs` §4 (`recursion_vk_fingerprint` of an honest
-//! fold), and its reproducibility is the shipped property
-//! `circuit-prove/tests/recursion_vk_determinism.rs` exists to defend.
+//! fold) and by `recursion-verify/tests/mina_chain_root_seam.rs` §2, and its reproducibility is
+//! the shipped property `circuit-prove/tests/recursion_vk_determinism.rs` exists to defend.
+//!
+//! ⚑⚑ **IT ROTATED ON 2026-08-08 AND IT WILL ROTATE AGAIN.** The phase-2 chain tower was switched
+//! to the two-engine shape every other recursion tower already ran at: a leaf now VERIFIES its
+//! IR-v2 child at the descriptor engine and MINTS at the recursion engine (`log_blowup 3, 38
+//! queries`), so the fold circuit that verifies a 38-query child is a **different circuit** and its
+//! `recursion_vk_fingerprint` is a different value. There is nothing in this repo to re-emit — the
+//! anchor has no checked-in default, by the design above — but **an operator running a pin from
+//! before that date will have every Mina anchored head REFUSED**, which is the correct failure and
+//! not a silent one. Re-extract from an honest fold and re-pin.
 
 use std::sync::Arc;
 
@@ -89,10 +98,13 @@ impl MinaChainRootBackend for P3MinaChainRootBackend {
     ) -> Result<([u8; 32], MinaChainRootClaim), String> {
         let proof = decode_recursive_batch_proof(proof_bytes)?;
         let measured = recursion_vk_fingerprint(&proof);
-        // ⚑ THE CONFIG IS NOT A CHOICE HERE. The IR-v2 chain leaf/fold tower runs at
-        // `ir2_leaf_wrap_config` (inner FRI log_blowup 6); verifying a root under the default
-        // recursion knobs simply fails, which is honest but confusing, so the config comes from
-        // the same crate that defines the fold's claim layout.
+        // ⚑ THE CONFIG IS NOT A CHOICE HERE, AND IT IS DELEGATED RATHER THAN NAMED. A chain root
+        // is minted at `recursion_layer_over`'s fixed point — since 2026-08-08, `log_blowup 3 /
+        // 38 queries`, where until then the whole tower ran at its child's `log_blowup 6 / 19`.
+        // Taking the accessor from the crate that also defines the fold's claim layout is what
+        // made that rotation reach this node without an edit here; naming a config would not have.
+        // ⚠ The operator's pinned `DREGG_MINA_CHAIN_ROOT_VK` DID have to be re-extracted: the root
+        // is a different circuit, and an anchor from before the rotation refuses every root now.
         verify_recursive_batch_proof_with_config(&proof, &chain_root_config())?;
         let claim = read_chain_claim_from_proof(&proof).ok_or_else(|| {
             "the recursion root verifies but publishes no Mina phase-2 chain claim".to_string()

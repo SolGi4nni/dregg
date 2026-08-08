@@ -16,7 +16,15 @@
 //!
 //! `bodyChainDesc = MinaPhase1Chain.chainDesc` by `rfl` — the SAME 2 048 instructions, the SAME 469
 //! columns, the SAME `chainPins` layout the phase-1 transcript (27 links) and the VK-digest chain
-//! (28 links) already ride. Nothing emits, no VK rotates, nothing re-genesises.
+//! (28 links) already ride. Nothing emits and nothing re-genesises.
+//!
+//! ⚠ **THE "NO VK ROTATES" HALF OF THAT SENTENCE EXPIRED ON 2026-08-08 — and it expired for a
+//! reason that has nothing to do with this descriptor.** This chain rides
+//! `mina_phase2_chain_leaf`'s leaf and fold, and that tower was switched to the two-engine shape:
+//! a leaf VERIFIES its IR-v2 child at the descriptor engine (unchanged, bit for bit) and MINTS at
+//! the recursion engine, `log_blowup 3 / 38 queries`. So every ROOT this file produces is a
+//! different circuit than it was and its `recursion_vk_fingerprint` is a different value. No
+//! descriptor moved; the recursion wrapper around it did.
 //!
 //! ## ⚑ THE PRICE, RE-DERIVED — AND THE INHERITED FIGURE WAS 26
 //!
@@ -38,6 +46,8 @@
 //!
 //! **MEASURED 2026-08-07** (laptop, release, `--test-threads=1`): §4's 25 leaves + 24 folds ran in
 //! **514 s**, root verified — one leaf **8.6 s**, one fold **8.2 s**. Whole file 709.7 s, 8/8.
+//! ⚠ **That is the BASELINE at the single-engine shape** and is retained as one, not carried
+//! forward: since 2026-08-08 every layer here commits an 8× smaller LDE domain.
 //!
 //! ## ⚑ WHAT MAKES THIS A CLAIM AND NOT 25 PROOFS
 //!
@@ -92,8 +102,8 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     ABSORBED_PI_LO, ABSORBED_WIDTH, CHAIN_CLAIM_LEN, CHAIN_PI_COUNT, OUT_PI_LO, SK, STATE_WIDTH,
-    chain_config, fold_chain_links, fp_chain_link_descriptor, host_chain_transcript_acc,
-    prove_chain_link_leaf_with, read_chain_claim,
+    chain_inner_config, chain_root_config, fold_chain_links, fp_chain_link_descriptor,
+    host_chain_transcript_acc, prove_chain_link_leaf_with, read_chain_claim,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     recursion_vk_fingerprint, verify_recursive_batch_proof_with_config,
@@ -368,13 +378,17 @@ fn the_body_hash_chain_runs_the_deployed_fp_chainlink_descriptor() {
 #[test]
 fn two_body_hash_links_fold_into_one_claim() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES since the mint split reached this tower: a leaf verifies its Fp IR-v2
+    // child at the inner engine and mints at the recursion engine; a fold verifies what the
+    // leaf emitted. Both are derived tower accessors, neither is a named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
     let desc = fp_chain_link_descriptor().expect("descriptor");
 
     let t0 = Instant::now();
-    let l0 = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &config)
+    let l0 = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &inner)
         .expect("body link 0 leaf");
-    let l1 = prove_chain_link_leaf_with(&desc, &link_trace(1), &pis[1], &config)
+    let l1 = prove_chain_link_leaf_with(&desc, &link_trace(1), &pis[1], &inner)
         .expect("body link 1 leaf");
     let leaves_ms = t0.elapsed().as_millis();
 
@@ -383,12 +397,12 @@ fn two_body_hash_links_fold_into_one_claim() {
         &l0,
         &l1,
         &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
-        &config,
+        &fold_cfg,
     )
     .expect("body links 0..1 fold");
     let fold_ms = t1.elapsed().as_millis();
 
-    verify_recursive_batch_proof_with_config(&node.0, &config).expect("the folded node verifies");
+    verify_recursive_batch_proof_with_config(&node.0, &fold_cfg).expect("the folded node verifies");
 
     let claim = read_chain_claim(&node).expect("the node publishes a chain claim");
     assert_eq!(
@@ -437,12 +451,12 @@ fn two_body_hash_links_fold_into_one_claim() {
 #[test]
 fn a_substituted_body_element_is_refused_by_the_pin() {
     let pis = all_link_pis();
-    let config = chain_config();
+    let inner = chain_inner_config();
     let desc = fp_chain_link_descriptor().expect("descriptor");
 
     // The honest link proves — asserted FIRST, so the refusal below cannot be a leaf failing for
     // an unrelated reason.
-    prove_chain_link_leaf_with(&desc, &link_trace(12), &pis[12], &config)
+    prove_chain_link_leaf_with(&desc, &link_trace(12), &pis[12], &inner)
         .expect("link 12 is an honest link and its leaf MUST prove");
 
     let slot = ABSORBED_PI_LO;
@@ -461,7 +475,7 @@ fn a_substituted_body_element_is_refused_by_the_pin() {
     );
 
     let err = expect_refusal(
-        prove_chain_link_leaf_with(&desc, &link_trace(12), &forged, &config),
+        prove_chain_link_leaf_with(&desc, &link_trace(12), &forged, &inner),
         "a body element that is not this block's must be REFUSED even when the hash is unchanged",
     );
     println!("\n§2 ⚑⚑ SUBSTITUTED BODY ELEMENT REFUSED AT THE LEAF: {err}");
@@ -481,12 +495,16 @@ fn a_substituted_body_element_is_refused_by_the_pin() {
 #[test]
 fn a_skipped_body_link_is_refused_by_the_folds_connect() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES since the mint split reached this tower: a leaf verifies its Fp IR-v2
+    // child at the inner engine and mints at the recursion engine; a fold verifies what the
+    // leaf emitted. Both are derived tower accessors, neither is a named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
     let desc = fp_chain_link_descriptor().expect("descriptor");
 
-    let l0 = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &config)
+    let l0 = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &inner)
         .expect("link 0 is honest and its leaf MUST prove");
-    let l2 = prove_chain_link_leaf_with(&desc, &link_trace(2), &pis[2], &config)
+    let l2 = prove_chain_link_leaf_with(&desc, &link_trace(2), &pis[2], &inner)
         .expect("link 2 is honest and its leaf MUST prove -- the lie is only the JOIN");
 
     let err = expect_refusal(
@@ -494,7 +512,7 @@ fn a_skipped_body_link_is_refused_by_the_folds_connect() {
             &l0,
             &l2,
             &FoldVkPins::tracked(&l0, &l2).expect("both children carry a preprocessed commitment"),
-            &config,
+            &fold_cfg,
         ),
         "a body-hash chain that skips link 1 must be REFUSED by the fold",
     );
@@ -505,12 +523,12 @@ fn a_skipped_body_link_is_refused_by_the_folds_connect() {
     );
 
     let l1 =
-        prove_chain_link_leaf_with(&desc, &link_trace(1), &pis[1], &config).expect("link 1 leaf");
+        prove_chain_link_leaf_with(&desc, &link_trace(1), &pis[1], &inner).expect("link 1 leaf");
     fold_chain_links(
         &l0,
         &l1,
         &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
-        &config,
+        &fold_cfg,
     )
     .expect("the HONEST join must still fold");
     println!("  …and the honest join (0,1) folds, so the refusal is the join and not the link.");
@@ -523,7 +541,7 @@ fn a_skipped_body_link_is_refused_by_the_folds_connect() {
 #[test]
 fn a_fresh_sponge_head_is_refused() {
     let pis = all_link_pis();
-    let config = chain_config();
+    let inner = chain_inner_config();
     let desc = fp_chain_link_descriptor().expect("descriptor");
 
     let mut forged = pis[0].clone();
@@ -536,7 +554,7 @@ fn a_fresh_sponge_head_is_refused() {
     forged[0] = BabyBear::new((before + 1) % 256);
 
     let err = expect_refusal(
-        prove_chain_link_leaf_with(&desc, &link_trace(0), &forged, &config),
+        prove_chain_link_leaf_with(&desc, &link_trace(0), &forged, &inner),
         "an incoming state that is not the pinned salt must be REFUSED",
     );
     println!("\n§2c ⚑ FORGED HEAD REFUSED AT THE LEAF: {err}");
@@ -552,17 +570,21 @@ fn a_fresh_sponge_head_is_refused() {
 #[test]
 fn the_body_hash_folds_recursion_vk_is_deterministic() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES since the mint split reached this tower: a leaf verifies its Fp IR-v2
+    // child at the inner engine and mints at the recursion engine; a fold verifies what the
+    // leaf emitted. Both are derived tower accessors, neither is a named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
     let desc = fp_chain_link_descriptor().expect("descriptor");
 
     let build = || {
-        let l0 = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &config).expect("l0");
-        let l1 = prove_chain_link_leaf_with(&desc, &link_trace(1), &pis[1], &config).expect("l1");
+        let l0 = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &inner).expect("l0");
+        let l1 = prove_chain_link_leaf_with(&desc, &link_trace(1), &pis[1], &inner).expect("l1");
         fold_chain_links(
             &l0,
             &l1,
             &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
-            &config,
+            &fold_cfg,
         )
         .expect("links 0..1 fold")
     };
@@ -601,21 +623,25 @@ fn the_body_hash_folds_recursion_vk_is_deterministic() {
 #[ignore = "the whole 25-link body-hash fold; wall-clock only"]
 fn the_whole_body_hash_chain_folds() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES since the mint split reached this tower: a leaf verifies its Fp IR-v2
+    // child at the inner engine and mints at the recursion engine; a fold verifies what the
+    // leaf emitted. Both are derived tower accessors, neither is a named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
     let desc = fp_chain_link_descriptor().expect("descriptor");
 
     let t0 = Instant::now();
-    let mut acc = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &config)
+    let mut acc = prove_chain_link_leaf_with(&desc, &link_trace(0), &pis[0], &inner)
         .expect("body link 0 leaf");
     for j in 1..BODY_LINKS {
-        let leaf = prove_chain_link_leaf_with(&desc, &link_trace(j), &pis[j], &config)
+        let leaf = prove_chain_link_leaf_with(&desc, &link_trace(j), &pis[j], &inner)
             .unwrap_or_else(|e| panic!("body link {j} leaf: {e}"));
         acc = fold_chain_links(
             &acc,
             &leaf,
             &FoldVkPins::tracked(&acc, &leaf)
                 .expect("both children carry a preprocessed commitment"),
-            &config,
+            &fold_cfg,
         )
         .unwrap_or_else(|e| panic!("fold at body link {j}: {e}"));
         println!(
@@ -626,7 +652,7 @@ fn the_whole_body_hash_chain_folds() {
     }
     let total_s = t0.elapsed().as_secs();
 
-    verify_recursive_batch_proof_with_config(&acc.0, &config).expect("the 25-link root verifies");
+    verify_recursive_batch_proof_with_config(&acc.0, &fold_cfg).expect("the 25-link root verifies");
 
     let claim = read_chain_claim(&acc).expect("the root publishes a chain claim");
     assert_eq!(

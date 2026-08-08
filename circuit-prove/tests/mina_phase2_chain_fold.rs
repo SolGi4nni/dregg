@@ -18,7 +18,22 @@
 //! * **§4** — `RecursionVk` determinism: an honest re-fold of the same chain mints the SAME
 //!   fingerprint. That is a shipped property (`recursion_vk_determinism.rs` calls it *"the light
 //!   client's distributed trust anchor"*) and this file must not break it.
-//! * **§5** — the whole 46-link chain. RUN: 1037 s, root verified. `#[ignore]`d for wall-clock only.
+//! * **§5** — the whole 46-link chain. `#[ignore]`d for wall-clock only.
+//!
+//! ## ⚑⚑ THE TOWER IS TWO ENGINES DEEP SINCE 2026-08-08, AND EVERY NUMBER BELOW MOVED
+//!
+//! A chain leaf VERIFIES its IR-v2 child at the descriptor engine (`chain_inner_config()`,
+//! `log_blowup 6 / 19 queries` — bit-for-bit the acceptance decision it always made) and MINTS at
+//! the recursion engine (`chain_root_config()`, `log_blowup 3 / 38 queries`), which every fold and
+//! the root verify then run at. Both are reached by iterating `recursion_layer_over`; **no test
+//! below names a FRI constant.** §1 asserts the switch on the ARTIFACTS it mints — emitted query
+//! count, committed Merkle depth, and the node's refusal at the descriptor engine — because a
+//! config object being right is what was already true while the predecessor of this change was
+//! inert.
+//!
+//! ⚠ **The 1 037 s recorded for §5 was measured at the single-engine shape and is RETRACTED as a
+//! figure for the tower that exists now.** ⚠ **Every chain-root VK rotates**; an operator's
+//! `DREGG_MINA_CHAIN_ROOT_VK` must be re-extracted from an honest fold.
 //!
 //! ## ⚑ RELEASE, DELIBERATELY
 //!
@@ -53,8 +68,8 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     ABSORBED_PI_LO, ABSORBED_WIDTH, CHAIN_CLAIM_LEN, CHAIN_LINKS, CHAIN_PI_COUNT, OUT_PI_LO, SK,
-    STATE_WIDTH, chain_config, chain_link_descriptor, fold_chain_links, host_chain_transcript_acc,
-    prove_chain_link_leaf, read_chain_claim,
+    STATE_WIDTH, chain_inner_config, chain_link_descriptor, chain_root_config, fold_chain_links,
+    host_chain_transcript_acc, prove_chain_link_leaf, read_chain_claim,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     recursion_vk_fingerprint, verify_recursive_batch_proof_with_config,
@@ -128,6 +143,34 @@ fn link_trace(j: usize) -> Vec<Vec<BabyBear>> {
     assert_eq!(t.len(), 2048, "the Lean-emitted link is 2048 rows");
     assert!(t.iter().all(|r| r.len() == 469), "every row is 469 wide");
     t
+}
+
+/// The FRI shape of an EMITTED artifact, read off the proof rather than off a config field.
+/// `log_lde_domain` is the tallest committed matrix's Merkle authentication-path length; this
+/// tower's `cap_height` is 0, so path length IS tree depth IS `degree_bits + mint log_blowup`.
+struct EmittedFri {
+    num_queries: usize,
+    log_lde_domain: usize,
+    max_degree_bits: usize,
+}
+
+fn emitted_fri(
+    out: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+) -> EmittedFri {
+    let fri = &out.0.proof.opening_proof;
+    EmittedFri {
+        num_queries: fri.query_proofs.len(),
+        log_lde_domain: fri
+            .query_proofs
+            .iter()
+            .flat_map(|q| q.input_proof.iter())
+            .map(|b| b.opening_proof.len())
+            .max()
+            .unwrap_or(0),
+        max_degree_bits: out.0.proof.degree_bits.iter().copied().max().unwrap_or(0),
+    }
 }
 
 /// `Result::expect_err` needs `T: Debug`, and a `RecursionOutput` is not. This says the same thing
@@ -271,11 +314,16 @@ fn the_chain_descriptor_runs_the_deployed_wrap_links_rom() {
 #[test]
 fn two_links_fold_into_one_claim() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES, AND THEY ARE NOT THE SAME OBJECT ANY MORE: a leaf VERIFIES its IR-v2
+    // child at the inner engine and MINTS at the recursion engine; a fold verifies what the
+    // leaf emitted, so it runs at the root config. Both are tower accessors, neither is a
+    // named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
 
     let t0 = Instant::now();
-    let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
-    let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
+    let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &inner).expect("link 0 leaf");
+    let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &inner).expect("link 1 leaf");
     let leaves_ms = t0.elapsed().as_millis();
 
     let t1 = Instant::now();
@@ -283,12 +331,42 @@ fn two_links_fold_into_one_claim() {
         &l0,
         &l1,
         &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
-        &config,
+        &fold_cfg,
     )
     .expect("links 0..1 fold");
     let fold_ms = t1.elapsed().as_millis();
 
-    verify_recursive_batch_proof_with_config(&node.0, &config).expect("the folded node verifies");
+    verify_recursive_batch_proof_with_config(&node.0, &fold_cfg).expect("the folded node verifies");
+
+    // ⚑ THE SWITCH, READ OFF THE TWO ARTIFACTS THIS TEST JUST MINTED — not off a config field.
+    // A config object being right is exactly what was already true while the split was inert.
+    for (label, art) in [("leaf", &l0), ("fold node", &node)] {
+        let e = emitted_fri(art);
+        println!(
+            "  {label:<10} EMITTED {} query proofs, committed LDE 2^{} (trace 2^{})",
+            e.num_queries, e.log_lde_domain, e.max_degree_bits
+        );
+        assert_eq!(
+            e.num_queries, 38,
+            "the chain {label} emitted {} query proofs; 19 means it minted at its CHILD's engine \
+             and the 8x is not in this tower",
+            e.num_queries
+        );
+        assert_eq!(
+            e.log_lde_domain,
+            e.max_degree_bits + 3,
+            "the chain {label} committed 2^{} over a 2^{} trace; the split mint blowup is 8x, the \
+             deployed one was 64x",
+            e.log_lde_domain,
+            e.max_degree_bits
+        );
+    }
+    // …and the node REFUSES at the inner engine. Without this the two assertions above could be
+    // two labels on one object rather than a claim that two distinct engines exist.
+    assert!(
+        verify_recursive_batch_proof_with_config(&node.0, &inner).is_err(),
+        "a 38-query chain node must NOT verify under the 19-query IR-v2 descriptor engine"
+    );
 
     let claim = read_chain_claim(&node).expect("the node publishes a chain claim");
     assert_eq!(
@@ -318,25 +396,30 @@ fn two_links_fold_into_one_claim() {
 #[test]
 fn four_links_fold_into_one_claim() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES, AND THEY ARE NOT THE SAME OBJECT ANY MORE: a leaf VERIFIES its IR-v2
+    // child at the inner engine and MINTS at the recursion engine; a fold verifies what the
+    // leaf emitted, so it runs at the root config. Both are tower accessors, neither is a
+    // named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
 
     let t0 = Instant::now();
-    let mut acc = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
+    let mut acc = prove_chain_link_leaf(&link_trace(0), &pis[0], &inner).expect("link 0 leaf");
     for j in 1..4 {
-        let leaf = prove_chain_link_leaf(&link_trace(j), &pis[j], &config)
+        let leaf = prove_chain_link_leaf(&link_trace(j), &pis[j], &inner)
             .unwrap_or_else(|e| panic!("link {j} leaf: {e}"));
         acc = fold_chain_links(
             &acc,
             &leaf,
             &FoldVkPins::tracked(&acc, &leaf)
                 .expect("both children carry a preprocessed commitment"),
-            &config,
+            &fold_cfg,
         )
         .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
     }
     let total_ms = t0.elapsed().as_millis();
 
-    verify_recursive_batch_proof_with_config(&acc.0, &config).expect("the 4-link root verifies");
+    verify_recursive_batch_proof_with_config(&acc.0, &fold_cfg).expect("the 4-link root verifies");
 
     let claim = read_chain_claim(&acc).expect("the root publishes a chain claim");
     assert_eq!(
@@ -369,11 +452,16 @@ fn four_links_fold_into_one_claim() {
 #[test]
 fn a_skipped_link_is_refused_by_the_folds_connect() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES, AND THEY ARE NOT THE SAME OBJECT ANY MORE: a leaf VERIFIES its IR-v2
+    // child at the inner engine and MINTS at the recursion engine; a fold verifies what the
+    // leaf emitted, so it runs at the root config. Both are tower accessors, neither is a
+    // named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
 
-    let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config)
+    let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &inner)
         .expect("link 0 is an honest link and its leaf MUST prove");
-    let l2 = prove_chain_link_leaf(&link_trace(2), &pis[2], &config)
+    let l2 = prove_chain_link_leaf(&link_trace(2), &pis[2], &inner)
         .expect("link 2 is an honest link and its leaf MUST prove -- the lie is only the JOIN");
 
     let err = expect_refusal(
@@ -381,7 +469,7 @@ fn a_skipped_link_is_refused_by_the_folds_connect() {
             &l0,
             &l2,
             &FoldVkPins::tracked(&l0, &l2).expect("both children carry a preprocessed commitment"),
-            &config,
+            &fold_cfg,
         ),
         "a chain that skips link 1 must be REFUSED by the fold",
     );
@@ -392,12 +480,12 @@ fn a_skipped_link_is_refused_by_the_folds_connect() {
          refuses a broken join; got: {err}"
     );
     // The honest join proves, so the refusal above is about the JOIN and not about link 2.
-    let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
+    let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &inner).expect("link 1 leaf");
     fold_chain_links(
         &l0,
         &l1,
         &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
-        &config,
+        &fold_cfg,
     )
     .expect("the HONEST join must still fold");
     println!("  …and the honest join (0,1) folds, so the refusal is the join and not the link.");
@@ -409,14 +497,14 @@ fn a_skipped_link_is_refused_by_the_folds_connect() {
 #[test]
 fn a_forged_absorbed_element_is_refused_by_the_pin() {
     let pis = all_link_pis();
-    let config = chain_config();
+    let inner = chain_inner_config();
 
     let mut forged = pis[0].clone();
     // Stay INSIDE the declared 8-bit range so a range lookup can never be what refuses.
     forged[ABSORBED_PI_LO] = BabyBear::new((forged[ABSORBED_PI_LO].as_u32() + 1) % 256);
 
     let err = expect_refusal(
-        prove_chain_link_leaf(&link_trace(0), &forged, &config),
+        prove_chain_link_leaf(&link_trace(0), &forged, &inner),
         "an absorbed element that is not the tape's must be REFUSED",
     );
     println!("\n§3b ⚑ FORGED ABSORBED TAPE ELEMENT REFUSED AT THE LEAF: {err}");
@@ -433,7 +521,7 @@ fn a_forged_absorbed_element_is_refused_by_the_pin() {
 #[test]
 fn a_forged_outgoing_state_is_refused_at_the_third_lane() {
     let pis = all_link_pis();
-    let config = chain_config();
+    let inner = chain_inner_config();
 
     // Lane 2 of the OUTGOING state — the lane `MinaBlockFqTranscript.linkPins` never pinned.
     let slot = OUT_PI_LO + 2 * SK;
@@ -441,7 +529,7 @@ fn a_forged_outgoing_state_is_refused_at_the_third_lane() {
     forged[slot] = BabyBear::new((forged[slot].as_u32() + 1) % 256);
 
     let err = expect_refusal(
-        prove_chain_link_leaf(&link_trace(0), &forged, &config),
+        prove_chain_link_leaf(&link_trace(0), &forged, &inner),
         "a third outgoing lane the machine did not compute must be REFUSED",
     );
     println!("\n§3c ⚑ FORGED THIRD OUTGOING LANE REFUSED: {err}");
@@ -463,16 +551,21 @@ fn a_forged_outgoing_state_is_refused_at_the_third_lane() {
 #[test]
 fn the_chain_folds_recursion_vk_is_deterministic() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES, AND THEY ARE NOT THE SAME OBJECT ANY MORE: a leaf VERIFIES its IR-v2
+    // child at the inner engine and MINTS at the recursion engine; a fold verifies what the
+    // leaf emitted, so it runs at the root config. Both are tower accessors, neither is a
+    // named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
 
     let build = || {
-        let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
-        let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
+        let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &inner).expect("link 0 leaf");
+        let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &inner).expect("link 1 leaf");
         fold_chain_links(
             &l0,
             &l1,
             &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
-            &config,
+            &fold_cfg,
         )
         .expect("links 0..1 fold")
     };
@@ -514,26 +607,34 @@ fn the_chain_folds_recursion_vk_is_deterministic() {
 /// 207 MB witness figure implied. That is the number the residual should always have been priced
 /// against.
 ///
-/// ⚑ **RUN, 2026-08-05: 1037 s (17.3 min), root verified**, steady state ~9.5 s leaf + ~11.5 s fold.
+/// ⚑ **RUN, 2026-08-05, AT THE SINGLE-ENGINE SHAPE: 1037 s (17.3 min), root verified**, steady
+/// state ~9.5 s leaf + ~11.5 s fold. ⚠ **That is a number about an object this tower no longer
+/// contains** — since 2026-08-08 the leaf mints at `log_blowup 3` and the whole tree commits an 8×
+/// smaller domain per layer. It is kept as the BASELINE it is, labelled, and not carried forward.
 ///
 /// `#[ignore]`d for wall clock only. Run it with:
 /// `cargo test -p dregg-circuit-prove --release --test mina_phase2_chain_fold -- --ignored --nocapture`
 #[test]
-#[ignore = "the whole 46-link chain: 17.3 min measured (RUN, root verified). Explicit --ignored."]
+#[ignore = "the whole 46-link chain. Baseline at the OLD single-engine shape was 17.3 min. Explicit --ignored."]
 fn the_whole_phase2_transcript_folds_into_one_claim() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES, AND THEY ARE NOT THE SAME OBJECT ANY MORE: a leaf VERIFIES its IR-v2
+    // child at the inner engine and MINTS at the recursion engine; a fold verifies what the
+    // leaf emitted, so it runs at the root config. Both are tower accessors, neither is a
+    // named FRI constant.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
     let t_all = Instant::now();
 
     let mut acc = {
         let t = Instant::now();
-        let leaf = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
+        let leaf = prove_chain_link_leaf(&link_trace(0), &pis[0], &inner).expect("link 0 leaf");
         println!("  link  0/46 leaf {:>6} ms", t.elapsed().as_millis());
         leaf
     };
     for j in 1..CHAIN_LINKS {
         let t = Instant::now();
-        let leaf = prove_chain_link_leaf(&link_trace(j), &pis[j], &config)
+        let leaf = prove_chain_link_leaf(&link_trace(j), &pis[j], &inner)
             .unwrap_or_else(|e| panic!("link {j} leaf: {e}"));
         let leaf_ms = t.elapsed().as_millis();
         let t = Instant::now();
@@ -542,7 +643,7 @@ fn the_whole_phase2_transcript_folds_into_one_claim() {
             &leaf,
             &FoldVkPins::tracked(&acc, &leaf)
                 .expect("both children carry a preprocessed commitment"),
-            &config,
+            &fold_cfg,
         )
         .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
         println!(
@@ -552,7 +653,7 @@ fn the_whole_phase2_transcript_folds_into_one_claim() {
         );
     }
 
-    verify_recursive_batch_proof_with_config(&acc.0, &config)
+    verify_recursive_batch_proof_with_config(&acc.0, &fold_cfg)
         .expect("the 46-link chain root verifies");
     let claim = read_chain_claim(&acc).expect("the root publishes a chain claim");
 

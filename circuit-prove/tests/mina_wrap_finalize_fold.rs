@@ -63,11 +63,33 @@
 //! *wider* than this conjunction, so a fold tower over it is memory-bound per node long before it is
 //! row-bound.
 //!
+//! ## ⚑⚑ THIS TOWER IS TWO ENGINES DEEP SINCE 2026-08-08, AND EVERY NUMBER BELOW IS A BASELINE
+//!
+//! Each leaf VERIFIES its IR-v2 child at the descriptor engine (`finalize_inner_config()`,
+//! `log_blowup 6 / 19 queries` — bit-for-bit the acceptance decision it always made) and MINTS at
+//! the recursion engine (`finalize_root_config()`, `log_blowup 3 / 38 queries`), which the fold and
+//! the root verify then run at. Both are reached by iterating `recursion_layer_over`; **no test
+//! here names a FRI constant.** §4 polarity 1 asserts the switch on the three ARTIFACTS it mints.
+//!
+//! ⚠ **Every wall-clock and memory figure in the two sections below was measured at the OLD
+//! single-engine shape and is a BASELINE, not a description of this tower.** They are kept
+//! labelled rather than deleted, because the before/after is the point. ⚠ **The finalize root's VK
+//! rotates.**
+//!
+//! **MEASURED 2026-08-08 at the split, this whole file under `/usr/bin/time -l`** (96 GiB M2 Max,
+//! load ~90, sibling lanes proving — so the wall clocks are the weak column):
+//! endo leaf **18.5 s**, conjunction leaf **41.0 s**, fold **10.5 s**, root verified, 8/8 passed in
+//! **165.9 s**; the WHOLE binary peaked at **16.86 GiB maxrss / 21.36 GiB footprint** — against a
+//! single conjunction leaf wrap that could not be held under a 30 GiB cap at the old shape. The
+//! committed domains, which are exact and read off the artifacts: endo leaf `2^20` over a `2^17`
+//! trace, conjunction leaf `2^23` over a `2^20` trace, fold root `2^20` over `2^17`. Each was
+//! `2^(trace+6)` before.
+//!
 //! ## ⚠⚠ AND THE MEASURED TIMES CORRECT A PRICE I HAD JUST DERIVED — READ THIS BEFORE QUOTING CELLS
 //!
-//! Measured here, 2026-08-06: **endo-lift leaf 55.7 s (687 cols × 2 048 rows), conjunction leaf
-//! 177.3 s (2 536 cols × 16 rows), fold node 48.0 s**, root verified. Against the phase-2 chain's
-//! **9.5 s** for a 469-column × 2 048-row leaf.
+//! Measured here **at the single-engine shape**, 2026-08-06: **endo-lift leaf 55.7 s (687 cols ×
+//! 2 048 rows), conjunction leaf 177.3 s (2 536 cols × 16 rows), fold node 48.0 s**, root verified.
+//! Against the phase-2 chain's **9.5 s** for a 469-column × 2 048-row leaf.
 //!
 //! ⚑ **LEAF COST DOES NOT TRACK COMMITTED CELLS. IT TRACKS COLUMNS.** The conjunction leaf commits
 //! `2 536 × 16 = 40 576` cells — **1/24th** of the chainlink leaf's `960 512` — and takes **18.7×
@@ -97,8 +119,8 @@ use dregg_circuit_prove::mina_wrap_finalize_fold::{
     CLAIM_B0, CLAIM_R, CLAIM_VPRIME, CLAIM_ZETA, CLAIM_ZETAW, CONJ_PI_B0, CONJ_PI_COUNT, CONJ_PI_R,
     CONJ_PI_XI, CONJ_PI_ZETA, CONJ_PI_ZETAW, CONJ_ROWS, ENDO_PI_COUNT, ENDO_PI_VPRIME, ENDO_PI_XI,
     FINALIZE_CLAIM_LEN, SK, V_PRIME_LIMBS, conjunction_descriptor, endo_lift_descriptor,
-    finalize_config, fold_endo_into_finalize, prove_conjunction_leaf, prove_endo_lift_leaf,
-    read_finalize_claim,
+    finalize_inner_config, finalize_root_config, fold_endo_into_finalize, prove_conjunction_leaf,
+    prove_endo_lift_leaf, read_finalize_claim,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::verify_recursive_batch_proof_with_config;
 
@@ -131,6 +153,34 @@ const XI_DECIMAL: &str =
 // ────────────────────────────────────────────────────────────────────────────────────────────────
 // fixtures
 // ────────────────────────────────────────────────────────────────────────────────────────────────
+
+/// The FRI shape of an EMITTED artifact, read off the proof rather than off a config field.
+/// `log_lde_domain` is the tallest committed matrix's Merkle authentication-path length; this
+/// tower's `cap_height` is 0, so path length IS tree depth IS `degree_bits + mint log_blowup`.
+struct EmittedFri {
+    num_queries: usize,
+    log_lde_domain: usize,
+    max_degree_bits: usize,
+}
+
+fn emitted_fri(
+    out: &p3_recursion::RecursionOutput<
+        dregg_circuit_prove::plonky3_recursion_impl::recursive::DreggRecursionConfig,
+    >,
+) -> EmittedFri {
+    let fri = &out.0.proof.opening_proof;
+    EmittedFri {
+        num_queries: fri.query_proofs.len(),
+        log_lde_domain: fri
+            .query_proofs
+            .iter()
+            .flat_map(|q| q.input_proof.iter())
+            .map(|b| b.opening_proof.len())
+            .max()
+            .unwrap_or(0),
+        max_degree_bits: out.0.proof.degree_bits.iter().copied().max().unwrap_or(0),
+    }
+}
 
 fn parse_trace(text: &str, width: usize) -> Vec<Vec<BabyBear>> {
     let t: Vec<Vec<BabyBear>> = text
@@ -320,7 +370,11 @@ fn the_forged_xi_leaf_proves_and_verifies_on_its_own() {
 /// ⚑ **POLARITY 1 — THE FOLD LANDS, AND THE ROOT VERIFIES.**
 #[test]
 fn the_endo_and_the_conjunction_fold_into_one_claim() {
-    let cfg = finalize_config();
+    // ⚑ TWO ENGINES since the mint split reached this tower: each leaf VERIFIES its IR-v2
+    // child at the inner engine and MINTS at the recursion engine; the fold verifies what the
+    // leaves emitted. Both are derived accessors — neither names a FRI constant.
+    let inner = finalize_inner_config();
+    let fold_cfg = finalize_root_config();
     let ed = endo_lift_descriptor().expect("endo-lift descriptor");
     let cd = conjunction_descriptor().expect("conjunction descriptor");
 
@@ -328,7 +382,7 @@ fn the_endo_and_the_conjunction_fold_into_one_claim() {
     let endo = prove_endo_lift_leaf(
         &parse_trace(ENDO_TRACE, ed.trace_width),
         &parse_pis(ENDO_PIS),
-        &cfg,
+        &inner,
     )
     .expect("the endo-lift leaf");
     let t_endo = t0.elapsed();
@@ -337,7 +391,7 @@ fn the_endo_and_the_conjunction_fold_into_one_claim() {
     let conj = prove_conjunction_leaf(
         &parse_trace(CONJ_TRACE, cd.trace_width),
         &parse_pis(CONJ_PIS),
-        &cfg,
+        &inner,
     )
     .expect("the conjunction leaf");
     let t_conj = t1.elapsed();
@@ -347,12 +401,46 @@ fn the_endo_and_the_conjunction_fold_into_one_claim() {
         &endo,
         &conj,
         &FoldVkPins::tracked(&endo, &conj).expect("both children carry a preprocessed commitment"),
-        &cfg,
+        &fold_cfg,
     )
     .expect("the honest fold lands");
     let t_fold = t2.elapsed();
 
-    verify_recursive_batch_proof_with_config(&root.0, &cfg).expect("the fold root verifies");
+    verify_recursive_batch_proof_with_config(&root.0, &fold_cfg).expect("the fold root verifies");
+
+    // ⚑ THE SWITCH, READ OFF THE THREE ARTIFACTS THIS TEST JUST MINTED. A config object being
+    // right is exactly what was already true while the predecessor of this change was inert.
+    for (label, art) in [
+        ("endo leaf", &endo),
+        ("conj leaf", &conj),
+        ("fold root", &root),
+    ] {
+        let e = emitted_fri(art);
+        println!(
+            "  {label:<10} EMITTED {} query proofs, committed LDE 2^{} (trace 2^{})",
+            e.num_queries, e.log_lde_domain, e.max_degree_bits
+        );
+        assert_eq!(
+            e.num_queries, 38,
+            "the finalize {label} emitted {} query proofs; 19 means it minted at its CHILD's \
+             engine and the 8x is not in this tower",
+            e.num_queries
+        );
+        assert_eq!(
+            e.log_lde_domain,
+            e.max_degree_bits + 3,
+            "the finalize {label} committed 2^{} over a 2^{} trace; the split mint blowup is 8x, \
+             the deployed one was 64x",
+            e.log_lde_domain,
+            e.max_degree_bits
+        );
+    }
+    // …and the root REFUSES at the inner engine, without which the two assertions above are two
+    // labels on one object rather than a claim that two distinct engines exist.
+    assert!(
+        verify_recursive_batch_proof_with_config(&root.0, &inner).is_err(),
+        "a 38-query finalize root must NOT verify under the 19-query IR-v2 descriptor engine"
+    );
 
     let claim = read_finalize_claim(&root).expect("the root publishes the finalize claim");
     assert_eq!(claim.len(), FINALIZE_CLAIM_LEN);
@@ -395,14 +483,18 @@ fn the_endo_and_the_conjunction_fold_into_one_claim() {
 /// forged cells are legal limbs, and the four republished blocks are untouched.
 #[test]
 fn a_conjunction_at_another_xi_cannot_be_folded() {
-    let cfg = finalize_config();
+    // ⚑ TWO ENGINES since the mint split reached this tower: each leaf VERIFIES its IR-v2
+    // child at the inner engine and MINTS at the recursion engine; the fold verifies what the
+    // leaves emitted. Both are derived accessors — neither names a FRI constant.
+    let inner = finalize_inner_config();
+    let fold_cfg = finalize_root_config();
     let ed = endo_lift_descriptor().expect("endo-lift descriptor");
     let cd = conjunction_descriptor().expect("conjunction descriptor");
 
     let endo = prove_endo_lift_leaf(
         &parse_trace(ENDO_TRACE, ed.trace_width),
         &parse_pis(ENDO_PIS),
-        &cfg,
+        &inner,
     )
     .expect("the endo-lift leaf");
 
@@ -410,7 +502,7 @@ fn a_conjunction_at_another_xi_cannot_be_folded() {
         &parse_trace(CONJ_TRACE, cd.trace_width),
         &parse_pis(CONJ_PIS),
     );
-    let conj = prove_conjunction_leaf(&ft, &fp, &cfg)
+    let conj = prove_conjunction_leaf(&ft, &fp, &inner)
         .expect("the forged leaf is honest in its own right and wraps as a leaf");
 
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -419,7 +511,7 @@ fn a_conjunction_at_another_xi_cannot_be_folded() {
             &conj,
             &FoldVkPins::tracked(&endo, &conj)
                 .expect("both children carry a preprocessed commitment"),
-            &cfg,
+            &fold_cfg,
         )
     }));
     let refused = match r {

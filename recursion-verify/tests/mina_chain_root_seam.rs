@@ -10,6 +10,16 @@
 //!         →  read chain claim  →  dregg-turn's check_chain_root_binding
 //! ```
 //!
+//! ## ⚑⚑ THE ANCHOR THIS FILE PRINTS ROTATED ON 2026-08-08
+//!
+//! The phase-2 chain tower was switched to the two-engine shape: a leaf VERIFIES its IR-v2 child at
+//! the descriptor engine (bit for bit the acceptance decision it always made) and MINTS at the
+//! recursion engine, `log_blowup 3 / 38 queries`, which every fold and the root verify then run
+//! at. The fold circuit that verifies a 38-query child is a **different circuit**, so **every
+//! `recursion_vk_fingerprint` this file prints is a new value** and an operator's
+//! `DREGG_MINA_CHAIN_ROOT_VK` from before that date refuses every root — fail-closed, which is the
+//! correct direction. §1 and §1b are unaffected: they are about PI bytes, not proofs.
+//!
 //! ## ⚑ RELEASE, DELIBERATELY
 //!
 //! Algebraic refusals are `debug_assert` panics in debug and clean `Err(..)` in release, so a
@@ -35,7 +45,7 @@ use std::path::PathBuf;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
-    CHAIN_LINKS, CHAIN_PI_COUNT, OUT_PI_LO, STATE_WIDTH, chain_config, fold_chain_links,
+    CHAIN_LINKS, CHAIN_PI_COUNT, OUT_PI_LO, STATE_WIDTH, chain_inner_config, fold_chain_links,
     prove_chain_link_leaf,
 };
 use dregg_recursion_verify::chain_root::{chain_root_config, read_chain_claim_from_proof};
@@ -307,16 +317,19 @@ fn a_root_landing_one_limb_away_is_refused_without_any_fold() {
 #[test]
 fn a_real_fold_root_passes_the_nodes_path_and_a_wrong_anchor_does_not() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES: a leaf verifies its IR-v2 child at the inner engine and mints at the
+    // recursion engine, so the fold — and the node's own verify — run at `chain_root_config()`.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
 
     let t0 = std::time::Instant::now();
-    let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
-    let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
+    let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &inner).expect("link 0 leaf");
+    let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &inner).expect("link 1 leaf");
     let root = fold_chain_links(
         &l0,
         &l1,
         &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
-        &config,
+        &fold_cfg,
     )
     .expect("links 0..1 fold");
     let fold_ms = t0.elapsed().as_millis();
@@ -368,15 +381,18 @@ fn a_real_fold_root_passes_the_nodes_path_and_a_wrong_anchor_does_not() {
 #[test]
 fn the_extracted_fingerprint_is_still_deterministic() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES: a leaf verifies its IR-v2 child at the inner engine and mints at the
+    // recursion engine, so the fold — and the node's own verify — run at `chain_root_config()`.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
     let build = || {
-        let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
-        let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &config).expect("link 1 leaf");
+        let l0 = prove_chain_link_leaf(&link_trace(0), &pis[0], &inner).expect("link 0 leaf");
+        let l1 = prove_chain_link_leaf(&link_trace(1), &pis[1], &inner).expect("link 1 leaf");
         fold_chain_links(
             &l0,
             &l1,
             &FoldVkPins::tracked(&l0, &l1).expect("both children carry a preprocessed commitment"),
-            &config,
+            &fold_cfg,
         )
         .expect("links 0..1 fold")
     };
@@ -409,19 +425,22 @@ fn the_extracted_fingerprint_is_still_deterministic() {
 #[ignore = "the whole 46-link chain: ~17 min and all 46 witnesses. Explicit --ignored."]
 fn the_whole_chain_root_binds_to_the_deployed_sub_proof() {
     let pis = all_link_pis();
-    let config = chain_config();
+    // ⚑ TWO ENGINES: a leaf verifies its IR-v2 child at the inner engine and mints at the
+    // recursion engine, so the fold — and the node's own verify — run at `chain_root_config()`.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
     let t_all = std::time::Instant::now();
 
-    let mut acc = prove_chain_link_leaf(&link_trace(0), &pis[0], &config).expect("link 0 leaf");
+    let mut acc = prove_chain_link_leaf(&link_trace(0), &pis[0], &inner).expect("link 0 leaf");
     for j in 1..CHAIN_LINKS {
-        let leaf = prove_chain_link_leaf(&link_trace(j), &pis[j], &config)
+        let leaf = prove_chain_link_leaf(&link_trace(j), &pis[j], &inner)
             .unwrap_or_else(|e| panic!("link {j} leaf: {e}"));
         acc = fold_chain_links(
             &acc,
             &leaf,
             &FoldVkPins::tracked(&acc, &leaf)
                 .unwrap_or_else(|e| panic!("fold at link {j} has an unpinnable child: {e}")),
-            &config,
+            &fold_cfg,
         )
         .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
         println!(

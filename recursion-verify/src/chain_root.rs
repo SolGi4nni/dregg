@@ -98,12 +98,23 @@ pub fn read_chain_claim_from_proof(
     })
 }
 
-/// The config a Mina phase-2 chain leaf, fold and root verify all run at.
+/// ⚑ **THE ENGINE EVERY LAYER ABOVE A CHAIN LEAF RUNS AT** — all 45 folds and the native verify of
+/// the root. The fixed point of [`crate::config::recursion_layer_over`].
 ///
-/// ⚠ This tower was deliberately LEFT at the single-engine shape by the IR-v2 leaf-wrap mint
-/// split, so this is still `ir2_leaf_wrap_config()` and nothing here rotated.
+/// ⚠ It USED to be `ir2_leaf_wrap_config()`, because this tower was left whole when the IR-v2 leaf
+/// wrap's mint was split: one config played the leaf's verify role, the leaf's mint role, every
+/// fold's, and the root verify's, and it played them all at the CHILD's `log_blowup 6`. A chain
+/// leaf now VERIFIES its IR-v2 child at that engine (bit-for-bit unchanged — the same
+/// `Ir2BatchProof` bytes, the same in-circuit verifier) and MINTS at this one, so a chain root is a
+/// `(log_blowup 3, 38 query)` proof. **Every consumer's pinned chain-root VK rotates with it**,
+/// including an operator's `DREGG_MINA_CHAIN_ROOT_VK`.
+///
+/// ⚑ RE-EXPORTED shape, not a fourth answer: `dregg_circuit_prove::mina_phase2_chain_leaf`
+/// re-exports this rather than defining its own, because a prove-side and a verify-side "what
+/// config is a root at" that agree today are two answers that disagree the first time one is
+/// retuned — and both sides would still BUILD; only the FRI would refuse.
 pub fn chain_root_config() -> DreggRecursionConfig {
-    crate::config::ir2_leaf_wrap_config()
+    crate::config::recursion_tower_root_config()
 }
 
 /// ⚑ **VERIFY A CHAIN ROOT AND READ ITS CLAIM, IN THE ONLY ORDER THAT MEANS ANYTHING.**

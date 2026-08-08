@@ -7,6 +7,12 @@
 //! on a box" is not verified and not sound; everything below inherits the undischarged FRI/STARK
 //! floor.
 //!
+//! ⚑ **AND SINCE 2026-08-08 THE FOLD UNDER TEST RUNS AT A DIFFERENT ENGINE THAN THE LEAVES.** A
+//! chain leaf VERIFIES its IR-v2 child at the descriptor engine and MINTS at the recursion engine
+//! (`log_blowup 3 / 38 queries`), so the fold verifies a 38-query child and every parent VK below —
+//! `control_vk`, `honest_vk`, the two leaf fingerprints — is a NEW value. Nothing about what this
+//! file tests moved: a same-shape/different-constants child is refused by the pin at either engine.
+//!
 //! # WHAT WAS OPEN
 //!
 //! `RecursionOutput::into_recursion_input` passes `expected_preprocessed_commit: None`, and the
@@ -84,7 +90,7 @@ use std::time::Instant;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::fold_vk_pin::{FoldVkPins, VK_PIN_FELTS_PER_CHILD, child_vk_commit};
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
-    CHAIN_PI_COUNT, chain_config, chain_link_descriptor, fold_chain_links,
+    CHAIN_PI_COUNT, chain_inner_config, chain_link_descriptor, chain_root_config, fold_chain_links,
     fp_chain_link_descriptor, prove_chain_link_leaf_with, read_chain_claim,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
@@ -306,7 +312,10 @@ fn link_witness(dir: &PathBuf, which: &str, j: usize) -> (Vec<Vec<BabyBear>>, Ve
 /// nothing else's — stated this way because a theorem can be true about the wrong object.
 #[test]
 fn a_same_shape_different_constants_child_is_refused_by_the_vk_pin() {
-    let config = chain_config();
+    // ⚑ TWO ENGINES: a leaf verifies its IR-v2 child at the inner engine and mints at the
+    // recursion engine; a fold verifies what the leaf emitted, so it runs at the root config.
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
     let fq_desc = chain_link_descriptor().expect("Fq chain-link descriptor");
     let fp_desc = fp_chain_link_descriptor().expect("Fp chain-link descriptor");
 
@@ -320,7 +329,7 @@ fn a_same_shape_different_constants_child_is_refused_by_the_vk_pin() {
 
     let wrap = |desc: &_, trace: &Vec<Vec<BabyBear>>, pis: &Vec<BabyBear>, label: &str| {
         let t = Instant::now();
-        let out = prove_chain_link_leaf_with(desc, trace, pis, &config)
+        let out = prove_chain_link_leaf_with(desc, trace, pis, &inner)
             .unwrap_or_else(|e| panic!("{label} leaf wrap: {e}"));
         println!("  {label:<10} leaf wrap {:>7} ms", t.elapsed().as_millis());
         out
@@ -379,14 +388,14 @@ fn a_same_shape_different_constants_child_is_refused_by_the_vk_pin() {
         &fp0,
         &fp1,
         &FoldVkPins::tracked(&fp0, &fp1).expect("both children carry a preprocessed commitment"),
-        &config,
+        &fold_cfg,
     )
     .expect(
         "the CONTROL must land: the Fp pair is chain-continuous and every constraint of this \
          parent circuit other than the pin has a satisfying assignment",
     );
     let control_ms = t.elapsed().as_millis();
-    verify_recursive_batch_proof_with_config(&control.0, &config)
+    verify_recursive_batch_proof_with_config(&control.0, &fold_cfg)
         .expect("the control fold's root verifies");
     println!("  CONTROL  (Fp children, Fp pins)  LANDED   {control_ms:>7} ms");
 
@@ -396,7 +405,7 @@ fn a_same_shape_different_constants_child_is_refused_by_the_vk_pin() {
         &fp0,
         &fp1,
         &FoldVkPins::new(fq_commit.clone(), fq_commit.clone()),
-        &config,
+        &fold_cfg,
     );
     let adversary_ms = t.elapsed().as_millis();
     let err = match adversary {
@@ -415,11 +424,11 @@ fn a_same_shape_different_constants_child_is_refused_by_the_vk_pin() {
         &fq0,
         &fq1,
         &FoldVkPins::new(fq_commit.clone(), fq_commit.clone()),
-        &config,
+        &fold_cfg,
     )
     .expect("the honest Fq fold, pinned to the RECORDED Fq leaf commitment, must land");
     let honest_ms = t.elapsed().as_millis();
-    verify_recursive_batch_proof_with_config(&honest.0, &config)
+    verify_recursive_batch_proof_with_config(&honest.0, &fold_cfg)
         .expect("the honest pinned fold's root verifies");
     println!("  HONEST   (Fq children, Fq pins)  LANDED   {honest_ms:>7} ms");
 
