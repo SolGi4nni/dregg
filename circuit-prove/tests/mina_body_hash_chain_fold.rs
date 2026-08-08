@@ -49,6 +49,18 @@
 //! ⚠ **That is the BASELINE at the single-engine shape** and is retained as one, not carried
 //! forward: since 2026-08-08 every layer here commits an 8× smaller LDE domain.
 //!
+//! **MEASURED 2026-08-08 at the split** (same laptop, release, `--test-threads=1`, `--include-ignored`,
+//! under `/usr/bin/time -l`): `test result: ok. 8 passed; 0 failed`, whole file **1 132.1 s**, §4's
+//! 25 leaves + 24 folds in **859 s**, root verified, `BODYHASH` derived. The whole binary peaked at
+//! **6.47 GiB maxrss / 8.74 GiB peak footprint** — the number worth carrying, because it is
+//! allocation and not scheduling.
+//!
+//! ⚠ **THE WALL CLOCK IS NOT A COMPARISON AND MUST NOT BE READ AS ONE.** This ran on a 12-core box
+//! carrying a load average near **145** from six sibling proving lanes; the 514 s baseline's load
+//! was never recorded. A run at 10× oversubscription tells you the tower COMPLETES, not what it
+//! costs. The controlled same-binary before/after is in
+//! `mina_towers_mint_at_their_own_engine.rs`.
+//!
 //! ## ⚑ WHAT MAKES THIS A CLAIM AND NOT 25 PROOFS
 //!
 //! Three things are carried, and each is read from a child's OWN FRI-bound public targets:
