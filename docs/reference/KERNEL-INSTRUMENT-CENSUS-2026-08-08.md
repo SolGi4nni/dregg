@@ -162,6 +162,32 @@ Two special cases inside the cluster:
   asserts nothing at all, and on a broken one its only assertion is that a missing export produces
   an error. Setup-failure-as-assertion in its purest form.
 
+### ⚑ FIX VERIFIED IN HEAD + THE REST OF THE TREE SWEPT, 2026-08-08 (never-ran-gates lane)
+
+`git grep demand_lean HEAD -- persist/` — **13 sites over 5 files**; every guard now bottoms out
+in a `demand_lean`-armed helper (`require_native`, `galley_native_available`, `native_available`),
+with exactly one deliberate raw `native_present()` at `poa_world_activation.rs:1296` for the
+inverted test whose subject is the absence. Read from the commit, not the worktree.
+
+**Swept every crate depending on `dregg-lean-ffi`** for the same shape (a `#[test]` early-returning
+on a runtime `*_available()`/`*_present()` with no `demand_lean` in scope). **Exactly two crates
+had ZERO `demand_lean`**, and both are now armed (`45caf4c32`):
+
+* `grain-turn/tests/r3_grain_adapter.rs:46` `r3_verifies_a_real_driven_grain_session`
+* `grain-verify/tests/r3_whole_history.rs:170` `r3_whole_history_unfoolable_decided_by_lean`
+
+Both delegate the whole decision to `dregg_grain_r3_verify` ("no Rust fallback by design") and
+both printed `ok` on an archive-less lane. Milder than `persist/` — each did `eprintln!` first —
+but cargo still reports `ok` and the eprintln is swallowed without `--nocapture`.
+
+**Still raw, reported not fixed** (a contended file at the time of the sweep):
+`bridge/src/mina_observer.rs:1934, 1957, 1997, 2044, 2082` — five `#[test]` guards on
+`mina_state_hash_word_ok_available()` in a file that demonstrates the armed idiom at `:2454` and
+`:2640`. Also `bridge/examples/mina_opening_check.rs:51` and `node/src/lib.rs:3978`. The raw bits
+in `exec-lean/src/{conservation_oracle,constraint_oracle,lean_shadow,mina_accumulator_oracle}.rs`
+are **production DECLINE paths, not test guards**, and are correct as-is (they are in the "Sound"
+list below).
+
 ## BR-4 — ⚑⚑⚑⚑ The only descriptor gate that re-derives from Lean has never produced a verdict
 
 **Class Q1. (a), and (b) downstream.** SUB-MEASURED (workflow config + GitHub run API + commit
@@ -233,6 +259,78 @@ bounds the IMAGE, not the attack).
 `PastaFieldSound`, which belongs to whoever owns the Mina opening-check emitter. Recorded here so
 it is findable, and so nobody "fixes" it by routing through the named unsound escape.
 
+### ⚑ THE GATE WAS RUN, 2026-08-08, and it is RED — never-ran-gates lane, MEASURED
+
+**Every claim above confirmed, with three sharpenings and one new defect of the same class.**
+
+**(i) WHY it never ran — cause per run, from the step-level GitHub API over all 12 non-push runs
+of `ci.yml`, 2026-07-29 → 2026-08-08 (the complete set).** The census's "killed or cancelled in
+≥8 nightlies" is the right verdict on a *wrong distribution*: only two were kills.
+
+| date | drift step | cause |
+|---|---|---|
+| 07-29, 07-30, 07-31, 08-01 | failure @ ~2 min | static preflight aborted on a **WORKFLOW-GHOST** — `ci.yml`'s own `bash scripts/…` lines resolving to `metatheory/scripts/…` |
+| 08-03 | failure @ ~2 min | **LEAN-IMPORT-GHOST**: `Dregg2.lean` imported `Dregg2.Circuit.ChipArityBite` and `…LimbTally`, neither of which exists in any history |
+| 08-04, 08-05 | **skipped** | the provenance stamp failed and the drift step, then unguarded, was skipped behind it |
+| 08-02 (69 min), 08-06 (62 min) | failure, exit 143 | `##[error] The runner has received a shutdown signal` at module **~10,100 of ~10,300 — 98% done**, after ~45 s of silence. Not `timeout-minutes` (330). The `metatheory-no-sorry` job dies the same way, at 61/60/67/63/62 min across the same runs: **a 4-vCPU/16 GB hosted runner cannot hold the Dregg2 corpus build**, and neither long Lean job has a `Reclaim runner disk` step, which every other heavy job in the file has |
+| 08-07 | **cancelled** @ 37 min | run-level cancel |
+| 08-08 | **skipped** | ⚑ NEW: the 08-08 reorder gave the two static gates `!cancelled()` and gave the three provisioning steps nothing, so a red from a 5-second python gate skipped elan/mathlib/rustfmt and the ~1h re-derivation behind them |
+
+**(ii) A `cancelled` IS INVISIBLE REPO-WIDE.** Every notifier in `.github/workflows/` tests
+`needs.<job>.result == 'failure'` — `armed-teeth:1076-1080`, `federation-node-{1,2,3}`,
+`intent-service`, `mirror-gates`, `proof-integrity-canary` — and a cancelled job's `result` is
+`cancelled`. `descriptor-drift` had no notifier at all. `main` is **not branch-protected**
+(`protected: false`, `enforcement_level: off`), so nothing blocked either. Closed by a
+`descriptor-drift-verdict` job that treats `cancelled`/`skipped` as **worse** than a red.
+
+**(iii) THE UNCOVERED COMMITS ARE 13, NOT 8** — `f7bc7d351..HEAD` on
+`metatheory/Dregg2/Circuit/Emit/`, 37 files, +6248/−658, no new `docs/VK-REGEN-LOG.md` row.
+
+**(iv) ⚑ THE VERDICT.** Run at `1400cb9da` on hbox (24 cores, warm `.lake` seed, pinned rustfmt
+`8b6558a02b`, clean detached worktree), full corpus **`Build completed successfully (10683
+jobs)`**, **43 min 27 s**, then the byte comparison — the first complete run of this gate on
+record:
+
+```
+DESCRIPTOR DRIFT: the Lean emission and the checked-in artifacts disagree.
+  Would change:
+    by-name/dregg-mina-body-preimage-bits-v1.json
+    PROVENANCE.json: `dregg-mina-body-preimage-bits-v1.json` was emitted but has NO row in the stamp
+    PROVENANCE.json: `dregg-mina-lightclient-link-v1.json`   pin does not equal the emitted bytes
+    PROVENANCE.json: `dregg-mina-lightclient-verify-v1.json` pin does not equal the emitted bytes
+```
+
+The first row is the class **only this gate can see**: the committed descriptor bytes are not
+what this revision's Lean emits. All four are attributable to **`23d65af59`** (2026-08-08), which
+changed those three `circuit/descriptors/by-name/*.json` and never touched `PROVENANCE.json`.
+`DREGG_VK_REGEN_ACK` re-emit + stamp; do **not** hand-add rows.
+
+**(v) ⚑ A FIFTH GATE, NOT IN THE CENSUS: the provenance stamp has not reached its own subject
+since 2026-08-07.** `emit_descriptors.py::verify_workflow_refs` ended in `sys.exit(...)` when a
+tracked `.github/**/action.yml` exists; `.github/actions/lean-seed/action.yml` landed that day.
+It is called from `verify_provenance` **before** the sha256-of-every-descriptor comparison, so
+the 08-08 nightly's entire output is six lines — four leg counters and a coverage-gap message —
+with no `verify-provenance: PASS/FAIL` line at all. This is exactly the mask
+`check-descriptor-drift.sh:159-171` names and repaired two days earlier, one file over. Converted
+to a recorded finding that still fails; **the first run that reached the comparison** produced
+the three by-name rows above plus four stale `fp_file_sha256` snapshot rows
+(`bilateral_aggregation_air.rs`, `cap_delegation_nonamp_descriptor.rs`, `effect_vm_descriptors.rs`,
+`lean_descriptor_air.rs`).
+
+**(vi) The emit-gate weld is red at HEAD too**, and it names the same flag day:
+`dregg-effectvm-transfer-v1`, Rust golden `circuit/src/lean_descriptor_air.rs` vs pin
+`circuit/descriptors/dregg-effectvm-transfer-ir2.json` — `public_input_count` **42 (Rust) vs 35
+(pin)**, i.e. the *seven-slot PI compaction* of `f7bc7d351` that re-emitted 117 members "exactly
+seven felts narrower" never reached this golden; also 36 vs 42 constraints, `hash_sites` `[]` in
+the pin, and `challenges`/`ir`/`tables` present in the pin and absent from the golden.
+Corroborating: three goldens in `dregg-lean-ffi/src/circuit_differential.rs`
+(`dregg-kernel-step-v1`, `dregg-merkle-poseidon2-v1`, `dregg-poseidon2-compress-v1`) have **no pin
+anywhere** — "the gate certifies only itself".
+
+**Not done here:** the runner-capacity fix. `hbox` is registered and online as a self-hosted
+runner (`self-hosted,Linux,X64,lean-seed,linux-x86_64`) and did this build in 43 minutes, but
+routing a nightly onto ember's physically co-tenant box is a topology decision, not a lane's.
+
 ## BR-5 — ⚑⚑⚑ Three Lean-seed freshness gates, none wired to any workflow
 
 **Class Q1. (a).** SUB-MEASURED.
@@ -248,6 +346,44 @@ solely in `scripts/local-gates.sh`.
 The member-freshness gate landed 2026-08-07 in response to precisely this class:
 `deployed_constraint_probe` printed `8 passed` daily 07-30→08-06 with six of eight assertions
 false, because the archive carried a 07-25 object. **It is a good gate wired to nothing automatic.**
+
+### ⚑ RESOLVED + CORRECTED 2026-08-08 by the never-ran-gates lane (`45caf4c32`) — MEASURED
+
+**Correction.** *"None wired to any workflow"* is false for one of the three.
+`check-lean-seed-closure.sh` **is** reached from CI, indirectly: `scripts/fetch-lean-seed.sh:216`
+invokes it on the freshly downloaded candidate before install, and that script runs at
+`ci.yml:573`, `ci.yml:1291` and in `.github/actions/lean-seed`, i.e. in `armed-teeth`, `demos`,
+`federation-node-{1,2,3}` and `intent-service`. The `grep .github/` that produced the finding
+cannot see a script invoked by a script. ⚠ It graded only a *candidate at fetch time*, and it sat
+behind `if [ -x <script> ]` — so dropping the mode bit deleted the only CI reader silently and the
+seed installed anyway. Now unconditional through `bash`, absent script a FAULT.
+
+**Only ONE of the remaining two is honestly hosted-runnable**, and the split matters:
+
+| gate | hosted-runner? | why |
+|---|---|---|
+| `check-lean-seed-freshness.sh` | **yes — now wired**, `ci-invariants.yml` `commit-hygiene` | two strings; no network, no `lake`, no cargo, no mtimes, ~2s. The closure hash is platform-independent (the platform enters the asset KEY, not the hash) |
+| `check-lean-seed-member-freshness.py` | **no** | `ar` member mtimes vs `.lean` mtimes, and `actions/checkout` does not preserve mtimes — every member reads stale by construction. A wall, not a gate. Stays a local-gates row, same reason `.github/dark-targets.txt` accepts its Rust twin `linked_archive_freshness` as dark |
+
+**WHAT ALL THREE FOUND, run 2026-08-08 at HEAD. All three RED.**
+
+* `check-lean-seed-freshness.sh` → **exit 1.** `lean-seed.pin` carries an **empty
+  `DREGG_CLOSURE_HASH`** after the 2026-08-07 closure-key flag day, which the gate refuses to
+  read as "no drift". No published asset is reachable by name for this checkout, so every
+  verified gate CI arms from the seed is dark. Fix is an **outward act, owner ember**:
+  `gh workflow run lean-seed.yml -f platforms=linux-x86_64`. Wired anyway and left red.
+* `check-lean-seed-member-freshness.py` → **exit 1. 42 of 347** in-tree objects in
+  `dregg-lean-ffi/libdregg_lean.a` are OLDER than the Lean they claim to be — including
+  **`Dregg2_FFI.o` itself** (member 2026-08-07T16:18:05Z vs `Dregg2/FFI.c` 2026-08-08T02:55:10Z)
+  and 41 `Dregg2.Games.PathOfAngels.*`.
+* `check-lean-seed-closure.sh` → **exit 1. 5 in-tree boundary-closure modules have no object at
+  all** (`ArtificerLogic`, `ArtificerLogicEmit`, `CrewFieldMissionAdmission`, `RelicNamespace`,
+  `VentCrawlEmit`). Each is an `@[export]` whose `#[cfg(dregg_*_present)]` gate compiles its
+  ABSENT arm.
+
+Also fixed in passing: the gate computed a "commits behind" figure its own comment called *"a
+more honest unit than wall-clock"* and printed it **nowhere**. It is printed now, and reported as
+unanswerable under a shallow checkout rather than as a small number that looks like a fact.
 
 ## BR-6 — ⚑⚑⚑ `fast_path` asserts a nonce check in three docblocks and does not perform one
 
