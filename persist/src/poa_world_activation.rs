@@ -1150,8 +1150,28 @@ mod tests {
         Ok(())
     }
 
-    fn require_native() -> bool {
+    /// The RAW availability bit. Use ONLY where the ABSENCE of the export is itself the subject
+    /// under test (there is exactly one such test below); every other guard must be armed.
+    fn native_present() -> bool {
         poa_world_activation_available()
+    }
+
+    /// ⚑ **THE ARMED GUARD.** Absent export ⇒ `demand_lean` PANICS naming the capability, instead
+    /// of returning `false` so the caller can `return` and cargo can print `ok`.
+    ///
+    /// Until 2026-08-08 this was the raw bit, and `persist/` was the last kernel crate whose skip
+    /// guards were unarmed: 24 sites across 21 test fns, none routed through `demand_lean`, no
+    /// `eprintln`, nothing. On any lane where the archive is absent — which is every CI lane that
+    /// gets past the seed fetch — every world-activation and galley-authority refusal test in this
+    /// crate reported `ok` having asserted nothing. `TESTQALOG.md:589` records 17 sites in 13
+    /// files being converted; this crate was missed.
+    ///
+    /// `DREGG_TEST_ALLOW_MISSING_LEAN=1` restores the old skip, and is the opt-IN.
+    fn require_native() -> bool {
+        dregg_lean_ffi::demand_lean(
+            native_present(),
+            "the PoA world-activation verified authority path (dregg_poa_world_activation_*)",
+        )
     }
 
     #[test]
@@ -1263,7 +1283,17 @@ mod tests {
 
     #[test]
     fn absent_native_export_refuses_preparation_without_a_rust_twin() {
-        if require_native() {
+        // ⚑ THE ONE INVERTED GUARD IN THIS MODULE, and it must stay on the RAW bit: the ABSENCE of
+        // the export is this test's whole subject, so arming it would panic in exactly the state
+        // it exists to exercise. Said out loud because the other five guards below are armed and a
+        // reader will wonder why this one is not.
+        //
+        // ⚠ Named as a residual, not fixed here: on a correctly-built lane this test asserts
+        // NOTHING, and on a broken lane its only assertion is that a missing export produces an
+        // error — setup-failure-as-assertion. It is a real property (no Rust twin silently
+        // substitutes for the Lean authority) that wants a build-time `#[cfg(not(...))]` gate
+        // rather than a runtime skip.
+        if native_present() {
             return;
         }
         let store = PersistentStore::open_in_memory().unwrap();

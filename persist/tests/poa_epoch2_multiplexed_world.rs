@@ -131,8 +131,14 @@ fn signed(
         .expect("envelope")
 }
 
+/// ⚑ **ARMED GUARD** (2026-08-08) — see `persist/src/poa_world_activation.rs`'s `require_native`.
+/// Absent export ⇒ `demand_lean` PANICS naming the capability, rather than returning `false` so
+/// each caller can `return` and cargo can print `ok` for a test that asserted nothing.
 fn native_available() -> bool {
-    poa_world_activation_available() && poa_activated_content_runtime_available()
+    dregg_lean_ffi::demand_lean(
+        poa_world_activation_available() && poa_activated_content_runtime_available(),
+        "the epoch-2 multiplexed PoA world (world-activation + activated-content)",
+    )
 }
 
 /// Install the pin and the REAL shipped epoch-1 galley world, exactly as the devnet
@@ -178,7 +184,12 @@ fn store_at_shipped_epoch_1(key: &SigningKey) -> (PersistentStore, [u8; 32]) {
 /// and BOTH organs answer.
 #[test]
 fn both_organs_are_served_from_one_epoch2_activation() {
-    if !native_available() || !poa_night_watch_campaign_available() {
+    if !native_available()
+        || !dregg_lean_ffi::demand_lean(
+            poa_night_watch_campaign_available(),
+            "the PoA night-watch campaign organ",
+        )
+    {
         return;
     }
     let key = SigningKey::from_bytes(&[0xA2; 32]);

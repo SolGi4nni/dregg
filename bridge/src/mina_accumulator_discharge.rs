@@ -502,8 +502,30 @@ pub fn discharge(
     let answer = dregg_lean_ffi::bridge_lc_ffi::run_mina_deferral_ok(&receipt.wire)
         .map_err(DischargeError::VerifiedGateUnavailable)?;
     receipt.gate_answer = answer.clone();
-    let gate_ok = answer == "1";
     let computed = receipt.verdict == Verdict::Discharged;
+    // ⚑ A NON-VERDICT ANSWER IS NOT A `no`, AND MUST NOT BE COMPARED AS ONE.
+    //
+    // Until 2026-08-08 this read `let gate_ok = answer == "1";`, which folded `"ERR"` — the gate
+    // REFUSING TO READ the wire — into the same `false` as a genuine `"0"`. That defeated this
+    // function's entire purpose on the negative polarity: when the MSM refused (`computed =
+    // false`) and the gate answered `"ERR"`, `gate_ok == computed` held, `GateDisagreed` did NOT
+    // fire, and `discharge` went on to report `Refused("the batched MSM … did not vanish")` as
+    // though the verified gate had CONCURRED — when in truth the gate had never decided anything.
+    // The cross-check could only ever fire on the positive polarity, which is the half that needs
+    // it least. `GateDisagreed`'s own docblock already said "or `ERR`"; the code could not.
+    //
+    // Decoding to a two-valued verdict FIRST makes the fusion unrepresentable: `gate_ok` is now
+    // constructible only from an answer that actually is a verdict.
+    let gate_ok = match answer.as_str() {
+        "1" => true,
+        "0" => false,
+        _ => {
+            return Err(DischargeError::GateDisagreed {
+                computed,
+                gate: answer,
+            });
+        }
+    };
     if gate_ok != computed {
         return Err(DischargeError::GateDisagreed {
             computed,

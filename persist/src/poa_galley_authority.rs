@@ -1967,11 +1967,17 @@ mod tests {
             .expect("installed world");
     }
 
+    /// ⚑ **ARMED GUARD** (2026-08-08) — see `poa_world_activation::tests::require_native`. Absent
+    /// export ⇒ PANIC naming the capability, never a silent `return` that prints `ok`.
     fn native_available() -> bool {
-        poa_world_activation_available()
-            && poa_galley_daily_available()
-            && poa_event_batch_runtime_available()
-            && poa_event_batch_initial_heads_digest_available()
+        dregg_lean_ffi::demand_lean(
+            poa_world_activation_available()
+                && poa_galley_daily_available()
+                && poa_event_batch_runtime_available()
+                && poa_event_batch_initial_heads_digest_available(),
+            "the PoA Galley authority path (world-activation + galley-daily + event-batch runtime \
+             + initial-heads digest)",
+        )
     }
 
     fn activated_manifest_for_fixture() -> (PoaWorldIdentityV2, Vec<u8>) {
@@ -2291,7 +2297,14 @@ mod tests {
                 .is_err()
         );
 
-        if !poa_world_activation_available() {
+        // ⛑ ARMED (2026-08-08). The `is_err()` leg above runs on an EMPTY store, so it passes
+        // for the trivial reason "no world is installed at all". Everything below is the
+        // SUBSTITUTED-world leg — the other half of this test's name — and it used to be skipped
+        // in silence, so on an archive-less lane this test checked half of what it claims.
+        if !dregg_lean_ffi::demand_lean(
+            poa_world_activation_available(),
+            "the SUBSTITUTED-active-world leg of poa_galley_authority preparation",
+        ) {
             return;
         }
         install_world(&store, world(0x59));
@@ -2352,7 +2365,12 @@ mod tests {
 
     #[test]
     fn active_observation_is_minted_from_sealed_content_and_native_replay() {
-        if !native_available() || !poa_activated_content_runtime_available() {
+        if !native_available()
+            || !dregg_lean_ffi::demand_lean(
+                poa_activated_content_runtime_available(),
+                "the PoA activated-content runtime (native replay leg)",
+            )
+        {
             return;
         }
         let store = PersistentStore::open_in_memory().expect("store");

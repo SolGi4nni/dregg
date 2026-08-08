@@ -4404,12 +4404,23 @@ pub(crate) mod tests {
         .expect("authenticated Galley policy fixture")
     }
 
+    /// ⚑ **ARMED GUARD** (2026-08-08). Absent export ⇒ `demand_lean` PANICS naming the capability.
+    ///
+    /// These eight call sites are the Galley commit-adapter and raw-apex refusal tests —
+    /// `..._rejects_invalid_signature_after_staging_and_rolls_back`,
+    /// `..._refuses_replay_invention_...`, `..._wrong_current_world_rolls_back_every_weld`. Every
+    /// one of them used to `return` silently on an absent archive and report `ok`, which is the
+    /// same object as a deleted test. See the note on `poa_world_activation::tests::require_native`.
     fn galley_native_available() -> bool {
-        dregg_lean_ffi::poa_world_activation_ffi::poa_world_activation_available()
-            && dregg_lean_ffi::poa_activated_content_ffi::poa_activated_content_runtime_available()
-            && dregg_lean_ffi::poa_galley_ffi::poa_galley_daily_available()
-            && dregg_lean_ffi::poa_event_batch_ffi::poa_event_batch_runtime_available()
-            && dregg_lean_ffi::poa_event_batch_ffi::poa_event_batch_initial_heads_digest_available()
+        dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::poa_world_activation_ffi::poa_world_activation_available()
+                && dregg_lean_ffi::poa_activated_content_ffi::poa_activated_content_runtime_available()
+                && dregg_lean_ffi::poa_galley_ffi::poa_galley_daily_available()
+                && dregg_lean_ffi::poa_event_batch_ffi::poa_event_batch_runtime_available()
+                && dregg_lean_ffi::poa_event_batch_ffi::poa_event_batch_initial_heads_digest_available(),
+            "the PoA Galley authority path (world-activation + activated-content + galley-daily + \
+             event-batch runtime + initial-heads digest)",
+        )
     }
 
     fn raw_galley_policy_json(epoch: u64, public_action: u8) -> String {
@@ -5142,7 +5153,15 @@ pub(crate) mod tests {
     }
 
     fn install_active_poa_world(store: &PersistentStore, world: crate::PoaWorldIdentityV2) -> bool {
-        if !dregg_lean_ffi::poa_world_activation_ffi::poa_world_activation_available() {
+        // ⚑ ARMED (2026-08-08). `false` here means EXACTLY "the archive lacks the export" — every
+        // other path below `expect`s — so three callers that read it as
+        // `if !install_active_poa_world(..) { return; }` (`:5800`, `:5968`, `:6161`) were silent
+        // skips. `:6161` is `poa_v2_central_writer_refuses_absent_or_wrong_active_world`, where the
+        // skipped half is the "WRONG active world" leg — the one the test is named for.
+        if !dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::poa_world_activation_ffi::poa_world_activation_available(),
+            "installing an active PoA world (dregg_poa_world_activation_*)",
+        ) {
             return false;
         }
         let curator = ed25519_dalek::SigningKey::from_bytes(&[0xC7; 32]);

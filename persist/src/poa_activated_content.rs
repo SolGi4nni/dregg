@@ -606,8 +606,13 @@ mod tests {
         .unwrap()
     }
 
+    /// ⚑ **ARMED GUARD** (2026-08-08) — see `poa_world_activation::tests::require_native`. Absent
+    /// export ⇒ PANIC naming the capability, never a silent `return` that prints `ok`.
     fn native_available() -> bool {
-        poa_world_activation_available() && poa_activated_content_runtime_available()
+        dregg_lean_ffi::demand_lean(
+            poa_world_activation_available() && poa_activated_content_runtime_available(),
+            "the PoA activated-content runtime (world-activation + activated-content)",
+        )
     }
 
     #[test]

@@ -42,7 +42,7 @@
 //! ```text
 //! INPUT  := "cl=" cl ";bl=" bl ";pc=" pc ";bls=" B ";fl=" fl ";fr=" B ";el=" el ";er=" B
 //! B      := "0" | "1"
-//! OUTPUT := "1" (ACCEPT) | "0" (REJECT) | "ERR" (malformed ⇒ fail-closed REJECT)
+//! OUTPUT := "1" (ACCEPT) | "0" (REJECT) | "ERR" (the gate could not READ the wire — NOT a verdict)
 //! ```
 //! (`cl`=committee length, `bl`=bitfield length, `pc`=participant popcount, `bls`=BLS aggregate
 //! result, `fl`=finality-branch depth, `fr`=finality reconstruct result, `el`=execution-branch
@@ -54,12 +54,53 @@
 //! (cfg `dregg_eth_lc_verify_present`, set by build.rs) AND runtime init succeeded. When
 //! unavailable (stale / marshal-only / cold-seed archive) the caller FAILS CLOSED — the ETH
 //! light-client verdict is `Err`, never a silent Rust-twin accept. A wire that round-trips to
-//! `"ERR"` / anything but `"1"` is a REJECT.
+//! `"ERR"` leaves through the ERROR channel too — see [`decode_gate_bit`].
 
 use crate::{ensure_lean_init, lean_init_once};
 
+/// **Decode a verified gate's THREE-valued output into a TWO-valued verdict — or refuse.**
+///
+/// ⚑ The gate grammar is `"1"` (the rule ran and said yes) | `"0"` (the rule ran and said no) |
+/// `"ERR"` (**the gate refused to READ the wire this crate built**). Only the first two are
+/// verdicts. `"ERR"` is not a fact about the subject — it is a fact about the *wire*, and the
+/// subject was never examined.
+///
+/// Until 2026-08-08 all twelve wrappers below decoded with `if out == "1" { Accept } else
+/// { Reject }`, which put `"ERR"` INSIDE the verdict type. Callers then minted named factual
+/// claims from that `Reject`: `ObserveError::WrapProofNotChained` ("these two real blocks are not
+/// a Pickles-recursion chain"), `ObserveError::HeaderBindingMismatch` ("this peer re-labelled the
+/// proof"), `PicklesOutcome::Refused` (a `false` into the finality conjunct). A rendering drift in
+/// any of the eight decimal projections would therefore accuse an honest peer of forgery, and the
+/// accusation would be indistinguishable from a real one. `bridge/src/mina_head.rs:885-890`
+/// records the same fusion having already fired once, in the fork-choice gate, where every call
+/// decoded to `"ERR"` and five `KeepExisting` assertions were satisfied by a refusal.
+///
+/// This is FAIL-CLOSED either way — every caller refuses on `Err` — but the refusal now carries
+/// the right cause. The confusion is made UNREPRESENTABLE rather than merely checked: a malformed
+/// outcome is no longer a member of the verdict type.
+///
+/// A token outside the grammar entirely is also an `Err`: the archive and this decoder disagreeing
+/// about the wire format is exactly the drift that must not be silently read as "no".
+fn decode_gate_bit(gate: &'static str, out: &str) -> Result<bool, String> {
+    match out {
+        "1" => Ok(true),
+        "0" => Ok(false),
+        "ERR" => Err(format!(
+            "the VERIFIED gate `{gate}` REFUSED TO READ the wire this crate built (`ERR`): the \
+             projections did not parse under the gate's own grammar. NOTHING WAS DECIDED about \
+             the subject — this is not a verdict and must never be reported as one."
+        )),
+        other => Err(format!(
+            "the VERIFIED gate `{gate}` returned `{other}`, which is outside its `1|0|ERR` \
+             grammar — the linked archive and this decoder disagree about the wire format. \
+             Nothing was decided."
+        )),
+    }
+}
+
 /// The verified decision the ETH light-client verify LOGIC reduces to. `Accept` iff the Lean gate
-/// returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed, archive-absent) is fail-closed.
+/// returned `"1"`. `"0"` is the REJECT verdict; `"ERR"`, an off-grammar token and an absent archive
+/// all leave through `Err` (fail-closed) because none of them is a verdict — see `decode_gate_bit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EthLcVerdict {
     /// The verified gate ACCEPTED the update's projections (→ `verifyFinalizedUpdate = true`,
@@ -140,7 +181,7 @@ pub fn verified_eth_lc_verify(
         exec_ok,
     );
     let out = shadow_eth_lc_verify(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_eth_lc_verify", &out)? {
         EthLcVerdict::Accept
     } else {
         EthLcVerdict::Reject
@@ -219,14 +260,15 @@ mod ffi_eth_lc {
 // ```text
 // INPUT  := "nl=" nl ";nr=" B          (nl = branch depth, nr = reconstruction result)
 // B      := "0" | "1"
-// OUTPUT := "1" (ROTATE) | "0" (REFUSE) | "ERR" (malformed ⇒ fail-closed REFUSE)
+// OUTPUT := "1" (ROTATE) | "0" (REFUSE) | "ERR" (the gate could not READ the wire — NOT a verdict)
 // ```
 //
 // Absent export ⇒ `Err`, and `verify_committee_update` refuses: the trusted committee simply does
 // not advance. There is deliberately no Rust fallback — the Rust rule WAS the twin.
 
 /// The verified decision the ETH committee-rotation LOGIC reduces to. `Rotate` iff the Lean gate
-/// returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed, archive-absent) is fail-closed.
+/// returned `"1"`. `"0"` is the REJECT verdict; `"ERR"`, an off-grammar token and an absent archive
+/// all leave through `Err` (fail-closed) because none of them is a verdict — see `decode_gate_bit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EthCommitteeRotationVerdict {
     /// The verified gate ACCEPTED the rotation projections (→ `verifyCommitteeRotation = true`,
@@ -273,7 +315,7 @@ pub fn verified_eth_committee_rotation(
 ) -> Result<EthCommitteeRotationVerdict, String> {
     let wire = eth_committee_rotation_wire(branch_len, reconstruct_ok);
     let out = shadow_eth_committee_rotation(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_eth_committee_rotation", &out)? {
         EthCommitteeRotationVerdict::Rotate
     } else {
         EthCommitteeRotationVerdict::Refuse
@@ -373,7 +415,7 @@ mod ffi_eth_committee {
 // ```
 
 /// The verified decision the Tendermint light-client verify LOGIC reduces to. `Accept` iff the Lean
-/// gate (`dregg_tm_lc_verify`) returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed,
+/// gate (`dregg_tm_lc_verify`) returned `"1"`; `"0"` is REJECT and every NON-verdict (`"ERR"`,
 /// archive-absent) is fail-closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TmLcVerdict {
@@ -431,7 +473,7 @@ pub fn shadow_tm_lc_verify(wire: &str) -> Result<String, String> {
 
 /// The end-to-end verified Tendermint light-client verify query: build the wire from the
 /// projections, run the gate, and decode to [`TmLcVerdict`]. Returns `Ok(Accept)` ONLY on the gate's
-/// `"1"`; every other gate output (`"0"`, `"ERR"`, malformed) is `Ok(Reject)` (fail-closed). `Err` is
+/// `"1"`; `"0"` is `Ok(Reject)`, while `"ERR"`/off-grammar is `Err` (fail-closed, NOT a verdict). `Err` is
 /// returned ONLY when the archive lacks the export — the caller must treat that as REJECT
 /// (fail-closed), NOT fall back to a Rust twin.
 ///
@@ -470,7 +512,7 @@ pub fn verified_tm_lc_verify(
         signed_power,
     );
     let out = shadow_tm_lc_verify(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_tm_lc_verify", &out)? {
         TmLcVerdict::Accept
     } else {
         TmLcVerdict::Reject
@@ -562,7 +604,7 @@ mod ffi_tm_lc {
 // ```
 
 /// The verified decision the Tendermint SKIPPING verify LOGIC reduces to. `Accept` iff the Lean
-/// gate (`dregg_tm_skip_verify`) returned `"1"`; every other outcome is fail-closed.
+/// gate (`dregg_tm_skip_verify`) returned `"1"`; `"0"` is REJECT, every non-verdict is `Err`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TmSkipVerdict {
     /// The verified gate ACCEPTED the skip's projections (→ `tmSkipVerify = true`, hence — with
@@ -620,7 +662,7 @@ pub fn shadow_tm_skip_verify(wire: &str) -> Result<String, String> {
 }
 
 /// The end-to-end verified Tendermint SKIPPING query: build the wire, run the gate, decode to
-/// [`TmSkipVerdict`]. `Ok(Accept)` ONLY on the gate's `"1"`; every other gate output (`"0"`,
+/// [`TmSkipVerdict`]. `Ok(Accept)` ONLY on the gate's `"1"`; `Ok(Reject)` ONLY on `"0"` (`"ERR"`,
 /// `"ERR"`, malformed) is `Ok(Reject)`. `Err` is returned ONLY when the archive lacks the export
 /// — the caller must treat that as REJECT, NOT fall back to a Rust twin.
 #[allow(clippy::too_many_arguments)]
@@ -661,7 +703,7 @@ pub fn verified_tm_skip_verify(
         signed_power,
     );
     let out = shadow_tm_skip_verify(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_tm_skip_verify", &out)? {
         TmSkipVerdict::Accept
     } else {
         TmSkipVerdict::Reject
@@ -757,7 +799,7 @@ mod ffi_tm_skip {
 // ```
 
 /// The verified decision the EVM-inclusion light-client verify LOGIC reduces to. `Accept` iff the
-/// Lean gate (`dregg_mpt_lc_verify`) returned `"1"`; every other outcome is fail-closed.
+/// Lean gate (`dregg_mpt_lc_verify`) returned `"1"`; `"0"` is REJECT, every non-verdict is `Err`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MptLcVerdict {
     /// The verified gate ACCEPTED (→ `mptVerify = true`, hence — with the named keccak256 `hashCR`
@@ -809,7 +851,7 @@ pub fn shadow_mpt_lc_verify(wire: &str) -> Result<String, String> {
 
 /// The end-to-end verified EVM-inclusion light-client verify query: build the wire from the
 /// projections, run the gate, and decode to [`MptLcVerdict`]. Returns `Ok(Accept)` ONLY on the gate's
-/// `"1"`; every other gate output is `Ok(Reject)` (fail-closed). `Err` ONLY when the archive lacks the
+/// `"1"`; `Ok(Reject)` ONLY on `"0"`. `Err` when the archive lacks the
 /// export — the caller must treat that as REJECT (fail-closed), NOT fall back to a Rust twin.
 ///
 /// Because `LightClientMptGate.mptVerifyDecision_refines` proves the gate's decision over these
@@ -840,7 +882,7 @@ pub fn verified_mpt_lc_verify(
         storage_proof_ok,
     );
     let out = shadow_mpt_lc_verify(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_mpt_lc_verify", &out)? {
         MptLcVerdict::Accept
     } else {
         MptLcVerdict::Reject
@@ -964,7 +1006,7 @@ mod ffi_mpt_lc {
 // ```
 
 /// The verified decision the Mina anchored-segment finality claim reduces to. `Accept` iff the Lean
-/// gate (`dregg_mina_lc_verify`) returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed,
+/// gate (`dregg_mina_lc_verify`) returned `"1"`; `"0"` is REJECT and every non-verdict (`"ERR"`,
 /// archive-absent) is fail-closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinaLcVerdict {
@@ -1038,7 +1080,7 @@ pub fn verified_mina_lc_verify(
         canon_ok,
     );
     let out = shadow_mina_lc_verify(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_mina_lc_verify", &out)? {
         MinaLcVerdict::Accept
     } else {
         MinaLcVerdict::Reject
@@ -1138,7 +1180,7 @@ mod ffi_mina_lc {
 // ```
 
 /// The verified verdict on a single block's Wrap-proof preamble. `Accept` iff the Lean gate
-/// (`dregg_mina_wrap_shape_ok`) returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed,
+/// (`dregg_mina_wrap_shape_ok`) returned `"1"`; `"0"` is REJECT and every non-verdict (`"ERR"`,
 /// archive-absent) is fail-closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinaWrapShapeVerdict {
@@ -1187,7 +1229,7 @@ pub fn shadow_mina_wrap_shape_ok(wire: &str) -> Result<String, String> {
 }
 
 /// The end-to-end verified per-block Wrap-preamble query. `Ok(Accept)` ONLY on the gate's `"1"`;
-/// every other gate output is `Ok(Reject)` (fail-closed). `Err` ONLY when the archive lacks the
+/// `Ok(Reject)` ONLY on `"0"`; `"ERR"` is `Err`. `Err` also when the archive lacks the
 /// export — the caller must treat that as a REFUSAL, never as a skipped check.
 #[allow(clippy::too_many_arguments)]
 pub fn verified_mina_wrap_shape_ok(
@@ -1217,7 +1259,7 @@ pub fn verified_mina_wrap_shape_ok(
         proof_ipa_rounds,
     );
     let out = shadow_mina_wrap_shape_ok(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_mina_wrap_shape_ok", &out)? {
         MinaWrapShapeVerdict::Accept
     } else {
         MinaWrapShapeVerdict::Reject
@@ -1326,7 +1368,7 @@ mod ffi_mina_wrap_shape {
 // ```
 
 /// The verified verdict on one ADJACENT PAIR of exhibited blocks. `Accept` iff the Lean gate
-/// (`dregg_mina_proof_chain_ok`) returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed,
+/// (`dregg_mina_proof_chain_ok`) returned `"1"`; `"0"` is REJECT and every non-verdict (`"ERR"`,
 /// archive-absent) is fail-closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinaProofChainVerdict {
@@ -1384,7 +1426,7 @@ pub fn shadow_mina_proof_chain_ok(wire: &str) -> Result<String, String> {
 }
 
 /// The end-to-end verified proof-chain query for one adjacent pair. `Ok(Accept)` ONLY on the
-/// gate's `"1"`; every other gate output is `Ok(Reject)` (fail-closed). `Err` ONLY when the
+/// gate's `"1"`; `Ok(Reject)` ONLY on `"0"` (`"ERR"` is `Err`). `Err` also when the
 /// archive lacks the export — the caller must treat that as a REFUSAL with its own distinct
 /// error, never as a skipped check and never as a proved `no`.
 pub fn verified_mina_proof_chain_ok(
@@ -1404,7 +1446,7 @@ pub fn verified_mina_proof_chain_ok(
         child_acc_challenges,
     );
     let out = shadow_mina_proof_chain_ok(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_mina_proof_chain_ok", &out)? {
         MinaProofChainVerdict::Accept
     } else {
         MinaProofChainVerdict::Reject
@@ -1513,7 +1555,7 @@ mod ffi_mina_proof_chain {
 // ```
 
 /// The verified verdict on one exhibited block's header. `Accept` iff the Lean gate
-/// (`dregg_mina_state_hash_word_ok`) returned `"1"`; every other outcome (`"0"`, `"ERR"`,
+/// (`dregg_mina_state_hash_word_ok`) returned `"1"`; `"0"` is REJECT, every non-verdict (`"ERR"`,
 /// malformed, archive-absent) is fail-closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinaStateHashWordVerdict {
@@ -1584,7 +1626,7 @@ pub fn shadow_mina_state_hash_word_ok(wire: &str) -> Result<String, String> {
 }
 
 /// The end-to-end verified header-derivation query for one block. `Ok(Accept)` ONLY on the gate's
-/// `"1"`; every other gate output is `Ok(Reject)` (fail-closed). `Err` ONLY when the archive lacks
+/// `"1"`; `Ok(Reject)` ONLY on `"0"` (`"ERR"` is `Err`). `Err` also when the archive lacks
 /// the export — the caller must treat that as a REFUSAL with its own distinct error.
 #[allow(clippy::too_many_arguments)]
 pub fn verified_mina_state_hash_word_ok(
@@ -1601,7 +1643,7 @@ pub fn verified_mina_state_hash_word_ok(
         state_hash, acc_comm, acc_chals, mnw_comm, mnw_chals, sg, word12, word11,
     );
     let out = shadow_mina_state_hash_word_ok(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_mina_state_hash_word_ok", &out)? {
         MinaStateHashWordVerdict::Accept
     } else {
         MinaStateHashWordVerdict::Reject
@@ -1914,7 +1956,7 @@ pub fn shadow_mina_account_state_ok(wire: &str) -> Result<String, String> {
 /// account.
 pub fn verified_mina_account_state_ok(input: &MinaAccountOpeningInput) -> Result<bool, String> {
     let out = shadow_mina_account_state_ok(&mina_account_opening_wire(input))?;
-    Ok(out == "1")
+    decode_gate_bit("dregg_mina_account_state_ok", &out)
 }
 
 #[cfg(all(lean_lib_present, dregg_mina_account_state_ok_present))]
@@ -2129,7 +2171,7 @@ pub fn shadow_mina_better_tip(wire: &str) -> Result<String, String> {
 }
 
 /// The end-to-end verified Samasika comparison of ONE candidate tip against the CURRENT head.
-/// `Ok(TakeCandidate)` ONLY on the gate's `"1"`; every other gate output is `Ok(KeepExisting)`
+/// `Ok(TakeCandidate)` ONLY on the gate's `"1"`; `Ok(KeepExisting)` ONLY on `"0"` — `"ERR"` is `Err`
 /// (fail-closed). `Err` is returned ONLY when the archive lacks the export — the caller must treat
 /// that as a REFUSAL to choose, never as a skipped check and never as an advance.
 ///
@@ -2150,7 +2192,7 @@ pub fn verified_mina_better_tip(
         candidate_protocol_state,
     );
     let out = shadow_mina_better_tip(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_mina_better_tip", &out)? {
         MinaForkChoiceVerdict::TakeCandidate
     } else {
         MinaForkChoiceVerdict::KeepExisting
@@ -2369,7 +2411,8 @@ mod ffi_mina_head_advance {
 // exactly one constructor (`Verdict::wire_for`) which is gated on that MSM's result.
 
 /// The verified verdict on a batch of deferred accumulator claims. `Accept` iff the Lean gate
-/// returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed, archive-absent) is fail-closed.
+/// returned `"1"`. `"0"` is the REJECT verdict; `"ERR"`, an off-grammar token and an absent archive
+/// all leave through `Err` (fail-closed) because none of them is a verdict — see `decode_gate_bit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinaDeferralVerdict {
     /// The batch is well-formed AND discharged.
@@ -2429,7 +2472,7 @@ pub fn verified_mina_deferral_ok(
 ) -> Result<MinaDeferralVerdict, String> {
     let wire = mina_deferral_wire(srs_len, rounds, chal_lens, discharged);
     let out = run_mina_deferral_ok(&wire)?;
-    Ok(if out == "1" {
+    Ok(if decode_gate_bit("dregg_mina_deferral_ok", &out)? {
         MinaDeferralVerdict::Accept
     } else {
         MinaDeferralVerdict::Reject
@@ -2692,14 +2735,33 @@ mod tests {
             "the ETH gate returned the SAME verdict on both sides of the 2/3 quorum threshold — \
              it is a constant, not a gate"
         );
-        // …and a malformed wire decodes to REJECT at the verdict layer, never to an accept.
-        assert_eq!(
-            shadow_eth_lc_verify("garbage").map(|o| if o == "1" {
-                EthLcVerdict::Accept
-            } else {
-                EthLcVerdict::Reject
-            }),
-            Ok(EthLcVerdict::Reject)
+        // ⚑ …and a malformed wire is NOT A VERDICT AT ALL.
+        //
+        // This assertion used to reproduce the decoder inline — `if o == "1" { Accept } else
+        // { Reject }` — and pin the answer to `Ok(Reject)`. It was therefore a test that ENSHRINED
+        // the fusion: it asserted, as the desired behaviour, that "the gate could not read this
+        // wire" and "the gate read this wire and said no" are the same value. Every REJECT
+        // assertion above is satisfied by an always-`"ERR"` gate for exactly that reason, which is
+        // what the non-constancy canary above exists to catch.
+        //
+        // The plant is the line above (`shadow_eth_lc_verify("garbage") == Ok("ERR")`): it asserts
+        // the malformed input really does reach the gate and really does come back `"ERR"`, so the
+        // refusal below is attributable to the decoder and not to a wire that never got there.
+        assert_eq!(shadow_eth_lc_verify("garbage").as_deref(), Ok("ERR"));
+        assert!(
+            decode_gate_bit("dregg_eth_lc_verify", "ERR").is_err(),
+            "`ERR` must leave through the ERROR channel — a gate that could not read the wire \
+             decided NOTHING, and rendering that as a REJECT verdict is how a rendering drift \
+             becomes a factual accusation about the subject"
+        );
+        assert_eq!(decode_gate_bit("dregg_eth_lc_verify", "1"), Ok(true));
+        assert_eq!(decode_gate_bit("dregg_eth_lc_verify", "0"), Ok(false));
+        assert!(
+            decode_gate_bit("dregg_eth_lc_verify", "").is_err()
+                && decode_gate_bit("dregg_eth_lc_verify", "2").is_err()
+                && decode_gate_bit("dregg_eth_lc_verify", "1 ").is_err(),
+            "a token outside the `1|0|ERR` grammar means the archive and this decoder disagree \
+             about the wire format — that is drift, and it must not read as `no`"
         );
     }
 
@@ -2745,6 +2807,69 @@ mod tests {
                 verified_mpt_lc_verify("5", "100", "100", "1", "1", "0", "0", true, true).is_err()
             );
         }
+    }
+
+    /// ⚑⚑ **THE END-TO-END RED-PROOF: A WIRE THE GATE CANNOT READ IS NOT AN ACCUSATION.**
+    ///
+    /// `bridge/src/mina_observer.rs:1192` turns a non-`Accept` from
+    /// [`verified_mina_proof_chain_ok`] into `ObserveError::WrapProofNotChained { child_height,
+    /// parent_height }` — a NAMED FACTUAL CLAIM that two real, exhibited Mina blocks are not a
+    /// Pickles-recursion chain. Until 2026-08-08 the decoder was `if out == "1" { Accept } else
+    /// { Reject }`, so ANY rendering drift in the six decimal projections (`decimal_of_le32`, the
+    /// 16-limb challenge arrays) produced `"ERR"` → `Reject` → that accusation, about honest
+    /// blocks, indistinguishably from a real one.
+    ///
+    /// The plant is CONSTRUCTIVE and asserted before the verdict is read: a coordinate that is not
+    /// a decimal at all. Leg 1 proves the plant lands (the gate really does answer `"ERR"` — so a
+    /// mutation that had quietly stopped biting cannot pass this test). Leg 2 is the gate firing.
+    #[test]
+    fn a_malformed_projection_is_not_a_proof_chain_verdict() {
+        if !crate::demand_lean(
+            mina_proof_chain_ok_available(),
+            "dregg_mina_proof_chain_ok Pickles proof-chain gate",
+        ) {
+            return;
+        }
+
+        let chals = [0u128; 16];
+        // A coordinate that is not a decimal — the shape a `decimal_of_le32` drift would produce.
+        let wire = mina_proof_chain_wire("not-a-decimal", "0", &chals, "0", "0", &chals);
+
+        // ── LEG 1: THE PLANT LANDED. The gate is genuinely reached and genuinely cannot read it.
+        assert_eq!(
+            shadow_mina_proof_chain_ok(&wire).as_deref(),
+            Ok("ERR"),
+            "the plant did not bite: this wire was supposed to be unreadable by the gate, so \
+             leg 2 below would prove nothing"
+        );
+
+        // ── LEG 2: THE GATE FIRES. It leaves through the ERROR channel, NOT as `Reject`.
+        let got = verified_mina_proof_chain_ok("not-a-decimal", "0", &chals, "0", "0", &chals);
+        assert!(
+            got.is_err(),
+            "a wire the gate REFUSED TO READ came back as {got:?} — a verdict. The observer \
+             turns any non-`Accept` into `WrapProofNotChained`, so this value accuses two honest \
+             blocks of a broken recursion chain on the strength of a rendering bug"
+        );
+        assert_ne!(
+            got,
+            Ok(MinaProofChainVerdict::Reject),
+            "`ERR` must not be representable as the REJECT verdict"
+        );
+
+        // The honest control: a well-formed wire still produces a real, readable verdict, so the
+        // refusal above is attributable to the malformation and not to the gate being dead.
+        assert!(
+            matches!(
+                shadow_mina_proof_chain_ok(&mina_proof_chain_wire(
+                    "0", "0", &chals, "0", "0", &chals
+                ))
+                .as_deref(),
+                Ok("1") | Ok("0")
+            ),
+            "the gate answers neither `1` nor `0` on a WELL-FORMED wire — it is not deciding, and \
+             the refusal above would then be vacuous"
+        );
     }
 
     #[test]
@@ -3213,15 +3338,32 @@ mod tests {
             "a shorter candidate must not un-finalize"
         );
 
-        // A REFUSAL IS NOT A VERDICT COMPUTED FROM WHAT DID PARSE. A malformed wire, and a byte
-        // string that is not a `Protocol_state.Value`, both come back as `"ERR"` — which is
-        // `KeepExisting` for the comparison and an `Err` (persist nothing) for the roll.
+        // ⚑ A REFUSAL IS NOT A VERDICT COMPUTED FROM WHAT DID PARSE — AND, SINCE 2026-08-08, THE
+        // TYPE SAYS SO. A malformed wire and a byte string that is not a `Protocol_state.Value`
+        // both come back as `"ERR"`.
+        //
+        // This block used to assert that the comparison rendered that `"ERR"` as
+        // `Ok(KeepExisting)` — while the sibling roll gate on the very next assertion rendered the
+        // SAME `"ERR"` as `Err`. Two gates, one input, two answers, and the comment above them
+        // said "A REFUSAL IS NOT A VERDICT" over the one that made it into one. The comparison is
+        // now the roll's equal: `"ERR"` leaves through the error channel, so "the head is not
+        // displaced" is a consequence of the CALLER refusing, not a fork-choice verdict about two
+        // pieces of garbage.
         assert_eq!(shadow_mina_better_tip("garbage").as_deref(), Ok("ERR"));
         assert_eq!(shadow_mina_head_advance("garbage").as_deref(), Ok("ERR"));
-        assert_eq!(
-            verified_mina_better_tip(EXISTING_STATE_HASH, CANDIDATE_STATE_HASH, b"\x00", b"\x00"),
+        let non_state =
+            verified_mina_better_tip(EXISTING_STATE_HASH, CANDIDATE_STATE_HASH, b"\x00", b"\x00");
+        assert!(
+            non_state.is_err(),
+            "bytes that are not a protocol state yielded the VERDICT {non_state:?} — Samasika \
+             `select` was never run on them, so there is nothing for a verdict to be about"
+        );
+        assert_ne!(
+            non_state,
             Ok(MinaForkChoiceVerdict::KeepExisting),
-            "bytes that are not a protocol state must not displace the head"
+            "⚑ THE REGRESSION THIS LINE EXISTS FOR: `KeepExisting` here is indistinguishable from \
+             a real `select` result, and `bridge/src/mina_head.rs:885-890` records five assertions \
+             that were satisfied by exactly this refusal-wearing-a-verdict's-clothes"
         );
         assert!(
             verified_mina_head_advance(

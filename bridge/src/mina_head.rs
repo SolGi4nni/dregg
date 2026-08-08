@@ -928,16 +928,22 @@ mod tests {
         // ⚑ NON-VACUITY CONTROL, FIRST. A WRONG hash must be REFUSED — otherwise every
         // `KeepExisting` below could be a refusal wearing a verdict's clothes, which is precisely
         // the defect this test had. `"1"` is the value the old test passed for both sides.
-        assert_eq!(
-            dregg_lean_ffi::verified_mina_better_tip("1", "1", &parent, &parent),
-            Ok(MinaForkChoiceVerdict::KeepExisting),
-            "a bogus served hash must not yield TakeCandidate"
+        //
+        // ⚑ 2026-08-08: this control can finally SAY that. Until today `verified_mina_better_tip`
+        // decoded `"ERR"` to `KeepExisting`, so the strongest thing these two lines could assert
+        // was `Ok(KeepExisting)` — a value a genuine `select` also produces. The control was
+        // therefore made of the same substance as the defect it guarded against. `"ERR"` now
+        // leaves through the error channel, so a REFUSAL and a VERDICT are different values and
+        // these assertions distinguish them.
+        assert!(
+            dregg_lean_ffi::verified_mina_better_tip("1", "1", &parent, &parent).is_err(),
+            "a bogus served hash must be REFUSED — `decodeSide?` cannot re-derive `1` from these \
+             bytes, so no `select` ran and there is no verdict to report"
         );
-        assert_eq!(
-            dregg_lean_ffi::verified_mina_better_tip("1", "2", &parent, &child),
-            Ok(MinaForkChoiceVerdict::KeepExisting),
+        assert!(
+            dregg_lean_ffi::verified_mina_better_tip("1", "2", &parent, &child).is_err(),
             "⚑ the served-hash check must REFUSE a pair labelled with hashes its bytes do not \
-             have — if this ever returns TakeCandidate, decodeSide? has stopped re-deriving"
+             have — if this ever returns a VERDICT of any kind, decodeSide? has stopped re-deriving"
         );
 
         // A tip does not displace itself (select_irrefl) — the side DECODES and select says no.
