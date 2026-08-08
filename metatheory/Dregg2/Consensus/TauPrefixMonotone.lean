@@ -53,9 +53,17 @@ already implements. Nothing here is a runtime stability check over two whole lac
 head's ratified-leader chain, so the chains extend. That is precisely CM Prop. 9's central argument,
 and CM DERIVES it: Prop. 3 (*a cordial blocklace is leader-safe*) gives that every final leader is
 ratified by every subsequent leader, from **cordiality alone** — a per-block admission predicate
-(CM Def. 25, Alg. 1:15-16), which `Distributed.BlocklaceFinality` §5c now defines and exports for
-the receive path. Two gaps remain between that and a Lean proof of `ChainExtends`, and both are
-named rather than papered over:
+(CM Def. 25, Alg. 1:15-16), which `Distributed.BlocklaceFinality` §5c now **defines**.
+
+⚠ Defines, and nothing more: `isCordialBlock` carries no `@[export]`, and NOTHING on the receive
+path evaluates it — `insert_checked` still never looks at the cardinality of a block's pointer set.
+So cordiality is available as a predicate, not established as a fact, and the derivation below is
+not yet open to us even in principle. §5c's own debt block says the same; this paragraph exists so
+the two cannot drift apart. Three gaps stand between here and a Lean proof of `ChainExtends`:
+
+0. **The premise is not enforced.** Wiring `isCordialBlock` into the receive path needs an FFI
+   export and a refusal policy — unlike a missing predecessor, a cordiality failure is not fixable
+   by waiting, so it cannot simply be buffered.
 
 1. **Prop. 3 itself is not formalised.** Its proof is quorum intersection over the DAG (App. C, two
    cases on the relative depth of the ratifying supermajority) and it is a real formalisation, not a
@@ -380,10 +388,11 @@ theorem closureLace_stable {B B' : Lace} (h : ClosedExtension B B') {bid : Block
     exact hne b.id hxB b.id (List.mem_map_of_mem hbnew) rfl
   rw [hnil, List.append_nil]
 
-/-! ## 3. τ's per-anchor contribution is a function of the anchor's closure — the discharge of
-`fold_agrees`. -/
+/-! ## 3. τ's per-anchor contribution is a function of the anchor's closure — the discharge of the
+former `fold_agrees` hypothesis, which no longer exists. -/
 
-/-- Every segment an anchor appends is unchanged by the growth. This is `fold_agrees`, as a theorem:
+/-- Every segment an anchor appends is unchanged by the growth. This is the former `fold_agrees`
+hypothesis — deleted — as a theorem:
 `anchorSegment` reads `closureLace B l.id` and `causalPastIncl B l.id`, both of which are pinned by
 `l`'s own pointers. -/
 theorem anchorSegment_stable {B B' : Lace} (h : ClosedExtension B B') (P : List AuthorId)
@@ -446,14 +455,15 @@ theorem foldl_congr_mem {α β : Type} {f g : β → α → β} :
       _ = (a :: L).foldl g acc := rfl
 
 /-- Replaying an anchor list of held blocks through the GROWN lace reproduces the fold exactly.
-This is `fold_agrees`, discharged. -/
+This is the former `fold_agrees` hypothesis (deleted), discharged. -/
 theorem foldl_tauStep_stable {B B' : Lace} (h : ClosedExtension B B') (P : List AuthorId)
     (L : List Block) (hall : ∀ l ∈ L, B.has l.id = true)
     (acc : List BlockId × List BlockId) :
     L.foldl (tauStep B' P) acc = L.foldl (tauStep B P) acc :=
   foldl_congr_mem L (fun acc' l hl => tauStep_stable h P acc' (hall l hl)) acc
 
-/-! ## 5. The enrollment verdict is stable — the discharge of `enrollment_agrees`.
+/-! ## 5. The enrollment verdict is stable — the discharge of the former `enrollment_agrees`
+hypothesis, deleted with the rest of `FinalizedRegionStable`.
 
 The old field assumed the growth does not reclassify an already-ordered block's creator. It cannot:
 `enrolledId` reads `Lace.lookup`, and §2 pinned that. What was missing was the OTHER half — that
@@ -653,7 +663,8 @@ theorem tau_finalized_prefix_monotone {B B' : Lace} {P : List AuthorId} {wl : Na
     have hheld : B.has hd.id = true := lastFinalLeader_has hhd
     have hchainHas : ∀ l ∈ ratifiedLeaderChain B P wl hd, B.has l.id = true :=
       ratifiedLeaderChain_has B P wl hheld
-    -- the OLD fold, replayed in the GROWN lace, is the old fold (`fold_agrees`, discharged).
+    -- the OLD fold, replayed in the GROWN lace, is the old fold (the former `fold_agrees`
+    -- hypothesis, deleted and discharged).
     have hreplay := foldl_tauStep_stable hext P (ratifiedLeaderChain B P wl hd) hchainHas ([], [])
     -- the grown fold is the old fold followed by the extra anchors, which only APPEND.
     obtain ⟨rest, hrest⟩ :=
@@ -663,8 +674,8 @@ theorem tau_finalized_prefix_monotone {B B' : Lace} {P : List AuthorId} {wl : Na
       unfold tauOrderUnfiltered
       simp only [hhd, hhd']
       rw [← hT, List.foldl_append, hrest, hreplay]
-    -- the enrollment verdict is unchanged on every id the old fold emitted
-    -- (`enrollment_agrees`, discharged).
+    -- the enrollment verdict is unchanged on every id the old fold emitted (the former
+    -- `enrollment_agrees` hypothesis, deleted and discharged).
     have hmem : ∀ bid ∈ tauOrderUnfiltered B P wl, B.has bid = true := by
       intro bid hbid
       unfold tauOrderUnfiltered at hbid

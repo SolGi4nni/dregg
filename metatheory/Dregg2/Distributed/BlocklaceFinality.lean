@@ -116,8 +116,9 @@ by a member of the reference participant set. It gates TWO things, and they are 
   creators, so an unenrolled creator's state transition cannot reach the executor.
 
 **Why the second exists** (`node/src/finality_gate.rs`'s falsifier
-`attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule`). `leaderCoverage` is the
-union of the causal pasts of the wave-end blocks that ratify the leader, and `leaderSegment`
+`attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule`). The per-anchor input was
+formerly `leaderCoverage` — DELETED with the CM Def. 6 rewrite — the union of the causal pasts of
+the wave-end blocks that ratify the leader, and `leaderSegment`
 subtracts only `prevCovered` and equivocators. A block from a creator that is NOT in `participants`
 sits in the honest leader's causal past as soon as one honest node acks it — so the rule EMITTED it,
 and the node fed it to the executor. Measured on a 4-creator / 3-round lace with 3 enrolled: the
@@ -133,8 +134,9 @@ That precondition is NOT enforceable on the live path (see the module header of
 enforces it itself.
 
 **`none ⇒ true` is deliberate.** An id that does not resolve in `B` is not the enrollment filter's
-business: it is an invariant breach (`tauOrder` only ever emits ids drawn from `leaderCoverage`,
-which is drawn from causal pasts of present blocks), and the CALLER owns it — `tauBlocks`'
+business: it is an invariant breach (`tauOrder` only ever emits ids drawn from the anchor's own
+closure — formerly `leaderCoverage`, now deleted — so from present blocks), and the CALLER owns
+it — `tauBlocks`'
 `filterMap B.lookup`, the Rust `compute_order`'s `id_to_block` filter_map, and
 `poll_finalized_blocks`' `error!("finalized block id not present in the lace")`. Making this branch
 `false` would silently convert a breach into a drop and hide it; it would also make the
@@ -343,7 +345,8 @@ so a ROTATED-OUT validator keeps its ratifying power under the pre-repair rule; 
 `from_checkpoint_trusted` reloads the persisted DAG with no roster check at all.
 
 Applied at BOTH sites that map a wave-end block to a decision — `isSuperRatified` (does the wave
-anchor?) and `leaderCoverage` (what does the anchor order?) — because an unenrolled ack must
+anchor?) and the per-anchor segment (what does the anchor order?; this site was `leaderCoverage`,
+since DELETED) — because an unenrolled ack must
 neither decide finality nor decide WHERE an honest block lands in the total order. The second
 matters because non-participants' blocks are exactly the ones honest nodes are NOT guaranteed to
 have all seen, so letting them shape coverage breaks the reduction `tauOrder_deterministic` rests
@@ -610,7 +613,8 @@ break by `id`, exactly the Rust `xsort`'s deterministic by-block-id tie-break.
 `Array.qsort`'s worker is well-founded and private to `Init`, and this toolchain carries NO `qsort`
 permutation lemma, so NOTHING could be proved about which ids the sort emits: every statement of the
 form "the finalized order contains only ids drawn from the anchor's closure" was out of reach, which
-is exactly why `Consensus.TauPrefixMonotone` had to ASSUME its `enrollment_agrees` conjunct.
+is exactly why `Consensus.TauPrefixMonotone` had to ASSUME its former `enrollment_agrees` conjunct
+(now a theorem; that conjunct no longer exists).
 `List.mergeSort_perm` gives `mergeSort l le ~ l`, so membership transfers through the sort and that
 conjunct becomes a theorem. The comparator is `≤` on `(round, id)` — reflexive and total on the
 deduped id lists `anchorSegment` hands it — so the output is the unique sorted permutation and
@@ -637,7 +641,19 @@ theorem mem_xsortBy {B : Lace} {participants : List AuthorId} {ids : List BlockI
 `prevCovered` is `[b₂]`, the closure of the previous ratified leader (the fold below carries it).
 The `approves(l, ·)` filter is CM Alg. 1:17: membership in `[l]` is automatic because the candidate
 set IS `[l]`, so what remains is the equivocation clause, evaluated — as the paper quantifies it —
-over `[l]`, i.e. against `closureLace B l.id`. -/
+over `[l]`, i.e. against `closureLace B l.id`.
+
+⚑ **THE EQUIVOCATION CLAUSE HERE IS INERT UNTIL THE TWO-TIPS FLOOR IS RESTORED — and the two are
+one property split across two files.** `hasEquivInPast Bl P l.id c` can only fire if creator `c` has
+TWO blocks at one round inside `[l]`. Under a one-tip-per-creator dissemination rule no block ever
+carries an equivocating PAIR into any closure: a receiver holding one half and a leader observing
+the other never put both in the same causal past, so the filter is a no-op however faithfully it is
+written. CM Alg. 1:5 is explicit that a block points at **"at most two tips per miner"**, and its
+whole exclusion story (Alg. 1:17 `approves`, Fig. 1.B's blue block observing both red blocks and
+approving neither) presupposes it. So: restoring the two-tips evidence floor is a PRECONDITION for
+exclusion-by-causal-past to do anything at all, and it lives in `blocklace/`
+(`finality.rs::CreatorTips`), not here. A reader who checks only this file will conclude the
+exclusion is live. It is not, yet. -/
 def anchorSegment (B : Lace) (participants : List AuthorId)
     (prevCovered : List BlockId) (l : Block) : List BlockId :=
   let Bl := closureLace B l.id
@@ -673,7 +689,7 @@ RESTRICTED TO ENROLLED CREATORS.
 
 The filter is applied to the fold's output rather than inside `leaderSegment` (where the Rust
 `tau_unified` puts it). The two are the SAME VALUE, not merely the same set: `tauStep`'s second
-component is `leaderCoverage`, which does not read the segment, so the accumulator — and therefore
+component is `causalPastIncl B l.id`, which does not read the segment, so the accumulator — and therefore
 every later segment — is unaffected by filtering; and the first component is a `++`-fold of
 segments, over which `List.filter` distributes. Filtering here instead buys the two theorems below
 (`tauOrder_only_enrolled` / `tauOrder_enrolled_eq_unfiltered`) without any reasoning about
@@ -686,8 +702,8 @@ def tauOrder (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List
 **Why.** The pure `tauOrder` above RE-COMPUTES `causalPastIncl` for the same block ids an
 EXPONENTIAL number of times: `ratifies` rebuilds an observer's past and, per past block, calls
 `approves` (another past) + `hasEquivInPast` (another past); `isSuperRatified` calls `ratifies` per
-wave-end block; `findAllFinalLeaders` calls `isSuperRatified` per wave; `leaderCoverage` calls
-`ratifies` + `causalPastIncl` again. On a cross-linked DAG (the live `n=5` shape) this nested
+wave-end block; `findAllFinalLeaders` calls `isSuperRatified` per wave; and the former
+`leaderCoverage` (DELETED) called `ratifies` + `causalPastIncl` again. On a cross-linked DAG (the live `n=5` shape) this nested
 re-traversal blows up — the finality-FFI wedge the node hit (the `dregg_tau_order` export pinned a
 tokio worker and starved the runtime).
 

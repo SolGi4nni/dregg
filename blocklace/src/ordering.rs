@@ -1801,8 +1801,8 @@ mod tests {
     /// This is the Rust face of the finding `node/src/finality_gate.rs:379` measured: a fourth
     /// creator with a perfectly valid key that was never enrolled produces well-formed blocks at
     /// every round, fully cross-linked into the honest DAG, and the honest nodes ack them back —
-    /// so they sit in the honest leader's causal past and `leaderCoverage` sweeps them into the
-    /// finalized order. Before the enrollment filter this lace finalized 12 of 12 blocks, all
+    /// so they sit in the honest leader's causal past and the per-anchor segment sweeps them into
+    /// the finalized order (that site was `leaderCoverage`, since DELETED with the CM Def. 6 rewrite). Before the enrollment filter this lace finalized 12 of 12 blocks, all
     /// three of the unenrolled creator's included.
     ///
     /// BOTH HALVES, because a rule that refuses everyone is not a fix:

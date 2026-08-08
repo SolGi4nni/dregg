@@ -232,276 +232,282 @@ mod tests {
         [i; 32]
     }
 
-    /// ⚠ STALE FIXTURE — encodes the PRE-`d182d10fc` coverage-τ, which no longer
-    /// exists. This was the TauPrefixMonotone §4 counterexample (`lagBase →
-    /// lagGrown`) ported block-for-block to the then-deployed `ordering::tau`:
-    /// validator 4 lags, catches up, and its late ratifier GREW the wave's
-    /// coverage so late blocks sorted into the executed region. Against the
-    /// landed CM Def. 6 τ (segments = the anchor's OWN closure) the same trace
-    /// is PREFIX-STABLE — the Lean retains it inverted as the positive exhibit —
-    /// and this helper's mid-prefix search cannot succeed (a 3-round lace now
-    /// emits exactly the anchor), so the five tests consuming it need a RE-ARM
-    /// against the new rule (e.g. the still-real `ChainExtends` failure: an
-    /// equivocating leader's late leader-slot block retracting an anchored wave).
+    /// The honest-laggard trace, at the depth CM's τ actually reaches.
     ///
-    /// Returns `(base_order, grown_order, id41, id42)` as finality-layer ids
-    /// (the coordinate `poll_finalized_blocks` cursors over).
+    /// This WAS the exhibit for the pre-`d182d10fc` coverage-τ: validator 4
+    /// lagged, caught up, and its late wave-end ratifier GREW an already-final
+    /// wave's coverage so the catch-up blocks sorted into the already-executed
+    /// region. That τ is gone. Under CM Def. 6 a segment is the anchor's OWN
+    /// closure — fixed by the anchor's signed pointers — so the same trace is
+    /// prefix-stable, and the fixture is kept INVERTED as the invariant's
+    /// witness rather than deleted.
     ///
-    /// OPEN-CM-XSORT note: the Lean model tie-breaks concurrent blocks by
-    /// abstract id; Rust `xsort` tie-breaks by blake3 block id. The mid-prefix
-    /// landing is a property of the tie-break CLASS (the late round-2 block
-    /// sorts with/before round-3 blocks), realized here by searching for a
-    /// payload byte whose hash exhibits it — the damage is payload-independent,
-    /// the search only de-correlates the test from blake3's arbitrary order.
-    fn lag_trace_orders() -> (Vec<BlockId>, Vec<BlockId>, BlockId, BlockId) {
+    /// Three orders, because prefix-stability over a one-block order proves
+    /// nothing:
+    ///
+    /// * `base`  — rounds 1–6. Validator 4 publishes genesis, then LAGS through
+    ///   rounds 2–3. Wave 0 anchors on validator 1's genesis; wave 1 anchors on
+    ///   validator 2's round-4 block, whose closure is the whole of rounds 1–3.
+    /// * `grown` — `base` plus validator 4's catch-up blocks `41` (round 2) and
+    ///   `42` (round 3, ratifying wave 0's leader). They arrive AFTER wave 1 was
+    ///   sealed, so no anchor observes them yet.
+    /// * `later` — `grown` plus rounds 7–9, whose wave-2 leader DOES observe the
+    ///   catch-up. This is where `41`/`42` get ordered: at the END, after
+    ///   everything already emitted, which is exactly CM's claim.
+    ///
+    /// No search over payload bytes. The old fixture brute-forced a byte until
+    /// `41`'s blake3 id landed mid-prefix under `xsort`'s id tie-break; that
+    /// landing is now unreachable by construction, so a search for it would
+    /// panic. Nothing here depends on the tie-break.
+    fn lag_trace_orders() -> (Vec<BlockId>, Vec<BlockId>, Vec<BlockId>, BlockId, BlockId) {
         let participants: Vec<[u8; 32]> = (1..=4).map(key).collect();
+        let ids = |v: &[OBlock]| -> Vec<[u8; 32]> { v.iter().map(|b| b.id()).collect() };
 
-        // lagBase: rounds 1–3 without validator 4's rounds 2–3.
+        // Rounds 1–3: validator 4 publishes genesis, then lags.
         let genesis: Vec<OBlock> = (1..=4)
             .map(|i| OBlock::new(key(i), 0, vec![], vec![1, i]))
             .collect();
-        let gids: Vec<[u8; 32]> = genesis.iter().map(|b| b.id()).collect();
+        let gids = ids(&genesis);
         let r2: Vec<OBlock> = (1..=3)
             .map(|i| OBlock::new(key(i), 1, gids.clone(), vec![2, i]))
             .collect();
-        let r2ids: Vec<[u8; 32]> = r2.iter().map(|b| b.id()).collect();
+        let r2ids = ids(&r2);
         let r3: Vec<OBlock> = (1..=3)
             .map(|i| OBlock::new(key(i), 2, r2ids.clone(), vec![3, i]))
             .collect();
+        let r3ids = ids(&r3);
+        // Rounds 4–6 complete wave 1, whose leader anchors rounds 1–3.
+        let r4: Vec<OBlock> = (1..=3)
+            .map(|i| OBlock::new(key(i), 3, r3ids.clone(), vec![4, i]))
+            .collect();
+        let r4ids = ids(&r4);
+        let r5: Vec<OBlock> = (1..=3)
+            .map(|i| OBlock::new(key(i), 4, r4ids.clone(), vec![5, i]))
+            .collect();
+        let r5ids = ids(&r5);
+        let r6: Vec<OBlock> = (1..=3)
+            .map(|i| OBlock::new(key(i), 5, r5ids.clone(), vec![6, i]))
+            .collect();
+        let r6ids = ids(&r6);
 
-        let mut base = OBlocklace::new();
-        for b in genesis.iter().chain(&r2).chain(&r3) {
-            base.insert_unverified(b.clone()).expect("causal order");
-        }
-        let base_order: Vec<[u8; 32]> = tau(&base, &participants);
-
-        // lagGrown: validator 4 catches up — 41 (round 2) + 42 (round 3,
-        // ratifying leader 10 via preds [11,21,31,41]). Search the payload byte
-        // so 41's blake3 id lands MID-PREFIX under xsort's id tie-break (the
-        // Lean counterexample's shape; see OPEN-CM-XSORT note above).
-        for payload_byte in 0..=255u8 {
-            let b41 = OBlock::new(key(4), 1, gids.clone(), vec![2, 4, payload_byte]);
-            let id41 = b41.id();
-            let mut preds42 = r2ids.clone();
-            preds42.push(id41);
-            let b42 = OBlock::new(key(4), 2, preds42, vec![3, 4]);
-            let id42 = b42.id();
-
-            let mut grown = OBlocklace::new();
-            for b in genesis.iter().chain(&r2).chain(&r3) {
-                grown.insert_unverified(b.clone()).expect("causal order");
+        let seed = |lace: &mut OBlocklace| {
+            for b in genesis
+                .iter()
+                .chain(&r2)
+                .chain(&r3)
+                .chain(&r4)
+                .chain(&r5)
+                .chain(&r6)
+            {
+                lace.insert_unverified(b.clone()).expect("causal order");
             }
-            grown.insert_unverified(b41).expect("causal order");
-            grown.insert_unverified(b42).expect("causal order");
-            let grown_order: Vec<[u8; 32]> = tau(&grown, &participants);
+        };
 
-            let pos41 = grown_order.iter().position(|id| *id == id41);
-            if let Some(pos41) = pos41 {
-                if pos41 < base_order.len() {
-                    // Mid-prefix landing realized — the counterexample trace.
-                    let wrap = |v: Vec<[u8; 32]>| v.into_iter().map(BlockId).collect();
-                    return (
-                        wrap(base_order),
-                        wrap(grown_order),
-                        BlockId(id41),
-                        BlockId(id42),
-                    );
-                }
-            }
+        let mut base_lace = OBlocklace::new();
+        seed(&mut base_lace);
+        let base_order: Vec<[u8; 32]> = tau(&base_lace, &participants);
+
+        // Validator 4 catches up. `42` sits at wave 0's END round and ratifies
+        // wave 0's leader — the premise of the OLD refutation is still true; it
+        // simply no longer decides what any anchor orders.
+        let b41 = OBlock::new(key(4), 1, gids.clone(), vec![2, 4]);
+        let id41 = b41.id();
+        let mut preds42 = r2ids.clone();
+        preds42.push(id41);
+        let b42 = OBlock::new(key(4), 2, preds42, vec![3, 4]);
+        let id42 = b42.id();
+
+        let mut grown_lace = OBlocklace::new();
+        seed(&mut grown_lace);
+        grown_lace
+            .insert_unverified(b41.clone())
+            .expect("causal order");
+        grown_lace
+            .insert_unverified(b42.clone())
+            .expect("causal order");
+        let grown_order: Vec<[u8; 32]> = tau(&grown_lace, &participants);
+
+        // Rounds 7–9: wave 2, whose leader observes the catch-up (round 7 acks
+        // round 6 AND `42`).
+        let mut r7preds = r6ids.clone();
+        r7preds.push(id42);
+        let r7: Vec<OBlock> = (1..=3)
+            .map(|i| OBlock::new(key(i), 6, r7preds.clone(), vec![7, i]))
+            .collect();
+        let r7ids = ids(&r7);
+        let r8: Vec<OBlock> = (1..=3)
+            .map(|i| OBlock::new(key(i), 7, r7ids.clone(), vec![8, i]))
+            .collect();
+        let r8ids = ids(&r8);
+        let r9: Vec<OBlock> = (1..=3)
+            .map(|i| OBlock::new(key(i), 8, r8ids.clone(), vec![9, i]))
+            .collect();
+
+        let mut later_lace = OBlocklace::new();
+        seed(&mut later_lace);
+        later_lace.insert_unverified(b41).expect("causal order");
+        later_lace.insert_unverified(b42).expect("causal order");
+        for b in r7.iter().chain(&r8).chain(&r9) {
+            later_lace
+                .insert_unverified(b.clone())
+                .expect("causal order");
         }
-        panic!("no payload byte realized the mid-prefix landing (xsort tie-break changed?)");
+        let later_order: Vec<[u8; 32]> = tau(&later_lace, &participants);
+
+        let wrap = |v: Vec<[u8; 32]>| -> Vec<BlockId> { v.into_iter().map(BlockId).collect() };
+        (
+            wrap(base_order),
+            wrap(grown_order),
+            wrap(later_order),
+            BlockId(id41),
+            BlockId(id42),
+        )
     }
 
-    /// PIN — the Lean counterexample reproduces against the REAL Rust `tau`:
-    /// both laces finalize wave 0, the old order is NOT a prefix of the new,
-    /// and index slicing would (a) re-serve an already-executed block and
-    /// (b) drop the finalized honest catch-up block forever. Mirrors the
-    /// `#guard` teeth of `TauPrefixMonotone.lean` §4 at the node's coordinate.
+    /// THE INVARIANT (was the counterexample). Against the real Rust `tau`, the
+    /// honest catch-up changes NOTHING already emitted, and the catch-up blocks
+    /// are ordered later, at the END — never inside the executed region.
+    ///
+    /// The mechanism is pinned, not just the conclusion: `grown == base`
+    /// EXACTLY (not merely a prefix), because the wave-1 anchor's closure is a
+    /// function of its own signed pointers and the late blocks are not in it.
+    /// That is the node-side mirror of `TauPrefixMonotone.lean` §8's
+    /// `causalPastIncl lagBase 10 == causalPastIncl lagGrown 10`.
     #[test]
-    fn lean_lag_counterexample_reproduces_in_rust_tau() {
-        let (base, grown, id41, _id42) = lag_trace_orders();
+    fn lean_lag_trace_is_prefix_stable_in_rust_tau() {
+        let (base, grown, later, id41, id42) = lag_trace_orders();
 
-        // Same finalization shape as the Lean trace: 10 then 12 blocks.
-        assert_eq!(base.len(), 10, "lagBase finalizes all 10 blocks");
-        assert_eq!(grown.len(), 12, "lagGrown finalizes all 12 blocks");
-        // Growth is conservative on membership: nothing finalized is lost…
-        assert!(base.iter().all(|id| grown.contains(id)));
-        // …but the old order is NOT a prefix of the new (T5 unconditional REFUTED).
+        // NON-VACUITY FIRST: a prefix claim over an empty or one-block order is
+        // worth nothing. Wave 0 emits its anchor; wave 1 emits rounds 1–3.
         assert!(
-            !grown.starts_with(&base),
-            "old finalized order must not be a prefix (the counterexample)"
+            base.len() >= 10,
+            "base order must be substantial, got {}",
+            base.len()
         );
-        // The catch-up block landed inside the already-executed region.
-        let pos41 = grown.iter().position(|id| *id == id41).unwrap();
-        assert!(pos41 < base.len(), "41 lands mid-prefix (got {pos41})");
+        assert!(later.len() > grown.len(), "the third poll must order more");
 
-        // NODE DAMAGE under index slicing (the deployed pre-fix logic):
-        // slice = ordered[executed_up_to..] with executed_up_to = base.len().
-        let slice = &grown[base.len()..];
-        assert!(
-            slice.iter().any(|id| base.contains(id)),
-            "index slice RE-SERVES an already-executed block"
+        // THE MECHANISM: the anchor's closure did not move, so the order is not
+        // merely prefix-stable — it is IDENTICAL.
+        assert_eq!(
+            grown, base,
+            "the honest catch-up must change nothing already emitted"
         );
+        // The catch-up blocks are not ordered YET…
+        assert!(!grown.contains(&id41) && !grown.contains(&id42));
+        // …and they are not lost: a later anchor that OBSERVES them orders them.
+        assert!(later.starts_with(&grown), "history must only extend");
+        assert!(later.contains(&id41) && later.contains(&id42));
+        let pos41 = later.iter().position(|id| *id == id41).unwrap();
+        let pos42 = later.iter().position(|id| *id == id42).unwrap();
         assert!(
-            !slice.contains(&id41),
-            "index slice NEVER serves the finalized honest catch-up block 41"
+            pos41 >= grown.len() && pos42 >= grown.len(),
+            "catch-up blocks land AFTER the already-emitted region (41 at {pos41}, 42 at {pos42})"
+        );
+
+        // …so index slicing would now be sound at this trace: the tail contains
+        // nothing already executed. (The cursor stays identity-based anyway —
+        // `ChainExtends` is unproved; see the module header.)
+        let tail = &later[grown.len()..];
+        assert!(
+            !tail.iter().any(|id| grown.contains(id)),
+            "the tail must re-serve nothing"
         );
     }
 
-    /// THE FIX — identity tracking executes every finalized block exactly once,
-    /// in the current tau order, across the catch-up reorg. (This test FAILS
-    /// against the index-slicing cursor: it re-executes one block and skips 41.)
+    /// Identity tracking executes every finalized block exactly once across the
+    /// catch-up, and the catch-up poll is a no-op because nothing changed.
     #[test]
-    fn identity_cursor_executes_each_finalized_block_exactly_once_across_catchup_reorg() {
-        let (base, grown, id41, id42) = lag_trace_orders();
+    fn identity_cursor_executes_each_finalized_block_exactly_once_across_catchup() {
+        let (base, grown, later, id41, id42) = lag_trace_orders();
 
         let mut cursor = ExecutionCursor::new();
+        let mut applied: Vec<BlockId> = Vec::new();
 
-        // Poll 1: wave 0 finalized without validator 4's rounds 2–3.
-        let batch1 = cursor.pending(&base);
-        assert_eq!(
-            batch1, base,
-            "fresh cursor serves the whole finalized order"
-        );
-        for id in &batch1 {
-            cursor.mark_executed(*id);
+        for id in cursor.pending(&base) {
+            cursor.mark_executed(id);
+            applied.push(id);
         }
+        assert_eq!(applied, base, "fresh cursor serves the whole order");
 
-        // Poll 2: validator 4 caught up; the finalized order grew MID-PREFIX.
-        let batch2 = cursor.pending(&grown);
+        // Poll 2: validator 4 caught up — and there is nothing new to do.
+        assert!(
+            cursor.pending(&grown).is_empty(),
+            "the catch-up poll must serve nothing: the order did not change"
+        );
 
-        // (a) NO RE-EXECUTION: nothing already executed is served again.
-        for id in &batch2 {
-            assert!(
-                !batch1.contains(id),
-                "block {id:?} re-served after the catch-up reorg (re-execution)"
-            );
+        // Poll 3: a later anchor observes the catch-up; the tail is served.
+        for id in cursor.pending(&later) {
+            cursor.mark_executed(id);
+            applied.push(id);
         }
-        // (b) NO SKIP: across both polls, every finalized block executes
-        // exactly once — in particular the mid-prefix catch-up block 41.
-        let mut all: Vec<BlockId> = batch1.iter().chain(&batch2).copied().collect();
-        all.sort();
-        let mut want = grown.clone();
-        want.sort();
-        assert_eq!(
-            all, want,
-            "the two polls together must execute EXACTLY the finalized set, once each"
-        );
+        assert_eq!(applied, later, "the applied sequence IS the tau order");
+        assert!(applied.contains(&id41) && applied.contains(&id42));
+
+        // Exactly once, by identity.
+        let mut seen = std::collections::HashSet::new();
         assert!(
-            batch2.contains(&id41),
-            "the skipped-forever block 41 executes"
+            applied.iter().all(|id| seen.insert(*id)),
+            "no block executed twice"
         );
-        assert!(
-            batch2.contains(&id42),
-            "the late wave-end ratifier 42 executes"
-        );
-        // (c) ORDER: the batch is served in the CURRENT tau order.
-        let positions: Vec<usize> = batch2
-            .iter()
-            .map(|id| grown.iter().position(|x| x == id).unwrap())
-            .collect();
-        assert!(
-            positions.windows(2).all(|w| w[0] < w[1]),
-            "pending batch follows the current tau order"
-        );
+        assert_eq!(cursor.executed_count(), later.len());
     }
 
-    /// ⚑ **TWO HONEST NODES APPLY THE SAME FINALIZED SET IN DIFFERENT ORDERS.**
+    /// THE ORDER-AGREEMENT INVARIANT (was
+    /// `..._apply_a_different_sequence`). Two honest nodes that polled at
+    /// different times apply the SAME sequence.
     ///
-    /// The test above pins what the identity cursor DOES guarantee across a
-    /// catch-up reorg — every finalized block executes exactly once — and it
-    /// compares the union of the two batches as a SORTED SET. That is the
-    /// blindness this test removes.
+    /// The old test asserted the opposite and was correct about the old τ: with
+    /// segments drawn from live-lace ratifier coverage, `pending` is a set
+    /// difference, so WHICH blocks are outstanding depended on local poll
+    /// timing and the two nodes applied the same set in different orders — a
+    /// consensus-level disagreement reached with no Byzantine validator. Under
+    /// CM Def. 6 the order is append-only across these polls, so "not yet
+    /// executed" is a SUFFIX regardless of when you polled, and the set-difference
+    /// cursor and an index cursor coincide.
     ///
-    /// `pending` serves "the finalized blocks not yet executed, in the CURRENT
-    /// tau order". Which blocks are "not yet executed" is a function of WHEN
-    /// this node polled, which is local wall-clock, not consensus. So on the
-    /// counterexample growth two honest nodes running identical code over the
-    /// identical final lace produce different APPLICATION SEQUENCES:
-    ///
-    /// * the node that polled BEFORE validator 4 caught up executes the base
-    ///   order, then the late blocks — so `41` lands at the END;
-    /// * the node that first polled AFTER the catch-up executes `grown` in one
-    ///   batch — so `41` lands MID-PREFIX, where tau puts it.
-    ///
-    /// Both are "correct" by exactly-once. They are not the same sequence, and
-    /// `blocklace_sync`'s post-finalization predicates are order-sensitive: the
-    /// agent-scoped receipt-continuity check compares a turn's
-    /// `previous_receipt_hash` against `cclerk.agent_receipt_head_hash(agent)`,
-    /// a value that is a pure function of the order in which that agent's turns
-    /// were applied. Two same-agent turns straddling the shift therefore get
-    /// OPPOSITE `receipt-chain-mismatch` verdicts on the two nodes — a
-    /// consensus-level disagreement about what the ledger contains, reached
-    /// without any equivocation, any Byzantine validator, or any un-verified
-    /// ordering twin. `ordering::tau` is a pure function of the lace here; both
-    /// nodes ran the SAME order function on the SAME lace.
-    ///
-    /// This is the boundary `TauPrefixMonotone.lean` names. Its
-    /// `tau_executed_prefix_fixed` — "the executed region is bit-identical" —
-    /// holds under `ClosedExtension` + `ChainExtends`, and the trace below WAS a
-    /// witness that the (pre-`d182d10fc`) hypothesis failed. The identity
-    /// cursor's answer to that failure preserves LIVENESS (exactly-once) and
-    /// abandons the ORDER AGREEMENT the theorem was supplying. The node cannot
-    /// discharge `ChainExtends` locally; `observe_order` only counts a shift
-    /// and logs it.
+    /// ⚠ This does NOT say the node is now safe in general. It is a statement
+    /// about growth that is a CLOSED EXTENSION with a non-retracting head.
+    /// `ChainExtends` (CM Prop. 3) is still unproved, and `finalLeaderAt` can
+    /// still retract an anchored wave when a leader equivocates — that case is
+    /// NOT exhibited here and is owed a test.
     #[test]
-    fn two_honest_nodes_that_polled_at_different_times_apply_a_different_sequence() {
-        let (base, grown, id41, _id42) = lag_trace_orders();
+    fn two_honest_nodes_that_polled_at_different_times_apply_the_same_sequence() {
+        let (base, grown, later, id41, _id42) = lag_trace_orders();
 
-        // NODE L (lagged behind validator 4's catch-up): polled at `base`, then
-        // again at `grown`.
+        // NODE L: polled early, then across the catch-up, then again.
         let mut lagged = ExecutionCursor::new();
         let mut seq_lagged: Vec<BlockId> = Vec::new();
-        for id in lagged.pending(&base) {
-            lagged.mark_executed(id);
-            seq_lagged.push(id);
-        }
-        for id in lagged.pending(&grown) {
-            lagged.mark_executed(id);
-            seq_lagged.push(id);
+        for order in [&base, &grown, &later] {
+            for id in lagged.pending(order) {
+                lagged.mark_executed(id);
+                seq_lagged.push(id);
+            }
         }
 
-        // NODE P (its first poll already saw the catch-up): one batch at `grown`.
+        // NODE P: its first poll already saw everything.
         let mut prompt = ExecutionCursor::new();
         let mut seq_prompt: Vec<BlockId> = Vec::new();
-        for id in prompt.pending(&grown) {
+        for id in prompt.pending(&later) {
             prompt.mark_executed(id);
             seq_prompt.push(id);
         }
 
-        // ANTI-VACUITY 1: both nodes really did execute the whole finalized set.
-        let mut set_l = seq_lagged.clone();
-        let mut set_p = seq_prompt.clone();
-        set_l.sort();
-        set_p.sort();
-        let mut want = grown.clone();
-        want.sort();
-        assert_eq!(set_l, want, "node L executed exactly the finalized set");
-        assert_eq!(set_p, want, "node P executed exactly the finalized set");
-        assert!(!want.is_empty(), "the finalized set must be non-empty");
+        // Non-vacuity: both sequences are substantial and contain the block the
+        // old fork turned on.
+        assert!(seq_prompt.len() >= 10, "sequence must be substantial");
+        assert!(seq_lagged.contains(&id41) && seq_prompt.contains(&id41));
 
-        // ANTI-VACUITY 2: node P's sequence IS the current tau order, so the
-        // disagreement below is not two arbitrary permutations — one of them is
-        // the order the verified rule actually names.
         assert_eq!(
-            seq_prompt, grown,
-            "node P applies the current tau order verbatim"
-        );
-
-        // THE DIVERGENCE: same set, same code, same lace — different sequence.
-        assert_ne!(
             seq_lagged, seq_prompt,
-            "the two honest nodes must be shown to APPLY A DIFFERENT SEQUENCE; if this \
-             passes, the order-agreement hazard has been closed and this test should be \
-             re-read, not deleted"
+            "two honest nodes must apply the SAME sequence"
         );
 
-        // Name the inversion concretely, so a future reader sees the mechanism
-        // and not just an inequality: there is a pair whose relative order flips.
+        // …and stated the way the old test stated its refutation, so the two are
+        // directly comparable: there is NO inverted pair.
         let pos = |seq: &[BlockId], id: &BlockId| seq.iter().position(|x| x == id).unwrap();
-        let inverted: Vec<(BlockId, BlockId)> = grown
+        let inverted: Vec<(BlockId, BlockId)> = later
             .iter()
-            .flat_map(|a| grown.iter().map(move |b| (*a, *b)))
+            .flat_map(|a| later.iter().map(move |b| (*a, *b)))
             .filter(|(a, b)| a != b)
             .filter(|(a, b)| {
                 (pos(&seq_lagged, a) < pos(&seq_lagged, b))
@@ -509,60 +515,53 @@ mod tests {
             })
             .collect();
         assert!(
-            !inverted.is_empty(),
-            "a sequence difference must exhibit at least one inverted pair"
-        );
-        // The catch-up block is in one of them: node P applies it mid-prefix,
-        // node L applies it after everything the base order already covered.
-        assert!(
-            inverted.iter().any(|(a, b)| *a == id41 || *b == id41),
-            "the catch-up block 41 must be one side of an inverted pair"
-        );
-        assert!(
-            pos(&seq_lagged, &id41) >= base.len(),
-            "node L applies 41 AFTER the whole base order"
-        );
-        assert!(
-            pos(&seq_prompt, &id41) < base.len(),
-            "node P applies 41 INSIDE the region node L had already executed"
+            inverted.is_empty(),
+            "no pair may flip between the two nodes, found {}",
+            inverted.len()
         );
     }
 
-    /// The prefix-shift observability signal: a pure extension is stable; the
-    /// catch-up reorg trips the signal exactly once and is absorbed.
+    /// The prefix-shift observability signal. The catch-up no longer trips it —
+    /// but the signal must still be capable of firing, so the red half is kept
+    /// on a SYNTHETIC non-prefix order rather than deleted.
     #[test]
-    fn prefix_shift_signal_fires_on_catchup_reorg_only() {
-        let (base, grown, _id41, id42) = lag_trace_orders();
+    fn prefix_shift_signal_is_quiet_on_catchup_and_still_able_to_fire() {
+        let (base, grown, later, _id41, _id42) = lag_trace_orders();
 
-        // Stable growth: extending the order at the END does not trip it.
+        // The real trace: three polls, no shift.
         let mut cursor = ExecutionCursor::new();
         assert!(cursor.observe_order(&base), "first observation is stable");
-        let mut extended = base.clone();
-        extended.push(id42);
         assert!(
-            cursor.observe_order(&extended),
-            "append-only growth is stable"
+            cursor.observe_order(&grown),
+            "the catch-up no longer reorders finalized history"
         );
+        assert!(cursor.observe_order(&later), "append-only growth is stable");
         assert_eq!(cursor.prefix_shifts(), 0);
 
-        // The counterexample growth: NOT a prefix → the signal fires.
+        // THE RED HALF. `observe_order` is a pure function of two id vectors, so
+        // a hand-built permutation proves the detector still detects — WITHOUT
+        // claiming tau can produce it. A signal that cannot go red is not a
+        // signal; a signal whose red case is asserted of tau would be a lie.
+        let mut swapped = later.clone();
+        assert!(swapped.len() >= 2);
+        swapped.swap(0, 1);
         let mut cursor = ExecutionCursor::new();
-        assert!(cursor.observe_order(&base));
+        assert!(cursor.observe_order(&later));
         assert!(
-            !cursor.observe_order(&grown),
-            "catch-up reorg must trip the prefix-shift signal"
+            !cursor.observe_order(&swapped),
+            "a genuine reorder must trip the signal"
         );
         assert_eq!(cursor.prefix_shifts(), 1);
         // …and is absorbed: the new order is the baseline thereafter.
-        assert!(cursor.observe_order(&grown));
+        assert!(cursor.observe_order(&swapped));
         assert_eq!(cursor.prefix_shifts(), 1);
     }
 
     /// Recovery: a cursor rebuilt from its persisted identity set resumes with
-    /// exactly the not-yet-executed blocks pending — across the reorg.
+    /// exactly the not-yet-executed blocks pending, in tau order.
     #[test]
     fn restored_cursor_resumes_by_identity() {
-        let (base, grown, id41, id42) = lag_trace_orders();
+        let (base, _grown, later, id41, id42) = lag_trace_orders();
 
         let mut cursor = ExecutionCursor::new();
         for id in &base {
@@ -571,13 +570,20 @@ mod tests {
         let restored = ExecutionCursor::restore(cursor.executed_ids().to_vec());
         assert_eq!(restored.executed_count(), base.len());
 
-        let pending = restored.pending(&grown);
-        let in_order = |a: &BlockId, b: &BlockId| {
-            grown.iter().position(|x| x == a).unwrap() < grown.iter().position(|x| x == b).unwrap()
-        };
-        assert_eq!(pending.len(), 2);
+        let pending = restored.pending(&later);
+        assert_eq!(
+            pending.len(),
+            later.len() - base.len(),
+            "pending is exactly the un-executed tail"
+        );
+        assert!(!pending.is_empty(), "non-vacuity: there IS a tail");
         assert!(pending.contains(&id41) && pending.contains(&id42));
-        assert!(in_order(&pending[0], &pending[1]));
+        // …and it is served in tau order.
+        let posn = |id: &BlockId| later.iter().position(|x| x == id).unwrap();
+        assert!(
+            pending.windows(2).all(|w| posn(&w[0]) < posn(&w[1])),
+            "pending must be served in tau order"
+        );
     }
 
     /// `mark_executed` is idempotent by identity; the count is of DISTINCT blocks.
