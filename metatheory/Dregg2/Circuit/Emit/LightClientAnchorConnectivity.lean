@@ -646,52 +646,81 @@ theorem minaLink_the_seam_joins_the_preimage_to_the_image :
         relatedCols) := by
   decide
 
-/-- ⚑ **THE NARROWER TRIPWIRE THAT REPLACES IT — AND ITS TRIGGER IS RE-AIMED, 2026-08-07.**
-`BODYHASH` is the one nonet the seam does not DERIVE: it is an ARGUMENT of the hash. The nine
-body-hash columns are read and joined, and NOT PI-bound.
+/-- ⚑⚑⚑ **REPORT: THE RE-AIMED TRIPWIRE FIRED, AND THAT IS THE MECHANISM WORKING.**
 
-⚑⚑ **REPORT: THIS DID NOT FIRE WHEN THE SUB-PROOF LANDED, AND THAT IS THE FINDING.** Its docstring
-said *"it reds the day `state_body_hash` acquires its own sub-proof, which is the next rung."* That
-rung landed (`Circuit.Emit.MinaStateBodyHashChain` — 25 links of the deployed
-`dregg-pasta-fp-chainlink::v1` from the pinned `MinaProtoStateBody` salt over the block's packed
-`Body.to_input`, proved and folded) and **every literal here is unchanged**, because the derivation
-is a SIBLING CHAIN welded executor-side rather than a constraint in this descriptor. The tripwire was
-watching the right column and the wrong event.
+The history, because only the sequence makes this legible:
 
-⚑ **RE-AIMED, and the new trigger is the one that matters:** `isPiBound = false` is now the SPECIFIC
-gap, not an incidental observation. A `proofBind`'s `commit`/`vk` name PUBLISHED values and a
-recursion fold reads `air_public_targets`, so **an unpublished `BODYHASH` cannot be `cb.connect`ed to
-the body-hash chain's root at all** — the executor comparison is not a choice, it is what an
-unpublished column forces. This reds the day `BODYHASH` is PI-bound, which is exactly the flag day
-`LightClientMinaLinkAir`'s §"WHAT THIS BREAKS" costs (piCount 20 → 37, both Mina descriptors re-VK).
+  * The ORIGINAL trigger was *"it reds the day `state_body_hash` acquires its own sub-proof."* That
+    rung landed on 2026-08-07 (`Circuit.Emit.MinaStateBodyHashChain` — 25 links of the deployed
+    `dregg-pasta-fp-chainlink::v1` from the pinned `MinaProtoStateBody` salt) and **every literal
+    here was unchanged**, because the derivation was a SIBLING CHAIN welded executor-side rather
+    than a constraint in this descriptor. ⚠ **A watcher aimed at the right column and the wrong
+    event.**
+  * It was RE-AIMED the same day at `isPiBound = false`, with the trigger stated as the flag day:
+    *"This reds the day `BODYHASH` is PI-bound, which is exactly the flag day … piCount 20 → 37."*
+  * ⚑ **2026-08-08: THAT FLAG DAY LANDED AND THE RE-AIMED TRIPWIRE WENT RED.** `isPiBound` is now
+    `true` on all nine columns and the old theorem's third conjunct is FALSE. This theorem is its
+    replacement — RENAMED rather than annotated, because a theorem whose name says
+    `is_joined_but_not_published` about a published column is a theorem about the wrong object.
 
-⚠ And what would STILL be owed after that: publishing the nonet buys a weld to a chain, not a weld
-to a BLOCK. The chain's absorbed stream is named by its fold accumulator, and tying THAT to the
-block whose `PARENT`/`HEIGHT` this row carries is a comparison the node makes from wire bytes. -/
-theorem minaLink_body_hash_is_joined_but_not_published :
+⚑ **What the flag day bought, measured rather than described:** the nine `BODYHASH` columns are
+PI-bound (slots 20..28) and the body-hash chain's EIGHT-lane ordered accumulator with them (40..47 →
+slots 29..36), and both nonets are named by the body-chain `proofBind` whose `vkPin` is
+`dregg-pasta-fp-chainlink::v1`'s fingerprint. A recursion fold reads `air_public_targets`, so the
+weld to the chain's root is now REACHABLE — which is precisely what the unpublished shape forbade.
+
+⚠ **AND WHAT IS STILL OWED, in the same breath.** Publication is reachability, not the weld: until a
+fold `cb.connect`s these 17 slots to the chain root's claim lanes, the tie is an EXECUTOR
+comparison. Connectivity is CO-OCCURRENCE, not derivation — this file's standing caveat, and it
+binds here too. -/
+theorem minaLink_body_hash_is_published_and_joined :
     ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
       isRead LightClientMinaLinkAir.minaLinkDesc col = true ∧
       isRelated LightClientMinaLinkAir.minaLinkDesc col = true ∧
-      isPiBound LightClientMinaLinkAir.minaLinkDesc col = false := by
+      isPiBound LightClientMinaLinkAir.minaLinkDesc col = true := by
   decide
 
-/-- ⚑ **THE POSITIVE HALF, STATED SO THE GAIN IS A TERM.** The nine body-hash columns are not
-inert: they are named by the state-hash seam's `proof_bind` — the SAME constraint that names the
-parent, the own hash and the attested program — so what is missing is PUBLICATION, not membership in
-the component. Without this the theorem above reads as "BODYHASH is unconnected", which is false and
-would misdirect the repair. -/
-theorem minaLink_body_hash_is_named_by_the_seam :
-    ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
-      col ∈ (((LightClientMinaLinkAir.minaLinkDesc.constraints.drop 51).take 1).flatMap
+/-- ⚑⚑⚑ **THE FIRING, AS A TERM.** `minaLink_body_hash_is_joined_but_not_published`'s third
+conjunct was `isPiBound = false` on all nine columns; this says that claim is now REFUTABLE. A
+tripwire that is merely *deleted* when its trigger arrives leaves no evidence it ever fired, which
+is the failure the 08-07 re-aiming was itself a response to — so the firing is recorded as a theorem
+rather than as a commit message. -/
+theorem the_unpublished_body_hash_claim_is_now_refuted :
+    ¬ (∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
+        isPiBound LightClientMinaLinkAir.minaLinkDesc col = false) := by decide
+
+/-- ⚑⚑ **AND THE ACCUMULATOR IS PUBLISHED AND JOINED TOO — which is the anti-vacuity half.**
+`LightClientMinaLinkAir` §2c: *"a bind of `(salt, BODYHASH)` alone would be VACUOUS … `perm` is a
+permutation, so 25 links from a fixed head with free absorbed inputs reach every field element.
+Naming the stream is the whole content."* These eight columns ARE the stream, ordered — the
+`seg_poseidon_commit` fold the chain's 25-leaf recursion publishes as `transcript_acc`.
+
+⚠ **TRIPWIRE, AND SAY WHAT WOULD FIRE IT:** this reds the day the accumulator leaves the seam's
+commitment — which is exactly the shape a "simplification" back to `(salt, BODYHASH)` would take. -/
+theorem minaLink_body_chain_accumulator_is_published_and_joined :
+    ∀ col ∈ [40, 41, 42, 43, 44, 45, 46, 47],
+      isRead LightClientMinaLinkAir.minaLinkDesc col = true ∧
+      isRelated LightClientMinaLinkAir.minaLinkDesc col = true ∧
+      isPiBound LightClientMinaLinkAir.minaLinkDesc col = true := by
+  decide
+
+/-- ⚑ **THE POSITIVE HALF, STATED SO THE GAIN IS A TERM.** The nine body-hash columns and the eight
+accumulator columns are named by the SAME `proof_bind` — the body-chain seam — so what a fold would
+connect to and what the seam attests are one component. -/
+theorem minaLink_body_hash_is_named_by_the_body_chain_seam :
+    ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30, 40, 41, 42, 43, 44, 45, 46, 47],
+      col ∈ (((LightClientMinaLinkAir.minaLinkDesc.constraints.drop 61).take 1).flatMap
         relatedCols) := by
   decide
 
-/-- …and the count is exactly the twenty the descriptor declares, so the `[]` above is a statement
-about twenty joined columns and not about an empty PI set. -/
-theorem minaLink_has_twenty_pi_bound_columns :
+/-- …and the count is exactly the thirty-seven the descriptor declares, so the `[]` above is a
+statement about thirty-seven joined columns and not about an empty PI set. ⚑ **20 → 37 on the
+2026-08-08 publication flag day**, and the seventeen that arrived are the nine `BODYHASH` lanes and
+the eight body-chain accumulator lanes. -/
+theorem minaLink_has_thirty_seven_pi_bound_columns :
     ((List.range LightClientMinaLinkAir.minaLinkDesc.traceWidth).filter
-      fun col => isPiBound LightClientMinaLinkAir.minaLinkDesc col).length = 20 ∧
-    LightClientMinaLinkAir.minaLinkDesc.piCount = 20 := by
+      fun col => isPiBound LightClientMinaLinkAir.minaLinkDesc col).length = 37 ∧
+    LightClientMinaLinkAir.minaLinkDesc.piCount = 37 := by
   decide
 
 /-- ⚑⚑⚑ **THE SOLANA STAKE-TABLE FOLD: NO DECORATIVE ANCHORS — AND, FOR THE FIRST TIME IN THIS
@@ -808,9 +837,11 @@ theorem the_five_verify_descriptors_carry_fifty_three_decorative_anchors :
 #assert_axioms minaVerify_anchor_height_shares_no_constraint_with_the_hash
 #assert_axioms minaLink_decorative_anchors
 #assert_axioms minaLink_the_seam_joins_the_preimage_to_the_image
-#assert_axioms minaLink_body_hash_is_joined_but_not_published
-#assert_axioms minaLink_body_hash_is_named_by_the_seam
-#assert_axioms minaLink_has_twenty_pi_bound_columns
+#assert_axioms minaLink_body_hash_is_published_and_joined
+#assert_axioms the_unpublished_body_hash_claim_is_now_refuted
+#assert_axioms minaLink_body_chain_accumulator_is_published_and_joined
+#assert_axioms minaLink_body_hash_is_named_by_the_body_chain_seam
+#assert_axioms minaLink_has_thirty_seven_pi_bound_columns
 #assert_axioms solStakeFold_decorative_anchors
 #assert_axioms solStakeFold_has_twelve_pi_bound_columns
 #assert_axioms solStakeFold_root_shares_a_constraint_with_the_stake_rows

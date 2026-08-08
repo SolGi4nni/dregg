@@ -1020,7 +1020,13 @@ sibling descriptor's own bytes and asserts these nine numbers, and
 `mina_head_verifier::check_subproof_program_pin` recomputes it again AT VERIFY TIME — because the
 wraplink drift proved a pin whose only reader is a test is a pin a node can drift past. -/
 def LINK_VK_LANES : List ℤ :=
-  [233430738, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074]
+  -- ⚑ MOVED 2026-08-08 with the link descriptor's `piCount` 20 → 37 publication flag day
+  -- (`trace_width` 40 → 57, constraints 72 → 99). Recomputed from the emitted bytes with
+  -- `cargo run -p dregg-circuit --release --example conj_fingerprint -- \
+  --   circuit/descriptors/by-name/dregg-mina-lightclient-link-v1.json`, never transcribed
+  -- from a docblock. THIS descriptor re-emits and re-VKs with it; every previously produced
+  -- `MinaHeadProofWire` fails to verify.
+  [485689086, 477622751, 46091945, 410308945, 235143973, 391260395, 78649260, 413048609, 30212]
 
 /-- The `i`-th pinned segment-program lane, as the `vkPin` literal the leg carries. -/
 def linkVkLane (i : Nat) : ℤ := LINK_VK_LANES.getD i 0
@@ -2673,7 +2679,10 @@ So the "one lane" claim is now a THEOREM (`the_forged_link_lane_moves_a_real_val
 conjuncts), not a sentence in this docstring. A future re-emit that moves `LINK_VK_LANES` and leaves
 this vector behind goes RED. -/
 def FORGED_LINK_VK_LANES : List ℤ :=
-  [233430739, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074]
+  -- ⚑ FOLLOWS `LINK_VK_LANES`, 2026-08-08: lane 0 + 1, tail identical. The 08-06 note above is
+  -- exactly this maintenance, and `the_forged_link_lane_moves_a_real_value` went RED when the
+  -- literal moved and this one did not — the falsifier caught its own staleness.
+  [485689087, 477622751, 46091945, 410308945, 235143973, 391260395, 78649260, 413048609, 30212]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT SEGMENT PROGRAM.** -/
 def forgedLinkProgramRow : Assignment :=

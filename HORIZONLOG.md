@@ -1,5 +1,92 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 8 — the opening slot 12 was said to be MISSING has been on disk for a week; what is missing is a TRANSCRIPT
+
+The brief: *"give §19 a real IPA opening for block 539508's wrap proof — its L/R and `delta` are
+already in `MinaStepPrevCommitments`; **`sg`/`z1`/`z2` are what is missing**. Then `G` is the real
+accumulator, `step_pre` becomes the assembly's 16, and slot 12 closes."* Then 40/40, then take the
+devnet re-registration.
+
+⚑ **THE EXTRACTION WAS A NO-OP AND THE PREMISE IS REFUTED.** `sg`, `z1`, `z2`, `srs.h` and the
+fifteen prechallenges of Mina devnet block **539508**'s opening have been extracted since
+`MinaWrapOpeningGate` landed, in a module `KimchiStepMainCore` imports **directly**, through the very
+file the brief said they were absent from. Nothing needed extracting. `MinaStepPrevCommitments` now
+names them on its own surface (`SG_XY`, `SRS_H_XY`, `Z1`, `Z2`, `IPA_PRECHALS`) with **four
+kernel-clean named theorems** — `#assert_axioms`, no `#guard` added — so the claim cannot be made a
+third time.
+
+⛑⛑ **AND WIRING THEM IN DOES NOT CLOSE `equal_g` — MEASURED, BOTH POLARITIES, AT THE COMMITTED
+SHAPE.** `KimchiStepMainPins19` (§19b, three `#assert_compiled` theorems over `mkStep shapeStep`):
+
+* `the_blocks_own_opening_does_not_close_this_assemblys_transcript` — `bpCloses` at the block's own
+  `(sg, z₁, z₂)` on this assembly's `lhs` is **FALSE**, while at `solveG`'s output with the fixture
+  scalars it is **TRUE**. Same predicate, same `lhs`, opposite verdicts, so it is a miss and not a
+  broken checker. `GENERATORS_H == SRS_H_XY` is pinned in the same statement, so it is not `H`; `sg`
+  is on the curve in `Fp`, so it is not the base; `SG_XY != tStep.gXY`, so it is not two names.
+* `the_two_transcripts_differ_at_t_and_u_and_b_and_nowhere_in_the_points` — **the miss is three
+  cells**: `t = challenge_fq()`, `u = group_map t`, and `advice.b`. The POINTS all agree: `srs.h`,
+  the thirty `bullet_reduce` gammas, `delta`, and the fold's bases are block 539508's, by
+  construction. The assembly holds the block's geometry and squeezes its own scalars.
+* `the_published_statement_carries_fifteen_of_segment_ds_sixteen` — the half the brief called a
+  drop-in. Segment D absorbs sixteen lifts; the emitted step statement publishes **fifteen** of the
+  sixteen raw prechallenges (entries 48…62 are `uChal 1 … uChal 15`, all `< 2^128`), and **`uChal 0`
+  is published nowhere**, raw or lifted. So `step_pre` cannot be an extraction at sixteen today:
+  either the statement grows a word or the sixteenth travels out of band, and the first is a decision
+  about the STATEMENT. ⚠ Filling fifteen from the statement and leaving one ladder digit would make
+  the record true in fifteen slots and false in one — invisible to every per-slot instrument.
+
+⛑ **BOTH ESCAPE ROUTES END AT THE SAME WALL, and this is the part worth carrying forward.** §19's
+rows are the `.opening` rung's and the rung that is EMITTED AND PROVED is `.finalize`, so `equal_g`
+constrains no emitted witness and `G := SG_XY` costs no proof. It still closes nothing: the wire's
+`messages_for_next_step_proof.challenge_polynomial_commitments[0]` is the wrap proof's kimchi
+recursion-slot commitment, which kimchi forces to `commit(b_poly(chals))` over the slot's own
+challenges — and those are tied, since 2026-08-06, to the step statement's published words, the tie
+slot 11 rests on. For that point to BE block 539508's `sg`, the step circuit's published bulletproof
+challenges would have to be the block's fifteen. The other route (pin `G`, keep `lhs`) is §17(g)'s
+two-dimensional discrete log in `⟨G + b·u, H⟩`, item #11, an assumption. **Slot 12 is not an
+extraction item and not an arity item. It is the `verify_one` fidelity item wearing a public word.**
+
+**WHAT THE DOCBLOCKS SAID, AND NOW DO NOT.** `solveG`'s own header and §18b's verdict both read
+*"the assembly has no IPA opening to take a real `G` from"* — false at HEAD, and it is what sent a
+lane looking for a file that was already imported. Corrected in place at all three sites
+(`KimchiStepMainCore` `solveG` + `BP_Z1_VAL` + the `G_XY` deletion note, `KimchiStepMainPins13`
+§18b), and §18b's *"they disagree on ONE family"* is corrected to **two** — `G` **and** the sixteen
+challenges, with the price of each named. `pickles_kimchi_marshal`'s `step_pre` carries the arity
+measurement so the next lane does not rediscover it.
+
+⛑⛑ **AND RE-BAKING THE REFEREE, AS INSTRUCTED, FOUND A THIRD FAMILY NOBODY HAD NAMED.**
+`WRAP_PUBLIC_INPUT_MEASURED` is stale at **exactly one slot, and it is slot 12** — measured by
+re-running `pickles_kimchi_marshal` (both proofs re-made, `PROOF_MARSHAL_RESULT=GREEN`) and diffing
+its `wrap-public-input.json` against the tracked constant, 39 identical and slot 12 apart. **The
+cause is an un-installed emit.** The generator writes three Lean modules; two
+(`KimchiStepWrapChainFixture`, `KimchiStepWrapChainKey`) come out byte-identical to the tracked
+copies, and **`MinaWrapOwnVerifierKey.lean` does not.** That module is dregg's own wrap verification
+key — **56 of the 76 cells of word 54's preimage**, segment D's whole `sponge_after_index` prefix —
+and the wrap circuit it is the key OF was re-emitted at `8c3c341d8` (2026-08-07 19:39, *"the wrap
+arity, settled at source"*), **29 commits after** the module was last written (`8015b6f07`, 15:15).
+So the step assembly has been hashing under a superseded key while `gate_c` hashes under the live
+one. ⚠ `segd_slot12_probe` is structurally blind to it: it READS the tracked module, so it agrees
+with the stale install by construction.
+
+⚑ **THAT IS NOW A RED, NOT A DOCBLOCK.** `pickles_kimchi_marshal::installed_gate` compares every
+generated module against its tracked twin and folds the drift into the same `failed` count every
+other rung uses, so a re-emit that is not installed turns `PROOF_MARSHAL_RESULT` RED. Both polarities
+on the same run: the two step tape modules report `byte-identical`, `MinaWrapOwnVerifierKey` reports
+the drift with its first differing byte and the consequence chain to carry.
+
+**THE ANSWER TO THE TWO QUESTIONS ASKED.** **No, we do not agree at 40 of 40** — the live
+`#assert_compiled` measurement is unchanged at **39 of 40**, slot 12 alone
+(`KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve`; the smoke shape's 17 is a
+different, smaller circuit). **The devnet re-registration is NOT taken.** The previous lane refused
+at 39 because *"registering a key for a 39/40 emission would put a differently-stale key on chain"*;
+that refusal stands, and it now has a measured reason rather than a caution.
+
+**FLAG DAY: none.** No emitted byte moves, no VK rotates, nothing re-genesises, no descriptor
+re-emits. `MinaStepPrevCommitments` gains five `def`s and four theorems; one new pin module
+(`KimchiStepMainPins19`, imported by `KimchiStepMain` so it is not an orphan); the rest is docblocks.
+`PROVENANCE.json` is not stamped.
+
+
 ## ⛑⛑⛑⛑ AUGUST 8 — the IPA closing check is in a circuit, and `sg` is not in the equation any more
 
 `opening_is_vacuous_when_sg_is_free` — two `#assert_axioms`-gated theorems (`PastaIpaDeferral.lean:427`,

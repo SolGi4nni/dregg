@@ -59,6 +59,7 @@ import Dregg2.Circuit.Emit.MerkleMembershipEmit
 import Dregg2.Circuit.Emit.MinaFixtureEmit
 import Dregg2.Circuit.Emit.LightClientMinaAir
 import Dregg2.Circuit.Emit.LightClientMinaLinkAir
+import Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir
 import Dregg2.Circuit.Emit.LightClientSolStakeFoldAir
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 import Dregg2.Circuit.Emit.Poseidon2HashEmit
@@ -474,6 +475,16 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- witnessed (`LinkHashResidual`).
   , ("dregg-mina-lightclient-link-v1.json",
       Dregg2.Circuit.Emit.LightClientMinaLinkAir.minaLinkDesc)
+    -- ⚑ THE BODY-PREIMAGE CHUNK GATES (2026-08-08): `dregg-mina-body-preimage-bits::v1`, ONE ROW,
+    -- 2 381 booleanity gates over the packed half of `Body.to_input` and 302 limb gates composing
+    -- the eleven packed field elements the body-hash chain absorbs. `bodyBitsDesc` is COMPILER
+    -- OUTPUT — `EffectLower.lowerTiedAir` of the `EffectAir` source `bodyBitsAir`, no hand-written
+    -- `VmConstraint2` in its module. It discharges the range hypothesis of
+    -- `Bridge.MinaPackInjective.packing_is_injective`, without which two different bodies pack to
+    -- the same 49 field elements and the whole 25-link chain attests the wrong thing with every
+    -- link honest. ⚑ NO TABLE AND NO LOOKUP: committed width = declared width.
+  , ("dregg-mina-body-preimage-bits-v1.json",
+      Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir.bodyBitsDesc)
     -- ⚑ THE SOLANA STAKE-TABLE FOLD (2026-08-04): `dregg-solana-stake-table-fold::v1`, ONE ROW PER
     -- STAKE-TABLE ENTRY. `solStakeFoldDesc` is COMPILER OUTPUT — `EffectLower.lowerAir` of the
     -- `EffectAir` source `solStakeFoldAir`, no hand-written `VmConstraint2` in its module
@@ -712,7 +723,10 @@ Both directions are gated outside Lean:
 -- lean --run EmitByName.lean` dies, and the WHOLE by-name surface is unemittable for every lane
 -- at once. That outage is what produced the eleven private one-off emitters this file spent
 -- 2026-08-05 absorbing. Rows and pin are one atom.
-theorem byNameDescriptors_length : byNameDescriptors.length = 125 := rfl
+-- ⚑ 2026-08-08: the 126th row (`dregg-mina-body-preimage-bits-v1.json`) pushed the `rfl` over the
+-- default recursion depth — the list is longer, not the descriptor heavier. Raised, not weakened.
+set_option maxRecDepth 8000 in
+theorem byNameDescriptors_length : byNameDescriptors.length = 126 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

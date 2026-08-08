@@ -189,27 +189,58 @@ refuses one structurally (`LimbsLeg.mainRailOk`).
 `check-descriptor-drift.sh` is already RED; this adds a row to that ledger and the stamp remains the
 operator's ceremony.
 
-**2026-08-07 — THE FLAG DAY THIS RUNG DID *NOT* TAKE, NAMED SO IT IS FINDABLE AND COSTED.**
+**2026-08-08 — THE FLAG DAY THIS RUNG DID *NOT* TAKE ON 08-07, TAKEN. `piCount` 20 → 37.**
 
-`MinaStateBodyHashChain` derives `state_body_hash` and folds it, but **nothing in this descriptor
-relates `BODYHASH` to that chain's root** — a `proofBind`'s `commit`/`vk` name PUBLISHED values, and
-these nine columns are read and joined and NOT PI-bound. What would close it, in circuit:
+`MinaStateBodyHashChain` derived `state_body_hash` on 08-07 and folded it, and nothing in this
+descriptor related `BODYHASH` to that chain's root — because a `proofBind`'s `commit`/`vk` name
+PUBLISHED values and these nine columns were read, joined and NOT PI-bound
+(`LightClientAnchorConnectivity.minaLink_body_hash_is_joined_but_not_published`, whose third
+conjunct is now REFUTED: `the_unpublished_body_hash_claim_is_now_refuted`). What landed:
 
-* publish `BODYHASH 0..8` as PI slots 20..28 and the body chain's 8-lane transcript accumulator as
-  29..36 (`piCount` **20 → 37**), so a recursion fold can reach them from `air_public_targets`;
-* weld this leaf to the body-hash chain's fold root with `cb.connect`, the way
-  `mina_wrap_finalize_fold.rs` welds ξ — **not** by re-pinning public inputs, which closes nothing;
-* the accumulator's own tie to *this block's* preimage stays an executor comparison against
-  `packToFields (bodyI decoded)`, which is a hash the node already computes from bytes it already
-  holds.
+* `BODYHASH 0..8` are **published** at PI slots 20..28, and the body-hash chain's **8-lane ordered
+  transcript accumulator** at 29..36. `piCount` **20 → 37**. A recursion fold reads
+  `air_public_targets`, so the weld to the chain's root is now REACHABLE — which is exactly what the
+  unpublished shape forbade.
+* ⚑ **THE SEAM BINDS THE ABSORBED STREAM, NOT `(salt, BODYHASH)`.** §2c's `bodyChainBindLeg`
+  commits to `salt("MinaProtoStateBody") ‖ BODYHASH ‖ acc` — 27 constant lanes, 9 body-hash lanes,
+  **8 accumulator lanes** — against `dregg-pasta-fp-chainlink::v1`'s fingerprint. The vacuity was
+  named before it could be built: *"a bind of `(salt, BODYHASH)` alone would be VACUOUS … `perm` is
+  a permutation, so 25 links from a fixed head with free absorbed inputs reach every field element.
+  Naming the stream is the whole content."* `minaLink_body_chain_seam_binds_the_stream` pins the 44.
 
-⚠ **A BIND OF `(salt, BODYHASH)` ALONE WOULD BE VACUOUS** and that is why the accumulator is in the
-list rather than optional: `perm` is a permutation, so 25 links from a fixed head with free absorbed
-inputs reach every field element. Naming the stream is the whole content.
+**WHAT RE-EMITS, WHAT RE-VKs, AND WHAT NOW REFUSES RATHER THAN REINTERPRETS:**
 
-Cost: this descriptor re-emits and re-VKs; `LightClientMinaAir.LINK_VK_LANES` moves, so
-`dregg-mina-lightclient-verify::v1` re-emits and re-VKs; every `MinaHeadProofWire` fails to decode.
-Three descriptors, one chain — the same cascade the 2026-08-06 seam paid.
+* `dregg-mina-lightclient-link::v1` **re-emits**: `trace_width` **40 → 57** (eight `BODY_ACC`, nine
+  `CHAIN_VK`), `piCount` **20 → 37**, constraints **72 → 99** (nine program-lane lookups, one
+  `proof_bind`, seventeen pins), legs **43 → 62**. **Its VK rotates.**
+* ⚠ **THE OLD SHAPE FAILS TO LOAD, IT DOES NOT VERIFY WEAKLY.** `prove_vm_descriptor2` refuses a
+  trace whose row width is not the descriptor's (`"base row width {} must equal descriptor
+  trace_width {}"`) and refuses a public-input vector of the wrong length (`"public input count {}
+  != descriptor public_input_count {}"`). A pre-flag-day 40-wide trace with 20 PIs hits BOTH. There
+  is no path on which it is reinterpreted.
+* `dregg-mina-lightclient-verify::v1` **re-emits and re-VKs**, because `LightClientMinaAir.
+  LINK_VK_LANES` is this descriptor's fingerprint and that moved. **Every previously produced
+  `MinaHeadProofWire` fails to verify.**
+* `mina_head_predicate_vk()` is blake3 over the descriptor NAME, which did not move, so cell
+  programs keep their pinned predicate vk and **nothing re-genesises.**
+* `pasta-fp-chainlink.json` is **unchanged** — it is the bound sub-program, not a new one — and
+  `FP_CHAINLINK_VK_LANES` is its fingerprint transcribed. Re-emitting IT would move that literal and
+  cascade through both descriptors above. Four descriptors, one chain.
+* ⚠ **RUST CONSUMERS THAT MUST MOVE WITH IT**, named so the break is findable rather than absent:
+  `circuit-prove/tests/mina_link_segment_multirow.rs` (builds 40-wide rows and 20-PI vectors),
+  `circuit/tests/mina_statehash_seam_proves.rs` (`proofBindsOf` is now TWO seams, not one),
+  `circuit/tests/mina_transcript_carrier_binding.rs` (`LEAN_SEGMENT_VK_LANES` is the moved
+  fingerprint) and `turn/src/executor/mina_head_verifier.rs`'s `MINA_LINK_DESCRIPTOR` path.
+
+⚠ `circuit/descriptors/PROVENANCE.json` is already UNSTAMPED from the 2026-08-03 flag day and
+`check-descriptor-drift.sh` is already RED; this adds rows to that ledger and the stamp remains the
+operator's ceremony.
+
+⚠ **AND WHAT PUBLICATION DOES *NOT* BUY, said in the same breath.** It buys the weld's
+REACHABILITY. Until a fold `cb.connect`s these seventeen slots to the chain root's claim lanes, what
+relates this nonet to that chain's root is still an EXECUTOR comparison — and the accumulator's own
+tie to *this block's* preimage stays a comparison against `packToFields (bodyI decoded)`, a hash the
+node computes from bytes it already holds.
 
 ## Scope — do NOT overclaim
 
@@ -313,9 +344,30 @@ range-gated and forced by the seam's `vkPin` to the nine `Faithful9` lanes of
 `dregg-pasta-fp-absorb::v1`. The same shape `LightClientMinaAir.LINK_VK` carries one rung up. -/
 def HASH_VK (i : Nat) : Nat := 3 * STATE_LIMBS + 4 + i
 
+/-- ⚑ **`BODY_ACC i`** — lane `i` of the body-hash chain's ORDERED TRANSCRIPT ACCUMULATOR, the
+8-lane `seg_poseidon_commit` fold `MinaStateBodyHashChain`'s 25-leaf recursion publishes as its root
+claim's `transcript_acc`. Columns 40..47, published at PI 29..36.
+
+⚑⚑ **THIS IS THE COLUMN THAT KEEPS THE BODY-CHAIN SEAM FROM BEING VACUOUS**, and it was named
+before it was built: *"A BIND OF `(salt, BODYHASH)` ALONE WOULD BE VACUOUS … `perm` is a
+permutation, so 25 links from a fixed head with free absorbed inputs reach every field element.
+Naming the stream is the whole content."* The accumulator IS the stream, ordered — so the seam's
+commitment is `salt ‖ BODYHASH ‖ acc(absorbed)` and not `(salt, BODYHASH)`.
+
+⚠ **NOT RANGE-GATED, and that is not an omission.** These are BabyBear Poseidon2 digest lanes, i.e.
+arbitrary field elements; a 29-bit lookup would REFUSE an honest accumulator. They are joined by the
+seam's `proof_bind`, which is what `pinsTied`/`decorativeAnchors` ask of a published column. -/
+def BODY_ACC (i : Nat) : Nat := 4 * STATE_LIMBS + 4 + i
+
+/-- ⚑ **`CHAIN_VK i`** — lane `i` of the body-hash chain program's fingerprint. Columns 48..56,
+range-gated at 29 bits and forced by the body-chain seam's `vkPin` to the nine `Faithful9` lanes of
+`dregg-pasta-fp-chainlink::v1`. Same shape, same gadget, same coupling as `HASH_VK`. -/
+def CHAIN_VK (i : Nat) : Nat := 4 * STATE_LIMBS + 12 + i
+
 /-- Main-trace width: three nine-lane hashes (parent, own, body) + height + the two real-row
-columns + the anchor height + the nine attested-program lanes. -/
-def MINA_LINK_WIDTH : Nat := 4 * STATE_LIMBS + 4
+columns + the anchor height + the nine attested-program lanes + the body chain's 8-lane accumulator
++ its nine program lanes. -/
+def MINA_LINK_WIDTH : Nat := 4 * STATE_LIMBS + 21
 
 /-- PI slot of anchor-state lane `j` (slots 0..8). -/
 def PI_ANCHOR (j : Nat) : Nat := j
@@ -325,8 +377,12 @@ def PI_TIP (j : Nat) : Nat := STATE_LIMBS + j
 def PI_ANCHOR_H : Nat := 2 * STATE_LIMBS
 /-- ⚑ PI slot 19: the number of EXHIBITED blocks, as counted by the trace. -/
 def PI_SEG_LEN : Nat := 2 * STATE_LIMBS + 1
-/-- Number of public inputs. -/
-def MINA_LINK_PI_COUNT : Nat := 2 * STATE_LIMBS + 2
+/-- ⚑ PI slots 20..28: the block's `state_body_hash`, PUBLISHED. -/
+def PI_BODYHASH (j : Nat) : Nat := 2 * STATE_LIMBS + 2 + j
+/-- ⚑ PI slots 29..36: the body-hash chain's ordered transcript accumulator, PUBLISHED. -/
+def PI_BODY_ACC (i : Nat) : Nat := 3 * STATE_LIMBS + 2 + i
+/-- Number of public inputs. ⚑ **20 → 37 on 2026-08-08**, the flag day §"WHAT THIS BREAKS" costed. -/
+def MINA_LINK_PI_COUNT : Nat := 3 * STATE_LIMBS + 10
 
 /-- The eight LOW lane columns of the block's parent hash. -/
 def parentLowLanes : List Nat :=
@@ -353,6 +409,11 @@ def bodyHashValue (a : Assignment) : ℤ := stateValue a bodyHashLowLanes (BODYH
 def hashVkLanes : List Nat :=
   [HASH_VK 0, HASH_VK 1, HASH_VK 2, HASH_VK 3, HASH_VK 4, HASH_VK 5, HASH_VK 6, HASH_VK 7,
    HASH_VK 8]
+
+/-- The nine `CHAIN_VK` columns, as a limb vector. -/
+def chainVkLanes : List Nat :=
+  [CHAIN_VK 0, CHAIN_VK 1, CHAIN_VK 2, CHAIN_VK 3, CHAIN_VK 4, CHAIN_VK 5, CHAIN_VK 6, CHAIN_VK 7,
+   CHAIN_VK 8]
 
 /-! ## §2 — the SOURCE legs, in the framework's own algebra.
 
@@ -562,6 +623,94 @@ def stateHashBindLeg : AirLeg :=
         , vkPin  := some ABSORB_VK_LANES
         , bound  := none }
 
+/-! ### §2c — ⚑⚑⚑ THE BODY-CHAIN SEAM: `BODYHASH` STOPS BEING AN UNBOUND ARGUMENT.
+
+**2026-08-08.** `MinaStateBodyHashChain` derived `state_body_hash` on 08-07 and folded it, and
+`LightClientAnchorConnectivity.minaLink_body_hash_is_joined_but_not_published` named the exact reason
+nothing here could reach it:
+
+> *"`isPiBound = false` is now the SPECIFIC gap … a `proofBind`'s `commit`/`vk` name PUBLISHED values
+> and a recursion fold reads `air_public_targets`, so **an unpublished `BODYHASH` cannot be
+> `cb.connect`ed to the body-hash chain's root at all**."*
+
+So the nonet is published (PI 20..28) and the chain's ordered accumulator with it (PI 29..36), and
+this leg names both.
+
+⚑⚑ **AND THE ACCUMULATOR IS NOT OPTIONAL — the vacuity was named before anything could be built.**
+`(salt, BODYHASH)` alone commits to a hash from a pinned head over a FREE stream, and `perm` is a
+permutation: 25 links from a fixed head reach every field element, so such a bind refuses nothing.
+The commitment here is `salt ‖ BODYHASH ‖ acc`, where `acc` is the 8-lane ordered digest of the 49
+absorbed packed elements the chain's fold publishes as `transcript_acc`. **Naming the stream is the
+whole content**, and it is what makes this a claim about a *body* rather than about a permutation.
+
+⚠ **WHAT IS STILL OWED AFTER THIS, said plainly.** Publishing buys the weld's REACHABILITY, not the
+weld. Until a fold `cb.connect`s these 17 PI slots to the chain root's claim lanes, the tie is an
+EXECUTOR comparison — and the accumulator's own tie to *this* block's preimage stays a comparison
+against `packToFields (bodyI decoded)`, a hash the node computes from bytes it already holds. -/
+
+/-- ⚑ **THE `MinaProtoStateBody` SALT, AS 27 `Faithful9` LANES.** `Bridge.MinaStateHashDerive.
+saltProtoStateBody`, itself pinned to openmina's OWN regression constants
+(`poseidon/tests/test_hash_params.rs:28-51`). Decomposed base `2^29`, low lane first.
+
+⚠ A LITERAL and not the computed expression, for a measured reason: `saltProtoStateBody` is a Kimchi
+Poseidon permutation and reducing one under the kernel costs 47.6 GB / 68 min in this tree, so a
+`rfl` shape pin over a computed salt would not elaborate. `mina_link_body_salt_lanes_are_the_body_
+salt` recomposes all three elements and compares against `saltProtoStateBody` itself.
+
+⚠ **AND IT IS THE OTHER SALT.** `MINA_PROTO_STATE_SALT_LANES` is `"MinaProtoState"`; this is
+`"MinaProtoStateBody"`. Mina's whole domain separation between a state hash and a body hash rests on
+the two being different, and a copy-paste here would name a different hash function with every gate
+green — `the_two_seams_name_two_different_salts` is that as a theorem. -/
+def MINA_PROTO_STATE_BODY_SALT_LANES : List ℤ :=
+  [ 445790955, 89416348, 113760843, 414947883, 48810538, 69263919, 383158676, 95079572, 514152
+  , 346036615, 382017676, 419187451, 491103726, 217437079, 153525551, 207452011, 442303419, 19441
+  , 402493039, 345947338, 315114507, 422856893, 136538847, 195968706, 319895372, 227253601, 2739951 ]
+
+/-- ⚑ **THE BODY-HASH CHAIN PROGRAM'S IDENTITY, AS NINE LANES.** The `Faithful9` key lanes of
+`effect_vm_descriptor2_semantic_fingerprint(dregg-pasta-fp-chainlink::v1)` — the descriptor
+`MinaStateBodyHashChain.bodyChainDesc` IS, by `rfl`.
+
+⚠ **FLAG DAY COUPLING:** re-emitting `pasta-fp-chainlink.json` moves this literal and therefore
+re-emits and re-VKs `dregg-mina-lightclient-link::v1`, which moves
+`LightClientMinaAir.LINK_VK_LANES` and re-VKs the head. Lean cannot compute blake3, so this is a
+TRANSCRIPTION and `circuit/tests/mina_statehash_seam_proves.rs` is what makes it a gate. -/
+def FP_CHAINLINK_VK_LANES : List ℤ :=
+  [331349446, 492579056, 87664392, 244507792, 473722701, 515537956, 384678982, 534069614, 6023200]
+
+/-- The eight `BODY_ACC` columns, as commit expressions. -/
+def bodyAccCommitLanes : List Expr :=
+  [ .var (BODY_ACC 0), .var (BODY_ACC 1), .var (BODY_ACC 2), .var (BODY_ACC 3)
+  , .var (BODY_ACC 4), .var (BODY_ACC 5), .var (BODY_ACC 6), .var (BODY_ACC 7) ]
+
+/-- The nine `CHAIN_VK` columns, as vk expressions. -/
+def chainVkCommitLanes : List Expr :=
+  [ .var (CHAIN_VK 0), .var (CHAIN_VK 1), .var (CHAIN_VK 2), .var (CHAIN_VK 3), .var (CHAIN_VK 4)
+  , .var (CHAIN_VK 5), .var (CHAIN_VK 6), .var (CHAIN_VK 7), .var (CHAIN_VK 8) ]
+
+/-- The body-chain seam's commitment: the pinned `MinaProtoStateBody` salt as constants, then this
+row's body hash, then the chain's ordered absorbed-stream accumulator. 44 lanes. -/
+def bodyChainCommitLanes : List Expr :=
+  MINA_PROTO_STATE_BODY_SALT_LANES.map Expr.const ++ bodyCommitLanes ++ bodyAccCommitLanes
+
+/-- ⚑⚑⚑ **THE BODY-CHAIN BIND LEG.** Guard `1` — unconditional, every row, for the same reason
+§2b gives: `Satisfied2Custom.proofBound` quantifies over EVERY row, so a guard column would let a
+prover switch the seam off exactly where the tip lives. -/
+def bodyChainBindLeg : AirLeg :=
+  .bind { guard  := .const 1
+        , commit := bodyChainCommitLanes
+        , vk     := chainVkCommitLanes
+        , vkPin  := some FP_CHAINLINK_VK_LANES
+        , bound  := none }
+
+/-- ⚑ The nine `BODYHASH` PI pins (cols 22..30 → PI 20..28) — the publication that makes the weld
+reachable at all. -/
+def bodyHashPins : List AirLeg :=
+  (List.range STATE_LIMBS).map fun j => .pin ⟨VmRow.first, BODYHASH j, PI_BODYHASH j⟩
+
+/-- ⚑ The eight `BODY_ACC` PI pins (cols 40..47 → PI 29..36). -/
+def bodyAccPins : List AirLeg :=
+  (List.range 8).map fun i => .pin ⟨VmRow.first, BODY_ACC i, PI_BODY_ACC i⟩
+
 /-! ## §3 — ⚑ THE SOURCE AIR, and the descriptor as the COMPILER'S OUTPUT. -/
 
 /-- ⚑ **THE SOURCE.** Forty-three legs: fifteen windows (nine lane-continuity + six
@@ -587,10 +736,13 @@ def minaLinkAir : EffectAir :=
       , lowLanesLeg bodyHashLowLanes
       , topLaneLeg (BODYHASH 8)
       , lowLanesLeg hashVkLanes
-      , stateHashBindLeg ]
+      , stateHashBindLeg
+      , lowLanesLeg chainVkLanes
+      , bodyChainBindLeg ]
       ++ anchorPins ++ tipPins
       ++ [ .pin ⟨VmRow.first, ANCHOR_H, PI_ANCHOR_H⟩
-         , .pin ⟨VmRow.last, REAL_COUNT, PI_SEG_LEN⟩ ] }
+         , .pin ⟨VmRow.last, REAL_COUNT, PI_SEG_LEN⟩ ]
+      ++ bodyHashPins ++ bodyAccPins }
 
 /-- ⚑ **THE VOCABULARY WAS ADEQUATE, AND THE MULTI-ROW HALF IS WHERE IT MATTERED.** Every leg is
 main-rail expressible — decided on the emitted predicate, not by eye — so no leg lowered to
@@ -602,9 +754,9 @@ theorem minaLinkAir_mainRailOk : minaLinkAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaLinkAir_pinsFit : minaLinkAir.pinsFit MINA_LINK_PI_COUNT = true := by rfl
 
-/-- Forty-three legs: 9 lane windows + 6 counting/height windows + 4 `.limbs` + 3 top lookups +
-1 `.bind` + 20 pins. -/
-theorem minaLinkAir_leg_count : minaLinkAir.legs.length = 43 := by rfl
+/-- Sixty-two legs: 9 lane windows + 6 counting/height windows + 5 `.limbs` + 3 top lookups +
+2 `.bind` + 37 pins. ⚑ 43 → 62 on the 2026-08-08 publication flag day. -/
+theorem minaLinkAir_leg_count : minaLinkAir.legs.length = 62 := by rfl
 
 /-- ⚑ **THE SEAM IS NOT THE DECLARATIVE SHAPE, AND IT IS NOT NARROW.** `BindLeg.mainRailOk` refuses
 a bind that pins neither its program nor its commitment, and refuses either vector below
@@ -638,7 +790,7 @@ limbed at 29 bits for a reason that is load-bearing rather than tidy: an emitted
 is `≡ 0 [ZMOD P]`, so without a width gate a `HASH_VK` column could sit at `pin + P` and attest a
 program nobody pinned. Same coupling, same gadget, as `link_lane_equality_is_exact`. -/
 theorem minaLinkAir_limbs_shape :
-    minaLinkAir.limbsCount = 4 ∧ minaLinkAir.totalRangeLookups = 33
+    minaLinkAir.limbsCount = 5 ∧ minaLinkAir.totalRangeLookups = 42
       ∧ minaLinkAir.maxLimbedCapacityBits = 261 := by
   refine ⟨?_, ?_, ?_⟩ <;> rfl
 
@@ -680,10 +832,10 @@ theorem minaLinkDesc_tables : minaLinkDesc.tables = [minaLaneTable, minaTopLaneT
 theorem minaLinkDesc_hashSites : minaLinkDesc.hashSites = [] := rfl
 theorem minaLinkDesc_ranges : minaLinkDesc.ranges = [] := rfl
 
-/-- Seventy-two constraints from forty-three legs: one per leg except the four `.limbs` legs, which
-lower to EIGHT (parent, own, body) and NINE (attested program) lookups. A dropped lane moves this
-and nothing else does. -/
-theorem minaLinkDesc_constraint_count : minaLinkDesc.constraints.length = 72 := rfl
+/-- Ninety-nine constraints from sixty-two legs: one per leg except the five `.limbs` legs, which
+lower to EIGHT (parent, own, body) and NINE (each attested program) lookups. A dropped lane moves
+this and nothing else does. ⚑ 72 → 99 on the 2026-08-08 publication flag day. -/
+theorem minaLinkDesc_constraint_count : minaLinkDesc.constraints.length = 99 := rfl
 
 /-- ⚑⚑ **THE SEAM, AT ITS EMITTED POSITION, ON THE COMPILER'S OUTPUT.** Constraint 51 is the
 `proofBind`: an unconditional guard, a commitment whose first 27 lanes are the pinned salt
@@ -712,8 +864,8 @@ theorem minaLink_commit_is_salt_then_the_row :
 
 /-- ⚑ **AND IT IS THE ONLY ONE.** One seam, so `proofBind_bound`'s `∀ m ∈ proofBindsOf d` is about
 this leg and no other, and the `proofBindDeclarative` census is zero. -/
-theorem minaLink_has_one_pinned_seam :
-    (Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLinkDesc).length = 1
+theorem minaLink_has_two_pinned_seams :
+    (Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLinkDesc).length = 2
       ∧ Dregg2.Circuit.DescriptorIR2.proofBindDeclarative minaLinkDesc = 0 := by
   refine ⟨?_, ?_⟩ <;> rfl
 
@@ -756,7 +908,7 @@ LAST-row tip lanes, the first-row anchor height, and — the tooth — the LAST-
 `PI_SEG_LEN`. A `.last` pin re-scoped to `.first` would read the first row's counter (always
 `IS_REAL[0] ∈ {0,1}`) and the segment length would be free again. -/
 theorem minaLinkDesc_pins :
-    minaLinkDesc.constraints.drop 52 =
+    minaLinkDesc.constraints.drop 62 =
       [ .base (.piBinding VmRow.first (PARENT 0) (PI_ANCHOR 0))
       , .base (.piBinding VmRow.first (PARENT 1) (PI_ANCHOR 1))
       , .base (.piBinding VmRow.first (PARENT 2) (PI_ANCHOR 2))
@@ -776,7 +928,69 @@ theorem minaLinkDesc_pins :
       , .base (.piBinding VmRow.last (OWNHASH 7) (PI_TIP 7))
       , .base (.piBinding VmRow.last (OWNHASH 8) (PI_TIP 8))
       , .base (.piBinding VmRow.first ANCHOR_H PI_ANCHOR_H)
-      , .base (.piBinding VmRow.last REAL_COUNT PI_SEG_LEN) ] := rfl
+      , .base (.piBinding VmRow.last REAL_COUNT PI_SEG_LEN)
+      , .base (.piBinding VmRow.first (BODYHASH 0) (PI_BODYHASH 0))
+      , .base (.piBinding VmRow.first (BODYHASH 1) (PI_BODYHASH 1))
+      , .base (.piBinding VmRow.first (BODYHASH 2) (PI_BODYHASH 2))
+      , .base (.piBinding VmRow.first (BODYHASH 3) (PI_BODYHASH 3))
+      , .base (.piBinding VmRow.first (BODYHASH 4) (PI_BODYHASH 4))
+      , .base (.piBinding VmRow.first (BODYHASH 5) (PI_BODYHASH 5))
+      , .base (.piBinding VmRow.first (BODYHASH 6) (PI_BODYHASH 6))
+      , .base (.piBinding VmRow.first (BODYHASH 7) (PI_BODYHASH 7))
+      , .base (.piBinding VmRow.first (BODYHASH 8) (PI_BODYHASH 8))
+      , .base (.piBinding VmRow.first (BODY_ACC 0) (PI_BODY_ACC 0))
+      , .base (.piBinding VmRow.first (BODY_ACC 1) (PI_BODY_ACC 1))
+      , .base (.piBinding VmRow.first (BODY_ACC 2) (PI_BODY_ACC 2))
+      , .base (.piBinding VmRow.first (BODY_ACC 3) (PI_BODY_ACC 3))
+      , .base (.piBinding VmRow.first (BODY_ACC 4) (PI_BODY_ACC 4))
+      , .base (.piBinding VmRow.first (BODY_ACC 5) (PI_BODY_ACC 5))
+      , .base (.piBinding VmRow.first (BODY_ACC 6) (PI_BODY_ACC 6))
+      , .base (.piBinding VmRow.first (BODY_ACC 7) (PI_BODY_ACC 7)) ] := rfl
+
+/-- ⚑⚑⚑ **THE BODY-CHAIN SEAM, AT ITS EMITTED POSITION.** Constraint 61 is the second `proofBind`:
+an unconditional guard, a commitment whose first 27 lanes are the pinned `MinaProtoStateBody` salt
+CONSTANTS, then this row's body-hash nonet, then the chain's EIGHT-lane ordered accumulator, and
+nine attested program columns pinned to `dregg-pasta-fp-chainlink::v1`'s fingerprint.
+
+⚠ A leg that dropped the accumulator tail — the exact vacuity §2c names — moves this. -/
+theorem minaLinkDesc_body_chain_seam :
+    (minaLinkDesc.constraints.drop 61).take 1 =
+      [ .proofBind
+          { guard  := Dregg2.Exec.CircuitEmit.emitExpr (.const 1)
+          , commit := bodyChainCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+          , vk     := chainVkCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+          , vkPin  := some FP_CHAINLINK_VK_LANES
+          , bound  := none } ] := rfl
+
+/-- ⚑⚑ **THE BODY-CHAIN SEAM NAMES THE ABSORBED STREAM, NOT JUST `(salt, BODYHASH)`.** Forty-four
+commit lanes: 27 salt constants, 9 body-hash lanes, 8 accumulator lanes. ⚠ The 8 is the whole
+anti-vacuity content — with 36 the bind would be a hash from a pinned head over a FREE stream, and
+`perm` being a permutation means such a bind refuses nothing. -/
+theorem minaLink_body_chain_seam_binds_the_stream :
+    (match bodyChainBindLeg with | .bind b => b.mainRailOk | _ => false) = true
+      ∧ (match bodyChainBindLeg with | .bind b => b.commit.length | _ => 0) = 44
+      ∧ (match bodyChainBindLeg with | .bind b => b.vk.length | _ => 0) = 9
+      ∧ bodyAccCommitLanes.length = 8 := by
+  refine ⟨by rfl, by rfl, by rfl, by rfl⟩
+
+/-- ⚑ **THE TWO SEAMS NAME TWO DIFFERENT SALTS.** Mina's domain separation between `state_hash` and
+`state_body_hash` is exactly this, and a copy-paste that reused `MINA_PROTO_STATE_SALT_LANES` here
+would name a different hash function with every gate green. -/
+theorem the_two_seams_name_two_different_salts :
+    MINA_PROTO_STATE_BODY_SALT_LANES ≠ MINA_PROTO_STATE_SALT_LANES := by decide
+
+/-- ⚑ **THE BODY SALT LANES ARE THE BODY SALT.** The 27 `.const` lanes recompose, nine at a time
+base `2^29`, to the three elements of `Bridge.MinaStateHashDerive.saltProtoStateBody` — itself
+pinned to openmina's own regression constants. Without this the constants are a transcription
+nothing checks.
+
+⚠ `native_decide`: `saltProtoStateBody` is a Kimchi Poseidon permutation and reducing one under the
+kernel is measured at 47.6 GB / 68 min in this tree. Compiled evaluator, confessed. -/
+theorem mina_link_body_salt_lanes_are_the_body_salt :
+    MINA_PROTO_STATE_BODY_SALT_LANES =
+      ((Dregg2.Bridge.MinaStateHashDerive.saltProtoStateBody.flatMap
+        (fun v => (List.range 9).map (fun i => ((v / 2 ^ (29 * i)) % 2 ^ 29 : Nat)))).map
+          (fun n => (n : ℤ))) := by native_decide
 
 /-- Layout sanity as theorems: the two nonets are contiguous, disjoint and inside the declared
 width, and the counting columns sit above them. -/
@@ -784,9 +998,13 @@ theorem minaLink_layout_wellformed :
     PARENT 0 = 0 ∧ PARENT 8 = 8 ∧ OWNHASH 0 = 9 ∧ OWNHASH 8 = 17
       ∧ HEIGHT = 18 ∧ IS_REAL = 19 ∧ REAL_COUNT = 20 ∧ ANCHOR_H = 21
       ∧ BODYHASH 0 = 22 ∧ BODYHASH 8 = 30 ∧ HASH_VK 0 = 31 ∧ HASH_VK 8 = 39
-      ∧ MINA_LINK_WIDTH = 40
-      ∧ HASH_VK 8 < MINA_LINK_WIDTH ∧ PI_SEG_LEN < MINA_LINK_PI_COUNT := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩ <;> decide
+      ∧ BODY_ACC 0 = 40 ∧ BODY_ACC 7 = 47 ∧ CHAIN_VK 0 = 48 ∧ CHAIN_VK 8 = 56
+      ∧ MINA_LINK_WIDTH = 57
+      ∧ PI_BODYHASH 0 = 20 ∧ PI_BODYHASH 8 = 28 ∧ PI_BODY_ACC 0 = 29 ∧ PI_BODY_ACC 7 = 36
+      ∧ MINA_LINK_PI_COUNT = 37
+      ∧ CHAIN_VK 8 < MINA_LINK_WIDTH ∧ PI_BODY_ACC 7 < MINA_LINK_PI_COUNT := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+    rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **THE SALT LANES ARE THE SALT.** The 27 `.const` lanes of the seam's commitment head
 recompose, nine at a time base `2^29`, to the three elements of
@@ -958,9 +1176,19 @@ def minaLinkSeam : Dregg2.Circuit.DescriptorIR2.ProofBind :=
 against `ABSORB_VK_LANES`. -/
 def hashVkRead (a : Assignment) : List ℤ := minaLinkSeam.vk.map (fun e => e.eval a)
 
-/-- The emitted descriptor's proof-binding ops are exactly this seam. -/
+/-- ⚑ **THE BODY-CHAIN SEAM, AS THE `ProofBind` THE COMPILER EMITS** (2026-08-08). -/
+def minaLinkBodyChainSeam : Dregg2.Circuit.DescriptorIR2.ProofBind :=
+  { guard  := Dregg2.Exec.CircuitEmit.emitExpr (.const 1)
+  , commit := bodyChainCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+  , vk     := chainVkCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
+  , vkPin  := some FP_CHAINLINK_VK_LANES
+  , bound  := none }
+
+/-- The emitted descriptor's proof-binding ops are exactly these TWO seams — the state-hash seam
+(2026-08-06) and the body-chain seam (2026-08-08), in emission order. ⚑ `proofBind_bound`'s
+`∀ m ∈ proofBindsOf d` is about both and no others. -/
 theorem minaLink_proofBinds : Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLinkDesc =
-    [minaLinkSeam] := rfl
+    [minaLinkSeam, minaLinkBodyChainSeam] := rfl
 
 /-- ⚑ **A GATED LANE-VECTOR CONGRUENCE IS AN EXACT EQUALITY when both sides are canonical.** The
 list-level form of `link_lane_equality_is_exact`, and it is the SAME coupling: `zeroLanes` says
@@ -1653,7 +1881,10 @@ theorem mina_link_discriminates :
 #assert_axioms minaLink_seam_shape
 #assert_axioms minaLinkDesc_state_hash_seam
 #assert_axioms minaLink_commit_is_salt_then_the_row
-#assert_axioms minaLink_has_one_pinned_seam
+#assert_axioms minaLink_has_two_pinned_seams
+#assert_axioms minaLinkDesc_body_chain_seam
+#assert_axioms minaLink_body_chain_seam_binds_the_stream
+#assert_axioms the_two_seams_name_two_different_salts
 #assert_axioms minaLink_proofBinds
 #assert_axioms laneVal_map
 #assert_axioms zeroLanes_one_exact
@@ -1671,5 +1902,6 @@ theorem mina_link_discriminates :
 -- kernel cannot reduce one (47.6 GB / 68 min, measured in this tree), so the salt-lane
 -- decomposition is checked by the compiled evaluator and says so.
 #assert_compiled mina_link_salt_lanes_are_the_salt
+#assert_compiled mina_link_body_salt_lanes_are_the_body_salt
 
 end Dregg2.Circuit.Emit.LightClientMinaLinkAir
