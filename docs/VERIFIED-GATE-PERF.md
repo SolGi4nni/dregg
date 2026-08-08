@@ -113,11 +113,41 @@ These remain live design; each is stated with the reason it is its own piece of 
    cadence rule ("no new O(N) recompute until the previous completed AND finality advanced") is
    subsumed in practice by the finality-keyed cache but remains available if a workload defeats it.
 
-### FALLBACK — bounded-timeout fail-open (⚠ FAIL-OPEN-LAW-sensitive — NOT built, NOT a default)
+### FALLBACK — bounded-timeout (⚑ CORRECTED 2026-08-08: it IS built, and it IS the default)
 
-Only if the seams above prove insufficient: bound the verified FFI with `tokio::time::timeout`; on
-timeout use the already-computed Rust `tau` order for that poll and record a divergence-class metric
-plus a loud warn. **This weakens the verification guarantee** — the verified Lean rule stops being
-the decider on any poll that times out, the posture `DREGG_FINALITY_GATE=0` takes, but per-poll and
-silent-until-warned. It is an operator/consensus-owner lever gated on ember's explicit call; the
-elevate-don't-degrade answer is the persistent cross-call cache.
+**This section used to read "NOT built, NOT a default … gated on ember's explicit call". That is
+false and has been for some time.** The bound is live in `node/src/blocklace_sync.rs`
+(`tokio::time::timeout(verified_order_ffi_timeout(), ffi)`), the budget defaults to **2500 ms**
+(`DREGG_FINALITY_ORDER_TIMEOUT_MS`), and it is on by default on every node. A reader who trusted
+this page would have concluded the verified rule was unconditionally the decider. It is not.
+
+What a miss actually does — and it is **not** the single "fail-open" this section described:
+
+| node posture | `rust_tau_fallback_allowed` | a missed budget causes |
+|---|---|---|
+| `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1` (e.g. `scripts/federation-local.sh:86`) | true | the **un-verified Rust `ordering::tau` order decides the poll** |
+| Lean-linked, escape unset (`scripts/poa-devnet.sh` pins it to `0`) | false | the poll **FAILS CLOSED — finalizes nothing** |
+
+Same trigger, opposite failure mode, opposite remedy. Two further defects the bound introduced,
+both fixed 2026-08-08 (`node/src/blocklace_sync.rs`):
+
+1. **The cache did not record provenance.** A fallback poll stored the un-verified Rust order in
+   the cross-poll cache indistinguishably from a verified one, and because the cache is keyed on
+   the finalized *order* (stable while finality is not advancing) every later poll served it under
+   a `debug!("verified-order cache HIT")`. The WARN fired **once**, then silence. `last_lean_order`
+   now carries `(order, verified: bool)`.
+2. **`ordered_from_lean` was set `true` for the fallback**, disarming the belt-and-suspenders
+   finality gate in precisely the case its own comment says it defends ("keep the belt ONLY for
+   the Rust fallback"). It now carries the real provenance.
+
+Accounting now exists where there was only a log line:
+`dregg_consensus_order_polls_total{source=…}`, `dregg_consensus_order_over_budget_total`, and the
+`/status` fields `consensus_order`, `consensus_order_budget_ms`,
+`consensus_order_{verified,unverified,failed_closed,over_budget}_polls`.
+
+**Raising the budget is not a fix** — it moves the crossing without changing whether the verified
+path runs. The elevate-don't-degrade answer is still the seams in §3, plus the one this campaign
+measured and named: the lace is `List Block` with an O(n) `Lace.lookup`
+(`metatheory/Dregg2/Authority/Blocklace.lean`) called from the innermost loops of
+`tauOrderFastImpl`, which builds `Std.HashMap` past/round maps but **no `BlockId → Block` index**.
+That single missing index is the dominating term.

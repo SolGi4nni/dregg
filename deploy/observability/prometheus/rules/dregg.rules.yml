@@ -30,6 +30,44 @@ groups:
           summary: "rust<->lean finality DIVERGENCE detected"
           description: "dregg_consensus_differential_divergence_total > 0 — a consensus-implementation bug; investigate now. Runbook: docs/ops/INCIDENT-RESPONSE.md."
 
+      # PAGE — a finality poll finalized over an UN-VERIFIED order.
+      #
+      # The node's claim is that it finalizes over the VERIFIED Lean `dregg_tau_order`. That
+      # claim is CONDITIONAL ON A PER-POLL WALL-CLOCK BUDGET (DREGG_FINALITY_ORDER_TIMEOUT_MS,
+      # default 2500ms), and the verified rule is super-quadratic in the lace size while a lace
+      # grows without bound. When the budget is missed on a node that permits it
+      # (DREGG_ALLOW_UNVERIFIED_CONSENSUS=1), the un-verified Rust `ordering::tau` twin decides
+      # the poll instead. Safety then rests entirely on the two orders agreeing — asserted at
+      # the SEQUENCE level by node/tests/verified_order_budget.rs, not by anything at runtime
+      # (the live differential sorts before comparing, so it compares only the finalized SET).
+      #
+      # ConsensusDivergence above cannot fire for this: it only advances when a VERIFIED order
+      # was obtained and disagreed. A poll with no verified order at all trips nothing there.
+      - alert: ConsensusOrderUnverified
+        expr: increase(dregg_consensus_order_polls_total{source=~"unverified_.*"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: page
+        annotations:
+          summary: "finality poll(s) decided by the UN-VERIFIED Rust tau order ({{ $labels.source }})"
+          description: "dregg_consensus_order_polls_total{source={{ $labels.source }}} advanced — this node did NOT finalize over the verified Lean ordering on those polls. source=unverified_over_budget means the verified FFI blew its per-poll budget; unverified_cached means an earlier fallback's order is still being served from the cross-poll cache. Check /status consensus_order*. Runbook: docs/VERIFIED-GATE-PERF.md."
+
+      # WARN — the verified tau-order FFI is missing its per-poll budget.
+      #
+      # Fires whatever happens next, because the two consequences are opposite and both matter:
+      # on a node permitting the twin it is a SAFETY degrade (unverified order decides), and on a
+      # Lean-linked PoA node (escape pinned to 0) it is a LIVENESS degrade (the poll finalizes
+      # nothing). Sustained firing means the lace has outgrown the budget, which is a permanent
+      # condition — raising the budget moves the crossing, it does not fix it.
+      - alert: VerifiedOrderOverBudget
+        expr: increase(dregg_consensus_order_over_budget_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "verified tau-order FFI exceeded its per-poll budget"
+          description: "dregg_consensus_order_over_budget_total advanced in the last 15m — the verified ordering is no longer completing within DREGG_FINALITY_ORDER_TIMEOUT_MS at this lace size. Either unverified polls or failed-closed polls are accumulating; see dregg_consensus_order_polls_total{source}. Runbook: docs/VERIFIED-GATE-PERF.md."
+
       # PAGE — a node's /metrics is unscrapeable (the node is down or wedged).
       - alert: NodeDown
         expr: up{job="dregg-node"} == 0

@@ -96,9 +96,13 @@ not a single node.
 
 1. **Marshal (un-verified) state producer.** The default binary is not
    Lean-linked, so it runs the un-verified Rust reference executor
-   (`DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`, `state_producer=rust`). **Consensus and
-   finality are real and proven** (blocklace BFT, quorum intersection, the tau
-   ordering — `metatheory/Dregg2/Distributed/`); the **state transition
+   (`DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`, `state_producer=rust`). Consensus and
+   finality are real (blocklace BFT, quorum intersection, the tau ordering —
+   `metatheory/Dregg2/Distributed/`) — but read caveat 3 before repeating
+   "**proven**" about the tau ordering *on this harness*: the verified rule is
+   the decider only on polls that meet a 2500 ms budget, and the same escape
+   hatch named on this line is what lets a missed budget substitute the
+   un-verified Rust twin; the **state transition
    function** committing each turn is the un-verified reference, not the
    Lean-shadowed verified kernel. For a verified-producer federation, build the
    Lean-linked node (`scripts/bootstrap.sh`, `docs/BUILD-LEAN-LINKED-NODE.md`)
@@ -113,15 +117,34 @@ not a single node.
    streams. Safety holds at both (quorum intersection `2·3 − 4 = 2 > f`); the
    difference is **liveness**, and it is a deploy dial, not a code change.
 
-3. **Finality-gate perf is O(history) under churn (perf, not correctness).**
-   The verified tau-order finality poll recomputes over the lace each poll; a
-   cross-poll cache keyed on an exact block-id-set fingerprint misses under
-   continuous catch-up churn, so committed-turn throughput can fall below block
-   production and `latest_height` *crawls* (never deadlocks, never corrupts —
-   the DAGs stay byte-identical; `docs/CROSS-MACHINE-FINALITY-FINDING.md`,
-   `docs/VERIFIED-GATE-PERF.md`). This is a **performance** ceiling on a
-   long-lived / cross-machine node, not a safety defect. On a fresh single-box
-   `up` it streams steadily.
+3. **Finality-gate perf is O(history) under churn — and past a budget it stops
+   being only a perf story.** The verified tau-order finality poll recomputes
+   over the lace each poll; a cross-poll cache misses under continuous catch-up
+   churn, so committed-turn throughput can fall below block production and
+   `latest_height` *crawls* (`docs/CROSS-MACHINE-FINALITY-FINDING.md`,
+   `docs/VERIFIED-GATE-PERF.md`).
+
+   ⚑ **CORRECTED 2026-08-08. This used to end "a performance ceiling …, not a
+   safety defect."** That is not true of *this script's* configuration. The
+   verified FFI is bounded by a per-poll wall-clock budget
+   (`DREGG_FINALITY_ORDER_TIMEOUT_MS`, default **2500 ms**), and because
+   `federation-local.sh:86` sets `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`
+   unconditionally, a poll that misses the budget **hands the finalized order to
+   the un-verified Rust `ordering::tau` twin.** Over-budget warnings were
+   observed on an *idle* 4-node committee at `lace_size` 773–981 — i.e. within
+   an hour or so of ordinary running, not at some exotic scale. Past that point
+   the ordering on this harness is un-verified more often than not, so the
+   claim in caveat 1 stops applying and the degrade is a *correctness-surface*
+   change, not a throughput one.
+
+   Check which order actually decided, rather than assuming: `/status` reports
+   `consensus_order`, `consensus_order_budget_ms`, and
+   `consensus_order_{verified,unverified,failed_closed,over_budget}_polls`. A
+   non-zero `consensus_order_unverified_polls` means this run did not finalize
+   over the verified ordering throughout.
+
+   (A Lean-linked node *without* the escape — the deployed PoA posture — fails
+   CLOSED instead: the poll finalizes nothing. Same trigger, opposite failure.)
 
 **Closed (formerly caveat 4): full-mode restart recovery.** A full-mode node
 persists a genuine committee quorum with each finalized root: `FinalizationVote`
