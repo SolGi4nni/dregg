@@ -46,6 +46,29 @@ const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REPO = process.env.DREGG_REPO_ROOT ?? resolve(APP, '..', '..');
 const SELF_TEST = process.argv.includes('--self-test');
 
+// ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
+// misreads this convention exists to stop happened to people reading RESULTS, not source. ──
+const SCOPE_ANSWERS =
+  'does every declared VK notion name a producer script that EXISTS and a route a clean checkout could walk ' +
+  '(a non-gitignored artifact, or a tracked mirror, per `git check-ignore`); does every notion whose pin AND ' +
+  'producer are BOTH present in this checkout agree with its producer; and does explainVkMismatch name both ' +
+  'notions and carry its layering sentences when handed the registered devnet key and a number nothing holds?';
+const SCOPE_DOES_NOT_ANSWER =
+  'whether the key on Mina devnet is the key of HEAD circuit. Leg [3] compares the sha256 of a COMMITTED ' +
+  'fixture against a JSON field in devnet-foreign-vk-registration.json — it never queries a chain — and it ' +
+  'PASSES either way, printing both epochs. An ABSENT artifact is reported and never red. Leg [4] is a ' +
+  'SUBSTRING check over the refusal prose, not an exercise of advanceHead.';
+const SCOPE_ANSWERS_SELFTEST =
+  'everything the bare run answers, PLUS: can [2] and [1c] go RED — a pin perturbed one off its producer IN ' +
+  'MEMORY reported as drift with both sides named, a gitignored source with NO tracked mirror reported ' +
+  'UNROUTABLE against a control where a tracked mirror makes it routable, and an unknown notion id throwing?';
+const SCOPE_DOES_NOT_ANSWER_SELFTEST =
+  'whether [2] red path is armed ON THIS MACHINE. When the producing key ring is absent — `.fullchain/` is ' +
+  'gitignored, so on any box that did not compile the chain — the drift probe prints UNPROVEN and the run ' +
+  'still PASSES, so a green here does not mean the drift check was shown to fire.';
+console.log(`ANSWERS:         ${SELF_TEST ? SCOPE_ANSWERS_SELFTEST : SCOPE_ANSWERS}`);
+console.log(`DOES NOT ANSWER: ${SELF_TEST ? SCOPE_DOES_NOT_ANSWER_SELFTEST : SCOPE_DOES_NOT_ANSWER}`);
+
 let failures = 0;
 const ok = (m: string) => console.log(`  ✓ ${m}`);
 const bad = (m: string) => {

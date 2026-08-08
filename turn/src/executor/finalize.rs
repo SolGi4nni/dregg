@@ -85,6 +85,10 @@ impl TurnExecutor {
             // Shield (on-ramp): a shield-opening STARK verify PLUS the debit's
             // note-spend proof verify — proof-heavy, charged as a proof_verify.
             Effect::Shield { .. } => self.costs.proof_verify,
+            // Deshield (off-ramp): a complete-spend STARK verify PLUS the value-link
+            // STARK verify — the same order of work as a one-in/one-out shielded
+            // transfer, which is charged at the same rung.
+            Effect::Deshield { .. } => self.costs.proof_verify,
             // Custom: the executor dispatches the paired custom sub-proof to its
             // registered verifier (a recursive STARK verify) and the state weld —
             // proof-heavy, charged as a proof_verify like the other verify-gated
@@ -484,6 +488,13 @@ impl TurnExecutor {
             Effect::Shield { .. } => {
                 *has_cleartext = true;
             }
+            // A deshield CREDITS a CLEARTEXT note (its `value` is public — that is
+            // what an off-ramp is), so it routes the turn to the cleartext
+            // conservation path too, where `collect_note_effects_from_effect`
+            // balances it as a boundary ENTRY.
+            Effect::Deshield { .. } => {
+                *has_cleartext = true;
+            }
             _ => {}
         }
     }
@@ -568,6 +579,40 @@ impl TurnExecutor {
             // fail EVERY honest Shield (V spent, 0 cleartext created); omitting it
             // entirely (the old `_ => {}`) would let the debit go UNCONSERVED — a mint.
             Effect::Shield {
+                value, asset_type, ..
+            } => {
+                let entry = inputs.entry(*asset_type).or_insert(0);
+                *entry = entry
+                    .checked_add(*value)
+                    .ok_or((*asset_type, u64::MAX, 0))?;
+                let entry = outputs.entry(*asset_type).or_insert(0);
+                *entry = entry
+                    .checked_add(*value)
+                    .ok_or((*asset_type, 0, u64::MAX))?;
+            }
+            // Deshield (off-ramp): the SAME boundary accounting, entered from the
+            // other side. Value V LEAVES the shielded domain (the nullified note) and
+            // ENTERS cleartext (the created note). The cleartext ledger sees a
+            // BOUNDARY ENTRY balanced against the shielded spend, so it contributes V
+            // to BOTH sides for asset A — like Shield and BridgeMint.
+            //
+            // ⚑ SAY WHAT THIS ARM IS, BECAUSE IT IS NOT A CHECK. The predicate below is
+            // `input_total != output_total` per asset, and this arm adds V to BOTH
+            // sides, so it is BALANCE-NEUTRAL BY CONSTRUCTION: a `_ => {}`
+            // fall-through would leave a lone Deshield contributing 0/0 and the turn
+            // would commit either way. Nothing here can go red on an inflated credit.
+            // It is the EXPLICIT STATEMENT that a Deshield is self-balancing — the same
+            // role `dsl/conservation.rs`'s `Deshield => 0` plays — kept out of the
+            // wildcard so the decision is on the record rather than silent, and so the
+            // boundary movement is visible in the per-asset totals an auditor reads.
+            //
+            // WHAT ACTUALLY MAKES THE TWO V's EQUAL is the Lean-emitted
+            // `dregg-shielded-deshield-value-link::v1`, which pins the credit's
+            // canonical 16-bit limbs to the very columns the spent note's carrier
+            // absorbs (`deshield_link_reads_one_opening`), so an inflated credit has no
+            // satisfying trace. Do not read this arm as a second, ledger-side guard on
+            // the value — there is exactly one guard and it is in the AIR.
+            Effect::Deshield {
                 value, asset_type, ..
             } => {
                 let entry = inputs.entry(*asset_type).or_insert(0);

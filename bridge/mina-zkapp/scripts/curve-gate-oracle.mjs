@@ -125,6 +125,31 @@ export function grade(o1, leanGates) {
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
 const arg = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
+
+// ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
+// misreads this convention exists to stop happened to people reading RESULTS, not source. ──
+const SCOPE_ANSWERS =
+  'for VarBaseMul and CompleteAdd, is the SET of coefficient-vector LENGTHS exactly {0} in o1js own '
+  + 'Provable.constraintSystem over Group.scale(Scalar) AND in our emitted step circuit (live, else the '
+  + 'committed gz, under the provenance floor), and do the two sets agree; and for EndoMul and EndoMulScalar, '
+  + 'which Group.scale cannot reach, is o1js silent about them and that set {0} in OUR emission alone?';
+const SCOPE_DOES_NOT_ANSWER =
+  'whether these gates behave like kimchi. The coefficient-vector LENGTH is the only thing read — no '
+  + 'coefficient VALUE, no wire, no row count, no placement — and the EndoMul / EndoMulScalar legs have ONE '
+  + 'source, our own emission, with proof-systems vec![] constructors cited in prose that no code opens.';
+const SCOPE_ANSWERS_SELFTEST =
+  'over a SYNTHETIC eight-row coeff-free gate list standing in for the Lean side, does putting one coefficient '
+  + 'on one row of each of the four types redden that type entry, and is an EMPTY gate list refused rather than '
+  + 'passing vacuously?';
+const SCOPE_DOES_NOT_ANSWER_SELFTEST =
+  'anything about our emission: no Lean artifact is opened in this mode, by design, so the gate red path stays '
+  + 'answerable in a tree whose cone has moved. Only source A (o1js) is real here.';
+{
+  const st = argv.includes('--self-test') && argv.length === 1;
+  console.log(`ANSWERS:         ${st ? SCOPE_ANSWERS_SELFTEST : SCOPE_ANSWERS}`);
+  console.log(`DOES NOT ANSWER: ${st ? SCOPE_DOES_NOT_ANSWER_SELFTEST : SCOPE_DOES_NOT_ANSWER}`);
+}
+
 const o1 = await o1jsCurveGates();
 console.log(`── o1js Group.scale(Scalar): ${o1.rows} rows`);
 for (const [t, e] of o1.byType) console.log(`   ${t.padEnd(16)} count=${String(e.count).padStart(4)}  coeffLens={${lens(e).join(',')}}`);

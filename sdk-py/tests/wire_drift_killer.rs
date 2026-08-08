@@ -511,6 +511,9 @@ fn effect_vocabulary_is_an_explicit_subset_not_an_accident() {
         // Shielded on-ramp: needs a shield-opening proof (and a note-spend debit
         // proof) the light client has no prover for.
         "Shield",
+        // Shielded off-ramp: needs a complete-spend proof AND a deshield value-link proof
+        // the light client has no prover for.
+        "Deshield",
         // Custom-VK door: the executor REFUSES this outside a proof-carrying
         // sovereign turn (TurnError::CustomEffectRequiresProofCarryingTurn), and
         // sdk-py cannot build one. Exposing a `.custom()` verb here would only

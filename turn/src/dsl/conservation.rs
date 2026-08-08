@@ -38,6 +38,13 @@ pub fn derive_balance_change(target: CellId, effects: &[Effect]) -> i64 {
             // fall-through) so the self-balancing decision is on the record, not silent.
             Effect::Shield { .. } => 0,
 
+            // Deshield (off-ramp): converts shielded → cleartext of EQUAL value V (the
+            // spend consumes a shielded note worth V, `-V`; the credit creates a
+            // cleartext note worth V, `+V`). Net ZERO for the caller, exactly like the
+            // on-ramp above. Explicit (not the `_ => 0` fall-through) so the
+            // self-balancing decision is on the record, not silent.
+            Effect::Deshield { .. } => 0,
+
             // ReleaseEscrow / RefundEscrow / Release*Committed: the executor
             // moves the funds; we don't double-count here. The recipient's
             // action separately reflects the credit.

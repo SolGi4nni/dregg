@@ -223,8 +223,8 @@ pub use pending::{
     ResolutionOutcome,
 };
 pub use shielded_verifier::{
-    ShieldOpeningVerifier, ShieldedTransferVerifier, VerifiedShieldOpening,
-    VerifiedShieldedTransfer,
+    DeshieldVerifier, ShieldOpeningVerifier, ShieldedTransferVerifier, VerifiedDeshield,
+    VerifiedShieldOpening, VerifiedShieldedTransfer,
 };
 pub use signed_turn::SignedTurn;
 // `Precondition` and friends collapsed into `dregg_cell::preconditions`

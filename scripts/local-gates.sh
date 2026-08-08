@@ -345,6 +345,36 @@ GATES=(
   "chip-absorb-arity|1200|bash scripts/check-chip-absorb-arity.sh"
   "chip-absorb-arity-red|1200|bash scripts/check-chip-absorb-arity.sh --self-test"
   "wasm-freshness|120|bash scripts/check-wasm-freshness.sh"
+  # ⚑ THE REPO SHIPS TWO BROWSER BUNDLES AND THE GATE WAS AIMED AT ONE OF THEM.
+  # `wasm-freshness` grades `wasm/pkg` — the site runtime. The extension's engine
+  # (`extension/dregg_wasm.js` + `dregg_wasm_bg.wasm`, `--target no-modules`, loaded by the
+  # MV3 service worker with `importScripts`) is a SEPARATE artifact, and until 2026-08-07 no
+  # build step refreshed it and no gate looked at it. It rotted for a week: `wasm/src/lib.rs`
+  # exported `build_poa_signal_claim_turn`, the shipped glue had ZERO occurrences of it, and
+  # `background.ts:3499` refused EVERY judged PoA Signal claim on live beta. The instrument
+  # was one artifact away from the drift.
+  #
+  # The second row grades THE PACKAGE — the .zip a store receives and a user installs —
+  # because the directory and the archive are two things and only one of them ships.
+  #
+  # ⚑ BOTH ROWS ARE EXPECTED RED IN A LIVE MULTI-LANE TREE, for the same reason
+  # `wasm-freshness` is: the wasm32 source closure moves every few minutes, so any bundle
+  # older than the last lane's commit is genuinely stale. That is the gate working.
+  # OWNER: whoever ships. CLEAR IT: `bash scripts/build-web-artifacts.sh` (both bundles), or
+  # `cd extension && ./build.sh wasm && ./build.sh package` (the extension's alone).
+  # Do NOT silence either row — an unshippable artifact reading green is the whole wound.
+  "extension-wasm-freshness|180|bash scripts/check-wasm-freshness.sh extension --kind no-modules"
+  "extension-package-freshness|180|bash scripts/check-wasm-freshness.sh extension/dist/dregg-cipherclerk-chrome.zip --kind no-modules"
+  # The three rows above are NEGATIVE assertions — they pass just as happily when the
+  # refuser is broken, which is precisely how this class survives. This row drives the gate
+  # RED constructively on nine planted defects (missing record, superseded schema, edited
+  # blob, edited glue, a glue a week behind whose export is GONE, a moved source
+  # fingerprint, a glue that is not the kind claimed, and a package with no record) and
+  # asserts each plant LANDED before reading the verdict — plus two CONTROLS asserting the
+  # unmutated bundle is GREEN, without which nine reds are consistent with a gate that
+  # refuses everything. It builds its subjects in a temp dir and mutates nothing in the
+  # shared tree. ~5s, no cargo.
+  "wasm-freshness-red|180|bash scripts/check-wasm-freshness.sh --self-test"
   "effect-payload-shape|900|bash scripts/check-effect-payload-shape.sh"
   # An em-dash in a string a PLAYER reads. Paired with its own can-it-go-red run, the way
   # `feature-t3-ratchet` is: the gate is a NEGATIVE assertion, which is the shape that passes

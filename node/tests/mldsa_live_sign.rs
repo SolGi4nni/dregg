@@ -37,6 +37,7 @@ use dregg_node::{
     install_mldsa_verified_sign_core, install_mldsa_verified_sign_core_real,
     install_mldsa_verified_verify_core,
 };
+use dregg_pq::MlDsaSignCoreReply;
 use fips204::ml_dsa_65;
 use fips204::traits::{KeyGen as _, SerDes as _, Signer as _, Verifier as _};
 
@@ -97,9 +98,11 @@ fn verified_scalar_sign_core_runs_live_and_roundtrips() {
     );
 
     // Honest sample: secret (s1,s2,t0)=(5,1,3), message μ=7, mask y=40 → accepted signature (c̃,z,h)=(7,45,0).
-    let sig_wire = dregg_pq::ml_dsa_sign_core("5 1 3 7 40")
-        .expect("sign core installed ⇒ Some(_)")
-        .expect("honest sample ⇒ an accepted signature, not REJECT");
+    let sig_wire =
+        match dregg_pq::ml_dsa_sign_core("5 1 3 7 40").expect("sign core installed ⇒ Some(_)") {
+            MlDsaSignCoreReply::Signed(sig) => sig,
+            other => panic!("honest sample ⇒ an accepted signature, got {other:?}"),
+        };
     assert_eq!(
         sig_wire, "7 45 0",
         "the live Lean signCore emits the accepted signature wire"
@@ -114,14 +117,38 @@ fn verified_scalar_sign_core_runs_live_and_roundtrips() {
         "the extracted signCore output ACCEPTS through the extracted verifyCore — round-trip runs live"
     );
 
-    // Rejected samples are honestly Some(None) (resample) — NOT a faked accept.
-    assert_eq!(dregg_pq::ml_dsa_sign_core("5 1 3 7 261888"), Some(None));
-    assert_eq!(dregg_pq::ml_dsa_sign_core("5 1 3 7 1000000"), Some(None));
-    assert_eq!(dregg_pq::ml_dsa_sign_core("garbage"), Some(None));
+    // Out-of-norm samples are the honest Fiat–Shamir-with-aborts RESAMPLE — not a faked accept.
+    assert_eq!(
+        dregg_pq::ml_dsa_sign_core("5 1 3 7 261888"),
+        Some(MlDsaSignCoreReply::Resampled)
+    );
+    assert_eq!(
+        dregg_pq::ml_dsa_sign_core("5 1 3 7 1000000"),
+        Some(MlDsaSignCoreReply::Resampled)
+    );
+    // ⚑ AND A WIRE THE CORE COULD NOT READ IS A DIFFERENT ANSWER. Until `d62ec21d7` all three of
+    // these lines read `Some(None)` — this one was literally the same assertion as the two above,
+    // so a caller could resample forever against a wire that would never parse and this test would
+    // have said everything was fine. Restating it as `Resampled` would re-plant exactly that wound,
+    // so it is pinned to the malformed pole and to the DISTINCTNESS of the two, the same way
+    // `dregg-pq/src/mldsa.rs`'s own mocked-core test pins it.
+    match dregg_pq::ml_dsa_sign_core("garbage").expect("sign core installed ⇒ Some(_)") {
+        MlDsaSignCoreReply::WireMalformed { stage } => assert!(
+            stage.contains("scalar token"),
+            "the stage must name the half of the grammar that refused, got {stage:?}"
+        ),
+        other => panic!("an unreadable sign wire must not be the resample verdict; got {other:?}"),
+    }
+    assert_ne!(
+        dregg_pq::ml_dsa_sign_core("5 1 3 7 261888"),
+        dregg_pq::ml_dsa_sign_core("garbage"),
+        "the honest rejection-sampling abort and an unreadable wire must not be the same answer"
+    );
 
     eprintln!(
         "PROVED (A): the extracted verified SCALAR sign core runs LIVE; an honest sample signs and \
-         round-trips through the extracted verifyCore, bad samples honestly reject."
+         round-trips through the extracted verifyCore, an out-of-norm sample honestly resamples, \
+         and an unreadable wire refuses as a WIRE fault rather than as a resample."
     );
 }
 

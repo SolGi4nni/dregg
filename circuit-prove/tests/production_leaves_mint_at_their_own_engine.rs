@@ -292,7 +292,16 @@ fn each_switched_leaf_gets_its_own_ledger_at_its_own_height() {
             ext_deg: 4,
             log_d0: log_rows + k.log_blowup,
             bciks_m: BCIKS_M,
-            commit_pow_bits: k.commit_pow_bits,
+            // ⚑ The field is `commit_pow`, not `commit_pow_bits`. `FriKnobs`'s own
+            // docblock: it maps to `FriLedger::commit_pow_branch` one-for-one and is
+            // "the ONLY lever on that branch" — so a wrong name here is not cosmetic,
+            // it is the difference between pricing that branch and defaulting it.
+            // ⚑ The two structs spell it differently: Lean's `FriKnobs.commit_pow`,
+            // Rust's `MintKnobs.commit_pow_bits`. `FriKnobs`'s docblock says the field
+            // maps to `FriLedger::commit_pow_branch` one-for-one and is "the ONLY lever
+            // on that branch" — the branch the split actually moves (eps_C 43 -> 53) —
+            // so getting this wrong prices a config nobody runs while looking green.
+            commit_pow: k.commit_pow_bits,
         })
         .expect("Lean's ledger")
     };

@@ -230,7 +230,7 @@ inductive EffectTag
   | Refusal | CellSeal | CellUnseal | CellDestroy | Burn | AttenuateCapability
   | ReceiptArchive
   | Promise | Notify | React | Mint | ShieldedTransfer | Custom
-  | CreateHybridCell | RotatePqIdentity | Shield
+  | CreateHybridCell | RotatePqIdentity | Shield | Deshield
   deriving DecidableEq, Repr
 
 /-- The complete roster of live tags — used to state completeness as a list cover and to witness
@@ -246,7 +246,7 @@ def allEffectTags : List EffectTag :=
     .Refusal, .CellSeal, .CellUnseal, .CellDestroy, .Burn, .AttenuateCapability,
     .ReceiptArchive,
     .Promise, .Notify, .React, .Mint, .ShieldedTransfer, .Custom,
-    .CreateHybridCell, .RotatePqIdentity, .Shield ]
+    .CreateHybridCell, .RotatePqIdentity, .Shield, .Deshield ]
 
 /-! ## §7 — THE TOTAL COVER (completeness, exhaustive by the compiler).
 
@@ -312,6 +312,16 @@ def classify : EffectTag → Classification
   -- (shield-side, evidence ↑). Self-authorizing like `NoteSpend`/`ShieldedTransfer`; the
   -- executor's `value == piVALUE` boundary equality conserves without a cleartext `move`.
   | .Shield             => .survivor .shieldUnshield
+  -- Deshield (off-ramp): the UNSHIELD direction of the same evidence verb, and the reason
+  -- `shieldUnshield` is ONE verb rather than two. Executor (`apply_deshield`): the spent
+  -- shielded note's revealed nullifier is consumed once into `note_nullifiers` (unshield,
+  -- evidence ↑, the same double-spend gate `NoteSpend` rides), and a CLEARTEXT commitment is
+  -- added (evidence ↑). Self-authorizing like `NoteSpend`/`Shield`. Unlike `Shield`, there is
+  -- no executor-side boundary equality to conserve with: the credit's canonical 16-bit limbs
+  -- are PUBLIC INPUTS of `dregg-shielded-deshield-value-link::v1`, pinned to the very columns
+  -- the spent note's carrier absorbs, so conservation is a circuit equality and an inflated
+  -- credit has no satisfying trace (`inflated_credit_unsat`).
+  | .Deshield           => .survivor .shieldUnshield
   -- The reactive triple rides the SAME evidence discipline — the design keystone
   -- (docs/deos/REACTIVE-EFFECTS.md §4, action.rs Track-2 header): "a promise-hole IS a
   -- nullifier; to React is to SPEND the hole." Promise/Notify are hole-MINTS (shield
@@ -363,10 +373,11 @@ manifest can consume it: every tag in `allEffectTags` has a classification. -/
 theorem classify_total : ∀ t ∈ allEffectTags, ∃ c, classify t = c := by
   intro t _; exact ⟨classify t, rfl⟩
 
-/-- The roster lists exactly the 37 live variants (the prior 34 plus cell-owned PQ birth and
-rotation and the shielded on-ramp `Shield`). The Rust gate (`turn/tests/verb_registry_gate.rs`) greps for THIS statement's RHS, so
+/-- The roster lists exactly the 38 live variants (the prior 34 plus cell-owned PQ birth and
+rotation, the shielded on-ramp `Shield` and the shielded OFF-ramp `Deshield`). The Rust gate
+(`turn/tests/verb_registry_gate.rs`) greps for THIS statement's RHS, so
 the census here cannot silently understate the wire enum. -/
-theorem effect_tag_count : allEffectTags.length = 37 := by decide
+theorem effect_tag_count : allEffectTags.length = 38 := by decide
 
 /-- `allEffectTags` has no duplicates — it is a faithful, non-redundant census of the wire enum. -/
 theorem effect_tags_nodup : allEffectTags.Nodup := by decide
@@ -495,7 +506,11 @@ private instance : BEq Classification where
 #guard classify .React == .survivor .shieldUnshield
 #guard classify .React == classify .NoteSpend       -- a react IS a nullifier spend
 -- the roster counts:
-#guard allEffectTags.length == 37
+-- ⚑ The roster-length guard was DELETED (2026-08-07, off-ramp pass), not bumped to 38. It was a
+-- verbatim duplicate of `effect_tag_count : allEffectTags.length = 38`, which is a NAMED theorem,
+-- is `#assert_axioms`-pinned below, and is the statement `turn/tests/verb_registry_gate.rs` greps
+-- for. Per `metatheory/docs/GUARD-DISCIPLINE.md` a fact worth asserting is worth naming; a `#guard`
+-- restating a proved theorem adds no check and one more number to forget to move.
 #guard survivors.length == 7          -- 7 constructors (shield/unshield folded)
 #guard survivorDirectionCount == 8    -- the human-facing eight
 

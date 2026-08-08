@@ -549,6 +549,32 @@ function selfTest(sources) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
+
+// ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
+// misreads this convention exists to stop happened to people reading RESULTS, not source. ──
+const SCOPE_ANSWERS =
+  `does each of the ${PINS.length} numbers this file REGEX-SCRAPES out of a named theorem STATEMENT TEXT in `
+  + 'KimchiStepProverChoice.lean / KimchiWrapProverChoice.lean satisfy the ceiling committed in THIS file '
+  + '(max may fall, min may rise, eq must not move), is every pin still readable at all, and is the ladder '
+  + `distance from the census rung to wrapmain-region-conformance.mjs TOP_RUNG at most ${RUNG_GAP_CEILING}?`;
+const SCOPE_DOES_NOT_ANSWER =
+  'whether those counts are TRUE of the emitted circuit. It reads statement TEXT: it never elaborates Lean, '
+  + 'never checks the theorem is PROVED (a sorry scrapes identically), and never re-derives freedom from an '
+  + 'artifact — a free cell and a derived one are the same bytes in the emitted JSON. `--artifact` adds three '
+  + 'SHAPE fields (name, public_input_size, num_rows) and no freedom measurement.';
+const SCOPE_ANSWERS_SELFTEST =
+  'bending IN-MEMORY copies of the census sources — every max/eq pin raised by one, every min pin lowered by '
+  + 'one, a renamed theorem, a reshaped statement, and five bends of the rung derivation — does each make its '
+  + 'pin RED or its derivation REFUSE, while the sources as committed anchor green?';
+const SCOPE_DOES_NOT_ANSWER_SELFTEST =
+  'whether the committed CEILINGS are the right numbers — those are a decision made in this file and no leg '
+  + 'checks them against anything. It proves the reader bites; the bare run is what decides the tree.';
+{
+  const st = argv.includes('--self-test');
+  console.log(`ANSWERS:         ${st ? SCOPE_ANSWERS_SELFTEST : SCOPE_ANSWERS}`);
+  console.log(`DOES NOT ANSWER: ${st ? SCOPE_DOES_NOT_ANSWER_SELFTEST : SCOPE_DOES_NOT_ANSWER}`);
+}
+
 const sources = {};
 for (const [k, rel] of Object.entries(SRC_PATH)) {
   const p = join(META_ROOT, rel);

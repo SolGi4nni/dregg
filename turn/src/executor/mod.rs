@@ -886,6 +886,15 @@ pub struct TurnExecutor {
     /// journal or ledger. See [`crate::shielded_verifier::ShieldOpeningVerifier`].
     pub shield_opening_verifier:
         Option<std::sync::Arc<dyn crate::shielded_verifier::ShieldOpeningVerifier>>,
+    /// The shielded OFF-RAMP seam (`Effect::Deshield`).
+    ///
+    /// `None` ⇒ `Effect::Deshield` is refused (fail-closed by absence), the same
+    /// posture as the other two shielded seams. Production is
+    /// `dregg_turn_prover::CircuitDeshieldVerifier` (calls the Lean-emitted
+    /// `dregg-shielded-spend-complete-fsi2::v1` + `dregg-shielded-deshield-value-link::v1`
+    /// goldens). VERIFY-RETURNS-VALUE; never sees the journal or ledger. See
+    /// [`crate::shielded_verifier::DeshieldVerifier`].
+    pub deshield_verifier: Option<std::sync::Arc<dyn crate::shielded_verifier::DeshieldVerifier>>,
     /// Optional budget gate (Stingray bounded counter).
     /// When present, the executor checks the silo's local budget slice before executing
     /// each turn. If the slice cannot cover the turn fee, the turn is rejected with
@@ -1283,6 +1292,7 @@ impl TurnExecutor {
             proof_verifier: None,
             shielded_transfer_verifier: None,
             shield_opening_verifier: None,
+            deshield_verifier: None,
             budget_gate: None,
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1367,6 +1377,7 @@ impl TurnExecutor {
             proof_verifier: None,
             shielded_transfer_verifier: None,
             shield_opening_verifier: None,
+            deshield_verifier: None,
             budget_gate: Some(Mutex::new(gate)),
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1421,6 +1432,7 @@ impl TurnExecutor {
             proof_verifier: Some(verifier),
             shielded_transfer_verifier: None,
             shield_opening_verifier: None,
+            deshield_verifier: None,
             budget_gate: None,
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1516,6 +1528,29 @@ impl TurnExecutor {
         verifier: std::sync::Arc<dyn crate::shielded_verifier::ShieldOpeningVerifier>,
     ) -> Self {
         self.shield_opening_verifier = Some(verifier);
+        self
+    }
+
+    /// Inject the deshield verifier — the shielded OFF-RAMP (`Effect::Deshield`).
+    ///
+    /// Production is `dregg_turn_prover::CircuitDeshieldVerifier`. Until it is
+    /// injected, every `Effect::Deshield` fails closed — a verify-only executor
+    /// cannot admit a shielded off-ramp, the same posture as the other two shielded
+    /// seams.
+    pub fn set_deshield_verifier(
+        &mut self,
+        verifier: std::sync::Arc<dyn crate::shielded_verifier::DeshieldVerifier>,
+    ) {
+        self.deshield_verifier = Some(verifier);
+    }
+
+    /// Builder form of [`Self::set_deshield_verifier`].
+    #[must_use]
+    pub fn with_deshield_verifier(
+        mut self,
+        verifier: std::sync::Arc<dyn crate::shielded_verifier::DeshieldVerifier>,
+    ) -> Self {
+        self.deshield_verifier = Some(verifier);
         self
     }
 

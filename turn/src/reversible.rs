@@ -433,6 +433,11 @@ impl Effect {
             // same double-spend gate `NoteSpend` rides) and appends a shielded note —
             // committed, no inverse.
             Effect::Shield { .. } => Inversion::Committed(CommittedReason::NullifierConsumed),
+            // A deshield consumes the SPENT shielded note's nullifier one-shot and
+            // creates a cleartext note — committed, no inverse. (Un-crediting would
+            // not restore the shielded note: the nullifier is spent, and the note it
+            // named cannot be re-minted without re-proving an opening nobody holds.)
+            Effect::Deshield { .. } => Inversion::Committed(CommittedReason::NullifierConsumed),
         }
     }
 }

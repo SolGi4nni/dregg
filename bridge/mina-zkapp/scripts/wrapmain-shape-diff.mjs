@@ -436,6 +436,31 @@ const argv = process.argv.slice(2);
 const known = new Set(['--self-test', '--report', '--update-baseline', '--accept-growth']);
 for (const a of argv) if (!known.has(a)) { console.error(`usage: wrapmain-shape-diff.mjs [${[...known].join('] [')}]`); process.exit(2); }
 
+// ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
+// misreads this convention exists to stop happened to people reading RESULTS, not source. ──
+const SCOPE_ANSWERS =
+  'for each of the seven kimchi gate types and each `typ x runlength` family, is |ours - mina| EXACTLY the '
+  + 'number recorded in fixtures/wrapmain-wrap-census-baseline.json — measured over the union of 15 '
+  + '/tmp/pickles-wrapmain rungs, each provenance-checked against the current source cone, probe rows spliced '
+  + 'out, every branch verified on emitted rows to be its base plus a suffix?';
+const SCOPE_DOES_NOT_ANSWER =
+  'whether the gates we emit ARE Mina wrap gates. It reads COUNTS of gate types and COUNTS of run lengths and '
+  + 'nothing else — never a coefficient, a wire, a row position or an ordering — so a circuit with the right '
+  + 'run-length multiset in the wrong order with wrong coefficients sits at baseline; and because it is a '
+  + 'RATCHET, at baseline means no worse than the recorded divergence, never conforms.';
+const SCOPE_ANSWERS_SELFTEST =
+  'given MINA OWN gate list as the synthetic candidate, do ratchet() and assemble() bite — a gate-type delta '
+  + 'that grew, a new divergent run-length family, a shrink the baseline does not record, a branch that is not '
+  + 'its base plus a suffix, and a rung contributing zero own rows?';
+const SCOPE_DOES_NOT_ANSWER_SELFTEST =
+  'anything about the wrap assembly on disk. It reads no emission and no baseline file at all; the bare census '
+  + 'refuses (exit 3) without one, so a green here is the instrument firing, not a census.';
+{
+  const st = argv.includes('--self-test') && argv.length === 1;
+  console.log(`ANSWERS:         ${st ? SCOPE_ANSWERS_SELFTEST : SCOPE_ANSWERS}`);
+  console.log(`DOES NOT ANSWER: ${st ? SCOPE_DOES_NOT_ANSWER_SELFTEST : SCOPE_DOES_NOT_ANSWER}`);
+}
+
 const { spec, publicInputSize, gates: minaGates } = await loadCircuit('wrap-transaction');
 const mina = { name: spec.stem.slice(0, 48), pub: publicInputSize, gates: minaGates.map((g) => g.typ) };
 

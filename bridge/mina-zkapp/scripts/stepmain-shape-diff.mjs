@@ -218,6 +218,32 @@ function selfTest(mina) {
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
 const arg = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
+
+// ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail, because the
+// misreads this convention exists to stop happened to people reading RESULTS, not source. ──
+const SCOPE_ANSWERS =
+  'over Mina compiled step-zkapp-proved blob and our stepmain_step_r8_finalize emission (live, else the '
+  + 'committed gz, both under the provenance floor): is every run LENGTH we emit for the five gadget families '
+  + 'one Mina also emits, is our per-family row COUNT at most Mina, is our gate-type alphabet inside Mina, and '
+  + 'is every Poseidon run on BOTH sides a multiple of 11?';
+const SCOPE_DOES_NOT_ANSWER =
+  'whether a gadget is in the right place or says the right thing. It is a SUBSET-and-inequality check over '
+  + 'run lengths: no coefficient, no wire, no row position and no ordering is ever read, and being arbitrarily '
+  + 'SHORT of Mina passes every verdict — an emission of one Poseidon permutation and nothing else is green. '
+  + 'stepmain-region-conformance.mjs is the file that sees those four things.';
+const SCOPE_ANSWERS_SELFTEST =
+  'with MINA OWN gate list bent four ways — a Poseidon permutation split by a retyped row, every EndoMul row '
+  + 'duplicated, a Lookup gate spliced in, one Poseidon row deleted — does each bend redden a NAMED verdict '
+  + 'while the unbent list stays green?';
+const SCOPE_DOES_NOT_ANSWER_SELFTEST =
+  'anything about our Lean emission, which it never reads: the candidate in every leg is Mina own gate list. '
+  + 'It proves the four verdicts can fire, not that the step assembly conforms.';
+{
+  const st = argv.includes('--self-test') && argv.length === 1;
+  console.log(`ANSWERS:         ${st ? SCOPE_ANSWERS_SELFTEST : SCOPE_ANSWERS}`);
+  console.log(`DOES NOT ANSWER: ${st ? SCOPE_DOES_NOT_ANSWER_SELFTEST : SCOPE_DOES_NOT_ANSWER}`);
+}
+
 if (argv.some((a) => a.endsWith('.json') && !argv.includes('--lean')))
   console.error('note: positional dump paths are gone — the Mina side is loaded (and md5-verified) by '
     + 'mina-canonical-circuit-oracle.mjs, and the Lean side by --lean <path> or the provenance floor.');

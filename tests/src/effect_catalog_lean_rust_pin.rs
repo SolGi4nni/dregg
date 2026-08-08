@@ -119,6 +119,12 @@ const RUST_ONLY: &[&str] = &[
     // modelling the shielded note domain, which `EffectKind` does not yet do. Leaves this
     // list when a `shield` constructor is added to Lean's catalog.
     "Shield",
+    // Deshield (off-ramp): value-moving, uncolored — the same residual as Shield, pointed the
+    // other way. Its honest color is Conservative (shielded-out V == cleartext-in V, and here
+    // it is a CIRCUIT equality rather than an executor comparison), but stating that in Lean
+    // means modelling the shielded note domain, which `EffectKind` does not yet do. Leaves
+    // this list when a `deshield` constructor is added to Lean's catalog.
+    "Deshield",
 ];
 
 // ---------------------------------------------------------------------------

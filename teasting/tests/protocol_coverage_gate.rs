@@ -115,6 +115,17 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         // `TurnExecutor::execute` path is not yet wired, so per the honesty contract
         // this stays `false` until that lands (same posture as ShieldedTransfer).
         Effect::Shield { .. } => false,
+        // Deshield (landed 2026-08-07): `true`, and the honesty contract's bar is met
+        // literally — `turn-prover/tests/deshield_offramp.rs` drives the variant through the
+        // PUBLIC `TurnExecutor::execute` door with real accept AND reject assertions: an
+        // honest off-ramp COMMITS (nullifier consumed, cleartext note created at exactly the
+        // spent note's value); a deshield crediting 1_000_000 for a worth-500 note is
+        // REFUSED and moves nothing; a replay of the same note is REFUSED by the
+        // double-spend gate; an uninjected executor REFUSES by name; and a note the
+        // executor never committed REFUSES under the live root. Not `false`: under-claiming
+        // a variant that IS driven would make this ratchet lie in the safe-looking
+        // direction, which is how a gate stops meaning anything.
+        Effect::Deshield { .. } => true,
     }
 }
 

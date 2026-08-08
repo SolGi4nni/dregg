@@ -2727,6 +2727,11 @@ impl TurnExecutor {
                 // proof + its shield-opening proof ARE the authority — no cross-cell
                 // victim to gate, no `action.target` permission.
                 | Effect::Shield { .. }
+                // Deshield is SELF-AUTHORIZING for the same reason, pointed the other
+                // way: its complete-spend proof + its value-link proof ARE the
+                // authority. The cleartext note it creates needs no target ACL any
+                // more than an `Effect::NoteCreate` does.
+                | Effect::Deshield { .. }
                 // Custom is SELF-AUTHORIZING via its proof: the custom sub-proof's
                 // registry verify + the `[old8,new8]` state weld ARE the authority
                 // (the cell's own committed pre-root is the pre-image the proof

@@ -1098,6 +1098,10 @@ pub fn weld_coverage(effect: &Effect, cell_id: &dregg_cell::CellId) -> WeldCover
         // Shield moves the note-nullifier and shielded accumulator roots (rotated
         // separately), never a committed field of the acting cell.
         | Effect::Shield { .. }
+        // Deshield moves the shielded accumulator's nullifier root and the cleartext
+        // commitments root (rotated separately), never a committed field of the
+        // acting cell.
+        | Effect::Deshield { .. }
         | Effect::BridgeMint { .. }
         | Effect::Promise { .. }
         | Effect::Notify { .. }

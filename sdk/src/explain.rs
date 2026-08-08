@@ -173,6 +173,11 @@ fn effect_body(effect: &Effect) -> String {
         } => format!(
             "a shielded on-ramp: debit a cleartext note (value {value}, asset {asset_type}) and mint an equal-value HIDDEN shielded note bound to the debited value"
         ),
+        Effect::Deshield {
+            value, asset_type, ..
+        } => format!(
+            "a shielded OFF-ramp: spend a HIDDEN shielded note and credit an equal-value cleartext note (value {value}, asset {asset_type}); the credit is bound to the spent note's value in-AIR, and the spent note's nullifier is consumed so it cannot leave twice"
+        ),
 
         Effect::SpawnWithDelegation {
             child_public_key,

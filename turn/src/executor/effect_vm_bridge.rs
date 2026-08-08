@@ -822,6 +822,9 @@ pub fn try_convert_turn_effects_to_vm(
                 Effect::Shield { .. } => {
                     return Err(EffectVmProjectionError::ShieldedEffect("Shield"));
                 }
+                Effect::Deshield { .. } => {
+                    return Err(EffectVmProjectionError::ShieldedEffect("Deshield"));
+                }
                 Effect::ExerciseViaCapability { inner_effects, .. } => {
                     check_inner(inner_effects)?;
                 }
@@ -848,6 +851,9 @@ pub fn try_convert_turn_effects_to_vm(
                 }
                 Effect::Shield { .. } => {
                     return Err(EffectVmProjectionError::ShieldedEffect("Shield"));
+                }
+                Effect::Deshield { .. } => {
+                    return Err(EffectVmProjectionError::ShieldedEffect("Deshield"));
                 }
                 Effect::ExerciseViaCapability { inner_effects, .. } => {
                     check_inner(inner_effects)?;

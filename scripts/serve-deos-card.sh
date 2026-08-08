@@ -46,7 +46,16 @@ PORT="${PORT:-8000}"
 DIST="$ROOT/deos-view/target/web-out/dist"
 
 echo "=== 1/3 Building the playground wasm bundle (wasm-pack, --target web) ==="
-wasm-pack build "$ROOT/wasm" --target web --out-dir pkg --release
+# THE FLAG PAIR, from the one definition. This line carried NO RUSTFLAGS at all, which is
+# one of the two ways to separate the pair: it took `getrandom_backend` from
+# `.cargo/config.toml` and never got the 32 MiB stack the in-tab recursion verifier needs.
+# It also writes `wasm/pkg` — the directory `scripts/check-wasm-freshness.sh` grades —
+# WITHOUT stamping provenance, so after this script runs that gate reads RED ("no
+# provenance record"), which is the correct fail-closed answer and the reason to build the
+# shipping bundle with `scripts/build-descent-wasm.sh` instead of this dev-loop helper.
+# shellcheck source=scripts/wasm-build-flags.sh
+. "$ROOT/scripts/wasm-build-flags.sh"
+RUSTFLAGS="$DREGG_WASM_RUSTFLAGS" wasm-pack build "$ROOT/wasm" --target web --out-dir pkg --release
 
 echo "=== 2/3 Baking the live card page (gpui-free web renderer) ==="
 ( cd "$ROOT/deos-view" && cargo run --no-default-features --features web --example web_render_card )

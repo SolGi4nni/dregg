@@ -1,0 +1,9 @@
+# PUBLISH TARGETS — written by `scripts/build-web-artifacts.sh`, never committed.
+#
+# `site/dist` and `site/pkg` are already ignored from the repo-root .gitignore. These two
+# were not, and `site/extension/` did not exist at all: the build died on
+#   cp … site/extension/dregg-cipherclerk.zip: No such file or directory
+# after twenty minutes of wasm, because a publish target that is neither created nor
+# ignored is a directory nobody has.
+extension/
+artifacts-manifest.json

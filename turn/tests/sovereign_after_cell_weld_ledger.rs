@@ -366,6 +366,9 @@ weld_ledger! {
             // Lean-emitted value-link proof.
             inputs: vec![],
             outputs: vec![],
+            // ⚑ Fixed forward by the deshield lane, 2026-08-07 — see the note on
+            // `minimal_shielded_payload` in turn/src/action.rs.
+            link_proof: vec![],
         },
     },
     BridgeMint => Class::NoCellStateChange, Prep::Live, Effect::BridgeMint {
@@ -450,6 +453,20 @@ weld_ledger! {
         nullifier: dregg_cell::Nullifier([0x68u8; 32]),
         note_tree_root: [0u8; 32],
         spending_proof: vec![],
+    },
+    // Deshield moves the note-nullifier + cleartext commitments roots (rotated
+    // separately), never a committed field of the acting cell → NoCellStateChange.
+    Deshield => Class::NoCellStateChange, Prep::Live, Effect::Deshield {
+        value: 1,
+        asset_type: 0,
+        note_commitment: dregg_cell::NoteCommitment([0x69u8; 32]),
+        encrypted_note: vec![],
+        input: dregg_turn::action::ShieldedInputPayload {
+            nullifier: 0x69,
+            spend_wide_binding: [0u32; 16],
+            spend_proof: vec![],
+        },
+        link_proof: vec![],
     },
 }
 
@@ -571,17 +588,22 @@ fn the_weld_projects_every_effect_variant_as_classified() {
         wrong_behavior.len(),
         wrong_behavior.join("\n  ")
     );
+    // ⚑ 16 -> 17 on 2026-08-07: the shielded OFF-ramp `Effect::Deshield` is a
+    // `NoCellStateChange` verb (its apply leg moves the note-nullifier and cleartext-commitments
+    // roots, never a committed field of the acting cell), so the middle bucket grew by exactly
+    // one. Bumped DELIBERATELY, which is what this pin exists to force.
     assert_eq!(
         counts,
-        (11, 16, 10),
+        (11, 17, 10),
         "projected / no-cell-state-change / unprojected-mover split moved. 11 verbs the weld \
-         projects, 16 whose apply leg writes no committed field of the acting cell, 10 movers the \
+         projects, 17 whose apply leg writes no committed field of the acting cell, 10 movers the \
          sovereign producers FAIL CLOSED on. Reconcile against `rotation_witness::weld_coverage` \
          and `node/src/api.rs`'s 29/5/3 attestation split before editing the pin"
     );
+    // ⚑ 37 -> 38 on 2026-08-07: `Effect::Deshield`, the shielded OFF-ramp.
     assert_eq!(
         weld_rows().len(),
-        37,
+        38,
         "the ledger must carry one row per `dregg_turn::Effect` variant"
     );
 }

@@ -45,6 +45,40 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. ─────────
+SCOPE_ANSWERS = (
+    "do the 28 commitments in each of the two sha256-pinned devnet wrap VK fixtures decode, "
+    "under the arkworks SWFlags::PositiveY (`greater`) convention, to 56 coordinates whose "
+    "Kimchi Fp sponge digest equals the VKDIGEST decimal typed into this file — and do the "
+    "`odd`/`even` readings fail to?"
+)
+SCOPE_DOES_NOT_ANSWER = (
+    "whether the fixture is the VK any chain actually verifies against. The sha256 pin says "
+    "the bytes have not moved since somebody committed them, not where they came from; and "
+    "the VKDIGEST it reproduces is a decimal retyped here beside the Lean constant."
+)
+SCOPE_ANSWERS_CHECK = (
+    "do the VK_COMM_XY and TXN_VK_COMM_XY `List Nat` literals, parsed TEXTUALLY out of "
+    "metatheory/Dregg2/Circuit/Emit/MinaWrapVkDigestChain.lean, equal the coordinates this "
+    "script decodes from the two sha256-pinned fixtures?"
+)
+SCOPE_DOES_NOT_ANSWER_CHECK = (
+    "whether those coordinates are the RIGHT ones. `--check` never computes a digest — the "
+    "VKDIGEST leg runs only in the default/--self-check mode — so it cannot catch a fixture "
+    "swap that both sides agree on. It never builds Lean either, so it cannot see whether "
+    "anything imports the two constants or what a proof does with them."
+)
+SCOPE_ANSWERS_SELFTEST = (
+    "can three controls fire in memory: an incremented coordinate differs from the original "
+    "list, sha256 separates a one-byte fixture change, and the odd-parity reading moves "
+    "coordinates and yields a digest that is not VKDIGEST?"
+)
+SCOPE_DOES_NOT_ANSWER_SELFTEST = (
+    "whether --check would catch a drifted Lean literal. The literal control never opens "
+    "MinaWrapVkDigestChain.lean and never calls lean_literals — it establishes only that "
+    "adding 1 to a number changes it. The convention control is the leg with real teeth."
+)
+
 # Pallas base field — `Dregg2.Circuit.Emit.PastaField.pN`.
 P = 28948022309329048855892746252171976963363056481941560715954676764349967630337
 # `y^2 = x^3 + 5`.
@@ -320,8 +354,21 @@ def main() -> int:
     ap.add_argument("--self-test", action="store_true", help="prove the check can go red")
     args = ap.parse_args()
 
+    # `--lean` writes the Lean literal block to stdout for redirection, so the banner goes to
+    # stderr THERE and only there; every other mode prints it on stdout.
+    sc = sys.stderr if args.lean else sys.stdout
+
     if args.self_test:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_SELFTEST}", file=sc, flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_SELFTEST}", file=sc, flush=True)
         return red_proof()
+
+    if args.self_check or not (args.lean or args.check):
+        print(f"ANSWERS:         {SCOPE_ANSWERS}", file=sc, flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER}", file=sc, flush=True)
+    if args.check:
+        print(f"ANSWERS:         {SCOPE_ANSWERS_CHECK}", file=sc, flush=True)
+        print(f"DOES NOT ANSWER: {SCOPE_DOES_NOT_ANSWER_CHECK}", file=sc, flush=True)
 
     if args.self_check or not (args.lean or args.check):
         for which in ("blockchain", "transaction"):

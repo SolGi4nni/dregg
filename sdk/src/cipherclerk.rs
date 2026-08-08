@@ -7095,17 +7095,23 @@ impl AgentCipherclerk {
                 "EffectVM cannot yet prove {effect}: the PQ identity authority plane has no AIR row"
             )));
         }
-        // The shielded ON-RAMP (`Effect::Shield`) is verified executor-side and has NO
-        // deployed EffectVM row, so the checked projection REFUSES it BY NAME — the same
-        // fail-closed posture as the verify-side twin
+        // The shielded BOUNDARY verbs — the ON-ramp (`Effect::Shield`) and the OFF-ramp
+        // (`Effect::Deshield`) — are verified executor-side and have NO deployed EffectVM
+        // row, so the checked projection REFUSES them BY NAME — the same fail-closed
+        // posture as the verify-side twin
         // (`dregg_turn::executor::try_convert_turn_effects_to_vm`, `ShieldedEffect`), and
         // nested inside `ExerciseViaCapability` too (which this projector only hash-folds).
-        fn find_shielded_onramp_effect(effects: &[Effect]) -> Option<&'static str> {
+        //
+        // ⚑ Both directions refuse. A projector that named only the on-ramp would let an
+        // off-ramp — the direction that MOVES VALUE OUT — through a witness path with no
+        // AIR row behind it, which is the worse of the two to miss.
+        fn find_shielded_boundary_effect(effects: &[Effect]) -> Option<&'static str> {
             for effect in effects {
                 match effect {
                     Effect::Shield { .. } => return Some("Shield"),
+                    Effect::Deshield { .. } => return Some("Deshield"),
                     Effect::ExerciseViaCapability { inner_effects, .. } => {
-                        if let Some(found) = find_shielded_onramp_effect(inner_effects) {
+                        if let Some(found) = find_shielded_boundary_effect(inner_effects) {
                             return Some(found);
                         }
                     }
@@ -7114,9 +7120,9 @@ impl AgentCipherclerk {
             }
             None
         }
-        if let Some(effect) = find_shielded_onramp_effect(effects) {
+        if let Some(effect) = find_shielded_boundary_effect(effects) {
             return Err(SdkError::InvalidWitness(format!(
-                "EffectVM cannot yet prove {effect}: the shielded on-ramp is verified \
+                "EffectVM cannot yet prove {effect}: the shielded value boundary is verified \
                  executor-side and has no deployed AIR row"
             )));
         }

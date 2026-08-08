@@ -508,6 +508,12 @@ fn assert_variant_coverage(e: &Effect) -> &'static str {
         // named REFUSAL (`effect_enum_descriptor_residual_gate.rs`, RefusedResidual),
         // and its executor debit+mint is exercised in `turn-prover`.
         Effect::Shield { .. } => "Shield",
+        // Deshield (added 2026-08-07): the shielded OFF-ramp — the exit that did not exist,
+        // so value could enter the pool and never leave. Its EffectVM stage is a named
+        // REFUSAL (`effect_enum_descriptor_residual_gate.rs`, RefusedResidual), and its
+        // executor spend+credit+nullify is exercised end-to-end through the PUBLIC
+        // `TurnExecutor::execute` path in `turn-prover/tests/deshield_offramp.rs`.
+        Effect::Deshield { .. } => "Deshield",
     }
 }
 

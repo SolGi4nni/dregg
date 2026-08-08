@@ -923,6 +923,7 @@ impl TurnExecutor {
             E::RevokeCapability { .. } => 0x09,
             E::EmitEvent { .. } => 0x0A,
             E::Shield { .. } => 0x0E,
+            E::Deshield { .. } => 0x0F,
             _ => 0xFF,
         }
     }

@@ -67,6 +67,17 @@ for a in "$@"; do
   esac
 done
 
+# ── SCOPE ─ this block is the ONLY copy; it prints on every run, pass or fail. The
+# --self-test answers a DIFFERENT question from the bare run and carries its own pair. ──
+if [[ "$SELF_TEST" -eq 1 ]]; then
+  SCOPE_A='at 12 trials per leg: is the unperturbed differential GREEN; does its log state a baseline decode byte-equal to the committed proof, ADVERSARY ALIVE, at least one changed old-to-new delta and zero no-ops; does removing all four teeth return the forgery code 2; does emptying the free-lane allow-list return 4; do a short stream and zero trials each return 6; and does an empty workdir return BLOCKED 3?'
+  SCOPE_D='whether the two verifiers agree on this tree. The control leg runs 12 trials, not the recorded 3000 — that is the fri-mutation row under --all — and leg 3b is REPORTED, never asserted: a tooth that rejected nothing at this population prints a warning and does not fail.'
+else
+  SCOPE_A='over the requested number of seeded single-felt mutations of the committed dregg root FRI proof (default 3000 at seed 20260731), do the DEPLOYED Rust verifier and the o1js twin return the same accept-or-reject verdict at or above the floor, with free lanes only in FRIMUT_EXPECTED_FREE, and with the floors inside the twin met — the full stream delivered, zero no-op deltas, both-reject above zero, and at least two bound regions sampled?'
+  SCOPE_D='whether either verifier is CORRECT, or whether the IN-CIRCUIT one agrees. This is verdict agreement on single-element mutations of ONE committed proof under one seed: a defect the two implementations SHARE is invisible by construction, nothing here compiles or proves a Kimchi circuit, and a missing oracle binary or committed proof exits 3 (BLOCKED) instead of producing a verdict at all.'
+fi
+printf 'ANSWERS:         %s\nDOES NOT ANSWER: %s\n' "$SCOPE_A" "$SCOPE_D"
+
 SEED="${FRIMUT_SEED:-20260731}"
 TRIALS="${FRIMUT_TRIALS:-3000}"
 FLOOR="${FRIMUT_FLOOR:-1.0}"

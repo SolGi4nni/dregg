@@ -142,3 +142,67 @@ pub trait ShieldOpeningVerifier: Send + Sync {
         shield_proof: &[u8],
     ) -> Result<VerifiedShieldOpening, TurnError>;
 }
+
+/// What a [`DeshieldVerifier`] RETURNS on accept: the shielded nullifier to consume,
+/// and nothing else.
+///
+/// ⚑ **There is deliberately no `value` field here, and its absence is the design.**
+/// [`VerifiedShieldOpening`] returns `value`/`asset_type` because a shield-opening
+/// proof PUBLISHES them and the core must then check them against the debit — an
+/// executor-side comparison. A deshield has nothing to compare: the credit's canonical
+/// 16-bit limbs are public inputs of the value-link relation, pinned to the very
+/// columns the spent note's carrier absorbs, and the verifier is HANDED the effect's
+/// declared `(value, asset_type)` to build them from. So acceptance already means "the
+/// declared credit is what the note holds". Returning a value here would invite a
+/// redundant `if verified.value != value` that reads like the binding while being a
+/// tautology — the shape a later reader would trust.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifiedDeshield {
+    /// The revealed shielded nullifier as a canonical BabyBear field element, read off
+    /// the VERIFIED complete-spend statement rather than re-read from the untrusted
+    /// payload. The core domain-separates it into the 32-byte `note_nullifiers` key
+    /// space and consumes it once, journaled — so a note cannot be deshielded twice.
+    pub nullifier: u32,
+}
+
+/// The injected verifier for [`crate::action::Effect::Deshield`] — the shielded
+/// OFF-RAMP.
+///
+/// Implemented by `dregg_turn_prover::CircuitDeshieldVerifier` over
+/// `dregg-circuit-prove`'s `ShieldedDeshield::verify`; injected with
+/// [`crate::executor::TurnExecutor::set_deshield_verifier`]. Fail-closed by absence:
+/// no verifier injected ⇒ `Effect::Deshield` is refused, exactly as the other two
+/// shielded seams behave.
+///
+/// Pure verification, like its two siblings: it receives the wire payload plus the
+/// executor's committed root, runs both STARK gates, and returns the proven nullifier.
+/// It never sees the journal, the ledger, or the executor — the core `apply_deshield`
+/// path performs (and journals) the nullifier consumption and the cleartext credit.
+pub trait DeshieldVerifier: Send + Sync {
+    /// Run EVERY cryptographic gate and return the validated data, or the refusal.
+    ///
+    /// # ⚑ Why `credit_value` / `credit_asset` are PARAMETERS
+    ///
+    /// They are the effect's DECLARED public cleartext credit — the `u64`s the core is
+    /// about to record in the cleartext ledger. The implementor MUST build the
+    /// value-link statement's `vLimb[4] ++ aLimb[4]` public inputs from *these*, never
+    /// from anything inside `link_proof`. That is what makes the relation a binding on
+    /// the credit rather than a statement the proof makes about itself: the relation
+    /// pins those limbs to the same columns the spent note's carrier absorbs, so a
+    /// declared credit larger (or smaller) than the note has no satisfying trace.
+    ///
+    /// # ⚑ `committed_root` — the seam-#15 argument
+    ///
+    /// The executor's LIVE shielded-accumulator root, read inside `apply_deshield`
+    /// immediately before this call and never from the payload (which has no root
+    /// field). A forged-tree membership proof folds to `R ≠ committed_root` and the
+    /// 8-lane `rootPins` `.piBinding` has no satisfying assignment.
+    fn verify(
+        &self,
+        input: &crate::action::ShieldedInputPayload,
+        credit_value: u64,
+        credit_asset: u64,
+        link_proof: &[u8],
+        committed_root: [BabyBear; 8],
+    ) -> Result<VerifiedDeshield, TurnError>;
+}

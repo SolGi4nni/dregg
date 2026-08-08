@@ -513,6 +513,21 @@ async function selfTest() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // ── SCOPE ─ this pair is the ONLY copy; it prints on every run, pass or fail. It lives INSIDE the
+  // CLI entry guard on purpose: five gates in this directory `import` this module, and a banner at
+  // module scope would prepend itself to every one of their outputs. ────────────────────────────
+  const SCOPE_ANSWERS =
+    'over a SYNTHESISED temp artifact and a two-file FAKE cone, does requireFreshArtifact ACCEPT the honest '
+    + 'stamp and REFUSE-as-StaleArtifact each of five bends (no stamp beside the artifact, a cone that has '
+    + 'since moved, artifact bytes that are not the stamped ones, an emit cone uncommitted at the stamped '
+    + 'HEAD, and a stamp from outside git) — plus, on the REAL tree, does every path gitContext reports for '
+    + 'EmitStepMainJson.lean cone actually exist on disk?';
+  const SCOPE_DOES_NOT_ANSWER =
+    'whether any artifact or fixture in this tree is fresh. Seven of the eight legs run on inputs this file '
+    + 'writes into a temp dir; what is measured is the FLOOR own accept/refuse behaviour. Each gate that '
+    + 'delegates freshness to this module grades its own artifact, and none of that happens here.';
+  console.log(`ANSWERS:         ${SCOPE_ANSWERS}`);
+  console.log(`DOES NOT ANSWER: ${SCOPE_DOES_NOT_ANSWER}`);
   if (process.argv.includes('--self-test')) await selfTest();
   else { console.error('usage: node scripts/emit-provenance.mjs --self-test'); process.exit(2); }
 }

@@ -83,6 +83,7 @@ use std::sync::Arc;
 pub mod aggregate_bilateral_prover;
 pub mod custom_program_proofs;
 pub mod descent_census_custom;
+pub mod deshield_verifier;
 pub mod faithful_note_spend_exact_v3_verifier;
 pub mod faithful_note_spend_verifier;
 pub mod private_graph_rewrite_custom;
@@ -100,6 +101,7 @@ pub use aggregate_bilateral_prover::{
     verify_aggregated_tree, verify_cross_side_existence,
 };
 pub use custom_program_proofs::TurnCustomProofsExt;
+pub use deshield_verifier::CircuitDeshieldVerifier;
 pub use faithful_note_spend_exact_v3_verifier::FaithfulNoteSpendExactV3Verifier;
 pub use faithful_note_spend_verifier::FaithfulNoteSpendVerifier;
 pub use proven_receipt::mint_transfer_proven_receipt;

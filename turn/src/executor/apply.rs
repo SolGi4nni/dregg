@@ -507,6 +507,22 @@ impl TurnExecutor {
                 note_tree_root,
                 spending_proof,
             ),
+            Effect::Deshield {
+                value,
+                asset_type,
+                note_commitment,
+                input,
+                link_proof,
+                ..
+            } => self.apply_deshield(
+                path,
+                journal,
+                *value,
+                *asset_type,
+                note_commitment,
+                input,
+                link_proof,
+            ),
             // THE CUSTOM-VK DOOR, closed on THIS side (fail-closed).
             //
             // `Effect::Custom` is adjudicated ONLY on the proof-carrying sovereign path
@@ -2061,6 +2077,127 @@ impl TurnExecutor {
                 .map_err(|e| invalid(format!("shield output note append failed: {e}")))?;
             journal.record_shielded_note_inserted(commitment);
         }
+
+        Ok(())
+    }
+
+    /// Apply a **shielded OFF-RAMP** (`Effect::Deshield`): SPEND a hidden shielded
+    /// note, CREDIT the cleartext ledger with its value, NULLIFY the note.
+    ///
+    /// The exact mirror of [`Self::apply_shield`], and it closes the gap that made
+    /// the pool one-way: value could enter (`Shield`) and move inside
+    /// (`ShieldedTransfer`) but never leave, so every note that entered was trapped.
+    ///
+    /// Four gates, all fail-closed and atomic under the journal (any failure after a
+    /// mutation unwinds it — a Deshield NEVER credits without nullifying, which is
+    /// the outcome worse than the theft this closes: an un-nullified note credited
+    /// once can be credited again):
+    ///
+    /// 1. **THE COMMITTED ROOT, from ledger state (seam #15).** `note_shielded`'s live
+    ///    `root8()` is read HERE and handed to the verifier as the 8-lane `piCommitted`
+    ///    the complete-spend proof is judged against. The payload has no root field to
+    ///    offer instead. A spend folded in the attacker's own tree reaches
+    ///    `R ≠ committed_root` and refuses.
+    /// 2. **VERIFY** — the injected [`crate::shielded_verifier::DeshieldVerifier`] runs
+    ///    the complete-spend relation under that root AND the Lean-emitted
+    ///    `dregg-shielded-deshield-value-link::v1`, whose sixteen carrier PIs come off
+    ///    the spend proof and whose eight remaining PIs are the canonical 16-bit limbs
+    ///    of THIS effect's declared `value`/`asset_type`. Fail-closed by absence: no
+    ///    verifier injected ⇒ refused.
+    ///
+    ///    ⚑ **There is no GATE-3-style `value == piVALUE` comparison here, and its
+    ///    absence is the design.** `apply_shield` needs one because the shield-opening
+    ///    proof PUBLISHES a value the executor must then tie to the debit. A deshield
+    ///    has nothing to compare: the credit's limbs are public inputs of the relation,
+    ///    pinned to the very columns the spent note's carrier absorbs (Lean
+    ///    `deshield_link_reads_one_opening`), so acceptance in gate 2 already MEANS the
+    ///    declared credit is what the note holds. A credit worth more has no satisfying
+    ///    trace (`inflated_credit_unsat`); a credit in another asset likewise
+    ///    (`substituted_credit_asset_unsat`). Adding a comparison here would be a
+    ///    tautology dressed as a check — the shape a later reader would trust.
+    /// 3. **NULLIFY** — consume the shielded nullifier ONCE in `note_nullifiers`,
+    ///    domain-separated to a 32-byte key so it never collides with the cleartext
+    ///    nullifier space (the same `shielded_nullifier_key` `apply_shielded_transfer`
+    ///    uses). Journaled. This is where the note LEAVES the shielded domain, and it
+    ///    is what makes a second deshield of the same note a double-spend refusal.
+    /// 4. **CREDIT** — create the cleartext note through the existing
+    ///    [`Self::apply_note_create`] gates (null-commitment refusal, duplicate
+    ///    rejection, journaled insert into `note_commitments` at `value`). This is
+    ///    where `V` ENTERS cleartext. A CLEARTEXT credit — no value commitment, no
+    ///    range proof: the value is public and the AIR already forced `0 ≤ v < 2^64`
+    ///    off the limb cells' booleanity.
+    ///
+    /// Verify runs first so no note is nullified for a credit that will not validate;
+    /// the nullify and the credit stay atomic under the journal. Nullify precedes
+    /// credit so that a failing credit (a duplicate commitment, say) unwinds BOTH
+    /// rather than leaving a spent note with nothing to show for it.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_deshield(
+        &self,
+        path: &[usize],
+        journal: &mut LedgerJournal,
+        value: u64,
+        asset_type: u64,
+        note_commitment: &NoteCommitment,
+        input: &crate::action::ShieldedInputPayload,
+        link_proof: &[u8],
+    ) -> Result<(), (TurnError, Vec<usize>)> {
+        let invalid = |reason: String| (TurnError::InvalidEffect { reason }, path.to_vec());
+
+        // GATE 2 (fail-closed by absence), hoisted so nothing is read from state for
+        // an effect this executor cannot admit anyway.
+        let Some(verifier) = self.deshield_verifier.as_ref() else {
+            return Err(invalid(
+                "deshield requires an injected deshield verifier (no deshield verifier \
+                 linked in this verify-only executor)"
+                    .into(),
+            ));
+        };
+
+        // GATE 1 (THE COMMITTED ROOT). Read from the executor's own state, before any
+        // mutation, and the guard dropped immediately: the root a spend is judged
+        // against is the accumulator as it stood when the turn began.
+        let committed_root = self.note_shielded.lock().unwrap().root8().limbs();
+
+        // GATE 2 (VERIFY): both relations, with the DECLARED credit handed in as the
+        // value-link statement's limbs.
+        let verified = verifier
+            .verify(input, value, asset_type, link_proof, committed_root)
+            .map_err(|error| (error, path.to_vec()))?;
+
+        // GATE 3 (NULLIFY): the note leaves the shielded domain, exactly once.
+        let nullifier = shielded_nullifier_key(verified.nullifier);
+        {
+            let mut set = self.note_nullifiers.lock().unwrap();
+            if set.contains(&nullifier) {
+                return Err(invalid(
+                    "double-spend: shielded nullifier already in note_nullifiers set \
+                     (this note has already been deshielded or transferred)"
+                        .into(),
+                ));
+            }
+            // The `0` value mirrors `apply_shielded_transfer`'s: the shielded
+            // nullifier carries no circuit-continuous cleartext note value, and this
+            // entry pollutes `note_nullifiers.root8()` vs the in-circuit accumulator
+            // regardless of what is recorded. Segregating the committed accumulator
+            // from the Rust double-spend dedup set is the same Stage-B/D work that
+            // residual names there — it is one residual, not two.
+            set.insert(nullifier, 0).map_err(|e| {
+                invalid(match e {
+                    NoteError::DoubleSpend { .. } => {
+                        "double-spend: race on shielded nullifier insert".into()
+                    }
+                    other => format!("shielded nullifier insert failed: {other:?}"),
+                })
+            })?;
+        }
+        journal.record_note_nullifier_inserted(nullifier);
+        journal.record_note_spend(nullifier);
+
+        // GATE 4 (CREDIT): V enters cleartext. Through `apply_note_create`, so the
+        // cleartext side is landed by exactly the code an `Effect::NoteCreate` lands
+        // it with — a second insert path here is how the two would drift.
+        self.apply_note_create(path, journal, note_commitment, value, None, None)?;
 
         Ok(())
     }
