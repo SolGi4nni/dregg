@@ -60,6 +60,7 @@ import Dregg2.Circuit.Emit.MinaFixtureEmit
 import Dregg2.Circuit.Emit.LightClientMinaAir
 import Dregg2.Circuit.Emit.LightClientMinaLinkAir
 import Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir
+import Dregg2.Circuit.Emit.MinaPreambleLegsAir
 import Dregg2.Circuit.Emit.LightClientSolStakeFoldAir
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 import Dregg2.Circuit.Emit.Poseidon2HashEmit
@@ -485,6 +486,17 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- link honest. ⚑ NO TABLE AND NO LOOKUP: committed width = declared width.
   , ("dregg-mina-body-preimage-bits-v1.json",
       Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir.bodyBitsDesc)
+    -- ⚑ THE PREAMBLE LEGS (2026-08-08): `dregg-mina-preamble-legs::v1`, ONE ROW, 30 columns,
+    -- 38 constraints — five `verify_block` preamble legs (B1 non-chunking + non-empty walk,
+    -- B3 step-domain ≤ 16, C3's packing length, D1a/D1b's two count equalities) rendered as
+    -- emitted polynomials instead of the compiled decision the observer calls. `preambleDesc`
+    -- is COMPILER OUTPUT — `EffectLower.lowerTiedAir` of the `EffectAir` source `preambleAir`,
+    -- no hand-written `VmConstraint2` in its module. D1b is the marquee: the equality
+    -- `verifier.rs:816-820` checks, which `shapeOkRec`'s `decide (0 < publicLen)` never was —
+    -- the 41-word index the old gate admitted has NO accepted row
+    -- (`the_41_word_index_has_no_accepted_row`). ⚑ NO TABLE AND NO LOOKUP: committed = declared.
+  , ("dregg-mina-preamble-legs-v1.json",
+      Dregg2.Circuit.Emit.MinaPreambleLegsAir.preambleDesc)
     -- ⚑ THE SOLANA STAKE-TABLE FOLD (2026-08-04): `dregg-solana-stake-table-fold::v1`, ONE ROW PER
     -- STAKE-TABLE ENTRY. `solStakeFoldDesc` is COMPILER OUTPUT — `EffectLower.lowerAir` of the
     -- `EffectAir` source `solStakeFoldAir`, no hand-written `VmConstraint2` in its module
@@ -725,8 +737,10 @@ Both directions are gated outside Lean:
 -- 2026-08-05 absorbing. Rows and pin are one atom.
 -- ⚑ 2026-08-08: the 126th row (`dregg-mina-body-preimage-bits-v1.json`) pushed the `rfl` over the
 -- default recursion depth — the list is longer, not the descriptor heavier. Raised, not weakened.
+-- ⚑ 2026-08-08: 127 = 126 + `dregg-mina-preamble-legs-v1.json` (the five `verify_block` preamble
+-- legs as emitted polynomials). Rows and pin are one atom — bumped in the same edit as the row.
 set_option maxRecDepth 8000 in
-theorem byNameDescriptors_length : byNameDescriptors.length = 126 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 127 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
