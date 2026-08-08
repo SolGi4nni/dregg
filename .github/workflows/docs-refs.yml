@@ -82,4 +82,17 @@ jobs:
             exit 1
           fi
           echo "scanning ${#docs[@]} markdown files (docs/audit + docs/SUPERSEDED excluded)"
-          bash scripts/check-doc-refs.sh "${docs[@]}"
+          # ⚑ `metatheory` IS NOT DECORATION — WITHOUT IT THIS JOB COULD NOT PASS (2026-08-08).
+          # `check-doc-refs.sh` has TWO passes: markdown prose, and path-shaped tokens in LEAN
+          # COMMENTS (gated against scripts/doc-refs-lean-baseline.tsv). The lean pass carries its
+          # own non-vacuity floor — under 2000 lean refs scanned is a FAIL, because a scanner that
+          # harvests nothing reports no findings forever. This job handed it a MARKDOWN-ONLY file
+          # list, so the lean pass scanned zero files and the floor fired by construction:
+          #     check-doc-refs: FAIL — only 0 lean refs scanned (floor 2000).
+          # measured on run 31231048428, the FIRST run this workflow has ever had (see the trigger
+          # block at the top of this file for why it had never run). Arming the trigger is what
+          # made the degenerate invocation visible; a gate that cannot pass in the shape CI calls
+          # it is not a stricter gate, it is a wall, and the escape hatch would become routine.
+          # Passing `metatheory` makes CI ask the SAME question `scripts/git-hooks/pre-push` asks
+          # — the two must not diverge, or the hook and the checks page grade different trees.
+          bash scripts/check-doc-refs.sh "${docs[@]}" metatheory
