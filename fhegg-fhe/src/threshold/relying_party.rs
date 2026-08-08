@@ -40,6 +40,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use fhe::bfv::PublicKey;
@@ -235,6 +236,69 @@ impl From<QuorumError> for RelyingPartyError {
 
 type Result<T> = std::result::Result<T, RelyingPartyError>;
 
+/// What this caller has actually spent on the wire, counted as it happens.
+///
+/// The committee's cost has been quoted from a ROUND FORMULA. A formula is a
+/// derivation about the protocol; this is a measurement of the deployment. Every
+/// field is incremented inside [`DistributedCommitteeClient::request`], which is
+/// the single place a byte leaves or arrives, so no round can be counted twice or
+/// missed.
+///
+/// `round_trips` counts REQUEST/RESPONSE EXCHANGES, not protocol rounds: one
+/// protocol round over `n` parties is `n` exchanges, and a chunked round is one
+/// exchange per chunk per party. That is deliberately the operationally binding
+/// number — it is what the TCP connection count and the latency actually track.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WireCost {
+    /// Connect + write + read cycles completed against a party.
+    pub round_trips: u64,
+    /// Payload bytes written (frame headers excluded — they are 9 bytes each and
+    /// `round_trips * 9` recovers them exactly).
+    pub bytes_out: u64,
+    /// Payload bytes read back.
+    pub bytes_in: u64,
+}
+
+impl WireCost {
+    /// The cost incurred between two observations of the same client.
+    pub fn since(self, earlier: Self) -> Self {
+        Self {
+            round_trips: self.round_trips.saturating_sub(earlier.round_trips),
+            bytes_out: self.bytes_out.saturating_sub(earlier.bytes_out),
+            bytes_in: self.bytes_in.saturating_sub(earlier.bytes_in),
+        }
+    }
+}
+
+impl std::fmt::Display for WireCost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} round-trips, {:.2} MiB out / {:.2} MiB in",
+            self.round_trips,
+            self.bytes_out as f64 / (1024.0 * 1024.0),
+            self.bytes_in as f64 / (1024.0 * 1024.0),
+        )
+    }
+}
+
+#[derive(Debug, Default)]
+struct WireCounters {
+    round_trips: AtomicU64,
+    bytes_out: AtomicU64,
+    bytes_in: AtomicU64,
+}
+
+impl WireCounters {
+    fn snapshot(&self) -> WireCost {
+        WireCost {
+            round_trips: self.round_trips.load(Ordering::Relaxed),
+            bytes_out: self.bytes_out.load(Ordering::Relaxed),
+            bytes_in: self.bytes_in.load(Ordering::Relaxed),
+        }
+    }
+}
+
 /// Drives the landed distributed committee over its authenticated transport. It is
 /// the caller a dark clearing (or any threshold-decrypt consumer) constructs; the
 /// `n` custody parties are separate processes it talks to by address.
@@ -244,6 +308,7 @@ pub struct DistributedCommitteeClient {
     party_addresses: Vec<SocketAddr>,
     party_keys: Vec<[u8; 32]>,
     io_timeout: Duration,
+    wire: WireCounters,
 }
 
 impl DistributedCommitteeClient {
@@ -268,12 +333,19 @@ impl DistributedCommitteeClient {
             party_addresses,
             party_keys,
             io_timeout: Duration::from_secs(300),
+            wire: WireCounters::default(),
         })
     }
 
     pub fn with_io_timeout(mut self, io_timeout: Duration) -> Self {
         self.io_timeout = io_timeout;
         self
+    }
+
+    /// What this client has spent on the wire so far. Take one before a phase and
+    /// one after, then [`WireCost::since`], to price that phase exactly.
+    pub fn wire_cost(&self) -> WireCost {
+        self.wire.snapshot()
     }
 
     pub fn dkg(&self) -> &DistributedDkg {
@@ -302,6 +374,15 @@ impl DistributedCommitteeClient {
             .map_err(|error| RelyingPartyError::Transport(format!("write to {party}: {error}")))?;
         let (_, _, reply) = read_frame(&mut stream)
             .map_err(|error| RelyingPartyError::Transport(format!("read from {party}: {error}")))?;
+        // Counted HERE and only here: `request` is the single place this caller
+        // puts a byte on a socket, so the wire cost cannot drift from the wire.
+        self.wire.round_trips.fetch_add(1, Ordering::Relaxed);
+        self.wire
+            .bytes_out
+            .fetch_add(payload.len() as u64, Ordering::Relaxed);
+        self.wire
+            .bytes_in
+            .fetch_add(reply.len() as u64, Ordering::Relaxed);
         Ok(reply)
     }
 

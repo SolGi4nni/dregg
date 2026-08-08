@@ -45,23 +45,41 @@
 //! under the 8 MiB sealed-envelope limit (`fhegg_fhe::threshold::chunked`), so `n > 3` and
 //! degree-8192 no longer overflow.
 //!
-//! # What is actually left, named exactly
+//! # The lifecycle blocker HAS A HOME NOW — read this before repeating the old sentence
 //!
-//! The remaining gap is NOT cryptographic, it is LIFECYCLE. Both ceremonies here
+//! What used to stand here said the remaining gap was LIFECYCLE: both ceremonies here
 //! ([`dark_pool_offering`](crate::dark_pool_offering)'s `pool_ceremony` and
-//! [`oracle_pit`](crate::oracle_pit)'s `pit_ceremony`) are synchronous functions that return a
-//! ready committee. A distributed committee is `n` party PROCESSES that must be enrolled, spawned
-//! or connected to, waited on, and shut down, and whose failure is an operational event rather than
-//! an `Err`. Nothing in this module has anywhere to put that, and inventing a process supervisor
-//! inside a market offering is how it would be put in the wrong place.
+//! [`oracle_pit`](crate::oracle_pit)'s `pit_ceremony`) are synchronous functions returning a ready
+//! committee, a distributed committee is `n` party PROCESSES to enrol / spawn / wait on / shut
+//! down, and *"nothing in this module has anywhere to put that"*.
 //!
-//! One more difference a rewire must not paper over: the distributed committee is `t`-of-`n` and
-//! this one is `n`-of-`n`. That is a WEAKER reconstruction requirement, not merely a different
-//! shape — `t` parties suffice there where all `n` are needed here — and it is a deliberate
-//! availability trade, not a detail to be matched silently.
+//! That last clause is no longer true. [`fhegg_fhe::threshold::supervisor`] is the place, and its
+//! address is the argument for it: process supervision of committee parties belongs in the crate
+//! that owns the party binary and the wire protocol, never in a consumer. It offers two postures —
+//! `attach` (the parties are already running under their own operators; the production one) and
+//! `spawn_local` (this process forks them; single-host, for development) — and both hand back the
+//! same `LiveCommittee`. A market offering holds one of those and supervises NOTHING.
 //!
-//! Read the above as work not done. It is no longer an option the markets do not have; it is one
-//! nobody has wired up yet.
+//! So the rewire is no longer blocked. What remains is the offering-side change, and it is an
+//! OWNERSHIP INVERSION rather than a substitution: `PoolCore::stand_up` and `OraclePitOffering::mount`
+//! currently CREATE their committee inside themselves. An offering must instead be HANDED custody
+//! it did not create, because a committee that outlives one offering and is operated by people who
+//! are not the offering's operator is the entire point of the construction.
+//!
+//! Two differences that inversion must not paper over:
+//!
+//! * The distributed committee is `t`-of-`n` and this one is `n`-of-`n`. That is a WEAKER
+//!   reconstruction requirement — `t` parties suffice there where all `n` are needed here — and it
+//!   is a deliberate availability trade, not a detail to be matched silently.
+//! * Every distributed opening is NONCE-BOUND. An `open(ct)` here is a pure function; there it is a
+//!   transcript-anchored request that must not reuse a nonce. A forwarding wrapper has to mint one
+//!   per opening, and a wrapper that hides that has hidden a replay surface.
+//!
+//! **And say what the pool's current custody actually is**, because it is the reason this matters:
+//! `pool_ceremony` uses [`PartySeeding::FromRoot`], which derives all `n` party roots from ONE
+//! 32-byte value inside ONE process. That is a shared dealer. Whoever holds the root holds every
+//! share and can decrypt the book unilaterally. The distributed committee is what removes that,
+//! and until an offering is handed one, "dark pool" names a property the custody does not have.
 //!
 //! # The two refusals a caller must not conflate
 //!

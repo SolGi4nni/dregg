@@ -31,3 +31,9 @@ pub mod relin;
 /// The production relying-party caller that drives the `distributed` committee over its authenticated
 /// transport: collective-key agreement, the verified commit round, and certificate-checked opening.
 pub mod relying_party;
+/// WHERE THE COMMITTEE'S PROCESS LIFECYCLE LIVES — enrolment, spawn-or-attach, the custody wait
+/// that names a dead party's REFUSAL rather than its exit status, and shutdown. The named blocker
+/// on moving a production caller off the in-process committee was never cryptographic; it was that
+/// nobody had a home for this. A consumer holds a [`supervisor::LiveCommittee`] and supervises
+/// nothing itself.
+pub mod supervisor;

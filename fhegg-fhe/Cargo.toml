@@ -253,6 +253,15 @@ name = "distributed_threshold_committee"
 path = "tests/distributed_threshold_committee.rs"
 required-features = ["verified-pq-runtime-tests"]
 
+# WHAT THE DISTRIBUTED COMMITTEE COSTS, measured through the production supervisor,
+# plus the two lifecycle poles: a clearing completes, and a short roster / a lying
+# dealer fails cleanly with the REAL cause named. Same feature as the party binary
+# it spawns.
+[[test]]
+name = "distributed_committee_lifecycle"
+path = "tests/distributed_committee_lifecycle.rs"
+required-features = ["verified-pq-runtime-tests"]
+
 [[test]]
 name = "ristretto_msm_wgpu_required"
 path = "tests/ristretto_msm_wgpu_required.rs"
