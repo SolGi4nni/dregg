@@ -25,6 +25,14 @@
 # ⚠ `unrouted` IS AN ALLOWED ANSWER AND IS THE HONEST ONE for a test nothing runs.
 # Inventing a lane that does not run it is not. The count is a downward-only ratchet.
 #
+# ⚠ AND FOUR OTHER ROUTES ALSO MEAN "NOTHING RUNS IT" — `measurement`, `oversized`,
+# `exclusive`, `fixture-mint`. They are more INFORMATIVE than `unrouted` (each says why a
+# nightly cannot serve that test) and exactly as UNARMED. `gpu` likewise names a profile
+# that needs an adapter, which no scheduled lane in this repository has. Only
+# `armed-nightly`, `armed-dark` and `other-lane` name something that actually runs.
+# 13 + 20 + 152 = 185 of the 282 are still executed by nothing; the ratchet is what stops
+# that number growing while nobody is looking.
+#
 # ── WHAT THE CENSUS FOUND, BEYOND THE GLOB ───────────────────────────────────────────
 # ⚑ Widening `binding-teeth` to the whole package would NOT have been right, and the
 # tree's own `#[ignore]` reasons say why. `[profile.armed]` is
@@ -194,7 +202,7 @@ exclusive dregg-circuit-prove the_rotated_leaf_at_the_split_engine   # its own #
 exclusive dregg-circuit-prove the_split_mint_proves_the_same_eight_additions   # its own #[ignore] reason says run ALONE; [profile.armed] is test-threads=4
 
 # ── fixture-mint ──────────────────────────────────────────────────────────
-fixture-mint dregg-circuit-prove derive_deployed_apex_vk_identity_and_check_fixture   # its effect is to WRITE a fixture into the tree
+fixture-mint dregg-circuit-prove derive_deployed_apex_vk_identity_and_check_fixture   # ⚑ A REAL PIN WELDED TO A WRITER: it "asserts the gnark fixture matches" the apex VK identity derived from a fresh fold at HEAD, AND "(re)writes chain/gnark/fixtures/apex_vk_identity.json". The write is what disqualifies it from a nightly, so the deployed apex VK pin runs NOWHERE. Splitting the assert from the write would let it be armed.
 fixture-mint dregg-circuit-prove export_real_shrink_fri_fixture_for_gnark   # its effect is to WRITE a fixture into the tree
 
 # ── other-lane ────────────────────────────────────────────────────────────

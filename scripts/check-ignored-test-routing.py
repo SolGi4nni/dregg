@@ -39,8 +39,27 @@ truth is the tree's own `#[ignore]` attributes, re-read on every run. Neither ha
 sufficient alone; the pair is.
 
 ═══ WHAT A "ROUTE" IS ═════════════════════════════════════════════════════════════
-A route is a claim about WHERE a given `#[ignore]`d test executes. It is not a label.
-Every route below except `unrouted` names something that actually runs it:
+A route is a claim about WHERE a given `#[ignore]`d test executes, or an explicit,
+reasoned statement that nothing does.
+
+⚠ ONLY THREE ROUTES NAME SOMETHING THAT ACTUALLY RUNS THE TEST: `armed-nightly`,
+`armed-dark` and `other-lane`. `gpu` names a profile that runs it ON A BOX WITH AN
+ADAPTER, which no scheduled lane in this repository is. And `measurement`, `oversized`,
+`exclusive` and `fixture-mint` are DELIBERATELY-NOT-ARMED: each records WHY a nightly
+cannot serve that test, and each is still a test nothing runs. Saying so in four
+specific words instead of one vague one is worth doing — but it is not a resolution,
+and this header will not pretend otherwise. Those 13 + the 20 GPU + the 152 `unrouted`
+are the standing residual, and the ratchet is what stops it growing.
+
+⚑ AND ONE OF THEM IS A REAL PIN WELDED TO A WRITER.
+`apex_shrink_gnark_fixture::derive_deployed_apex_vk_identity_and_check_fixture` is
+rostered `fixture-mint` because it "(re)writes chain/gnark/fixtures/apex_vk_identity.json"
+— but its own reason also says it "asserts the gnark fixture matches" the VK identity
+derived from a fresh fold at HEAD. That is the deployed apex VK pin, and it runs nowhere,
+because the assertion and the write live in ONE test and the write is what disqualifies
+it from a nightly. Splitting them would let the pin be armed. Reported here rather than
+repaired in an arming pass.
+
 
   armed-nightly  `.github/workflows/armed-teeth.yml`'s `binding-teeth` job, 05:00 UTC.
   armed-dark     `.github/workflows/armed-teeth.yml`'s `dark-binding-teeth` job — the 71
@@ -52,19 +71,19 @@ Every route below except `unrouted` names something that actually runs it:
   gpu            `[profile.gpu]` in `.config/nextest.toml`, on a box with an adapter.
                  These fail CLOSED on a missing adapter BY DESIGN; a GPU-less nightly
                  must not run them.
-  measurement    NOT A TOOTH. A perf/anatomy probe with no adversarial claim (in one
+  measurement    NOT ARMED — and not a tooth either. A perf/anatomy probe with no adversarial claim (in one
                  case — `dfa_routing_emit_gate::perf_prove_verify_breakdown` — the
                  `#[ignore]` reason says "PERF PROBE with NO assertion" outright).
                  Arming these buys nothing and costs the nightly's wall clock.
-  oversized      The tree records a peak footprint LARGER THAN THE RUNNER. `ubuntu-latest`
+  oversized      NOT ARMED. The tree records a peak footprint LARGER THAN THE RUNNER. `ubuntu-latest`
                  is 4 vCPU / 16 GB; `mina_accumulator_fold`'s three tests record
                  117.8–118.3 GiB peak and `leaf_wrap_mint_blowup_repricing`'s records
                  "~118 GiB peak footprint (> RAM)". Scheduling these on a hosted runner
                  does not arm them, it manufactures an OOM that reads as a failing tooth.
-  exclusive      The test's own `#[ignore]` reason says it must run ALONE (it measures a
+  exclusive      NOT ARMED. The test's own `#[ignore]` reason says it must run ALONE (it measures a
                  process-wide resource). `[profile.armed]` sets `test-threads = 4`, so
                  running it there INVALIDATES it while looking like coverage.
-  fixture-mint   Its effect is to WRITE a fixture into the tree. A nightly that mints
+  fixture-mint   NOT ARMED. Its effect is to WRITE a fixture into the tree. A nightly that mints
                  fixtures is a nightly that edits the repository.
   other-lane     Executed by a named non-`armed` lane (a different workflow/profile).
   unrouted       NOTHING RUNS IT. This is the honest bucket and it is a RATCHET: the
