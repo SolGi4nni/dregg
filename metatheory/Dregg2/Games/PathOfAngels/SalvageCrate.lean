@@ -576,6 +576,26 @@ theorem accepted_open_advances_global_counter {config : Config} {state : State c
 The runtime capabilities cannot be forged inside ordinary Lean clients.  These
 fixtures deliberately exercise the private transition core so the refusal rules
 remain executable without postulating a fake capability.
+
+⚑ **THE LAB NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured). The lab's STATEMENTS stay here, each as an
+evaluation-free `check_* : Bool` definition (a `def` body elaborates without running), because
+they must see the private core (`openCore`, `State.mk`, `State.snapshot`) that makes the
+capabilities unforgeable in the first place. The EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `SalvageCrateFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale fixture
+reds the guard library instead of the archive.
+
+Fail-closed convention: where a check needs an accepted opening as a PREREQUISITE (the old
+`.get (by native_decide)` shape), it matches on the `Option` and answers `false` on `none` —
+a broken prerequisite fails the pin in the guard library rather than wedging this module.
+
+⚠ Named residue, two construction proofs: `fixture_config_valid` and `rerolled_config_valid`
+stay `native_decide` HERE because `Config` carries its validity proof as data — constructing
+the fixture config at all requires the proof at elaboration. Breaking `configValidB` on the
+fixture raw config therefore still reds this module (and the archive). Everything else moved.
 -/
 
 private def fixtureDigest (tag : Nat) : Digest32 where
@@ -675,10 +695,13 @@ private def firstEnvelope : OpenEnvelope := envelopeFor initial ⟨12⟩ 0 1
 private def firstOpen? : Option (OpenResult fixtureConfig firstEnvelope) :=
   openCore fixtureConfig initial.snapshot initial firstEnvelope
 
-theorem fixture_daily_open_succeeds : firstOpen?.isSome = true := by native_decide
+/-- The first daily open is accepted. (Pinned `= true` in `SalvageCrateFixtures`.) -/
+def check_fixture_daily_open_succeeds : Bool := firstOpen?.isSome
 
 private def afterFirst : State fixtureConfig :=
-  (firstOpen?.get (by native_decide)).after
+  match firstOpen? with
+  | some result => result.after
+  | none => initial  -- unreachable while `check_fixture_daily_open_succeeds` pins true
 
 /-- A second crew member opening on the SAME period.  Their key differs, so the
 crate admits both; a downstream projection must not collapse them. -/
@@ -694,8 +717,9 @@ private def bobEnvelope : OpenEnvelope where
 private def bobOpen? : Option (OpenResult fixtureConfig bobEnvelope) :=
   openCore fixtureConfig afterFirst.snapshot afterFirst bobEnvelope
 
-theorem two_crew_members_may_open_the_same_period : bobOpen?.isSome = true := by
-  native_decide
+/-- A second crew member's open on the same period is accepted — their key differs.
+(Pinned `= true` in `SalvageCrateFixtures`.) -/
+def check_two_crew_members_may_open_the_same_period : Bool := bobOpen?.isSome
 
 /-! ### The write path is now REACHABLE — through genesis and the capability chain
 
@@ -707,16 +731,18 @@ hands back the capability for its successor.  A player really can open the crate
 
 /-- Genesis positions the ship at the first authored beacon (period 12), the same
 period the hand-built `initial` used, with an equal global snapshot — so the
-public path and the proven core path are opening the same state. -/
-theorem genesis_snapshot_is_the_installed_state :
-    (genesis fixtureConfig).snapshot = initial.snapshot := by native_decide
+public path and the proven core path are opening the same state.
+(Pinned `= true` in `SalvageCrateFixtures`.) -/
+def check_genesis_snapshot_is_the_installed_state : Bool :=
+  decide ((genesis fixtureConfig).snapshot = initial.snapshot)
 
 /-- ⭐ THE HONEST OPEN, through the reachable public API.  `genesis` +
 `genesisCapability` + `openCrate` succeeds — the ritual can be performed. -/
 def genesisOpen? : Option (OpenResult fixtureConfig firstEnvelope) :=
   openCrate fixtureConfig (genesis fixtureConfig) (genesisCapability fixtureConfig) firstEnvelope
 
-theorem public_open_from_genesis_succeeds : genesisOpen?.isSome = true := by native_decide
+/-- ⭐ THE HONEST OPEN succeeds. (Pinned `= true` in `SalvageCrateFixtures`.) -/
+def check_public_open_from_genesis_succeeds : Bool := genesisOpen?.isSome
 
 /-- The public open agrees with the already-proven `openCore` result, so every
 exactness theorem above transfers to what a player actually runs.  `genesis`
@@ -724,39 +750,32 @@ reduces to the hand-built `initial` and `openCrate` unfolds to `openCore` over t
 state's own snapshot, so this is definitional. -/
 theorem public_open_is_the_core_open : genesisOpen? = firstOpen? := rfl
 
-private def genesisResult : OpenResult fixtureConfig firstEnvelope :=
-  genesisOpen?.get (by native_decide)
-
-/-- The capability the accepted open hands back — the ONLY way to reach a second
-open, and it is bound to this open's successor state. -/
-private def afterGenesisCap : CurrentStateCapability genesisResult.after :=
-  genesisResult.nextCapability
-
-/-- The replayed second open: the SAME player, the SAME period, on the successor
-state, carrying the successor capability and the correctly-advanced counter — so
-the ONLY check left to fail is the consumed-period replay guard. -/
-private def replayEnvelope : OpenEnvelope := envelopeFor genesisResult.after ⟨12⟩ 1 2
-
 /-- ⭐ REPLAY REFUSED through the public API.  Holding a perfectly valid successor
-capability does not let the same crew member open the same period twice: the
-append-only `consumed` set refuses it. -/
-theorem public_double_open_in_one_period_refuses :
-    openCrate fixtureConfig genesisResult.after afterGenesisCap replayEnvelope = none := by
-  native_decide
+capability (`result.nextCapability` — the ONLY way to reach a second open, bound to this
+open's successor state) does not let the same crew member open the same period twice: the
+append-only `consumed` set refuses the replayed envelope (same player, same period, on the
+successor state with the correctly-advanced counter — the ONLY check left to fail is the
+consumed-period replay guard). Matches on the accepted genesis open; `none` answers `false`
+(fail-closed). (Pinned `= true` in `SalvageCrateFixtures`.) -/
+def check_public_double_open_in_one_period_refuses : Bool :=
+  match genesisOpen? with
+  | some result =>
+      (openCrate fixtureConfig result.after result.nextCapability
+        (envelopeFor result.after ⟨12⟩ 1 2)).isNone
+  | none => false
 
 /-- ⭐ WRONG-PERIOD REFUSED through the public API.  A capability for the installed
-state authorizes opening THIS period, not tomorrow's. -/
-theorem public_tomorrow_open_refuses :
-    openCrate fixtureConfig (genesis fixtureConfig) (genesisCapability fixtureConfig)
-      (envelopeFor initial ⟨13⟩ 0 1) = none := by native_decide
+state authorizes opening THIS period, not tomorrow's. (Pinned in `SalvageCrateFixtures`.) -/
+def check_public_tomorrow_open_refuses : Bool :=
+  (openCrate fixtureConfig (genesis fixtureConfig) (genesisCapability fixtureConfig)
+    (envelopeFor initial ⟨13⟩ 0 1)).isNone
 
 /-- Finality is reachable too: the adapter's capability advances period 12 → 13,
-and hands back the capability for the advanced state. -/
-theorem public_finality_advance_succeeds :
-    (advancePeriodChained fixtureConfig initial
-      { priorPeriod := ⟨12⟩, finalizedPeriod := ⟨13⟩ }
-      (finalityCapability initial { priorPeriod := ⟨12⟩, finalizedPeriod := ⟨13⟩ })).isSome
-      = true := by native_decide
+and hands back the capability for the advanced state. (Pinned in `SalvageCrateFixtures`.) -/
+def check_public_finality_advance_succeeds : Bool :=
+  (advancePeriodChained fixtureConfig initial
+    { priorPeriod := ⟨12⟩, finalizedPeriod := ⟨13⟩ }
+    (finalityCapability initial { priorPeriod := ⟨12⟩, finalizedPeriod := ⟨13⟩ })).isSome
 
 /-! ### Deliberately public lab witnesses
 
@@ -766,36 +785,54 @@ opening rather than a re-typed mirror.  This widens nothing: `OpenResult.mk` and
 `OpenReceipt.mk` remain private, `CurrentStateCapability` remains opaque, and
 both witnesses name the fixture federation — a panel deployed on any other
 federation refuses them, which `ShipInstrumentPanel` proves. -/
-def fixtureOpenReceipt : OpenReceipt := (firstOpen?.get (by native_decide)).receipt
+/-- The all-zero receipt behind the fail-closed `match` arms below. It can never be served
+while `check_fixture_daily_open_succeeds` / `check_two_crew_members_may_open_the_same_period`
+pin true in `SalvageCrateFixtures` — and if a fixture regression ever made an open refuse,
+downstream welds would read this obviously-inert receipt while the guard library went red. -/
+private def fallbackReceipt : OpenReceipt where
+  federationId := fixtureDigest 0
+  contentSession := fixtureDigest 0
+  contentEpoch := ⟨0⟩
+  period := ⟨0⟩
+  player := fixtureDigest 0
+  contribution := .zero
 
-def fixtureOpenReceiptSecondCrew : OpenReceipt := (bobOpen?.get (by native_decide)).receipt
+def fixtureOpenReceipt : OpenReceipt :=
+  match firstOpen? with
+  | some result => result.receipt
+  | none => fallbackReceipt
+
+def fixtureOpenReceiptSecondCrew : OpenReceipt :=
+  match bobOpen? with
+  | some result => result.receipt
+  | none => fallbackReceipt
 
 /-- The two lab witnesses are the same deployment and period but different
-crew, which is exactly the pair a projection's replay key must keep apart. -/
-theorem lab_witnesses_share_a_period_and_differ_only_in_crew :
-    fixtureOpenReceipt.period = fixtureOpenReceiptSecondCrew.period ∧
+crew, which is exactly the pair a projection's replay key must keep apart.
+(Pinned in `SalvageCrateFixtures`.) -/
+def check_lab_witnesses_share_a_period_and_differ_only_in_crew : Bool :=
+  decide (fixtureOpenReceipt.period = fixtureOpenReceiptSecondCrew.period ∧
     fixtureOpenReceipt.federationId = fixtureOpenReceiptSecondCrew.federationId ∧
-    fixtureOpenReceipt.player ≠ fixtureOpenReceiptSecondCrew.player := by
-  native_decide
+    fixtureOpenReceipt.player ≠ fixtureOpenReceiptSecondCrew.player)
 
-theorem identical_daily_open_reroll_refuses :
-    openCore fixtureConfig afterFirst.snapshot afterFirst firstEnvelope = none := by
-  native_decide
+/-- (Pinned in `SalvageCrateFixtures`.) -/
+def check_identical_daily_open_reroll_refuses : Bool :=
+  (openCore fixtureConfig afterFirst.snapshot afterFirst firstEnvelope).isNone
 
-theorem tomorrow_and_old_epoch_claims_refuse :
-    openCore fixtureConfig initial.snapshot initial
-        (envelopeFor initial ⟨13⟩ 0 1) = none ∧
-      let current := initialAt ⟨19⟩
-      openCore fixtureConfig current.snapshot current
-        (envelopeFor current ⟨12⟩ 0 1) = none := by
-  native_decide
+private def periodNineteenStart : State fixtureConfig := initialAt ⟨19⟩
+
+/-- (Pinned in `SalvageCrateFixtures`.) -/
+def check_tomorrow_and_old_epoch_claims_refuse : Bool :=
+  (openCore fixtureConfig initial.snapshot initial
+      (envelopeFor initial ⟨13⟩ 0 1)).isNone
+    && (openCore fixtureConfig periodNineteenStart.snapshot periodNineteenStart
+      (envelopeFor periodNineteenStart ⟨12⟩ 0 1)).isNone
 
 /-- Even a representation-level fresh state cannot be reopened against the latest
 global snapshot.  Public callers cannot construct that fresh state in the first
-place, and cannot mint its `CurrentStateCapability`. -/
-theorem fresh_state_reopen_against_global_snapshot_refuses :
-    openCore fixtureConfig afterFirst.snapshot initial firstEnvelope = none := by
-  native_decide
+place, and cannot mint its `CurrentStateCapability`. (Pinned in `SalvageCrateFixtures`.) -/
+def check_fresh_state_reopen_against_global_snapshot_refuses : Bool :=
+  (openCore fixtureConfig afterFirst.snapshot initial firstEnvelope).isNone
 
 private def rerolledRaw : RawConfig :=
   { fixtureRaw with beacons :=
@@ -813,10 +850,9 @@ private def rerolledState : State rerolledConfig where
 
 /-- Changing the committed beacon changes the complete config identity.  An
 envelope authorized for the original deployment cannot ask the operator to try
-the new beacon. -/
-theorem operator_beacon_reroll_breaks_authorized_identity :
-    openCore rerolledConfig rerolledState.snapshot rerolledState firstEnvelope = none := by
-  native_decide
+the new beacon. (Pinned in `SalvageCrateFixtures`.) -/
+def check_operator_beacon_reroll_breaks_authorized_identity : Bool :=
+  (openCore rerolledConfig rerolledState.snapshot rerolledState firstEnvelope).isNone
 
 private def transferableTable : List LootEntry :=
   match fixtureTable with
@@ -826,18 +862,18 @@ private def transferableTable : List LootEntry :=
 private def forgedTableRaw : RawConfig := { fixtureRaw with table := transferableTable }
 private def emptyTableRaw : RawConfig := { fixtureRaw with table := [] }
 
-theorem forged_transferable_table_refuses : configValidB forgedTableRaw = false := by
-  native_decide
+/-- (Pinned in `SalvageCrateFixtures`.) -/
+def check_forged_transferable_table_refuses : Bool := !(configValidB forgedTableRaw)
 
-theorem empty_loot_table_refuses : configValidB emptyTableRaw = false := by
-  native_decide
+/-- (Pinned in `SalvageCrateFixtures`.) -/
+def check_empty_loot_table_refuses : Bool := !(configValidB emptyTableRaw)
 
 private def all255 : List (Fin 256) := List.replicate 32 (byte 255)
 
 /-- Three does not divide 256.  Byte 255 belongs to the biased high tail and is
-rejected rather than silently mapping to ticket zero. -/
-theorem modulo_bias_tail_refuses_instead_of_favoring_zero :
-    unbiasedIndex? 3 all255 = none := by native_decide
+rejected rather than silently mapping to ticket zero. (Pinned in `SalvageCrateFixtures`.) -/
+def check_modulo_bias_tail_refuses_instead_of_favoring_zero : Bool :=
+  (unbiasedIndex? 3 all255).isNone
 
 private def exhaustedCounters : PlayerCounterTable :=
   PlayerCounterTable.empty.set (counterKey fixtureConfig alice)
@@ -854,9 +890,9 @@ private def exhaustedState : State fixtureConfig where
 private def exhaustedEnvelope : OpenEnvelope :=
   envelopeFor exhaustedState ⟨12⟩ (PLAYER_COUNTER_MODULUS - 1) PLAYER_COUNTER_MODULUS
 
-theorem counter_exhaustion_refuses_otherwise_eligible_open :
-    openCore fixtureConfig exhaustedState.snapshot exhaustedState exhaustedEnvelope = none := by
-  native_decide
+/-- (Pinned in `SalvageCrateFixtures`.) -/
+def check_counter_exhaustion_refuses_otherwise_eligible_open : Bool :=
+  (openCore fixtureConfig exhaustedState.snapshot exhaustedState exhaustedEnvelope).isNone
 
 private def periodNineteenFresh : State fixtureConfig := initialAt ⟨19⟩
 private def periodNineteenEnvelope : OpenEnvelope :=
@@ -877,11 +913,10 @@ private def periodNineteenFresh? : Option LootEntry := do
   some result.entry
 
 /-- Counter history affects replay identity, never the draw.  Missing every period
-between 12 and 19 therefore imposes no streak penalty. -/
-theorem skipped_periods_do_not_change_the_daily_prize :
-    periodNineteenReturning? = periodNineteenFresh? ∧
-    periodNineteenReturning?.isSome = true := by
-  native_decide
+between 12 and 19 therefore imposes no streak penalty. (Pinned in `SalvageCrateFixtures`.) -/
+def check_skipped_periods_do_not_change_the_daily_prize : Bool :=
+  decide (periodNineteenReturning? = periodNineteenFresh?)
+    && periodNineteenReturning?.isSome
 
 #assert_axioms open_result_retains_exact_entry
 #assert_axioms accepted_open_consumes_exact_period
@@ -889,23 +924,11 @@ theorem skipped_periods_do_not_change_the_daily_prize :
 #assert_axioms receipt_player_is_the_signed_player
 #assert_axioms receipt_contribution_is_the_authored_table_row
 #assert_axioms receipt_period_is_the_consumed_period
-#assert_compiled two_crew_members_may_open_the_same_period
-#assert_compiled genesis_snapshot_is_the_installed_state
-#assert_compiled public_open_from_genesis_succeeds
+-- `rfl`, but its statement names `fixtureConfig`, whose construction carries the
+-- `fixture_config_valid` `native_decide` — so the axiom record is compiled-trust, not kernel.
 #assert_compiled public_open_is_the_core_open
-#assert_compiled public_double_open_in_one_period_refuses
-#assert_compiled public_tomorrow_open_refuses
-#assert_compiled public_finality_advance_succeeds
-#assert_compiled lab_witnesses_share_a_period_and_differ_only_in_crew
-#assert_compiled fixture_daily_open_succeeds
-#assert_compiled identical_daily_open_reroll_refuses
-#assert_compiled tomorrow_and_old_epoch_claims_refuse
-#assert_compiled fresh_state_reopen_against_global_snapshot_refuses
-#assert_compiled operator_beacon_reroll_breaks_authorized_identity
-#assert_compiled forged_transferable_table_refuses
-#assert_compiled empty_loot_table_refuses
-#assert_compiled modulo_bias_tail_refuses_instead_of_favoring_zero
-#assert_compiled counter_exhaustion_refuses_otherwise_eligible_open
-#assert_compiled skipped_periods_do_not_change_the_daily_prize
+
+-- The eighteen lab pins (`#assert_compiled` + `native_decide`) live in
+-- `SalvageCrateFixtures.lean`, rooted in `PathOfAngelsGuards` — see the lab header above.
 
 end Dregg2.Games.PathOfAngels.SalvageCrate

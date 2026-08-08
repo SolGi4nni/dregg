@@ -270,16 +270,10 @@ Dregg2.Circuit.Emit.PastaMsmBucketed
 # It should be rooted together with `PastaMsmBucketed` when the digit weld lands.
 Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm
 #
-# `MinaWrapXiEndoLift` — the endomorphism lift `ScalarChallenge(v').to_field(endo_r)` as an emitted
-# AIR on `MinaWrapCommitMachine`, and the file where xi STOPS BEING TOLD: it takes the block's own
-# Fq-sponge squeeze (`MinaBlockFqTranscript.WRAP_V_CHAL`) and computes o1-labs' polyscale from it in
-# 1 160 instructions. Excluded because it imports `MinaBlockFqTranscript`, whose 46-permutation
-# sponge cone is already an orphan for cost, and `KimchiVerify`.
-# ⚑ It is CHEAP — 52 s, all of it kernel `decide` over a 2 048-row machine run. Its emitted
-# artifact is `circuit/descriptors/by-name/mina-xi-endo-lift.json`; the check that reads it is
-# `circuit/tests/mina_xi_endo_weld.rs`, which PROVES it and compares its OUTPUT public inputs
-# against `mina-commit-xi.json`'s INPUT public inputs, 32 felts elementwise.
-Dregg2.Circuit.Emit.MinaWrapXiEndoLift
+# (`MinaWrapXiEndoLift` stood here until 2026-08-08: it became REACHABLE when the seam migration
+# rooted `Dregg2.Circuit.Emit.MinaSeams` — which imports it — from the `Dregg2` root, and a stale
+# allowlist row hides the next real orphan. Its cost note lives on in `MinaWrapXiScalarWeld`'s
+# entry below.)
 #
 # `MinaWrapXiScalarWeld` — the read-only weld between the xi on the wire and the xi-aggregate's
 # DECLARED digits. Emits nothing; every object it names is emitted elsewhere. Excluded because it

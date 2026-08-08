@@ -50,6 +50,30 @@ already-authored six into the build graph so their negative assertions can go re
       GENERATED — regenerate with `metatheory/fixtures/pickles-extractors/
       gen_multiblock_conformance.py`, do not hand-edit.
 
+## ⚑ 2026-08-08 — THE WRAP-CLOSING / FINALIZE-SCALARS CONE, ROOTED OUT OF ORPHANHOOD
+
+Three more `Circuit.Emit` Mina modules join. All three were reachable from NO `defaultTargets`
+entry — `check-lean-orphans.sh` named them UNLISTED — while their own docblocks said *"NOT imported
+by the `Dregg2` root, per house practice for gates."* That practice is exactly HALF a practice: a
+gate stays out of the FFI root set, but it must be rooted in a GUARD library or its oleans go stale
+on disk and `lake build` checks nothing (the `MinaWrapVerifierSponge` §8 census weld shipped
+through that hole). Each was built green at HEAD before rooting:
+
+  * `Dregg2.Circuit.Emit.MinaWrapClosingAir`       — the Pallas closing-verifier AIR (FSI1's other
+      curve): the accumulator machine at `pLimb`, block 539508's Step `sg` fixtures, the b-fold and
+      both-polarity refusal exhibits.
+  * `Dregg2.Circuit.Emit.MinaWrapClosingScheduled` — its scheduled/selector-forced form (the
+      `AirSelectorForcing` route), same fixtures, zero `#guard`s.
+  * `Dregg2.Circuit.Emit.MinaFinalizeScalars`      — `dregg-mina-finalize-scalars::v1`: the whole
+      in-AIR finalize-scalars row program (slot tables, liveness windows, the C5 zk-poly leg) over
+      the real block.
+
+  * `Dregg2.Circuit.Emit.MinaFinalizeScalarsWeld` — the weld between the finalize-scalars fixture
+      constants and the Wrap fixtures' own values (domain generator, zk roots, shifts, the C5
+      witnessed inverse). It was RED at the first rooting pass (an `Inhabited`-instance hole at
+      its `WRAP_BLOCKS.getD … default` statement) while its authoring lane was live; it
+      elaborates clean now and joins the same day.
+
 (The DAG is redundant on purpose: `MinaWrapFtEval0Weld` transitively pulls Deferred/DeferredWeld/
 PublicInput/TickShifts, and `MinaWrapChallengesWeld` is a second top. All six are imported explicitly
 so the rooted set is self-documenting and a re-parenting of the DAG cannot silently un-root one.)
@@ -67,6 +91,10 @@ import Dregg2.Bridge.MinaWrapPublicInput
 import Dregg2.Bridge.TickShifts
 import Dregg2.Bridge.StepMainFtEval0RealBlock
 import Dregg2.Bridge.MinaMultiBlockConformance
+import Dregg2.Circuit.Emit.MinaWrapClosingAir
+import Dregg2.Circuit.Emit.MinaWrapClosingScheduled
+import Dregg2.Circuit.Emit.MinaFinalizeScalars
+import Dregg2.Circuit.Emit.MinaFinalizeScalarsWeld
 
 namespace Dregg2.MinaBridgeGuards
 

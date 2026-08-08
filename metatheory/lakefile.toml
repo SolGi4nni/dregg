@@ -516,4 +516,13 @@ globs = [
   # wrong-period are refused and never reach the panel). Emit-free cone, so it does not wait on the
   # descent wire. Unrooted, these pins would run in no target.
   "Dregg2.Games.PathOfAngels.StationCrateOpen",  # 0 ax, 9 comp
+  # ⚑ 2026-08-08 (fixture-decoupling) — THE `*Fixtures` SPLIT BEGINS HERE. `SalvageCrate` is in
+  # the `Dregg2.FFI` closure (the crypto archive's build), and its hostility lab's 18
+  # `native_decide` pins ran at ITS elaboration — so a stale game fixture was a hard failure of
+  # every Rust proving target (measured: hours of workspace-wide redness from one PoA fixture).
+  # The lab's STATEMENTS stay in the module as evaluation-free `check_* : Bool` defs (they must
+  # see the private core); the EVALUATION is pinned `= true` here, outside the FFI closure.
+  # Same names, same count (18 + 1 witness pin), new blast radius: `lake build` still runs all
+  # of them; `lake build Dregg2.FFI` runs none.
+  "Dregg2.Games.PathOfAngels.SalvageCrateFixtures",
 ]
