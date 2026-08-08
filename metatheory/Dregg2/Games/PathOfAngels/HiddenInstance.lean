@@ -77,9 +77,25 @@ sponge over 8-lane blocks, one byte per lane, and `digestBlocks` writes its four
 slices out rather than recursing, so there is no chunking function whose
 termination could drift.
 
-`SeedDraw.drawBelow?` is the only draw used.  `SalvageCrate.unbiasedIndex?`
-cannot stream — `find?` then modulo re-reads the same byte — and nothing here
-calls it.
+`SeedDraw.drawBelow?` is the only draw used IN THIS MODULE.  `SalvageCrate.
+unbiasedIndex?` cannot stream — `find?` then modulo re-reads the same byte — and
+nothing here calls it.
+
+⚠ **CORRECTED 2026-08-07 — the sentence above used to have no qualifier, and it
+was FALSE of the pipeline it appeared to describe.**  A consumer draws its own
+instance out of the seed this module hands it, and one of them does not use
+`SeedDraw`: `SignalTriangulation.targetFromSeed` folds three of these bytes with
+`% 6`.  `256 = 42*6 + 4`, so the four low band symbols come back 43/256 against
+42/256 — a 1.073x spread across the 216 targets, 0.0070 in total variation from
+uniform.  The lane-to-byte projection above rejects ONE value to keep the byte
+stream uniform and the very next hop folds FOUR back in.  Measured, WARNed by
+`scripts/poa-design-gate.py` as `signal-triangulation/seed-modulo-bias`, and NOT
+yet repaired — the repair is `targetFromSeed? : Digest32 → Option Code`, which is
+a flag day through Signal's fixture layer.  `BlackBoxReconstruction` and
+`VentCrawl` do go through `SeedDraw`; Signal is the one that does not.
+
+The lesson for this docblock: a claim about what "is used" reaches past the module
+it is written in, and nobody re-checks it when a consumer is added.
 
 ## ⚑ `commit`, `runSeedFor` and `practiceRunSeed` are `@[irreducible]`, and why
 

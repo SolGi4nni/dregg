@@ -179,11 +179,61 @@ abbrev MAX_TURNS : Nat := 5
 
 def byte (n : Nat) : Fin 256 := ⟨n % 256, Nat.mod_lt _ (by omega)⟩
 
+/-! ## The instance draw
+
+⚑ **MEASURED DEFECT, 2026-08-07 — NOT REPAIRED HERE.  See below before touching this.**
+
+`HiddenInstance` goes to real trouble to hand this module UNIFORM bytes: the
+lane-to-byte projection discards the single field value that would give byte 0 an
+extra preimage (`HiddenInstance.laneByte_rejects_exactly_the_aliasing_value`), and
+its docblock says plainly "`SeedDraw.drawBelow?` is the only draw used".  **It is
+not.**  The draw below folds that carefully-uniform byte with `% 6`, and
+`256 = 42*6 + 4`, so the four low band symbols come back 43/256 against 42/256 for
+the other two — the same aliasing wound one level down, and FOUR values wide where
+the one so carefully rejected upstream was one.
+
+MEASURED over the 216 targets: the most likely is **1.073x** the least likely, and
+the distribution sits **0.0070** in total variation from uniform.  Signal is the
+flagship judged game, its target is HIDDEN and committed to, and a reward rides on
+it — which is exactly the condition `scripts/poa-design-gate.py`'s own
+`seed-modulo-bias` note names as the one that makes the bias matter.  The gate now
+raises it as a WARN rather than an INFO for that reason.
+
+⚠ **THE FIX IS A FLAG DAY AND IT IS NOT A DESIGN FORK.**  216 does not divide
+`2^256`, so no TOTAL function from a 32-byte seed onto the 216 targets is exactly
+uniform: an honest uniform draw MUST be able to refuse, and no fallback is
+admissible (`getD zeroCode` would pile the excess onto `[0,0,0]`, which the gate
+reports as an opener that cannot win within the budget).  So the repair is
+
+    def targetFromSeed? (seed : Digest32) : Option Code   -- three SeedDraw.drawBelow? 6
+    Config.target_eq : some target = targetFromSeed? mission.runSeed
+
+exactly the shape `BlackBoxReconstruction.orderFromRunSeed?` / `Config.order_eq`
+already has.  It was built and it compiles through `SignalTriangulation` and
+`Emit` (`signalConfig?`); what it does NOT do cheaply is the fixture layer.
+`NetworkJudgeWire.fixtureConfig`, `NetworkJudge` (x2), `NetworkGenesis` (x2),
+`RecordsRuntime`, `BazaarGameExamples` and `AttendantKernel` each DERIVE a total
+`Config` inside the fixture, so each becomes `Option` or acquires an
+`Option.get`/carried-literal target — and the `rfl` proofs that ride on them
+(`fixtureMissionContext_is_the_live_context` and friends) stop being kernel-clean
+`#assert_axioms` pins and become compiler-trusted ones.  Turning a dozen
+kernel-clean pins into `native_decide` pins to fix a draw is a trade that needs
+doing deliberately, by restructuring the fixtures to CARRY a measured target and a
+`target_eq` measurement rather than derive one, not as a side effect.
+`SlotDeriveRuntime.derive` (the `dregg_poa_signal_slot_derive` FFI export) and
+`SignalFeedbackRuntime.targetOf` move with it; the export already has its `""`
+refusal sentinel, so that end is ready.
+
+That is the whole of the remaining work and it is the next thing, not an operator
+decision. -/
+
 def digestByte (digest : Digest32) (i : Nat) : Nat :=
   (digest.bytes.getD i 0).val
 
 /-- The run seed chooses the puzzle; it is recorded verbatim in the Core receipt.
-The mission artifact pins this derivation and the full feedback table. -/
+The mission artifact pins this derivation and the full feedback table.
+
+⚠ The `% 6` is the measured defect described above. -/
 def targetFromSeed (seed : Digest32) : Code := {
   low := ⟨digestByte seed 0 % 6, Nat.mod_lt _ (by omega)⟩
   mid := ⟨digestByte seed 1 % 6, Nat.mod_lt _ (by omega)⟩

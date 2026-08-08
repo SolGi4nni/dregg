@@ -782,6 +782,23 @@ private def blackBoxOracleTableJson : String :=
   jsonPrettyArray ((List.finRange BlackBoxReconstruction.ORDER_SPACE).map fun order =>
     "    " ++ jsonString (blackBoxOracleRow order))
 
+private def blackBoxActionId (a : BlackBoxReconstruction.Action) : String :=
+  blackBoxProbeId a.pair
+
+/-- One refusal witness on the wire: the instance, the legal prefix, the further
+probe, and the reason the kernel reports at it.  ⚠ The gate does NOT take the
+reason on trust — it replays the prefix against the emitted oracle table and
+re-derives the reason from the declared `settles` semantics.  A disagreement is a
+hard failure there, which is the whole point of shipping the witness. -/
+private def blackBoxWitnessJson (w : BlackBoxReconstruction.RefusalWitness) : String :=
+  "    {\"reason\":" ++ jsonString w.reason.tag ++
+    ",\"instance\":" ++ toString w.order.val ++
+    ",\"history\":" ++ jsonArray (w.history.map (fun a => jsonString (blackBoxActionId a))) ++
+    ",\"probe\":" ++ jsonString (blackBoxActionId w.probe) ++ "}"
+
+private def blackBoxWitnessesJson : String :=
+  jsonPrettyArray (BlackBoxReconstruction.refusalWitnesses.map blackBoxWitnessJson)
+
 def blackBoxDescriptorJson : String :=
   "{\n" ++
   "  \"format\":\"POAG1-GAME\",\n" ++
@@ -805,8 +822,11 @@ def blackBoxDescriptorJson : String :=
   "    \"probes\":" ++ jsonPrettyArray (blackBoxProbes.map blackBoxProbeJson) ++ ",\n" ++
   "    \"table\":" ++ blackBoxOracleTableJson ++ "\n" ++
   "  },\n" ++
-  "  \"refusals\":[\"solved\",\"turn-limit\",\"repeated-probe\",\"settled-slot\"," ++
-    "\"settled-fragment\"],\n" ++
+  "  \"refusals\":" ++
+    jsonArray (BlackBoxReconstruction.allRefusals.map
+      (fun r => jsonString r.tag)) ++ ",\n" ++
+  "  \"refusal_precedence\":\"first-applicable-in-declared-order\",\n" ++
+  "  \"refusal_witnesses\":" ++ blackBoxWitnessesJson ++ ",\n" ++
   "  \"output\":{\"requires\":\"terminal\",\"contribution\":\"mission_reward\"," ++
     "\"artifact\":\"mission_artifact\"}\n" ++
   "}\n"
@@ -898,10 +918,20 @@ is pinned exactly, like every other descriptor here. -/
 def validateBlackBoxDescriptor (bytes : String) : Except String Unit := do
   let document ← Json.parse bytes
   exactKeys document ["format", "schema_version", "game_id", "ruleset", "engine_module",
-    "action_limit", "security", "instance", "oracle", "refusals", "output"]
+    "action_limit", "security", "instance", "oracle", "refusals", "refusal_precedence",
+    "refusal_witnesses", "output"]
   validateHiddenSecurity document "oracle-only"
   validateInstanceDeclaration (← document.getObjVal? "instance") "oracle-only"
   exactKeys (← document.getObjVal? "output") ["requires", "contribution", "artifact"]
+  let declared ← (document.getObjVal? "refusals") >>= Json.getArr?
+  if declared.size != BlackBoxReconstruction.allRefusals.length then
+    throw s!"POAG1 black-box declares {declared.size} refusal reasons"
+  let witnesses ← (document.getObjVal? "refusal_witnesses") >>= Json.getArr?
+  if witnesses.size != declared.size then
+    throw s!"POAG1 black-box carries {witnesses.size} refusal witnesses for \
+      {declared.size} declared reasons"
+  for witness in witnesses do
+    exactKeys witness ["reason", "instance", "history", "probe"]
   let oracle ← document.getObjVal? "oracle"
   exactKeys oracle ["instance_space", "instance_shape", "required_per_instance",
     "settles", "class_alphabet", "classes", "probes", "table"]
@@ -944,6 +974,56 @@ def blackBoxTableRefinesKernel : Except String Unit := do
             throw s!"POAG1 black-box cell ({order.val}, {blackBoxProbeId pair.1}) \
               disagrees with the kernel"
 
+private def blackBoxProbeOfId? (id : String) : Option BlackBoxReconstruction.Action :=
+  (blackBoxProbes.find? (fun p => blackBoxProbeId p == id)).map
+    (fun p => BlackBoxReconstruction.Action.probe p.1 p.2)
+
+/-- ⚑ **The emitted refusal witnesses are the kernel's.**  Reads the witnesses back
+out of the RENDERED descriptor, replays each prefix through `BlackBoxReconstruction.
+replay`, and requires the kernel's own `refusal?` to report exactly the reason the
+wire claims — and every declared reason to have a witness.  Without this the
+witnesses would be a second, unchecked statement of which rules exist, which is the
+shape the oracle table was already given a weld against. -/
+def blackBoxWitnessesRefineKernel : Except String Unit := do
+  let document ← Json.parse blackBoxDescriptorJson
+  let witnesses ← (document.getObjVal? "refusal_witnesses") >>= Json.getArr?
+  let declared ← (document.getObjVal? "refusals") >>= Json.getArr?
+  let mut seen : List String := []
+  for witness in witnesses do
+    let reason ← witness.getObjValAs? String "reason"
+    let row ← witness.getObjValAs? Nat "instance"
+    if h : row < BlackBoxReconstruction.ORDER_SPACE then
+      let order : Fin BlackBoxReconstruction.ORDER_SPACE := ⟨row, h⟩
+      let historyJson ← (witness.getObjVal? "history") >>= Json.getArr?
+      let mut history : List BlackBoxReconstruction.Action := []
+      for entry in historyJson do
+        let id ← entry.getStr?
+        match blackBoxProbeOfId? id with
+        | none => throw s!"POAG1 black-box witness names an unknown probe {id}"
+        | some action => history := history ++ [action]
+      let probeId ← witness.getObjValAs? String "probe"
+      match blackBoxProbeOfId? probeId with
+      | none => throw s!"POAG1 black-box witness names an unknown probe {probeId}"
+      | some probe =>
+          match BlackBoxReconstruction.replay order
+              BlackBoxReconstruction.initialState history with
+          | none => throw s!"POAG1 black-box witness for {reason} has an illegal prefix"
+          | some state =>
+              match BlackBoxReconstruction.refusal? order state probe with
+              | none =>
+                  throw s!"POAG1 black-box witness for {reason} ends in an ACCEPTED probe"
+              | some fired =>
+                  if fired.tag != reason then
+                    throw s!"POAG1 black-box witness claims {reason}; the kernel \
+                      reports {fired.tag}"
+                  seen := seen ++ [reason]
+    else
+      throw s!"POAG1 black-box witness names instance {row}, outside the space"
+  for entry in declared do
+    let tag ← entry.getStr?
+    if !seen.contains tag then
+      throw s!"POAG1 black-box declares refusal {tag} and witnesses it nowhere"
+
 /-- Signal's descriptor is validated the same way, with the rules table checked for
 the one thing that could silently fold: an unnameable class rendering as `?`. -/
 def validateSignalDescriptor (bytes : String) : Except String Unit := do
@@ -981,6 +1061,9 @@ theorem blackBoxDescriptor_exact_schema :
 theorem blackBox_table_is_the_kernel : blackBoxTableRefinesKernel = .ok () := by
   native_decide
 
+theorem blackBox_witnesses_are_the_kernel : blackBoxWitnessesRefineKernel = .ok () := by
+  native_decide
+
 theorem salvageDescriptor_exact_schema :
     validateSalvageDescriptor salvageDescriptorJson = .ok () := by
   native_decide
@@ -993,6 +1076,7 @@ theorem signalDescriptor_exact_schema :
 #assert_compiled salvageDescriptor_exact_schema
 #assert_compiled blackBoxDescriptor_exact_schema
 #assert_compiled blackBox_table_is_the_kernel
+#assert_compiled blackBox_witnesses_are_the_kernel
 #assert_compiled signalDescriptor_exact_schema
 
 def signalBudget : ContributionBudget :=

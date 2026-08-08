@@ -471,6 +471,23 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
     }
 
+    fn deployment_manifest_path() -> PathBuf {
+        repo().join("poa/deployments/epoch-1/poa-devnet.json")
+    }
+
+    /// The live federation/deployment identity, read from the deployment kit the
+    /// ceremony actually genesises. Never typed: a ceremony that re-genesises moves
+    /// both of these, and a typed copy would keep a test green against a dead
+    /// federation — which is exactly what happened until 2026-08-05.
+    fn deployed_identity() -> (String, String) {
+        let bundle = Poag1Bundle::load(repo().join("poa/artifacts/poag1/manifest.json")).unwrap();
+        let bound = bundle.bind_deployment(deployment_manifest_path()).unwrap();
+        (
+            bound.deployment().federation_id().to_owned(),
+            bound.deployment().deployment_id().to_owned(),
+        )
+    }
+
     fn manifest(bundle: &Poag1Bundle) -> CompanionManifestV3 {
         let catalog = bundle
             .manifest()
@@ -478,21 +495,15 @@ mod tests {
             .iter()
             .find(|pin| pin.path == "catalog.json")
             .unwrap();
+        let (federation_id, deployment_id) = deployed_identity();
         CompanionManifestV3 {
             schema: COMPANION_SCHEMA_V3.into(),
             content_epoch: 1,
             content_counter: 4,
             sequence: 7,
             poa_origin: POA_ORIGIN.into(),
-            // ⚠ TYPED, not derived — and typed a second time in the expected string below,
-            // so these two do NOT go red when the deployment moves. They named the DEAD
-            // three-validator federation until 2026-08-05 and nothing noticed. The values
-            // that DO have teeth in this test are `content_pack_digest` and the catalog
-            // asset, which come out of the real POAG1 bundle two lines up.
-            federation_id: "70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b"
-                .into(),
-            deployment_id: "4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d"
-                .into(),
+            federation_id,
+            deployment_id,
             content_pack_digest: bundle.manifest_sha256().into(),
             context: CompanionContext::Youtube {
                 video_id: "AbCdEfGhI01".into(),
@@ -530,29 +541,138 @@ mod tests {
         }
     }
 
+    /// A route whose every field is a LITERAL of this test, naming no artifact and
+    /// no deployment. The property under test is the canonical PROJECTION — key
+    /// order, absent-option elision, number rendering, string escaping, the
+    /// `poa-companion/v3\n` domain line — which is the cross-runtime contract with
+    /// `extension/src/poa.ts` (`JSON.stringify` over the same fixed key order).
+    ///
+    /// ⚠ Deliberately synthetic. This assertion used to be typed over the LIVE
+    /// bundle, so it pinned `bytes: 5508` for `catalog.json` — a length that grows
+    /// every time a game enrols, which made a correct enrolment red and the repair
+    /// "bump the literal", re-arming it for the next one. What the projection owes
+    /// the artifact is checked below, against the artifact, by derivation.
+    fn projection_fixture() -> CompanionManifestV3 {
+        CompanionManifestV3 {
+            schema: COMPANION_SCHEMA_V3.into(),
+            content_epoch: 1,
+            content_counter: 4,
+            sequence: 7,
+            poa_origin: POA_ORIGIN.into(),
+            federation_id: "11".repeat(32),
+            deployment_id: "22".repeat(32),
+            content_pack_digest: format!("sha256:{}", "33".repeat(32)),
+            context: CompanionContext::Youtube {
+                video_id: "AbCdEfGhI01".into(),
+                channel_id: "UC_PathOfAngels".into(),
+            },
+            experience: CompanionExperience {
+                id: "episode-1".into(),
+                // quote, backslash and a non-ASCII dash: the escaper is part of the
+                // signed bytes and both runtimes must render it identically.
+                title: "Path of Angels — a \"field\" dispatch \\ route".into(),
+                episode: Some("Episode 1".into()),
+                dispatch: Some("A signed field route is available.".into()),
+                beta_url: format!("{POA_ORIGIN}/?episode=1"),
+                game: Some(CompanionGameRoute {
+                    kind: "descent".into(),
+                    src: "dregg://descent/b3_de5ce0".into(),
+                }),
+                content_assets: vec![CompanionContentAsset {
+                    path: "catalog.json".into(),
+                    url: format!("{POA_ORIGIN}/artifacts/poag1/catalog.json"),
+                    media_type: "application/json".into(),
+                    bytes: 4242,
+                    sha256: "44".repeat(32),
+                }],
+                actions: Some(CompanionActions {
+                    mission: Some(CompanionLink {
+                        label: "Open field terminal".into(),
+                        beta_url: format!("{POA_ORIGIN}/?station=field"),
+                    }),
+                    evidence: None,
+                    debrief: None,
+                }),
+                field_record: None,
+            },
+            issued_at: NOW - 60,
+            expires_at: NOW + 3600,
+        }
+    }
+
     #[test]
     fn v3_signing_bytes_are_the_browser_canonical_projection() {
-        let bundle = Poag1Bundle::load(repo().join("poa/artifacts/poag1/manifest.json")).unwrap();
-        let bytes = String::from_utf8(manifest(&bundle).signing_bytes().unwrap()).unwrap();
+        let bytes = String::from_utf8(projection_fixture().signing_bytes().unwrap()).unwrap();
         assert_eq!(
             bytes,
             concat!(
                 "poa-companion/v3\n",
                 "{\"schema\":\"poa-companion/v3\",\"contentEpoch\":1,\"contentCounter\":4,\"sequence\":7,",
                 "\"poaOrigin\":\"https://beta.pathofangels.network\",",
-                "\"federationId\":\"70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b\",",
-                "\"deploymentId\":\"4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d\",",
-                "\"contentPackDigest\":\"sha256:3cff74449b87d468aec9bd95c04e7fc3bb6d193e23f5b00076691c23abdcd1df\",",
+                "\"federationId\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+                "\"deploymentId\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+                "\"contentPackDigest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",",
                 "\"context\":{\"platform\":\"youtube\",\"videoId\":\"AbCdEfGhI01\",\"channelId\":\"UC_PathOfAngels\"},",
-                "\"experience\":{\"id\":\"episode-1\",\"title\":\"Path of Angels field dispatch\",\"episode\":\"Episode 1\",",
+                "\"experience\":{\"id\":\"episode-1\",\"title\":\"Path of Angels — a \\\"field\\\" dispatch \\\\ route\",\"episode\":\"Episode 1\",",
                 "\"dispatch\":\"A signed field route is available.\",\"betaUrl\":\"https://beta.pathofangels.network/?episode=1\",",
                 "\"game\":{\"kind\":\"descent\",\"src\":\"dregg://descent/b3_de5ce0\"},",
                 "\"contentAssets\":[{\"path\":\"catalog.json\",\"url\":\"https://beta.pathofangels.network/artifacts/poag1/catalog.json\",",
-                "\"mediaType\":\"application/json\",\"bytes\":5508,\"sha256\":\"2e85db1fbe2b670d2bbc210790e0b04be521a6cddfa65b9724c49aa2558b39f8\"}],",
+                "\"mediaType\":\"application/json\",\"bytes\":4242,\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\"}],",
                 "\"actions\":{\"mission\":{\"label\":\"Open field terminal\",\"betaUrl\":\"https://beta.pathofangels.network/?station=field\"}}},",
                 "\"issuedAt\":1799999940,\"expiresAt\":1800003600}"
             )
         );
+    }
+
+    /// What the projection owes the SHIPPED artifact, pinned by derivation rather
+    /// than by a literal: every identity in the signed bytes has to be the one the
+    /// authenticated bundle and the deployment kit report, byte for byte. This is
+    /// the half that had teeth, and it survives an enrolment because it reads the
+    /// enrolled artifact instead of a length someone typed.
+    #[test]
+    fn v3_signing_bytes_carry_the_live_bundle_and_deployment_verbatim() {
+        let bundle = Poag1Bundle::load(repo().join("poa/artifacts/poag1/manifest.json")).unwrap();
+        let catalog = bundle
+            .manifest()
+            .artifacts
+            .iter()
+            .find(|pin| pin.path == "catalog.json")
+            .unwrap();
+        let (federation_id, deployment_id) = deployed_identity();
+        let bytes = String::from_utf8(manifest(&bundle).signing_bytes().unwrap()).unwrap();
+
+        // The bundle's own manifest digest is what a companion route commits to;
+        // a projection that dropped or truncated it would not carry this span.
+        let expected_pack = format!("\"contentPackDigest\":\"{}\",", bundle.manifest_sha256());
+        assert!(
+            bytes.contains(&expected_pack),
+            "signed bytes do not carry the bundle manifest digest: {expected_pack}"
+        );
+        assert!(bytes.contains(&format!("\"federationId\":\"{federation_id}\",")));
+        assert!(bytes.contains(&format!("\"deploymentId\":\"{deployment_id}\",")));
+
+        // The catalog asset span, rendered from the authenticated POAG1 pin. `bytes`
+        // and `sha256` move together on every enrolment and neither is typed here.
+        let expected_asset = format!(
+            concat!(
+                "{{\"path\":\"{path}\",\"url\":\"{origin}/artifacts/poag1/{path}\",",
+                "\"mediaType\":\"{media}\",\"bytes\":{len},\"sha256\":\"{sha}\"}}"
+            ),
+            path = catalog.path,
+            origin = POA_ORIGIN,
+            media = catalog.media_type,
+            len = catalog.bytes,
+            sha = catalog.sha256.trim_start_matches("sha256:"),
+        );
+        assert!(
+            bytes.contains(&expected_asset),
+            "signed bytes do not carry the authenticated catalog pin: {expected_asset}"
+        );
+
+        // …and the pin is the file on disk, so `bytes`/`sha256` above are the real
+        // artifact and not a manifest that drifted from it.
+        let on_disk = bundle.artifact_bytes(&catalog.path).unwrap();
+        assert_eq!(on_disk.len() as u64, catalog.bytes);
     }
 
     #[test]

@@ -228,6 +228,28 @@ inductive Refusal where
   | settledFragment
 deriving Repr, DecidableEq
 
+/-- ⚑ **PRECEDENCE-ORDERED, and the descriptor's `refusals` array is this list.**
+`refusal?` below is a chain of guards, so when two conditions hold at once the
+EARLIER one is the reason reported.  That order is semantics a client renders, so
+it is emitted rather than left to the reader — and `settled-slot` holds at every
+`solved` state (a solved run has settled every slot), which is exactly why the
+order cannot be dropped. -/
+def allRefusals : List Refusal :=
+  [.solved, .turnLimit, .repeatedProbe, .settledSlot, .settledFragment]
+
+theorem allRefusals_complete (r : Refusal) : r ∈ allRefusals := by
+  cases r <;> decide
+
+def Refusal.tag : Refusal → String
+  | .solved => "solved"
+  | .turnLimit => "turn-limit"
+  | .repeatedProbe => "repeated-probe"
+  | .settledSlot => "settled-slot"
+  | .settledFragment => "settled-fragment"
+
+theorem refusal_tags_are_distinct :
+    (allRefusals.map Refusal.tag).eraseDups = allRefusals.map Refusal.tag := by decide
+
 def refusal? (order : Fin ORDER_SPACE) (s : State) : Action → Option Refusal
   | .probe slot fragment =>
       if solvedB order s then some .solved
@@ -726,6 +748,83 @@ theorem a_run_can_be_lost :
      | some s => !solvedB 0 s && decide (s.turns = MAX_TURNS)) = true := by
   native_decide
 
+/-! ## Refusal reachability, witnessed
+
+⚑ **A declared refusal reason that cannot fire is decoration.**  The design gate
+measures that from a total transition table for every other Path-of-Angels game;
+this one has no such table (the state space is a subset lattice, `2^25`), so the
+gate reported the vocabulary as UNCHECKED — `black-box-reconstruction/refusals-\
+declared-not-checked`, a gap in the instrument rather than a property of the game.
+
+The gap closes by EMITTING the evidence.  Each witness is a legal transcript
+prefix and one further probe; the kernel replays it and reports the reason, the
+descriptor carries the witness, and `scripts/poa-design-gate.py` replays the same
+witness against the emitted ORACLE TABLE and re-derives the reason from the
+declared `settles` semantics without reading any of these definitions.  Two
+sources for one fact, which is the only shape that catches a disagreement.
+
+⚠ The witnesses are the shortest transcripts that reach each guard, on the
+identity instance (order 0), EXCEPT `turnLimit`, which needs the budget spent:
+`losingTranscript` is the fifteen legal non-matching probes `a_run_can_be_lost`
+already replays. -/
+
+structure RefusalWitness where
+  reason : Refusal
+  order : Fin ORDER_SPACE
+  /-- Legal transcript prefix; `replay` must accept it in full. -/
+  history : List Action
+  /-- The probe the run is refused at. -/
+  probe : Action
+deriving Repr
+
+/-- Order 0 is the identity permutation, so `probe i i` matches and `probe 0 1`
+does not — the two facts every witness below is built from, and both are cells of
+the emitted table rather than claims of this comment. -/
+def refusalWitnesses : List RefusalWitness :=
+  [ { reason := .solved, order := 0
+      history := [.probe 0 0, .probe 1 1, .probe 2 2, .probe 3 3, .probe 4 4]
+      probe := .probe 0 1 }
+  , { reason := .turnLimit, order := 0
+      history := losingTranscript
+      probe := .probe 0 0 }
+  , { reason := .repeatedProbe, order := 0
+      history := [.probe 0 1]
+      probe := .probe 0 1 }
+  , { reason := .settledSlot, order := 0
+      history := [.probe 0 0]
+      probe := .probe 0 1 }
+  , { reason := .settledFragment, order := 0
+      history := [.probe 0 0]
+      probe := .probe 1 0 } ]
+
+/-- A witness FIRES when its prefix is accepted at every step and the further
+probe is refused with exactly the reason it names. -/
+def witnessFiresB (w : RefusalWitness) : Bool :=
+  match replay w.order initialState w.history with
+  | none => false
+  | some s => decide (refusal? w.order s w.probe = some w.reason)
+
+/-- ⚑ **Every declared refusal reason is reachable.**  Not "one theorem per
+reason asserted in prose" — every witness replays, and every constructor of
+`Refusal` is named by one.  The design gate re-derives all five from the emitted
+artifact. -/
+def everyRefusalIsWitnessedB : Bool :=
+  refusalWitnesses.all witnessFiresB &&
+    allRefusals.all fun r => refusalWitnesses.any fun w => decide (w.reason = r)
+
+theorem every_refusal_is_witnessed : everyRefusalIsWitnessedB = true := by
+  native_decide
+
+/-- The falsifier, constructed rather than asserted: a witness whose prefix is
+legal and whose further probe is NOT refused at all does not fire.  Probing
+`(0,1)` after `(0,2)` on the identity is a perfectly ordinary accepted move, so
+`witnessFiresB` must reject any claim that it refuses. -/
+theorem a_probe_that_is_accepted_witnesses_nothing :
+    (allRefusals.any fun r =>
+      witnessFiresB { reason := r, order := 0, history := [.probe 0 2],
+                      probe := .probe 0 1 }) = false := by
+  native_decide
+
 #assert_axioms orderRow_length
 #assert_axioms orderRow_nodup
 #assert_axioms orderRow_perm
@@ -765,8 +864,12 @@ theorem a_run_can_be_lost :
 #assert_axioms judge_action_count_bounded
 #assert_axioms judge_receipt_binds_transcript
 #assert_axioms judge_binds_run_seed
+#assert_axioms allRefusals_complete
+#assert_axioms refusal_tags_are_distinct
 #assert_compiled five_positions_cost_exactly_fifteen_probes
 #assert_compiled scan_worst_case_is_the_budget
 #assert_compiled a_run_can_be_lost
+#assert_compiled every_refusal_is_witnessed
+#assert_compiled a_probe_that_is_accepted_witnesses_nothing
 
 end Dregg2.Games.PathOfAngels.BlackBoxReconstruction
