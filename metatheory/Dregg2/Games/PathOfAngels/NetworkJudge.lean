@@ -36,13 +36,29 @@ is drawn per run from the committed slot secret, so the emitter cannot supply it
 and this boundary carries the candidate's own.  Every other game-semantic field
 still comes from the Lean emitter: mission/artifact ids, epoch, session, budget,
 privacy, ballot, reward, allowed relics.  The TARGET is no longer among them,
-because it is no longer a constant: it is `targetFromSeed` of whatever live seed
+because it is no longer a constant: it is `targetFromSeed?` of whatever live seed
 `Judged.admissionChecks` proved was the derived one. -/
 def emittedSignalConfig (config : SignalTriangulation.Config) :
     SignalTriangulation.Config :=
-  Emit.signalConfig config.mission.runSeed config.mission.federationId
+  Emit.signalConfigWith config.mission.runSeed config.target config.target_eq
+    config.mission.federationId
     config.mission.artifact.sourceDigest config.mission.artifact.contentDigest
     config.mission.contentRoot config.mission.activationDigest
+
+/-- ⚠ **The rebuild carries the candidate's OWN target, and that is not a relaxation.**
+The draw is partial now, so a rebuild that re-drew would have to handle a refusal it
+can never see: `Config.target_eq` already forces every configuration's target to be
+the draw of its own mission's run seed, so the target component of the comparison
+below was NEVER able to fail — before this change it compared `targetFromSeed s`
+against a field the type defined to be `targetFromSeed s`.  This `rfl` is that
+statement, and it is why nothing here needs an `Option`.
+
+Where a CLAIMED target is actually checked against the derivation is
+`SignalConfigWire.toSemantic?`, at the point the target enters from the wire — and
+that check is now `some target = targetFromSeed? …`, so a wire naming a target for a
+seed that draws nothing is refused rather than reinterpreted. -/
+theorem emittedSignalConfig_target_was_already_forced (config : SignalTriangulation.Config) :
+    (emittedSignalConfig config).target = config.target := rfl
 
 def exactEmittedSignalConfig (config : SignalTriangulation.Config) : Bool :=
   decide (ActiveGame.configClaim (.signal config) =
@@ -489,12 +505,12 @@ theorem fixture_wrong_claimed_slot_refused :
 
 /-- ⚑ **The seed nobody gets to choose.**  This input is internally CONSISTENT — the
 config is exactly what `Emit.signalConfig` renders for `Emit.UNBOUND_RUN_SEED`, its target
-is `targetFromSeed` of that seed, `exactEmittedSignalConfig` accepts it, and the submitted
+is `targetFromSeed?` of that seed, `exactEmittedSignalConfig` accepts it, and the submitted
 action solves it — and it is REFUSED, because that seed is not `HiddenInstance.runSeedFor`
 of the committed slot secret for this player.  This is the falsifier for the claim that
 `UNBOUND_RUN_SEED` cannot be played. -/
 def unboundSeedConfig : SignalTriangulation.Config :=
-  Emit.signalConfig Emit.UNBOUND_RUN_SEED fixtureFederationId fixtureSourceDigest
+  Emit.signalTemplateConfig fixtureFederationId fixtureSourceDigest
     fixtureContentDigest fixtureContentRoot fixtureActivationDigest
 
 def unboundSeedInputWire : SignalInputWire := {

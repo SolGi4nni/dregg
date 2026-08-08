@@ -269,7 +269,7 @@ def descriptorFrom (states : List DeckDescent.State) (rows : List DescentRow)
   "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
     "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
-  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" (symbolDrawJson "rejection" [2, 2, 2]) ++ ",\n" ++
   "  \"shaft\":" ++ shaftJson ++ ",\n" ++
   "  \"state_machine\":{\n" ++
   "    \"initial_state\":" ++ jsonString (DeckDescent.stateId DeckDescent.initialState) ++ ",\n" ++

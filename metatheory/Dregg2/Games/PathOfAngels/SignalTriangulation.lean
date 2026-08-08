@@ -7,6 +7,7 @@ after a solved run, but it has no authority to manufacture or promote
 canon.  `step` is the rules oracle: refusal is `none`, never an accepted no-op.
 -/
 import Dregg2.Games.PathOfAngels.Core
+import Dregg2.Games.PathOfAngels.SeedDraw
 import Dregg2.Tactics
 import Mathlib.Data.Multiset.UnionInter
 
@@ -181,71 +182,116 @@ def byte (n : Nat) : Fin 256 := ⟨n % 256, Nat.mod_lt _ (by omega)⟩
 
 /-! ## The instance draw
 
-⚑ **MEASURED DEFECT, 2026-08-07 — NOT REPAIRED HERE.  See below before touching this.**
+The three bands are three CONSUMING rejection-sampled draws off one byte stream —
+`SeedDraw.drawBelow? 6`, the same draw `HiddenInstance` goes to trouble to hand a
+uniform stream to, and the one its docblock names.
 
-`HiddenInstance` goes to real trouble to hand this module UNIFORM bytes: the
-lane-to-byte projection discards the single field value that would give byte 0 an
-extra preimage (`HiddenInstance.laneByte_rejects_exactly_the_aliasing_value`), and
-its docblock says plainly "`SeedDraw.drawBelow?` is the only draw used".  **It is
-not.**  The draw below folds that carefully-uniform byte with `% 6`, and
-`256 = 42*6 + 4`, so the four low band symbols come back 43/256 against 42/256 for
-the other two — the same aliasing wound one level down, and FOUR values wide where
-the one so carefully rejected upstream was one.
-
-MEASURED over the 216 targets: the most likely is **1.073x** the least likely, and
-the distribution sits **0.0070** in total variation from uniform.  Signal is the
-flagship judged game, its target is HIDDEN and committed to, and a reward rides on
-it — which is exactly the condition `scripts/poa-design-gate.py`'s own
-`seed-modulo-bias` note names as the one that makes the bias matter.  The gate now
-raises it as a WARN rather than an INFO for that reason.
-
-⚠ **THE FIX IS A FLAG DAY AND IT IS NOT A DESIGN FORK.**  216 does not divide
+⚑ **WHY THIS IS PARTIAL, AND WHY THERE IS NO FALLBACK.**  216 does not divide
 `2^256`, so no TOTAL function from a 32-byte seed onto the 216 targets is exactly
-uniform: an honest uniform draw MUST be able to refuse, and no fallback is
-admissible (`getD zeroCode` would pile the excess onto `[0,0,0]`, which the gate
-reports as an opener that cannot win within the budget).  So the repair is
+uniform.  An honest uniform draw MUST be able to refuse.  A fallback would not
+rescue totality, it would relocate the bias and CONCENTRATE it: `getD zeroCode`
+piles the whole excess onto `[0,0,0]`, which is in `aaa` — the one opener class
+the design gate reports as unable to win within the five-burst budget.  So the
+draw returns `Option Code` and `Config.target_eq` carries the measurement, exactly
+the shape `BlackBoxReconstruction.orderFromRunSeed?` / `Config.order_eq` has.
 
-    def targetFromSeed? (seed : Digest32) : Option Code   -- three SeedDraw.drawBelow? 6
-    Config.target_eq : some target = targetFromSeed? mission.runSeed
+⚑ **WHAT THIS REPLACED, 2026-08-07.**  `targetFromSeed : Digest32 → Code` folded
+each byte with `% 6`.  `256 = 42*6 + 4`, so band symbols `0..3` came back 43/256
+against 42/256 — the most likely of the 216 targets was 1.0731x the least likely
+and the distribution sat 0.0070 in total variation from uniform, in a judged game
+whose target is hidden and committed to and which pays a mission reward.
+`modulo_fold_is_not_uniform` below keeps that refuted rather than remembered.
 
-exactly the shape `BlackBoxReconstruction.orderFromRunSeed?` / `Config.order_eq`
-already has.  It was built and it compiles through `SignalTriangulation` and
-`Emit` (`signalConfig?`); what it does NOT do cheaply is the fixture layer.
-`NetworkJudgeWire.fixtureConfig`, `NetworkJudge` (x2), `NetworkGenesis` (x2),
-`RecordsRuntime`, `BazaarGameExamples` and `AttendantKernel` each DERIVE a total
-`Config` inside the fixture, so each becomes `Option` or acquires an
-`Option.get`/carried-literal target — and the `rfl` proofs that ride on them
-(`fixtureMissionContext_is_the_live_context` and friends) stop being kernel-clean
-`#assert_axioms` pins and become compiler-trusted ones.  Turning a dozen
-kernel-clean pins into `native_decide` pins to fix a draw is a trade that needs
-doing deliberately, by restructuring the fixtures to CARRY a measured target and a
-`target_eq` measurement rather than derive one, not as a side effect.
-`SlotDeriveRuntime.derive` (the `dregg_poa_signal_slot_derive` FFI export) and
-`SignalFeedbackRuntime.targetOf` move with it; the export already has its `""`
-refusal sentinel, so that end is ready.
+Byte-stream partiality is not hypothetical: `all_high_block_seed_refuses` exhibits
+a seed the draw declines outright. -/
 
-That is the whole of the remaining work and it is the next thing, not an operator
-decision. -/
-
-def digestByte (digest : Digest32) (i : Nat) : Nat :=
-  (digest.bytes.getD i 0).val
+/-- The draw, on a raw byte stream.  Three consuming draws below 6: each one
+discards the incomplete high block (`SeedDraw.ceilingFor 6 = 252`) rather than
+folding it, and hands the REMAINING bytes to the next, so the three bands read
+disjoint prefixes (`SeedDraw.drawBelow?_consumes`) instead of one byte three
+times. -/
+def targetFromBytes? (bs : List (Fin 256)) : Option Code :=
+  match SeedDraw.drawBelow? 6 (by decide) bs with
+  | none => none
+  | some (low, s1) =>
+    match SeedDraw.drawBelow? 6 (by decide) s1 with
+    | none => none
+    | some (mid, s2) =>
+      match SeedDraw.drawBelow? 6 (by decide) s2 with
+      | none => none
+      | some (high, _) => some { low, mid, high }
 
 /-- The run seed chooses the puzzle; it is recorded verbatim in the Core receipt.
 The mission artifact pins this derivation and the full feedback table.
 
-⚠ The `% 6` is the measured defect described above. -/
-def targetFromSeed (seed : Digest32) : Code := {
-  low := ⟨digestByte seed 0 % 6, Nat.mod_lt _ (by omega)⟩
-  mid := ⟨digestByte seed 1 % 6, Nat.mod_lt _ (by omega)⟩
-  high := ⟨digestByte seed 2 % 6, Nat.mod_lt _ (by omega)⟩
-}
+`none` means this seed draws no instance.  A caller may not substitute one: every
+`Config` carries `target_eq`, so a refused seed has no configuration at all. -/
+def targetFromSeed? (seed : Digest32) : Option Code := targetFromBytes? seed.bytes
+
+theorem targetFromSeed?_is_the_byte_draw (seed : Digest32) :
+    targetFromSeed? seed = targetFromBytes? seed.bytes := rfl
+
+/-! ### The uniformity, measured — and the fold it replaced, refuted
+
+`SeedDraw.draw_is_uniform_on_every_bound` is the general fact: for EVERY bound in
+`1..256` each residue has exactly `256 / bound` accepted preimages.  The two
+measurements below are about the bound this game actually uses, and they are
+stated so that a regression to the fold turns them RED rather than leaving them
+true of a function nobody calls. -/
+
+/-- MEASURED at the band bound: the six symbols have exactly 42 accepted preimages
+each, and no symbol is favoured. -/
+theorem band_draw_fibres_at_six : SeedDraw.fibreSizes 6 = List.replicate 6 42 := by decide
+
+/-- The fibres of the map this module used to apply: `byte % 6` over the WHOLE byte
+domain, nothing rejected. -/
+def moduloFibres : List Nat :=
+  (List.range 6).map fun r => ((List.range 256).filter fun b => b % 6 == r).length
+
+/-- ⚑ **THE DEFECT, KEPT REFUTED.**  The fold is not uniform — four symbols have 43
+preimages and two have 42 — and it is not the draw.  These are the two facts the
+repair rests on; if `targetFromBytes?` ever folds again they are what goes red. -/
+theorem modulo_fold_is_not_uniform : moduloFibres = [43, 43, 43, 43, 42, 42] := by decide
+
+theorem modulo_fold_is_not_the_draw : moduloFibres ≠ SeedDraw.fibreSizes 6 := by decide
+
+/-- ⚑ **PARTIALITY IS REAL, NOT DECORATIVE.**  Every byte of this seed is in the
+incomplete high block, so every byte is discarded and the stream runs out: the draw
+refuses rather than folding a biased byte.  This is the witness that no total
+function could have been written here. -/
+theorem all_high_block_seed_refuses :
+    targetFromSeed? ⟨List.replicate 32 255, by simp⟩ = none := by decide
+
+/-- The complement: an all-zero stream draws the all-low code.  Stated so the
+refusal above cannot be read as the draw refusing everything. -/
+theorem zero_seed_draws_the_all_low_code :
+    targetFromSeed? ⟨List.replicate 32 0, by simp⟩ =
+      some { low := 0, mid := 0, high := 0 } := by decide
+
+/-- ⚑ The three bands are three DRAWS, not one byte read three times: a seed whose
+first three bytes differ draws three different bands, in order.  This is the
+`SeedDraw.consuming_draw_is_not_a_repeat` property at this call site. -/
+theorem bands_are_three_consuming_draws :
+    targetFromBytes? ([1, 2, 3] ++ List.replicate 29 0) =
+      some { low := 1, mid := 2, high := 3 } := by decide
+
+/-- ⚑ A rejected byte is CONSUMED, not re-read: byte 0 is in the high block, so the
+low band comes from byte 1 and the bands shift down the stream.  A draw that
+re-read on rejection would return `low = 2` here and the stream would be one byte
+out for every band after it. -/
+theorem a_rejected_byte_shifts_the_stream :
+    targetFromBytes? ([255, 1, 2, 3] ++ List.replicate 28 0) =
+      some { low := 1, mid := 2, high := 3 } := by decide
 
 structure Config where
   target       : Code
   mission      : MissionSpec
   reward       : Contribution
   reward_accepted : mission.acceptsContribution reward = true
-  target_eq : target = targetFromSeed mission.runSeed
+  /-- ⚠ `some target = …`, not `target = …`: a seed the draw refuses has no
+  configuration.  There is no `Option.get`, no default, and no way to name a target
+  the seed did not draw. -/
+  target_eq : some target = targetFromSeed? mission.runSeed
 
 structure State where
   turns        : Nat
@@ -486,7 +532,7 @@ theorem judge_some_sound (cfg : Config) (before : WorldState) (ctx : JudgeContex
 
 theorem judge_receipt_binds_target (cfg : Config) (before : WorldState) (ctx : JudgeContext)
     (actions : List Action) {run : JudgedRun} (h : judge cfg before ctx actions = some run) :
-    cfg.target = targetFromSeed run.receipt.runSeed := by
+    some cfg.target = targetFromSeed? run.receipt.runSeed := by
   have hs := judge_some_sound cfg before ctx actions h
   rw [run.receipt.run_seed_matches, hs.2.2.2.1]
   exact cfg.target_eq
@@ -514,6 +560,14 @@ theorem refused_prefix_refuses_replay (cfg : Config) (s : State) (a : Action) (a
     (h : step cfg s a = none) : replay cfg s (a :: as) = none := by
   simp [replay, h]
 
+#assert_axioms targetFromSeed?_is_the_byte_draw
+#assert_axioms band_draw_fibres_at_six
+#assert_axioms modulo_fold_is_not_uniform
+#assert_axioms modulo_fold_is_not_the_draw
+#assert_axioms all_high_block_seed_refuses
+#assert_axioms zero_seed_draws_the_all_low_code
+#assert_axioms bands_are_three_consuming_draws
+#assert_axioms a_rejected_byte_shifts_the_stream
 #assert_axioms exactCount_le_three
 #assert_axioms totalMatches_le_three
 #assert_axioms feedback_match_bound

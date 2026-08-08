@@ -40,6 +40,44 @@ def jsonPrettyArray (xs : List String) : String :=
 def jsonBool (value : Bool) : String :=
   if value then "true" else "false"
 
+/-- How a game turns the drawn SEED into its instance.
+
+⚠ This is a SEPARATE declaration from `sponge`, and the separation is the point.
+`sponge` says how the seed is produced and `commitment` says nobody chose it; neither
+says anything about the LAST HOP, and that hop is where a bias lived undetected —
+`SignalTriangulation` folded three seed bytes with `% 6` while every surrounding
+declaration described a careful uniform construction.  A gate reading this artifact had
+to ASSUME the last hop, and `scripts/poa-design-gate.py` assumed `% alphabet`; that is
+why its `seed-modulo-bias` finding could not be cleared by repairing the code, and why
+the hop is now DECLARED and MEASURED rather than assumed.
+
+`method` is what the gate measures the fibres of:
+
+* `"rejection"` — `SeedDraw.drawBelow?`: byte values at or above `256 - 256 % bound`
+  are discarded rather than folded, so every symbol has exactly `256 / bound`
+  preimages for ANY bound, and the draw may refuse when the stream runs out.
+* `"modulo"` — a bare `byte % bound`, total and never refusing.  Exact only when
+  `bound` divides 256; the gate computes the fibres and reports the spread when it
+  does not.
+
+`bounds` lists the successive draws in order, so a game drawing 5/4/3/2 states four
+bounds and the gate measures the whole instance space rather than one symbol. -/
+def symbolDrawJson (method : String) (bounds : List Nat) : String :=
+  let rejection := method == "rejection"
+  let ceiling := fun (b : Nat) => if rejection then 256 - 256 % b else 256
+  -- A rejection draw can only run out of bytes if some bound leaves a high block.
+  let refuses := rejection && bounds.any (fun b => 256 % b != 0)
+  "{\"method\":" ++ jsonString method ++
+  (if rejection then
+      ",\"module\":\"Dregg2.Games.PathOfAngels.SeedDraw\",\"function\":\"drawBelow?\""
+    else ",\"module\":null,\"function\":null") ++
+  ",\"bounds\":[" ++ String.intercalate "," (bounds.map toString) ++ "]" ++
+  ",\"byte_ceilings\":[" ++
+    String.intercalate "," ((bounds.map ceiling).map toString) ++ "]" ++
+  ",\"consumes_rejected_bytes\":" ++ jsonBool rejection ++
+  ",\"on_exhausted\":" ++ jsonString (if refuses then "refuse" else "unreachable") ++
+  ",\"refuses\":" ++ jsonBool refuses ++ "}"
+
 /-- The declaration every hidden-instance descriptor carries in place of its
 instance.  It states WHERE the instance comes from and what a client must verify
 before a run is scored; it states no value from which one can be computed.
@@ -49,10 +87,11 @@ is signed once per content epoch and slots open afterwards.  It is published per
 slot in the run opening, whose shape `Emit.schemaJson` pins, and a client refuses
 a run whose opening does not carry a curator-signed commitment for the slot it
 claims. -/
-def instanceDeclarationJson (disclosure : String) : String :=
+def instanceDeclarationJson (disclosure : String) (symbolDraw : String) : String :=
   "{\"kind\":\"per-run-hidden-draw\"" ++
   ",\"derivation_module\":\"Dregg2.Games.PathOfAngels.HiddenInstance\"" ++
   ",\"disclosure\":" ++ jsonString disclosure ++
+  ",\"symbol_draw\":" ++ symbolDraw ++
   ",\"commitment\":{\"published_in\":\"slot-opening\",\"domain\":\"POAC\"," ++
     "\"preimage\":[\"domain\",\"slot\",\"slot_secret\"]," ++
     "\"binding_bits\":124,\"opened_after\":\"slot-close\"}" ++
@@ -89,8 +128,11 @@ construction: they are not in the allowed set, so a descriptor that still names 
 drawn board fails to load rather than being reinterpreted. -/
 def validateInstanceDeclaration (block : Json) (disclosure : String) :
     Except String Unit := do
-  exactKeys block ["kind", "derivation_module", "disclosure", "commitment", "draw",
-    "sponge", "practice", "operator_knows_instance"]
+  exactKeys block ["kind", "derivation_module", "disclosure", "symbol_draw",
+    "commitment", "draw", "sponge", "practice", "operator_knows_instance"]
+  exactKeys (← block.getObjVal? "symbol_draw")
+    ["method", "module", "function", "bounds", "byte_ceilings",
+     "consumes_rejected_bytes", "on_exhausted", "refuses"]
   if (← block.getObjValAs? String "kind") != "per-run-hidden-draw" then
     throw "POAG1 instance declaration is not a per-run hidden draw"
   if (← block.getObjValAs? String "disclosure") != disclosure then

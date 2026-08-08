@@ -13,8 +13,8 @@ module and back; it computes nothing.
 * `active.runSeed = HiddenInstance.runSeedFor ⟨secret, slot, playerKey⟩ ctx`
 
 and `SignalTriangulation.Config.target_eq` requires a third,
-`target = targetFromSeed mission.runSeed`.  The judge RE-DERIVES all three and refuses
-on mismatch.  That is a CHECK only if the node derived them independently: a node that
+`some target = targetFromSeed? mission.runSeed`.  The judge RE-DERIVES all three and
+refuses on mismatch.  That is a CHECK only if the node derived them independently: a node that
 shipped `Emit.UNBOUND_RUN_SEED` and let the judge fill it in would be asking the judge
 to compute the answer rather than to verify that the node served the committed one.
 
@@ -190,17 +190,52 @@ def drawOf (request : Request) : HiddenInstance.Draw where
   slot := ⟨request.slot⟩
   playerKey := request.playerKey
 
-/-- All three derived values, computed once.  `target` is a function of `run_seed`
-alone, so the reply cannot carry a target and a seed that disagree. -/
-def derive (request : Request) : Reply :=
-  let runSeed := HiddenInstance.runSeedFor (drawOf request) (contextOf request)
-  { commitment := HiddenInstance.commit (drawOf request).secret (drawOf request).slot
-    runSeed := runSeed
-    target := SignalTriangulation.targetFromSeed runSeed }
+/-- The run seed this request derives.  Named, so the two facts about it below and the
+reply's own field are one term and cannot drift apart. -/
+def runSeedOf (request : Request) : Digest32 :=
+  HiddenInstance.runSeedFor (drawOf request) (contextOf request)
+
+/-- All three derived values.  `target` is a function of `run_seed` alone, so the reply
+cannot carry a target and a seed that disagree.
+
+⚑ **`none` WHEN THE SEED DRAWS NOTHING.**  `SignalTriangulation.targetFromSeed?` is
+partial by necessity (216 ∤ 2^256), and this export does not paper over that: a seed
+whose byte stream is exhausted before three bands are drawn yields no reply at all.
+The alternative — returning a substitute target — would hand the judge an instance
+the seed did not draw, and `Config.target_eq` would then be unprovable for exactly
+the runs where it matters most.  The refusal reaches the node as the `""` sentinel
+the export already had.
+
+⚠ Written with `Option.map` rather than a `match`.  A `match` on this scrutinee
+generates equation lemmas indexed by the scrutinee's constructors, and `unfold`ing
+through them makes the KERNEL whnf `targetFromSeed? (runSeedOf request)` — a
+Poseidon2 sponge — which overflows its stack (`deep recursion detected`, measured
+while writing this).  `@[irreducible]` on the sponge does not help: it is an
+elaborator hint and the kernel ignores it.  `Option.map` has one equation and the
+inversion below never reduces the seed. -/
+def derive? (request : Request) : Option Reply :=
+  (SignalTriangulation.targetFromSeed? (runSeedOf request)).map fun target =>
+    { commitment := HiddenInstance.commit (drawOf request).secret (drawOf request).slot
+      runSeed := runSeedOf request
+      target := target }
+
+/-- The single inversion every fact below is read off.  Stated once so that no other
+proof in this file has to touch the draw. -/
+theorem derive?_some_inv {request : Request} {reply : Reply}
+    (h : derive? request = some reply) :
+    SignalTriangulation.targetFromSeed? (runSeedOf request) = some reply.target ∧
+      reply.runSeed = runSeedOf request ∧
+      reply.commitment =
+        HiddenInstance.commit (drawOf request).secret (drawOf request).slot := by
+  rw [derive?, Option.map_eq_some_iff] at h
+  obtain ⟨target, hd, hr⟩ := h
+  subst hr
+  exact ⟨hd, rfl, rfl⟩
 
 def deriveBytes? (bytes : String) : Option String := do
   let request ← decodeRequest bytes
-  some (derive request).toJson
+  let reply ← derive? request
+  some reply.toJson
 
 /-- **`@[export dregg_poa_signal_slot_derive]`** — the per-run instance derivation.
 `""` is the fail-closed refusal sentinel, as in every other PoA export; every accepted
@@ -244,34 +279,58 @@ theorem slotDeriveFFI_refuses_uncanonical {bytes : String} (h : decodeRequest by
     slotDeriveFFI bytes = "" := by
   simp [slotDeriveFFI, deriveBytes?, h]
 
+/-! ⚠ **Every proof below GENERALIZES the draw before casing on it.**  The scrutinee is
+`targetFromSeed? (runSeedOf request)`, and `runSeedOf` is a Poseidon2 sponge: `split`
+or `cases` on it unreduced sends the KERNEL into the permutation, which is not slow
+but infeasible (`deep recursion detected`, hit while writing this).  `@[irreducible]`
+does not help — it is an elaborator hint and the kernel ignores it.
+`generalize … = t at h` replaces the sponge with a variable FIRST, so the case split
+is on a two-constructor `Option` and nothing reduces. -/
+
 /-- ⚑ The commitment the export returns IS `HiddenInstance.commit` of the secret and
 slot the request named.  This is the value `Judged.admissionChecks` recomputes. -/
-theorem derive_commitment_is_the_commit (request : Request) :
-    (derive request).commitment =
-      HiddenInstance.commit ⟨request.secret⟩ ⟨request.slot⟩ := rfl
+theorem derive_commitment_is_the_commit {request : Request} {reply : Reply}
+    (h : derive? request = some reply) :
+    reply.commitment = HiddenInstance.commit ⟨request.secret⟩ ⟨request.slot⟩ :=
+  (derive?_some_inv h).2.2
 
 /-- ⚑ The run seed the export returns IS `HiddenInstance.runSeedFor` of that draw and
 that context. -/
-theorem derive_run_seed_is_the_draw (request : Request) :
-    (derive request).runSeed =
+theorem derive_run_seed_is_the_draw {request : Request} {reply : Reply}
+    (h : derive? request = some reply) :
+    reply.runSeed =
       HiddenInstance.runSeedFor
         { secret := ⟨request.secret⟩, slot := ⟨request.slot⟩, playerKey := request.playerKey }
-        (contextOf request) := rfl
+        (contextOf request) :=
+  (derive?_some_inv h).2.1
 
-/-- ⚑ The target the export returns IS `targetFromSeed` of the run seed it returned in
-the same reply — not of some other seed. -/
-theorem derive_target_is_from_its_own_run_seed (request : Request) :
-    (derive request).target =
-      SignalTriangulation.targetFromSeed (derive request).runSeed := rfl
+/-- ⚑ The target the export returns IS the DRAW of the run seed it returned in the
+same reply — not of some other seed, and not a substitute for a seed that drew
+nothing. -/
+theorem derive_target_is_from_its_own_run_seed {request : Request} {reply : Reply}
+    (h : derive? request = some reply) :
+    some reply.target = SignalTriangulation.targetFromSeed? reply.runSeed := by
+  obtain ⟨hd, hseed, _⟩ := derive?_some_inv h
+  rw [hseed]
+  exact hd.symm
 
 /-- The exact proof obligation `SignalTriangulation.Config.target_eq` demands.  A node
 that installs the reply's run seed into a mission can discharge `target_eq` with this
 and does not have to recompute a target of its own. -/
-theorem derive_target_discharges_config_target_eq (request : Request) (mission : MissionSpec)
-    (hseed : mission.runSeed = (derive request).runSeed) :
-    (derive request).target = SignalTriangulation.targetFromSeed mission.runSeed := by
+theorem derive_target_discharges_config_target_eq {request : Request} {reply : Reply}
+    (h : derive? request = some reply) (mission : MissionSpec)
+    (hseed : mission.runSeed = reply.runSeed) :
+    some reply.target = SignalTriangulation.targetFromSeed? mission.runSeed := by
   rw [hseed]
-  exact derive_target_is_from_its_own_run_seed request
+  exact derive_target_is_from_its_own_run_seed h
+
+/-- ⚑ **THE REFUSAL IS REACHABLE, AND IT IS THE SEED THAT CAUSES IT.**  Without this
+the `none` branch of `derive?` could be a limb nothing reaches, and the partiality
+would be decorative rather than the honest consequence of a uniform draw. -/
+theorem derive_refuses_a_seed_that_draws_nothing (request : Request)
+    (h : SignalTriangulation.targetFromSeed? (runSeedOf request) = none) :
+    derive? request = none := by
+  rw [derive?, h, Option.map_none]
 
 /-- ⚑ **THE WELD.**  A node that derives through this export and installs the answers
 satisfies EXACTLY the two clauses of `Judged.admissionChecks` that no node can assert.
@@ -281,22 +340,23 @@ secret and slot the request named, the carrier's signer is the player it named, 
 mission's draw context is the context it named, and the commitment and run seed are the
 ones the export returned.  Nothing is assumed about the sponge, and nothing here
 reduces it — both sides of each conjunct are the same opaque application. -/
-theorem derive_satisfies_admission (request : Request)
+theorem derive_satisfies_admission {request : Request} {reply : Reply}
+    (hderive : derive? request = some reply)
     (active : ActiveRunState) (carrier : FinalizedCarrier)
     (hsecret : active.slotSecret = ⟨request.secret⟩)
     (hslot : active.slot = ⟨request.slot⟩)
     (hplayer : carrier.playerKey = request.playerKey)
     (hcontext : HiddenInstance.MissionContext.ofMission active.game.mission = contextOf request)
-    (hcommitment : active.slotCommitment = (derive request).commitment)
-    (hrunSeed : active.runSeed = (derive request).runSeed) :
+    (hcommitment : active.slotCommitment = reply.commitment)
+    (hrunSeed : active.runSeed = reply.runSeed) :
     active.slotCommitment = HiddenInstance.commit active.slotSecret active.slot ∧
       active.runSeed =
         HiddenInstance.runSeedFor
           { secret := active.slotSecret, slot := active.slot, playerKey := carrier.playerKey }
           (HiddenInstance.MissionContext.ofMission active.game.mission) := by
   refine ⟨?_, ?_⟩
-  · rw [hcommitment, hsecret, hslot, derive_commitment_is_the_commit]
-  · rw [hrunSeed, hsecret, hslot, hplayer, hcontext, derive_run_seed_is_the_draw]
+  · rw [hcommitment, hsecret, hslot, derive_commitment_is_the_commit hderive]
+  · rw [hrunSeed, hsecret, hslot, hplayer, hcontext, derive_run_seed_is_the_draw hderive]
 
 /-! ## Concrete requests, and why these are compiled pins
 
@@ -336,9 +396,15 @@ theorem fixture_request_roundtrips :
     decodeRequest fixtureRequestBytes = some fixtureRequest := by
   native_decide
 
+/-- ⚑ **THE FIXTURE REQUEST DRAWS.**  `derive?` is partial now, so every pin below is a
+statement about a `some`; without this one they could all be satisfied by a refusal and
+the whole compiled suite would read green against an export that answers nothing. -/
+theorem fixture_derives : (derive? fixtureRequest).isSome = true := by
+  native_decide
+
 /-- The export answers, and its answer is the canonical reply it would have written. -/
 theorem fixture_export_answers :
-    slotDeriveFFI fixtureRequestBytes = (derive fixtureRequest).toJson := by
+    some (slotDeriveFFI fixtureRequestBytes) = (derive? fixtureRequest).map Reply.toJson := by
   native_decide
 
 /-- The answer is non-empty, so the refusal sentinel is unambiguous on this wire. -/
@@ -347,14 +413,16 @@ theorem fixture_export_is_not_the_refusal :
   native_decide
 
 theorem fixture_reply_is_canonical_and_states_the_format :
-    (derive fixtureRequest).toJson.startsWith ("{\"format\":\"" ++ OUTPUT_FORMAT ++ "\"") = true := by
+    ((derive? fixtureRequest).map Reply.toJson).any
+      (fun j => j.startsWith ("{\"format\":\"" ++ OUTPUT_FORMAT ++ "\"")) = true := by
   native_decide
 
 /-- ⚠ The reply does not echo the secret.  A one-instance check, and it is exactly one:
 the general statement is that `Reply` has no secret FIELD, which is a type-level fact
 visible above, not a theorem. -/
 theorem fixture_reply_does_not_carry_the_secret :
-    ((derive fixtureRequest).toJson.splitOn FIXTURE_SECRET_HEX).length = 1 := by
+    ((derive? fixtureRequest).map
+      (fun r => (r.toJson.splitOn FIXTURE_SECRET_HEX).length)) = some 1 := by
   native_decide
 
 theorem fixture_trailing_byte_refused :
@@ -398,8 +466,10 @@ def otherSecretRequest : Request :=
     secret := hexDigest "8888888888888888888888888888888888888888888888888888888888888888" }
 
 theorem fixture_other_secret_draws_another_instance :
-    (derive fixtureRequest).runSeed ≠ (derive otherSecretRequest).runSeed ∧
-      (derive fixtureRequest).commitment ≠ (derive otherSecretRequest).commitment := by
+    (derive? fixtureRequest).map Reply.runSeed ≠
+        (derive? otherSecretRequest).map Reply.runSeed ∧
+      (derive? fixtureRequest).map Reply.commitment ≠
+        (derive? otherSecretRequest).map Reply.commitment := by
   native_decide
 
 /-- The commitment takes no player and no mission, so two players in one slot under one
@@ -409,8 +479,10 @@ def otherPlayerRequest : Request :=
     playerKey := hexDigest "6666666666666666666666666666666666666666666666666666666666666666" }
 
 theorem fixture_commitment_is_player_independent_but_the_seed_is_not :
-    (derive fixtureRequest).commitment = (derive otherPlayerRequest).commitment ∧
-      (derive fixtureRequest).runSeed ≠ (derive otherPlayerRequest).runSeed := by
+    (derive? fixtureRequest).map Reply.commitment =
+        (derive? otherPlayerRequest).map Reply.commitment ∧
+      (derive? fixtureRequest).map Reply.runSeed ≠
+        (derive? otherPlayerRequest).map Reply.runSeed := by
   native_decide
 
 #assert_axioms decodeRequest_reencodes
@@ -421,7 +493,9 @@ theorem fixture_commitment_is_player_independent_but_the_seed_is_not :
 #assert_axioms derive_run_seed_is_the_draw
 #assert_axioms derive_target_is_from_its_own_run_seed
 #assert_axioms derive_target_discharges_config_target_eq
+#assert_axioms derive_refuses_a_seed_that_draws_nothing
 #assert_axioms derive_satisfies_admission
+#assert_compiled fixture_derives
 #assert_compiled fixture_request_roundtrips
 #assert_compiled fixture_export_answers
 #assert_compiled fixture_export_is_not_the_refusal

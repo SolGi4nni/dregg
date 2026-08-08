@@ -36,7 +36,7 @@ private def expectedConfig (input : GenesisInputWire) : SignalTriangulation.Conf
   -- ⚠ `UNBOUND_RUN_SEED`: genesis describes the mission TEMPLATE, and a template
   -- has no instance.  The live seed is drawn per run by `HiddenInstance.runSeedFor`
   -- and checked by `Judged.admissionChecks`; nothing at genesis time can name it.
-  Emit.signalConfig Emit.UNBOUND_RUN_SEED input.deployment.federationId
+  Emit.signalTemplateConfig input.deployment.federationId
     input.content.sourceDigest
     input.content.signalContentDigest input.content.contentRoot input.content.activationDigest
 
@@ -443,7 +443,7 @@ def fixtureInput : GenesisInputWire := {
     activationCounter := 2
   }
   config := SignalConfigWire.ofSemantic
-    (Emit.signalConfig Emit.UNBOUND_RUN_SEED fixtureFederationId fixtureSourceDigest
+    (Emit.signalTemplateConfig fixtureFederationId fixtureSourceDigest
       fixtureSignalDigest fixtureContentRoot fixtureActivationDigest)
   initial := emptyInitialState
 }

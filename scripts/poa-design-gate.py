@@ -128,6 +128,84 @@ BANNED_ACTION_KEYS = {
 
 DISCLOSURES = {"oracle-only", "per-run-open"}
 
+# ---------------------------------------------------------------------------
+# the last hop: seed bytes -> instance symbols
+# ---------------------------------------------------------------------------
+#
+# ⚑ THIS USED TO BE AN ASSUMPTION, AND THE ASSUMPTION IS WHY THE FINDING BELOW
+# COULD NOT BE CLEARED BY FIXING THE CODE.
+#
+# `seed-modulo-bias` was computed as `Counter(b % alphabet for b in range(256))`
+# — hardcoded here, read from nothing.  For `alphabet = 6` that is never uniform,
+# so the finding fired for Signal no matter what `targetFromSeed` actually did.
+# It was RIGHT (Signal did fold with `% 6`), and it was right by luck: the same
+# line would have kept firing after the repair, and the only way to silence it
+# would have been a baseline entry — which is exactly how a real defect becomes
+# furniture.
+#
+# The descriptor now DECLARES the last hop (`instance.symbol_draw`, emitted by
+# `EmitJson.symbolDrawJson`) and this computes the fibres of what is declared.
+# A rejection draw measures uniform and the finding does not fire; a `modulo`
+# draw measures its real fibres and fires exactly when the bound does not divide
+# 256.  The gate can still go RED, on evidence, which a baseline could not.
+
+SYMBOL_DRAW_METHODS = {"rejection", "modulo"}
+
+
+def declared_symbol_draw(doc: dict) -> dict:
+    """The game's declared seed-to-symbol map.  Refuses a descriptor without one."""
+    inst = doc.get("instance")
+    if not isinstance(inst, dict):
+        raise Refusal("descriptor carries no `instance` declaration")
+    decl = inst.get("draw") if "boards" in inst else inst
+    sd = (decl or {}).get("symbol_draw")
+    if not isinstance(sd, dict):
+        raise Refusal(
+            "`instance.symbol_draw` is absent: the descriptor states how its SEED is "
+            "produced but not how the seed becomes its INSTANCE, and that last hop is "
+            "where a modulo bias lives.  A gate cannot score an undeclared draw, and "
+            "this one refuses to assume it (it did assume it, and the assumption "
+            "outlived the defect).  Re-emit from Lean: `EmitJson.symbolDrawJson`.")
+    method = sd.get("method")
+    if method not in SYMBOL_DRAW_METHODS:
+        raise Refusal(f"symbol draw method {method!r} is not one of "
+                      f"{sorted(SYMBOL_DRAW_METHODS)}")
+    bounds = sd.get("bounds")
+    if not (isinstance(bounds, list) and bounds
+            and all(isinstance(b, int) and b > 0 for b in bounds)):
+        raise Refusal("`symbol_draw.bounds` is not a non-empty list of positive ints")
+    # The declaration has to agree with itself: a rejection draw's ceiling is the
+    # largest multiple of the bound that fits in a byte, and it can only refuse when
+    # some bound leaves an incomplete block.  A descriptor that says "rejection" and
+    # then states modulo ceilings is refused rather than read charitably.
+    ceilings = sd.get("byte_ceilings")
+    expect = [256 - 256 % b if method == "rejection" else 256 for b in bounds]
+    if ceilings != expect:
+        raise Refusal(f"`symbol_draw.byte_ceilings` {ceilings} disagrees with method "
+                      f"{method!r} over bounds {bounds}; expected {expect}")
+    refuses = method == "rejection" and any(256 % b for b in bounds)
+    if sd.get("refuses") is not refuses:
+        raise Refusal(f"`symbol_draw.refuses` is {sd.get('refuses')!r}; over bounds "
+                      f"{bounds} under {method!r} it is {refuses}")
+    return sd
+
+
+def symbol_draw_fibres(doc: dict, alphabet: int) -> Counter:
+    """Preimage counts, out of 256 byte values, for each symbol below `alphabet`.
+
+    MEASURED by enumerating the byte domain under the DECLARED draw, not asserted.
+    `rejection` discards the incomplete high block instead of folding it, so every
+    symbol has exactly `256 // bound` preimages; `modulo` folds the whole domain.
+    """
+    sd = declared_symbol_draw(doc)
+    if alphabet not in sd["bounds"]:
+        raise Refusal(
+            f"the descriptor's action alphabet is {alphabet} but its declared draw "
+            f"bounds are {sd['bounds']}: the instance is not drawn over the symbol set "
+            f"the actions use, so one of the two declarations is wrong")
+    ceiling = 256 - 256 % alphabet if sd["method"] == "rejection" else 256
+    return Counter(b % alphabet for b in range(256) if b < ceiling)
+
 
 def check_instance_contract(doc: dict, rep: Report) -> str:
     """Refuse the pre-split shape; return the declared disclosure.
@@ -567,10 +645,12 @@ class DeductionGame:
             family.append({"class": shape_name(orb[0]), "instances": len(orb),
                            "feedback_classes_realizable": len(got)})
 
-        # seed -> instance map, and its modulo bias
-        mods = Counter(b % self.alphabet for b in range(256))
+        # seed -> instance map, and its bias — MEASURED from the draw the descriptor
+        # DECLARES, not from an assumption about it.  See `symbol_draw_fibres`.
+        mods = symbol_draw_fibres(self.doc, self.alphabet)
         bias = {"symbol_counts_out_of_256": dict(sorted(mods.items())),
-                "uniform": len(set(mods.values())) == 1}
+                "uniform": len(set(mods.values())) == 1,
+                "method": declared_symbol_draw(self.doc)["method"]}
 
         # reference policies, one per opener class
         policies = []
@@ -644,7 +724,8 @@ class DeductionGame:
         rep.find(self.name, "instance-collapse", INFO,
                  f"the seed space collapses to {len(code_orbits)} structurally distinct "
                  f"instances",
-                 f"seeds are 2^256; `targetFromSeed` reads 3 bytes mod {self.alphabet} "
+                 f"seeds are 2^256; the declared draw takes {self.bands} symbols below "
+                 f"{self.alphabet} off the byte stream "
                  f"giving {self.n} targets; the verified symmetry group "
                  f"(S{self.alphabet} recolour x S{self.bands} reposition) collapses those "
                  f"to {len(code_orbits)} classes "
@@ -676,8 +757,10 @@ class DeductionGame:
             rep.find(self.name, "seed-modulo-bias", WARN if live else INFO,
                      "the hidden instance is not drawn uniformly"
                      if live else "the seed-to-band map is not uniform",
-                     f"a byte mod {self.alphabet} yields symbol counts {lo}..{hi} out of "
-                     f"256, so band symbols 0..{255 % self.alphabet} are "
+                     f"the descriptor declares a {bias['method']!r} draw over bounds "
+                     f"{declared_symbol_draw(self.doc)['bounds']}; MEASURED over the "
+                     f"whole 256-value byte domain that yields symbol counts "
+                     f"{lo}..{hi}, so band symbols 0..{255 % self.alphabet} are "
                      f"{round(100 * (hi - lo) / lo, 2)}% more likely than the rest.  "
                      f"Over the whole {self.n}-target domain that is a "
                      f"{worst:.4f}x spread between the most and least likely target "
@@ -686,18 +769,17 @@ class DeductionGame:
                       f"'oracle-only' and `output.contribution` is "
                       f"{self.doc['output']['contribution']!r}, so the target is "
                       f"HIDDEN and a reward rides on it — the exact condition this "
-                      f"finding was written to fire on.  The repo already owns the "
-                      f"fix and does not use it here: `SeedDraw.drawBelow?` is "
+                      f"finding was written to fire on.  The fix is the one the repo "
+                      f"already owns: draw with `SeedDraw.drawBelow?`, which is "
                       f"rejection-sampled with `draw_is_uniform_on_every_bound` "
-                      f"proved over every bound, `HiddenInstance` rejects a whole "
-                      f"lane value to keep the byte stream uniform, and its docblock "
-                      f"claims `drawBelow?` is the only draw used — then "
-                      f"`SignalTriangulation.targetFromSeed` folds with `% "
-                      f"{self.alphabet}`.  The repair is `targetFromSeed? : Digest32 "
-                      f"→ Option Code` and `target_eq : some target = …`, the shape "
-                      f"`BlackBoxReconstruction.orderFromRunSeed?` already has; it is "
-                      f"a flag day through the fixture layer and it is NOT a design "
-                      f"fork.  Do not baseline this."
+                      f"proved over every bound, and declare it as "
+                      f"`instance.symbol_draw.method = \"rejection\"`.  A partial "
+                      f"draw is REQUIRED — {self.alphabet} does not divide 256 — so "
+                      f"the config must carry `target_eq : some target = …`, the "
+                      f"shape `BlackBoxReconstruction.orderFromRunSeed?` has.  Do "
+                      f"NOT add a fallback: folding the excess onto one code "
+                      f"concentrates the bias instead of removing it.  Do not "
+                      f"baseline this."
                       if live else
                       "Immaterial for a public-target demo; it is a real bias the "
                       "moment the target is hidden and a reward rides on it."))

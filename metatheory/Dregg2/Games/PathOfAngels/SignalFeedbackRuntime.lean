@@ -222,33 +222,40 @@ def deriveRequestOf (request : Request) : SlotDeriveRuntime.Request where
   contentSession := request.contentSession
   playerKey := request.playerKey
 
-/-- The instance this request is answerable to, as `SlotDeriveRuntime` derives it. -/
-def derivedOf (request : Request) : SlotDeriveRuntime.Reply :=
-  SlotDeriveRuntime.derive (deriveRequestOf request)
+/-- The instance this request is answerable to, as `SlotDeriveRuntime` derives it.
+
+⚠ `none` when the run seed draws no instance.  The oracle then serves nothing rather
+than classifying against a substitute — a mid-run oracle that answered against a target
+the judge would not score is worse than one that refuses. -/
+def derivedOf? (request : Request) : Option SlotDeriveRuntime.Reply :=
+  SlotDeriveRuntime.derive? (deriveRequestOf request)
 
 /-- The hidden target — **internal, and it reaches no output.**  `Reply` has no field it
 could occupy and `classifyBytes?` never mentions it except through `feedback`. -/
-def targetOf (request : Request) : SignalTriangulation.Code :=
-  (derivedOf request).target
+def targetOf? (request : Request) : Option SignalTriangulation.Code :=
+  (derivedOf? request).map SlotDeriveRuntime.Reply.target
 
-/-- Whether the node's secret opens the commitment it says the curator published. -/
+/-- Whether the node's secret opens the commitment it says the curator published.
+A request whose seed draws nothing opens nothing: `Option.any` is `false` on `none`. -/
 def commitmentOpens (request : Request) : Bool :=
-  (derivedOf request).commitment = request.commitment
+  (derivedOf? request).any (fun d => d.commitment = request.commitment)
 
 /-- The classification, and nothing else: `SignalTriangulation.feedback` of the derived
 target and the submitted guess. -/
-def classify (request : Request) : SignalTriangulation.Feedback :=
-  SignalTriangulation.feedback (targetOf request) request.guess
+def classify? (request : Request) : Option SignalTriangulation.Feedback :=
+  (targetOf? request).map (fun t => SignalTriangulation.feedback t request.guess)
 
-def replyOf (request : Request) : Reply := { feedback := classify request }
+def replyOf? (request : Request) : Option Reply :=
+  (classify? request).map (fun f => { feedback := f })
 
-/-- Fail-closed on both legs: a wire that is not canonical, and a secret that does not
-open the stated commitment, both produce `none` and therefore the `""` sentinel. -/
+/-- Fail-closed on three legs now: a wire that is not canonical, a secret that does not
+open the stated commitment, and a run seed that draws no instance — each produces `none`
+and therefore the `""` sentinel. -/
 def classifyBytes? (bytes : String) : Option String :=
   match decodeRequest bytes with
   | none => none
   | some request =>
-      if commitmentOpens request then some (replyOf request).toJson else none
+      if commitmentOpens request then (replyOf? request).map Reply.toJson else none
 
 /-- **`@[export dregg_poa_signal_feedback]`** — the mid-run LOCKED/DRIFT oracle.
 
@@ -305,23 +312,37 @@ theorem signalFeedbackFFI_refuses_an_unopened_commitment {bytes : String} {reque
 spelling of Mastermind: `SignalTriangulation.feedback`, the function
 `SignalTriangulation.step` scores a judged transcript with. -/
 theorem classify_is_the_triangulation_rule (request : Request) :
-    classify request = SignalTriangulation.feedback (targetOf request) request.guess := rfl
+    classify? request =
+      (targetOf? request).map (fun t => SignalTriangulation.feedback t request.guess) := rfl
 
 /-- ⚑ **THE WELD.**  The target this oracle classifies against IS the target
-`SlotDeriveRuntime.derive` hands the judge for the same slot, secret, context and
-player.  Feedback served mid-run and the verdict that settles are about ONE instance. -/
+`SlotDeriveRuntime.derive?` hands the judge for the same slot, secret, context and
+player — and it REFUSES on exactly the seeds that one refuses.  Feedback served mid-run
+and the verdict that settles are about ONE instance, including when there is none. -/
 theorem request_derives_the_judged_instance (request : Request) :
-    targetOf request = (SlotDeriveRuntime.derive (deriveRequestOf request)).target := rfl
+    targetOf? request =
+      (SlotDeriveRuntime.derive? (deriveRequestOf request)).map
+        SlotDeriveRuntime.Reply.target := rfl
 
-/-- The judged instance is `targetFromSeed` of `runSeedFor` — the judged purpose tag,
-not `practiceRunSeed`.  A practice run and a judged run are different draws, so a
-practice transcript can never be replayed as a judged one. -/
+/-- The seed the oracle draws against carries the JUDGED purpose tag, not
+`practiceRunSeed`.  A practice run and a judged run are different draws, so a practice
+transcript can never be replayed as a judged one. -/
+theorem judged_run_seed_is_the_judged_draw (request : Request) :
+    SlotDeriveRuntime.runSeedOf (deriveRequestOf request) =
+      HiddenInstance.runSeedFor
+        { secret := ⟨request.secret⟩, slot := ⟨request.slot⟩, playerKey := request.playerKey }
+        (SlotDeriveRuntime.contextOf (deriveRequestOf request)) := rfl
+
+/-- The oracle's instance is the DRAW of that seed — the same partial draw the judge
+applies, with no substitution anywhere between them. -/
 theorem judged_target_is_from_the_judged_run_seed (request : Request) :
-    targetOf request =
-      SignalTriangulation.targetFromSeed
-        (HiddenInstance.runSeedFor
-          { secret := ⟨request.secret⟩, slot := ⟨request.slot⟩, playerKey := request.playerKey }
-          (SlotDeriveRuntime.contextOf (deriveRequestOf request))) := rfl
+    targetOf? request =
+      SignalTriangulation.targetFromSeed?
+        (SlotDeriveRuntime.runSeedOf (deriveRequestOf request)) := by
+  unfold targetOf? derivedOf? SlotDeriveRuntime.derive?
+  generalize SignalTriangulation.targetFromSeed?
+    (SlotDeriveRuntime.runSeedOf (deriveRequestOf request)) = t
+  cases t <;> rfl
 
 /-- ⚑ **THE REPLY IS THE FEEDBACK AND NOTHING ELSE.**  Two requests whose classification
 agrees serve byte-identical replies — whatever else differs between them: the secret,
@@ -329,9 +350,9 @@ the slot, the player, the mission, the run seed, the target.  The served bytes a
 function of the classification alone, so no field of the request is recoverable from a
 reply beyond what the classification itself says. -/
 theorem reply_bytes_are_a_function_of_the_feedback_alone {left right : Request}
-    (h : classify left = classify right) :
-    (replyOf left).toJson = (replyOf right).toJson := by
-  simp [replyOf, Reply.toJson, h]
+    (h : classify? left = classify? right) :
+    (replyOf? left).map Reply.toJson = (replyOf? right).map Reply.toJson := by
+  simp only [replyOf?, h]
 
 /-- The bytes served for one guess against one target.  This is the whole observable of
 a judged session round. -/
@@ -359,15 +380,27 @@ theorem served_transcript_cannot_separate_feedback_equivalent_targets
 /-- A solved round is exactly a solved round: the reply says `exact = 3` iff the guess
 IS the target, which is the same predicate `SignalTriangulation.step` sets `solved` by.
 A session cannot call a run solved on any other evidence. -/
-theorem reply_reports_solved_iff_the_guess_is_the_target (request : Request) :
-    (classify request).exact = 3 ↔ request.guess = targetOf request :=
-  SignalTriangulation.exactCount_eq_three_iff _ _
+theorem reply_reports_solved_iff_the_guess_is_the_target {request : Request}
+    {t : SignalTriangulation.Code} (htarget : targetOf? request = some t) :
+    (classify? request).any (fun f => f.exact == 3) = true ↔ request.guess = t := by
+  rw [classify?, htarget]
+  simp only [Option.map_some, Option.any_some, beq_iff_eq]
+  exact SignalTriangulation.exactCount_eq_three_iff _ _
 
 /-- Both served numbers are bounded by three, so the wire's integers are single digits
-and the reply length is fixed.  A length side channel would be a field by another name. -/
+and the reply length is fixed.  A length side channel would be a field by another name.
+
+⚠ Stated with `Option.all`, which is `true` on `none` — that is not a hole here: a
+refusal serves no bytes at all, so there is no reply for a bound to be about. -/
 theorem served_counts_are_bounded (request : Request) :
-    (classify request).exact + (classify request).present ≤ 3 :=
-  SignalTriangulation.feedback_match_bound _ _
+    (classify? request).all (fun f => decide (f.exact + f.present ≤ 3)) = true := by
+  unfold classify?
+  generalize targetOf? request = t
+  cases t with
+  | none => rfl
+  | some target =>
+      simp only [Option.map_some, Option.all_some, decide_eq_true_eq]
+      exact SignalTriangulation.feedback_match_bound _ _
 
 /-! ## Concrete requests, and why these are compiled pins
 
@@ -380,10 +413,22 @@ really are reachable. -/
 private def hexDigest (hex : String) : Digest32 :=
   (Emit.parseBytes32Hex? hex).getD ⟨List.replicate 32 0, by simp⟩
 
-/-- The commitment `SlotDeriveRuntime.fixtureRequest`'s secret and slot open.  It is
-taken from the derivation rather than typed in, so this fixture cannot drift away from
-the one the other export is pinned against. -/
-def fixtureCommitment : Digest32 := (SlotDeriveRuntime.derive SlotDeriveRuntime.fixtureRequest).commitment
+/-- The commitment `SlotDeriveRuntime.fixtureRequest`'s secret and slot open.
+
+⚠ It names `HiddenInstance.commit` directly rather than projecting the derivation,
+because the derivation is now partial and this field is not: a commitment does not
+depend on the draw at all (`SlotDeriveRuntime.derive_commitment_is_the_commit`).  It is
+still tied to the other export's fixture rather than typed in — by
+`fixtureCommitment_is_the_derived_commitment` below, which is what stops the two
+drifting apart. -/
+def fixtureCommitment : Digest32 :=
+  HiddenInstance.commit ⟨SlotDeriveRuntime.fixtureRequest.secret⟩
+    ⟨SlotDeriveRuntime.fixtureRequest.slot⟩
+
+theorem fixtureCommitment_is_the_derived_commitment :
+    (SlotDeriveRuntime.derive? SlotDeriveRuntime.fixtureRequest).map
+      SlotDeriveRuntime.Reply.commitment = some fixtureCommitment := by
+  native_decide
 
 def fixtureRequest : Request where
   slot := SlotDeriveRuntime.fixtureRequest.slot
@@ -402,8 +447,20 @@ theorem fixture_request_roundtrips :
     decodeRequest fixtureRequestBytes = some fixtureRequest := by
   native_decide
 
+/-- ⚑ **THE FIXTURE'S SEED DRAWS, AND THIS IS THE INSTANCE.**  Carried as a literal and
+measured, not derived: every pin below is a statement about a `some`, and without this
+one they could all be satisfied by a refusal while reading green. -/
+def fixtureTarget : SignalTriangulation.Code := { low := 2, mid := 5, high := 1 }
+
+theorem fixtureTarget_is_the_drawn_instance :
+    targetOf? fixtureRequest = some fixtureTarget := by
+  native_decide
+
+/-- The bytes this fixture is served, once. -/
+def fixtureReplyJson? : Option String := (replyOf? fixtureRequest).map Reply.toJson
+
 theorem fixture_export_answers :
-    signalFeedbackFFI fixtureRequestBytes = (replyOf fixtureRequest).toJson := by
+    some (signalFeedbackFFI fixtureRequestBytes) = fixtureReplyJson? := by
   native_decide
 
 theorem fixture_export_is_not_the_refusal :
@@ -411,35 +468,37 @@ theorem fixture_export_is_not_the_refusal :
   native_decide
 
 theorem fixture_reply_is_canonical_and_states_the_format :
-    (replyOf fixtureRequest).toJson.startsWith
-      ("{\"format\":\"" ++ OUTPUT_FORMAT ++ "\"") = true := by
+    fixtureReplyJson?.any
+      (fun j => j.startsWith ("{\"format\":\"" ++ OUTPUT_FORMAT ++ "\"")) = true := by
   native_decide
 
 /-- ⚠ The reply does not echo the SECRET. -/
 theorem fixture_reply_does_not_carry_the_secret :
-    ((replyOf fixtureRequest).toJson.splitOn
-      SlotDeriveRuntime.FIXTURE_SECRET_HEX).length = 1 := by
+    fixtureReplyJson?.map
+      (fun j => (j.splitOn SlotDeriveRuntime.FIXTURE_SECRET_HEX).length) = some 1 := by
   native_decide
 
-/-- ⚠ The reply does not echo the RUN SEED — the value three modulo operations away
-from the answer. -/
+/-- ⚠ The reply does not echo the RUN SEED — the value the draw reads to pick the
+answer. -/
 theorem fixture_reply_does_not_carry_the_run_seed :
-    ((replyOf fixtureRequest).toJson.splitOn
-      (Emit.bytes32Hex (derivedOf fixtureRequest).runSeed)).length = 1 := by
+    (do
+      let j ← fixtureReplyJson?
+      let d ← derivedOf? fixtureRequest
+      pure (j.splitOn (Emit.bytes32Hex d.runSeed)).length) = some 1 := by
   native_decide
 
 /-- ⚠ The reply does not echo the COMMITMENT either, though that value is public. -/
 theorem fixture_reply_does_not_carry_the_commitment :
-    ((replyOf fixtureRequest).toJson.splitOn
-      (Emit.bytes32Hex fixtureCommitment)).length = 1 := by
+    fixtureReplyJson?.map
+      (fun j => (j.splitOn (Emit.bytes32Hex fixtureCommitment)).length) = some 1 := by
   native_decide
 
 /-- ⚠ The reply does not spell the TARGET.  A three-band code has a canonical JSON
 spelling on this very wire (it is how the guess arrives); the served bytes do not
 contain it. -/
 theorem fixture_reply_does_not_carry_the_target :
-    ((replyOf fixtureRequest).toJson.splitOn
-      (codeJson (targetOf fixtureRequest))).length = 1 := by
+    fixtureReplyJson?.map
+      (fun j => (j.splitOn (codeJson fixtureTarget)).length) = some 1 := by
   native_decide
 
 /-- ⚑ THE ORACLE IS NOT CONSTANT.  Two guesses against the same instance get different
@@ -456,7 +515,7 @@ theorem fixture_two_guesses_are_classified_differently :
 session's solved bit is `exact = 3` and this is a live witness that the bit is
 reachable. -/
 def fixtureSolvingRequest : Request :=
-  { fixtureRequest with guess := targetOf fixtureRequest }
+  { fixtureRequest with guess := fixtureTarget }
 
 theorem fixture_the_target_locks_all_three :
     signalFeedbackFFI fixtureSolvingRequest.toJson =
@@ -471,7 +530,7 @@ def fixtureOtherPlayer : Request :=
   { fixtureRequest with playerKey := SlotDeriveRuntime.otherPlayerRequest.playerKey }
 
 theorem fixture_another_player_draws_another_instance :
-    targetOf fixtureRequest ≠ targetOf fixtureOtherPlayer := by
+    targetOf? fixtureRequest ≠ targetOf? fixtureOtherPlayer := by
   native_decide
 
 /-- A secret that does not open the stated commitment is refused, not classified. -/
@@ -531,11 +590,14 @@ theorem fixture_transposed_keys_refused : signalFeedbackFFI transposedRequestByt
 #assert_axioms signalFeedbackFFI_refuses_an_unopened_commitment
 #assert_axioms classify_is_the_triangulation_rule
 #assert_axioms request_derives_the_judged_instance
+#assert_axioms judged_run_seed_is_the_judged_draw
 #assert_axioms judged_target_is_from_the_judged_run_seed
 #assert_axioms reply_bytes_are_a_function_of_the_feedback_alone
 #assert_axioms served_transcript_cannot_separate_feedback_equivalent_targets
 #assert_axioms reply_reports_solved_iff_the_guess_is_the_target
 #assert_axioms served_counts_are_bounded
+#assert_compiled fixtureCommitment_is_the_derived_commitment
+#assert_compiled fixtureTarget_is_the_drawn_instance
 #assert_compiled fixture_request_roundtrips
 #assert_compiled fixture_export_answers
 #assert_compiled fixture_export_is_not_the_refusal

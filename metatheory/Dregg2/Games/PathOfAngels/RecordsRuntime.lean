@@ -31,8 +31,8 @@ ceremony actually installed.  A node at height 0 has something true to display.
 wrong.**  It used to say that omitting `SignalConfigWire.target` was enough.  It
 is not, and the fixture in this very file proved it: `ViewWire.mission` was a
 full `MissionWire`, `MissionWire` carries `runSeed`, and
-`SignalTriangulation.targetFromSeed` is a public total function — three modulo
-operations from a published seed to the code.  A surface that omits `target` and
+`SignalTriangulation.targetFromSeed?` is a public function — a rejection-sampled
+draw from a published seed to the code.  A surface that omits `target` and
 publishes `runSeed` has published the target.
 
 Two things close it, and the second exists because the first is one edit away
@@ -395,7 +395,7 @@ theorem unsettled_has_no_coordinate {run : RunWire}
 
 ⚑ It has no `runSeed` field, and that absence is the security property.  A live
 `MissionSpec.runSeed` determines the Signal target through the public total
-function `SignalTriangulation.targetFromSeed`, so publishing the seed publishes
+function `SignalTriangulation.targetFromSeed?`, so publishing the seed publishes
 the answer.  `MissionWire` carries one; this does not. -/
 structure PublicMissionWire where
   missionId : Nat
@@ -693,7 +693,7 @@ def project? (bytes : String) : Option ViewWire := do
   else if configWire.mission.epoch != genesisWire.contentEpoch then none
   -- ⚑ The retained genesis config is a mission TEMPLATE and its seed must be the
   -- all-zero sentinel.  A live seed here would mean the node retained a drawn
-  -- instance as if it were the template, and since `targetFromSeed` is public
+  -- instance as if it were the template, and since `targetFromSeed?` is public
   -- that value IS an answer.  `PublicMissionWire` cannot publish it in any case;
   -- this refuses to serve the world at all, so the condition is detectable
   -- rather than silently tolerated.
@@ -763,7 +763,7 @@ production sends, and the emitted document therefore contained the live seed.
 That exact previous fixture is retained below as
 `hostile_live_run_seed_config_refused`. -/
 private def fixtureTemplateConfig : SignalTriangulation.Config :=
-  Emit.signalConfig Emit.UNBOUND_RUN_SEED fixtureFederationId fixtureSourceDigest
+  Emit.signalTemplateConfig fixtureFederationId fixtureSourceDigest
     fixtureContentDigest fixtureContentRoot fixtureActivationDigest
 
 private def fixtureConfigWire : SignalConfigWire :=
@@ -865,11 +865,11 @@ theorem fixture_transcript_is_plaintext_of_the_submitted_code :
     (fixtureTranscript.bytes.getD 1 0).val = fixtureConfig.target.low.val ∧
       (fixtureTranscript.bytes.getD 2 0).val = fixtureConfig.target.mid.val ∧
       (fixtureTranscript.bytes.getD 3 0).val = fixtureConfig.target.high.val ∧
-      fixtureConfig.target = SignalTriangulation.targetFromSeed fixtureRunSeed := by
+      some fixtureConfig.target = SignalTriangulation.targetFromSeed? fixtureRunSeed := by
   native_decide
 
 /-- ⚑ The emitted document does not contain the live run seed anywhere — not in
-the mission, not in a record, not in any field.  `targetFromSeed` of that seed is
+the mission, not in a record, not in any field.  `targetFromSeed?` of that seed is
 the answer, so this is the load-bearing absence. -/
 theorem view_never_publishes_the_live_run_seed :
     (oneRunView?.map fun view =>

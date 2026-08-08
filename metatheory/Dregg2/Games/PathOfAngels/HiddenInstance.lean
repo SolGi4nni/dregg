@@ -81,21 +81,33 @@ termination could drift.
 unbiasedIndex?` cannot stream — `find?` then modulo re-reads the same byte — and
 nothing here calls it.
 
-⚠ **CORRECTED 2026-08-07 — the sentence above used to have no qualifier, and it
-was FALSE of the pipeline it appeared to describe.**  A consumer draws its own
-instance out of the seed this module hands it, and one of them does not use
-`SeedDraw`: `SignalTriangulation.targetFromSeed` folds three of these bytes with
-`% 6`.  `256 = 42*6 + 4`, so the four low band symbols come back 43/256 against
-42/256 — a 1.073x spread across the 216 targets, 0.0070 in total variation from
-uniform.  The lane-to-byte projection above rejects ONE value to keep the byte
-stream uniform and the very next hop folds FOUR back in.  Measured, WARNed by
-`scripts/poa-design-gate.py` as `signal-triangulation/seed-modulo-bias`, and NOT
-yet repaired — the repair is `targetFromSeed? : Digest32 → Option Code`, which is
-a flag day through Signal's fixture layer.  `BlackBoxReconstruction` and
-`VentCrawl` do go through `SeedDraw`; Signal is the one that does not.
+⚠ **The qualifier "IN THIS MODULE" is load-bearing, and it was added the hard way.**
+Until 2026-08-07 the sentence had no qualifier and was FALSE of the pipeline it
+appeared to describe: a consumer draws its own instance out of the seed this module
+hands it, and one of them did not use `SeedDraw` — `SignalTriangulation.targetFromSeed`
+folded three of these bytes with `% 6`.  `256 = 42*6 + 4`, so the four low band symbols
+came back 43/256 against 42/256: a 1.073x spread across the 216 targets and 0.0070 in
+total variation from uniform.  The lane-to-byte projection above rejects ONE value to
+keep the byte stream uniform and the very next hop folded FOUR back in.
 
-The lesson for this docblock: a claim about what "is used" reaches past the module
-it is written in, and nobody re-checks it when a consumer is added.
+**REPAIRED 2026-08-07.**  `SignalTriangulation.targetFromSeed?` is three
+`SeedDraw.drawBelow? 6` on one consumed stream, `Config.target_eq` carries the
+measurement, and there is no fallback: a seed that draws nothing has no configuration.
+`SignalTriangulation.modulo_fold_is_not_uniform` keeps the fold refuted rather than
+remembered.
+
+⚠ And the scope of THAT claim, checked at source rather than assumed, because the
+sentence this replaced was wrong in exactly this way.  The consumers that draw an
+instance from a seed are: `SignalTriangulation` (now `drawBelow? 6`, x3),
+`BlackBoxReconstruction` (5/4/3/2), `SalvageLock` (5/3/3), `VentCrawl` (`FACES`, x6),
+`DeckDescent` (2, x3), `ArtificerLogic` (16) — all `SeedDraw` — and
+**`RelayRepair.boardFromRunSeed`, which is a bare `% 8` and is NOT `SeedDraw`.**  That
+one is exact anyway: `8` divides `256`, so the fold has no incomplete block and every
+board has 32 preimages.  It is unbiased by arithmetic, not by rejection, and it is the
+one place left where a change of bound would reintroduce this defect silently.
+
+The lesson for this docblock outlives the defect: a claim about what "is used" reaches
+past the module it is written in, and nobody re-checks it when a consumer is added.
 
 ## ⚑ `commit`, `runSeedFor` and `practiceRunSeed` are `@[irreducible]`, and why
 

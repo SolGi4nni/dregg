@@ -192,7 +192,7 @@ def descriptorFrom (states : List VentCrawl.State) (rows : List VentRow)
   "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
     "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
-  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" (symbolDrawJson "rejection" [8, 8, 8, 8, 8, 8]) ++ ",\n" ++
   "  \"vent\":" ++ ventJson mapBanked mapDrowned ++ ",\n" ++
   "  \"state_machine\":{\n" ++
   "    \"initial_state\":" ++ jsonString (VentCrawl.stateId VentCrawl.initialState) ++ ",\n" ++

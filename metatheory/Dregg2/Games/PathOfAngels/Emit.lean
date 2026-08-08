@@ -528,7 +528,7 @@ def signalDescriptorJson : String :=
   "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
     "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
-  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" (symbolDrawJson "rejection" [6, 6, 6]) ++ ",\n" ++
   "  \"state\":{\"fields\":[\"turns\",\"solved\",\"last_feedback\"]},\n" ++
   "  \"action\":{\"tag\":\"submit\",\"code\":{\"bands\":3,\"alphabet\":6}},\n" ++
   "  \"feedback\":{\"exact_max\":3,\"present_max\":3,\"exact_plus_present_max\":3," ++
@@ -616,7 +616,7 @@ family stays public because the family is the rules. -/
 private def relayInstanceJson : String :=
   "{\"modulus\":8" ++
     ",\"source\":\"alpha\",\"sink\":\"omega\"" ++
-    ",\"draw\":" ++ instanceDeclarationJson "per-run-open" ++
+    ",\"draw\":" ++ instanceDeclarationJson "per-run-open" (symbolDrawJson "modulo" [8]) ++
     ",\"boards\":" ++ jsonPrettyArray
       ((List.finRange 8).map fun index =>
         relayBoardJson index.val (RelayRepair.boardAt index)) ++
@@ -725,7 +725,7 @@ def salvageDescriptorJson : String :=
   "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
     "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
-  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" (symbolDrawJson "rejection" [5, 3, 3]) ++ ",\n" ++
   "  \"state_machine\":{\n" ++
   "    \"initial_state\":" ++ jsonString (FiniteTables.salvageStateId SalvageLock.initialState) ++ ",\n" ++
   "    \"states\":" ++ jsonPrettyArray (states.map salvageStateJson) ++ ",\n" ++
@@ -810,7 +810,7 @@ def blackBoxDescriptorJson : String :=
   "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
     "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
-  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" (symbolDrawJson "rejection" [5, 4, 3, 2]) ++ ",\n" ++
   "  \"oracle\":{\n" ++
   "    \"instance_space\":" ++ toString BlackBoxReconstruction.ORDER_SPACE ++ ",\n" ++
   "    \"instance_shape\":\"a permutation of five fragments over five positions\",\n" ++
@@ -1151,26 +1151,122 @@ theorem signalReward_accepted (runSeed : Digest32)
   · exact signalReward_within
   · simp [signalMission, signalReward]
 
-def signalConfig (runSeed : Digest32)
+/-! ### Building a Signal configuration
+
+⚑ **THE DRAW IS PARTIAL, AND THIS IS WHERE THAT IS ABSORBED.**
+`SignalTriangulation.targetFromSeed?` can refuse (216 ∤ 2^256; see its docblock),
+so there are exactly two honest ways to obtain a `Config` and both are here:
+
+* `signalConfigWith` — the caller ALREADY HOLDS a target and a measurement of it.
+  Total, and it reduces over whatever the caller measured.  This is what a fixture
+  uses: it CARRIES the target its seed was measured to draw, so nothing downstream
+  has to reduce the draw — or, when the seed is a sponge output, the sponge.
+* `signalConfig?` — the caller holds only a seed.  The measurement comes from the
+  `match` discriminant, so this costs no evaluation either; the caller pays by
+  handling `none`.
+
+There is no third one.  In particular there is no `signalConfig : … → Config`:
+a total constructor could only exist by inventing a target for a refused seed. -/
+
+/-- A configuration built around a target the caller has ALREADY measured.  The
+measurement is the argument `htarget`, so this function neither performs nor
+assumes a draw. -/
+def signalConfigWith (runSeed : Digest32) (target : SignalTriangulation.Code)
+    (htarget : some target = SignalTriangulation.targetFromSeed? runSeed)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     SignalTriangulation.Config :=
-  { target := SignalTriangulation.targetFromSeed runSeed
+  { target := target
     mission := signalMission runSeed federationId sourceDigest contentDigest contentRoot
       activationDigest
     reward := signalReward
     reward_accepted := signalReward_accepted runSeed federationId sourceDigest contentDigest
       contentRoot activationDigest
-    target_eq := rfl }
+    target_eq := htarget }
+
+/-- The configuration a seed determines, or `none` if the seed draws no instance.
+The `match` binding IS the proof of `target_eq`; the same shape
+`blackBoxConfig?` uses. -/
+def signalConfig? (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    Option SignalTriangulation.Config :=
+  match htarget : SignalTriangulation.targetFromSeed? runSeed with
+  | none => none
+  | some target =>
+      some (signalConfigWith runSeed target htarget.symm federationId sourceDigest
+        contentDigest contentRoot activationDigest)
 
 /-- The judged target is the one the LIVE seed draws, for whatever seed the judge
 was handed.  The kernel binding did not change; the seed did. -/
 theorem signalConfig_target_from_live_seed (runSeed : Digest32)
+    (target : SignalTriangulation.Code)
+    (htarget : some target = SignalTriangulation.targetFromSeed? runSeed)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    (signalConfig runSeed federationId sourceDigest contentDigest contentRoot
-      activationDigest).target =
-      SignalTriangulation.targetFromSeed
-        (signalConfig runSeed federationId sourceDigest contentDigest contentRoot
-          activationDigest).mission.runSeed := rfl
+    some (signalConfigWith runSeed target htarget federationId sourceDigest contentDigest
+      contentRoot activationDigest).target =
+      SignalTriangulation.targetFromSeed?
+        (signalConfigWith runSeed target htarget federationId sourceDigest contentDigest
+          contentRoot activationDigest).mission.runSeed := htarget
+
+/-- Whatever `signalConfig?` returns carries the draw of the seed it was given —
+so a caller that goes through it cannot install a target of its own. -/
+theorem signalConfig?_target_is_the_draw (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32)
+    {cfg : SignalTriangulation.Config}
+    (h : signalConfig? runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest = some cfg) :
+    some cfg.target = SignalTriangulation.targetFromSeed? runSeed := by
+  unfold signalConfig? at h
+  split at h
+  · contradiction
+  · rename_i target htarget
+    simp only [Option.some.injEq] at h
+    subst h
+    exact htarget.symm
+
+/-- ⚑ `signalConfig?` REFUSES a seed the draw refuses.  Without this the partiality
+could be decorative — a `none` branch nothing reaches. -/
+theorem signalConfig?_refuses_a_refused_seed (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32)
+    (h : SignalTriangulation.targetFromSeed? runSeed = none) :
+    signalConfig? runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest = none := by
+  unfold signalConfig?
+  split
+  · rfl
+  · rename_i target htarget
+    rw [h] at htarget
+    exact absurd htarget (by simp)
+
+/-! ### The template configuration
+
+A catalog mission has no instance, so it carries `UNBOUND_RUN_SEED` — thirty-two
+zero bytes.  Zero is below `SeedDraw.ceilingFor 6 = 252`, so the draw ACCEPTS it
+and the template is a genuine configuration of a genuine instance rather than a
+special case: `signalTemplateConfig` is total and kernel-clean, and every consumer
+that used to build a template with `signalConfig UNBOUND_RUN_SEED …` still gets a
+total `Config` with no `Option` and no `native_decide`.
+
+⚠ That instance is `[0,0,0]`, which is in the `aaa` class the design gate reports
+as unable to win within the budget.  That is not a fallback and not a regression —
+it is what the all-zero seed has always drawn, and `Judged.admissionChecks` refuses
+`UNBOUND_RUN_SEED` outright, so it is never played.  The value is reachable ONLY by
+the template, never by a live draw. -/
+
+/-- The all-zero seed's draw. -/
+def UNBOUND_TARGET : SignalTriangulation.Code := { low := 0, mid := 0, high := 0 }
+
+/-- MEASURED, in the kernel: the template's target is what the template's seed draws.
+This is `signalTemplateConfig`'s `target_eq` and it costs no compiled evaluation. -/
+theorem unbound_target_is_the_unbound_draw :
+    some UNBOUND_TARGET = SignalTriangulation.targetFromSeed? UNBOUND_RUN_SEED := by decide
+
+/-- The configuration of a mission with no live instance.  Total, because the
+measurement above is total. -/
+def signalTemplateConfig
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    SignalTriangulation.Config :=
+  signalConfigWith UNBOUND_RUN_SEED UNBOUND_TARGET unbound_target_is_the_unbound_draw
+    federationId sourceDigest contentDigest contentRoot activationDigest
 
 /-- ⚑ **The artifact does not determine the code.**  Everything a client fetches is
 held fixed here — the same template mission, the same federation, the same content
@@ -1178,18 +1274,34 @@ session, the same slot, the same player — and two slot secrets still draw two
 different targets.  This is the statement `signalTarget_literal` could not make,
 because there the published seed WAS the answer. -/
 theorem signalDescriptor_does_not_determine_the_target :
-    SignalTriangulation.targetFromSeed
+    SignalTriangulation.targetFromSeed?
         (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
           (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 1) ≠
-      SignalTriangulation.targetFromSeed
+      SignalTriangulation.targetFromSeed?
         (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
           (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 2) := by
+  native_decide
+
+/-- ⚠ And both of those seeds DRAW.  Without this, the inequality above would be
+satisfiable by two refusals, and a draw that refused every live seed would read as
+"the artifact does not determine the code". -/
+theorem signalDescriptor_demo_seeds_both_draw :
+    (SignalTriangulation.targetFromSeed?
+        (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 1)).isSome ∧
+    (SignalTriangulation.targetFromSeed?
+        (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 2)).isSome := by
   native_decide
 
 #assert_axioms signalMission_context_ignores_the_run_seed
 #assert_axioms signalReward_accepted
 #assert_axioms signalConfig_target_from_live_seed
+#assert_axioms signalConfig?_target_is_the_draw
+#assert_axioms signalConfig?_refuses_a_refused_seed
+#assert_axioms unbound_target_is_the_unbound_draw
 #assert_compiled signalDescriptor_does_not_determine_the_target
+#assert_compiled signalDescriptor_demo_seeds_both_draw
 
 def signalPreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :

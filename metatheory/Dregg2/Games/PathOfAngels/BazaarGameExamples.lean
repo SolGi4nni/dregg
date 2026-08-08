@@ -205,12 +205,21 @@ def mission : MissionSpec where
 theorem reward_is_mission_accepted : mission.acceptsContribution reward = true := by
   native_decide
 
+/-- ⚑ The instance `liveRunSeed` draws.  Because that seed is written as literal BYTES
+(see the note above it), this measurement reduces IN THE KERNEL — `by decide`, not
+`native_decide`.  The sponge stays where the note put it: in the three named compiled
+theorems, and nowhere else in this workbook. -/
+def signalTarget : SignalTriangulation.Code := { low := 2, mid := 0, high := 2 }
+
+theorem signalTarget_is_the_drawn_instance :
+    some signalTarget = SignalTriangulation.targetFromSeed? mission.runSeed := by decide
+
 def signalConfig : SignalTriangulation.Config where
-  target := SignalTriangulation.targetFromSeed mission.runSeed
+  target := signalTarget
   mission
   reward
   reward_accepted := reward_is_mission_accepted
-  target_eq := rfl
+  target_eq := signalTarget_is_the_drawn_instance
 
 def active : ActiveRunState where
   game := .signal signalConfig

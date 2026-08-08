@@ -187,7 +187,7 @@ def descriptorFrom (engages : ArtificerLogic.Rule → List ArtificerLogic.Charge
   "  \"security\":{\"classification\":\"committed-hidden-instance\"," ++
     "\"instance_visibility\":\"oracle-only\",\"competitive_rewards\":false," ++
     "\"economic_rewards\":false},\n" ++
-  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" ++ ",\n" ++
+  "  \"instance\":" ++ instanceDeclarationJson "oracle-only" (symbolDrawJson "rejection" [16]) ++ ",\n" ++
   "  \"manual\":" ++ manualJson engages ++ ",\n" ++
   "  \"practice\":{\"scored\":false,\"instance_space\":" ++
     toString ArtificerLogic.manual.length ++

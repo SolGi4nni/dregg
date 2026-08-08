@@ -1777,19 +1777,49 @@ def fixtureSupplySpec : MissionSpec :=
 def fixtureIntelSpec : MissionSpec :=
   fixtureDerivedMissionSpec fixtureIntelMission ⟨82⟩ intelContribution
 
+/-- ⚑ A fixture CARRIES the target its seed was measured to draw.
+
+The draw is partial (216 ∤ 2^256), so it cannot be derived at construction and stay
+total.  Both seeds here are `HiddenInstance.runSeedFor` outputs — Poseidon2 — so the two
+measurements below are compiled, and they are the ONLY new compiled facts in this file:
+every theorem that consumes these configurations was already a `native_decide` pin.
+`fixtureSupplySpec`/`fixtureIntelSpec` are named separately from the configurations, so
+nothing kernel-clean is stated about a term carrying a compiled proof field. -/
 def fixtureSignalConfig (mission : MissionSpec) (reward : Contribution)
-    (accepted : mission.acceptsContribution reward = true) : SignalTriangulation.Config where
-  target := SignalTriangulation.targetFromSeed mission.runSeed
+    (accepted : mission.acceptsContribution reward = true)
+    (target : SignalTriangulation.Code)
+    (drawn : some target = SignalTriangulation.targetFromSeed? mission.runSeed) :
+    SignalTriangulation.Config where
+  target := target
   mission
   reward
   reward_accepted := accepted
-  target_eq := rfl
+  target_eq := drawn
+
+def fixtureSupplyTarget : SignalTriangulation.Code := { low := 0, mid := 2, high := 5 }
+def fixtureIntelTarget : SignalTriangulation.Code := { low := 5, mid := 2, high := 4 }
+
+theorem fixtureSupplyTarget_is_the_drawn_instance :
+    some fixtureSupplyTarget =
+      SignalTriangulation.targetFromSeed? fixtureSupplySpec.runSeed := by native_decide
+
+theorem fixtureIntelTarget_is_the_drawn_instance :
+    some fixtureIntelTarget =
+      SignalTriangulation.targetFromSeed? fixtureIntelSpec.runSeed := by native_decide
+
+/-- ⚠ ONE secret serves both missions and they draw DIFFERENT instances — `missionId` is
+in the draw preimage.  Stated so the two measurements above cannot both be satisfied by
+one accidental value. -/
+theorem fixture_missions_draw_different_instances :
+    fixtureSupplyTarget ≠ fixtureIntelTarget := by decide
 
 def fixtureSupplyConfig : SignalTriangulation.Config :=
   fixtureSignalConfig fixtureSupplySpec supplyContribution (by decide)
+    fixtureSupplyTarget fixtureSupplyTarget_is_the_drawn_instance
 
 def fixtureIntelConfig : SignalTriangulation.Config :=
   fixtureSignalConfig fixtureIntelSpec intelContribution (by decide)
+    fixtureIntelTarget fixtureIntelTarget_is_the_drawn_instance
 
 def fixtureToolSpec : EquipmentSpec where
   id := fixtureTool
@@ -2627,5 +2657,8 @@ theorem fixture_identity_rejects_serial_substitution :
 #assert_compiled skipped_epoch_is_refused
 #assert_compiled home_absence_cannot_erase_attachment
 #assert_compiled fixture_identity_rejects_serial_substitution
+#assert_compiled fixtureSupplyTarget_is_the_drawn_instance
+#assert_compiled fixtureIntelTarget_is_the_drawn_instance
+#assert_axioms fixture_missions_draw_different_instances
 
 end Dregg2.Games.PathOfAngels.Attendant

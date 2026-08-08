@@ -809,7 +809,9 @@ def SignalConfigWire.toSemantic? (c : SignalConfigWire) : Option SignalTriangula
   let mission ← c.mission.toSemantic?
   let reward ← c.reward.toSemantic?
   if rewardAccepted : mission.acceptsContribution reward = true then
-    if targetEq : target = SignalTriangulation.targetFromSeed mission.runSeed then
+    -- ⚠ `some target = …`: a wire that names a target for a seed the draw REFUSES is
+    -- refused here, not folded onto a substitute.
+    if targetEq : some target = SignalTriangulation.targetFromSeed? mission.runSeed then
       some { target, mission, reward, reward_accepted := rewardAccepted, target_eq := targetEq }
     else none
   else none
@@ -1401,8 +1403,46 @@ def fixtureRunSeed : Digest32 :=
   HiddenInstance.runSeedFor ⟨fixtureSlotSecret, fixtureSlot, fixturePlayerKey⟩
     fixtureMissionContext
 
+/-- ⚑ The instance this fixture's seed was MEASURED to draw.
+
+The draw is partial, so a fixture cannot derive its target at construction and stay
+total.  It CARRIES the measured value instead, and `fixtureTarget_is_the_drawn_instance`
+is the measurement.  That measurement is the only new compiled-evaluation obligation in
+this file: `fixtureRunSeed` is a Poseidon2 output, so `targetFromSeed?` of it cannot
+reduce in the kernel — for the same reason, and with the same remedy, as
+`BazaarGameExamples.live_run_seed_is_the_derived_draw`.
+
+⚠ Carrying it is strictly BETTER for the kernel than deriving it was.  Before this
+change the config's target field was the term `targetFromSeed (runSeedFor …)`, so
+every downstream reduction that touched the target had a sponge under it; now it is
+a literal. -/
+def fixtureTarget : SignalTriangulation.Code := { low := 5, mid := 0, high := 5 }
+
+theorem fixtureTarget_is_the_drawn_instance :
+    some fixtureTarget = SignalTriangulation.targetFromSeed? fixtureRunSeed := by
+  native_decide
+
+/-- ⚑ **THE MISSION IS NAMED SEPARATELY FROM THE CONFIGURATION, AND THAT IS LOAD-BEARING.**
+
+`Config` now carries a PROOF FIELD (`target_eq`), and the measurement discharging it
+here is compiled.  A `Config` term therefore drags that compiled axiom behind it, so
+every fact stated ABOUT `fixtureConfig` — including facts about its mission, which have
+nothing to do with the draw — would silently stop being kernel-clean.  That is exactly
+what happened when this was written the obvious way: `fixtureMissionContext_is_the_live_context`
+went from `#assert_axioms`-clean to depending on a `native_decide` axiom, for a statement
+about a projection that does not mention the target at all.
+
+Naming the mission on its own keeps the two apart.  Facts about the MISSION reduce in the
+kernel; the one fact that genuinely needs compiled evaluation — that the carried target is
+the drawn one — is isolated in `fixtureTarget_is_the_drawn_instance` and pinned with
+`#assert_compiled`.  The config's own mission field is this term definitionally. -/
+def fixtureMission : MissionSpec :=
+  Emit.signalMission fixtureRunSeed fixtureFederationId fixtureSourceDigest
+    fixtureContentDigest fixtureContentRoot fixtureActivationDigest
+
 def fixtureConfig : SignalTriangulation.Config :=
-  Emit.signalConfig fixtureRunSeed fixtureFederationId fixtureSourceDigest
+  Emit.signalConfigWith fixtureRunSeed fixtureTarget fixtureTarget_is_the_drawn_instance
+    fixtureFederationId fixtureSourceDigest
     fixtureContentDigest fixtureContentRoot fixtureActivationDigest
 
 /-- The context the seed was drawn against is the context the LIVE mission carries, so
@@ -1410,30 +1450,30 @@ the derivation above is not a cycle dressed up.  It is an instance of
 `Emit.signalMission_context_ignores_the_run_seed`, which is the general fact; stating
 it here pins that the fixture actually applied it. -/
 theorem fixtureMissionContext_is_the_live_context :
-    HiddenInstance.MissionContext.ofMission fixtureConfig.mission = fixtureMissionContext :=
+    HiddenInstance.MissionContext.ofMission fixtureMission = fixtureMissionContext :=
   Emit.signalMission_context_ignores_the_run_seed _ _ _ _ _ _ _
 
 def fixtureCanon : CanonState :=
   CanonState.empty fixtureFederationId fixtureContentRoot fixtureActivationDigest
-    fixtureConfig.mission.contentSession fixtureConfig.mission.epoch fixtureCuratorKey
+    fixtureMission.contentSession fixtureMission.epoch fixtureCuratorKey
 
 def fixtureCarrier : FinalizedCarrier where
   federationId := fixtureFederationId
   contentRoot := fixtureContentRoot
   activationDigest := fixtureActivationDigest
-  contentSession := fixtureConfig.mission.contentSession
-  contentEpoch := fixtureConfig.mission.epoch
+  contentSession := fixtureMission.contentSession
+  contentEpoch := fixtureMission.epoch
   actorRoot := fixtureActorRoot
   playerKey := fixturePlayerKey
   currentPlayerCounter := 0
 
 def fixtureRequestWire : SignalRequestWire where
-  missionId := fixtureConfig.mission.missionId.value
+  missionId := fixtureMission.missionId.value
   federationId := fixtureFederationId
   contentRoot := fixtureContentRoot
   activationDigest := fixtureActivationDigest
-  contentSession := fixtureConfig.mission.contentSession
-  contentEpoch := fixtureConfig.mission.epoch.value
+  contentSession := fixtureMission.contentSession
+  contentEpoch := fixtureMission.epoch.value
   slot := fixtureSlot.value
   slotCommitment := fixtureSlotCommitment
   actorRoot := fixtureActorRoot
@@ -1441,7 +1481,7 @@ def fixtureRequestWire : SignalRequestWire where
   previousPlayerCounter := 0
   expectedWorldSequence := 0
   expectedCanonRevision := 0
-  actions := [CodeWire.ofSemantic fixtureConfig.target]
+  actions := [CodeWire.ofSemantic fixtureTarget]
 
 def fixtureSlotStateWire : SlotStateWire where
   slot := fixtureSlot.value
@@ -1491,8 +1531,8 @@ def fixtureSuccessorCanonWire : CanonStateWire where
   federationId := fixtureFederationId
   contentRoot := fixtureContentRoot
   activationDigest := fixtureActivationDigest
-  contentSession := fixtureConfig.mission.contentSession
-  contentEpoch := fixtureConfig.mission.epoch.value
+  contentSession := fixtureMission.contentSession
+  contentEpoch := fixtureMission.epoch.value
   curatorKey := fixtureCuratorKey
   world := fixturePostWorldWire
   known := [fixtureInputWire.config.mission.artifact]
@@ -1500,15 +1540,15 @@ def fixtureSuccessorCanonWire : CanonStateWire where
   superseded := []
   consumedRuns := [{
     federationId := fixtureFederationId
-    contentSession := fixtureConfig.mission.contentSession
-    contentEpoch := fixtureConfig.mission.epoch.value
+    contentSession := fixtureMission.contentSession
+    contentEpoch := fixtureMission.epoch.value
     playerKey := fixturePlayerKey
     playerCounter := 1
   }]
   playerCounters := [{
     federationId := fixtureFederationId
-    contentSession := fixtureConfig.mission.contentSession
-    contentEpoch := fixtureConfig.mission.epoch.value
+    contentSession := fixtureMission.contentSession
+    contentEpoch := fixtureMission.epoch.value
     playerKey := fixturePlayerKey
     value := 1
   }]
@@ -1520,17 +1560,17 @@ def fixtureReceiptWire : SignalReceiptWire where
   federationId := fixtureFederationId
   contentRoot := fixtureContentRoot
   activationDigest := fixtureActivationDigest
-  contentSession := fixtureConfig.mission.contentSession
-  contentEpoch := fixtureConfig.mission.epoch.value
+  contentSession := fixtureMission.contentSession
+  contentEpoch := fixtureMission.epoch.value
   actorRoot := fixtureActorRoot
   playerKey := fixturePlayerKey
   previousPlayerCounter := 0
   playerCounter := 1
-  runSeed := fixtureConfig.mission.runSeed
+  runSeed := fixtureMission.runSeed
   preWorld := fixtureInputWire.world
   postWorld := fixturePostWorldWire
   contribution := fixtureInputWire.config.reward
-  transcriptDigest := SignalTriangulation.transcriptDigest [.submit fixtureConfig.target]
+  transcriptDigest := SignalTriangulation.transcriptDigest [.submit fixtureTarget]
 
 def fixtureOutputWire : SignalOutputWire where
   receipt := fixtureReceiptWire
@@ -1612,6 +1652,7 @@ theorem fixture_output_refuses_trailing_bytes :
   native_decide
 
 #assert_axioms fixtureMissionContext_is_the_live_context
+#assert_compiled fixtureTarget_is_the_drawn_instance
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeSignalInput_reencodes
 #assert_axioms decodeSignalInput_accepted_bytes_injective
