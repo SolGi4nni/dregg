@@ -821,10 +821,10 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          the_finalize_evaluations_are_minas_own_wrap_proof
          the_finalize_evaluations_need_no_encoding
          finalize_reproduces_minas_own_ft_eval0
-         -- ⚑ …and `the_forty_agree_but_for_the_arity_mismatched_slot`, the agreement grade
+         -- ⚑ …and `the_forty_agree_but_for_slot_twelve`, the agreement grade
          -- itself: `wrapPublicAt (mkWrap shapeWrap) .close` against openmina's forty, forty
          -- comparisons over a vector whose closing rung runs `bullData`'s 67 endo ladders.
-         the_forty_agree_but_for_the_arity_mismatched_slot
+         the_forty_agree_but_for_slot_twelve
          -- ⚠ ⚑⚑ **AND THE SAME CLASS AGAIN, ONE COMMIT LATER — `95ab41aef` LANDED THIS THEOREM IN
          -- `KimchiWrapHackDigest` WITH ITS OWN `#assert_compiled` AND THIS LIST DID NOT FOLLOW.**
          -- It went unseen for a different reason from the last one, and the reason is worth

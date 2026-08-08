@@ -46,7 +46,7 @@ import Dregg2.Circuit.Emit.MinaWrapOpeningGate
 
 namespace Dregg2.Bridge.MinaStepPrevCommitments
 
-open Dregg2.Circuit.Emit.PastaField (pN)
+open Dregg2.Circuit.Emit.PastaField (pN qN)
 
 set_option autoImplicit false
 set_option maxRecDepth 10000
@@ -138,6 +138,51 @@ def DELTA_XY : Pt :=
   ((Dregg2.Circuit.Emit.MinaWrapOpeningGate.DELTA).1,
    (Dregg2.Circuit.Emit.MinaWrapOpeningGate.DELTA).2.1)
 
+/-! ## ⚑⚑ THE CLOSING SIDE OF THE SAME OPENING — `sg`, `z₁`, `z₂`
+
+`DELTA_XY` above and `GAMMA_XY`'s fifteen `(L, R)` pairs are two of the four families
+`check_bulletproof`'s closing equation reads. **The other two are here**, and they come off the same
+object — `MinaWrapOpeningGate`'s `SG` / `Z1` / `Z2`, block 539508's own `opening.{sg, z1, z2}` — so
+this module still owns no literals.
+
+`step_verifier.ml:325-337` is the equation, and every operand of it now has a name in THIS module:
+
+    lhs = Scalar_challenge.endo q c + delta                      -- `DELTA_XY`, `GAMMA_XY` inside `q`
+    rhs = z₁·(sg + b·u) + z₂·H                                   -- `SG_XY`, `Z1`, `Z2`, `SRS_H_XY`
+
+⚠ ⚑ **AND NAMING THEM HERE DOES NOT MAKE THEM THIS ASSEMBLY'S.** `KimchiStepMain` §19 emits that
+equation over ITS OWN transcript's `c`, `u`, `b` and ξ-fold, and those are not block 539508's — three
+of three measured apart in `KimchiStepMainPins19`. So `bpCloses` at `(SG_XY, Z1, Z2)` is **false**
+there, and §19 still SOLVES its `G`. What this block retires is the diagnosis that used to be written
+beside that solve — *"the assembly has no IPA opening to take a real `G` from"* — which was false at
+HEAD: the opening is on disk, in a module `KimchiStepMainCore` already imports through this one. What
+blocks it is the TRANSCRIPT, not the DATA, and the two are different pieces of work. -/
+
+/-- ⚑ `opening.sg` — the IPA's final `G`. It is `check_bulletproof`'s `challenge_polynomial_commitment`
+(`step_verifier.ml:333`, the point `z₁` scales) AND the commitment segment D forwards as the next
+step's accumulator (`step_main.ml:525-566`, `step.rs:2848-2857`). ONE object in both roles, which is
+why a `G` that closes the opening and a `G` that the chain carries cannot be two different points. -/
+def SG_XY : Pt :=
+  ((Dregg2.Circuit.Emit.MinaWrapOpeningGate.SG).1,
+   (Dregg2.Circuit.Emit.MinaWrapOpeningGate.SG).2.1)
+
+/-- `srs.h` — `Generators.h`, the blinding base `z₂` scales (`step_verifier.ml:336`). -/
+def SRS_H_XY : Pt :=
+  ((Dregg2.Circuit.Emit.MinaWrapOpeningGate.SRS_H).1,
+   (Dregg2.Circuit.Emit.MinaWrapOpeningGate.SRS_H).2.1)
+
+/-- `opening.z1` — the prover's first response scalar. A **Pallas SCALAR**, so it lives mod `qN` and
+enters the step circuit as a `Shifted_value.Type2` split, not as a coordinate. -/
+def Z1 : Nat := Dregg2.Circuit.Emit.MinaWrapOpeningGate.Z1
+
+/-- `opening.z2` — the second response scalar, likewise mod `qN`. -/
+def Z2 : Nat := Dregg2.Circuit.Emit.MinaWrapOpeningGate.Z2
+
+/-- The 15 raw 128-bit prechallenges of `opening.prechallenges` — `bullet_reduce`'s own squeezes,
+the challenges `GAMMA_XY`'s pairs are folded at, and the vector `accumulator_check` says `sg` is the
+challenge-polynomial commitment OF. -/
+def IPA_PRECHALS : List Nat := Dregg2.Circuit.Emit.MinaWrapOpeningGate.IPA_PRECHALS
+
 /-- `y^2 = x^3 + 5` over Pallas' base field. -/
 def onCurve (p : Pt) : Bool :=
   (p.2 * p.2) % pN == (p.1 * p.1 % pN * p.1 + 5) % pN
@@ -203,5 +248,77 @@ def EVERY : List Pt := LAGRANGE_XY ++ COMBINE_XY ++ GAMMA_XY
 #guard INDEX_XY.all (fun p => !(GAMMA_XY.contains p) && !(LAGRANGE_XY.contains p))
 -- …and `t_comm` is a fourth: the prover's quotient commitment, in none of the other lists.
 #guard T_COMM_XY.all (fun p => !(EVERY.contains p) && !(INDEX_XY.contains p))
+
+/-! ## ⚑⚑ THE OPENING'S CLOSING SIDE, AS NAMED THEOREMS
+
+⚑ `#guard`s above, theorems here, and the asymmetry is deliberate rather than sloppy: the guards are
+a baselined block this module is not re-litigating, and every fact ADDED from 2026-08-08 is a named
+term (`metatheory/docs/GUARD-DISCIPLINE.md`). All four are kernel `decide` — 255-bit `Nat` arithmetic
+is exactly where the kernel still reaches. -/
+
+/-- **`the_openings_points_are_real_and_five_distinct_points`** — `sg`, `delta` and `srs.h` are on
+`y² = x³ + 5` over `Fp`, are finite, are full-width, and are distinct from each other AND from
+`sg_old[0]` — the point `combine_split_commitments` STARTS its accumulator at.
+
+⚑ **That last leg is the one worth having.** `sg_old[0]` and `sg` are both "the accumulator" in
+English — one is the accumulator the previous proof handed in, the other is the accumulator this
+proof hands on — and a lane that conflated them would produce an assembly whose `check_bulletproof`
+closed against a commitment the fold had already consumed. They are two points and this says so. -/
+theorem the_openings_points_are_real_and_five_distinct_points :
+    (onCurve SG_XY && onCurve DELTA_XY && onCurve SRS_H_XY
+      && [SG_XY, DELTA_XY, SRS_H_XY, SG_OLD0_XY].all (fun p => p.1 != 0 && p.2 != 0)
+      && [SG_XY, DELTA_XY, SRS_H_XY, SG_OLD0_XY].all (fun p => p.1 > 2 ^ 200)
+      && ([SG_XY, DELTA_XY, SRS_H_XY, SG_OLD0_XY].map (·.1)).dedup.length == 4) = true := by
+  decide
+
+/-- **`the_opening_is_a_provenance_the_absorbed_lists_do_not_carry`** — `sg` and `delta` are in NONE
+of the four lists this module already had: not a Lagrange constant, not a `combine_split_commitments`
+base, not a `bullet_reduce` gamma, not a plonk-index commitment, not a `t_comm` chunk.
+
+⚠ ⚑ **Stated because "we already have the opening" was almost true and would have been wrong.** The
+fold consumes `GAMMA_XY` — the opening's `L`/`R` — so a reader can conclude the opening is on disk
+and stop. The two points the CLOSING equation needs are not in any absorbed list and were not on this
+module's surface until 2026-08-08. -/
+theorem the_opening_is_a_provenance_the_absorbed_lists_do_not_carry :
+    ([SG_XY, DELTA_XY].all (fun p =>
+        !(EVERY.contains p) && !(INDEX_XY.contains p) && !(T_COMM_XY.contains p))
+      -- …and the check discriminates: a point that IS in a list is found.
+      && EVERY.contains SG_OLD0_XY
+      && INDEX_XY.contains (INDEX_XY.getD 6 (0, 0))) = true := by
+  decide
+
+/-- **`the_response_scalars_are_pallas_scalars_and_are_not_the_assemblys`** — `z₁`, `z₂` are reduced
+non-zero elements of Pallas' SCALAR field `qN`, are distinct, and are full width.
+
+⚑ The last clause is the anti-vacuity leg with a name: `KimchiStepMainCore.BP_Z1_VAL` and
+`BP_Z2_VAL` — the two free witnesses §19 actually emits — are `987654321098765432109876543210` and
+`555555555555555555555555555555`, decimal repunits under `2^100`. A pin that only said "the scalars
+are in range" would be satisfied by those. This says the block's are not shaped like a chosen
+numeral, so a later edit that reverts the fixture to a legible constant reds here. -/
+theorem the_response_scalars_are_pallas_scalars_and_are_not_the_assemblys :
+    (decide (0 < Z1) && decide (Z1 < qN) && decide (0 < Z2) && decide (Z2 < qN)
+      && decide (Z1 != Z2)
+      && decide (Z1 > 2 ^ 200) && decide (Z2 > 2 ^ 200)) = true := by
+  decide
+
+/-- **`the_fifteen_prechallenges_are_the_fifteen_gamma_rounds`** — `opening.prechallenges` has one
+entry per `(L, R)` pair, every entry is a non-zero value below `2^128` (`Challenge.length`, so each
+round-trips through the two `u64` limbs the wire carries), and no two rounds squeezed the same
+challenge.
+
+⚑ `accumulator_check` is the statement that `sg` is `⟨b_poly_coefficients(these), srs.g⟩`; this is
+the shape leg of that claim, on the vector, in this module — the arithmetic leg is
+`MinaWrapOpeningGate`'s deferred rung 5h and stays deferred. -/
+theorem the_fifteen_prechallenges_are_the_fifteen_gamma_rounds :
+    (IPA_PRECHALS.length == GAMMA_XY.length / 2
+      && IPA_PRECHALS.length == 15
+      && IPA_PRECHALS.all (fun c => c != 0 && c < 2 ^ 128)
+      && IPA_PRECHALS.dedup.length == 15) = true := by
+  decide
+
+#assert_axioms the_openings_points_are_real_and_five_distinct_points
+#assert_axioms the_opening_is_a_provenance_the_absorbed_lists_do_not_carry
+#assert_axioms the_response_scalars_are_pallas_scalars_and_are_not_the_assemblys
+#assert_axioms the_fifteen_prechallenges_are_the_fifteen_gamma_rounds
 
 end Dregg2.Bridge.MinaStepPrevCommitments

@@ -665,16 +665,32 @@ this theorem names `mkWrap shapeWrap` explicitly rather than reading `tW`.
 `wraphack_closing_sponge_reproduces_minas_slot_eleven`). Leaving the exclusion in would have hidden a
 regression at 11 behind a green line about 38.
 
-⚠ **WHAT SLOT 12 IS, so the one is not read as almost-nothing.** `messages_for_next_step_proof` is an
-ARITY mismatch on both sides — segment D hashes 56+20 where the marshaller's
-`MessagesForNextStepProof::hash()` hashes 56+36 (`KimchiWrapMainPins10`) — and neither side closes it
-by deriving harder. It is the last item, and it is a different KIND of item from the six that closed.
+⚠ ⚑ **WHAT SLOT 12 IS — AND THE NAME THIS THEOREM CARRIED UNTIL 2026-08-08 WAS A REFUTED
+DIAGNOSIS.** It was `the_forty_agree_but_for_the_arity_mismatched_slot`, and this paragraph read
+*"`messages_for_next_step_proof` is an ARITY mismatch on both sides — segment D hashes 56+20 where
+the marshaller's `MessagesForNextStepProof::hash()` hashes 56+36"*. **The arity closed on
+2026-08-07** (`marshal::STEP_RECURSION_SLOTS = gates::STEP_RULE_N_PREVIOUS = 1`; `gate_c` reports
+`MATCH=true` on every run), and `segd_slot12_probe` reproduces segment D's squeeze **to the digit**
+with openmina's own hasher on the same 56+20 preimage — so there is no arity gap and no sponge gap.
+The name outlived its own refutation, which is the class this campaign has now paid for twice; it is
+renamed to the MEASUREMENT (`… but_for_slot_twelve`) rather than to a new diagnosis, because a name
+that carries only what is measured cannot rot.
+
+**What slot 12 actually is**: both sides hash the same seventy-six-cell shape and disagree about what
+FILLS it, in two families — `G` (segment D absorbs `solveG`'s solve; the wire carries the wrap
+proof's recursion-slot commitment) and the sixteen challenges (segment D's transcript lifts against
+`prove_step`'s golden-ratio ladder). `KimchiStepMainPins19` §19b measures why the obvious repair does
+not work: block 539508's real `sg`/`z₁`/`z₂` are on disk, and `bpCloses` at them is FALSE, because
+this assembly squeezes its own `t`, `u` and `b`. ⚠ **And a third family is live as of 2026-08-08**:
+`MinaWrapOwnVerifierKey.lean` (56 of the 76 cells) was not re-installed when the wrap circuit was
+re-emitted at `8c3c341d8`, so `WRAP_PUBLIC_INPUT_MEASURED` below is stale at **exactly slot 12** —
+`pickles_kimchi_marshal::installed_gate` now reds on that drift.
 
 ⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY**, and it is what makes this a fact about VALUES rather
 than about a list of zeros: ten of the forty are `Spec.T.Constant` padding and the lookup `Opt` and
 are zero on both sides, so an all-zero emission would satisfy the first conjunct at those ten.
 Twenty-nine of the agreements are NONZERO. -/
-theorem the_forty_agree_but_for_the_arity_mismatched_slot :
+theorem the_forty_agree_but_for_slot_twelve :
     (let em := (wrapPublicAt (mkWrap shapeWrap) .close).map (fun z => (z % (qN : Int)).toNat)
      let mn := Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED
      -- ⚑ WHICH slot disagrees, over ALL forty — a count says a number, this says which.
@@ -694,7 +710,7 @@ theorem the_forty_agree_but_for_the_arity_mismatched_slot :
             == mn.getD i 0)).length = 17) := by
   native_decide
 
-#assert_compiled the_forty_agree_but_for_the_arity_mismatched_slot
+#assert_compiled the_forty_agree_but_for_slot_twelve
 
 #assert_compiled fin_deferred_words_are_the_derivation
 #assert_compiled the_live_block_declares_itself_minas_own_wrap_proof

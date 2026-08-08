@@ -572,6 +572,31 @@ fn prove_step(
     // every run. **WHAT RE-BAKES:** `STEP_PREVCOMM_XY` (4 coordinates → 2) and therefore
     // `KimchiWrapMainCore.RC_SGOLD`'s real half, `KimchiStepWrapChain.chainTape` (37 words → 35) and
     // every `wrapmain_wrap_*.json` whose `sg_old` block reads it.
+    //
+    // ⚑⚑ **WHERE THE ASSEMBLY'S OWN SIXTEEN BELONG, AND WHY THIS IS STILL A LADDER (measured
+    // 2026-08-08).** These sixteen prechallenges become the wire's
+    // `messages_for_next_step_proof.old_bulletproof_challenges`, which `gate_c` endo-lifts
+    // (`util.rs:35-56`, `ScalarChallenge::limbs_to_field`) and hashes. Segment D of the step circuit
+    // absorbs `liftOf … (uChal k)` at the same sixteen positions. **They are two different vectors,
+    // and that is one of the TWO families slot 12 disagrees on** — the other is `G`.
+    //
+    // The repair is an EXTRACTION and not a choice: the assembly's sixteen are transcript-derived
+    // and every one is below `2^128`, so they drop into `[u64; 2]` unchanged. What stops it being a
+    // one-line read today is ARITY. `KimchiStepMainPins19.the_published_statement_carries_fifteen_of
+    // _segment_ds_sixteen` measures that the emitted step statement publishes **fifteen** of them —
+    // entries 48…62, i.e. `32·1 + 16 + j`, which are `uChal 1 … uChal 15` — and publishes `uChal 0`
+    // NOWHERE, raw or lifted. `step_statement_prechallenges` above reads exactly that window for the
+    // WRAP side's fifteen. So closing this half means either the step statement grows a word or the
+    // sixteenth travels out of band, and the first is a decision about the STATEMENT, not about this
+    // function. ⚠ Do not fill fifteen from the statement and leave the sixteenth a ladder digit: the
+    // record would then be true about the circuit in fifteen slots and false in one, which is the
+    // shape that reads as agreement in every per-slot instrument.
+    //
+    // ⚠ And it would not close slot 12 on its own. `messages_for_next_step_proof
+    // .challenge_polynomial_commitments[0]` is `proof.prev_challenges[_].comm` — forced by kimchi to
+    // `commit(b_poly(chals))` — while segment D absorbs `solveG`'s output; block 539508's real
+    // `opening.sg` closes neither side, because this assembly's `check_bulletproof` runs over its own
+    // `t`/`u`/`b` and not the block's (§19b(a),(b)).
     let step_pre: Vec<[PreChallenge; STEP_ROUNDS]> = (0..STEP_RECURSION_SLOTS)
         .map(|j| {
             std::array::from_fn(|i| {
@@ -759,6 +784,61 @@ fn first_diff(a: &[u8], b: &[u8]) -> Option<usize> {
     }
 }
 
+/// ⚑⚑ **"INSTALL WHAT YOU EMIT", AS A RED INSTEAD OF AS A COMMENT.**
+///
+/// Every generated Lean module this binary writes has a tracked twin under
+/// `metatheory/Dregg2/Circuit/Emit/`, and until 2026-08-08 the only thing enforcing that they were
+/// the same file was a docblock saying *"copy them over to re-bake; a second run must move zero
+/// bytes"*. Nothing measured it, so nothing saw when it stopped being true.
+///
+/// ⚠ **IT HAD STOPPED BEING TRUE, AND AT THE WORST OF THE THREE.**
+/// `MinaWrapOwnVerifierKey.lean` is dregg's own wrap verification key — **56 of the 76 cells of the
+/// step statement's word 54**, the whole `sponge_after_index` prefix of segment D. The wrap circuit
+/// it is the key OF was re-emitted at `8c3c341d8` ("the wrap arity, settled at source"), **29
+/// commits after** the module was last written (`8015b6f07`). So the step assembly has been hashing
+/// under a superseded key while `gate_c` and `wrap_public_input` below hash under the live one — and
+/// `MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED`, baked before that re-emit, is stale at
+/// **exactly slot 12**, which is the one slot the forty-agreement theorem reports as the miss.
+/// A referee stale at the slot under investigation is worse than no referee.
+///
+/// ⚠ `segd_slot12_probe` cannot see this: it READS the tracked module, so it agrees with the stale
+/// install by construction. The drift is only visible where both objects exist at once, which is
+/// here.
+///
+/// Returns 1 when the tracked file differs (or is unreadable), so the caller folds it into the same
+/// `failed` count every other rung uses and `PROOF_MARSHAL_RESULT` goes RED.
+fn installed_gate(name: &str, emitted: &str) -> usize {
+    let path = format!(
+        "{}/../../Dregg2/Circuit/Emit/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let installed = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            println!(
+                "[install] {name}: MISSING at {path} ({e}) — nothing consumes what was emitted"
+            );
+            return 1;
+        }
+    };
+    if installed == *emitted {
+        println!("[install] {name}: byte-identical to the tracked module");
+        return 0;
+    }
+    let at = first_diff(installed.as_bytes(), emitted.as_bytes());
+    println!(
+        "[install] ⚑ {name}: THE TRACKED MODULE IS NOT WHAT THIS RUN EMITS — first difference at \
+         byte {at:?} (installed {} bytes, emitted {} bytes). Copy \
+         `<out-dir>/{name}` over `metatheory/Dregg2/Circuit/Emit/{name}` and carry the consequence \
+         chain: segment D's preimage moves, therefore the step statement's word 54, therefore \
+         `stepmain_step_r8_finalize.json`, the step proof, `KimchiStepWrapChainFixture` and \
+         `MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED`.",
+        installed.len(),
+        emitted.len()
+    );
+    1
+}
+
 fn write_o1js(out_dir: &str, name: &str, p: &PicklesProofProofsVerified2ReprStableV2) -> usize {
     let sexp = sexp_of_proof(p);
     let b64 = base64::engine::general_purpose::STANDARD.encode(sexp.as_bytes());
@@ -819,6 +899,7 @@ fn main() {
     ] {
         std::fs::write(format!("{out_dir}/{name}"), body).expect("write lean tape module");
         println!("[tape ] wrote {out_dir}/{name}");
+        failed += installed_gate(name, body);
     }
     std::fs::write(
         format!("{out_dir}/step-tape.json"),
@@ -1183,6 +1264,10 @@ fn main() {
     )
     .expect("write the wrap-own-vk lean module");
     println!("[gate C] wrote {out_dir}/MinaWrapOwnVerifierKey.lean — the OUTER dlog_plonk_index");
+    failed += installed_gate(
+        "MinaWrapOwnVerifierKey.lean",
+        &gates::wrap_own_vk_lean(&vk_evals),
+    );
 
     // ⚠ ⚑ THE RECORD'S ARITY, CHECKED RATHER THAN ACCEPTED. `step.rs:2848-2857` leaves
     // `messages_for_next_step_proof` UNPADDED at `N_PREVIOUS` while the same function pads

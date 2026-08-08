@@ -1179,4 +1179,7 @@ import Dregg2.Circuit.Emit.KimchiStepMainPins15
 import Dregg2.Circuit.Emit.KimchiStepMainPins16
 import Dregg2.Circuit.Emit.KimchiStepMainPins17
 import Dregg2.Circuit.Emit.KimchiStepMainPins18
+-- ⚑ §19b — the block's own IPA opening is ON DISK and does not close this assembly's transcript.
+-- Imported here rather than left orphaned: a pin module nobody reaches asserts nothing.
+import Dregg2.Circuit.Emit.KimchiStepMainPins19
 import Dregg2.Circuit.Emit.KimchiStepStatementPins

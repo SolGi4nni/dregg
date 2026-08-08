@@ -439,7 +439,7 @@ what it does not:
 
 Word 54 is `messages_for_next_step_proof`, and it is Mina's wrap public-input **slot 12** — the one
 slot of the forty the emitted wrap vector does not agree with
-(`KimchiWrapMainPins12.the_forty_agree_but_for_the_arity_mismatched_slot`, 39 of 40). Three
+(`KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve`, 39 of 40). Three
 structural explanations for that miss have been written into `KimchiWrapMainPins10` and refuted at
 source: the outer hash (refuted by the index repair), an arity gap (refuted 2026-08-07 —
 `marshal::STEP_RECURSION_SLOTS = gates::STEP_RULE_N_PREVIOUS = 1`), and a **fixpoint**:
@@ -476,15 +476,36 @@ first arrow and off `STEP_PREVCOMM_XY`, which is an ARGUMENT to `create_recursiv
 value it returns — that is `KimchiWrapMainPins12.the_wraphack_tape_reads_no_published_statement_entry`,
 and it is why 55/56 closed in one re-prove on 2026-08-06.
 
-⚠ ⚑ **SO WHAT DOES BLOCK SLOT 12 IS NOT A LOOP — IT IS (g) ABOVE WEARING A PUBLIC WORD.** The two
-sides of slot 12 hash the same seventy-six-cell shape (`segd_slot12_probe` reproduces this squeeze to
-the digit with openmina's own `MessagesForNextStepProof::hash()`), and they disagree on ONE family:
-`G`. Segment D absorbs `solveG`'s SOLVE, because §17 measured that this assembly has no IPA opening
-to take a real `challenge_polynomial_commitment` from; the marshaller fills the same wire field from
-`proof.prev_challenges[0].comm`. **Making them one object means pinning `G`, and §17(g)/(g) above
-already price that: with `G` fixed, re-closing `equal_g` is the two-dimensional discrete log in
-`⟨G + b·u, H⟩` — the accumulator check's OPENING leg, item #11.** That is an assumption, not an
-iteration, and it is the honest name for the last of the forty.
+⚠ ⚑ **SO WHAT DOES BLOCK SLOT 12 IS NOT A LOOP.** The two sides of slot 12 hash the same
+seventy-six-cell shape (`segd_slot12_probe` reproduces this squeeze to the digit with openmina's own
+`MessagesForNextStepProof::hash()`), so there is no sponge gap. They disagree on **TWO** of the four
+families, and the two have different prices:
+
+  * ⚑ **the sixteen challenges — an EXTRACTION, and it is fifteen-sixteenths available.** Segment D
+    absorbs `liftOf … (uChal k)`; the marshaller's `step_pre` is a `k·0x9E3779B97F4A7C15 | 1`
+    ladder chosen in `prove_step`. The assembly's own sixteen are transcript-derived and all below
+    `2^128`, so they drop into the wire's `[u64; 2]` unchanged — but only FIFTEEN of them are
+    published (entries 48…62 are `uChal 1 … uChal 15`); `uChal 0` is in no published entry, raw or
+    lifted. `KimchiStepMainPins19.the_published_statement_carries_fifteen_of_segment_ds_sixteen` is
+    that measurement, and it is what decides whether this half is a marshaller edit or a statement
+    change.
+  * ⚑⚑ **`G` — and the reason this paragraph gave for it was FALSE until 2026-08-08.** It read
+    *"§17 measured that this assembly has no IPA opening to take a real
+    `challenge_polynomial_commitment` from"*. There is one: block 539508's own `opening.sg`, in
+    `MinaStepPrevCommitments.SG_XY` beside the `GAMMA_XY` and `DELTA_XY` the emitted rows already
+    consume, off a module `KimchiStepMainCore` imports. What blocks it is that `bpCloses` at that
+    `sg` — with the block's own `z₁`, `z₂` — is **FALSE** on this assembly's `lhs`, because the
+    assembly squeezes its own `t`, `u` and `b` rather than the block's (§19b(a), (b)).
+
+**And the two escapes both terminate there.** (i) §19's rows are the `.opening` rung's and the rung
+that is PROVED is `.finalize`, so `equal_g` constrains no emitted witness and `G := SG_XY` would cost
+no proof — but the wire's `challenge_polynomial_commitments[0]` is the WRAP proof's kimchi
+recursion-slot commitment, forced to `commit(b_poly(chals))` over the slot's own challenges, which
+are tied to the step statement's published words by the 2026-08-06 repair slot 11 rests on. For that
+point to BE `SG_XY`, the published challenges would have to be block 539508's fifteen. (ii) Keeping
+`lhs` and pinning `G` re-opens §17(g)/(g)'s two-dimensional discrete log in `⟨G + b·u, H⟩` — item
+#11, an assumption. **Both roads end at the transcript**, which is the honest name for the last of
+the forty and is a different work item from the one this section used to name.
 
 ⚑ Stated at `shapeStep` — the shape whose 67 published entries `KimchiStepWrapChainFixture` carries
 and whose word 54 the wrap ladder ties Mina's slot 12 to. `tS` is the smoke assembly and its word 54

@@ -1117,6 +1117,12 @@ def N_OUT_VARS : Nat := N_HM_APP + 2 + N_IDX_WORDS
 -- nothing in the assembly related it to anything. §19's `rhs`/`equal_g` do relate it: `G` is now
 -- `solveG`'s output, a FUNCTION of `lhs`, and it lives on `StepData.gXY`. A constant here would be a
 -- second `G` that the opening does not close, and R8's `Boolean.all` would refuse the honest witness.
+-- ⚑ **AND THAT IS TRUE OF THE BLOCK'S REAL `sg` TOO, MEASURED (2026-08-08).**
+-- `MinaStepPrevCommitments.SG_XY` is devnet block 539508's own `opening.sg` — the point upstream's
+-- `check_bulletproof` scales and upstream's segment D forwards — and `bpCloses` at it, with the
+-- block's own `z₁`/`z₂`, is FALSE here (`KimchiStepMainPins19` §19b(a)). Restoring a constant `G`
+-- from the right provenance is the same refusal as restoring one from the wrong provenance, until
+-- the transcript is the block's.
 
 /-- The OUTER hash's two app-state words — `rule.main`'s OUTPUT state (`step_main.ml:550-557`),
 which no `verify_one` sub-circuit derives. A distinct fixture from segment C's `hmVal`, because it
@@ -1619,7 +1625,15 @@ the row count is not the claim. -/
 
 /-- ⚑ **`z₁`'s fixture value**, a witness with no upstream binder. The circuit cell exists (`bpZ1`)
 and no row determines it, which is the fact §17 exhibits; the value here is what the honest
-assembly's witness carries. -/
+assembly's witness carries.
+
+⚠ ⚑ **AND IT IS NOT THE BLOCK'S, WHICH IS A CHOICE AND NOT A SHORTAGE (2026-08-08).** Mina devnet
+block 539508's own `opening.z1`/`z2` are on disk — `MinaStepPrevCommitments.Z1`/`Z2`, off the same
+object `GAMMA_XY` and `DELTA_XY` come from. They are not used here because the ladder they would
+run in reads this assembly's `u` and `b`, which are not the block's: `KimchiStepMainPins19` §19b(b)
+names the three cells and (a) measures that `bpCloses` at the block's own `(sg, z₁, z₂)` is FALSE
+while at the solve it is true. Substituting the real scalars without the real transcript would
+produce a witness `Boolean.all` refuses, not a stronger rung. -/
 def BP_Z1_VAL : Nat := 987654321098765432109876543210
 def BP_Z2_VAL : Nat := 555555555555555555555555555555
 
@@ -5385,12 +5399,23 @@ def jAffOf (P : Nat × Nat × Nat) : Nat × Nat :=
   (fMul P.1 z2, fMul P.2.1 (fMul z2 zi))
 
 /-- ⚑⚑ **`challenge_polynomial_commitment`, SOLVED — and this is the finding, not a shortcut.**
-`G := z₁⁻¹·(lhs − z₂·H) − b·u` (`KimchiStepMainField.bpSolveG`). The assembly has no IPA opening to
-take a real `G` from, and §17 measures that it does not need one: `G`, `z₁` and `z₂` are free
-witnesses, so for ANY `lhs` this identity produces a `G` that closes `equal_g`, at one scalar-field
-inverse and three scalar multiplications. The honest witness this file emits is therefore the SAME
-object a substituting prover would compute — which is why `equal_g` refuses no on-curve substitution
-and why the emitted rows change no verdict.
+`G := z₁⁻¹·(lhs − z₂·H) − b·u` (`KimchiStepMainField.bpSolveG`). §17 measures that `G`, `z₁` and `z₂`
+are free witnesses, so for ANY `lhs` this identity produces a `G` that closes `equal_g`, at one
+scalar-field inverse and three scalar multiplications. The honest witness this file emits is
+therefore the SAME object a substituting prover would compute — which is why `equal_g` refuses no
+on-curve substitution and why the emitted rows change no verdict.
+
+⚠ ⚑ **THE REASON WRITTEN HERE UNTIL 2026-08-08 WAS FALSE, AND IT WAS QUOTED DOWNSTREAM.** It read
+*"the assembly has no IPA opening to take a real `G` from"*, and §18b's verdict repeated it. There
+IS one: block 539508's `opening` — the proof whose commitments `stepBases` ARE — has been extracted
+since `MinaWrapOpeningGate`, and `MinaStepPrevCommitments` now carries `SG_XY`, `Z1`, `Z2` and
+`SRS_H_XY` on its own surface beside the `GAMMA_XY` and `DELTA_XY` this file's rows already consume.
+`KimchiStepMainCore` imports that module directly. **The obstruction is a TRANSCRIPT, not a datum**:
+`bpCloses` at the block's `(sg, z₁, z₂)` is FALSE on this assembly's `lhs`, and the miss is located
+at exactly three cells — `t = challenge_fq()`, `u = group_map t`, and `b` —
+(`KimchiStepMainPins19.the_two_transcripts_differ_at_t_and_u_and_b_and_nowhere_in_the_points`),
+with `H`, the fold's bases and `delta` all agreeing. Naming the obstruction as an absent datum sent
+one lane looking for a file that was already imported; naming it as three cells is a target.
 
 ⚠ It is also why `G` is data-dependent now: it is a function of `lhs`, hence of the transcript, hence
 of every commitment the fold consumed. A bent commitment moves `lhs`, moves the solved `G`, and moves
