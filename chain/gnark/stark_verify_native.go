@@ -442,13 +442,39 @@ type witnessBusSpec struct {
 // ExposeClaim.
 const ShrinkNumInstances = 6
 
+// VkSpineLanes is the pinned VK-SPINE lane count: the turn-chain root exposes
+// commit(L.cap8 || L.vk_spine8 || R.cap8 || R.vk_spine8) — the circuit
+// identity of every leaf and aggregation node folded beneath it — as lanes
+// 25..33 of its own claim, immediately after the 25-lane settlement segment
+// (ivc_turn_chain.rs VK_SPINE_WIDTH / SEG_VK_SPINE_FIRST).
+//
+// It is the half of the claim the apex RecursionVk fingerprint does NOT
+// cover: that fingerprint is deliberately content-independent and does not
+// move when a child circuit is substituted, so the apex-VK pin alone never
+// certified WHAT was folded. The SettlementCircuit pins these lanes too.
+const VkSpineLanes = 8
+
+// ApexClaimLanes is what a turn-chain root actually publishes:
+// [settlement segment(25) || vk_spine(8)] (ivc_turn_chain.rs SEG_SPINE_WIDTH).
+//
+// NOT the same number as NumPublicInputs. The settlement STATEMENT is 25; the
+// apex CLAIM is 33. Everything on this path read them as one number until
+// 2026-08-08 and therefore read the SPINE where it meant to read the apex VK
+// core.
+const ApexClaimLanes = NumPublicInputs + VkSpineLanes
+
 // ApexVkLanes is the pinned apex VK-core lane count: the apex's preprocessed
 // commitment (its VK-identity core, one BabyBear Poseidon2-W16 Merkle root =
-// 8 felts) rides as lanes 25..33 of the shrink proof's expose_claim channel
+// 8 felts) rides as lanes 33..41 of the shrink proof's expose_claim channel —
+// AFTER the apex's own ApexClaimLanes
 // (shrink_apex_to_outer_exposed: in-circuit `pin_preprocessed_commit` +
 // re-exposure). The SettlementCircuit pins these lanes to the DEPLOYED dregg
 // apex's commitment as baked constants (the apex-VK pin, tooth 2).
 const ApexVkLanes = 8
+
+// ExposedShrinkClaimLanes is the full expose_claim width of the EXPOSED
+// shrink proof: [segment(25) || vk_spine(8) || apex VK core(8)] = 41.
+const ExposedShrinkClaimLanes = ApexClaimLanes + ApexVkLanes
 
 // ShrinkVkShape is the pinned VK-side shape of the 6-instance EXPOSED shrink
 // proof (batch_stark_prover.rs:276 NUM_PRIMITIVE_TABLES = 3: Const, Public,
@@ -460,8 +486,8 @@ const ApexVkLanes = 8
 // 4·16+12 = 76, preprocessed 4·13+7 = 59 pin those knobs); Poseidon2
 // WIDTH_EXT + RATE_EXT + 1 = 7 (poseidon2-circuit-air/src/air.rs:1484-1532
 // at WIDTH_EXT=4, RATE_EXT=2); ExposeClaim ONE WitnessChecks receive per
-// lane = 33 (expose_claim_air.rs: the 25 claim lanes ++ the 8 apex VK-core
-// lanes). Instances with an eval that reads
+// lane = 41 (expose_claim_air.rs: the 25 settlement lanes ++ the 8 VK-spine
+// lanes ++ the 8 apex VK-core lanes). Instances with an eval that reads
 // next rows open trace_next / preprocessed_next (BaseAir defaults;
 // Const/Public/Recompose/ExposeClaim override to none).
 type ShrinkVkShape struct {
@@ -475,15 +501,15 @@ type ShrinkVkShape struct {
 	// symbolic interpreter, always).
 	SimpleSpecs map[int]witnessBusSpec
 	// ClaimInstance is the expose_claim instance (the settlement claim
-	// channel); ClaimLen its pinned public-value count = the 25 claim lanes
-	// ++ the 8 apex VK-core lanes.
+	// channel); ClaimLen its pinned public-value count = the 25 settlement
+	// lanes ++ the 8 VK-spine lanes ++ the 8 apex VK-core lanes.
 	ClaimInstance, ClaimLen int
 }
 
 // ShrinkVk is THE pinned shape for the current (exposed) shrink circuit.
 var ShrinkVk = ShrinkVkShape{
-	NumLookups:      [ShrinkNumInstances]int{1, 1, 18, 7, 1, 33},
-	NumPublicValues: [ShrinkNumInstances]int{0, 0, 0, 0, 0, 33},
+	NumLookups:      [ShrinkNumInstances]int{1, 1, 18, 7, 1, ExposedShrinkClaimLanes},
+	NumPublicValues: [ShrinkNumInstances]int{0, 0, 0, 0, 0, ExposedShrinkClaimLanes},
 	TraceNext:       [ShrinkNumInstances]bool{false, false, true, true, false, false},
 	PreNext:         [ShrinkNumInstances]bool{false, false, true, true, false, false},
 	SimpleSpecs: map[int]witnessBusSpec{
@@ -492,8 +518,8 @@ var ShrinkVk = ShrinkVkShape{
 		4: {multPreCol: 1, idxPreCol: 0}, // Recompose (RecomposePrepLaneCols)
 	},
 	ClaimInstance: 5,
-	// 25 settlement lanes + 8 apex VK-core lanes.
-	ClaimLen: NumPublicInputs + ApexVkLanes,
+	// 25 settlement lanes + 8 VK-spine lanes + 8 apex VK-core lanes.
+	ClaimLen: ExposedShrinkClaimLanes,
 }
 
 // ShrinkStarkChallenges are the transcript challenges the algebra layer

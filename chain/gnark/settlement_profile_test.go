@@ -78,7 +78,7 @@ func (c *settlementProfileCircuit) Define(api frontend.API) error {
 
 	claim := c.PrefixObs[c.loc.pubObsOffOf(c.claimInstance) : c.loc.pubObsOffOf(c.claimInstance)+
 		c.loc.pubLens[c.claimInstance]]
-	if len(claim) != NumPublicInputs+ApexVkLanes {
+	if len(claim) != ExposedShrinkClaimLanes {
 		panic("settlementProfileCircuit: claim channel is not the pinned statement")
 	}
 	k := 0
@@ -105,6 +105,14 @@ func (c *settlementProfileCircuit) Define(api frontend.API) error {
 			panic("settlementProfileCircuit: apexPreprocessedCommit lane count")
 		}
 		for i, want := range c.apexPreprocessedCommit {
+			api.AssertIsEqual(claim[ApexClaimLanes+i], want)
+		}
+	}
+	if c.rootVkSpine != nil {
+		if len(c.rootVkSpine) != VkSpineLanes {
+			panic("settlementProfileCircuit: rootVkSpine lane count")
+		}
+		for i, want := range c.rootVkSpine {
 			api.AssertIsEqual(claim[NumPublicInputs+i], want)
 		}
 	}

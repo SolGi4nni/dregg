@@ -456,6 +456,7 @@ func bakeVerifierFullVkPins(t *testing.T, c *VerifierFullCircuit, fx *shrinkReal
 	t.Helper()
 	c.vkPreprocessedRoot = shrinkPreprocessedRoot(t, fx, ex.loc)
 	c.apexPreprocessedCommit = apexPreprocessedCommitConstants(t)
+	c.rootVkSpine = rootVkSpineConstants(t)
 }
 
 // assignVerifierFullPublics fills the exposed 25-lane statement in the pinned
@@ -784,5 +785,22 @@ func TestEmittedVerifierFullStatementAndVkPinsBind(t *testing.T) {
 	if err := test.IsSolved(apexAlloc, assignVerifierFull(t, fx, ex, sym), field); err == nil {
 		t.Fatal("APEX-VK PIN: a WRONG baked apex VK-core lane ACCEPTED the honest proof — the " +
 			"apex-VK pin is absent or does not bind the claim channel's re-exposed VK-core lanes")
+	}
+
+	// --- tooth 4: VK-SPINE (subtree) pin. Wrong baked spine lane; honest witness. ---
+	//
+	// Its own tooth because it fails for a reason tooth 3 cannot reach: the apex
+	// RecursionVk fingerprint is content-independent and does NOT move when a child
+	// circuit is substituted, so a foreign subtree under an honest apex passes tooth 3
+	// and is caught only here.
+	spineAlloc, err := AllocVerifierFullCircuit(vf, sym)
+	if err != nil {
+		t.Fatalf("alloc: %v", err)
+	}
+	bakeVerifierFullVkPins(t, spineAlloc, fx, ex)
+	spineAlloc.rootVkSpine[0] = new(big.Int).Add(spineAlloc.rootVkSpine[0], big.NewInt(1))
+	if err := test.IsSolved(spineAlloc, assignVerifierFull(t, fx, ex, sym), field); err == nil {
+		t.Fatal("VK-SPINE PIN: a WRONG baked root VK-spine lane ACCEPTED the honest proof — the " +
+			"subtree pin is absent or does not bind the claim channel's re-exposed spine lanes")
 	}
 }

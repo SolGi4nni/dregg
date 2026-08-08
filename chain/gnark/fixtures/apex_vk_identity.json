@@ -1,15 +1,25 @@
 {
-  "version": 1,
-  "recursion_vk_hex": "3ad1c9c601686a0983ed8df43a4a145e729d985194386ec22156029b92fc5503",
+  "version": 2,
+  "recursion_vk_hex": "588720d922f1990378fae6cb8c06d08882a723f70422487e48b38098b72be92e",
   "apex_preprocessed_commit": [
-    268067513,
-    683892485,
-    843780348,
-    1680901520,
-    261608891,
-    103688439,
-    1361835212,
-    1543334732
+    608195924,
+    104368544,
+    202336184,
+    1888874993,
+    125353895,
+    1209392973,
+    502099709,
+    634770528
   ],
-  "description": "The deployed dregg apex's VK identity: recursion_vk_hex is the blake3-32 RecursionVk fingerprint, asserted at load against the governance-pinned DREGG_APEX_RECURSION_VK / DreggApexRecursionVk constant (the weak-subjectivity anchor); apex_preprocessed_commit is the flattened preprocessed commitment the fingerprint hashes (the ApexVkLanes value the gnark SettlementCircuit bakes as its apex-VK pin). Re-mint: cargo test -p dregg-circuit-prove --release --test apex_shrink_gnark_fixture emit_deployed_apex_vk_identity_artifact -- --ignored --nocapture. Check it (writes nothing): the same target with derive_deployed_apex_vk_identity_and_check_fixture"
+  "root_vk_spine": [
+    94134495,
+    396366701,
+    306206417,
+    275065737,
+    482921127,
+    1333144966,
+    1026711456,
+    75598493
+  ],
+  "description": "The deployed dregg apex's VK identity: recursion_vk_hex is the blake3-32 RecursionVk fingerprint, asserted at load against the governance-pinned DREGG_APEX_RECURSION_VK / DreggApexRecursionVk constant (the weak-subjectivity anchor); apex_preprocessed_commit is the flattened preprocessed commitment the fingerprint hashes (the ApexVkLanes value the gnark SettlementCircuit bakes as its apex-VK pin); root_vk_spine is the root's subtree-identity spine (expose_claim lanes 25..33), the half the fingerprint does NOT cover. ALL THREE ARE SPECIFIC TO ONE CHAIN LENGTH (the derivation folds a 2-turn chain; measured by root_vk_spine_varies_with_chain_length) — the apex is NOT depth-invariant. Re-mint: cargo test -p dregg-circuit-prove --release --test apex_shrink_gnark_fixture emit_deployed_apex_vk_identity_artifact -- --ignored --nocapture. Check it (writes nothing): the same target with derive_deployed_apex_vk_identity_and_check_fixture"
 }

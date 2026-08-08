@@ -679,13 +679,15 @@ type VerifierFullCircuit struct {
 	// --- THE STATEMENT BIND + VK PINS (settlement_circuit.go:241-285). ---
 	//
 	// claimChannel is the block-3 ExposeClaim instance's public-value lanes — the
-	// 25 settlement claim lanes ++ the 8 apex VK-core lanes (NumPublicInputs +
-	// ApexVkLanes) — captured (base-field) during block 3's DAG evaluation, where
+	// 25 settlement claim lanes ++ the 8 VK-spine lanes ++ the 8 apex VK-core
+	// lanes (ExposedShrinkClaimLanes) — captured (base-field) during block 3's DAG evaluation, where
 	// the ExposeClaimAir `public_value[lane] == v_0` identity binds each lane to
 	// the COMMITTED expose_claim trace cell (through the quotient identity at
 	// zeta). Block 5 equates lanes 0..NumPublicInputs against the exposed public
-	// statement (publicLane), and the apex-VK pin equates the tail lanes against
-	// apexPreprocessedCommit — so BOTH the statement and the apex VK-core are bound
+	// statement (publicLane), the subtree pin equates lanes
+	// NumPublicInputs..ApexClaimLanes against rootVkSpine, and the apex-VK pin
+	// equates the tail lanes against apexPreprocessedCommit — so the statement, the
+	// folded subtree's identity AND the apex VK-core are all bound
 	// to the REAL proof's exposed-claim channel, not to fresh, proof-free witness.
 	claimChannel []frontend.Variable
 	// preprocessedRoots are block 2b's opened input roots of the preprocessed PCS
@@ -702,6 +704,10 @@ type VerifierFullCircuit struct {
 	// channel's re-exposed VK-core lanes (apex-VK pin, tooth 2) — the twin of
 	// SettlementCircuit.apexPreprocessedCommit (settlement_circuit.go:278).
 	apexPreprocessedCommit []*big.Int
+	// rootVkSpine, when non-nil, bakes the deployed root's VK SPINE (VkSpineLanes
+	// lanes) as circuit constants against the claim channel's re-exposed spine
+	// block (subtree pin, tooth 3) — the twin of SettlementCircuit.rootVkSpine.
+	rootVkSpine []*big.Int
 }
 
 // publicLane returns the i-th lane of the pinned 25-lane public statement in the
@@ -836,8 +842,12 @@ func (c *VerifierFullCircuit) Define(api frontend.API) error {
 //     structural-abstraction residual, seam #2, replaces the deployed circuit's
 //     single transcript-observed cap). A shrink proof from a DIFFERENT circuit
 //     carries a different preprocessed commitment and fails here.
+//   - subtree/VK-spine (tooth 3): the claim channel's re-exposed spine lanes
+//     (NumPublicInputs..ApexClaimLanes) equal rootVkSpine — the apex RecursionVk
+//     fingerprint is content-independent and does not move when a child circuit is
+//     substituted, so tooth 2 alone certifies nothing about WHAT was folded.
 //   - apex-VK (tooth 2): the claim channel's re-exposed VK-core lanes
-//     (NumPublicInputs..NumPublicInputs+ApexVkLanes) equal apexPreprocessedCommit
+//     (ApexClaimLanes..ExposedShrinkClaimLanes) equal apexPreprocessedCommit
 //     — a shrink minted over a NON-deployed apex has different VK-core lanes (they
 //     are transcript-absorbed + ExposeClaimAir-bound in block 3), and cannot be
 //     swapped without re-proving.
@@ -861,12 +871,26 @@ func (c *VerifierFullCircuit) bindVkPins(api frontend.API) error {
 			return fmt.Errorf("apex-VK pin must carry exactly ApexVkLanes (%d) lanes, got %d",
 				ApexVkLanes, len(c.apexPreprocessedCommit))
 		}
-		if len(c.claimChannel) != NumPublicInputs+ApexVkLanes {
+		if len(c.claimChannel) != ExposedShrinkClaimLanes {
 			return fmt.Errorf("apex-VK pin: claim channel has %d lanes, want %d "+
-				"(the 25 statement lanes ++ the 8 apex VK-core lanes — block 3 ExposeClaim capture)",
-				len(c.claimChannel), NumPublicInputs+ApexVkLanes)
+				"(the 25 statement lanes ++ the 8 VK-spine lanes ++ the 8 apex VK-core lanes — "+
+				"block 3 ExposeClaim capture)",
+				len(c.claimChannel), ExposedShrinkClaimLanes)
 		}
 		for i, want := range c.apexPreprocessedCommit {
+			api.AssertIsEqual(c.claimChannel[ApexClaimLanes+i], want)
+		}
+	}
+	if c.rootVkSpine != nil {
+		if len(c.rootVkSpine) != VkSpineLanes {
+			return fmt.Errorf("VK-spine pin must carry exactly VkSpineLanes (%d) lanes, got %d",
+				VkSpineLanes, len(c.rootVkSpine))
+		}
+		if len(c.claimChannel) != ExposedShrinkClaimLanes {
+			return fmt.Errorf("VK-spine pin: claim channel has %d lanes, want %d",
+				len(c.claimChannel), ExposedShrinkClaimLanes)
+		}
+		for i, want := range c.rootVkSpine {
 			api.AssertIsEqual(c.claimChannel[NumPublicInputs+i], want)
 		}
 	}
@@ -2001,12 +2025,13 @@ func (c *VerifierFullCircuit) starkInstance(bb *BBApi, cur *varCursor, inst *Sym
 		in.PublicValues = pv
 		// CLAIM-CHANNEL CAPTURE: the ExposeClaim instance is the ONLY one carrying
 		// public values, and it carries exactly the 25 settlement claim lanes ++ the
-		// 8 apex VK-core lanes. Record them (base-field) as the claim channel: block
-		// 5 binds lanes 0..25 to the public statement and the apex-VK pin binds lanes
-		// 25..33 to the pinned apex commitment. The eval below (evalSymbolicFoldedNative)
+		// 8 VK-spine lanes ++ the 8 apex VK-core lanes. Record them (base-field) as the
+		// claim channel: block 5 binds lanes 0..25 to the public statement, the subtree
+		// pin binds lanes 25..33 to the deployed root spine, and the apex-VK pin binds
+		// lanes 33..41 to the pinned apex commitment. The eval below (evalSymbolicFoldedNative)
 		// runs the ExposeClaimAir `pv == v_0` identity, binding each captured lane to
 		// the committed expose_claim trace cell — so these are proof-bound, not free.
-		if inst.NumPublicValues == NumPublicInputs+ApexVkLanes {
+		if inst.NumPublicValues == ExposedShrinkClaimLanes {
 			lanes := make([]frontend.Variable, inst.NumPublicValues)
 			for i := range pv {
 				lanes[i] = pv[i][0]

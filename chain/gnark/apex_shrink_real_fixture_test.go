@@ -93,16 +93,21 @@ type shrinkRealFixture struct {
 	Description string `json:"description"`
 	DegreeBits  []int  `json:"degree_bits"`
 	// Per-instance table public values (the expose_claim instance carries the
-	// re-exposed 25-lane settlement claim FOLLOWED BY the 8 apex VK-core
-	// lanes; every other instance is empty).
+	// re-exposed apex claim — the 25-lane settlement segment ++ the 8-lane
+	// root VK spine — FOLLOWED BY the 8 apex VK-core lanes; every other
+	// instance is empty).
 	TablePublics  [][]uint32 `json:"table_publics"`
 	ClaimInstance int        `json:"claim_instance"`
 	// The apex's preprocessed commitment (the deployed dregg apex's
 	// VK-identity core) — a labeled copy of the claim channel's tail 8 lanes,
 	// cross-checked in the loader. This is the value the SettlementCircuit
 	// bakes as apexPreprocessedCommit.
-	ApexPreprocessedCommit []uint32       `json:"apex_preprocessed_commit"`
-	Fri                    shrinkFriShape `json:"fri"`
+	ApexPreprocessedCommit []uint32 `json:"apex_preprocessed_commit"`
+	// The turn-chain root's VK spine — a labeled copy of the claim channel's
+	// MIDDLE 8 lanes (25..33), cross-checked in the loader. This is the value
+	// the SettlementCircuit bakes as rootVkSpine (tooth 3).
+	RootVkSpine []uint32       `json:"root_vk_spine"`
+	Fri         shrinkFriShape `json:"fri"`
 	PrefixEvents    []shrinkFixtureEvent      `json:"prefix_events"`
 	CommitRoots     []string                  `json:"commit_roots"`
 	ExpectedBetas   [][4]uint32               `json:"expected_betas"`
@@ -144,9 +149,9 @@ func loadShrinkRealFixture(t *testing.T) *shrinkRealFixture {
 	if err := json.Unmarshal(raw, fx); err != nil {
 		t.Fatalf("fixture JSON: %v", err)
 	}
-	if fx.Version != 4 {
-		t.Fatalf("fixture version %d (want 4: exposed 25-lane claim + 8 apex VK-core lanes)",
-			fx.Version)
+	if fx.Version != 5 {
+		t.Fatalf("fixture version %d (want 5: exposed 25-lane segment + 8 VK-spine lanes + "+
+			"8 apex VK-core lanes)", fx.Version)
 	}
 	// The settlement claim channel: the expose_claim instance's 25 canonical
 	// claim lanes, in the pinned genesis8 ++ final8 ++ numTurns ++
@@ -159,9 +164,10 @@ func loadShrinkRealFixture(t *testing.T) *shrinkRealFixture {
 	if fx.ClaimInstance < 0 || fx.ClaimInstance >= len(fx.TablePublics) {
 		t.Fatalf("claim_instance %d out of range", fx.ClaimInstance)
 	}
-	if len(fx.TablePublics[fx.ClaimInstance]) != NumPublicInputs+ApexVkLanes {
-		t.Fatalf("claim instance carries %d lanes (want the pinned %d claim + %d apex VK-core)",
-			len(fx.TablePublics[fx.ClaimInstance]), NumPublicInputs, ApexVkLanes)
+	if len(fx.TablePublics[fx.ClaimInstance]) != ExposedShrinkClaimLanes {
+		t.Fatalf("claim instance carries %d lanes (want the pinned %d segment + %d VK spine + "+
+			"%d apex VK-core = %d)", len(fx.TablePublics[fx.ClaimInstance]),
+			NumPublicInputs, VkSpineLanes, ApexVkLanes, ExposedShrinkClaimLanes)
 	}
 	// The labeled apex VK-core copy IS the claim channel's tail (fail-closed:
 	// the value the settlement circuit pins is the one the transcript absorbed
@@ -172,8 +178,24 @@ func loadShrinkRealFixture(t *testing.T) *shrinkRealFixture {
 	}
 	for i, v := range fx.ApexPreprocessedCommit {
 		requireCanonicalBB(t, v, "apex VK-core lane")
-		if got := fx.TablePublics[fx.ClaimInstance][NumPublicInputs+i]; got != v {
+		// ⚠ offset ApexClaimLanes: the VK core is the channel's TAIL, after the apex's whole
+		// claim. At NumPublicInputs this compared the labeled VK core against the SPINE block.
+		if got := fx.TablePublics[fx.ClaimInstance][ApexClaimLanes+i]; got != v {
 			t.Fatalf("apex_preprocessed_commit[%d] = %d diverges from claim-channel lane %d = %d",
+				i, v, ApexClaimLanes+i, got)
+		}
+	}
+	// The labeled root VK-spine copy IS the claim channel's middle block, on the same
+	// fail-closed terms as the tail.
+	if len(fx.RootVkSpine) != VkSpineLanes {
+		t.Fatalf("root_vk_spine has %d lanes (want %d) — a v4 fixture carries none; "+
+			"re-export via export_real_shrink_fri_fixture_for_gnark",
+			len(fx.RootVkSpine), VkSpineLanes)
+	}
+	for i, v := range fx.RootVkSpine {
+		requireCanonicalBB(t, v, "root VK-spine lane")
+		if got := fx.TablePublics[fx.ClaimInstance][NumPublicInputs+i]; got != v {
+			t.Fatalf("root_vk_spine[%d] = %d diverges from claim-channel lane %d = %d",
 				i, v, NumPublicInputs+i, got)
 		}
 	}

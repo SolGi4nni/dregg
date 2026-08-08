@@ -129,11 +129,66 @@ fn outer_domain(pcs: &OuterPcsT, degree: usize) -> OuterDomain {
 /// num_turns ++ chain_digest8) — `chain/gnark`'s `NumPublicInputs`.
 pub const SETTLEMENT_CLAIM_LANES: usize = 25;
 
+/// **THE VK SPINE BLOCK** — [`crate::ivc_turn_chain::VK_SPINE_WIDTH`] lanes the turn-chain root
+/// exposes immediately AFTER the settlement segment, carrying the circuit identity of every leaf
+/// and aggregation node folded beneath it
+/// (`vk_spine = commit(L.cap8 ‖ L.vk_spine8 ‖ R.cap8 ‖ R.vk_spine8)`).
+///
+/// ⚑ It landed in `e1d8ab9bc` (2026-07-30) explicitly "STAGED, NOT FIRED", and the gnark
+/// settlement path never learned about it: the apex's exposed claim went 25 → 33 lanes while
+/// every length check on this path still said 25.
+pub const VK_SPINE_LANES: usize = crate::ivc_turn_chain::VK_SPINE_WIDTH;
+
+/// **THE APEX'S EXPOSED CLAIM** — what a turn-chain root actually publishes:
+/// `[settlement segment(25) ‖ vk_spine(8)]`. This is
+/// [`crate::ivc_turn_chain::SEG_SPINE_WIDTH`], and it is what the shrink re-exposes verbatim
+/// before appending the apex VK core.
+///
+/// ⚠ NOT the same number as [`SETTLEMENT_CLAIM_LANES`]. The settlement STATEMENT is 25; the apex
+/// CLAIM is 33. Conflating them is precisely the bug this constant exists to make impossible.
+pub const APEX_CLAIM_LANES: usize = SETTLEMENT_CLAIM_LANES + VK_SPINE_LANES;
+
 /// The apex VK-core lane count: the apex's preprocessed commitment is one
 /// BabyBear Poseidon2-W16 Merkle root (cap height 0) = 8 BabyBear felts.
-/// These ride as lanes `25..33` of the shrink proof's `expose_claim` table
-/// (see [`shrink_apex_to_outer_exposed`]).
+/// These ride as lanes `33..41` of the shrink proof's `expose_claim` table —
+/// AFTER the apex's own [`APEX_CLAIM_LANES`] (see [`shrink_apex_to_outer_exposed`]).
 pub const APEX_VK_LANES: usize = 8;
+
+/// The full lane count of the EXPOSED shrink proof's `expose_claim` table:
+/// `[segment(25) ‖ vk_spine(8) ‖ apex VK core(8)]`.
+pub const EXPOSED_SHRINK_CLAIM_LANES: usize = APEX_CLAIM_LANES + APEX_VK_LANES;
+
+/// Read the turn-chain root's **VK-spine lanes** — `[SETTLEMENT_CLAIM_LANES .. APEX_CLAIM_LANES]`
+/// of its `expose_claim` table — as canonical `u32`s.
+///
+/// This is the subtree-identity value the settlement path must bind: the apex `RecursionVk`
+/// fingerprint is deliberately content-independent and does NOT move when a child circuit is
+/// substituted (measured twice on `main`, see `e1d8ab9bc`), so the apex-VK pin alone does not
+/// certify WHAT was folded. The spine does.
+pub fn apex_root_vk_spine(
+    apex: &RecursionOutput<DreggRecursionConfig>,
+) -> Result<Vec<u32>, String> {
+    let claim = apex
+        .0
+        .non_primitives
+        .iter()
+        .find(|e| e.op_type.as_str() == "expose_claim")
+        .ok_or("apex proof carries no expose_claim table (no claim, hence no VK spine)")?;
+    if claim.public_values.len() < APEX_CLAIM_LANES {
+        return Err(format!(
+            "apex exposes {} claim lane(s), fewer than the {APEX_CLAIM_LANES} a segment + VK \
+             spine occupies — this is a PRE-SPINE artifact whose subtree identity cannot be \
+             certified; refusing to read a spine that is not there",
+            claim.public_values.len()
+        ));
+    }
+    Ok(
+        claim.public_values[SETTLEMENT_CLAIM_LANES..APEX_CLAIM_LANES]
+            .iter()
+            .map(|v| v.as_canonical_u32())
+            .collect(),
+    )
+}
 
 // ============================================================================
 // THE DEPLOYED APEX VK-IDENTITY (RecursionVk → ApexVkLanes)
@@ -167,9 +222,29 @@ pub const APEX_VK_LANES: usize = 8;
 /// REJECTS instead of being trusted because it sits at HEAD.
 ///
 /// VK material is content-independent (two proofs of the same circuit over
-/// different data carry identical material) and — with the accumulator's WRAP
-/// step ON — depth-invariant, so a fresh fold of ANY chain at HEAD derives
-/// the deployed circuit's identity. Two tests in tests/apex_shrink_gnark_fixture.rs
+/// different data carry identical material).
+///
+/// ⚑⚑ **IT IS NOT DEPTH-INVARIANT, AND THIS DOCBLOCK CLAIMED IT WAS.** Until 2026-08-08 the
+/// paragraph above continued "— and, with the accumulator's WRAP step ON, depth-invariant, so a
+/// fresh fold of ANY chain at HEAD derives the deployed circuit's identity", and
+/// `chain/gnark/settlement_circuit.go` repeated it. **MEASURED** by
+/// `root_vk_spine_varies_with_chain_length` (tests/apex_shrink_gnark_fixture.rs), folding real
+/// chains of 2, 3, 4 and 5 turns at HEAD: the `recursion_vk` fingerprint, the
+/// `apex_preprocessed_commit` lanes AND the root VK spine are **all three different at every
+/// length**. WRAP normalizes a LEAF's mint shape; it does not make a 2-turn root and a 3-turn
+/// root the same circuit.
+///
+/// What that means for everything downstream, said plainly: this artifact, the governance anchor
+/// [`DREGG_APEX_RECURSION_VK`] it is pinned against, and the `apexPreprocessedCommit` constants
+/// the gnark `SettlementCircuit` bakes from it are all specific to the **2-turn** chain the
+/// derivation lane folds. [`check_apex_vk_identity_pin`] fails closed on a chain of any other
+/// length — correctly, but for a reason nobody had written down. No test in the tree folded two
+/// lengths and compared, so "a fresh fold of ANY chain derives the deployed identity" went
+/// unchallenged. Repairing it is root-shape normalization in the recursion tower (the fork's
+/// `normalize_to_shape_spike`), not an edit here; until then, read every "deployed apex identity"
+/// in this module as "the deployed apex identity AT ONE CHAIN LENGTH".
+///
+/// Two tests in tests/apex_shrink_gnark_fixture.rs
 /// carry it, SPLIT 2026-08-08 so the check no longer reads its own input:
 /// `derive_deployed_apex_vk_identity_and_check_fixture` is the pure CHECK (governance
 /// pin + differential against BOTH committed artifacts, writing nothing, and therefore
@@ -188,6 +263,21 @@ pub struct ApexVkIdentity {
     /// [`APEX_VK_LANES`] canonical BabyBear `u32` lanes — the value
     /// `chain/gnark`'s `SettlementCircuit` bakes as `apexPreprocessedCommit`.
     pub apex_preprocessed_commit: Vec<u32>,
+    /// The turn-chain root's **VK spine** — [`VK_SPINE_LANES`] canonical BabyBear `u32` lanes,
+    /// `commit(L.cap8 ‖ L.vk_spine8 ‖ R.cap8 ‖ R.vk_spine8)` folded from the leaves up, i.e. the
+    /// circuit identity of everything folded beneath the root.
+    ///
+    /// ⚑ It is the half of the apex's exposed claim that
+    /// [`recursion_vk_fingerprint`] does **not** cover: the fingerprint is deliberately
+    /// content-independent and does NOT move when a child circuit is substituted (measured twice
+    /// on `main`, `e1d8ab9bc`), so the apex-VK pin alone never certified WHAT was folded. Carried
+    /// here so the settlement path can bind it instead of ignoring it — the shrink re-exposes
+    /// these lanes at `expose_claim[25..33]` whether or not anything checks them, and an exposed
+    /// lane nothing checks is a lane a prover chooses.
+    ///
+    /// ⚠ Schema v2 field. A v1 artifact (no spine) must REFUSE to load rather than default to
+    /// empty — an absent spine is not a spine of zeros.
+    pub root_vk_spine: Vec<u32>,
     /// Human-readable provenance note (how to regenerate/re-check).
     pub description: String,
 }
@@ -216,34 +306,79 @@ pub struct ApexVkIdentity {
 /// Go mirror); until then, identity loads fail closed. The trust model is
 /// weak subjectivity — "trust a governance-pinned recent fingerprint" — not
 /// "trust whoever compiled the artifact at HEAD".
-/// ⚑⚑ **STALE AS OF THE LEAF-WRAP MINT SPLIT — THIS ANCHOR ROTATES, AND SO DOES THE GO MIRROR.**
+/// ⚑ **ROTATED 2026-08-08 BY THE LEAF-WRAP MINT SPLIT** (previous epoch:
+/// `3ad1c9c601686a0983ed8df43a4a145e729d985194386ec22156029b92fc5503`).
 ///
-/// The value below is the fingerprint of an apex whose every fold verified a **19-query child
-/// committed on a 2^26 domain**. A turn-chain leaf now mints at `create_recursion_config`'s engine
+/// The retired value fingerprinted an apex whose every fold verified a **19-query child committed
+/// on a 2^26 domain**. A turn-chain leaf now mints at `create_recursion_config`'s engine
 /// (`ivc_turn_chain::turn_chain_root_config`), so every fold above it verifies a **38-query child
 /// on a 2^23 domain** — a different verifier circuit, hence a different preprocessed commitment,
 /// hence a different [`RecursionVk`]. Nothing about the descriptor, the AIR, the trace or the
 /// claim moved; the recursion *shape* did.
 ///
-/// **The flag day, named:** re-derive with
+/// ⚑⚑ **AND NOTHING SAW IT.** The Go anchor check (`loadApexVkIdentity`) compares the identity
+/// artifact against the Go mirror of THIS constant; the Go cross-artifact differential
+/// (`TestApexPinFixtureMatchesDerivedDeployedIdentity`) compares the two *committed files* to each
+/// other. Both passed throughout, because both artifacts carried the same stale lanes and the
+/// stale constant agreed with them — a closed loop of three stale things confirming one another.
+/// The ONLY instrument in the tree that can see this epoch is the Rust derivation lane
+/// (`derive_deployed_apex_vk_identity_and_check_fixture`), which folds a fresh apex at HEAD and
+/// asserts against it — and that lane could not even reach the pin (it verified the fresh apex
+/// under the pre-split engine and died `QueryProofCountMismatch { expected: 19, got: 38 }`).
+/// **A cross-artifact differential detects DISAGREEMENT, never STALENESS.** Freshness has exactly
+/// one source here and it must actually run.
+///
+/// **The flag day, named** — re-derive with
 /// `cargo test -p dregg-circuit-prove --release --test apex_shrink_gnark_fixture
-/// emit_deployed_apex_vk_identity_artifact -- --ignored --nocapture`, then update, together and
-/// in one commit:
+/// emit_deployed_apex_vk_identity_artifact -- --ignored --nocapture`, then move, together and in
+/// one commit:
 ///   1. this constant,
 ///   2. `chain/gnark/settlement_circuit.go`'s `DreggApexRecursionVk`,
 ///   3. `chain/gnark/fixtures/apex_vk_identity.json` (`recursion_vk_hex` **and** the 8
 ///      `apex_preprocessed_commit` lanes — `emit_deployed_apex_vk_identity_artifact`
 ///      rewrites it; the CHECK lane asserts it and never writes),
-///   4. `chain/gnark/fixtures/apex_shrink_fri_real.json`'s `apex_preprocessed_commit`, which the
-///      Go cross-artifact differential (`TestApexPinFixtureMatchesDerivedDeployedIdentity`)
-///      requires to equal (3).
+///   4. `chain/gnark/fixtures/apex_shrink_fri_real.json` — **not patchable.** Its 8 lanes are the
+///      claim-channel tail of a real BN254 FRI proof the Go loader re-verifies
+///      (`apex_preprocessed_commit == table_publics[claim][25..]`), so it must be RE-EXPORTED
+///      (`export_real_shrink_fri_fixture_for_gnark`) after the shrink path's `inner_config` is
+///      rotated to [`turn_chain_root_config`] — that config is the engine the shrink circuit
+///      verifies the apex at IN-CIRCUIT, so the shrink circuit's own shape moves with it,
+///   5. `chain/gnark/fixtures/shrink_symbolic_constraints.json` — re-emit from the FORK
+///      (`~/dev/plonky3-recursion`, `SHRINK_SYMBOLIC_OUT=<path> cargo test -p p3-circuit-prover
+///      --test emit_shrink_symbolic --release`). ⚠ the emitter asserts its structural knobs
+///      against the DEPLOYED proof, so read them off the fresh fixture's `input_rounds`
+///      (`[0]` = main widths, `[2]` = preprocessed, `[3]` = permutation = 4·num_lookups) rather
+///      than making the assert pass. Measured 2026-08-08: `ExposeClaimAir` 33 → 41 lanes
+///      (main 132 → 164, preprocessed 66 → 82), and `const` preprocessed 2 → 6, which had been
+///      stale since the fork's `fc3c6df` — the committed DAG was carrying 3 Const constraints
+///      where the deployed AIR has 7,
+///   6. the Groth16 leg — `DREGG_SNARK=1 go test -run TestSettlementGroth16EndToEnd`, which
+///      re-mints `chain/gnark/fixtures/settlement_groth16.vk`,
+///      `chain/contracts/DreggGroth16Verifier25.sol` and
+///      `chain/test/fixtures/settlement_groth16.json`, because `SettlementCircuit` bakes the apex
+///      lanes as R1CS constants,
+///   7. the three-chain VK codegen off that fresh `.sol`
+///      (`docs/ops/regenerating-verifiers.md` steps 2–3), or `check_consistency.sh` reds.
+///      ⚠ The Groth16 PUBLIC ARITY does not move — the spine is a baked pin, not a statement
+///      lane — so the 25-input Solidity/Solana/Cosmos interface is unchanged and only the VK
+///      rotates,
+///   8. the LEAN-EMITTED gnark twin `chain/gnark/emitted/inputopen_batch_r{0,2,3}.json` +
+///      `inputopen_batch_template.json` (`Dregg2/Circuit/Emit/GnarkVerifier/InputOpenBatchEmit.lean`
+///      §12 `batchData widths depth katMask`, with the in-Lean length + FNV-1a byte pins), plus
+///      `merkle_path_bn254_d{18,19}` — the shrink's height classes and row widths move with the
+///      shape. ⚠ **These are Lean-authored; re-emit them, never hand-edit the JSON.**
+///      Measured 2026-08-08: classes `{18,17,12,3}` → `{19,18,12,3}` and the four width
+///      signatures `80,300,8,132 / 16,8,16,8 / 61,24,4,66 / 76,28,8,132` →
+///      `76,304,8,164 / 8,16,16,8 / 59,26,8,82 / 72,32,8,164`,
+///   9. the GKR permutation census pin (`gkr_poseidon2_bn254_test.go`), 12008 → 13072 — every
+///      input is read from the fixture, so it is a pure drift tripwire and it fired.
 ///
 /// ⚠ The emitter asserts this pin BEFORE it writes, so it fails closed with the two
 /// fingerprints in the message rather than silently re-stamping the artifact — which is the
-/// behaviour to keep. Until all four move together, every consumer of the identity artifact
+/// behaviour to keep. Until all seven move together, every consumer of the identity artifact
 /// refuses to load, which is the correct posture and not a bug.
 pub const DREGG_APEX_RECURSION_VK: &str =
-    "3ad1c9c601686a0983ed8df43a4a145e729d985194386ec22156029b92fc5503";
+    "588720d922f1990378fae6cb8c06d08882a723f70422487e48b38098b72be92e";
 
 /// Assert an [`ApexVkIdentity`]'s fingerprint equals the governance-pinned
 /// [`DREGG_APEX_RECURSION_VK`] anchor — fail-closed. This is the check that
@@ -294,16 +429,23 @@ pub fn derive_apex_vk_identity(
         ));
     }
     let vk: RecursionVk = recursion_vk_fingerprint(&apex.0);
+    let root_vk_spine = apex_root_vk_spine(apex)?;
     Ok(ApexVkIdentity {
-        version: 1,
+        version: 2,
         recursion_vk_hex: vk.to_hex(),
         apex_preprocessed_commit: lanes,
+        root_vk_spine,
         description: "The deployed dregg apex's VK identity: recursion_vk_hex is the blake3-32 \
                       RecursionVk fingerprint, asserted at load against the governance-pinned \
                       DREGG_APEX_RECURSION_VK / DreggApexRecursionVk constant (the \
                       weak-subjectivity anchor); apex_preprocessed_commit is the flattened \
                       preprocessed commitment the fingerprint hashes (the ApexVkLanes value the \
-                      gnark SettlementCircuit bakes as its apex-VK pin). Re-mint: cargo test -p \
+                      gnark SettlementCircuit bakes as its apex-VK pin); root_vk_spine is the \
+                      root's subtree-identity spine (expose_claim lanes 25..33), the half the \
+                      fingerprint does NOT cover. ALL THREE ARE SPECIFIC TO ONE CHAIN LENGTH \
+                      (the derivation folds a 2-turn chain; measured by \
+                      root_vk_spine_varies_with_chain_length) — the apex is NOT depth-invariant. \
+                      Re-mint: cargo test -p \
                       dregg-circuit-prove --release --test apex_shrink_gnark_fixture \
                       emit_deployed_apex_vk_identity_artifact -- --ignored --nocapture. \
                       Check it (writes nothing): the same target with \
@@ -683,7 +825,8 @@ pub struct RealShrinkFriFixture {
     pub degree_bits: Vec<usize>,
     /// Per-instance table PUBLIC VALUES (canonical BabyBear lanes), in
     /// instance order — primitive tables carry none; the `expose_claim`
-    /// instance carries the re-exposed 25-lane chain claim FOLLOWED BY the
+    /// instance carries the re-exposed apex claim — the 25-lane settlement
+    /// segment ++ the 8-lane root VK spine — FOLLOWED BY the
     /// 8 apex VK-core lanes (the apex's preprocessed commitment — see
     /// [`shrink_apex_to_outer_exposed`], THE APEX-VK PIN). These are the
     /// exact values `verify_batch` observes into the transcript right after
@@ -694,12 +837,17 @@ pub struct RealShrinkFriFixture {
     /// settlement claim channel).
     pub claim_instance: usize,
     /// The apex's preprocessed commitment (the deployed dregg apex's
-    /// VK-identity core, 8 canonical BabyBear lanes) — a labeled copy of
-    /// `table_publics[claim_instance][25..33]`, the value
+    /// VK-identity core, [`APEX_VK_LANES`] canonical BabyBear lanes) — a labeled copy of
+    /// `table_publics[claim_instance][33..41]`, the value
     /// `chain/gnark/settlement_circuit.go` bakes as `apexPreprocessedCommit`.
     /// Fail-closed cross-checked against the claim-channel tail by the gnark
     /// loader.
     pub apex_preprocessed_commit: Vec<u32>,
+    /// The turn-chain root's VK spine ([`VK_SPINE_LANES`] lanes) — a labeled copy of
+    /// `table_publics[claim_instance][25..33]`, the subtree circuit identity the
+    /// `SettlementCircuit` binds alongside the apex VK core. Fail-closed cross-checked against
+    /// the claim channel's middle block by the gnark loader, exactly like the tail.
+    pub root_vk_spine: Vec<u32>,
     pub fri: FixtureFriShape,
     /// The pre-FRI transcript, `initialise_challenger()` through the FRI
     /// batch-combination alpha sample (inclusive).
@@ -950,16 +1098,26 @@ pub fn export_real_shrink_fri_fixture(
                 "shrink proof carries no expose_claim table — the settlement claim is unbound \
                  (mint with shrink_apex_to_outer_exposed, not the plain shrink)",
             )?;
-    if publics[claim_instance].len() != SETTLEMENT_CLAIM_LANES + APEX_VK_LANES {
+    if publics[claim_instance].len() != EXPOSED_SHRINK_CLAIM_LANES {
         return Err(format!(
-            "shrink expose_claim table carries {} lanes, want {} claim + {} apex-VK \
-             (mint with shrink_apex_to_outer_exposed, which pins+exposes the apex VK core)",
+            "shrink expose_claim table carries {} lanes, want {} settlement segment + {} VK \
+             spine + {} apex-VK = {} (mint with shrink_apex_to_outer_exposed, which re-exposes \
+             the apex's whole claim and then pins+exposes the apex VK core)",
             publics[claim_instance].len(),
             SETTLEMENT_CLAIM_LANES,
-            APEX_VK_LANES
+            VK_SPINE_LANES,
+            APEX_VK_LANES,
+            EXPOSED_SHRINK_CLAIM_LANES
         ));
     }
-    let apex_preprocessed_commit: Vec<u32> = publics[claim_instance][SETTLEMENT_CLAIM_LANES..]
+    // ⚠ The apex VK core sits after the apex's WHOLE claim (segment ++ spine), not after the
+    // settlement segment. Reading it at `SETTLEMENT_CLAIM_LANES..` — as this did until
+    // 2026-08-08 — silently returned the SPINE once the spine landed (`e1d8ab9bc`, 07-30).
+    let root_vk_spine: Vec<u32> = publics[claim_instance][SETTLEMENT_CLAIM_LANES..APEX_CLAIM_LANES]
+        .iter()
+        .map(bb_u32)
+        .collect();
+    let apex_preprocessed_commit: Vec<u32> = publics[claim_instance][APEX_CLAIM_LANES..]
         .iter()
         .map(bb_u32)
         .collect();
@@ -1424,9 +1582,10 @@ pub fn export_real_shrink_fri_fixture(
     }
 
     Ok(RealShrinkFriFixture {
-        version: 4,
+        version: 5,
         description: "REAL dregg apex shrink proof (BatchStarkProof<DreggOuterConfig> over a real \
-                      ir2_leaf_wrap apex) WITH the 25-lane chain claim AND the 8-lane apex \
+                      turn-chain-root apex) WITH the apex's WHOLE 33-lane claim (the 25-lane \
+                      settlement segment ++ the 8-lane root VK spine) AND the 8-lane apex \
                       VK-core (the apex's preprocessed commitment, in-circuit pinned via \
                       pin_preprocessed_commit) re-exposed through the shrink proof's own \
                       expose_claim table (shrink_apex_to_outer_exposed): pre-FRI transcript \
@@ -1441,6 +1600,7 @@ pub fn export_real_shrink_fri_fixture(
             .collect(),
         claim_instance,
         apex_preprocessed_commit,
+        root_vk_spine,
         fri: FixtureFriShape {
             log_blowup: OUTER_FRI_LOG_BLOWUP,
             log_final_poly_len: 0,

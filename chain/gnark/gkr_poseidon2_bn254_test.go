@@ -179,8 +179,13 @@ func TestGkrPoseidon2PermCensus(t *testing.T) {
 
 	t.Logf("open_input walk=%d leaf=%d, fri walk=%d leaf=%d => %d perms/query × %d queries = %d perms (~%.2fM R1CS at 243/perm)",
 		walk, leaf, friWalk, friLeaf, perQuery, fx.Fri.NumQueries, total, float64(total)*243/1e6)
-	if total != 12008 {
-		t.Fatalf("perm census drifted: %d (want 12008) — re-derive the GKR extrapolation", total)
+	// ⚑ 12008 → 13072 on 2026-08-08. Every input is READ FROM THE FIXTURE, so this pin is a
+	// pure drift tripwire, and it fired correctly: the apex-VK flag day moved the shrink proof's
+	// shape (FRI rounds 15 → 16, log_global_max_height 18 → 19, and the expose_claim table 132 →
+	// 164 limbs wide once the root's VK-spine block joined the re-exposed claim), which is more
+	// Merkle path levels and one more leaf-sponge block per query. Re-derived, not silenced.
+	if total != 13072 {
+		t.Fatalf("perm census drifted: %d (want 13072) — re-derive the GKR extrapolation", total)
 	}
 }
 

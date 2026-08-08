@@ -26,11 +26,13 @@ use std::time::Instant;
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit_prove::apex_shrink::verify_shrink_proof;
 use dregg_circuit_prove::apex_shrink_gnark_export::{
-    DREGG_APEX_RECURSION_VK, export_real_shrink_fri_fixture, shrink_apex_to_outer_exposed,
+    APEX_CLAIM_LANES, APEX_VK_LANES, DREGG_APEX_RECURSION_VK, EXPOSED_SHRINK_CLAIM_LANES,
+    SETTLEMENT_CLAIM_LANES, VK_SPINE_LANES, apex_root_vk_spine, export_real_shrink_fri_fixture,
+    shrink_apex_to_outer_exposed,
 };
 use dregg_circuit_prove::dregg_outer_config::{DreggOuterConfig, create_outer_config};
 use dregg_circuit_prove::ivc_turn_chain::{
-    FinalizedTurn, ir2_leaf_wrap_config, prove_turn_chain_recursive, turn_chain_root_config,
+    FinalizedTurn, prove_turn_chain_recursive, turn_chain_root_config,
 };
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::verify_recursive_batch_proof_with_config;
@@ -234,19 +236,34 @@ fn real_shrink_proof(outer_config: &DreggOuterConfig) -> BatchStarkProof<DreggOu
     let whole = prove_turn_chain_recursive(&the_chain()).expect("the fixed 2-turn chain folds");
     println!("apex fold time     : {:?}", t0.elapsed());
 
-    let inner_config = ir2_leaf_wrap_config();
+    // ⚑ **THE APEX IS MINTED AT THE TOWER ROOT CONFIG, SO THE SHRINK MUST VERIFY IT AT THAT ONE.**
+    // `inner_config` is not a bystander: `shrink_apex_to_outer_exposed` takes it as *the engine the
+    // shrink circuit verifies the apex at IN-CIRCUIT*, so a stale config here does not merely fail
+    // the host-side pre-check — it would build a shrink circuit for a verifier that no apex is
+    // minted under. Post leaf-wrap-mint-split the apex is `(lb 3, q 38)`; `ir2_leaf_wrap_config()`
+    // is `(lb 6, q 19)` and yields `QueryProofCountMismatch { expected: 19, got: 38 }`.
+    let inner_config = turn_chain_root_config();
     verify_recursive_batch_proof_with_config(&whole.root.0, &inner_config)
-        .expect("the real apex verifies under ir2_leaf_wrap_config");
+        .expect("the real apex verifies under the turn chain's ROOT config");
 
-    // The chain's expected 25-lane settlement claim, in the pinned order
-    // genesis_root8 ++ final_root8 ++ num_turns ++ chain_digest8 — FOLLOWED BY
-    // the 8 apex VK-core lanes (the REAL apex's preprocessed commitment, the
-    // RecursionVk-fingerprinted value the shrink pins + re-exposes).
-    let mut expected_claim: Vec<u32> = Vec::with_capacity(33);
+    // The apex's expected claim, in the pinned order: the 25-lane settlement segment
+    // (genesis_root8 ++ final_root8 ++ num_turns ++ chain_digest8), then the 8-lane root VK
+    // SPINE — FOLLOWED BY the 8 apex VK-core lanes (the REAL apex's preprocessed commitment,
+    // the RecursionVk-fingerprinted value the shrink pins + re-exposes).
+    //
+    // ⚑ The spine block is not optional padding: the root has exposed it since `e1d8ab9bc`
+    // (07-30), and building the expectation without it is what made this lane's assertion read
+    // "re-exposed shrink lanes != the chain's 25-lane claim ++ apex VK core" the first time the
+    // lane could run at all.
+    let mut expected_claim: Vec<u32> = Vec::with_capacity(EXPOSED_SHRINK_CLAIM_LANES);
     expected_claim.extend(whole.genesis_root.iter().map(|v| v.0));
     expected_claim.extend(whole.final_root.iter().map(|v| v.0));
     expected_claim.push(whole.num_turns as u32);
     expected_claim.extend(whole.chain_digest.iter().map(|v| v.0));
+    let spine = apex_root_vk_spine(&whole.root).expect("the real apex exposes a root VK spine");
+    assert_eq!(spine.len(), VK_SPINE_LANES);
+    println!("root VK spine      : {spine:?}");
+    expected_claim.extend(&spine);
     let apex_vk: Vec<u32> = whole
         .root
         .running_preprocessed_commit()
@@ -272,7 +289,8 @@ fn real_shrink_proof(outer_config: &DreggOuterConfig) -> BatchStarkProof<DreggOu
     assert_eq!(
         proof_claim_lanes(&shrink.proof),
         expected_claim,
-        "re-exposed shrink lanes != the chain's 25-lane claim ++ apex VK core"
+        "re-exposed shrink lanes != the apex's claim (settlement segment ++ root VK spine) ++ \
+         apex VK core"
     );
 
     let proof_bytes =
@@ -395,6 +413,72 @@ fn derive_deployed_apex_vk_identity_and_check_fixture() {
     );
 }
 
+/// **THE MEASUREMENT THAT DECIDES HOW THE VK SPINE MAY BE BOUND ON THE SETTLEMENT PATH.**
+///
+/// The apex's exposed claim is `[settlement segment(25) ‖ vk_spine(8)]`. The segment is the
+/// statement; the spine is subtree circuit identity. The gnark `SettlementCircuit` can bind an
+/// identity block in exactly one of two ways, and they are not interchangeable:
+///
+///  * **BAKE it** as circuit constants, the way `apexPreprocessedCommit` is baked. Legitimate
+///    only if the value is the SAME for every chain the deployed settlement circuit is meant to
+///    accept — otherwise baking silently narrows the verifier to one chain length.
+///  * **PUBLISH it** as further Groth16 public inputs, which keeps the verifier length-generic
+///    and moves the on-chain arity 25 → 33 (three chains' verifiers re-emit).
+///
+/// The apex `RecursionVk` is depth-INVARIANT (WRAP), so the settlement circuit is otherwise
+/// length-generic — a 2-turn and a 3-turn chain shrink to the same shape. Whether the SPINE is
+/// too is a fact about `combine_vk_spine`'s fold, not a matter of taste, so this test MEASURES it
+/// instead of arguing: fold a 2-turn chain and a 3-turn chain and compare the root spines.
+///
+/// ⚠ HONEST LABEL: this is a MEASUREMENT over two concrete chain lengths — a Rust case-test. It
+/// is not a proof that the spine varies for every pair of lengths, and it carries no formal
+/// content. It is here because it answers the design question with an observation instead of an
+/// assumption, and because it will fail loudly if the fold is ever made shape-invariant.
+#[test]
+#[ignore = "SLOW (two real folds, ~30s): MEASURES whether the root VK spine varies with chain \
+            length — the fact that decides whether the settlement path may BAKE the spine"]
+fn root_vk_spine_varies_with_chain_length() {
+    use dregg_circuit_prove::apex_shrink_gnark_export::{
+        APEX_CLAIM_LANES, VK_SPINE_LANES, apex_root_vk_spine, derive_apex_vk_identity,
+    };
+
+    println!("apex claim lanes   : {APEX_CLAIM_LANES} (segment 25 ++ spine {VK_SPINE_LANES})");
+    let mut rows: Vec<(usize, String, Vec<u32>, Vec<u32>)> = Vec::new();
+    for n in 2..=5usize {
+        let chain: Vec<FinalizedTurn> = (0..n).map(|i| make_turn(1000, i as u32)).collect();
+        let whole = prove_turn_chain_recursive(&chain)
+            .unwrap_or_else(|e| panic!("the {n}-turn chain folds: {e}"));
+        let spine = apex_root_vk_spine(&whole.root).expect("root exposes a VK spine");
+        assert_eq!(spine.len(), VK_SPINE_LANES);
+        let id = derive_apex_vk_identity(&whole.root).expect("identity derives");
+        println!("--- {n} turns ---");
+        println!("  recursion_vk : {}", id.recursion_vk_hex);
+        println!("  apex VK core : {:?}", id.apex_preprocessed_commit);
+        println!("  root spine   : {spine:?}");
+        rows.push((n, id.recursion_vk_hex, id.apex_preprocessed_commit, spine));
+    }
+
+    // THE TWO INVARIANCE QUESTIONS, reported as a table rather than asserted one pair at a time
+    // (an early panic on the first pair hides the shape of the answer).
+    let n0 = rows[0].0;
+    for r in &rows[1..] {
+        println!(
+            "{n0} vs {}: recursion_vk {}  apex_vk_core {}  spine {}",
+            r.0,
+            if r.1 == rows[0].1 { "SAME" } else { "DIFFERS" },
+            if r.2 == rows[0].2 { "SAME" } else { "DIFFERS" },
+            if r.3 == rows[0].3 { "SAME" } else { "DIFFERS" },
+        );
+    }
+
+    assert_ne!(
+        rows[0].3, rows[1].3,
+        "the root VK spine is IDENTICAL across chain lengths — combine_vk_spine has become \
+         shape-invariant, and the settlement path may bake it as a constant after all. Re-decide \
+         the binding before trusting this test's name."
+    );
+}
+
 /// THE EMITTER (the write half of the split above). Derives the deployed apex
 /// VK identity from a fresh fold at HEAD, asserts the governance pin — the
 /// artifact is never stamped with an unpinned fingerprint — and writes
@@ -473,7 +557,11 @@ fn shrink_pinned_to_foreign_apex_vk_rejects() {
     use p3_field::PrimeCharacteristicRing;
 
     let outer_config = create_outer_config();
-    let inner_config = ir2_leaf_wrap_config();
+    // Same rotation as `real_shrink_proof`: the apex mints at the tower root config, so the
+    // pinned-shrink REJECT canary must build its shrink circuit against that verifier — otherwise
+    // it would "reject" for a query-count mismatch rather than for the foreign VK pin, which is a
+    // canary that passes for the wrong reason.
+    let inner_config = turn_chain_root_config();
     let whole = prove_turn_chain_recursive(&the_chain()).expect("the fixed 2-turn chain folds");
     let honest = whole
         .root
@@ -530,21 +618,31 @@ fn export_real_shrink_fri_fixture_for_gnark() {
         fixture.table_publics[fixture.claim_instance]
     );
 
-    // The fixture's claim channel is the proof's re-exposed 25-lane claim ++
-    // the 8 apex VK-core lanes, and the labeled apex_preprocessed_commit copy
-    // matches the channel tail.
-    assert_eq!(fixture.table_publics[fixture.claim_instance].len(), 33);
+    // The fixture's claim channel is the proof's re-exposed apex claim (25-lane settlement
+    // segment ++ 8-lane root VK spine) ++ the 8 apex VK-core lanes, and BOTH labeled copies
+    // match their blocks of the channel.
+    assert_eq!(
+        fixture.table_publics[fixture.claim_instance].len(),
+        EXPOSED_SHRINK_CLAIM_LANES
+    );
     assert_eq!(
         fixture.table_publics[fixture.claim_instance],
         proof_claim_lanes(&proof),
         "fixture claim lanes drifted from the proof's expose_claim public values"
     );
-    assert_eq!(fixture.apex_preprocessed_commit.len(), 8);
+    assert_eq!(fixture.root_vk_spine.len(), VK_SPINE_LANES);
+    assert_eq!(
+        fixture.root_vk_spine[..],
+        fixture.table_publics[fixture.claim_instance][SETTLEMENT_CLAIM_LANES..APEX_CLAIM_LANES],
+        "labeled root VK-spine copy drifted from the claim channel's spine block"
+    );
+    assert_eq!(fixture.apex_preprocessed_commit.len(), APEX_VK_LANES);
     assert_eq!(
         fixture.apex_preprocessed_commit[..],
-        fixture.table_publics[fixture.claim_instance][25..],
+        fixture.table_publics[fixture.claim_instance][APEX_CLAIM_LANES..],
         "labeled apex VK-core copy drifted from the claim-channel tail"
     );
+    println!("root_vk_spine           : {:?}", fixture.root_vk_spine);
     println!(
         "apex_preprocessed_commit: {:?}",
         fixture.apex_preprocessed_commit

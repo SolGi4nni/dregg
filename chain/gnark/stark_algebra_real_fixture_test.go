@@ -670,6 +670,7 @@ func allocSettlementCircuit(t *testing.T, fx *shrinkRealFixture, ex *shrinkStark
 		claimInstance:          fx.ClaimInstance,
 		vkPreprocessedRoot:     shrinkPreprocessedRoot(t, fx, ex.loc),
 		apexPreprocessedCommit: apexPreprocessedCommitConstants(t),
+		rootVkSpine:            rootVkSpineConstants(t),
 		PrefixObs:              inner.PrefixObs,
 		PrefixDigests:          inner.PrefixDigests,
 		PrefixSamples:          inner.PrefixSamples,
@@ -698,6 +699,7 @@ func assignSettlementCircuit(t *testing.T, fx *shrinkRealFixture, ex *shrinkStar
 		claimInstance:          fx.ClaimInstance,
 		vkPreprocessedRoot:     shrinkPreprocessedRoot(t, fx, ex.loc),
 		apexPreprocessedCommit: apexPreprocessedCommitConstants(t),
+		rootVkSpine:            rootVkSpineConstants(t),
 		PrefixObs:              inner.PrefixObs,
 		PrefixDigests:          inner.PrefixDigests,
 		PrefixSamples:          inner.PrefixSamples,
@@ -729,7 +731,13 @@ type apexVkIdentity struct {
 	Version                int      `json:"version"`
 	RecursionVkHex         string   `json:"recursion_vk_hex"`
 	ApexPreprocessedCommit []uint32 `json:"apex_preprocessed_commit"`
-	Description            string   `json:"description"`
+	// RootVkSpine is the schema-v2 subtree-identity block (VkSpineLanes
+	// lanes). A v1 artifact carries none and must REFUSE to load rather than
+	// silently bake a nil spine: an absent spine is not a spine of zeros, and
+	// a nil here would leave the tooth-3 pin unset with everything still
+	// green.
+	RootVkSpine []uint32 `json:"root_vk_spine"`
+	Description string   `json:"description"`
 }
 
 const apexVkIdentityPath = "fixtures/apex_vk_identity.json"
@@ -764,8 +772,8 @@ func loadApexVkIdentity(t *testing.T) *apexVkIdentity {
 	if err := json.Unmarshal(raw, id); err != nil {
 		t.Fatalf("apex VK identity JSON: %v", err)
 	}
-	if id.Version != 1 {
-		t.Fatalf("apex VK identity version %d (want 1)", id.Version)
+	if id.Version != 2 {
+		t.Fatalf("apex VK identity version %d (want 2: + root_vk_spine)", id.Version)
 	}
 	if b, err := hex.DecodeString(id.RecursionVkHex); err != nil || len(b) != 32 {
 		t.Fatalf("recursion_vk_hex %q is not a 32-byte hex fingerprint", id.RecursionVkHex)
@@ -780,6 +788,14 @@ func loadApexVkIdentity(t *testing.T) *apexVkIdentity {
 	}
 	for _, v := range id.ApexPreprocessedCommit {
 		requireCanonicalBB(t, v, "derived apex VK-core lane")
+	}
+	if len(id.RootVkSpine) != VkSpineLanes {
+		t.Fatalf("derived root VK spine has %d lanes (want %d) — a v1 identity artifact "+
+			"carries no spine and cannot supply the subtree pin; re-mint with "+
+			"emit_deployed_apex_vk_identity_artifact", len(id.RootVkSpine), VkSpineLanes)
+	}
+	for _, v := range id.RootVkSpine {
+		requireCanonicalBB(t, v, "derived root VK-spine lane")
 	}
 	return id
 }
@@ -796,6 +812,20 @@ func apexPreprocessedCommitConstants(t *testing.T) []*big.Int {
 	id := loadApexVkIdentity(t)
 	out := make([]*big.Int, len(id.ApexPreprocessedCommit))
 	for i, v := range id.ApexPreprocessedCommit {
+		out[i] = new(big.Int).SetUint64(uint64(v))
+	}
+	return out
+}
+
+// rootVkSpineConstants bakes the settlement circuit's SUBTREE pin (tooth 3)
+// from the same anchor-checked derived identity. Separate from the apex-VK
+// constants because they pin different things: the apex VK core is the apex's
+// OWN circuit, the spine is everything folded beneath it — and the RecursionVk
+// fingerprint provably covers only the former.
+func rootVkSpineConstants(t *testing.T) []*big.Int {
+	id := loadApexVkIdentity(t)
+	out := make([]*big.Int, len(id.RootVkSpine))
+	for i, v := range id.RootVkSpine {
 		out[i] = new(big.Int).SetUint64(uint64(v))
 	}
 	return out
@@ -832,6 +862,18 @@ func apexVkLanesDifferentialErr(fx *shrinkRealFixture, id *apexVkIdentity) error
 				"or one artifact is stale; regenerate both via the Rust lanes "+
 				"(derive_deployed_apex_vk_identity_and_check_fixture + "+
 				"export_real_shrink_fri_fixture_for_gnark)",
+				i, got, want, id.RecursionVkHex)
+		}
+	}
+	if len(fx.RootVkSpine) != len(id.RootVkSpine) {
+		return fmt.Errorf("fixture root VK spine has %d lanes, derived deployed identity %d",
+			len(fx.RootVkSpine), len(id.RootVkSpine))
+	}
+	for i, want := range id.RootVkSpine {
+		if got := fx.RootVkSpine[i]; got != want {
+			return fmt.Errorf("fixture root VK-spine lane %d = %d != derived deployed lane %d "+
+				"(recursion_vk %s) — the fixture's apex folded a DIFFERENT subtree than the "+
+				"deployed one, or one artifact is stale; regenerate both via the Rust lanes",
 				i, got, want, id.RecursionVkHex)
 		}
 	}
@@ -1090,7 +1132,9 @@ func TestSettlementCircuitPinsApexPreprocessedCommitment(t *testing.T) {
 		t.Run(fmt.Sprintf("witness-vk-lane-%d-differs-from-deployed-constant", lane), func(t *testing.T) {
 			w := assignSettlementCircuit(t, fx, ex, sym)
 			honest := fx.ApexPreprocessedCommit[lane]
-			w.PrefixObs[claimObsOff+NumPublicInputs+lane] = bbAddRef(honest, 1)
+			// ⚠ ApexClaimLanes, not NumPublicInputs: the VK core is the channel's TAIL. At the
+			// old offset this mutated a SPINE lane and "rejected" for the wrong pin.
+			w.PrefixObs[claimObsOff+ApexClaimLanes+lane] = bbAddRef(honest, 1)
 			if err := test.IsSolved(allocSettlementCircuit(t, fx, ex, sym), w, field); err == nil {
 				t.Fatal("circuit ACCEPTED an apex VK-core lane that differs from the deployed " +
 					"apex's preprocessed commitment (the same-shape-apex forgery is OPEN)")
@@ -1117,8 +1161,64 @@ func TestSettlementCircuitPinsApexPreprocessedCommitment(t *testing.T) {
 		// pin's teeth, not shape drift.
 		c := allocSettlementCircuit(t, fx, ex, sym)
 		c.apexPreprocessedCommit = nil
+		c.rootVkSpine = nil
 		w := assignSettlementCircuit(t, fx, ex, sym)
 		w.apexPreprocessedCommit = nil
+		w.rootVkSpine = nil
+		if err := test.IsSolved(c, w, field); err != nil {
+			t.Fatalf("unpinned control rejected the honest witness (shape drift?): %v", err)
+		}
+	})
+}
+
+// VK-SPINE-PIN CANARY (tooth 3 — THE SUBTREE CLOSURE, and the canary that
+// catches a DECORATIVE pin): the apex RecursionVk fingerprint is deliberately
+// content-independent and does NOT move when a child circuit is substituted
+// (measured twice on main, e1d8ab9bc), so tooth 2 certifies the apex's own
+// circuit and says nothing about WHAT was folded beneath it. A shrink over an
+// honest-VK apex that folded a FOREIGN subtree carries a different root VK
+// spine, and this is the only assert that sees it.
+//
+// ⚑ WHY THIS TEST EXISTS AT ALL: when the spine pin was first added, the field
+// and its documentation landed and the assert in Define did NOT — and every
+// existing settlement test stayed green, because a constant nothing compares
+// is invisible. Both directions below fail if that regresses.
+func TestSettlementCircuitPinsRootVkSpine(t *testing.T) {
+	fx := loadShrinkRealFixture(t)
+	ex := extractShrinkStark(t, fx)
+	sym := loadShrinkSymbolicConstraints(t)
+	field := ecc.BN254.ScalarField()
+	claimObsOff := ex.loc.pubObsOffOf(fx.ClaimInstance)
+
+	for lane := 0; lane < VkSpineLanes; lane += VkSpineLanes - 1 { // first and last lane
+		t.Run(fmt.Sprintf("witness-spine-lane-%d-differs-from-deployed-constant", lane), func(t *testing.T) {
+			w := assignSettlementCircuit(t, fx, ex, sym)
+			honest := fx.RootVkSpine[lane]
+			w.PrefixObs[claimObsOff+NumPublicInputs+lane] = bbAddRef(honest, 1)
+			if err := test.IsSolved(allocSettlementCircuit(t, fx, ex, sym), w, field); err == nil {
+				t.Fatal("circuit ACCEPTED a root VK-spine lane that differs from the deployed " +
+					"root's spine — the foreign-subtree forgery is OPEN")
+			}
+		})
+	}
+
+	t.Run("baked-constant-differs-isolates-the-pin", func(t *testing.T) {
+		// Doctor ONLY the baked spine constant. The honest witness satisfies every other
+		// constraint, so a reject here is attributable to the spine pin alone — and an ACCEPT
+		// means the pin is declared but never asserted.
+		c := allocSettlementCircuit(t, fx, ex, sym)
+		c.rootVkSpine[0] = new(big.Int).Add(c.rootVkSpine[0], big.NewInt(1))
+		if err := test.IsSolved(c, assignSettlementCircuit(t, fx, ex, sym), field); err == nil {
+			t.Fatal("circuit with a different baked root VK spine ACCEPTED the honest witness — " +
+				"the VK-spine pin assert is not binding (a decorative constant)")
+		}
+	})
+
+	t.Run("unpinned-control-accepts", func(t *testing.T) {
+		c := allocSettlementCircuit(t, fx, ex, sym)
+		c.rootVkSpine = nil
+		w := assignSettlementCircuit(t, fx, ex, sym)
+		w.rootVkSpine = nil
 		if err := test.IsSolved(c, w, field); err != nil {
 			t.Fatalf("unpinned control rejected the honest witness (shape drift?): %v", err)
 		}

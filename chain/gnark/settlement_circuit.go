@@ -49,21 +49,37 @@
 // (a) pins that commitment IN the shrink circuit (`pin_preprocessed_commit`:
 // baked constants connected to the apex-verification's inputs) and (b)
 // re-exposes the same 8 constant lanes through the shrink's expose_claim
-// table, after the 25 claim lanes. `apexPreprocessedCommit`, when set, bakes
+// table, after the apex's own claim. `apexPreprocessedCommit`, when set, bakes
 // the DEPLOYED dregg apex's commitment as circuit constants and asserts the
-// exposed lanes 25..33 equal it — a shrink proof minted over any OTHER apex
+// exposed lanes 33..41 equal it — a shrink proof minted over any OTHER apex
 // circuit cannot satisfy this circuit (its exposed VK-core lanes differ, and
 // they are transcript-absorbed + ExposeClaimAir-bound, so they cannot be
 // swapped without re-proving).
+//
+// SUBTREE PIN (tooth 3, the VK SPINE — closes what tooth 2 provably cannot):
+// the apex RecursionVk fingerprint is DELIBERATELY content-independent and
+// does NOT move when a child circuit is substituted (measured twice on main,
+// e1d8ab9bc), so tooth 2 certifies the apex's own circuit and nothing about
+// what was folded under it. Since e1d8ab9bc the root exposes
+// vk_spine = commit(L.cap8 || L.vk_spine8 || R.cap8 || R.vk_spine8) as claim
+// lanes 25..33; `rootVkSpine`, when set, bakes the deployed value and asserts
+// those lanes equal it.
+//
+// ⚑ Those lanes existed here, unchecked, from 2026-07-30 to 2026-08-08 — the
+// claim channel had silently gone 33 → 41 lanes and every length check on
+// this path still said 25+8, so the apex-VK pin was reading the SPINE block.
+// Nothing caught it: the only instrument that folds a fresh apex is the Rust
+// derivation lane, and it could not run (it verified the fresh apex under the
+// pre-split engine and died QueryProofCountMismatch{expected 19, got 38}).
 //
 // WHERE THE PINNED VALUE COMES FROM (the pin's VALUE authority): the baked
 // constant is NOT read from the proof fixture. It is loaded from the DERIVED
 // identity artifact fixtures/apex_vk_identity.json, which the Rust derivation
 // lane (circuit-prove/tests/apex_shrink_gnark_fixture.rs
 // derive_deployed_apex_vk_identity_and_check_fixture) mints from a FRESH fold
-// of the apex circuit at HEAD — VK material is content-independent and
-// depth-invariant, so the derivation depends only on the deployed circuit
-// definition — together with the apex's RecursionVk fingerprint, which is
+// of the apex circuit at HEAD — VK material is content-independent, so the
+// derivation does not depend on the turns' CONTENT — together with the apex's
+// RecursionVk fingerprint, which is
 // ASSERTED equal to the governance-pinned DreggApexRecursionVk constant
 // (below) at every load, fail-closed. The fingerprint hashes the preprocessed
 // commitment as a labeled component, making the (fingerprint, lanes) pair
@@ -81,6 +97,23 @@
 // by running the HEAD circuit once and recording the fingerprint-bound,
 // anchor-checked result" — re-checkable by anyone via the Rust derivation
 // test.
+//
+// ⚑⚑ AND IT IS NOT DEPTH-INVARIANT. This comment claimed "VK material is
+// content-independent and depth-invariant, so the derivation depends only on
+// the deployed circuit definition" until 2026-08-08. MEASURED by the Rust
+// lane root_vk_spine_varies_with_chain_length over real 2-, 3-, 4- and
+// 5-turn folds at HEAD: the RecursionVk fingerprint, the apex VK-core lanes
+// AND the root VK spine are ALL THREE different at every chain length. WRAP
+// normalizes a LEAF's mint shape; it does not make a 2-turn root and a 3-turn
+// root the same circuit.
+//
+// So the constants this circuit bakes — apexPreprocessedCommit and
+// rootVkSpine — are the deployed apex's identity AT ONE CHAIN LENGTH (the
+// 2-turn chain the derivation lane folds), and this settlement circuit
+// accepts only chains of that length. That is a real restriction on what can
+// settle, it was not written down anywhere, and no test folded two lengths to
+// notice. Repairing it is root-shape normalization in the recursion tower
+// (the fork's normalize_to_shape_spike), not an edit here.
 package friverifier
 
 import (
@@ -119,7 +152,22 @@ import (
 // constant AND the Rust mirror — until then every identity load fails
 // closed. The trust model is "trust a governance-pinned recent fingerprint",
 // NOT "trust whoever compiled".
-const DreggApexRecursionVk = "3ad1c9c601686a0983ed8df43a4a145e729d985194386ec22156029b92fc5503"
+//
+// ⚑⚑ ROTATED 2026-08-08 by the leaf-wrap mint split (retired epoch:
+// 3ad1c9c601686a0983ed8df43a4a145e729d985194386ec22156029b92fc5503). READ
+// WHAT THE GO SIDE CAN AND CANNOT SEE: loadApexVkIdentity compares
+// fixtures/apex_vk_identity.json against THIS constant, and
+// TestApexPinFixtureMatchesDerivedDeployedIdentity compares that artifact
+// against fixtures/apex_shrink_fri_real.json. Both are consistency checks
+// among things committed in this tree. For a full epoch they all passed while
+// every one of them was stale — the constant agreed with the identity, which
+// agreed with the fixture, and none of the three had been near a fold at
+// HEAD. A cross-artifact differential detects DISAGREEMENT, never STALENESS.
+// The one instrument that can date this constant lives on the Rust side
+// (derive_deployed_apex_vk_identity_and_check_fixture, which folds a fresh
+// apex and asserts against it); the Go tests are the second half of that
+// tooth, not a substitute for it.
+const DreggApexRecursionVk = "588720d922f1990378fae6cb8c06d08882a723f70422487e48b38098b72be92e"
 
 // shrinkPrefixOp is the structural script for replaying the pre-FRI
 // transcript prefix in-circuit.
@@ -191,6 +239,19 @@ type SettlementCircuit struct {
 	// the apex circuit at HEAD and RecursionVk-fingerprint-bound), not a
 	// fixture-read constant — see the package doc's VALUE-authority note.
 	apexPreprocessedCommit []*big.Int
+	// rootVkSpine, when non-nil, pins the turn-chain root's VK SPINE
+	// (VkSpineLanes lanes at claim offset NumPublicInputs) as circuit
+	// constants — the SUBTREE-identity pin (tooth 3). The apex-VK pin above
+	// certifies the apex's own circuit; the spine certifies what was folded
+	// UNDER it, which the RecursionVk fingerprint provably does not (it is
+	// content-independent and does not move when a child is substituted —
+	// measured twice on main, e1d8ab9bc). Value source is the same derived
+	// deployed identity artifact (root_vk_spine), anchor-checked at load.
+	//
+	// Leaving this nil is not a neutral choice: the shrink re-exposes these
+	// lanes whether or not anything checks them, and an exposed lane nothing
+	// checks is a lane the prover picks.
+	rootVkSpine []*big.Int
 
 	PrefixObs     []frontend.Variable
 	PrefixDigests []frontend.Variable
@@ -241,11 +302,13 @@ func (c *SettlementCircuit) Define(api frontend.API) error {
 	// ---- THE SETTLEMENT BINDING: the first 25 lanes of the shrink proof's
 	// expose_claim public values (the transcript-absorbed, AIR-constrained
 	// claim channel) ARE the 25 public inputs, in the pinned order. The
-	// channel's tail ApexVkLanes lanes are the re-exposed apex VK core.
+	// channel then carries VkSpineLanes re-exposed VK-SPINE lanes, and
+	// finally ApexVkLanes re-exposed apex VK-core lanes.
 	claim := c.PrefixObs[c.loc.pubObsOffOf(c.claimInstance) : c.loc.pubObsOffOf(c.claimInstance)+
 		c.loc.pubLens[c.claimInstance]]
-	if len(claim) != NumPublicInputs+ApexVkLanes {
-		panic("SettlementCircuit: claim channel is not the pinned 25-lane statement + 8-lane apex VK core")
+	if len(claim) != ExposedShrinkClaimLanes {
+		panic("SettlementCircuit: claim channel is not the pinned 25-lane statement + 8-lane VK " +
+			"spine + 8-lane apex VK core")
 	}
 	k := 0
 	for i := 0; i < DigestWidth; i++ {
@@ -280,6 +343,23 @@ func (c *SettlementCircuit) Define(api frontend.API) error {
 			panic("SettlementCircuit: apexPreprocessedCommit must carry exactly ApexVkLanes lanes")
 		}
 		for i, want := range c.apexPreprocessedCommit {
+			// ⚠ offset ApexClaimLanes, not NumPublicInputs: the apex VK core sits after the
+			// apex's WHOLE claim (segment ++ spine). At NumPublicInputs this pinned the SPINE
+			// against the apex-VK constants — a check that can only ever fail, on a fixture the
+			// spine had already moved.
+			api.AssertIsEqual(claim[ApexClaimLanes+i], want)
+		}
+	}
+
+	// ---- SUBTREE PIN (tooth 3, the VK spine): the re-exposed spine lanes equal the deployed
+	// root's, as baked constants. Tooth 2 cannot do this job — the apex RecursionVk fingerprint
+	// is content-independent and does not move when a child circuit is substituted, so a shrink
+	// over an honest-VK apex that folded a FOREIGN subtree passes tooth 2 and fails only here.
+	if c.rootVkSpine != nil {
+		if len(c.rootVkSpine) != VkSpineLanes {
+			panic("SettlementCircuit: rootVkSpine must carry exactly VkSpineLanes lanes")
+		}
+		for i, want := range c.rootVkSpine {
 			api.AssertIsEqual(claim[NumPublicInputs+i], want)
 		}
 	}
