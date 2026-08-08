@@ -650,6 +650,166 @@ pub fn produce(
     )
 }
 
+/// **THE SOVEREIGN PRODUCER'S TURN CONTEXT — the ONE object, and the only way to name it.**
+///
+/// Every rotated sovereign turn commits under a [`V9RotationContext`](dregg_cell::commitment::V9RotationContext)
+/// whose six fields have exactly THREE free parameters: the turn-context ledger (`cells_root`), the
+/// receipt log (`iroot`), and the carrier material. The other three — `nullifier_root`,
+/// `commitments_root`, `revoked_root` — are the empty-accumulator roots of the three live
+/// accumulators, and a sovereign producer has no parameter to thread anything else through.
+///
+/// This type is that fact made unrepresentable-in-the-other-direction. It has ONE private field,
+/// no public constructor that names a root, and no accessor that hands back a mutable or
+/// spreadable `V9RotationContext` — so a holder **cannot** write
+/// `V9RotationContext { revoked_root: <anything else>, ..ctx }`. Every operation a fixture or a
+/// producer wants is a method, and each one reads the same three roots.
+///
+/// # ⚑ Why the type and not just a builder function
+///
+/// The wound this closes was measured three times by hand (`c45814b9f`, `a750130ed`, and the
+/// `debug_assert` in `cipherclerk`): `dregg_circuit::heap_root::empty_heap_root_8()` was the empty
+/// root of all three accumulators until `b20a2c50a` (2026-07-31) rebuilt them as exact
+/// tagged-linked-leaf trees, and ~100 hand-written occurrences of the sentinel survived across the
+/// fixtures. Nineteen of them were live defects: the fixture registered an OLD_COMMIT under the
+/// sentinel while the producer beside it published `empty_revoked_root_8()`, and
+/// `verify_and_commit_proof_rotated` — which binds the proof's OLD_COMMIT PIs to
+/// `bytes32_to_felt8(stored)` — refused every honest turn.
+///
+/// A free function returning a bare `V9RotationContext` would have fixed those nineteen and left
+/// the twentieth expressible in one token of struct-update syntax. The type does not offer it.
+///
+/// # ⚠ What this does NOT close, stated plainly
+///
+/// `V9RotationContext`'s fields are `pub`, and ~50 sites across the tree legitimately construct one
+/// by hand (`state_commit::consensus_ctx` with the executor's LIVE roots, the note-spend anchors,
+/// circuit fixtures pinning arbitrary roots to exercise a limb). A fixture that never obtains a
+/// `SovereignTurnCtx` can still hand-write a disagreeing context and call
+/// `compute_canonical_state_commitment_v9_8` directly. Making those fields private would require an
+/// all-args constructor for those ~50 sites — which takes the three roots as parameters and so
+/// reintroduces the identical hazard under a different name. **So: disagreement is unrepresentable
+/// FOR A HOLDER OF THIS TYPE, and merely inconvenient for a fixture that declines to hold one.**
+/// The binding is what makes the sovereign path have one body; it is not a whole-tree quantifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SovereignTurnCtx {
+    /// PRIVATE ON PURPOSE — see the type doc. Exposing this (even by `&`) would restore
+    /// `V9RotationContext { revoked_root: …, ..*ctx.as_v9() }`, which is the whole drift.
+    inner: dregg_cell::commitment::V9RotationContext,
+}
+
+impl SovereignTurnCtx {
+    /// The context for a sovereign turn whose `cells_root` is folded over `ctx_ledger` and whose
+    /// `iroot` is folded over `receipt_hashes`. The three accumulator roots are the LIVE empty
+    /// roots — [`empty_nullifier_root_8`] / [`empty_commitments_root_8`] / [`empty_revoked_root_8`]
+    /// — because a sovereign turn threads no accumulator frontier (the ledgerless cipherclerk holds
+    /// none, and `state_commit.rs`'s table records that there is no parameter for it).
+    pub fn new(
+        ctx_ledger: &Ledger,
+        receipt_hashes: &[[u8; 32]],
+        material: dregg_cell::commitment::RotationCarrierMaterial,
+    ) -> Self {
+        Self {
+            inner: dregg_cell::commitment::V9RotationContext {
+                cells_root: cells_root(ctx_ledger),
+                nullifier_root: empty_nullifier_root_8(),
+                commitments_root: empty_commitments_root_8(),
+                revoked_root: empty_revoked_root_8(),
+                iroot: iroot(receipt_hashes),
+                material,
+            },
+        }
+    }
+
+    /// The context for the single-cell turn-context ledger the sovereign producers build — a fresh
+    /// `Ledger` holding exactly `cell`. This is `prove_sovereign_turn_rotated`'s own `ctx_ledger`,
+    /// so a fixture that registers `cell`'s OLD_COMMIT calls THIS and cannot assemble a different
+    /// ledger by accident.
+    pub fn for_cell(
+        cell: &Cell,
+        receipt_hashes: &[[u8; 32]],
+        material: dregg_cell::commitment::RotationCarrierMaterial,
+    ) -> Self {
+        let mut ctx_ledger = Ledger::new();
+        let _ = ctx_ledger.insert_cell(cell.clone());
+        Self::new(&ctx_ledger, receipt_hashes, material)
+    }
+
+    /// The same context with a different carrier material — the ONE field a producer legitimately
+    /// varies between the BEFORE block (`Default`) and a factory turn's AFTER block (the installed
+    /// child VK). The roots and the ledger/receipt folds are carried over untouched, so this cannot
+    /// be used to move an accumulator root.
+    pub fn with_material(self, material: dregg_cell::commitment::RotationCarrierMaterial) -> Self {
+        Self {
+            inner: dregg_cell::commitment::V9RotationContext {
+                material,
+                ..self.inner
+            },
+        }
+    }
+
+    /// The `iroot` this context absorbs LAST — the value a caller needs to rebuild a
+    /// `RotatedBlockWitness` beside the witness itself.
+    pub fn iroot(&self) -> BabyBear {
+        self.inner.iroot
+    }
+
+    /// The rotated witness for `cell` under this context — [`produce_in_ctx`], with no context to
+    /// get wrong.
+    pub fn witness(&self, cell: &Cell) -> RotationWitness {
+        produce_in_ctx(cell, &self.inner)
+    }
+
+    /// The [`NUM_PRE_LIMBS`]-long absorption vector for `cell` under this context
+    /// (`dregg_cell::commitment::compute_rotated_pre_limbs`) — deliberately not a re-typed literal.
+    pub fn pre_limbs(&self, cell: &Cell) -> Vec<BabyBear> {
+        dregg_cell::commitment::compute_rotated_pre_limbs(cell, &self.inner)
+    }
+
+    /// The 1-felt `wireCommitR` twin — the value the rotated trace's row-0 `B_STATE_COMMIT` carrier
+    /// carries.
+    pub fn commitment_felt(&self, cell: &Cell) -> BabyBear {
+        dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(cell, &self.inner)
+    }
+
+    /// The FAITHFUL 8-felt chip commitment — the object the wide proof's 16 commit PIs publish and
+    /// the executor anchors against.
+    pub fn commitment_felt8(&self, cell: &Cell) -> dregg_circuit::Faithful8 {
+        dregg_cell::commitment::compute_canonical_state_commitment_v9_felt8(cell, &self.inner)
+    }
+
+    /// The 32-byte ledger-slot encoding of [`Self::commitment_felt8`] — **the value a fixture
+    /// registers with `Ledger::register_sovereign_cell`**, and the value the executor reads back
+    /// via `bytes32_to_felt8` as the proof's 8 BEFORE commit PIs.
+    pub fn commitment_8(&self, cell: &Cell) -> [u8; 32] {
+        dregg_cell::commitment::compute_canonical_state_commitment_v9_8(cell, &self.inner)
+    }
+}
+
+/// **THE ONE CONTEXT BUILDER** — [`SovereignTurnCtx::new`] as a free function, the shape the
+/// `a750130ed` lane named as the durable fix for the revoked-root drift. Call it from the producer
+/// AND from every fixture that reconstructs what the producer publishes.
+pub fn sovereign_turn_ctx(
+    ctx_ledger: &Ledger,
+    receipt_hashes: &[[u8; 32]],
+    material: dregg_cell::commitment::RotationCarrierMaterial,
+) -> SovereignTurnCtx {
+    SovereignTurnCtx::new(ctx_ledger, receipt_hashes, material)
+}
+
+/// **THE VALUE A FIXTURE REGISTERS.** The 8-felt sovereign commitment of `cell` under the producer's
+/// own single-cell context and `receipt_hashes` — i.e. exactly the OLD_COMMIT
+/// `AgentCipherclerk::prove_sovereign_turn_rotated` publishes for its before-state.
+///
+/// This is the whole of what the seventeen repaired `revoked_root` fixture sites were doing by hand.
+/// It takes NO root argument, so the drift it replaces has no place to live: registering a
+/// commitment over an accumulator no producer commits now requires declining to call this at all.
+///
+/// ⚠ It is DERIVED, never read off the proof. Registering `turn`'s own published pre-state
+/// commitment would make the executor's `stored == proof's OLD_COMMIT` check tautological — the
+/// fixture must reach the same value independently, which is what "one body, two callers" buys.
+pub fn sovereign_registration_commitment(cell: &Cell, receipt_hashes: &[[u8; 32]]) -> [u8; 32] {
+    SovereignTurnCtx::for_cell(cell, receipt_hashes, Default::default()).commitment_8(cell)
+}
+
 /// **THE PRODUCER-SIDE MEMBERSHIP-TEETH FILL** — the honest `(sender_leaf, authorized_root)`
 /// values the committed transfer row's teeth columns carry, derived from the BEFORE cell the leg
 /// mints from (the recipe twin of the SDK attach lane's `retain_sender_membership`, which pins
@@ -1311,6 +1471,94 @@ mod tests {
         assert_ne!(nul, com, "FNI2 / FCI2 are domain-separated even when empty");
         assert_ne!(nul, rev, "FNI2 / FRI2 are domain-separated even when empty");
         assert_ne!(com, rev, "FCI2 / FRI2 are domain-separated even when empty");
+    }
+
+    /// ⚑ **THE SHARED BINDING COMMITS THE LIVE ACCUMULATOR ROOTS, AND NAMES NONE OF THEM.**
+    ///
+    /// [`SovereignTurnCtx`] is the ONE body both `cipherclerk::prove_sovereign_turn_rotated` and
+    /// every fixture that registers its OLD_COMMIT read. Its three accumulator roots are not
+    /// parameters — this pins WHICH roots that body chose, so the nullifier/commitments cutover
+    /// (the sovereign producer used to publish `heap_root::empty_heap_root_8()` in limbs 26/27 while
+    /// `node::turn_proving` already published the live empty roots) cannot be silently walked back.
+    ///
+    /// It compares against the ACCUMULATORS, not against remembered constants: `NullifierSet::new()
+    /// .root8()` and friends are the definitions, so this goes red the day a set's empty root moves
+    /// AND the binding fails to move with it — which is the only interesting direction.
+    #[test]
+    fn the_sovereign_binding_commits_the_live_empty_accumulator_roots() {
+        let c = cell(0x11, 77);
+        let ctx = SovereignTurnCtx::for_cell(&c, &[[0xABu8; 32]], Default::default());
+        // The three roots are the LIVE empty accumulators…
+        let pre = ctx.pre_limbs(&c);
+        for (name, root, group) in [
+            (
+                "nullifier",
+                empty_nullifier_root_8(),
+                dregg_circuit::effect_vm::layout_generated::NULLIFIER_ROOT_GROUP,
+            ),
+            (
+                "commitments",
+                empty_commitments_root_8(),
+                dregg_circuit::effect_vm::layout_generated::COMMITMENTS_ROOT_GROUP,
+            ),
+            (
+                "revoked",
+                empty_revoked_root_8(),
+                dregg_circuit::effect_vm::layout_generated::REVOKED_ROOT_GROUP,
+            ),
+        ] {
+            let carried: Vec<BabyBear> = group.iter().map(|&i| pre[i]).collect();
+            assert_eq!(
+                carried,
+                root.limbs().to_vec(),
+                "the sovereign binding must commit the LIVE empty {name} root in its limb group"
+            );
+            assert_ne!(
+                carried,
+                dregg_circuit::heap_root::empty_heap_root_8()
+                    .limbs()
+                    .to_vec(),
+                "…and never the retired heap sentinel (the {name} slot)"
+            );
+        }
+    }
+
+    /// The registration helper and the witness producer are ONE value under ONE context: what a
+    /// fixture registers with `register_sovereign_cell` is exactly the chip 8-felt commit the
+    /// producer's BEFORE block publishes on the 16 wide commit PIs.
+    ///
+    /// This is the equation the executor's OLD_COMMIT tooth compares
+    /// (`verify_and_commit_proof_rotated` binds the proof's BEFORE PIs to
+    /// `bytes32_to_felt8(stored)`), asserted here at the ONE place both sides are in scope.
+    #[test]
+    fn the_registration_commitment_is_the_producers_before_block() {
+        let c = cell(0x2C, 512);
+        let receipts = [[0x01u8; 32], [0x02u8; 32]];
+        let ctx = SovereignTurnCtx::for_cell(&c, &receipts, Default::default());
+        let w = ctx.witness(&c);
+
+        assert_eq!(
+            sovereign_registration_commitment(&c, &receipts),
+            dregg_circuit::Faithful8::from_wire_commit_chip(&w.pre_limbs, w.iroot).to_bytes32(),
+            "the value a fixture registers IS the producer's published BEFORE 8-felt commit"
+        );
+        // …and the same body reached through the loose-parts producer, so the binding is not a
+        // second limb fill: `produce` with the binding's own roots must land on the same witness.
+        let mut ctx_ledger = Ledger::new();
+        ctx_ledger.insert_cell(c.clone()).unwrap();
+        assert_eq!(
+            w,
+            produce(
+                &c,
+                &ctx_ledger,
+                &empty_nullifier_root_8(),
+                &empty_commitments_root_8(),
+                &empty_revoked_root_8(),
+                &receipts,
+                &Default::default(),
+            ),
+            "SovereignTurnCtx::witness ≡ produce under the binding's roots"
+        );
     }
 
     #[test]

@@ -21,7 +21,6 @@
 //!
 //! Requires `prover` (the wide producer + verifier). Self-skips under `not(prover)`.
 
-use dregg_cell::commitment::{V9RotationContext, compute_rotated_pre_limbs};
 use dregg_cell::{Cell, CellMode, Ledger};
 use dregg_circuit::descriptor_ir2::{parse_vm_descriptor2, verify_vm_descriptor2};
 use dregg_circuit::effect_vm::trace_rotated::{
@@ -30,7 +29,6 @@ use dregg_circuit::effect_vm::trace_rotated::{
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
 use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::poseidon2::wire_commit_8_chip;
 use dregg_sdk::full_turn_proof::prove_effect_vm_rotated_wide;
 use dregg_turn::rotation_witness as rw;
 
@@ -60,10 +58,15 @@ fn sovereign_transfer_cells(balance: i64, amount: i64) -> (Cell, Cell) {
 /// the wrong thing. This is why the base is derived and only the ARITY is pinned.
 const WIDE_COMMIT_PI_COUNT: usize = 16;
 
-/// The chip-faithful 8-felt commit of a cell + turn-context (the executor's anchoring primitive).
-fn cell_chip_commit8(cell: &Cell, ctx: &V9RotationContext) -> [BabyBear; 8] {
-    let pre = compute_rotated_pre_limbs(cell, ctx);
-    wire_commit_8_chip(&pre, ctx.iroot)
+/// The chip-faithful 8-felt commit of a cell under THE SHARED SOVEREIGN CONTEXT (the executor's
+/// anchoring primitive).
+///
+/// ⚑ It takes a [`rw::SovereignTurnCtx`], not a bare `V9RotationContext`. The bare form is what let
+/// this file hand-assemble FOUR contexts beside the two the witnesses were minted under; each one
+/// re-typed three accumulator roots, and one of the three (`revoked_root`) had silently stopped
+/// meaning what the literal beside it said. The binding has no root to pass.
+fn cell_chip_commit8(ctx: &rw::SovereignTurnCtx, cell: &Cell) -> [BabyBear; 8] {
+    ctx.commitment_felt8(cell).limbs()
 }
 
 /// **CONTROL: the wide producer→executor pipeline PROVES + the anchored 16 wide PIs VERIFY.** The
@@ -75,39 +78,16 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     let amount: i64 = 100;
     let (before_cell, after_cell) = sovereign_transfer_cells(balance, amount);
 
-    // The turn-context the rotated commitment absorbs (single-cell ledger, empty maps, empty
-    // receipt-chain iroot) — the SAME context the sovereign producer supplies.
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    // ⚑ THE LIVE REVOKED ROOT. `heap_root::empty_heap_root_8()` is the RETIRED
-    // `CanonicalHeapTree8` empty root and is no longer the empty root of any live accumulator:
-    // `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree, so from that
-    // commit a fixture that hand-wrote the sentinel here committed a DIFFERENT revocation set
-    // than the producer beside it published. BOUND ONCE and read by both sides, so a literal
-    // cannot drift from its twin again.
-    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
+    // The turn context the rotated commitment absorbs (single-cell ledger, empty accumulators, empty
+    // receipt-chain iroot) — THE SHARED BINDING, i.e. literally the body the sovereign producer
+    // reads, with no accumulator root nameable here.
     let receipt_hashes: Vec<[u8; 32]> = vec![];
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
+    let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_hashes, Default::default());
 
-    let before_w = rw::produce(
-        &before_cell,
-        &ctx_ledger,
-        &nullifier_root,
-        &commitments_root,
-        &revoked_root,
-        &receipt_hashes,
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ctx_ledger,
-        &nullifier_root,
-        &commitments_root,
-        &revoked_root,
-        &receipt_hashes,
-        &Default::default(),
-    );
+    let before_w = turn_ctx.witness(&before_cell);
+    let after_w = turn_ctx.witness(&after_cell);
 
     let initial_vm_state = CellState::with_capability_root_and_record_digest(
         balance as u64,
@@ -165,24 +145,10 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     // -- EXECUTOR LEG: anchor the 16 wide PIs to the TRUSTED before/after cell chip-commits (the wide
     //    analog of the live `dpis[V1_PI_COUNT]/[+1]` override — the 1-felt-retire the flip
     //    performs; `[42]/[43]` before the 2026-08-07 seven-slot PI compaction). --
-    let before_ctx = V9RotationContext {
-        cells_root: rw::cells_root(&ctx_ledger),
-        nullifier_root,
-        commitments_root,
-        revoked_root,
-        iroot: before_w.iroot,
-        material: Default::default(),
-    };
-    let after_ctx = V9RotationContext {
-        cells_root: rw::cells_root(&ctx_ledger),
-        nullifier_root,
-        commitments_root,
-        revoked_root,
-        iroot: after_w.iroot,
-        material: Default::default(),
-    };
-    let trusted_before8 = cell_chip_commit8(&before_cell, &before_ctx);
-    let trusted_after8 = cell_chip_commit8(&after_cell, &after_ctx);
+    // The SAME context the witnesses were minted under — read, not rebuilt. The two hand-assembled
+    // twins that stood here differed from `turn_ctx` in nothing but the risk of doing so.
+    let trusted_before8 = cell_chip_commit8(&turn_ctx, &before_cell);
+    let trusted_after8 = cell_chip_commit8(&turn_ctx, &after_cell);
 
     // The executor reconstructs the published 16 wide PIs from ITS trusted commits (NOT the
     // producer's claim) — a forged producer commit cannot survive this override.
@@ -214,29 +180,11 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
 #[test]
 fn wide_sovereign_forged_anchor_is_rejected() {
     let (before_cell, after_cell) = sovereign_transfer_cells(100_000, 100);
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
-    let before_w = rw::produce(
-        &before_cell,
-        &ctx_ledger,
-        &nullifier_root,
-        &commitments_root,
-        &revoked_root,
-        &[],
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ctx_ledger,
-        &nullifier_root,
-        &commitments_root,
-        &revoked_root,
-        &[],
-        &Default::default(),
-    );
+    let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &[], Default::default());
+    let before_w = turn_ctx.witness(&before_cell);
+    let after_w = turn_ctx.witness(&after_cell);
 
     let initial_vm_state = CellState::with_capability_root_and_record_digest(
         100_000u64,
@@ -352,31 +300,13 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         .expect("a refused cell carries the audit slot in fields_map (apply_refusal wrote it)");
 
     // The turn-context (single-cell ledger, empty maps, empty receipt iroot) — the producer's context.
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let receipt_hashes: Vec<[u8; 32]> = vec![];
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
+    let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_hashes, Default::default());
 
-    let before_w = rw::produce(
-        &before_cell,
-        &ctx_ledger,
-        &nullifier_root,
-        &commitments_root,
-        &revoked_root,
-        &receipt_hashes,
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ctx_ledger,
-        &nullifier_root,
-        &commitments_root,
-        &revoked_root,
-        &receipt_hashes,
-        &Default::default(),
-    );
+    let before_w = turn_ctx.witness(&before_cell);
+    let after_w = turn_ctx.witness(&after_cell);
 
     // The refusal moves the AFTER record-digest / fields_root limbs (the genuine write — non-vacuity).
     assert_ne!(
@@ -467,24 +397,10 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
 
     // -- EXECUTOR LEG: anchor the 16 wide commit PIs to the TRUSTED before/after cell chip-commits
     //    (the wide analog of the live executor's 1-felt-retire override). --
-    let before_ctx = V9RotationContext {
-        cells_root: rw::cells_root(&ctx_ledger),
-        nullifier_root,
-        commitments_root,
-        revoked_root,
-        iroot: before_w.iroot,
-        material: Default::default(),
-    };
-    let after_ctx = V9RotationContext {
-        cells_root: rw::cells_root(&ctx_ledger),
-        nullifier_root,
-        commitments_root,
-        revoked_root,
-        iroot: after_w.iroot,
-        material: Default::default(),
-    };
-    let trusted_before8 = cell_chip_commit8(&before_cell, &before_ctx);
-    let trusted_after8 = cell_chip_commit8(&after_cell, &after_ctx);
+    // The SAME context the witnesses were minted under — read, not rebuilt. The two hand-assembled
+    // twins that stood here differed from `turn_ctx` in nothing but the risk of doing so.
+    let trusted_before8 = cell_chip_commit8(&turn_ctx, &before_cell);
+    let trusted_after8 = cell_chip_commit8(&turn_ctx, &after_cell);
 
     let mut anchored = producer_dpis.clone();
     for j in 0..8 {
@@ -594,30 +510,12 @@ fn flagday_transfer_witness(
         direction: 1,
     }];
 
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let receipt_hashes: Vec<[u8; 32]> = Vec::new();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
-    let before_w = rw::produce(
-        &before_cell,
-        &ctx_ledger,
-        &nullifier_root,
-        &commitments_root,
-        &revoked_root,
-        &receipt_hashes,
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ctx_ledger,
-        &nullifier_root,
-        &commitments_root,
-        &revoked_root,
-        &receipt_hashes,
-        &Default::default(),
-    );
+    let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_hashes, Default::default());
+    let before_w = turn_ctx.witness(&before_cell);
+    let after_w = turn_ctx.witness(&after_cell);
 
     let rotation = RotationTurnWitness {
         before: before_w.clone(),

@@ -17,14 +17,25 @@ use dregg_cell::{Cell, Ledger};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{HeapLeaf, compute_canonical_heap_root_8, empty_heap_root_8};
 use dregg_turn::rotation_witness::{
-    cells_root, empty_nullifier_root_8, iroot, produce, wire_commit_8,
+    cells_root, empty_nullifier_root_8, iroot, produce, produce_in_ctx, wire_commit_8,
 };
 
-/// (a)+(b) A non-empty nullifier accumulator root fills ALL 8 rotated lanes — limb 26 = root lane 0,
-/// limbs 68..=74 = root lanes 1..7 (NON-ZERO, closing the vacuous zero-fill) — and the cell twin
-/// (`compute_rotated_pre_limbs`) and turn twin (`produce`) write those 8 lanes BYTE-IDENTICALLY.
+/// (a) A non-empty nullifier accumulator root fills ALL 8 rotated lanes — limb 26 = root lane 0,
+/// limbs 68..=74 = root lanes 1..7 (NON-ZERO, closing the vacuous zero-fill).
+///
+/// ⚠ **(b) WAS "THE TWO PRODUCERS AGREE" AND IS NOW AN IDENTITY.** Since 2026-08-07
+/// `rotation_witness::produce` DELEGATES to `produce_in_ctx` → `commitment::compute_rotated_pre_limbs`
+/// — one body, not two — so the per-lane equality below compares a function with itself. It is kept
+/// because the LANE POSITIONS `[26, 68..=74]` are the real content; the twin claim is retired here
+/// rather than left standing as a name for something that stopped being true.
+///
+/// ⚑ AND THE CONTEXT USED TO BE ASYMMETRIC: `produce` was handed `empty_commitments_root_8()` while
+/// the hand-built context beside it wrote `heap_root::empty_heap_root_8()` into `commitments_root`
+/// — two different created-note sets, invisible only because every assertion here is scoped to the
+/// nullifier lanes. `produce_in_ctx` takes the context instead of assembling one, so both sides now
+/// read the same object and there is nothing left to disagree.
 #[test]
-fn nullifier_root_fills_all_8_lanes_and_twins_agree() {
+fn nullifier_root_fills_all_8_lanes_at_the_emitted_positions() {
     // A non-empty accumulator root (one spent nullifier leaf) — a genuine node8 tree root, the SAME
     // representation `NullifierSet::root8` yields for a live (nf, value) map.
     let nf_root = compute_canonical_heap_root_8(vec![HeapLeaf::entry(
@@ -41,25 +52,17 @@ fn nullifier_root_fills_all_8_lanes_and_twins_agree() {
     ledger.insert_cell(cell.clone()).unwrap();
     let receipts: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
-    // The turn twin (producer).
-    let w = produce(
-        &cell,
-        &ledger,
-        &nf_root,
-        &dregg_turn::rotation_witness::empty_commitments_root_8(),
-        &empty_heap_root_8(),
-        &receipts,
-        &Default::default(),
-    );
-    // The cell twin (commitment reconstruction) over the SAME turn-context.
+    // ONE context, built once and read by both calls — not two assemblies that agreed on the slot
+    // this test happens to look at.
     let ctx = V9RotationContext {
         cells_root: cells_root(&ledger),
         nullifier_root: nf_root,
-        commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        commitments_root: dregg_turn::rotation_witness::empty_commitments_root_8(),
+        revoked_root: dregg_turn::rotation_witness::empty_revoked_root_8(),
         iroot: iroot(&receipts),
         material: Default::default(),
     };
+    let w = produce_in_ctx(&cell, &ctx);
     let pre_cell = compute_rotated_pre_limbs(&cell, &ctx);
 
     let lanes = [26usize, 68, 69, 70, 71, 72, 73, 74];
@@ -69,9 +72,11 @@ fn nullifier_root_fills_all_8_lanes_and_twins_agree() {
             nf_root.limbs()[i],
             "turn producer limb {pos} must carry nullifier-root lane {i}"
         );
+        // ⚠ AN IDENTITY since `produce` began delegating — see the test doc. What it pins is the
+        // POSITION, not an agreement between two bodies.
         assert_eq!(
             w.pre_limbs[pos], pre_cell[pos],
-            "producer twins must write nullifier lane {i} (limb {pos}) byte-identically"
+            "nullifier lane {i} must ride limb {pos}"
         );
     }
     // (a) The completion lanes 68..74 are NON-ZERO (the vacuity closure). Post the REVOKED-ROOT

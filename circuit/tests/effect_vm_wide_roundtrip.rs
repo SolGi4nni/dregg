@@ -26,7 +26,9 @@
 // descriptor-level prove/verify (`prove_vm_descriptor2`/`verify_vm_descriptor2`) is
 // now unconditional in dregg-circuit, so this test compiles + runs by default.)
 
-use dregg_cell::commitment::{V9RotationContext, compute_canonical_state_commitment_v9_felt8};
+// ⓘ The `V9RotationContext` / `compute_canonical_state_commitment_v9_felt8` imports are GONE: the
+// executor-anchoring differential reaches both through `rw::SovereignTurnCtx`, which is the only
+// object in this file that names an accumulator root — and it names none of them to its callers.
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
@@ -196,30 +198,23 @@ fn assert_roundtrip(
 /// `wire_commit_8` the cell's `compute_canonical_state_commitment_v9_felt8` currently delegates to,
 /// which DIVERGES (no chip arity tag). This differential is the spec the cell-side cutover must meet:
 /// the flip repoints `_felt8` onto the chip-faithful chain so the cell anchors the deployed circuit.
+/// ⚑ **THIS ANCHOR USED TO HAND-BUILD ITS OWN CONTEXT, AND IT WAS ASYMMETRIC AT HEAD.** The
+/// `revoked_root` slot carried `heap_root::empty_heap_root_8()` while the PRODUCER beside it
+/// (`rw::produce` in the caller) was handed `empty_revoked_root_8()`. Those were one value until
+/// `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree; after it the
+/// cell side committed a DIFFERENT revocation set than the trace carries, which is exactly the
+/// producer-vs-check asymmetry that classifies as a defect rather than an arbitrary value. It takes
+/// `rw::SovereignTurnCtx` now — the same object the witnesses are minted from, with no root to name.
 fn assert_executor_anchor(
     name: &str,
     cell: &Cell,
-    before_w: &rw::RotationWitness,
-    nullifier_root: dregg_circuit::Faithful8,
-    commitments_root: dregg_circuit::Faithful8,
-    // Wound #23: the turn-level boundary root is a FAITHFUL 8-felt group now, so the anchor's
-    // context takes the producer's `Faithful8` rather than reading limb 0 back off `pre_limbs`
-    // (which would have re-created the lane-0 squeeze inside the check meant to catch it).
-    cells_root: dregg_circuit::Faithful8,
+    ctx: &rw::SovereignTurnCtx,
     trace: &[Vec<BabyBear>],
 ) {
-    let ctx = V9RotationContext {
-        cells_root,
-        nullifier_root,
-        commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        iroot: before_w.iroot,
-        material: Default::default(),
-    };
     // The cell's OWN pre_limbs (computed from its RecordKernelState + turn ctx, NOT the producer's
     // — the independent path the executor takes), through the CHIP-FAITHFUL wide chain.
-    let cell_pre = dregg_cell::commitment::compute_rotated_pre_limbs(cell, &ctx);
-    let cell_felt8 = dregg_circuit::poseidon2::wire_commit_8_chip(&cell_pre, ctx.iroot);
+    let cell_pre = ctx.pre_limbs(cell);
+    let cell_felt8 = dregg_circuit::poseidon2::wire_commit_8_chip(&cell_pre, ctx.iroot());
     let circuit_carrier12 = before_commit_8(trace);
     assert_eq!(
         cell_felt8, circuit_carrier12,
@@ -235,7 +230,7 @@ fn assert_executor_anchor(
     // `prover`) to the CHIP chain (`wire_commit_8_chip`), so it now EQUALS the deployed circuit
     // carrier — the executor-anchoring cutover landed. (Feature unification arms `dregg-cell/prover`
     // here via `dregg-turn`.)
-    let cell_felt8_deployed = compute_canonical_state_commitment_v9_felt8(cell, &ctx);
+    let cell_felt8_deployed = ctx.commitment_felt8(cell);
     assert_eq!(
         cell_felt8_deployed, circuit_carrier12,
         "{name}: the cell `_felt8` is repointed to the chip chain and MATCHES the deployed circuit \
@@ -322,27 +317,12 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
     let before_cell = producer_cell(before_balance, 0);
     let after_cell = producer_cell(before_balance - amount as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
-    let before_w = rw::produce(
-        &before_cell,
-        &ledger,
-        &nullifier_root,
-        &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ledger,
-        &nullifier_root,
-        &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    );
+    // THE SHARED BINDING — the witnesses AND `assert_executor_anchor`'s check read one context, so
+    // the producer-vs-check asymmetry the `revoked_root` slot carried has nowhere to live.
+    let turn_ctx = rw::sovereign_turn_ctx(&ledger, &receipt_log, Default::default());
+    let before_w = turn_ctx.witness(&before_cell);
+    let after_w = turn_ctx.witness(&after_cell);
 
     // The deployed burn member is the AVAIL-hardened crown row: generate at ITS pad.
     let burn_pad =
@@ -367,15 +347,7 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
     // wide-PI base = ROT_PI_COUNT (46) + DFA_RC_LEN (4 dsl rc, last-pre-wide) = 50; total 66
     // = the committed burnVmDescriptor2R24 public_input_count (wide pins at PI 50..65).
     assert_roundtrip(name, &desc, &trace, &dpis, &[], ROT_PI_COUNT + DFA_RC_LEN);
-    assert_executor_anchor(
-        name,
-        &before_cell,
-        &before_w,
-        nullifier_root,
-        commitments_root,
-        rw::cells_root(&ledger),
-        &trace,
-    );
+    assert_executor_anchor(name, &before_cell, &turn_ctx, &trace);
 }
 
 /// **setFieldDyn wide roundtrip — the DYNAMIC overflow-field write PROVES (the residual CLOSED).**

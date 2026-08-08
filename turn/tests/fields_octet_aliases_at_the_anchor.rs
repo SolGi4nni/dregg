@@ -146,10 +146,12 @@ fn the_alias_pair_is_genuinely_two_different_field_values() {
         (1u32 + P) % P,
         "the pair must share a lane — that is what makes it an alias"
     );
-    // The construction needs no grind: `c` and `c + p` for any `c < 2^32 - p`.
-    assert!(
+    // The construction needs no grind: `c` and `c + p` for any `c < 2^32 - p`. That the pair
+    // EXISTS at all is two constants — a build obligation, and one that decides whether every
+    // assertion above is about a real alias or about a value that cannot be constructed.
+    const _: () = assert!(
         (1u64 + P as u64) < u32::MAX as u64,
-        "c + p must still fit a u32, or this pair does not exist"
+        "c + p must still fit a u32, or the alias pair this file is about does not exist"
     );
 }
 
@@ -216,19 +218,26 @@ fn an_honest_field_change_does_move_the_anchor() {
     );
 }
 
-/// ⚑ **THE PRODUCER TWIN, ASSERTED RATHER THAN READ.** `dregg_turn::rotation_witness::produce` and
-/// `dregg_cell::commitment::compute_rotated_pre_limbs` both fill the fields octet, and both are
-/// documented as byte-identical — but the carrier-octet three-way test
-/// (`circuit/tests/effect_vm_rotation_flip.rs`) covers `child_vk8`/`contract_hash8`, not this one.
-/// A doc comment is a name, not a proof, and this octet is the one whose encoding just moved.
+/// **THE FIELDS NONET RIDES THE EMITTED, NON-CONTIGUOUS LANE POSITIONS — and the ninth lane is
+/// genuinely written.**
 ///
-/// The structural reason it holds is that there is ONE encoder and two call sites of it
-/// (`Faithful9::from_field_lanes9` at `turn/src/rotation_witness.rs` and `cell/src/commitment.rs`,
-/// over the SAME Lean-emitted `ROTATED_FIELD_LANE_COL[i]` nonet); this asserts the consequence, so a
-/// future hand-inlined second body is caught instead of trusted.
+/// ⚠ **WHAT THIS NAME PROMISES IS NO LONGER WHAT IT CHECKS, and saying so is the point.** It was
+/// written as a twin differential: `rotation_witness::produce` and
+/// `commitment::compute_rotated_pre_limbs` each filled the fields octet, and a doc comment is a name,
+/// not a proof. Since 2026-08-07 `produce` **delegates** — `produce` → `produce_in_ctx` →
+/// `compute_rotated_pre_limbs` — so `w.pre_limbs` and the "twin" are ONE function's output and the
+/// per-limb equality below is an identity. It cannot catch a hand-inlined second body because there
+/// is no longer a second body to catch. It still earns its place for the two facts it checks that
+/// are NOT identities: the nonet's lane positions come from the emitted
+/// `ROTATED_FIELD_LANE_COL` table (a stride reconstruction would compare the wrong columns), and
+/// the ninth lane is non-zero for a cell whose fields reach its window.
+///
+/// ⚑ AND IT USED TO BE ASYMMETRIC. The producer call was handed `empty_revoked_root_8()` while the
+/// hand-built twin context beside it wrote `heap_root::empty_heap_root_8()` into `revoked_root` —
+/// two different revocation sets, invisible only because the assertions are scoped to the fields
+/// limbs. Both sides now read ONE `rw::SovereignTurnCtx`, which has no root to name.
 #[test]
-fn both_producers_fill_the_fields_nonet_byte_identically() {
-    use dregg_cell::commitment::{V9RotationContext, compute_rotated_pre_limbs};
+fn the_fields_nonet_rides_the_emitted_lane_positions() {
     use dregg_turn::rotation_witness as rw;
 
     // A cell whose eight flat fields are all DIFFERENT and none of them small — so a twin that
@@ -251,29 +260,10 @@ fn both_producers_fill_the_fields_nonet_byte_identically() {
     let mut ledger = Ledger::new();
     ledger.insert_cell(cell.clone()).unwrap();
 
-    let z8 = dregg_circuit::heap_root::empty_heap_root_8();
-    let revoked = dregg_turn::rotation_witness::empty_revoked_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
-    let w = rw::produce(
-        &cell,
-        &ledger,
-        &z8,
-        &z8,
-        &revoked,
-        &receipt_log,
-        &Default::default(),
-    );
-    let twin = compute_rotated_pre_limbs(
-        &cell,
-        &V9RotationContext {
-            cells_root: rw::cells_root(&ledger),
-            nullifier_root: z8,
-            commitments_root: z8,
-            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
-            iroot: w.iroot,
-            material: Default::default(),
-        },
-    );
+    let turn_ctx = rw::sovereign_turn_ctx(&ledger, &receipt_log, Default::default());
+    let w = turn_ctx.witness(&cell);
+    let twin = turn_ctx.pre_limbs(&cell);
 
     let zero = dregg_circuit::field::BabyBear::ZERO;
     for slot in 0..8usize {
@@ -281,16 +271,18 @@ fn both_producers_fill_the_fields_nonet_byte_identically() {
         // `113 + 7·slot .. +6`, lane 8 at `176 + slot`. A stride reconstruction would silently
         // compare slot `j`'s ninth lane against slot `j+1`'s first completion lane.
         let positions = dregg_circuit::effect_vm::layout_generated::ROTATED_FIELD_LANE_COL[slot];
-        // NON-VACUITY: an all-zero nonet would let a twin that writes nothing pass.
+        // NON-VACUITY: an all-zero nonet would let a producer that writes nothing pass.
         assert!(
             positions.iter().any(|&p| w.pre_limbs[p] != zero),
             "slot {slot}: the nonet must be non-zero, or this comparison proves nothing"
         );
         for (lane, &pos) in positions.iter().enumerate() {
+            // ⚠ AN IDENTITY SINCE `produce` BEGAN DELEGATING — see the test doc. `w.pre_limbs` and
+            // `twin` are both `compute_rotated_pre_limbs` under `turn_ctx`. Kept because the
+            // POSITIONS come from the emitted table and are what this loop really pins.
             assert_eq!(
                 w.pre_limbs[pos], twin[pos],
-                "producer twins must write fields[{slot}] lane {lane} (limb {pos}) \
-                 byte-identically"
+                "fields[{slot}] lane {lane} must ride limb {pos}"
             );
         }
         // ⚑ AND THE NINTH LANE IS ACTUALLY WRITTEN. Both producers left column `176 + slot` at ZERO

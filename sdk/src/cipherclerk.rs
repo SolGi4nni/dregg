@@ -5498,11 +5498,8 @@ impl AgentCipherclerk {
         fee: u64,
         block_height: u64,
     ) -> Result<ProvenSovereignTurn, SdkError> {
-        use dregg_cell::commitment::{
-            V9RotationContext, compute_rotated_pre_limbs, felt8_to_bytes32,
-        };
+        use dregg_cell::commitment::felt8_to_bytes32;
         use dregg_circuit::field::BabyBear;
-        use dregg_circuit::poseidon2::wire_commit_8_chip;
         use dregg_turn::rotation_witness as rw;
 
         // 1. Local before-state cell.
@@ -5629,28 +5626,25 @@ impl AgentCipherclerk {
 
         // 4. The turn-context the rotated commitment absorbs. The cipherclerk is the
         //    authority for this sovereign cell, so it supplies the context: `cells_root`
-        //    from a single-cell ledger snapshot of the before-cell, the empty nullifier
-        //    root (a cap-less sovereign transfer spends no note), and the `iroot` MMR over
-        //    its own receipt chain. The before/after blocks share this turn-invariant
-        //    context (the receipt log does not change mid-proof).
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        // ⚑ BOUND ONCE, and it must be — the `before_commit_8` debug cross-check below rebuilds a
-        // `V9RotationContext` to re-derive what these producers publish, and it hand-wrote
-        // `heap_root::empty_heap_root_8()` for this field while the producers were handed
-        // `empty_revoked_root_8()`. Those were the same value until `b20a2c50a` rebuilt `RevokedSet`
-        // as an exact tagged-linked-leaf (`FRI2`) tree; after it, the cross-check recomputed a
-        // DIFFERENT revocation set than the proof published, so the `debug_assert_eq!` fired on
-        // every honest non-grow-gate sovereign turn in a debug build and was compiled out of
-        // `--release` — the `daf38eb87` shape this crate has already been bitten by once.
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
+        //    from a single-cell ledger snapshot of the before-cell, the empty accumulator
+        //    roots (a cap-less sovereign transfer spends no note and revokes nothing), and
+        //    the `iroot` over its own receipt chain. The before/after blocks share this
+        //    turn-invariant context (the receipt log does not change mid-proof).
+        //
+        // ⚑ THE CONTEXT IS BUILT ONCE, BY THE SHARED BINDING, AND NOTHING HERE NAMES A ROOT.
+        // Three fixes by hand (`c45814b9f`, `a750130ed`, and the `debug_assert` repair below) all
+        // patched instances of ONE class: this producer's context and a fixture's — or this
+        // producer's context and its OWN cross-check's — were assembled twice from loose roots, and
+        // `heap_root::empty_heap_root_8()` stopped being any accumulator's empty root at
+        // `b20a2c50a` without either copy noticing. `rw::SovereignTurnCtx` has no constructor that
+        // takes a root and no accessor that hands back a spreadable `V9RotationContext`, so the
+        // producer and every fixture that registers this turn's OLD_COMMIT
+        // (`rw::sovereign_registration_commitment`) now read the same three roots out of one body.
         let receipt_hashes: Vec<[u8; 32]> = self
             .receipt_chain
             .iter()
             .map(|r| r.receipt_hash())
             .collect();
-        let mut ctx_ledger = dregg_cell::Ledger::new();
-        let _ = ctx_ledger.insert_cell(before_cell.clone());
 
         // v12 CARRIER MATERIAL (STEP-2.5) — capture the REAL child VK so a factory turn's AFTER
         // commitment publishes the installed child VK on octet 88..95 (non-zero), not the vacuous
@@ -5672,24 +5666,15 @@ impl AgentCipherclerk {
             _ => dregg_cell::commitment::RotationCarrierMaterial::default(),
         };
 
-        let before_w = rw::produce(
-            &before_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
-        let after_w = rw::produce(
-            &after_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &after_material,
-        );
+        // THE ONE CONTEXT. `with_material` is the single field a producer legitimately varies
+        // between the BEFORE block (`Default` — the child is not born yet) and a factory turn's
+        // AFTER block (the installed child VK on octet 89..96); it carries the ledger fold, the
+        // receipt fold and all three accumulator roots across untouched.
+        let before_ctx =
+            rw::SovereignTurnCtx::for_cell(&before_cell, &receipt_hashes, Default::default());
+        let after_ctx = before_ctx.with_material(after_material);
+        let before_w = before_ctx.witness(&before_cell);
+        let after_w = after_ctx.witness(&after_cell);
 
         // THE REFUSAL `fields_root` WRITE-GATE CONTEXT (the light-client close's deployed prover wire).
         // A Refusal lead's `refusalVmDescriptor2R24` carries an in-circuit `.write` map-op forcing
@@ -6062,24 +6047,16 @@ impl AgentCipherclerk {
             )
         );
         if !lead_is_grow_gate {
-            let pre = compute_rotated_pre_limbs(
-                &before_cell,
-                &V9RotationContext {
-                    // wound #23: the turn-level boundary root is a FAITHFUL 8-felt group, so the
-                    // cross-check rebuilds it from the SAME single-cell context ledger `produce`
-                    // read — reading limb 0 back would re-create the lane-0 squeeze inside the
-                    // check meant to catch a producer disagreement.
-                    cells_root: rw::cells_root(&ctx_ledger),
-                    nullifier_root,
-                    commitments_root,
-                    revoked_root,
-                    iroot: before_w.iroot,
-                    material: Default::default(),
-                },
-            );
+            // ⚑ THE CROSS-CHECK NO LONGER REBUILDS A CONTEXT. It used to assemble a second
+            // `V9RotationContext` from loose roots beside the one `produce` read, and it hand-wrote
+            // `heap_root::empty_heap_root_8()` for `revoked_root` while the producer was handed
+            // `empty_revoked_root_8()` — so after `b20a2c50a` it recomputed a DIFFERENT revocation
+            // set than the proof published and fired on every honest non-grow-gate sovereign turn in
+            // a debug build, while `--release` compiled it out. Reading `before_ctx` is what makes
+            // that shape unavailable: there is no second context to disagree with the first.
             debug_assert_eq!(
                 before_commit_8,
-                wire_commit_8_chip(&pre, before_w.iroot),
+                before_ctx.commitment_felt8(&before_cell),
                 "rotated wide BEFORE commit must equal the chip-faithful 8-felt commitment of the before-state"
             );
         }
@@ -6307,8 +6284,6 @@ impl AgentCipherclerk {
             "the dispatcher only routes multi-cohort turns here"
         );
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_hashes: Vec<[u8; 32]> = self
             .receipt_chain
             .iter()
@@ -6343,33 +6318,23 @@ impl AgentCipherclerk {
             rw::apply_effect_to_cell(&mut full_after_cell, cell_id, effect, block_height);
         }
 
-        // ONE turn-context ledger (the turn's before-cell) feeds EVERY `produce` — `cells_root`/`iroot`
-        // are turn-invariant. The single `before_w` is REUSED for every run's before-block AND every
-        // INTERIOR run's after-block (the witness-carried limbs — cells_root, authority digest, lifecycle,
-        // r11..r23 — are turn-invariant); only the FINAL run's after-block uses the real `after_w`. The
-        // changing welds (balance/nonce/fields) ride each run's v1 sub-trace, threaded via `s_k`. This is
-        // the SAME design as the SDK `prove_cohort_run_chain`, so `leg[k].after8 == leg[k+1].before8`
+        // ONE turn context (the turn's before-cell as the single-cell context ledger) feeds EVERY
+        // witness — `cells_root`/`iroot`/the three accumulator roots are turn-invariant. The single
+        // `before_w` is REUSED for every run's before-block AND every INTERIOR run's after-block
+        // (the witness-carried limbs — cells_root, authority digest, lifecycle, r11..r23 — are
+        // turn-invariant); only the FINAL run's after-block uses the real `after_w`. The changing
+        // welds (balance/nonce/fields) ride each run's v1 sub-trace, threaded via `s_k`. This is the
+        // SAME design as the SDK `prove_cohort_run_chain`, so `leg[k].after8 == leg[k+1].before8`
         // holds by construction (both are `wireCommit(before_w carried-limbs, s_{k+1} welds)`).
-        let mut ctx_ledger = dregg_cell::Ledger::new();
-        let _ = ctx_ledger.insert_cell(before_cell.clone());
-        let before_w = rw::produce(
-            before_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
-            &receipt_hashes,
-            &Default::default(),
-        );
-        let after_w = rw::produce(
-            &full_after_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
-            &receipt_hashes,
-            &Default::default(),
-        );
+        //
+        // ⚑ It is the SAME BINDING the single-leg producer reads (`rw::SovereignTurnCtx`), so a
+        // chained turn's legs and a single-leg turn commit under byte-identical accumulator roots
+        // and NEITHER producer names one. Before this, both hand-assembled the roots and both wrote
+        // the retired `heap_root::empty_heap_root_8()` into limbs 26/27.
+        let turn_ctx =
+            rw::SovereignTurnCtx::for_cell(before_cell, &receipt_hashes, Default::default());
+        let before_w = turn_ctx.witness(before_cell);
+        let after_w = turn_ctx.witness(&full_after_cell);
 
         // The circuit pre-state, seeded from the turn's before-cell (the SAME seed the single-leg
         // path + the executor use; the executor threads s_k via the v1 sub-trace).

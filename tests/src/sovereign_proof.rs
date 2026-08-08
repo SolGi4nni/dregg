@@ -28,39 +28,24 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id();
 
-    // THE ROTATION (cutover C1): the proof-carrying sovereign path now mints the
-    // rotated R=24 `Ir2BatchProof` and carries the v9 felt commitment. Register the
-    // sovereign cell with the SAME v9 commitment the matched producer
-    // (`execute_sovereign_turn_with_proof`) derives for the before-state: a single-cell
-    // `cells_root` over this cell, the empty nullifier root, and an `iroot` MMR over the
-    // (empty) receipt chain. The executor verifier reads this back as OLD_COMMIT (PI 34).
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    // ⚑ THE LIVE REVOKED ROOT, not `heap_root::empty_heap_root_8()`. The producer this
-    // registration is checked against (`prove_sovereign_turn_rotated`) commits
-    // `rotation_witness::empty_revoked_root_8()` = `RevokedSet::new().root8()`. Those were the same
-    // value until `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree;
-    // from that commit this fixture registered an OLD_COMMIT over a DIFFERENT revocation set than
-    // the proof publishes, and `verify_and_commit_proof_rotated` — which binds the proof's
-    // OLD_COMMIT PIs to `bytes32_to_felt8(stored)` — rejected every honest turn here.
-    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
-    let mut ctx_ledger = Ledger::new();
-    let _ = ctx_ledger.insert_cell(cell.clone());
-    let cells_root = dregg_turn::rotation_witness::cells_root(&ctx_ledger);
-    let iroot = dregg_turn::rotation_witness::iroot(&[]); // empty receipt chain
-    let v9_ctx = dregg_cell::commitment::V9RotationContext {
-        cells_root,
-        nullifier_root,
-        commitments_root,
-        revoked_root,
-        iroot,
-        material: Default::default(),
-    };
-    // THE FLIP (faithful 8-felt): register the 8-felt commit (`_v9_8`, `felt8_to_bytes32` of the
-    // chip-faithful chain) so the executor reads it back via `bytes32_to_felt8` as the 8 wide BEFORE
-    // commit PIs (the deployed ~124-bit binding; the retired 1-felt `_v9` left 28 bytes zero).
-    let commitment =
-        dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+    // THE ROTATION (cutover C1): the proof-carrying sovereign path mints the rotated R=24
+    // `Ir2BatchProof` and carries the v9 felt commitment. Register the sovereign cell with the SAME
+    // v9 commitment the matched producer (`execute_sovereign_turn_with_proof`) derives for the
+    // before-state — and derive it through THE SHARED BINDING rather than by rebuilding a context
+    // here.
+    //
+    // ⚑ `rotation_witness::sovereign_registration_commitment` IS the producer's own context builder
+    // (`SovereignTurnCtx::for_cell` + `commitment_8`): a single-cell `cells_root` over this cell,
+    // the three LIVE empty accumulator roots, and the `iroot` over the (empty) receipt chain. It
+    // takes no root argument, so this fixture can no longer name one — which is what it used to do,
+    // writing the retired `heap_root::empty_heap_root_8()` into all three slots. That sentinel
+    // stopped being any live accumulator's empty root at `b20a2c50a`, and
+    // `verify_and_commit_proof_rotated` binds the proof's OLD_COMMIT PIs to
+    // `bytes32_to_felt8(stored)`, so the disagreement refused every honest turn.
+    //
+    // The value is the FAITHFUL 8-felt commit (`felt8_to_bytes32` of the chip chain), which the
+    // executor reads back via `bytes32_to_felt8` as the 8 wide BEFORE commit PIs.
+    let commitment = dregg_turn::rotation_witness::sovereign_registration_commitment(&cell, &[]);
 
     // Store the cell state in the cclerk.
     let mut cclerk = cclerk;

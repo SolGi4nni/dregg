@@ -32,29 +32,13 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id();
 
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    // ⚑ THE LIVE REVOKED ROOT. `heap_root::empty_heap_root_8()` is the RETIRED
-    // `CanonicalHeapTree8` empty root and is no longer the empty root of any live accumulator:
-    // `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree, so from that
-    // commit a fixture that hand-wrote the sentinel here committed a DIFFERENT revocation set
-    // than the producer beside it published. BOUND ONCE and read by both sides, so a literal
-    // cannot drift from its twin again.
-    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
-    let mut ctx_ledger = Ledger::new();
-    let _ = ctx_ledger.insert_cell(cell.clone());
-    let cells_root = dregg_turn::rotation_witness::cells_root(&ctx_ledger);
-    let iroot = dregg_turn::rotation_witness::iroot(&[]);
-    let v9_ctx = dregg_cell::commitment::V9RotationContext {
-        cells_root,
-        nullifier_root,
-        commitments_root,
-        revoked_root,
-        iroot,
-        material: Default::default(),
-    };
-    let commitment =
-        dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+    // ⚑ THE SHARED BINDING, not a context rebuilt here. `sovereign_registration_commitment` is the
+    // producer's OWN `SovereignTurnCtx::for_cell(..).commitment_8(..)` — a single-cell `cells_root`,
+    // the three LIVE empty accumulator roots, the empty-receipt-chain `iroot` — and it takes no root
+    // argument, so this fixture cannot name one. It used to name three, all of them
+    // `heap_root::empty_heap_root_8()`, which stopped being any live accumulator's empty root at
+    // `b20a2c50a`.
+    let commitment = dregg_turn::rotation_witness::sovereign_registration_commitment(&cell, &[]);
 
     let mut cclerk = cclerk;
     cclerk.store_sovereign_state(cell.clone());
@@ -194,23 +178,9 @@ mod record_pin_anchor {
         cell.mode = CellMode::Sovereign;
         let cell_id = cell.id();
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
-        let mut ctx_ledger = Ledger::new();
-        let _ = ctx_ledger.insert_cell(cell.clone());
-        let cells_root = rw::cells_root(&ctx_ledger);
-        let iroot = rw::iroot(&[]);
-        let v9_ctx = dregg_cell::commitment::V9RotationContext {
-            cells_root,
-            nullifier_root,
-            commitments_root,
-            revoked_root,
-            iroot,
-            material: Default::default(),
-        };
-        let commitment =
-            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+        // THE SHARED BINDING — the producer's own context builder, and no root is named here.
+        // `sovereign_registration_commitment` takes (cell, receipt log) and nothing else.
+        let commitment = rw::sovereign_registration_commitment(&cell, &[]);
 
         let mut cclerk = cclerk;
         cclerk.store_sovereign_state(cell.clone());
@@ -315,33 +285,17 @@ mod record_pin_anchor {
         );
 
         // Witness context, mirroring the cipherclerk producer's single-cell sovereign turn.
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
+        // THE SHARED BINDING — the producer's own turn context. No accumulator root is named here,
+        // so this fixture's BEFORE witness cannot commit a different set than the producer's does.
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
+        let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_hashes, Default::default());
 
         // BEFORE witness = the GENUINE before-cell (so OLD_COMMIT / PI 34 matches the registration).
-        let before_w = rw::produce(
-            &before_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
+        let before_w = turn_ctx.witness(&before_cell);
         // AFTER witness = the FORGED after-cell (its r23 authority digest = digest(frozen)).
-        let after_w = rw::produce(
-            &forged_after,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
+        let after_w = turn_ctx.witness(&forged_after);
 
         let initial_vm_state =
             dregg_circuit::effect_vm::CellState::with_capability_root_and_record_digest(
@@ -392,17 +346,11 @@ mod record_pin_anchor {
         // The forged NEW commitment = the v9 felt of the FORGED after-cell (so PI 35 matches the
         // proof's after-block STATE_COMMIT — the forgery is NOT caught by the commitment chain, only
         // by the record-digest anchor).
-        let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(
-            &forged_after,
-            &dregg_cell::commitment::V9RotationContext {
-                cells_root: rw::cells_root(&ctx_ledger),
-                nullifier_root,
-                commitments_root,
-                revoked_root,
-                iroot: after_w.iroot,
-                material: Default::default(),
-            },
-        );
+        // The SAME context the witnesses were minted under — read, not rebuilt. This is the site
+        // `a750130ed` had to repair by hand: a hand-assembled twin here carried the retired
+        // `heap_root::empty_heap_root_8()` in the `revoked_root` slot while the producer beside it
+        // published `empty_revoked_root_8()`.
+        let new_commit_felt = turn_ctx.commitment_felt(&forged_after);
         let new_commitment = dregg_cell::commitment::felt_to_bytes32(new_commit_felt);
 
         // Assemble the proof-carrying turn (mirroring the cipherclerk producer's turn shape).
@@ -524,31 +472,15 @@ mod record_pin_anchor {
             "the forgery must move the authority digest off the honest post-value"
         );
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
+        // THE SHARED BINDING — the producer's own turn context. No accumulator root is named here,
+        // so this fixture's BEFORE witness cannot commit a different set than the producer's does.
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
+        let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_hashes, Default::default());
 
-        let before_w = rw::produce(
-            &before_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
-        let after_w = rw::produce(
-            &forged_after,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
+        let before_w = turn_ctx.witness(&before_cell);
+        let after_w = turn_ctx.witness(&forged_after);
 
         let initial_vm_state =
             dregg_circuit::effect_vm::CellState::with_capability_root_and_record_digest(
@@ -594,17 +526,11 @@ mod record_pin_anchor {
         };
         let proof_bytes = postcard::to_allocvec(&forged_proof).expect("serialize forged proof");
 
-        let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(
-            &forged_after,
-            &dregg_cell::commitment::V9RotationContext {
-                cells_root: rw::cells_root(&ctx_ledger),
-                nullifier_root,
-                commitments_root,
-                revoked_root,
-                iroot: after_w.iroot,
-                material: Default::default(),
-            },
-        );
+        // The SAME context the witnesses were minted under — read, not rebuilt. This is the site
+        // `a750130ed` had to repair by hand: a hand-assembled twin here carried the retired
+        // `heap_root::empty_heap_root_8()` in the `revoked_root` slot while the producer beside it
+        // published `empty_revoked_root_8()`.
+        let new_commit_felt = turn_ctx.commitment_felt(&forged_after);
         let new_commitment = dregg_cell::commitment::felt_to_bytes32(new_commit_felt);
 
         let mut forest = dregg_turn::forest::CallForest::new();
@@ -680,23 +606,9 @@ mod record_pin_anchor {
         mutate(&mut cell);
         let cell_id = cell.id();
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
-        let mut ctx_ledger = Ledger::new();
-        let _ = ctx_ledger.insert_cell(cell.clone());
-        let cells_root = rw::cells_root(&ctx_ledger);
-        let iroot = rw::iroot(&[]);
-        let v9_ctx = dregg_cell::commitment::V9RotationContext {
-            cells_root,
-            nullifier_root,
-            commitments_root,
-            revoked_root,
-            iroot,
-            material: Default::default(),
-        };
-        let commitment =
-            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+        // THE SHARED BINDING — the producer's own context builder, and no root is named here.
+        // `sovereign_registration_commitment` takes (cell, receipt log) and nothing else.
+        let commitment = rw::sovereign_registration_commitment(&cell, &[]);
 
         let mut cclerk = cclerk;
         cclerk.store_sovereign_state(cell.clone());
@@ -776,31 +688,15 @@ mod record_pin_anchor {
 
         let vm_effects = AgentCipherclerk::convert_effects_to_vm(&cell_id, effects);
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
+        // THE SHARED BINDING — the producer's own turn context. No accumulator root is named here,
+        // so this fixture's BEFORE witness cannot commit a different set than the producer's does.
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
+        let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_hashes, Default::default());
 
-        let before_w = rw::produce(
-            before_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
-        let after_w = rw::produce(
-            forged_after,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
+        let before_w = turn_ctx.witness(before_cell);
+        let after_w = turn_ctx.witness(forged_after);
 
         let initial_vm_state =
             dregg_circuit::effect_vm::CellState::with_capability_root_and_record_digest(
@@ -850,17 +746,8 @@ mod record_pin_anchor {
         };
         let proof_bytes = postcard::to_allocvec(&forged_proof).expect("serialize forged proof");
 
-        let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(
-            forged_after,
-            &dregg_cell::commitment::V9RotationContext {
-                cells_root: rw::cells_root(&ctx_ledger),
-                nullifier_root,
-                commitments_root,
-                revoked_root,
-                iroot: after_w.iroot,
-                material: Default::default(),
-            },
-        );
+        // The SAME context the witnesses were minted under — read, not rebuilt.
+        let new_commit_felt = turn_ctx.commitment_felt(forged_after);
         let new_commitment = dregg_cell::commitment::felt_to_bytes32(new_commit_felt);
 
         let mut forest = dregg_turn::forest::CallForest::new();
@@ -1158,23 +1045,9 @@ mod record_pin_anchor {
         cell.mode = CellMode::Hosted;
         let cell_id = cell.id();
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
-        let mut ctx_ledger = Ledger::new();
-        let _ = ctx_ledger.insert_cell(cell.clone());
-        let cells_root = rw::cells_root(&ctx_ledger);
-        let iroot = rw::iroot(&[]);
-        let v9_ctx = dregg_cell::commitment::V9RotationContext {
-            cells_root,
-            nullifier_root,
-            commitments_root,
-            revoked_root,
-            iroot,
-            material: Default::default(),
-        };
-        let commitment =
-            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+        // THE SHARED BINDING — the producer's own context builder, and no root is named here.
+        // `sovereign_registration_commitment` takes (cell, receipt log) and nothing else.
+        let commitment = rw::sovereign_registration_commitment(&cell, &[]);
 
         let mut cclerk = cclerk;
         cclerk.store_sovereign_state(cell.clone());
@@ -1273,23 +1146,8 @@ mod whole_turn_forest {
         cell.mode = CellMode::Sovereign;
         let cell_id = cell.id();
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
-        let mut ctx_ledger = Ledger::new();
-        let _ = ctx_ledger.insert_cell(cell.clone());
-        let cells_root = rw::cells_root(&ctx_ledger);
-        let iroot = rw::iroot(&[]);
-        let v9_ctx = dregg_cell::commitment::V9RotationContext {
-            cells_root,
-            nullifier_root,
-            commitments_root,
-            revoked_root,
-            iroot,
-            material: Default::default(),
-        };
-        let commitment =
-            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+        // THE SHARED BINDING — the producer's own context builder, and no root is named here.
+        let commitment = rw::sovereign_registration_commitment(&cell, &[]);
 
         let mut cclerk = cclerk;
         cclerk.store_sovereign_state(cell.clone());
@@ -1476,31 +1334,15 @@ mod wall_a {
             direction: 1, // outgoing
         }];
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
+        // THE SHARED BINDING — the producer's own turn context. No accumulator root is named here,
+        // so this fixture's BEFORE witness cannot commit a different set than the producer's does.
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
+        let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_hashes, Default::default());
 
-        let before_w = rw::produce(
-            &before_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
-        let after_w = rw::produce(
-            &after_cell,
-            &ctx_ledger,
-            &nullifier_root,
-            &commitments_root,
-            &revoked_root,
-            &receipt_hashes,
-            &Default::default(),
-        );
+        let before_w = turn_ctx.witness(&before_cell);
+        let after_w = turn_ctx.witness(&after_cell);
 
         let rotation = RotationTurnWitness::for_effects(before_w, after_w, &vm_effects);
 
@@ -1678,23 +1520,8 @@ mod multi_residue_record_pin {
         cell.mode = CellMode::Sovereign;
         let cell_id = cell.id();
 
-        let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
-        let mut ctx_ledger = Ledger::new();
-        let _ = ctx_ledger.insert_cell(cell.clone());
-        let cells_root = rw::cells_root(&ctx_ledger);
-        let iroot = rw::iroot(&[]);
-        let v9_ctx = dregg_cell::commitment::V9RotationContext {
-            cells_root,
-            nullifier_root,
-            commitments_root,
-            revoked_root,
-            iroot,
-            material: Default::default(),
-        };
-        let commitment =
-            dregg_cell::commitment::compute_canonical_state_commitment_v9_8(&cell, &v9_ctx);
+        // THE SHARED BINDING — the producer's own context builder, and no root is named here.
+        let commitment = rw::sovereign_registration_commitment(&cell, &[]);
 
         let mut cclerk = cclerk;
         cclerk.store_sovereign_state(cell.clone());

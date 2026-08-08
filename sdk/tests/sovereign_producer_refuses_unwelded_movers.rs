@@ -21,7 +21,6 @@
 //!
 //! These tests need no STARK: the refusal happens before any trace generation.
 
-use dregg_cell::commitment::{V9RotationContext, compute_canonical_state_commitment_v9_8};
 use dregg_cell::{Cell, CellId, CellMode, Ledger};
 use dregg_sdk::AgentCipherclerk;
 use dregg_turn::rotation_witness as rw;
@@ -55,22 +54,9 @@ fn setup_with_ledger(balance: i64) -> (AgentCipherclerk, CellId, CellId, Ledger)
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id();
 
-    let mut ctx_ledger = Ledger::new();
-    let _ = ctx_ledger.insert_cell(cell.clone());
-    let ctx = V9RotationContext {
-        cells_root: rw::cells_root(&ctx_ledger),
-        nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        // ⚑ THE LIVE REVOKED ROOT. `heap_root::empty_heap_root_8()` is the RETIRED
-        // `CanonicalHeapTree8` empty root and stopped being the empty revoked root at `b20a2c50a`
-        // (`RevokedSet` became an exact tagged-linked-leaf `FRI2` tree). The producer this
-        // registration is verified against publishes `rw::empty_revoked_root_8()`, so the sentinel
-        // here registered an OLD_COMMIT over a revocation set no proof commits.
-        revoked_root: rw::empty_revoked_root_8(),
-        iroot: rw::iroot(&[]),
-        material: Default::default(),
-    };
-    let commitment = compute_canonical_state_commitment_v9_8(&cell, &ctx);
+    // THE SHARED BINDING — the producer this registration is verified against publishes its BEFORE
+    // block through the same `rw::SovereignTurnCtx` body, so no root is named here and none can drift.
+    let commitment = rw::sovereign_registration_commitment(&cell, &[]);
     cclerk.store_sovereign_state(cell.clone());
 
     let mut ledger = Ledger::new();

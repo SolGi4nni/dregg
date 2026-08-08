@@ -22,9 +22,7 @@
 //!
 //! Requires `prover`; self-skips under `not(prover)`.
 
-use dregg_cell::commitment::{
-    V9RotationContext, compute_canonical_state_commitment_v9_8, felt8_to_bytes32,
-};
+use dregg_cell::commitment::felt8_to_bytes32;
 use dregg_cell::{Cell, CellId, CellMode, Ledger};
 use dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest;
 use dregg_sdk::AgentCipherclerk;
@@ -59,10 +57,15 @@ fn ops_from_diff(
     ops
 }
 
-/// Build a sovereign before-cell + its single-cell v9 turn-context (cells_root over the lone cell,
-/// empty nullifier/commitments roots, empty receipt-chain MMR) — the EXACT context the cipherclerk
-/// sovereign producer (`prove_sovereign_turn_rotated`) and `setup_sovereign_cell` use.
-fn setup(balance: u64) -> (Cell, CellId, V9RotationContext, [u8; 32]) {
+/// Build a sovereign before-cell + its single-cell v9 turn context (cells_root over the lone cell,
+/// the three LIVE empty accumulator roots, empty receipt-chain `iroot`) — THE EXACT context the
+/// cipherclerk sovereign producer (`prove_sovereign_turn_rotated`) commits under, because it is the
+/// same `rw::SovereignTurnCtx` body.
+///
+/// ⚑ The returned context has no nameable root. The struct literal that stood here re-typed all
+/// three, and one of them (`revoked_root`) had silently stopped meaning what the neighbouring
+/// literal said at `b20a2c50a`.
+fn setup(balance: u64) -> (Cell, CellId, rw::SovereignTurnCtx, [u8; 32]) {
     let cclerk = AgentCipherclerk::new();
     let pub_key = cclerk.public_key().0;
     let token_id = *blake3::hash(b"weld-exec-domain").as_bytes();
@@ -71,22 +74,8 @@ fn setup(balance: u64) -> (Cell, CellId, V9RotationContext, [u8; 32]) {
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id();
 
-    let mut ctx_ledger = Ledger::new();
-    let _ = ctx_ledger.insert_cell(cell.clone());
-    let ctx = V9RotationContext {
-        cells_root: rw::cells_root(&ctx_ledger),
-        nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        // ⚑ THE LIVE REVOKED ROOT. `heap_root::empty_heap_root_8()` is the RETIRED
-        // `CanonicalHeapTree8` empty root and is no longer the empty root of any live accumulator
-        // — `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree. The
-        // `rw::produce` calls below are handed `ctx.revoked_root`, so the registered OLD_COMMIT and
-        // the witnesses the proof is minted from read ONE field rather than two literals.
-        revoked_root: dregg_turn::rotation_witness::empty_revoked_root_8(),
-        iroot: rw::iroot(&[]),
-        material: Default::default(),
-    };
-    let old_commitment = compute_canonical_state_commitment_v9_8(&cell, &ctx);
+    let ctx = rw::SovereignTurnCtx::for_cell(&cell, &[], Default::default());
+    let old_commitment = ctx.commitment_8(&cell);
     (cell, cell_id, ctx, old_commitment)
 }
 
@@ -159,26 +148,10 @@ fn welded_transfer_commits_through_executor() {
         .state
         .set_balance(after_cell.state.balance().saturating_sub(amount as i64));
 
-    let mut ctx_ledger = Ledger::new();
-    let _ = ctx_ledger.insert_cell(before_cell.clone());
-    let before_w = rw::produce(
-        &before_cell,
-        &ctx_ledger,
-        &ctx.nullifier_root,
-        &ctx.commitments_root,
-        &ctx.revoked_root,
-        &[],
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ctx_ledger,
-        &ctx.nullifier_root,
-        &ctx.commitments_root,
-        &ctx.revoked_root,
-        &[],
-        &Default::default(),
-    );
+    // The witnesses the proof is minted from and the OLD_COMMIT the ledger registers come from the
+    // SAME `SovereignTurnCtx` — one object, not two literals that agreed until they did not.
+    let before_w = ctx.witness(&before_cell);
+    let after_w = ctx.witness(&after_cell);
 
     let caveat = transfer_caveat_manifest();
     let proj_pre = project_record_kernel_state(&before_cell);
@@ -319,19 +292,9 @@ fn setup_bare(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id();
 
-    let mut ctx_ledger = Ledger::new();
-    let _ = ctx_ledger.insert_cell(cell.clone());
-    let ctx = V9RotationContext {
-        cells_root: rw::cells_root(&ctx_ledger),
-        nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        // ⚑ THE LIVE REVOKED ROOT — see `setup` above. The cipherclerk producer these tests drive
-        // (`execute_sovereign_turn_with_proof`) publishes under `rw::empty_revoked_root_8()`.
-        revoked_root: dregg_turn::rotation_witness::empty_revoked_root_8(),
-        iroot: rw::iroot(&[]),
-        material: Default::default(),
-    };
-    let commitment = compute_canonical_state_commitment_v9_8(&cell, &ctx);
+    // THE SHARED BINDING — the cipherclerk producer these tests drive
+    // (`execute_sovereign_turn_with_proof`) publishes its BEFORE block under this same body.
+    let commitment = rw::sovereign_registration_commitment(&cell, &[]);
 
     let mut cclerk = cclerk;
     cclerk.store_sovereign_state(cell.clone());

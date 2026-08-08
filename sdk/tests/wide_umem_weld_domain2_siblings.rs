@@ -235,24 +235,10 @@ fn mint_wire_commit(
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(after_cell.clone());
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
-    let before_w = rw::produce(
-        &before_cell,
-        &ctx_ledger,
-        &dregg_circuit::heap_root::empty_heap_root_8(),
-        &dregg_circuit::heap_root::empty_heap_root_8(),
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ctx_ledger,
-        &dregg_circuit::heap_root::empty_heap_root_8(),
-        &dregg_circuit::heap_root::empty_heap_root_8(),
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    );
+    // THE SHARED BINDING — both witnesses under one context, and no accumulator root nameable here.
+    let turn_ctx = rw::sovereign_turn_ctx(&ctx_ledger, &receipt_log, Default::default());
+    let before_w = turn_ctx.witness(&before_cell);
+    let after_w = turn_ctx.witness(&after_cell);
 
     let proj_pre = project_record_kernel_state(&before_cell);
     let proj_post = project_record_kernel_state(&after_cell);
