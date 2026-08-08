@@ -136,9 +136,20 @@ fn the_closing_chain_folds() {
     );
     assert_eq!(lanes, 192, "the root republishes `acc_in ‖ acc_out`");
 
-    // The terminal accumulator the last leaf was forced to vanish really is all zero.
+    // ⚑ The terminal accumulator is the canonical point at infinity — `(0 : y : 0)` with `y`
+    // NONZERO, which is what `MinaAccumulatorAir.dischargeLegs` actually forces: 64 `.last` window
+    // gates over `OUT_X` and `OUT_Z` and NONE over `OUT_Y`, because `pasta_msm::is_identity` is
+    // `z == 0 && x == 0`. `Discharged` and `discharged_is_the_identity` name exactly those two
+    // coordinates. Demanding all 96 limbs vanish would demand `(0 : 0 : 0)`, which is not a
+    // projective point at all and which the emitted AIR therefore cannot — and must not — force.
+    // Same shape as the Vesta twin in `mina_accumulator_fold.rs`.
+    let out = &rp[96..];
+    for i in 0..SK {
+        assert_eq!(out[i], BabyBear::new(0), "terminal X limb {i}");
+        assert_eq!(out[2 * SK + i], BabyBear::new(0), "terminal Z limb {i}");
+    }
     assert!(
-        rp[96..].iter().all(|v| *v == BabyBear::new(0)),
-        "the chain's terminal accumulator is the canonical point at infinity"
+        (0..SK).any(|i| out[SK + i] != BabyBear::new(0)),
+        "the identity is (0 : y : 0) with y NONZERO — an all-zero triple would be no point"
     );
 }
