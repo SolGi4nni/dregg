@@ -29,6 +29,19 @@ limbs DO carry lane lookups, and they are decorative all the same.
 
 ## ⚑ THE ANSWER, IN THE REGISTER THE MEASUREMENT SUPPORTS
 
+⚑⚑ **2026-08-08 — THE INSTRUMENT WAS COMPLICIT, AND THIS HEADER'S NUMBERS MOVED WHEN IT STOPPED.**
+`relatedCols`' `.proofBind` arm unioned a seam's `commit`/`vk` DECLARATIONS into the connectivity
+graph unconditionally, while `descriptor_ir2.rs` emits polynomials over `commit` only under
+`if let Some(b) = &p.bound` and over `vk` only under a `vk_pin` — and every served seam is
+`bound := none`. So the census counted columns that appear in NO emitted constraint as joined, and
+its `18 → 9` was quoted as gate coverage. The arm is now emission-faithful (one entry per emitted
+polynomial of arity ≥ 2); the DECLARATION reading survives as `declaredCols`, under a name that
+says what it counts. Where a bullet below describes a seam "joining" its commitment, read it
+through that split: the vk half is emitted polynomials; the commit half is a DECLARED PORT whose
+forcing is a named off-row weld — covered for the verify rung's anchor, tip and chainlink blocks
+(`MinaSeams`: the `headTipSeam` object; REFUSAL 4), ⚑ UNCOVERED for its conjunction block (REFUSAL
+15 is defined and CALLED BY NOTHING) and for the link rung's body columns.
+
 Seven served descriptors. **Three of them relate their published values to anything, and only one of
 those two relates them to something the prover did not choose.**
 
@@ -88,21 +101,25 @@ commitment the prover can afford, and derive the anchor instead of publishing it
   `SLOT_COL`. ⚠ The denominator is pinned; the stake TABLE is not (`LightClientSolanaAir` §6c prices
   the fold that would).
 
-* ⚑⚑ **`dregg-mina-lightclient-verify::v1` — THE SECOND VERIFY RUNG TO MOVE, AND IT MOVED BY HALF
-  (2026-08-05, second pass).** It read `{0..7}{11} / {8} / {9} / {10} / {12}…{29}`, EIGHTEEN of
-  twenty inert. It now carries **NINE**: the `TIP_STATE` lanes (cols 21..29) left the decorative set
-  when `LightClientMinaAir` §2c made them the `commit` vector of a `LINK_OK`-guarded `proofBind`
-  pinned to `dregg-mina-lightclient-link::v1`. *The prover exhibits a segment length, an anchor
-  height, a submission height and three range-checked slacks in an additive relation; publishes the
-  derived block length, the required depth and the anchor height; sets four bits to 1; exhibits nine
-  anchor lane values bounded to 29 or 22 bits and tied to nothing — **and names a verifying sub-proof
-  of the segment program whose public-input commitment is the nine tip lanes it publishes.***
-  ⚑ **PIs did NOT grow.** The tip block was already published; what changed is that a constraint now
-  names it. That is the shape of move this file's own §3 asks for — the decorative SHARE fell without
-  the denominator moving, which is not what happened when Solana widened a root.
+* ⚑⚑ **`dregg-mina-lightclient-verify::v1` — THE RUNG WHOSE "HALVING" WAS THE INSTRUMENT'S, AND
+  WHOSE PORTS ARE NOW OBJECTS (2026-08-08).** It read `{0..7}{11} / {8} / {9} / {10} / {12}…{29}`,
+  eighteen of twenty inert; the 2026-08-05 declaration of the `LINK_OK`-guarded `proofBind` was
+  scored as a join and the literal "halved" to nine. Emission-faithful it carries **THIRTY-SIX**:
+  the anchor nonet, the tip nonet, and the two nine-lane sub-proof-commitment blocks. *The prover
+  exhibits a segment length, an anchor height, a submission height and three range-checked slacks
+  in an additive relation; publishes the derived block length, the required depth and the anchor
+  height; sets four bits to 1; and publishes twenty-seven lanes of tip and sub-proof commitments
+  that no emitted polynomial names beside another column — while the three seams' vk halves force
+  twenty-seven PROGRAM lanes to descriptor literals under genuinely-joined guards.*
+  ⚑ The three commit blocks are DECLARED PORTS: the tip covered elementwise against the link
+  sub-proof (REFUSAL 13, called and both-polarity tested, now also the emitted `headTipSeam`
+  object), the chainlink commitment by digest recompute (REFUSAL 4, `check_transcript_binding`,
+  called and tested) — ⚑⚑⚑ and the conjunction commitment by NOTHING: `check_conjunction_binding`
+  (REFUSAL 15) is defined and never called, the wire carries no conjunction sub-proof, no test
+  exists (`MinaSeams.the_conjunction_commitment_port_has_no_live_weld`).
   ⚠ And the caveat that governs is the one `minaLink_decorative_anchors` already carries: the bound
-  sub-proof chains WITNESSED lane values. The tip is now the last element of a committed chain whose
-  SHAPE is gated; its HASH is still the prover's (`LinkHashResidual`).
+  sub-proof chains WITNESSED lane values. The tip is the last element of a committed chain whose
+  SHAPE is gated; its HASH derivation rides sibling sub-proofs no node yet requires.
   ⚑ Corrections the measurement forced, ONE OF WHICH IS NOW REPAIRED (2026-08-05):
   - ✅ the anchor HEIGHT (`ANCHOR_H`, col 1) WAS a free witness — not PI-bound, not range-looked-up,
     and pinned to no constant, while `LightClientMinaAir` called it "the pinned weak-subjectivity
@@ -130,25 +147,27 @@ commitment the prover can afford, and derive the anchor instead of publishing it
   the sibling rung, the numerator is still a witnessed projection, and the join between the two rungs
   is at the PUBLIC STATEMENT (the verifier compares four felts), not inside one proof.
 
-* **`dregg-mina-lightclient-link::v1`** — `{0}{9} / {1}{10} / … / {8}{17} / {18}{21} / {19..20}`.
-  **ZERO decorative anchors: all twenty PI-bound columns are related.** *The prover exhibited a
-  sequence of rows in which each row's nine-lane `OWNHASH` equals the next row's nine-lane `PARENT`,
-  the heights tick by one from a first-row anchor height, a boolean `IS_REAL` is monotone and its
-  running sum is published as the segment length — and the anchor and tip it publishes are the two
-  ends of that chain.*
-  ⚑ **2026-08-06 — `OWNHASH` STOPPED BEING A FREE WITNESS.** This bullet used to read *"nothing
-  forces it to be `Poseidon(stateRow)` (`LinkHashResidual`, priced at ~5·10⁵ BabyBear constraints per
-  block hash)"*; the price was wrong by 26× and the rung landed as a `proof_bind` against
-  `dregg-pasta-fp-absorb::v1` (`minaLink_the_seam_joins_the_preimage_to_the_image`, below). Every lane
-  pair is still its own island for the CHAINING gates — lane `j` chains to lane `j` and never crosses
-  — but the seam names all thirty-six columns of the row in ONE constraint.
-  ⚠ **AND THAT IS STILL NOT A BINDING TO MINA.** What the seam takes as an ARGUMENT is `BODYHASH`,
-  which this descriptor neither derives nor publishes. ⚑ 2026-08-07 it acquired a derivation —
-  `MinaStateBodyHashChain`, 25 links of `dregg-pasta-fp-chainlink::v1` from the pinned
-  `MinaProtoStateBody` salt — but **OFF THIS DESCRIPTOR**, so no constraint here relates the nonet to
-  that chain's root and `minaLink_body_hash_is_joined_but_not_published` did NOT fire. **Connectivity
-  is co-occurrence, not derivation**, and the tie that would upgrade this one needs `BODYHASH`
-  PUBLISHED so a fold can reach it.
+* **`dregg-mina-lightclient-link::v1`** — `{0}{9} / {1}{10} / … / {8}{17} / {18}{21} / {19..20}`,
+  plus seventeen body columns. **The twenty chain columns are related; the seventeen body-flag-day
+  columns are DECLARED and UNWELDED — the one uncovered port surface in this census.** *The prover
+  exhibited a sequence of rows in which each row's nine-lane `OWNHASH` equals the next row's
+  nine-lane `PARENT`, the heights tick by one from a first-row anchor height, a boolean `IS_REAL`
+  is monotone and its running sum is published as the segment length — and the anchor and tip it
+  publishes are the two ends of that chain.*
+  ⚑ **2026-08-06/08 — `OWNHASH`, RE-SAID AT EMISSION RESOLUTION.** The state-hash `proof_bind`
+  against `dregg-pasta-fp-absorb::v1` DECLARES `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` per row and
+  emits only its nine `HASH_VK` forcings
+  (`minaLink_state_hash_seam_declares_the_row_and_emits_only_the_program_pin`); the derivation is
+  the absorb sub-proofs the declaration names, welded today by tests, required by no node. Every
+  lane pair is still its own island for the CHAINING gates — lane `j` chains to lane `j` and never
+  crosses.
+  ⚠ **AND THAT IS STILL NOT A BINDING TO MINA.** `BODYHASH` is now PUBLISHED (PI 20..28, with the
+  chain's 8-lane accumulator at 29..36) so a fold can reach it — and none does: no fold
+  `cb.connect`s these seventeen slots to `MinaStateBodyHashChain`'s root claim and no executor
+  compares them (`turn`'s `LINK_PI_BODYHASH_BASE`/`LINK_PI_BODY_ACC_BASE` are consts with no
+  reader). `minaLink_decorative_anchors` counts the seventeen;
+  `MinaSeams.the_link_body_ports_have_no_registered_cover` is the term that shrinks when the weld
+  lands. **Connectivity is co-occurrence, not derivation — and a declaration is neither.**
 
 ## ⚑ WHY THESE ARE THEOREMS AND NOT A COMMENT — they are meant to go RED
 
@@ -159,7 +178,7 @@ them lands, the corresponding theorem below FAILS.** Shrinking its literal is th
 weakening the statement is not. A comment saying the same thing rots silently.
 
 The predicate is SATISFIABLE, REFUTABLE and NOT PROVABLE in general
-(`feedback-prove-the-floor-false`): `minaLink_decorative_anchors` exhibits `[]`, the other five
+(`feedback-prove-the-floor-false`): `solStakeFold_decorative_anchors` exhibits `[]`, the others
 exhibit non-empty lists, and no lemma here derives either from the shape of a descriptor.
 
 Companion gate: `scripts/check-descriptor-anchor-inertness.py` runs the same decomposition over all
@@ -249,23 +268,58 @@ def relatedCols : VmConstraint2 → List Nat
   | .mapOp m                 => nub ((exprCols m.guard) ++ (exprCols m.key) ++ (exprCols m.value) ++
                                      ((List.ofFn m.root).flatMap exprCols) ++
                                      ((List.ofFn m.newRoot).flatMap exprCols))
-  -- ⚑ **LANE VECTORS, NOT ONE LIMB EACH** (the `ProofBind` widening, 2026-08-05). `commit`/`vk`/
-  -- `bound` are `List EmittedExpr` now, and this arm read them as if each were a single expression —
-  -- which is a TYPE error here and so left the module red, but is the same UNDER-READ that in an
-  -- untyped instrument goes silent: `scripts/check-descriptor-anchor-inertness.py` walked only the
-  -- operands that are themselves an expression and scored nine BOUND commitment lanes as DECORATIVE
-  -- ANCHORS (18 → 27) with no anchor having changed, and `circuit-prove/tests/fold_claim_pin_liveness.rs`
-  -- read lane 0 alone and would declare a live pin dead. Three instruments, one blindness; Lean is
-  -- the one that could not compile through it.
+  -- ⚑⚑ **EMISSION-FAITHFUL SINCE 2026-08-08 — this arm counts POLYNOMIALS, not IR fields.**
   --
-  -- `bound` is included because `ProofBind.holdsAt` asserts `g·(commitᵢ − boundᵢ) ≡ 0` lane by lane:
-  -- those row-local expressions are tied to the commitment by the seam itself, so a walker that
-  -- omitted them would under-read exactly the tie this file exists to measure. Every seam served
-  -- today declares `bound := none`, so no committed count moves with this — it closes the hole
-  -- ahead of the first descriptor that uses it rather than after.
-  | .proofBind m             => nub ((exprCols m.guard) ++ (m.commit.flatMap exprCols) ++
-                                     (m.vk.flatMap exprCols) ++
-                                     ((m.bound.getD []).flatMap exprCols))
+  -- Until today it unioned `guard ++ commit ++ vk ++ bound` UNCONDITIONALLY, while
+  -- `descriptor_ir2.rs`'s `proofBind` arm emits polynomials over `commit` only under
+  -- `if let Some(b) = &p.bound` and over `vk` only under `if let Some(pin) = &p.vk_pin`. Every
+  -- seam served today declares `bound := none`, so **every `commit` lane the old walker scored as
+  -- JOINED appeared in no emitted constraint at all** — and the `18 → 9` decorative-anchor census
+  -- was quoted as gate coverage while measuring declarations. A census that counts declarations
+  -- and reports coverage is worse than no census; this is the repair, not a relabel.
+  --
+  -- What the deployed evaluator emits (`descriptor_ir2.rs`, `VmConstraint2::ProofBind`;
+  -- Lean `ProofBind.holdsAt` is the same `1 + n + n`):
+  --
+  --     guard·(guard − 1)                    always      — names the guard's columns only
+  --     guard·(vkᵢ − vkPinᵢ)     per lane,   iff vkPin   — names guard ∪ vkᵢ
+  --     guard·(commitᵢ − boundᵢ) per lane,   iff bound   — names guard ∪ commitᵢ ∪ boundᵢ
+  --
+  -- Each POLYNOMIAL relates its own columns, and only if it names two distinct ones: a vk-pin
+  -- lane under a `.const 1` guard is `1·(vkᵢ − pin)` — a one-column forcing, the same arity-1
+  -- shape as `ED_OK − 1`, and it joins nothing. The per-polynomial `poly` filter below is that
+  -- rule; without it a constant-guarded seam would join its vk lanes to each other through a
+  -- flat union no polynomial justifies.
+  --
+  -- ⚠ The DECLARATION-level reading (which columns does the seam NAME, forced or not) is still a
+  -- real question — it is what a port declaration covers — and it moved to `declaredCols` below,
+  -- under a name that says what it counts. Theorems that need it say so.
+  | .proofBind m             =>
+      let g := exprCols m.guard
+      let poly : List Nat → List Nat := fun cs => if 2 ≤ (nub cs).length then cs else []
+      let pinPolys : List Nat :=
+        match m.vkPin with
+        | none => []
+        | some _ => m.vk.flatMap (fun lane => poly (g ++ exprCols lane))
+      let boundPolys : List Nat :=
+        match m.bound with
+        | none => []
+        | some bs => (m.commit.zip bs).flatMap
+            (fun cb => poly (g ++ exprCols cb.1 ++ exprCols cb.2))
+      nub (poly g ++ pinPolys ++ boundPolys)
+
+/-- ⚑ **THE DECLARATION-LEVEL READER** — which columns a constraint NAMES, whether or not any
+emitted polynomial forces them. Identical to `relatedCols` except at `.proofBind`, where it returns
+the seam's whole IR surface: guard, every commit lane, every vk lane, every bound lane. This is the
+old `.proofBind` arm of `relatedCols`, moved here under a name that says what it counts — a
+`proofBind` with `bound := none` DECLARES its commit lanes (a port surface a weld must cover) and
+FORCES none of them, and the two readings must never share a name again. Used by the
+`…_is_declared_…` theorems below; never by `decorativeAnchors`. -/
+def declaredCols : VmConstraint2 → List Nat
+  | .proofBind m => nub ((exprCols m.guard) ++ (m.commit.flatMap exprCols) ++
+                         (m.vk.flatMap exprCols) ++
+                         ((m.bound.getD []).flatMap exprCols))
+  | c            => relatedCols c
 
 /-- A constraint RELATES iff it names at least two distinct columns. ⚑ An arity-1 range lookup and a
 one-column forcing gate (`ED_OK − 1`) both fail this, and both should: neither joins anything. -/
@@ -432,143 +486,149 @@ theorem sol_anchor_root_shares_a_constraint_with_the_stake_rows :
           && LightClientSolanaAir.STAKE 0 ∈ relatedCols c) = true := by
   decide
 
-/-- ⚑⚑⚑ **MINA VERIFY — THIS LITERAL FIRED, AND IT HALVED. NINE, NOT EIGHTEEN.**
+/-- ⚑⚑⚑ **MINA VERIFY — THE LITERAL THAT HALVED ON A DECLARATION, RESTORED ON THE EMISSION.
+THIRTY-SIX, NOT NINE.**
 
-It read `[12 … 29]`: the nine `ANCHOR_STATE` lanes AND the nine `TIP_STATE` lanes, every one of them
-PI-bound, width-checked and joined to nothing. **The nine `TIP_STATE` lanes are gone from this list**
-— `LightClientMinaAir`'s §2c segment bind (2026-08-05) makes them the `commit` vector of a
-`proofBind` guarded by `LINK_OK` and pinned to `dregg-mina-lightclient-link::v1`, so `relatedCols`'
-`.proofBind` arm returns all nine of them beside the guard and nine program lanes.
+The history, kept because the sequence is the lesson:
 
-⚑ **THE TRIPWIRE WORKED AS DESIGNED.** This theorem and the one below it were written *to go red the
-day an anchor column enters a gate beside another column*; both fired on the same edit. Shrinking the
-literal is the correct move and weakening the statement is not — so the positive fact is stated
-separately (`minaVerify_tip_lanes_are_published_and_joined`) rather than left as the absence of a
-red, and the residual keeps its own narrower tripwire.
+  * `[12 … 29]` — anchor and tip, eighteen lanes joined to nothing.
+  * `[12 … 20]` — NINE, 2026-08-05: the tip lanes "left" when the §2c `proofBind` named them —
+    but that shrink was measured by an instrument that unioned `commit` UNCONDITIONALLY, while
+    `descriptor_ir2.rs` emits polynomials over `commit` only under `if let Some(b) = &p.bound`,
+    and every served seam is `bound := none`. **The 18 → 9 was quoted as gate coverage while
+    measuring an IR field.**
+  * ⚑ `[12 … 29] ++ [40 … 48] ++ [68 … 76]` — THIRTY-SIX, 2026-08-08, the instrument fixed:
+    the anchor's nine, the tip's nine, the nine `SUB_PI` sub-proof-commitment lanes and the nine
+    `CONJ_PI` conjunction-commitment lanes. Every one is PI-bound and **appears in no emitted
+    polynomial that names a second column.** The three `proofBind`s force their guard bits and
+    their `vk` lanes (real polynomials, counted below); their `commit` vectors they DECLARE.
 
-⚠ What remains is the ANCHOR half, and it is not an oversight: `ProofBind`'s `commit` is the only
-vector that names off-row evidence and there is one `piCommit` per engine, so a second bind against
-the same program with a DIFFERENT commitment is incoherent. The anchor's nine lanes are refused at
-the CONSUMER against the link sub-proof's own anchor block. That is an executor check, not an edge,
-and this literal is what keeps saying so. -/
+⚠ **THIRTY-SIX DECORATIVE ANCHORS IS NOT THIRTY-SIX WOUNDS — BUT IT IS NINE MORE THAN THE COVERS
+CLAIMED, AND SAYING WHICH IS THE POINT.** These blocks are the seams' PORT SURFACES, declared in
+`MinaSeams` §8b: the anchor and tip ports are covered by the emitted head↔link seam (`headTipSeam`
+— the executor's REFUSAL 13/14 as an object, both polarities tested), and the chainlink-commitment
+port by the named, CALLED, tested weld `check_transcript_binding` (REFUSAL 4). ⚑⚑⚑ **The
+conjunction-commitment port's weld is DEAD CODE**: `check_conjunction_binding` (REFUSAL 15) is
+defined, documented — and called by nothing; the head wire carries no conjunction sub-proof to call
+it with, and no test exists. So `CONJ_PI` is published, forced to the statement by its pins, and
+compared to NOTHING any node runs — counted by
+`MinaSeams.the_conjunction_commitment_port_has_no_live_weld`, the "constructed zero times" class.
+This literal reds the day any of the four blocks enters an emitted polynomial, at which point the
+honest move is to shrink it and retire the corresponding port. -/
 theorem minaVerify_decorative_anchors :
     decorativeAnchors LightClientMinaAir.minaLcVerifyDesc
-      = [12, 13, 14, 15, 16, 17, 18, 19, 20] := by
+      = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+         40, 41, 42, 43, 44, 45, 46, 47, 48, 68, 69, 70, 71, 72, 73, 74, 75, 76] := by
   decide
 
-/-- ⚑ **AND THIS IS THE CASE `constraintCols` ALONE WOULD MISS — now stated of the NINE that are
-still inert.** The anchor lane columns ARE read — each by an arity-1 range lookup at 29 or 22 bits —
-and joined to nothing. A width bound is a fact about a value's SHAPE; it is not a tie to the
-evidence, and a census that counted "appears in a lookup tuple" as bound would have scored these nine
-as connected.
+/-- ⚑ **AND THIS IS THE CASE `constraintCols` ALONE WOULD MISS — restored to the EIGHTEEN state
+lanes.** The anchor and tip lane columns ARE read — each by an arity-1 range lookup at 29 or 22
+bits — and joined to nothing an emitted polynomial names beside them. A width bound is a fact about
+a value's SHAPE; it is not a tie to the evidence, and a census that counted "appears in a lookup
+tuple" as bound would have scored all eighteen as connected.
 
-⚑ This is the narrower replacement for `minaVerify_state_lanes_are_read_but_never_joined`, which
-covered `[12 … 29]` and fired on the segment bind. Keeping it at the anchor block is what makes the
-remaining half a MEASURED residual rather than an unmentioned one. -/
-theorem minaVerify_anchor_lanes_are_read_but_never_joined :
-    ∀ col ∈ [12, 13, 14, 15, 16, 17, 18, 19, 20],
+⚑ This theorem narrowed from `[12 … 29]` to the anchor nine on 2026-08-05 when the segment bind's
+DECLARATION was scored as a join; with the instrument emission-faithful it covers the eighteen
+again. The tip half is a covered PORT (`MinaSeams.headTipSeam`), not an oversight — see the
+decorative literal's docblock for the split. -/
+theorem minaVerify_state_lanes_are_read_but_never_joined :
+    ∀ col ∈ [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
       isRead LightClientMinaAir.minaLcVerifyDesc col = true ∧
       isRelated LightClientMinaAir.minaLcVerifyDesc col = false := by
   decide
 
-/-- ⚑⚑⚑ **THE POSITIVE STATEMENT: THE HEAD'S PUBLISHED TIP IS JOINED.** Each of the nine
-`TIP_STATE` lanes is PI-bound (so a consumer can compare it against a head it holds), READ, and
-RELATED — none is decorative. This is the flip of the deleted
-`minaVerify_state_lanes_are_read_but_never_joined`, stated in the affirmative so the gain is a term
-and not the absence of a red.
+/-- ⚑⚑⚑ **THE TIP, SAID AT THE RESOLUTION THE EMISSION SUPPORTS: PUBLISHED AND DECLARED, NOT
+JOINED.** Each of the nine `TIP_STATE` lanes is PI-bound (a real emitted `piBinding` forces the
+column to the statement, so a consumer can refuse a tip against the link sub-proof it verifies),
+READ (a width lookup), NOT related by any emitted polynomial — and DECLARED, all nine, by the
+`LINK_OK`-guarded `proofBind` whose `vkPin` is `dregg-mina-lightclient-link::v1`'s fingerprint.
 
-⚠ The standing caveat binds here as it does everywhere in this file: **connectivity is co-occurrence,
-not derivation.** What these nine co-occur with is a guard and a pinned program identity; what
-upgrades that to evidence is off-row — `Satisfied2Custom.proofBound`'s existential, discharged by a
-consumer that verifies a STARK over `dregg-mina-lightclient-link::v1`. ⚑ **AND THE CAVEAT THAT USED TO SIT HERE HAS MOVED ONE RUNG DOWN, 2026-08-06.** This paragraph
-read *"that sub-proof's own caveat still holds: its `OWNHASH` is a free witness, so what is gated is
-the segment's SHAPE, not its hashes."* The segment descriptor now carries a `proof_bind` of its own
-whose commitment is `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` against
-`dregg-pasta-fp-absorb::v1` — so `OWNHASH` is the IMAGE of its row at the same recursion boundary
-this seam stands at (`minaLink_the_seam_joins_the_preimage_to_the_image`, below). What remains free
-is `BODYHASH`, and what attests THAT is `PICKLES_OPENING_WITNESSED` (⚑ renamed 2026-08-06 from
-`PICKLES_WITNESSED`, and narrowed to the IPA opening, `cipCorrect` and `plonkChecksPassed`; the rest
-became `FINALIZE_XI_B_PROVED`, which is not a bit). -/
-theorem minaVerify_tip_lanes_are_published_and_joined :
+This theorem was named `…_published_and_joined` until 2026-08-08 and asserted `isRelated = true`,
+which was TRUE ABOUT THE WRONG OBJECT: the instrument scored the seam's `commit` DECLARATION as a
+join while `bound := none` emits no polynomial over these columns. The declaration is real and load-
+bearing — it is the port surface `MinaSeams.headTipSeam` covers, and the executor's REFUSAL 13
+discharges elementwise (`8·29 + 24 = 256` bits, no digest, no birthday bound) — but it is a PORT,
+and the fourth conjunct now says so in the language the emission supports. -/
+theorem minaVerify_tip_lanes_are_published_and_declared :
     ∀ col ∈ [21, 22, 23, 24, 25, 26, 27, 28, 29],
       isPiBound LightClientMinaAir.minaLcVerifyDesc col = true ∧
       isRead LightClientMinaAir.minaLcVerifyDesc col = true ∧
-      isRelated LightClientMinaAir.minaLcVerifyDesc col = true ∧
-      col ∉ decorativeAnchors LightClientMinaAir.minaLcVerifyDesc := by
+      isRelated LightClientMinaAir.minaLcVerifyDesc col = false ∧
+      LightClientMinaAir.minaLcVerifyDesc.constraints.any
+        (fun c => col ∈ declaredCols c
+          && LightClientMinaAir.LINK_OK ∈ declaredCols c
+          && LightClientMinaAir.LINK_VK 0 ∈ declaredCols c
+          && LightClientMinaAir.LINK_VK 8 ∈ declaredCols c) = true := by
   decide
 
-/-- ⚑⚑ **AND THE JOIN IS TO THE PINNED PROGRAM, IN ONE CONSTRAINT — the Mina analogue of
-`sol_anchor_root_shares_a_constraint_with_the_stake_rows`.** Every published tip lane co-occurs, in a
-SINGLE constraint, with the `LINK_OK` carrier and with the segment program's first and last attested
-lane. So the tip columns and the identity of the sub-proof they commit to are adjacent, not merely in
-one component by a long walk.
+/-- ⚑⚑ **AND THE SEAM'S EMITTED POLYNOMIALS ARE THE PROGRAM PIN — a REAL join, at the vk half.**
+The `LINK_OK`-guarded seam emits `guard·(guard−1)` and nine `guard·(LINK_VK i − pin_i)` — so the
+carrier and the nine attested-program columns ARE in emitted polynomials together, and `LINK_OK`
+costs a prover nine lane congruences against a descriptor literal, not one felt. What the seam does
+NOT emit is any polynomial over its `commit` lanes; that half is the covered port above. This split
+— vk half forced, commit half ported — is the whole shape of a `bound := none` seam, stated where
+the census can keep it honest. -/
+theorem minaVerify_link_seam_forces_the_program_pin_not_the_tip :
+    (∀ i ∈ [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.LINK_VK i) = true) ∧
+    isRelated LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.LINK_OK = true ∧
+    (∀ i ∈ [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.TIP_STATE i) = false) := by
+  refine ⟨by decide, by decide, by decide⟩
 
-⚠ The difference from Solana's is worth stating rather than letting the parallel shape imply it:
-there the co-occurring columns are the INPUTS of a deployed Poseidon2 chip absorb, so the published
-root is the IMAGE of the exhibited rows. Here they are a program FINGERPRINT, so what the constraint
-says is *which* sub-proof these nine lanes are the commitment of — not that they are anything's
-image. -/
-theorem minaVerify_tip_shares_a_constraint_with_the_pinned_segment_program :
-    ∀ j ∈ [21, 22, 23, 24, 25, 26, 27, 28, 29],
-      LightClientMinaAir.minaLcVerifyDesc.constraints.any (fun c =>
-        j ∈ relatedCols c
-          && LightClientMinaAir.LINK_OK ∈ relatedCols c
-          && LightClientMinaAir.LINK_VK 0 ∈ relatedCols c
-          && LightClientMinaAir.LINK_VK 8 ∈ relatedCols c) = true := by
-  decide
+/-! ### ⚑⚑ THE RECURSION RUNG, MEASURED HERE RATHER THAN ASSUMED — RE-MEASURED 2026-08-08.
 
-/-! ### ⚑⚑ 2026-08-05 — THE RECURSION RUNG, MEASURED HERE RATHER THAN ASSUMED.
+`dregg-mina-lightclient-verify::v1` grew its recursion shape in two steps (width 30 → 49 → 77, PIs
+20 → 29 → 39) as `PICKLES_OK` became `WRAP_FS_PROVED` + `FINALIZE_XI_B_PROVED` and their
+`proof_bind` legs. The 2026-08-05/06 reading — *"every added commitment lane lands JOINED, because
+a `proof_bind` relates its guard, its commitment and its vk column"* — was the INSTRUMENT's
+reading, not the emission's: with `bound := none` the deployed evaluator emits nothing over a
+`commit` lane, so the eighteen commitment lanes are published, DECLARED, and forced off-row by the
+named executor welds. The theorems below say exactly that split:
 
-`dregg-mina-lightclient-verify::v1` changed shape: width 30 → 49, PIs 20 → 29, constraints 50 → 69,
-because `PICKLES_OK` became `PICKLES_WITNESSED` plus `WRAP_FS_PROVED` and its nine `proof_bind`
-legs. The two theorems above were TRIPWIRES for exactly that kind of change and **they did not
-fire** — which is a result, not a non-event, and the reason is worth stating so nobody reads the
-unchanged `18` as "nothing happened":
+* the vk halves are REAL emitted polynomials — guard·(vkᵢ − pinᵢ) — so both carriers and all
+  eighteen program lanes are genuinely joined;
+* the commit halves are PORTS: `check_transcript_binding` (REFUSAL 4) recomputes the chainlink
+  sub-proof's PI digest and refuses lanes 20..28; `check_conjunction_binding` (REFUSAL 15) the
+  conjunction's at 30..38. Both welds carry both polarities in `turn`'s release tests, and
+  `MinaSeams` declares the two ports with those welds as their covers. -/
 
-* the rung did not bind an EXISTING decorative anchor. The eighteen state lanes are still read only
-  by arity-1 range lookups and still joined to nothing;
-* it added NINE NEW published values — the sub-proof commitment lanes — and every one of them lands
-  JOINED, because a `proof_bind` relates its guard, its commitment and its vk column
-  (`relatedCols`'s `.proofBind` arm). **Nine public inputs added, zero decorative anchors added.**
-
-That is the honest delta, and the theorem below is what makes it a measurement. It is a NEW tripwire
-in the same direction as the others: it reds if a future edit publishes the commitment without
-joining it. -/
-
-/-- ⚑⚑ **THE NINE SUB-PROOF COMMITMENT LANES ARE PUBLISHED AND JOINED.** PI-bound (so a consumer can
-compare them against a sub-proof it verifies) and related (so they are not decoration). -/
-theorem minaVerify_subproof_commitment_is_published_and_joined :
+/-- ⚑⚑ **THE NINE SUB-PROOF COMMITMENT LANES ARE PUBLISHED AND DECLARED — and NOT joined by any
+emitted polynomial.** PI-bound (so the executor weld can reach them), declared by the
+`WRAP_FS_PROVED`-guarded seam, and decorative under the emission-faithful census — the port state,
+counted rather than narrated. The piCount and decorative-count conjuncts pin the descriptor's whole
+published surface at the same moment so a shape drift cannot hide in this theorem's blind spot. -/
+theorem minaVerify_subproof_commitment_is_published_and_declared :
     ((List.range 9).all fun i =>
         isPiBound LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)
-          && isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i)) = true
+          && !(isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.SUB_PI i))
+          && LightClientMinaAir.minaLcVerifyDesc.constraints.any
+               (fun c => LightClientMinaAir.SUB_PI i ∈ declaredCols c
+                 && LightClientMinaAir.WRAP_FS_PROVED ∈ declaredCols c)) = true
       ∧ LightClientMinaAir.minaLcVerifyDesc.piCount = 39
-      -- ⚑ 18 → 9 on 2026-08-05 (the segment bind). The PI COUNT DID NOT MOVE THEN: the tip block was
-      -- already published, and what changed is that a constraint now named it.
-      -- ⚑⚑ 30 → 39 on 2026-08-06 (the FINALIZE conjunction bind). This time the count DID move — the
-      -- seam commits to a DIFFERENT object, the conjunction sub-proof's 160 public inputs, so nine
-      -- lanes had to be added rather than re-used. The decorative count is UNCHANGED at 9 (still the
-      -- anchor's nine, still joined to nothing), which is the fact worth checking: nine published
-      -- lanes were added and none of them is decoration.
-      ∧ (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 9 := by
+      ∧ (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 36 := by
   refine ⟨by decide, rfl, by decide⟩
 
-/-- ⚑⚑ **AND THE NINE FINALIZE-CONJUNCTION COMMITMENT LANES ARE PUBLISHED AND JOINED TOO** (added
-2026-08-06). Same shape as the chainlink's above, and the same reason: a `proof_bind`'s `commit`
-vector is what `relatedCols` returns, so these nine are named by a constraint and not merely pinned.
-`FINALIZE_XI_B_PROVED` is NOT PI-bound, for the reason `WRAP_FS_PROVED` is not: a carrier a verifier
-could set from outside the proof would be no carrier. -/
-theorem minaVerify_conjunction_commitment_is_published_and_joined :
+/-- ⚑⚑ **AND THE NINE FINALIZE-CONJUNCTION COMMITMENT LANES, SAME SPLIT** (declared 2026-08-06,
+re-measured 2026-08-08). The commit lanes are published and declared, not joined; the guard is
+genuinely joined — to the nine `CONJ_VK` columns its seam forces to the conjunction descriptor's
+fingerprint, which is what `FINALIZE_XI_B_PROVED = 1` costs in-circuit. `FINALIZE_XI_B_PROVED` is
+NOT PI-bound, for the reason `WRAP_FS_PROVED` is not: a carrier a verifier could set from outside
+the proof would be no carrier. -/
+theorem minaVerify_conjunction_commitment_is_published_and_declared :
     ((List.range 9).all fun i =>
         isPiBound LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.CONJ_PI i)
-          && isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.CONJ_PI i)) = true
+          && !(isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.CONJ_PI i))) = true
       ∧ isPiBound LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.FINALIZE_XI_B_PROVED = false
       ∧ isRelated LightClientMinaAir.minaLcVerifyDesc LightClientMinaAir.FINALIZE_XI_B_PROVED = true
       ∧ ((List.range 9).all fun i =>
           isRelated LightClientMinaAir.minaLcVerifyDesc (LightClientMinaAir.CONJ_VK i)) = true := by
   refine ⟨by decide, by decide, by decide, by decide⟩
 
-/-- ⚑ **AND THE GUARD IS IN THE SAME COMPONENT AS EVERY LANE IT GUARDS.** Nine binds, one guard —
-so the recursion carrier is not a bit sitting on its own island beside nine other bits. `WRAP_FS_PROVED`
+/-- ⚑ **AND THE GUARD IS IN THE SAME COMPONENT AS THE PROGRAM IT PINS** — one bind, nine vk lanes,
+each `guard·(vkᵢ − pinᵢ)` an emitted polynomial joining the carrier to a program column, so the
+recursion carrier is not a bit sitting on its own island. This survives the 2026-08-08 instrument
+fix because the vk half of a seam IS emitted; only the commit half was declaration. `WRAP_FS_PROVED`
 is NOT PI-bound (a carrier a verifier could set from outside the proof would be no carrier), which is
 why it never appears in the decorative census at all. -/
 theorem minaVerify_recursion_guard_is_joined_and_hidden :
@@ -614,37 +674,57 @@ theorem minaVerify_anchor_height_shares_no_constraint_with_the_hash :
         col ∈ relatedCols c → LightClientMinaAir.ANCHOR_H ∉ relatedCols c) := by
   decide
 
-/-- ⚑⚑ **THE MINA LINK RUNG: NO DECORATIVE ANCHORS.** All twenty PI-bound columns are joined — the
-nine anchor lanes to the nine own-hash lanes by the per-lane continuity window gates, the anchor
-height to the first row's height, and the segment length to the `IS_REAL` accumulator.
+/-- ⚑⚑ **THE MINA LINK RUNG: THE CHAIN'S TWENTY ARE JOINED; THE BODY FLAG DAY'S SEVENTEEN ARE
+DECLARED, NOT JOINED.** The original twenty PI-bound columns remain genuinely connected — the nine
+anchor lanes to the nine own-hash lanes by the per-lane continuity window gates, the anchor height
+to the first row's height, the segment length to the `IS_REAL` accumulator. **The seventeen that
+arrived on the 2026-08-08 publication flag day — nine `BODYHASH` lanes and eight `BODY_ACC` lanes —
+appear in no emitted polynomial beside another column.** Both seams that name them carry
+`bound := none` and a `.const 1` guard, so their emitted content is nine one-column vk forcings
+each; the commit vectors are declarations.
 
-⚠ **TRIPWIRE IN THE OTHER DIRECTION.** This one reds if someone DISCONNECTS a lane — the shape
-`broken_link_refused` exists to catch, stated here about the emitted object rather than about one
-witness pair. -/
+⚑⚑ **AND THESE SEVENTEEN ARE THE ONE PORT SURFACE IN THIS FILE WITH NO PRODUCTION COVER.** The
+verify rung's three commitment blocks have named welds the node RUNS (REFUSAL 4/13/15). These
+seventeen have `turn`'s slot constants (`LINK_PI_BODYHASH_BASE`, `LINK_PI_BODY_ACC_BASE`), a folded
+body-hash chain (`mina_body_hash_chain_fold.rs`) — and NO comparison between the two that any node
+performs. `MinaSeams.the_link_body_ports_have_no_registered_cover` counts exactly that, as a term
+that shrinks the day the weld lands. Until it does, this literal is the loud version of "publication
+buys reachability, not the weld". -/
 theorem minaLink_decorative_anchors :
-    decorativeAnchors LightClientMinaLinkAir.minaLinkDesc = [] := by
+    decorativeAnchors LightClientMinaLinkAir.minaLinkDesc
+      = [22, 23, 24, 25, 26, 27, 28, 29, 30, 40, 41, 42, 43, 44, 45, 46, 47] := by
   decide
 
-/-- ⚑⚑⚑ **THE POSITIVE STATEMENT, AND IT IS THE ONE THIS FILE EXISTED TO BE ABLE TO MAKE.**
+/-- ⚑ **THE TWENTY CHAIN COLUMNS STAY JOINED — the flip side, so a disconnect cannot hide in the
+literal above.** This is the residue of the retired `minaLink_decorative_anchors = []`: the anchor
+nonet, the own-hash nonet at the tip pin, the height and the count are all still related by real
+window gates, and this reds if someone disconnects a lane — the shape `broken_link_refused` exists
+to catch, stated on the emitted object. -/
+theorem minaLink_chain_columns_are_joined :
+    ∀ col ∈ (List.range 9).flatMap (fun j => [j, 9 + j]) ++ [18, 20, 21],
+      isRelated LightClientMinaLinkAir.minaLinkDesc col = true := by
+  decide
 
-The header of this module says every theorem in it is *"a TRIPWIRE meant to go red"*, and names the
-change that would do it: *"the in-AIR-crypto iteration (… `LINK_OK` from the Poseidon chain) is
-exactly the change that puts an anchor beside another column in a gate."* That change landed on
-2026-08-06 and this is what it looks like measured rather than described: the segment descriptor's
-`proof_bind` names, in ONE constraint, all thirty-six columns of the row's parent, body hash, own
-hash and attested program. Nine `PARENT`, nine `OWNHASH`, nine `BODYHASH`, nine `HASH_VK`, one
-component.
+/-- ⚑⚑⚑ **THE STATE-HASH SEAM, AT THE RESOLUTION THE EMISSION SUPPORTS: IT DECLARES THE PREIMAGE
+AND THE IMAGE; IT EMITS ONLY THE PROGRAM PIN.**
 
-⚠ **AND THE FILE'S STANDING CAVEAT IS NOT REPEALED BY IT.** Connectivity is CO-OCCURRENCE, not
-derivation: what this measures is that the columns share a constraint. What upgrades it to
-derivation is the seam's off-row half plus the sub-program's own denotation
-(`LightClientMinaLinkAir.seam_derives_the_own_hash`, which takes `StateHashEngine` as a named
-hypothesis). A green here is necessary and not sufficient, and saying which is the job. -/
-theorem minaLink_the_seam_joins_the_preimage_to_the_image :
-    ∀ col ∈ (List.range 9).flatMap (fun j => [j, 9 + j, 22 + j, 31 + j]),
+Until 2026-08-08 this theorem read `relatedCols` off constraint 51 and concluded the seam *"names,
+in ONE constraint, all thirty-six columns … one component"* — the instrument's reading of a
+DECLARATION. The emission: the seam's guard is `.const 1` (booleanity trivially zero), its `vkPin`
+emits nine ONE-COLUMN forcings `1·(HASH_VK i − pin_i)`, and its 54-lane commit vector —
+`salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` — enters **no polynomial at all** (`bound := none`,
+`descriptor_ir2.rs`'s `if let Some(b) = &p.bound` arm). So in emitted algebra the seam pins a
+program identity and declares a per-row claim; the derivation `OWNHASH = Poseidon_salt(PARENT,
+BODYHASH)` lives in the absorb sub-proofs the declaration names, welded today by TESTS
+(`mina_statehash_seam_proves.rs`), by no node. Both facts below are `decide`d on the served bytes:
+the declaration names all thirty-six columns; the emission relates none of them. -/
+theorem minaLink_state_hash_seam_declares_the_row_and_emits_only_the_program_pin :
+    (∀ col ∈ (List.range 9).flatMap (fun j => [j, 9 + j, 22 + j, 31 + j]),
       col ∈ (((LightClientMinaLinkAir.minaLinkDesc.constraints.drop 51).take 1).flatMap
-        relatedCols) := by
-  decide
+        declaredCols)) ∧
+    (((LightClientMinaLinkAir.minaLinkDesc.constraints.drop 51).take 1).flatMap
+        relatedCols) = [] := by
+  refine ⟨by decide, by decide⟩
 
 /-- ⚑⚑⚑ **REPORT: THE RE-AIMED TRIPWIRE FIRED, AND THAT IS THE MECHANISM WORKING.**
 
@@ -669,14 +749,16 @@ slots 29..36), and both nonets are named by the body-chain `proofBind` whose `vk
 `dregg-pasta-fp-chainlink::v1`'s fingerprint. A recursion fold reads `air_public_targets`, so the
 weld to the chain's root is now REACHABLE — which is precisely what the unpublished shape forbade.
 
-⚠ **AND WHAT IS STILL OWED, in the same breath.** Publication is reachability, not the weld: until a
-fold `cb.connect`s these 17 slots to the chain root's claim lanes, the tie is an EXECUTOR
-comparison. Connectivity is CO-OCCURRENCE, not derivation — this file's standing caveat, and it
-binds here too. -/
-theorem minaLink_body_hash_is_published_and_joined :
+⚠ **AND WHAT IS STILL OWED, in the same breath — re-measured 2026-08-08 with the instrument
+fixed.** This theorem asserted `isRelated = true` off the seam's DECLARATION; the emission relates
+none of these columns (`bound := none`, guard `.const 1`). Publication is reachability, not the
+weld, and there is no weld: no fold `cb.connect`s these 17 slots to the chain root's claim lanes
+and no executor compares them. The port surface is measured decorative until one exists
+(`minaLink_decorative_anchors`, `MinaSeams.the_link_body_ports_have_no_registered_cover`). -/
+theorem minaLink_body_hash_is_published_and_declared_not_joined :
     ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
       isRead LightClientMinaLinkAir.minaLinkDesc col = true ∧
-      isRelated LightClientMinaLinkAir.minaLinkDesc col = true ∧
+      isRelated LightClientMinaLinkAir.minaLinkDesc col = false ∧
       isPiBound LightClientMinaLinkAir.minaLinkDesc col = true := by
   decide
 
@@ -689,28 +771,41 @@ theorem the_unpublished_body_hash_claim_is_now_refuted :
     ¬ (∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
         isPiBound LightClientMinaLinkAir.minaLinkDesc col = false) := by decide
 
-/-- ⚑⚑ **AND THE ACCUMULATOR IS PUBLISHED AND JOINED TOO — which is the anti-vacuity half.**
-`LightClientMinaLinkAir` §2c: *"a bind of `(salt, BODYHASH)` alone would be VACUOUS … `perm` is a
-permutation, so 25 links from a fixed head with free absorbed inputs reach every field element.
-Naming the stream is the whole content."* These eight columns ARE the stream, ordered — the
-`seg_poseidon_commit` fold the chain's 25-leaf recursion publishes as `transcript_acc`.
+/-- ⚑⚑ **AND THE ACCUMULATOR IS PUBLISHED AND DECLARED TOO — which is the anti-vacuity half of the
+DECLARATION.** `LightClientMinaLinkAir` §2c: *"a bind of `(salt, BODYHASH)` alone would be VACUOUS
+… `perm` is a permutation, so 25 links from a fixed head with free absorbed inputs reach every
+field element. Naming the stream is the whole content."* These eight columns ARE the stream,
+ordered — the `seg_poseidon_commit` fold the chain's 25-leaf recursion publishes as
+`transcript_acc`. Re-measured 2026-08-08: named by the seam, forced by nothing emitted — the same
+port state as the `BODYHASH` nonet, and the same absent weld.
 
-⚠ **TRIPWIRE, AND SAY WHAT WOULD FIRE IT:** this reds the day the accumulator leaves the seam's
-commitment — which is exactly the shape a "simplification" back to `(salt, BODYHASH)` would take. -/
-theorem minaLink_body_chain_accumulator_is_published_and_joined :
+⚠ **AND THE EIGHT ARE NOT MERELY UNJOINED — THEY ARE UNREAD.** The `BODYHASH` nonet at least
+carries per-lane width lookups; the accumulator lanes appear in NO constraint of any kind — not a
+lookup, not a gate — the exact shape `eth_anchors_are_unread` names. The instrument fix surfaced
+this: the old walker scored them "related" through the seam's declaration, which also hid that
+nothing so much as bounds their width. A prover may write any field element into each.
+
+⚠ **TRIPWIRE, AND SAY WHAT WOULD FIRE IT:** `minaLink_body_hash_is_named_by_the_body_chain_seam`
+below reds the day the accumulator leaves the seam's commitment — exactly the shape a
+"simplification" back to `(salt, BODYHASH)` would take; THIS one reds the day a constraint first
+reads an accumulator lane, at which point say what reads it and shrink. -/
+theorem minaLink_body_chain_accumulator_is_published_and_declared :
     ∀ col ∈ [40, 41, 42, 43, 44, 45, 46, 47],
-      isRead LightClientMinaLinkAir.minaLinkDesc col = true ∧
-      isRelated LightClientMinaLinkAir.minaLinkDesc col = true ∧
+      isRead LightClientMinaLinkAir.minaLinkDesc col = false ∧
+      isRelated LightClientMinaLinkAir.minaLinkDesc col = false ∧
       isPiBound LightClientMinaLinkAir.minaLinkDesc col = true := by
   decide
 
-/-- ⚑ **THE POSITIVE HALF, STATED SO THE GAIN IS A TERM.** The nine body-hash columns and the eight
+/-- ⚑ **THE DECLARATION, STATED SO ITS SHAPE IS A TERM.** The nine body-hash columns and the eight
 accumulator columns are named by the SAME `proof_bind` — the body-chain seam — so what a fold would
-connect to and what the seam attests are one component. -/
+connect to and what the seam attests are one declared surface. `declaredCols`, and the name says
+so: no emitted polynomial relates any of these seventeen
+(`minaLink_state_hash_seam_declares_the_row_and_emits_only_the_program_pin` is the same fact for
+the sibling seam). -/
 theorem minaLink_body_hash_is_named_by_the_body_chain_seam :
     ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30, 40, 41, 42, 43, 44, 45, 46, 47],
       col ∈ (((LightClientMinaLinkAir.minaLinkDesc.constraints.drop 61).take 1).flatMap
-        relatedCols) := by
+        declaredCols) := by
   decide
 
 /-- …and the count is exactly the thirty-seven the descriptor declares, so the `[]` above is a
@@ -779,37 +874,38 @@ theorem solStakeFold_denominator_shares_a_constraint_with_the_row_stakes :
 /-! ## §3 — the census, as one number. -/
 
 /-- ⚑ **THE ANSWER TO "HOW MANY OF OUR LIGHT CLIENTS RELATE THEIR CLAIMED BLOCK TO THE EVIDENCE THEY
-CHECK?"** Fifty-three decorative anchors across the five VERIFY descriptors; zero across the LINK rung
-and the FOLD rung. **Three of seven now, and two of them are VERIFY descriptors.**
+CHECK?"** Eighty decorative anchors across the five VERIFY descriptors; seventeen on the LINK rung;
+zero on the FOLD rung.
 
-⚑ **THE SEQUENCE, BECAUSE A SINGLE NUMBER IS A BAD SUMMARY AND THIS FILE HAS SAID SO THREE TIMES.**
-`63 → 71 → 62 → 53`. The rise to 71 was Solana's `ANCHOR_ROOT` widening from ONE 31-bit column standing
-for a 256-bit SHA-256 root to nine radix-`2^31` limbs: eight more published columns, none of them read.
-The fall to 62 is those nine limbs being DELETED and replaced by the stake-table fold's eight `.last`
-output lanes, which are in the same component as the rows they commit to. **Column count moved the
-same direction for "we widened a root to bind it properly" and for "we published something and joined
-it to nothing"; it moved the RIGHT direction only when the root became derived.** Anyone tightening
-this gate should count BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the decorative SHARE, not columns.
+⚑ **THE SEQUENCE, BECAUSE A SINGLE NUMBER IS A BAD SUMMARY AND THIS FILE HAS SAID SO FOUR TIMES.**
+`63 → 71 → 62 → 53 → 80 (+17)`. The rise to 71 was Solana's `ANCHOR_ROOT` widening from ONE 31-bit
+column standing for a 256-bit SHA-256 root to nine radix-`2^31` limbs: eight more published columns,
+none of them read. The fall to 62 is those nine limbs being DELETED and replaced by the stake-table
+fold's eight `.last` output lanes, which are in the same component as the rows they commit to.
 
-⚑ **AND THE FALL TO 53 IS THE FIRST ONE THIS METRIC MEASURES HONESTLY, WHICH IS WHY IT IS WORTH THE
-SENTENCE.** Mina's nine `TIP_STATE` lanes joined a `proofBind` and **no public input was added or
-removed** — the descriptor's statement is the same thirty values it was this morning, and nine of them
-stopped being carried by nothing. Denominator fixed, numerator down: the one shape where the column
-count and the meaning cannot disagree. Contrast the `62 → 71` step, where the count rose *because* a
-root was being bound properly.
+⚑⚑ **AND THE RISE TO 80 IS THE INSTRUMENT CONFESSING, NOT THE DESCRIPTORS REGRESSING — 2026-08-08.**
+Not one descriptor byte moved. The falls to 53 and to 0-on-the-link were measured by a walker that
+unioned a `proofBind`'s `commit` DECLARATION into the connectivity graph while `bound := none`
+seams emit no polynomial over those lanes — declarations quoted as gate coverage. Emission-faithful,
+the tip, the two sub-proof-commitment blocks and the link's seventeen body columns return to the
+decorative set, WHERE THEY BELONG: they are PORT SURFACES. Mina-verify's thirty-six split as
+covered ports (anchor + tip: the emitted `headTipSeam`; the chainlink block: REFUSAL 4, called and
+tested) plus one UNCOVERED (the conjunction block — REFUSAL 15 is dead code,
+`MinaSeams.the_conjunction_commitment_port_has_no_live_weld`); the link's seventeen are the other
+uncovered surface, counted by `MinaSeams.the_link_body_ports_have_no_registered_cover`.
 
-⚠ Read `minaLink_decorative_anchors`' own caveat before reading Solana's `[69 … 78]` as SOUND. Zero
-decorative anchors is the floor, not the ceiling, and Solana is not at zero: its bank root and slot
-are still carried by no gate, its `ED_OK` is still a witnessed carrier and its numerator is still a
-witnessed projection. What changed is that the DENOMINATOR and the TABLE it is a total of are now
-derived from rows the same proof commits to. -/
-theorem the_five_verify_descriptors_carry_fifty_three_decorative_anchors :
+⚠ Anyone tightening this gate should count BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the decorative
+SHARE, not columns — and must never again let a count of DECLARATIONS stand in for a count of
+CONSTRAINTS. Solana's `[69 … 78]` caveat stands: zero decorative anchors is the floor, not the
+ceiling; its bank root and slot are still carried by no gate, `ED_OK` is still a witnessed carrier
+and its numerator a witnessed projection. -/
+theorem the_five_verify_descriptors_carry_eighty_decorative_anchors :
     (decorativeAnchors LightClientEthAir.ethLcVerifyDesc).length
       + (decorativeAnchors LightClientTendermintAir.tmLcVerifyDesc).length
       + (decorativeAnchors LightClientMidnightAir.midLcVerifyDesc).length
       + (decorativeAnchors LightClientSolanaAir.solLcVerifyDesc).length
-      + (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 53 ∧
-    (decorativeAnchors LightClientMinaLinkAir.minaLinkDesc).length = 0 := by
+      + (decorativeAnchors LightClientMinaAir.minaLcVerifyDesc).length = 80 ∧
+    (decorativeAnchors LightClientMinaLinkAir.minaLinkDesc).length = 17 := by
   decide
 
 /-! ## §4 — axiom hygiene. Named theorems, `#assert_axioms`, no `#guard`. -/
@@ -828,24 +924,26 @@ theorem the_five_verify_descriptors_carry_fifty_three_decorative_anchors :
 #assert_axioms sol_published_anchor_root_is_not_decorative
 #assert_axioms sol_anchor_root_shares_a_constraint_with_the_stake_rows
 #assert_axioms minaVerify_decorative_anchors
-#assert_axioms minaVerify_subproof_commitment_is_published_and_joined
+#assert_axioms minaVerify_subproof_commitment_is_published_and_declared
+#assert_axioms minaVerify_conjunction_commitment_is_published_and_declared
 #assert_axioms minaVerify_recursion_guard_is_joined_and_hidden
-#assert_axioms minaVerify_anchor_lanes_are_read_but_never_joined
-#assert_axioms minaVerify_tip_lanes_are_published_and_joined
-#assert_axioms minaVerify_tip_shares_a_constraint_with_the_pinned_segment_program
+#assert_axioms minaVerify_state_lanes_are_read_but_never_joined
+#assert_axioms minaVerify_tip_lanes_are_published_and_declared
+#assert_axioms minaVerify_link_seam_forces_the_program_pin_not_the_tip
 #assert_axioms minaVerify_anchor_height_is_published
 #assert_axioms minaVerify_anchor_height_shares_no_constraint_with_the_hash
 #assert_axioms minaLink_decorative_anchors
-#assert_axioms minaLink_the_seam_joins_the_preimage_to_the_image
-#assert_axioms minaLink_body_hash_is_published_and_joined
+#assert_axioms minaLink_chain_columns_are_joined
+#assert_axioms minaLink_state_hash_seam_declares_the_row_and_emits_only_the_program_pin
+#assert_axioms minaLink_body_hash_is_published_and_declared_not_joined
 #assert_axioms the_unpublished_body_hash_claim_is_now_refuted
-#assert_axioms minaLink_body_chain_accumulator_is_published_and_joined
+#assert_axioms minaLink_body_chain_accumulator_is_published_and_declared
 #assert_axioms minaLink_body_hash_is_named_by_the_body_chain_seam
 #assert_axioms minaLink_has_thirty_seven_pi_bound_columns
 #assert_axioms solStakeFold_decorative_anchors
 #assert_axioms solStakeFold_has_twelve_pi_bound_columns
 #assert_axioms solStakeFold_root_shares_a_constraint_with_the_stake_rows
 #assert_axioms solStakeFold_denominator_shares_a_constraint_with_the_row_stakes
-#assert_axioms the_five_verify_descriptors_carry_fifty_three_decorative_anchors
+#assert_axioms the_five_verify_descriptors_carry_eighty_decorative_anchors
 
 end Dregg2.Circuit.Emit.LightClientAnchorConnectivity

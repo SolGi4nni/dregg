@@ -186,20 +186,45 @@ def analyze(d: dict) -> dict:
             pi.setdefault(c["col"], []).append((c["pi_index"], c["row"]))
         elif t == "transition":
             relate({c["hi"], c["lo"]}, "transition", i)
-        elif t in ("mem_op", "map_op", "umem_op", "proof_bind"):
-            # ⚑ EXPRESSION SEQUENCES COUNT, NOT JUST SCALAR SLOTS (fixed 2026-08-05). These four
-            # tags carry their operands as bare `values()`, and until today this walked only the
-            # values that are THEMSELVES an expression dict. `map_op`'s `root`/`new_root` were
-            # already 8-element LISTS, and on 2026-08-05 `proof_bind` widened its `commit`/`vk`/
-            # `bound` from one expression to a length-prefixed lane sequence — so every lane of
-            # every such operand was invisible here, and the columns they tie read as RELATED TO
-            # NOTHING. Measured the hour the widening landed: `dregg-mina-lightclient-verify::v1`
-            # jumped 18 -> 27 decorative anchors with no anchor having changed — the nine sub-proof
-            # commitment lanes are bound by ONE eight-lane `proof_bind` where nine narrow ones stood,
-            # and this loop could not see the new shape. ⚠ The `else` below refuses an unknown TAG;
-            # nothing refused a known tag whose PAYLOAD grew a sequence, which is the quieter half of
-            # the same hole. `vk_pin` is a list of INTEGERS (a pinned digest, not columns) and is
-            # skipped by the `isinstance(dict)` test on each item, deliberately.
+        elif t == "proof_bind":
+            # ⚑⚑ EMISSION-FAITHFUL, one relate() per EMITTED POLYNOMIAL (fixed 2026-08-08; the
+            # 2026-08-05 fix below this arm made the lane SEQUENCES visible, and then over-read
+            # them). `descriptor_ir2.rs`'s `ProofBind` arm emits:
+            #
+            #     guard*(guard - 1)                     always     -- the guard's columns only
+            #     guard*(vk_i - vk_pin_i)   per lane,   iff vk_pin -- guard  U  vk_i
+            #     guard*(commit_i - bound_i) per lane,  iff bound  -- guard  U  commit_i  U  bound_i
+            #
+            # A `bound := none` seam emits NOTHING over its `commit` lanes, so a walker that
+            # related the whole declaration scored columns that appear in no emitted constraint as
+            # joined — and its 18 -> 9 was quoted as gate coverage. Measured the hour THIS fix
+            # landed: `dregg-mina-lightclient-verify::v1` 9 -> 36 decorative anchors (the tip and
+            # both sub-proof-commitment nonets return), `dregg-mina-lightclient-link::v1` 0 -> 17
+            # (the body flag-day columns), no descriptor byte having moved. The Lean twin is
+            # `LightClientAnchorConnectivity.relatedCols`' `.proofBind` arm, same day; the
+            # DECLARATION reading lives there as `declaredCols`, under a name that says so.
+            # `vk_pin` stays a list of INTEGERS (a pinned digest, not columns), never related.
+            g = set()
+            expr_cols(c["guard"], g)
+            relate(g, "proof_bind:guard", i)  # relate() drops arity-1 sets itself
+            if c.get("vk_pin") is not None:
+                for lane in c["vk"]:
+                    lane_cols = set(g)
+                    expr_cols(lane, lane_cols)
+                    relate(lane_cols, "proof_bind:vk_pin", i)
+            if c.get("bound") is not None:
+                for commit_lane, bound_lane in zip(c["commit"], c["bound"]):
+                    lane_cols = set(g)
+                    expr_cols(commit_lane, lane_cols)
+                    expr_cols(bound_lane, lane_cols)
+                    relate(lane_cols, "proof_bind:bound", i)
+        elif t in ("mem_op", "map_op", "umem_op"):
+            # ⚑ EXPRESSION SEQUENCES COUNT, NOT JUST SCALAR SLOTS (fixed 2026-08-05). These
+            # tags carry their operands as bare `values()`, and until 2026-08-05 this walked only
+            # the values that are THEMSELVES an expression dict — `map_op`'s `root`/`new_root` are
+            # 8-element LISTS and every lane was invisible. ⚠ The `else` below refuses an unknown
+            # TAG; nothing refused a known tag whose PAYLOAD grew a sequence, which is the quieter
+            # half of the same hole.
             cols = set()
             for v in c.values():
                 if isinstance(v, dict) and "t" in v:

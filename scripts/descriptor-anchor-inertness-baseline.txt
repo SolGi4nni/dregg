@@ -179,7 +179,22 @@
 11	dregg-eth-lightclient-verify::v1
 8	dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1
 12	dregg-midnight-lightclient-verify::v1
-9	dregg-mina-lightclient-verify::v1
+# ⚑⚑ 2026-08-08 — TWO MINA ROWS MOVED UP AND ONE APPEARED, WITH NO DESCRIPTOR BYTE HAVING CHANGED:
+# THE INSTRUMENT CONFESSED, NOT THE DESCRIPTORS. The walker's `proof_bind` arm related the whole
+# DECLARATION (`guard U commit U vk U bound`) while `descriptor_ir2.rs` emits polynomials over
+# `commit` only under a `bound` and over `vk` only under a `vk_pin` — and every served seam is
+# `bound := none`. So a `9` here meant "nine anchors whose ties are emitted constraints, plus
+# twenty-seven whose tie was a declaration scored as a join". Emission-faithful (one relate() per
+# emitted polynomial): `dregg-mina-lightclient-verify::v1` 9 -> 36 (the tip nonet and BOTH
+# sub-proof-commitment nonets return — they are PORT surfaces, declared and covered/counted in
+# `MinaSeams` §8b: tip+anchor by the emitted `headTipSeam`, the chainlink block by REFUSAL 4;
+# ⚠ the conjunction block's REFUSAL 15 is DEAD CODE and counted uncovered), and
+# `dregg-mina-lightclient-link::v1` 0 -> 17 (nine `BODYHASH` + eight `BODY_ACC`, published on the
+# 08-08 flag day and welded by NOTHING; the eight acc lanes are UNREAD — not even a width lookup).
+# The Lean twin moved the same day: `LightClientAnchorConnectivity` 53 -> 80 with the same split.
+# These rows may only SHRINK from here, and the shrink must name the weld that landed.
+36	dregg-mina-lightclient-verify::v1
+17	dregg-mina-lightclient-link::v1
 192	dregg-pasta-msm-bucketed-pallas-n59b255-c2-w192::v1
 19	dregg-presentation-freshness::summary-v1
 1	dregg-shielded-spend-pinned-root::v1
