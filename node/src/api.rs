@@ -11432,8 +11432,11 @@ mod tests {
                 // circuit equality. An output is now a Poseidon2 note commitment plus the
                 // Lean-emitted `dregg-shielded-transfer-value-link::v1` proof binding it to the
                 // spent note's carrier.
+                // ⚑ The link proof is PER-TRANSFER, not per-output: two per-output proofs
+                // would each claim the whole input (`o1 = v` AND `o2 = v`), a double-mint.
                 inputs: vec![],
                 outputs: vec![],
+                link_proof: vec![],
             },
         },
 
