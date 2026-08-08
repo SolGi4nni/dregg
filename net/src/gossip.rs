@@ -173,6 +173,94 @@ fn note_gossip_stream_rejected(peer: &str, reason: &'static str) {
     .increment(1);
 }
 
+// ─── The narrow join channel ───────────────────────────────────────────────
+
+/// Upper bound on a narrow-channel join-request body.
+///
+/// A join request carries the candidate's ML-DSA-65 public key (1952 B) and an
+/// ML-DSA proof of possession (3309 B) plus a small header — under 6 KiB. 8 KiB
+/// is comfortable for that shape and far too small to make an unauthenticated
+/// source useful as a memory-pressure or amplification vector. Enforced BEFORE
+/// any signature work, so an oversize body costs a parse and nothing more.
+pub const MAX_JOIN_REQUEST_BODY: usize = 8 * 1024;
+
+/// Join requests ADMITTED from one remote IP per [`JOIN_REQUEST_WINDOW`].
+///
+/// A candidate re-sends on a retry cadence until it is ratified, so the budget
+/// must exceed one — but a join is a rare operator-scale event, not traffic.
+const JOIN_REQUESTS_PER_IP_PER_WINDOW: u32 = 6;
+
+/// The join-request rate-limit window.
+const JOIN_REQUEST_WINDOW: Duration = Duration::from_secs(60);
+
+/// Hard cap on distinct IPs the join gate tracks. The bookkeeping itself must
+/// not become the memory-exhaustion vector the gate exists to prevent: past
+/// this many live entries the gate refuses new IPs until the window rolls.
+const JOIN_GATE_MAX_TRACKED_IPS: usize = 1024;
+
+/// A join request that passed the narrow channel's admission checks.
+///
+/// Receiving one means EXACTLY this much: the holder of `candidate_public_key`
+/// signed `body`, and `blake3(candidate_public_key)` is the `sender` id the
+/// envelope carried. It is NOT a membership claim, NOT an authorization, and the
+/// key is NOT registered anywhere. `body` is opaque to the gossip layer.
+#[derive(Debug, Clone)]
+pub struct InboundJoinRequest {
+    /// The transport address the request arrived from.
+    pub from: SocketAddr,
+    /// The candidate's Ed25519 federation public key, PROVEN to be the signer.
+    pub candidate_public_key: PublicKey,
+    /// The application-level request bytes. Opaque here; validated by the node.
+    pub body: Vec<u8>,
+}
+
+/// Per-IP fixed-window budget for the narrow join channel.
+struct JoinGate {
+    windows: tokio::sync::Mutex<HashMap<std::net::IpAddr, (Instant, u32)>>,
+}
+
+impl JoinGate {
+    fn new() -> Self {
+        Self {
+            windows: tokio::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Spend one admission for `ip`, or refuse. Expired windows are reclaimed on
+    /// the way through, so the map stays proportional to ACTIVE sources.
+    async fn admit(&self, ip: std::net::IpAddr) -> bool {
+        let now = Instant::now();
+        let mut w = self.windows.lock().await;
+        w.retain(|_, (started, _)| now.duration_since(*started) < JOIN_REQUEST_WINDOW);
+        match w.get_mut(&ip) {
+            Some((_, used)) => {
+                if *used >= JOIN_REQUESTS_PER_IP_PER_WINDOW {
+                    return false;
+                }
+                *used += 1;
+                true
+            }
+            None => {
+                if w.len() >= JOIN_GATE_MAX_TRACKED_IPS {
+                    return false;
+                }
+                w.insert(ip, (now, 1));
+                true
+            }
+        }
+    }
+}
+
+/// Record one narrow-channel join-request outcome.
+///
+/// `dregg_gossip_join_request_total{outcome}` is the metric that makes the join
+/// path OBSERVABLE from the committee side. Before this, the only committee-side
+/// signal a candidate existed at all was an `unknown_sender` WARN flood, which
+/// says "something was refused" and never "someone is trying to join".
+fn note_join_request(outcome: &'static str) {
+    metrics::counter!("dregg_gossip_join_request_total", "outcome" => outcome).increment(1);
+}
+
 // ─── Dandelion++ constants ─────────────────────────────────────────────────
 
 /// Base probability of continuing stem phase at each hop.
@@ -335,6 +423,14 @@ pub struct GossipNetwork {
     /// not supply a routable bind address (e.g. `0.0.0.0`), in which case we cannot
     /// advertise a dialable endpoint and the mesh falls back to manual peers.
     advertise_addr: Arc<RwLock<Option<SocketAddr>>>,
+    /// Per-IP budget for the narrow join channel (see [`JoinGate`]).
+    join_gate: Arc<JoinGate>,
+    /// Sender half of the dedicated narrow-join-channel delivery path. Join
+    /// requests NEVER travel on a topic stream: they cannot, since an
+    /// unregistered key has no topic and no spanning-tree slot.
+    join_requests_tx: mpsc::UnboundedSender<InboundJoinRequest>,
+    /// Receiver half, handed out exactly once by [`Self::take_join_requests`].
+    join_requests_rx: Arc<std::sync::Mutex<Option<mpsc::UnboundedReceiver<InboundJoinRequest>>>>,
 }
 
 /// A bounded deduplication set with time-based expiry.
@@ -929,6 +1025,33 @@ enum GossipEnvelope {
         msg_hash: MessageHash,
         payload: Vec<u8>,
     },
+    /// THE NARROW JOIN CHANNEL — the ONE envelope kind an UNREGISTERED key may
+    /// send, and the only thing that breaks the federation-growth deadlock.
+    ///
+    /// Every other envelope kind requires `sender` to resolve in `peer_keys`,
+    /// which is seeded from the genesis committee and extended only once a
+    /// candidate is already a member. That made the mesh a closed set: a
+    /// candidate's key was admitted only after it was a member, and it could
+    /// become a member only through a block the mesh refused.
+    ///
+    /// This variant is SELF-CERTIFYING and therefore needs no registry entry:
+    /// `candidate_public_key` is carried inline, and the receiver admits it only
+    /// when `blake3(candidate_public_key) == signed.sender` — the same
+    /// derivation the registry is keyed by — and the envelope's Ed25519
+    /// signature verifies under it. A sender can thus speak only for the
+    /// identity its own `sender` id commits to; it cannot borrow another's.
+    ///
+    /// ⚑ WHAT THIS DELIBERATELY DOES NOT DO. Admitting this envelope does NOT
+    /// register the key, join it to any topic, relay it, cache it, add it to a
+    /// spanning tree, or let it publish anything. `body` is opaque here: it is
+    /// handed to the application on a dedicated channel and NOTHING in the
+    /// gossip layer acts on it. The membership gate stays exactly as closed as
+    /// it was for every other message. The candidate's key enters `peer_keys`
+    /// only through `apply_committee_change`, as before — after ratification.
+    JoinRequest {
+        candidate_public_key: PublicKey,
+        body: Vec<u8>,
+    },
     /// AUTHENTICATED SELF-ADVERTISEMENT (the self-forming-mesh substrate): the
     /// envelope signer asserts its OWN reachable listen address. Because the
     /// carrying [`SignedEnvelope`] is Ed25519-signed with the sender's key, the
@@ -1070,6 +1193,8 @@ impl GossipNetwork {
         let signing_key = Arc::new(signing_key);
         let peer_keys = Arc::new(RwLock::new(peer_keys));
         let advertise_addr: Arc<RwLock<Option<SocketAddr>>> = Arc::new(RwLock::new(None));
+        let join_gate = Arc::new(JoinGate::new());
+        let (join_requests_tx, join_requests_rx) = mpsc::unbounded_channel();
 
         let network = Self {
             node_id,
@@ -1080,6 +1205,9 @@ impl GossipNetwork {
             max_connections,
             peer_keys: peer_keys.clone(),
             advertise_addr: advertise_addr.clone(),
+            join_gate: join_gate.clone(),
+            join_requests_tx: join_requests_tx.clone(),
+            join_requests_rx: Arc::new(std::sync::Mutex::new(Some(join_requests_rx))),
         };
 
         // Spawn the forwarding task
@@ -1107,6 +1235,8 @@ impl GossipNetwork {
                 accept_node_id,
                 accept_max_conns,
                 accept_peer_keys,
+                join_gate,
+                join_requests_tx,
             )
             .await;
         });
@@ -1717,8 +1847,20 @@ impl GossipNetwork {
         let key = self.signing_key.clone();
         let node_id = self.node_id;
         let peer_keys = self.peer_keys.clone();
+        let join_gate = self.join_gate.clone();
+        let join_requests_tx = self.join_requests_tx.clone();
         tokio::spawn(async move {
-            Self::serve_connection(serve_conn, state, outgoing_tx, key, node_id, peer_keys).await;
+            Self::serve_connection(
+                serve_conn,
+                state,
+                outgoing_tx,
+                key,
+                node_id,
+                peer_keys,
+                join_gate,
+                join_requests_tx,
+            )
+            .await;
         });
 
         Ok(conn)
@@ -2006,6 +2148,8 @@ impl GossipNetwork {
         node_id: NodeId,
         max_connections: usize,
         peer_keys: Arc<RwLock<HashMap<NodeId, PublicKey>>>,
+        join_gate: Arc<JoinGate>,
+        join_requests_tx: mpsc::UnboundedSender<InboundJoinRequest>,
     ) {
         loop {
             let Some(incoming) = endpoint.accept().await else {
@@ -2036,6 +2180,8 @@ impl GossipNetwork {
             let key = signing_key.clone();
             let our_node_id = node_id;
             let peer_keys = peer_keys.clone();
+            let join_gate = join_gate.clone();
+            let join_requests_tx = join_requests_tx.clone();
             tokio::spawn(async move {
                 let Ok(conn) = incoming.await else { return };
                 let remote_addr = conn.remote_address();
@@ -2051,7 +2197,17 @@ impl GossipNetwork {
                     s.scoreboard.observe(remote_addr);
                 }
 
-                Self::serve_connection(conn, state, outgoing_tx, key, our_node_id, peer_keys).await;
+                Self::serve_connection(
+                    conn,
+                    state,
+                    outgoing_tx,
+                    key,
+                    our_node_id,
+                    peer_keys,
+                    join_gate,
+                    join_requests_tx,
+                )
+                .await;
             });
         }
     }
@@ -2075,6 +2231,8 @@ impl GossipNetwork {
         signing_key: Arc<SigningKey>,
         node_id: NodeId,
         peer_keys: Arc<RwLock<HashMap<NodeId, PublicKey>>>,
+        join_gate: Arc<JoinGate>,
+        join_requests_tx: mpsc::UnboundedSender<InboundJoinRequest>,
     ) {
         let remote_addr = conn.remote_address();
         // Per-connection inbound concurrency limiter. We process at most
@@ -2105,6 +2263,8 @@ impl GossipNetwork {
             let outgoing_tx = outgoing_tx.clone();
             let key = signing_key.clone();
             let peer_keys = peer_keys.clone();
+            let join_gate = join_gate.clone();
+            let join_requests_tx = join_requests_tx.clone();
             let our_node_id = node_id;
             tokio::spawn(async move {
                 // Release the processing slot when this stream handler completes.
@@ -2138,6 +2298,24 @@ impl GossipNetwork {
                     let sender_pk = match sender_pk {
                         Some(pk) => pk,
                         None => {
+                            // THE NARROW JOIN CHANNEL, and the ONLY thing an
+                            // unregistered key may do. Handled entirely inside
+                            // this call: it admits exactly one envelope kind, on
+                            // its own self-certifying proof, to a dedicated
+                            // application channel — no registry write, no topic,
+                            // no relay. Anything else falls through to the refusal
+                            // below, unchanged.
+                            if Self::try_admit_join_request(
+                                &signed,
+                                remote_addr,
+                                &join_gate,
+                                &join_requests_tx,
+                                &state,
+                            )
+                            .await
+                            {
+                                return;
+                            }
                             warn!(
                                 "Rejecting gossip envelope from {} — unknown sender {:?}",
                                 remote_addr,
@@ -2664,6 +2842,20 @@ impl GossipNetwork {
                 s.verified_addrs.insert(sender_id, addr);
                 trace!("recorded authenticated self-advertisement: peer -> {addr}");
             }
+            GossipEnvelope::JoinRequest { .. } => {
+                // The narrow channel exists for senders the registry does NOT
+                // know; it is consumed in `try_admit_join_request`, before this
+                // dispatch. Reaching here means a REGISTERED key sent one, i.e. a
+                // member asking to join a federation it is already in. Dropped:
+                // an already-member has the ordinary membership verbs, and
+                // honouring this would create a second, registry-authenticated
+                // entrance to the same handler with different provenance.
+                debug!(
+                    "dropping a JoinRequest from an already-registered sender {remote_addr} \
+                     (the narrow channel is for NON-members only)"
+                );
+                note_join_request("from_registered_sender");
+            }
         }
     }
 
@@ -2954,6 +3146,155 @@ impl GossipNetwork {
         }
     }
 
+    /// Take the narrow join channel's receiving half. Succeeds exactly once per
+    /// network; every later call returns `None` (there is one consumer — the
+    /// node's membership loop — by construction).
+    pub fn take_join_requests(&self) -> Option<mpsc::UnboundedReceiver<InboundJoinRequest>> {
+        self.join_requests_rx.lock().ok()?.take()
+    }
+
+    /// Try to admit ONE envelope from a sender that is NOT in the peer registry.
+    ///
+    /// Returns `true` when this function has fully disposed of the envelope
+    /// (admitted OR refused with its own named reason); `false` when the
+    /// envelope is not a join request at all, so the caller applies the ordinary
+    /// `unknown_sender` refusal.
+    ///
+    /// ⚑ THE ARGUMENT THAT THIS DOES NOT OPEN THE MESH. The check that replaces
+    /// the registry lookup is not weaker than it, it is a DIFFERENT question.
+    /// The registry answers "is this key authorized"; here we answer only "is
+    /// this envelope authored by the key it names" — and then hand the result to
+    /// the application, which still has to decide authorization with the full
+    /// committee rules. Concretely, an admitted request grants: nothing. No
+    /// registry entry, no topic membership, no eager/lazy slot, no cache entry,
+    /// no relay, no ability to publish. `body` is never interpreted here.
+    ///
+    /// Ordering is DoS-shaped: parse, size, then the single blake3 that proves
+    /// self-consistency, then the per-IP budget, and only then the Ed25519
+    /// verification — so garbage from an unauthenticated source never reaches
+    /// the expensive check, and a flood cannot buy more than the budget.
+    async fn try_admit_join_request(
+        signed: &SignedEnvelope,
+        remote_addr: SocketAddr,
+        gate: &JoinGate,
+        tx: &mpsc::UnboundedSender<InboundJoinRequest>,
+        state: &Arc<RwLock<GossipState>>,
+    ) -> bool {
+        // Decoding is not authorization: we parse untrusted bytes only to learn
+        // whether this is the one kind we are willing to look at.
+        let Some(GossipEnvelope::JoinRequest {
+            candidate_public_key,
+            body,
+        }) = signed.decode_inner()
+        else {
+            return false;
+        };
+        let peer = remote_addr.ip().to_string();
+
+        if body.len() > MAX_JOIN_REQUEST_BODY {
+            note_gossip_stream_rejected(&peer, "join_request_oversize");
+            note_join_request("oversize");
+            state
+                .write()
+                .await
+                .scoreboard
+                .penalize(remote_addr, Penalty::ProtocolViolation);
+            return true;
+        }
+
+        // SELF-CERTIFICATION. `sender` must be the SAME derivation the registry
+        // is keyed by, over the key carried inline. This is what lets us drop the
+        // registry lookup without making the channel anonymous: a sender can
+        // speak only for the identity its own id commits to.
+        if *blake3::hash(&candidate_public_key.0).as_bytes() != signed.sender {
+            note_gossip_stream_rejected(&peer, "join_request_id_mismatch");
+            note_join_request("id_mismatch");
+            state
+                .write()
+                .await
+                .scoreboard
+                .penalize(remote_addr, Penalty::ProtocolViolation);
+            return true;
+        }
+
+        if !gate.admit(remote_addr.ip()).await {
+            note_gossip_stream_rejected(&peer, "join_request_rate_limited");
+            note_join_request("rate_limited");
+            return true;
+        }
+
+        if !signed.verify(&candidate_public_key) {
+            note_gossip_stream_rejected(&peer, "join_request_bad_signature");
+            note_join_request("bad_signature");
+            state
+                .write()
+                .await
+                .scoreboard
+                .penalize(remote_addr, Penalty::ProtocolViolation);
+            return true;
+        }
+
+        info!(
+            from = %remote_addr,
+            candidate = %candidate_public_key.short_hex(),
+            body_len = body.len(),
+            "narrow join channel: admitted a self-certified join request from a \
+             NON-MEMBER (no key registered, no topic joined — the application \
+             decides admission)"
+        );
+        note_join_request("admitted");
+        // A dropped receiver means the node has no membership loop; the request
+        // is discarded, never queued unboundedly against a dead consumer.
+        let _ = tx.send(InboundJoinRequest {
+            from: remote_addr,
+            candidate_public_key,
+            body,
+        });
+        true
+    }
+
+    /// Send a signed join request to `targets` over the narrow channel.
+    ///
+    /// This is the CANDIDATE side. It carries our own public key inline so the
+    /// receiver can self-certify it without holding a registry entry for us —
+    /// which it cannot have, because we are not a member yet. That is the whole
+    /// point: this is the one message a non-member can get delivered.
+    pub async fn send_join_request(&self, body: Vec<u8>, targets: &[SocketAddr]) -> usize {
+        if body.len() > MAX_JOIN_REQUEST_BODY {
+            warn!(
+                body_len = body.len(),
+                max = MAX_JOIN_REQUEST_BODY,
+                "refusing to send an oversize join request (every receiver would drop it)"
+            );
+            return 0;
+        }
+        let live: Vec<SocketAddr> = {
+            let s = self.state.read().await;
+            targets
+                .iter()
+                .copied()
+                .filter(|a| {
+                    s.peers
+                        .get(a)
+                        .is_some_and(|links| links.iter().any(|c| c.close_reason().is_none()))
+                })
+                .collect()
+        };
+        if live.is_empty() {
+            return 0;
+        }
+        let envelope = GossipEnvelope::JoinRequest {
+            candidate_public_key: self.signing_key.public_key(),
+            body,
+        };
+        let Some(bytes) = Self::sign_envelope(&envelope, self.node_id, &self.signing_key) else {
+            warn!("join-request envelope serialization failed");
+            return 0;
+        };
+        Self::send_to_peers(&bytes, &live, &self.state).await;
+        live.len()
+    }
+
     /// Get our node ID.
     pub fn node_id(&self) -> NodeId {
         self.node_id
@@ -2998,6 +3339,230 @@ async fn read_signed_envelope(recv: &mut RecvStream) -> Result<SignedEnvelope, S
 /// Derive a deterministic TopicId from a human-readable topic name.
 pub fn topic_id_from_name(name: &str) -> TopicId {
     *blake3::hash(name.as_bytes()).as_bytes()
+}
+
+#[cfg(test)]
+mod narrow_join_channel_tests {
+    use super::*;
+    use dregg_types::SigningKey;
+
+    /// Build a real `SignedEnvelope` the way the wire does, with an OVERRIDABLE
+    /// `sender` id so a test can construct the exact forgery it wants to see
+    /// refused. `sender = None` means "derive it honestly".
+    fn signed_join_request(
+        signer: &SigningKey,
+        sender_override: Option<NodeId>,
+        inline_key: PublicKey,
+        body: Vec<u8>,
+    ) -> SignedEnvelope {
+        let envelope = GossipEnvelope::JoinRequest {
+            candidate_public_key: inline_key,
+            body,
+        };
+        let sender =
+            sender_override.unwrap_or_else(|| *blake3::hash(&signer.public_key().0).as_bytes());
+        SignedEnvelope::sign(&envelope, sender, signer).expect("envelope signs")
+    }
+
+    fn addr(port: u16) -> SocketAddr {
+        format!("127.0.0.1:{port}").parse().unwrap()
+    }
+
+    fn fresh_state() -> Arc<RwLock<GossipState>> {
+        Arc::new(RwLock::new(GossipState {
+            topics: HashMap::new(),
+            peers: HashMap::new(),
+            seen: BoundedSeenSet::new(SEEN_MAX_ENTRIES, SEEN_TTL),
+            pending_ihaves: BoundedPendingIhaves::new(MAX_PENDING_IHAVES),
+            message_cache: HashMap::new(),
+            message_cache_order: VecDeque::new(),
+            stem_messages: HashMap::new(),
+            scoreboard: PeerScoreboard::new(),
+            anchors: HashSet::new(),
+            verified_addrs: HashMap::new(),
+            send_budgets: HashMap::new(),
+        }))
+    }
+
+    /// POLE 1, at the gossip layer: an UNREGISTERED key's join request is
+    /// admitted, and admitted means EXACTLY "handed to the application" — the
+    /// peer registry is untouched.
+    #[tokio::test]
+    async fn an_unregistered_key_may_send_exactly_one_join_request() {
+        let candidate = SigningKey::from_bytes(&[7u8; 32]);
+        let signed =
+            signed_join_request(&candidate, None, candidate.public_key(), b"hello".to_vec());
+        let gate = JoinGate::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let state = fresh_state();
+
+        assert!(
+            GossipNetwork::try_admit_join_request(&signed, addr(9001), &gate, &tx, &state).await,
+            "a well-formed join request from an unregistered key must be handled here"
+        );
+        let got = rx.try_recv().expect("the request reaches the application");
+        assert_eq!(
+            got.candidate_public_key.0,
+            candidate.public_key().0,
+            "the application is handed the PROVEN signer, not a claimed id"
+        );
+        assert_eq!(got.body, b"hello".to_vec());
+    }
+
+    /// THE GATE STAYS CLOSED. The same unregistered key sending anything OTHER
+    /// than a join request falls through to the ordinary `unknown_sender`
+    /// refusal — `try_admit_join_request` declines to handle it.
+    #[tokio::test]
+    async fn an_unregistered_key_may_send_nothing_else() {
+        let stranger = SigningKey::from_bytes(&[8u8; 32]);
+        let envelope = GossipEnvelope::FullMessage {
+            topic_id: [1u8; 32],
+            msg_hash: [2u8; 32],
+            payload: b"consensus blocks, please".to_vec(),
+        };
+        let sender = *blake3::hash(&stranger.public_key().0).as_bytes();
+        let signed = SignedEnvelope::sign(&envelope, sender, &stranger).expect("signs");
+        let gate = JoinGate::new();
+        let (tx, mut rx) = mpsc::unbounded_channel::<InboundJoinRequest>();
+        let state = fresh_state();
+
+        assert!(
+            !GossipNetwork::try_admit_join_request(&signed, addr(9002), &gate, &tx, &state).await,
+            "a NON-join envelope from an unregistered key must NOT be handled by the narrow \
+             channel — it falls through to the unknown-sender refusal"
+        );
+        assert!(rx.try_recv().is_err(), "nothing may reach the application");
+    }
+
+    /// POLE 2, mechanism A: a sender that names SOMEONE ELSE'S key is refused.
+    ///
+    /// ⚑ THE MUTATION IS ASSERTED PRESENT BEFORE THE VERDICT IS READ. The
+    /// envelope is signed by `attacker` but carries `victim`'s public key inline
+    /// and `victim`'s derived sender id — a genuine impersonation attempt, not a
+    /// malformed byte string. The test first proves the forgery is REAL (the
+    /// inline key is the victim's and differs from the signer's), then proves it
+    /// is refused. Without that assertion a later refactor could make this pass
+    /// by making the forgery stop being a forgery.
+    #[tokio::test]
+    async fn a_join_request_naming_another_identity_is_refused() {
+        let attacker = SigningKey::from_bytes(&[9u8; 32]);
+        let victim = SigningKey::from_bytes(&[10u8; 32]);
+        let victim_id = *blake3::hash(&victim.public_key().0).as_bytes();
+
+        // THE MUTATION, ASSERTED PRESENT.
+        assert_ne!(
+            attacker.public_key().0,
+            victim.public_key().0,
+            "the forgery must actually name a DIFFERENT identity than the signer"
+        );
+
+        // The attacker presents the victim's id and the victim's inline key, and
+        // signs with its own secret. `sender` and the inline key AGREE, so the
+        // self-certification check passes and only the SIGNATURE can catch it.
+        let signed = signed_join_request(
+            &attacker,
+            Some(victim_id),
+            victim.public_key(),
+            b"admit me as the victim".to_vec(),
+        );
+        assert_eq!(
+            *blake3::hash(&victim.public_key().0).as_bytes(),
+            signed.sender,
+            "precondition: the id/key pair is internally consistent, so this is not caught by \
+             the cheap derivation check"
+        );
+
+        let gate = JoinGate::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let state = fresh_state();
+        assert!(
+            GossipNetwork::try_admit_join_request(&signed, addr(9003), &gate, &tx, &state).await,
+            "the narrow channel disposes of it (with its own named reason)"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "an impersonated join request must NOT reach the application"
+        );
+    }
+
+    /// POLE 2, mechanism B: a sender id that is not the hash of the inline key
+    /// is refused before any signature work.
+    #[tokio::test]
+    async fn a_join_request_whose_sender_id_does_not_derive_from_its_key_is_refused() {
+        let candidate = SigningKey::from_bytes(&[11u8; 32]);
+        let honest_id = *blake3::hash(&candidate.public_key().0).as_bytes();
+        let mut mutated = honest_id;
+        mutated[0] ^= 0xff;
+
+        // THE MUTATION, ASSERTED PRESENT.
+        assert_ne!(mutated, honest_id, "the sender id must actually be mutated");
+
+        let signed = signed_join_request(
+            &candidate,
+            Some(mutated),
+            candidate.public_key(),
+            b"admit me".to_vec(),
+        );
+        let gate = JoinGate::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let state = fresh_state();
+        assert!(
+            GossipNetwork::try_admit_join_request(&signed, addr(9004), &gate, &tx, &state).await
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "a sender id that does not commit to the inline key must not reach the application"
+        );
+    }
+
+    /// POLE 2, mechanism C: an oversize body is refused without being parsed
+    /// into anything the application sees.
+    #[tokio::test]
+    async fn an_oversize_join_request_is_refused() {
+        let candidate = SigningKey::from_bytes(&[12u8; 32]);
+        let body = vec![0u8; MAX_JOIN_REQUEST_BODY + 1];
+        assert!(
+            body.len() > MAX_JOIN_REQUEST_BODY,
+            "the mutation must actually exceed the cap"
+        );
+        let signed = signed_join_request(&candidate, None, candidate.public_key(), body);
+        let gate = JoinGate::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let state = fresh_state();
+        assert!(
+            GossipNetwork::try_admit_join_request(&signed, addr(9005), &gate, &tx, &state).await
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "an oversize body must not reach the application"
+        );
+    }
+
+    /// The per-IP budget is real: a flood from one source is cut off, and the
+    /// requests that were admitted are exactly the budget.
+    #[tokio::test]
+    async fn the_join_channel_is_rate_limited_per_source() {
+        let candidate = SigningKey::from_bytes(&[13u8; 32]);
+        let gate = JoinGate::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let state = fresh_state();
+        for i in 0..(JOIN_REQUESTS_PER_IP_PER_WINDOW + 4) {
+            let signed =
+                signed_join_request(&candidate, None, candidate.public_key(), vec![i as u8]);
+            assert!(
+                GossipNetwork::try_admit_join_request(&signed, addr(9006), &gate, &tx, &state)
+                    .await
+            );
+        }
+        let mut admitted = 0;
+        while rx.try_recv().is_ok() {
+            admitted += 1;
+        }
+        assert_eq!(
+            admitted, JOIN_REQUESTS_PER_IP_PER_WINDOW as usize,
+            "exactly the per-window budget may reach the application from one source"
+        );
+    }
 }
 
 #[cfg(test)]
