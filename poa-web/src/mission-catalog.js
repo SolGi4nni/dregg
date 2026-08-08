@@ -55,6 +55,39 @@ const GAME_SPECS = Object.freeze([
     descriptorPath: "games/black-box-reconstruction.json",
     fixtureId: "blackbox-solved-preview-v1",
   }),
+  Object.freeze({
+    missionId: 5,
+    gameId: "deck-descent",
+    title: "Deck Descent",
+    engineModule: "Dregg2.Games.PathOfAngels.DeckDescent",
+    ruleset: "descent-v1",
+    disclosure: "oracle-only",
+    actionLimit: 9,
+    descriptorPath: "games/deck-descent.json",
+    fixtureId: "descent-solved-preview-v1",
+  }),
+  Object.freeze({
+    missionId: 6,
+    gameId: "artificer-logic",
+    title: "Artificer Logic",
+    engineModule: "Dregg2.Games.PathOfAngels.ArtificerLogic",
+    ruleset: "artificer-v1",
+    disclosure: "oracle-only",
+    actionLimit: 5,
+    descriptorPath: "games/artificer-logic.json",
+    fixtureId: "artificer-solved-preview-v1",
+  }),
+  Object.freeze({
+    missionId: 7,
+    gameId: "vent-crawl",
+    title: "Vent Crawl",
+    engineModule: "Dregg2.Games.PathOfAngels.VentCrawl",
+    ruleset: "push-your-luck-v1",
+    disclosure: "oracle-only",
+    actionLimit: 6,
+    descriptorPath: "games/vent-crawl.json",
+    fixtureId: "vent-solved-preview-v1",
+  }),
 ]);
 
 function refuse(condition, code, message) {
@@ -131,12 +164,12 @@ function world(value, at, betaArtifact) {
   return Object.freeze({ ...value, discovered_relics: discoveredRelics, beta_artifacts: Object.freeze(betaArtifacts) });
 }
 
-/** Parse the complete authenticated four-mission catalog and its exact bytes. */
+/** Parse the complete authenticated seven-mission catalog and its exact bytes. */
 export async function loadMissionCatalog(bundle) {
   const catalog = bundle?.payloads?.["catalog.json"]?.json;
   exactKeys(catalog, ["format", "schema_version", "missions", "fixtures"], "catalog.json");
   refuse(catalog.format === "POAG1-CATALOG" && catalog.schema_version === 1, "catalog-format", "unsupported POAG1 catalog");
-  refuse(Array.isArray(catalog.missions) && catalog.missions.length === GAME_SPECS.length, "catalog-missions", "catalog must contain the exact four-mission set");
+  refuse(Array.isArray(catalog.missions) && catalog.missions.length === GAME_SPECS.length, "catalog-missions", "catalog must contain the exact seven-mission set");
   refuse(Array.isArray(catalog.fixtures) && catalog.fixtures.length === GAME_SPECS.length, "catalog-fixtures", "catalog must contain one exact preview per mission");
   refuse(bundle.contentEpoch?.schema === "POA-CONTENT-EPOCH-SIGNATURE-V1", "catalog-activation", "catalog requires an authenticated content epoch");
   refuse(bundle.manifestDigest === bundle.contentEpoch.manifestDigest && SHA256.test(bundle.manifestDigest), "catalog-activation", "catalog manifest activation binding is invalid");

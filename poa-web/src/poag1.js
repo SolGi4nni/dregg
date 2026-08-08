@@ -20,10 +20,16 @@ export const POAG1_AUTHORITY = "Dregg2.Games.PathOfAngels";
 export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
   Object.freeze({ path: "schema.json", mediaType: "application/schema+json" }),
   Object.freeze({ path: "catalog.json", mediaType: "application/json" }),
+  // ⚠ PATH-ascending, which puts artificer-logic FIRST among the games — ahead of
+  // black-box. `GAME_SPECS` below is in MISSION order (1..7). Two lists that both read
+  // as "the games", sorted by different keys; the client refuses on artifact ORDER.
+  Object.freeze({ path: "games/artificer-logic.json", mediaType: "application/json" }),
   Object.freeze({ path: "games/black-box-reconstruction.json", mediaType: "application/json" }),
+  Object.freeze({ path: "games/deck-descent.json", mediaType: "application/json" }),
   Object.freeze({ path: "games/relay-repair.json", mediaType: "application/json" }),
   Object.freeze({ path: "games/salvage-lock.json", mediaType: "application/json" }),
   Object.freeze({ path: "games/signal-triangulation.json", mediaType: "application/json" }),
+  Object.freeze({ path: "games/vent-crawl.json", mediaType: "application/json" }),
 ]);
 
 /**
@@ -50,11 +56,9 @@ export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
  * or media type other than the pinned list; a pending path buys a game nothing at
  * load time. It is a statement about what the emitter will produce next.
  */
-export const POAG1_PENDING_ARTIFACTS = Object.freeze([
-  Object.freeze({ path: "games/artificer-logic.json", mediaType: "application/json" }),
-  Object.freeze({ path: "games/deck-descent.json", mediaType: "application/json" }),
-  Object.freeze({ path: "games/vent-crawl.json", mediaType: "application/json" }),
-]);
+// Empty at counter 9: all seven games are in the signed bundle. A path lands here only
+// while its descriptor is emitted and NOT yet signed into the manifest.
+export const POAG1_PENDING_ARTIFACTS = Object.freeze([]);
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const HEX_16 = /^[0-9a-f]{16}$/;
