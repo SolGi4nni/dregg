@@ -23,17 +23,23 @@ test("loads the actual curator-authenticated Lean-emitted POAG1 bundle", async (
   assert.equal(bundle.manifest.authority, "Dregg2.Games.PathOfAngels");
   assert.equal(bundle.contentEpoch.contentEpoch, 1);
   assert.match(bundle.manifestDigest, /^sha256:[0-9a-f]{64}$/);
+  // ⚠ MANIFEST order, not lexicographic — `artificer-logic` is the FIRST game, ahead
+  // of black-box. `GAME_SPECS` in mission-catalog.js is in MISSION order (1..7) instead.
+  // Two lists that both read as "the games", keyed differently; the client refuses on order.
   assert.deepEqual(Object.keys(bundle.payloads), [
     "schema.json",
     "catalog.json",
+    "games/artificer-logic.json",
     "games/black-box-reconstruction.json",
+    "games/deck-descent.json",
     "games/relay-repair.json",
     "games/salvage-lock.json",
     "games/signal-triangulation.json",
+    "games/vent-crawl.json",
   ]);
 });
 
-test("the client accepts the curator-signed counter-8 four-game bundle end to end", async () => {
+test("the client accepts the curator-signed counter-9 seven-game bundle end to end", async () => {
   const bundle = await loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",
@@ -41,14 +47,18 @@ test("the client accepts the curator-signed counter-8 four-game bundle end to en
     expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: await actualFetch(),
   });
-  assert.equal(bundle.contentEpoch.counter, 8);
-  assert.equal(bundle.manifest.artifacts.length, 6);
+  assert.equal(bundle.contentEpoch.counter, 10);
+  assert.equal(bundle.manifest.artifacts.length, 9);
   const missions = await loadMissionCatalog(bundle);
+  // MISSION order (1..7) — deliberately NOT the manifest's path order above.
   assert.deepEqual(missions.map((mission) => mission.gameId), [
     "signal-triangulation",
     "relay-repair",
     "salvage-lock",
     "black-box-reconstruction",
+    "deck-descent",
+    "artificer-logic",
+    "vent-crawl",
   ]);
   const blackBox = missions.find((mission) => mission.gameId === "black-box-reconstruction");
   assert.equal(blackBox.missionId, 4);
@@ -57,13 +67,14 @@ test("the client accepts the curator-signed counter-8 four-game bundle end to en
   assert.equal(blackBox.instanceDisclosure, "oracle-only");
 });
 
-test("the previous five-artifact shape is refused now that Black Box is enrolled", async () => {
+test("the previous six-artifact shape is refused now that all seven games are enrolled", async () => {
   const files = await actualBundleFiles();
   const manifest = JSON.parse(new TextDecoder().decode(files.manifest));
-  // The old bundle carried no Black Box descriptor. Drop it, and the count pin
-  // that was widened to six must refuse the five-artifact set rather than warn.
-  manifest.artifacts = manifest.artifacts.filter((pin) => pin.path !== "games/black-box-reconstruction.json");
-  assert.equal(manifest.artifacts.length, 5);
+  // Drop one enrolled descriptor and the count pin must REFUSE the short set rather
+  // than warn. Kept keyed on a real game rather than a bare number so it fails for the
+  // reason it names.
+  manifest.artifacts = manifest.artifacts.filter((pin) => pin.path !== "games/vent-crawl.json");
+  assert.equal(manifest.artifacts.length, 8);
   assert.throws(() => validateManifest(manifest), { code: "artifact-set" });
 });
 
