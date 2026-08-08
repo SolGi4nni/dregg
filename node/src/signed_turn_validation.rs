@@ -738,18 +738,117 @@ impl FinalizedPayloadRejectionRecord {
         if record.payload_hash != *blake3::hash(payload).as_bytes() {
             return Err("rejection row payload digest mismatch");
         }
-        if record.reason_code.is_empty() || record.reason_code.len() > 128 {
-            return Err("rejection row reason code is not canonical");
-        }
-        if !record
-            .reason_code
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        {
+        if !canonical_rejection_reason(&record.reason_code) {
             return Err("rejection row reason code is not canonical");
         }
         Ok(record)
     }
+
+    /// Decode a rejection row for a READ route, which does not hold the block's
+    /// payload and so cannot check the payload digest.
+    ///
+    /// Deliberately a SEPARATE, differently-named entry point rather than a
+    /// relaxed flag on [`Self::decode_authenticated`]: the recovery path must
+    /// never silently acquire a weaker check. What this checks — version and the
+    /// embedded block id against the key it was fetched under, plus a canonical
+    /// reason — is enough to serve a verdict and not enough to suppress
+    /// execution, which is why the recovery path may not call it.
+    pub fn decode_for_query(bytes: &[u8], block_id: [u8; 32]) -> Result<Self, &'static str> {
+        let record: Self = postcard::from_bytes(bytes).map_err(|_| "malformed rejection row")?;
+        if record.version != Self::VERSION {
+            return Err("unsupported rejection row version");
+        }
+        if record.block_id != block_id {
+            return Err("rejection row block id mismatch");
+        }
+        if !canonical_rejection_reason(&record.reason_code) {
+            return Err("rejection row reason code is not canonical");
+        }
+        Ok(record)
+    }
+}
+
+/// THE BY-TURN SIDE OF THE SAME DURABLE FACT.
+///
+/// [`FinalizedPayloadRejectionRecord`] is keyed by BLOCK ID, because a block id
+/// names one immutable consensus payload and that is the coordinate the restart
+/// reconciler walks. But a client holds a **turn hash** — the very value the
+/// submit response handed back — and had no coordinate to ask with. The verdict
+/// existed, durably, on every node, and was unreachable.
+///
+/// This row is the reciprocal index: `turn_hash → (block_id, reason)`. It is a
+/// pointer, never the authority. `GET /api/turn/{hash}/verdict` resolves through
+/// here and then re-reads the block-keyed row, refusing to answer if the two
+/// disagree — so a corrupted or stale index cannot invent a verdict, it can only
+/// fail closed.
+///
+/// FIRST-WRITE-WINS. Two distinct finalized blocks can carry the same turn bytes
+/// (duplicate gossip of one submission); the first rejection recorded is the one
+/// the index names, and a later one never overwrites it. The block-keyed rows
+/// remain complete either way.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalizedPayloadRejectionTurnIndex {
+    pub version: u8,
+    pub turn_hash: [u8; 32],
+    pub block_id: [u8; 32],
+    pub reason_code: String,
+}
+
+impl FinalizedPayloadRejectionTurnIndex {
+    pub const VERSION: u8 = 1;
+
+    pub fn new(turn_hash: [u8; 32], block_id: [u8; 32], reason_code: impl Into<String>) -> Self {
+        Self {
+            version: Self::VERSION,
+            turn_hash,
+            block_id,
+            reason_code: reason_code.into(),
+        }
+    }
+
+    pub fn storage_key(turn_hash: &[u8; 32]) -> String {
+        format!(
+            "finalized_payload_rejection_by_turn:v1:{}",
+            dregg_types::hex_encode(turn_hash)
+        )
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, postcard::Error> {
+        postcard::to_stdvec(self)
+    }
+
+    /// Decode and authenticate an index row against the turn hash it was looked
+    /// up by. The version, the embedded turn hash and the canonical reason code
+    /// must all agree before a read route may serve a verdict from it — the same
+    /// shape of check [`FinalizedPayloadRejectionRecord::decode_authenticated`]
+    /// makes, minus the payload digest, which this row does not carry (the
+    /// block-keyed authority does, and the route cross-checks against it).
+    pub fn decode_authenticated(bytes: &[u8], turn_hash: [u8; 32]) -> Result<Self, &'static str> {
+        let record: Self = postcard::from_bytes(bytes).map_err(|_| "malformed rejection index")?;
+        if record.version != Self::VERSION {
+            return Err("unsupported rejection index version");
+        }
+        if record.turn_hash != turn_hash {
+            return Err("rejection index turn hash mismatch");
+        }
+        if !canonical_rejection_reason(&record.reason_code) {
+            return Err("rejection index reason code is not canonical");
+        }
+        Ok(record)
+    }
+}
+
+/// A rejection reason code is a stable, machine-readable, PUBLIC token:
+/// non-empty, at most 128 bytes, `[a-z0-9-]` only. The shape is what keeps a
+/// reason from carrying local error formatting, a path, a key, or any other
+/// validator-local detail out to a caller — a reason names the CAUSE
+/// (`receipt-chain-mismatch`), never the evidence.
+pub fn canonical_rejection_reason(reason_code: &str) -> bool {
+    !reason_code.is_empty()
+        && reason_code.len() <= 128
+        && reason_code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 #[cfg(test)]

@@ -140,3 +140,18 @@ layer classifies auth vs capability (`node/src/metrics.rs`,
 gates held) or a broken client (find it before its operator finds you).
 Correlate the spike window with the node's own logs — the node binds the
 public port directly; there is no proxy layer with separate request logs.
+
+Since 2026-08-08 it ALSO counts the other refusal population: turns that
+consensus finalized and the application predicate then deterministically
+refused before any mutation (`blocklace_sync::persist_finalized_payload_rejection`).
+Those never touched a `TurnError`, so until then they moved no counter at all —
+a turn could be unanimously discarded by a whole federation with
+`dregg_turns_rejected_total` reading 0 on every member. The per-cause breakdown
+is `dregg_finalized_turns_rejected_total{reason="…"}`; `receipt-chain-mismatch`
+is the common one and means two turns raced for the same agent's receipt head
+(the loser is refused; nothing is lost but that turn).
+
+A client holding a `turn_hash` gets the verdict from
+`GET /api/turn/{hash}/verdict`: `accepted` / `rejected` (with the reason and the
+finalized block id) / `pending` / `unknown`. Reach for it before reading logs —
+it is the same durable row the counter came from.

@@ -174,11 +174,59 @@ impl StoredAttestedRoot {
     ///
     /// Does NOT verify signatures. For trusted verification, use
     /// [`verify_signatures`](Self::verify_signatures) with the committee keys.
+    ///
+    /// ⚑ THE PREDICATE WAS WRONG, NOT THE POPULATION (2026-08-08). Until this
+    /// change the body was `quorum_signatures.len() >= threshold` alone. On a
+    /// FULL-MODE node `quorum_signatures` structurally holds exactly ONE entry —
+    /// this node's own light-client signature over [`Self::signing_message`],
+    /// which is all a single process can produce synchronously; the field's own
+    /// docs say so. The cross-node committee agreement lands in
+    /// [`Self::finalization_quorum`], back-filled as the >=threshold hybrid
+    /// finalization votes arrive over gossip. So every genuinely finalized root
+    /// on every full-mode federation read `sigs=1 thr=3 complete=false` while
+    /// carrying a real quorum of 3–4, and any consumer treating this (or its
+    /// `is_valid` alias) as "final" got `false` on roots that WERE final.
+    ///
+    /// The fix is to consult the population that actually carries the quorum.
+    /// Both legs count DISTINCT signers, mirroring [`Self::verify_signatures`]:
+    /// duplicating one row never manufactures a quorum. `threshold == 0` is not
+    /// an authority and is refused here as it already is there — an empty
+    /// signature set over a zero threshold used to return `true`.
+    ///
+    /// STILL COUNT-ONLY. This says "enough distinct committee identities are
+    /// attached", never "their signatures verify". Cryptographic verdicts come
+    /// from [`Self::verify_signatures`] (light-client leg) and
+    /// [`Self::verify_finalization_quorum`] (committee-vote leg).
     pub fn is_structurally_complete(&self) -> bool {
         if self.threshold_qc.is_some() {
             return true;
         }
-        self.quorum_signatures.len() >= self.threshold
+        if self.threshold == 0 {
+            return false;
+        }
+        self.distinct_local_signers() >= self.threshold
+            || self.distinct_finalization_voters() >= self.threshold
+    }
+
+    /// Distinct committee identities in `quorum_signatures` (the light-client
+    /// attestation population). Count-only; no signature is checked.
+    pub fn distinct_local_signers(&self) -> usize {
+        self.quorum_signatures
+            .iter()
+            .map(|(pk, _)| *pk)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+
+    /// Distinct committee identities in `finalization_quorum` (the cross-node
+    /// committee-vote population). Count-only; no signature is checked — the
+    /// cryptographic leg is [`Self::verify_finalization_quorum`].
+    pub fn distinct_finalization_voters(&self) -> usize {
+        self.finalization_quorum
+            .iter()
+            .map(|qs| qs.voter)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
     }
 
     /// Deprecated alias for [`is_structurally_complete`](Self::is_structurally_complete).

@@ -33,6 +33,12 @@ pub fn install_recorder() -> PrometheusHandle {
             counter!("dregg_cap_refusals_total").increment(0);
             counter!("dregg_turns_rejected_total").increment(0);
             counter!("dregg_sandbox_denials_total").increment(0);
+            // The post-finalization rejection breakdown. Seeded with the
+            // sentinel label so `dregg_finalized_turns_rejected_total` EXISTS at
+            // boot: an alert on it is then ARMED rather than matching no series,
+            // which is the difference between a detector and a wish. Label shape
+            // MATCHES the real emit site (`note_finalized_payload_rejected`).
+            counter!("dregg_finalized_turns_rejected_total", "reason" => "none").increment(0);
             // Pre-seed the protocol-activity series the same way so the protocol
             // dashboard renders "0" from boot rather than "No data" on an idle
             // node. The label shapes MATCH the real emit sites: `inc_turns_submitted`
@@ -41,6 +47,16 @@ pub fn install_recorder() -> PrometheusHandle {
             counter!("dregg_turns_submitted_total").increment(0);
             counter!("dregg_proofs_verified_total", "result" => "valid").increment(0);
             gauge!("dregg_block_height").set(0.0);
+            // Pre-seed the CONSENSUS-ORDER PROVENANCE series at 0, one per source, so an alert
+            // on "a poll finalized over an UN-VERIFIED order" (or on a budget miss) is ARMED
+            // from boot rather than matching no series. This is the whole point of the tally:
+            // the degrade it watches for is one that used to announce itself in a single WARN
+            // line and then be served silently from cache forever. Label shape MATCHES the real
+            // emit site (`record_consensus_order_source`).
+            for source in ORDER_SOURCE_LABELS {
+                counter!("dregg_consensus_order_polls_total", "source" => source).increment(0);
+            }
+            counter!("dregg_consensus_order_over_budget_total").increment(0);
             // Pre-seed the gossip stream-rejection series at 0 so the federation
             // dashboard's gossip-rejection panel renders a healthy "0" from boot
             // (a flat green line) and lights up as a RATE spike during a gossip
@@ -186,6 +202,166 @@ pub fn inc_tau_prefix_shift() {
 /// observable so the mixed-network differential is a SAFETY NET, not a silent drop.
 pub fn inc_consensus_differential_divergence() {
     counter!("dregg_consensus_differential_divergence_total").increment(1);
+}
+
+// ─── THE VERIFIED-ORDER BUDGET — WHICH order decided each finality poll ──────────────────────
+//
+// The node's claim is that it "finalizes over the VERIFIED ordering". That claim is CONDITIONAL
+// ON A WALL-CLOCK BUDGET: `blocklace_sync::verified_order_ffi_timeout()` (default 2500 ms) bounds
+// the verified `dregg_tau_order` FFI, and a poll that misses it does NOT finalize over the
+// verified order — it runs the un-verified Rust `ordering::tau` twin (only under
+// `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`) or finalizes nothing.
+//
+// Until now the ONLY trace of that degrade was a WARN line, which (a) is not countable, (b) is
+// lost on a node whose log level is above WARN or whose logs nobody reads, and — the reason this
+// exists — (c) fires ONCE and then goes quiet, because the poll STORES its order in the cross-poll
+// cache and every later fingerprint-matching poll takes the silent "cache HIT" path. A degrade
+// that announces itself once and is then served silently forever is not a detected degrade.
+//
+// So provenance is now a first-class, countable property of every poll, it RIDES THE CACHE (a
+// cached un-verified order stays un-verified on every hit), and `/status` reports it.
+
+/// WHICH order decided one finality poll. Recorded on EVERY poll that selects an order, so
+/// `verified + unverified + failed_closed` is the total poll count and the ratio is readable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConsensusOrderSource {
+    /// The verified Lean `dregg_tau_order` FFI ran WITHIN the per-poll budget and its order
+    /// decided this poll. **This is the only value under which "this poll finalized over the
+    /// verified ordering" is true without qualification.**
+    VerifiedFfi,
+    /// A cross-poll cache HIT whose cached order was itself produced by the verified FFI. The
+    /// order is the verified one (the cache is keyed on the finalized order, so a hit means the
+    /// finalized order did not change), so this still counts as verified.
+    VerifiedCached,
+    /// The verified FFI EXCEEDED THE PER-POLL BUDGET and the un-verified Rust `ordering::tau`
+    /// twin decided this poll. Reachable only under `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1` (or a
+    /// build with no verified archive at all).
+    UnverifiedOverBudget,
+    /// The verified export was unavailable / returned ERR / the blocking task died, and the
+    /// un-verified Rust twin decided this poll.
+    UnverifiedUnavailable,
+    /// A cache HIT whose cached order was an UN-VERIFIED Rust order, stored by an earlier
+    /// over-budget or unavailable poll. **Verified-ness does not come back on a cache hit** —
+    /// this is the silent-forever path the WARN line could not see.
+    UnverifiedCached,
+    /// No verified order this poll and the Rust twin is FORBIDDEN (a Lean-linked node without
+    /// the escape): the poll FINALIZED NOTHING. A liveness alarm, not a safety one.
+    FailedClosed,
+}
+
+impl ConsensusOrderSource {
+    /// The Prometheus label / `/status` string for this source. Stable wire spelling.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::VerifiedFfi => "verified_ffi",
+            Self::VerifiedCached => "verified_cached",
+            Self::UnverifiedOverBudget => "unverified_over_budget",
+            Self::UnverifiedUnavailable => "unverified_unavailable",
+            Self::UnverifiedCached => "unverified_cached",
+            Self::FailedClosed => "failed_closed",
+        }
+    }
+
+    /// Whether a poll decided by this source finalized over the VERIFIED Lean order. This is the
+    /// predicate the honesty of the whole claim rests on; it is written once, here.
+    pub fn is_verified(self) -> bool {
+        matches!(self, Self::VerifiedFfi | Self::VerifiedCached)
+    }
+}
+
+static ORDER_POLLS_VERIFIED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static ORDER_POLLS_UNVERIFIED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static ORDER_POLLS_FAILED_CLOSED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static ORDER_POLLS_OVER_BUDGET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The `label()` of the most recent poll's source, as a discriminant index into
+/// [`ORDER_SOURCE_LABELS`]. `u8::MAX` = no poll has selected an order yet.
+static ORDER_LAST_SOURCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
+
+const ORDER_SOURCE_LABELS: [&str; 6] = [
+    "verified_ffi",
+    "verified_cached",
+    "unverified_over_budget",
+    "unverified_unavailable",
+    "unverified_cached",
+    "failed_closed",
+];
+
+fn order_source_index(src: ConsensusOrderSource) -> u8 {
+    match src {
+        ConsensusOrderSource::VerifiedFfi => 0,
+        ConsensusOrderSource::VerifiedCached => 1,
+        ConsensusOrderSource::UnverifiedOverBudget => 2,
+        ConsensusOrderSource::UnverifiedUnavailable => 3,
+        ConsensusOrderSource::UnverifiedCached => 4,
+        ConsensusOrderSource::FailedClosed => 5,
+    }
+}
+
+/// The consensus-order provenance tally, readable back for `/status` (the Prometheus recorder is
+/// write-only, so the same facts are kept in process-global atomics).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConsensusOrderTally {
+    /// Polls decided by the VERIFIED Lean order (fresh FFI or a verified-provenance cache hit).
+    pub verified_polls: u64,
+    /// Polls decided by the UN-VERIFIED Rust `ordering::tau` twin, for any reason.
+    pub unverified_polls: u64,
+    /// Polls that finalized NOTHING because no verified order was available and the twin was
+    /// forbidden.
+    pub failed_closed_polls: u64,
+    /// Of all polls, how many ran the verified FFI and BLEW THE PER-POLL BUDGET. This is the
+    /// number that says whether the budget is a real constraint on this node.
+    pub over_budget_polls: u64,
+    /// The source of the most recent poll, or `"none"` before the first.
+    pub last_source: &'static str,
+}
+
+impl ConsensusOrderTally {
+    /// Whether EVERY poll so far finalized over the verified order — i.e. whether the unqualified
+    /// claim "this node finalizes over the verified ordering" is currently true of this process.
+    pub fn fully_verified(self) -> bool {
+        self.unverified_polls == 0 && self.failed_closed_polls == 0
+    }
+}
+
+/// Record WHICH order decided one finality poll. Called on EVERY order selection in
+/// `poll_finalized_blocks` — including the cache-hit paths, which is the point: a cached
+/// un-verified order is recorded as un-verified on every hit it serves.
+///
+/// `over_budget` is passed separately because it is orthogonal to the source: a poll can blow the
+/// budget and STILL end up `FailedClosed` (a Lean-linked node without the escape), and that node
+/// needs the budget-miss visible even though no un-verified order ever ran on it.
+pub fn record_consensus_order_source(src: ConsensusOrderSource, over_budget: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    counter!("dregg_consensus_order_polls_total", "source" => src.label()).increment(1);
+    if src.is_verified() {
+        ORDER_POLLS_VERIFIED.fetch_add(1, Relaxed);
+    } else if src == ConsensusOrderSource::FailedClosed {
+        ORDER_POLLS_FAILED_CLOSED.fetch_add(1, Relaxed);
+    } else {
+        ORDER_POLLS_UNVERIFIED.fetch_add(1, Relaxed);
+    }
+    if over_budget {
+        counter!("dregg_consensus_order_over_budget_total").increment(1);
+        ORDER_POLLS_OVER_BUDGET.fetch_add(1, Relaxed);
+    }
+    ORDER_LAST_SOURCE.store(order_source_index(src), Relaxed);
+}
+
+/// Read back the consensus-order provenance tally for `/status`.
+pub fn consensus_order_tally() -> ConsensusOrderTally {
+    use std::sync::atomic::Ordering::Relaxed;
+    let last = ORDER_LAST_SOURCE.load(Relaxed);
+    ConsensusOrderTally {
+        verified_polls: ORDER_POLLS_VERIFIED.load(Relaxed),
+        unverified_polls: ORDER_POLLS_UNVERIFIED.load(Relaxed),
+        failed_closed_polls: ORDER_POLLS_FAILED_CLOSED.load(Relaxed),
+        over_budget_polls: ORDER_POLLS_OVER_BUDGET.load(Relaxed),
+        last_source: ORDER_SOURCE_LABELS
+            .get(last as usize)
+            .copied()
+            .unwrap_or("none"),
+    }
 }
 
 /// Increment the FINALITY-GATE-UNAVAILABLE REFUSAL counter: a poll declined to advance finality
@@ -391,6 +567,64 @@ pub fn note_turn_rejected(reason: &dregg_turn::TurnError) {
         dregg_turn::RefusalClass::Capability => inc_cap_refusal(),
         dregg_turn::RefusalClass::Other => {}
     }
+}
+
+/// The label value used for a rejection whose reason code is not canonical.
+///
+/// Reason codes are `&'static str` constants and error `code()`s today, and
+/// `FinalizedPayloadRejectionRecord::decode_authenticated` already refuses a row
+/// whose code is not `[a-z0-9-]{1,128}`. This is the metric-side twin of that
+/// refusal: a label is unbounded-cardinality-sensitive in a way a durable row is
+/// not, so anything off-shape collapses to one bucket instead of minting a
+/// series per distinct string.
+const NON_CANONICAL_REASON_LABEL: &str = "non-canonical";
+
+/// Clamp a rejection reason code to a safe Prometheus label value.
+fn rejection_reason_label(reason_code: &str) -> String {
+    let canonical = !reason_code.is_empty()
+        && reason_code.len() <= 64
+        && reason_code
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    if canonical {
+        reason_code.to_owned()
+    } else {
+        NON_CANONICAL_REASON_LABEL.to_owned()
+    }
+}
+
+/// Record a DETERMINISTIC POST-FINALIZATION rejection: consensus finalized a
+/// payload and the application predicate refused it before any mutation.
+///
+/// ⚑ WHY THIS EXISTS. `note_turn_rejected` is reachable only where a
+/// `dregg_turn::TurnError` exists — i.e. from the *executor*, on the ingress
+/// paths in `api.rs`. The post-finalization refusals funnel through
+/// `blocklace_sync::persist_finalized_payload_rejection` instead, which carries a
+/// stable reason CODE and no `TurnError`, and so bumped NOTHING. Measured on a
+/// live 4-node federation: two faucet turns each returned
+/// `{"success":true,"turn_hash":…}`, were unanimously and CORRECTLY refused by all
+/// four nodes for `receipt-chain-mismatch`, were durably recorded on all four —
+/// and `dregg_turns_rejected_total` read 0 everywhere. The metric named for
+/// exactly this did not count the path.
+///
+/// The consensus behaviour is right; this is the reporting. Both series move:
+/// `dregg_turns_rejected_total` so the flat total finally includes the
+/// post-finalization refusals, and `dregg_finalized_turns_rejected_total` with a
+/// `reason` label for the breakdown. They are separate NAMES on purpose — one
+/// metric family must not carry both a bare and a labelled series, or a naive
+/// `sum()` double counts.
+///
+/// Call this exactly ONCE per newly persisted rejection row. The idempotent
+/// re-observation of an already-recorded rejection (crash replay, duplicate
+/// delivery) must NOT bump it: a counter that climbs on restart is a counter of
+/// restarts.
+pub fn note_finalized_payload_rejected(reason_code: &str) {
+    counter!("dregg_turns_rejected_total").increment(1);
+    counter!(
+        "dregg_finalized_turns_rejected_total",
+        "reason" => rejection_reason_label(reason_code),
+    )
+    .increment(1);
 }
 
 // ─── Consensus signals (per-validator health + finality latency) ──────────────

@@ -1232,6 +1232,76 @@ fn attested_root_validity() {
     assert!(!invalid.is_structurally_complete()); // 3 sigs < threshold 5.
 }
 
+/// One committee finalization vote in the shape the node persists. The
+/// signature bytes are never inspected by the count-only predicate under test;
+/// what matters is the `voter` identity, which is what a quorum counts.
+fn sample_finalization_vote(voter: u8) -> crate::federation::QuorumSignature {
+    crate::federation::QuorumSignature {
+        voter: PublicKey([voter; 32]),
+        signature: Signature([voter; 64]),
+        ml_dsa_pubkey: vec![voter; 8],
+        pq_signature: vec![voter; 8],
+    }
+}
+
+/// THE FULL-MODE SHAPE. A finalized root produced by a real committee node
+/// carries exactly ONE local light-client signature (all a single process can
+/// make synchronously) and a >=threshold `finalization_quorum` back-filled from
+/// gossip. Before 2026-08-08 the predicate read only the first population, so
+/// every such root — genuinely finalized, carrying 3 committee votes at
+/// threshold 3 — reported `false`.
+#[test]
+fn a_full_mode_root_is_structurally_complete_on_its_committee_vote_quorum() {
+    let base = sample_attested_root(7);
+    let full_mode = StoredAttestedRoot {
+        // A full-mode node holds ONE local signature, never `threshold` of them.
+        quorum_signatures: vec![(PublicKey([0x11; 32]), Signature([0x22; 64]))],
+        threshold: 3,
+        finalization_quorum: vec![
+            sample_finalization_vote(0xA1),
+            sample_finalization_vote(0xA2),
+            sample_finalization_vote(0xA3),
+        ],
+        ..base.clone()
+    };
+    assert_eq!(full_mode.distinct_local_signers(), 1);
+    assert_eq!(full_mode.distinct_finalization_voters(), 3);
+    assert!(full_mode.is_structurally_complete());
+
+    // Below threshold on BOTH populations ⇒ not complete. This is the state a
+    // freshly persisted head is in before its votes arrive, and the reason the
+    // predicate must be able to say `false`.
+    let gathering = StoredAttestedRoot {
+        finalization_quorum: vec![sample_finalization_vote(0xA1)],
+        ..full_mode.clone()
+    };
+    assert!(!gathering.is_structurally_complete());
+
+    // DUPLICATES ARE NOT A QUORUM: one voter's row repeated three times counts
+    // once, exactly as `verify_signatures` counts distinct identities.
+    let duplicated = StoredAttestedRoot {
+        finalization_quorum: vec![
+            sample_finalization_vote(0xA1),
+            sample_finalization_vote(0xA1),
+            sample_finalization_vote(0xA1),
+        ],
+        ..full_mode.clone()
+    };
+    assert_eq!(duplicated.finalization_quorum.len(), 3);
+    assert_eq!(duplicated.distinct_finalization_voters(), 1);
+    assert!(!duplicated.is_structurally_complete());
+
+    // A ZERO threshold is not an authority — the same refusal `verify_signatures`
+    // already made. An empty-everything root used to answer `true` here.
+    let zero_threshold = StoredAttestedRoot {
+        quorum_signatures: Vec::new(),
+        finalization_quorum: Vec::new(),
+        threshold: 0,
+        ..base
+    };
+    assert!(!zero_threshold.is_structurally_complete());
+}
+
 // =============================================================================
 // Edge Cases
 // =============================================================================
