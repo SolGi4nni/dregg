@@ -5,14 +5,45 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const HEX32 = /^[0-9a-f]{64}$/;
 const METRIC_LIMIT = 1_000_000;
 /**
+ * Relic ids are ONE namespace shared by every mission — the world state carries a
+ * single `discovered_relics` set, so two missions naming the same number name the
+ * same relic. Each mission owns the block `missionId * RELIC_BLOCK` up to
+ * `+ RELIC_BLOCK - 1`, and `relic / RELIC_BLOCK` names its owner.
+ *
+ * ⚠ This client used to require `allowed_relics === [missionId]` — a convention
+ * from when every game banked exactly one relic. Deck Descent banks four (mouth,
+ * west, and TWO on the east spur), so the convention was false; and because it
+ * also fixed the numbers at the mission ids, Descent's `{5,6,7,8}` collided with
+ * missions 6 and 7 the moment they enrolled. The rule below is the correction: a
+ * mission may declare MORE than one relic, and may not declare one that belongs
+ * to another mission. `RELIC_BLOCK` mirrors `MISSION_RELIC_BLOCK` in
+ * `Dregg2.Games.PathOfAngels.RelicNamespace` and is re-checked against the signed
+ * schema's own declaration below, so a drift is a refusal, not a reinterpretation.
+ */
+const RELIC_BLOCK = 16;
+const RELIC_NAMESPACE = Object.freeze({
+  scheme: "per-mission-block",
+  block_width: RELIC_BLOCK,
+  owner: "relic_id / block_width == mission_id",
+  cross_mission: "disjoint-by-construction",
+  authored_in: "Dregg2.Games.PathOfAngels.RelicNamespace",
+  violation: "refuse",
+});
+const relicOwner = (relic) => Math.floor(relic / RELIC_BLOCK);
+/**
  * ⚠ `disclosure` is pinned here, in the SIGNED catalog's consumer, and the game
  * descriptors are checked against it. A descriptor that quietly relabelled
  * itself `per-run-open` would start handing out the board it is supposed to
  * withhold, and nothing inside that descriptor could contradict it.
+ *
+ * `relics` is the exact allowlist each game is expected to declare — its own
+ * block's slots, in ascending order. Descent's four are the only multi-relic
+ * entry, and they are slots 0..3 of block 5.
  */
 const GAME_SPECS = Object.freeze([
   Object.freeze({
     missionId: 1,
+    relics: Object.freeze([16]),
     gameId: "signal-triangulation",
     title: "Signal Triangulation",
     engineModule: "Dregg2.Games.PathOfAngels.SignalTriangulation",
@@ -24,6 +55,7 @@ const GAME_SPECS = Object.freeze([
   }),
   Object.freeze({
     missionId: 2,
+    relics: Object.freeze([32]),
     gameId: "relay-repair",
     title: "Relay Repair",
     engineModule: "Dregg2.Games.PathOfAngels.RelayRepair",
@@ -35,6 +67,7 @@ const GAME_SPECS = Object.freeze([
   }),
   Object.freeze({
     missionId: 3,
+    relics: Object.freeze([48]),
     gameId: "salvage-lock",
     title: "Salvage Lock",
     engineModule: "Dregg2.Games.PathOfAngels.SalvageLock",
@@ -46,6 +79,7 @@ const GAME_SPECS = Object.freeze([
   }),
   Object.freeze({
     missionId: 4,
+    relics: Object.freeze([64]),
     gameId: "black-box-reconstruction",
     title: "Black Box Reconstruction",
     engineModule: "Dregg2.Games.PathOfAngels.BlackBoxReconstruction",
@@ -57,6 +91,7 @@ const GAME_SPECS = Object.freeze([
   }),
   Object.freeze({
     missionId: 5,
+    relics: Object.freeze([80, 81, 82, 83]),
     gameId: "deck-descent",
     title: "Deck Descent",
     engineModule: "Dregg2.Games.PathOfAngels.DeckDescent",
@@ -68,6 +103,7 @@ const GAME_SPECS = Object.freeze([
   }),
   Object.freeze({
     missionId: 6,
+    relics: Object.freeze([96]),
     gameId: "artificer-logic",
     title: "Artificer Logic",
     engineModule: "Dregg2.Games.PathOfAngels.ArtificerLogic",
@@ -79,6 +115,7 @@ const GAME_SPECS = Object.freeze([
   }),
   Object.freeze({
     missionId: 7,
+    relics: Object.freeze([112]),
     gameId: "vent-crawl",
     title: "Vent Crawl",
     engineModule: "Dregg2.Games.PathOfAngels.VentCrawl",
@@ -176,6 +213,20 @@ export async function loadMissionCatalog(bundle) {
   refuse(SHA256.test(bundle.contentEpoch.activationDigest), "catalog-activation", "catalog activation digest is invalid");
   refuse(integer(bundle.contentEpoch.contentEpoch) && integer(bundle.contentEpoch.counter), "catalog-activation", "catalog activation counters are invalid");
 
+  // The relic namespace rule is PUBLISHED in the signed schema, and this client
+  // pins its own copy. A bundle whose rule differs from `RELIC_NAMESPACE` is
+  // refused rather than followed: the numbers below only mean anything under the
+  // rule that produced them.
+  const schema = bundle.payloads["schema.json"]?.json;
+  refuse(object(schema) && object(schema.contract), "catalog-schema", "bundle publishes no schema contract");
+  const declaredNamespace = schema.contract.relic_namespace;
+  exactKeys(declaredNamespace, Object.keys(RELIC_NAMESPACE), "schema relic_namespace");
+  refuse(
+    Object.entries(RELIC_NAMESPACE).every(([key, expected]) => declaredNamespace[key] === expected),
+    "catalog-relic-namespace",
+    "bundle declares a relic namespace this client was not built for",
+  );
+
   const descriptorEntries = GAME_SPECS.map((spec) => {
     const payload = bundle.payloads[spec.descriptorPath];
     refuse(payload?.bytes instanceof Uint8Array && object(payload.json), "catalog-descriptor", `${spec.descriptorPath} is absent`);
@@ -184,6 +235,9 @@ export async function loadMissionCatalog(bundle) {
   const measuredRoot = await contentRoot(descriptorEntries);
   const pins = new Map(bundle.manifest.artifacts.map((pin) => [pin.path, pin]));
 
+  // Every relic id any mission has claimed so far, and which mission claimed it.
+  // A relic is a shared namespace; this map is the only thing that sees it whole.
+  const claimedRelics = new Map();
   const missions = GAME_SPECS.map((spec, index) => {
     const value = catalog.missions[index];
     exactKeys(value, [
@@ -219,7 +273,30 @@ export async function loadMissionCatalog(bundle) {
     );
     const budget = contribution(value.budget, `${spec.title} budget`, false);
     const allowedRelics = exactNumericArray(value.allowed_relics, `${spec.title} allowed_relics`);
-    refuse(allowedRelics.length === 1 && allowedRelics[0] === spec.missionId, "catalog-relics", `${spec.title} relic allowlist drifted`);
+    // ⚠ ORDER. The collision sweep runs FIRST and against every mission read so far,
+    // because ownership implies disjointness: if the block rule were checked first,
+    // no catalog could ever reach the collision refusal and it would be a branch that
+    // cannot go red. Checked in this order, both are reachable — a relic claimed
+    // twice trips the first, a relic outside its block trips the second.
+    for (const relic of allowedRelics) {
+      const claimant = claimedRelics.get(relic);
+      refuse(claimant === undefined, "catalog-relic-collision", `${spec.title} claims relic ${relic}, already claimed by ${claimant}`);
+      claimedRelics.set(relic, spec.title);
+    }
+    refuse(
+      allowedRelics.length >= 1 && allowedRelics.length <= RELIC_BLOCK,
+      "catalog-relic-namespace",
+      `${spec.title} declares ${allowedRelics.length} relics, outside 1..${RELIC_BLOCK}`,
+    );
+    refuse(
+      allowedRelics.every((relic) => relicOwner(relic) === spec.missionId),
+      "catalog-relic-namespace",
+      `${spec.title} declares a relic outside its own block`,
+    );
+    // The exact allowlist this client was built for. A mission may declare more than
+    // one relic — Descent declares four — but not a different set than the one the
+    // emitted catalog is pinned to here.
+    refuse(JSON.stringify(allowedRelics) === JSON.stringify([...spec.relics]), "catalog-relics", `${spec.title} relic allowlist drifted`);
     refuse(Array.isArray(value.allowed_beta_discoveries) && value.allowed_beta_discoveries.length === 1, "catalog-artifact", `${spec.title} must declare one beta artifact`);
     const betaArtifact = artifactRef(value.allowed_beta_discoveries[0], `${spec.title} beta artifact`, spec, bundle.manifest, pins.get(spec.descriptorPath));
 
@@ -227,7 +304,12 @@ export async function loadMissionCatalog(bundle) {
     exactKeys(preview, ["id", "mission_id", "base_world", "contribution", "preview_world"], `catalog fixtures[${index}]`);
     refuse(preview.id === spec.fixtureId && preview.mission_id === spec.missionId, "catalog-preview", `${spec.title} preview identity is invalid`);
     const reward = contribution(preview.contribution, `${spec.title} preview contribution`, true);
-    refuse(JSON.stringify(reward.relics) === JSON.stringify(allowedRelics), "catalog-preview", `${spec.title} preview relics are outside its allowlist`);
+    // SUBSET, not equality: a preview banks what one solved line actually earns, and
+    // Descent's preview banks the east pair — two of its four declared relics. This is
+    // the client's copy of `MissionSpec.acceptsContribution`, whose relic clause is
+    // `c.relics ⊆ mission.allowedRelics`; requiring equality was the same one-relic
+    // convention as the allowlist pin above, and would have refused Descent too.
+    refuse(reward.relics.every((relic) => allowedRelics.includes(relic)), "catalog-preview", `${spec.title} preview relics are outside its allowlist`);
     for (const field of ["intel", "supplies", "cohesion", "influence", "score"]) {
       refuse(reward[field] <= budget[field], "catalog-preview", `${spec.title} preview contribution exceeds its budget`);
     }

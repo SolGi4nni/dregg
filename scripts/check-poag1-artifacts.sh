@@ -96,10 +96,20 @@ be64() {
 # reserved sentinel key that is not a player, which is why its hidden table is
 # shared across a slot rather than per-crawler.
 #
+# ⚠ 2026-08-08: `RelicNamespace.lean` joined — another source-digest flag day, and
+# this one changes the CATALOG BYTES as well. Relic ids are one namespace shared by
+# every mission (`WorldState.discoveredRelics` is a single `Finset RelicId`), and the
+# seven-game bundle had Deck Descent claiming `{5,6,7,8}` while Artificer Logic and
+# Vent Crawl claimed 6 and 7: relic 6 meant two things in one signed catalog. Every
+# mission now owns the block `mission_id * 16 .. +15` and the emitter cannot render a
+# mission that leaves its block. It sits next to `Core.lean` because that is what it
+# extends; it imports nothing else.
+#
 # The invariant to preserve: this list must contain the TRANSITIVE closure of
 # `Emit.lean`'s imports inside `Dregg2/Games/PathOfAngels/`. It now does.
 source_files=(
   "Dregg2/Games/PathOfAngels/Core.lean"
+  "Dregg2/Games/PathOfAngels/RelicNamespace.lean"
   "Dregg2/Games/PathOfAngels/SeedDraw.lean"
   "Dregg2/Games/PathOfAngels/SignalTriangulation.lean"
   "Dregg2/Games/PathOfAngels/RelayRepair.lean"

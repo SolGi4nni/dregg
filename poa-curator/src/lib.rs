@@ -114,6 +114,14 @@ const MAX_MISSIONS_PER_EPOCH: usize = 8;
 const MAX_FIXTURES_PER_EPOCH: usize = 24;
 const MAX_FIXTURES_PER_MISSION: usize = 8;
 const MAX_DISCOVERIES_PER_MISSION: usize = 8;
+/// Relic ids are ONE namespace shared by every mission: the world carries a single
+/// `discovered_relics` set, so two missions naming the same number name the same
+/// relic. Each mission owns the block `mission_id * MAX_RELICS_PER_MISSION` up to
+/// `+ MAX_RELICS_PER_MISSION - 1`, which is why the per-mission maximum and the
+/// block width are the same constant — a mission that stays inside its block is
+/// under the cap by construction. This is the same 16 as `MISSION_RELIC_BLOCK` in
+/// `Dregg2.Games.PathOfAngels.RelicNamespace`, recomputed here rather than trusted:
+/// a disagreement between the emitter and the signer is a refusal.
 const MAX_RELICS_PER_MISSION: usize = 16;
 const SCHEMA_PATH: &str = "schema.json";
 const CATALOG_PATH: &str = "catalog.json";
@@ -2792,6 +2800,10 @@ fn validate_schema_contract(schema: &Value, game_paths: &[String]) -> Result<(),
             "bytes32_pattern",
             "fnv1a64_pattern",
             "content_root",
+            // ⚠ 2026-08-08: the relic namespace joined, in this position. Relic ids
+            // are one namespace across the catalog and the rule that partitions it
+            // has to be published, not assumed — see the block check below.
+            "relic_namespace",
             "activation_digest",
             // ⚠ The hidden-instance split added these two, in this position. They
             // are pinned as an EXACT key set, not waved through: the point of this
@@ -2873,6 +2885,42 @@ fn validate_schema_contract(schema: &Value, game_paths: &[String]) -> Result<(),
     if schema_paths != game_paths.iter().map(String::as_str).collect::<Vec<_>>() {
         return Err(CuratorError::Catalog(
             "content_root.paths does not exactly equal the canonical manifest game order".into(),
+        ));
+    }
+
+    // The relic namespace the bundle publishes must be the one this signer enforces
+    // below. A bundle that declared a different block width would be internally
+    // consistent and still wrong the moment a client believed its declaration.
+    let relic_namespace = contract
+        .get("relic_namespace")
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Catalog("relic_namespace is not an object".into()))?;
+    require_exact_object_keys(
+        relic_namespace,
+        &[
+            "scheme",
+            "block_width",
+            "owner",
+            "cross_mission",
+            "authored_in",
+            "violation",
+        ],
+        "relic_namespace contract",
+    )
+    .map_err(CuratorError::Catalog)?;
+    if relic_namespace.get("scheme").and_then(Value::as_str) != Some("per-mission-block")
+        || relic_namespace.get("block_width").and_then(Value::as_u64)
+            != Some(MAX_RELICS_PER_MISSION as u64)
+        || relic_namespace.get("owner").and_then(Value::as_str)
+            != Some("relic_id / block_width == mission_id")
+        || relic_namespace.get("cross_mission").and_then(Value::as_str)
+            != Some("disjoint-by-construction")
+        || relic_namespace.get("authored_in").and_then(Value::as_str)
+            != Some("Dregg2.Games.PathOfAngels.RelicNamespace")
+        || relic_namespace.get("violation").and_then(Value::as_str) != Some("refuse")
+    {
+        return Err(CuratorError::Catalog(
+            "relic_namespace contract differs from the block scheme this curator enforces".into(),
         ));
     }
 
@@ -3154,6 +3202,10 @@ fn index_catalog(
     let mut descriptor_paths = BTreeSet::new();
     let mut content_sessions = BTreeSet::new();
     let mut all_artifacts = BTreeSet::new();
+    // Every relic any mission in this catalog has claimed. Nothing else in the
+    // ceremony sees the relic namespace whole, and the counter-9 bundle was signed
+    // with Deck Descent's {5,6,7,8} overlapping Artificer's {6} and Vent Crawl's {7}.
+    let mut all_relics = BTreeSet::new();
     for mission in mission_values {
         let obj = mission
             .as_object()
@@ -3388,6 +3440,22 @@ fn index_catalog(
             if previous_relic.is_some_and(|previous| relic <= previous) || !relics.insert(relic) {
                 return Err(CuratorError::Catalog(format!(
                     "mission {mission_id} allowed_relics must be strictly ascending; saw {relic}"
+                )));
+            }
+            // ⚠ ORDER: the cross-mission claim is checked BEFORE the block rule.
+            // Ownership implies disjointness, so checking the block first would make
+            // this branch unreachable — a refusal that can never fire is not a check.
+            if !all_relics.insert(relic) {
+                return Err(CuratorError::Catalog(format!(
+                    "relic {relic} is claimed by more than one mission; relic ids are one \
+                     namespace across the catalog"
+                )));
+            }
+            let owner = relic / MAX_RELICS_PER_MISSION as u64;
+            if owner != mission_id {
+                return Err(CuratorError::Catalog(format!(
+                    "mission {mission_id} declares relic {relic}, which belongs to mission \
+                     {owner} (block width {MAX_RELICS_PER_MISSION})"
                 )));
             }
             previous_relic = Some(relic);
@@ -4020,6 +4088,14 @@ mod tests {
                     "verify": "commit(slot_secret, slot) == commitment",
                     "missing_opening": "refuse"
                 },
+                "relic_namespace": {
+                    "scheme": "per-mission-block",
+                    "block_width": MAX_RELICS_PER_MISSION,
+                    "owner": "relic_id / block_width == mission_id",
+                    "cross_mission": "disjoint-by-construction",
+                    "authored_in": "Dregg2.Games.PathOfAngels.RelicNamespace",
+                    "violation": "refuse"
+                },
                 "run_instance": {
                     "derivation_module": "Dregg2.Games.PathOfAngels.HiddenInstance",
                     "function": "runSeedFor(draw, mission)",
@@ -4068,7 +4144,9 @@ mod tests {
                 },
                 "activation": {"state": "detached-signature-required", "digest_source": CONTENT_EPOCH_SCHEMA},
                 "budget": {"intel": 3, "supplies": 1, "cohesion": 0, "influence": 0, "score": 50, "relics": 1},
-                "allowed_relics": [spec.artifact_id],
+                // Slot 0 of this mission's own relic block; a bare mission id would
+                // now be owned by mission 0 and refused.
+                "allowed_relics": [spec.mission_id * MAX_RELICS_PER_MISSION as u64],
                 "descriptor_path": spec.path,
                 "allowed_beta_discoveries": [artifact_for(*spec)]
             }))
@@ -4080,7 +4158,7 @@ mod tests {
                     "id": format!("fixture-{:02}", spec.mission_id),
                     "mission_id": spec.mission_id,
                     "base_world": {"intel": 10, "sequence": 2},
-                    "contribution": {"intel": 3, "relics": [spec.artifact_id]},
+                    "contribution": {"intel": 3, "relics": [spec.mission_id * MAX_RELICS_PER_MISSION as u64]},
                     "preview_world": {"intel": 13, "sequence": 3}
                 })
             })

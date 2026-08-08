@@ -20,6 +20,7 @@ about what those digests authorize.
 -/
 import Lean.Data.Json
 import Dregg2.Games.PathOfAngels.Core
+import Dregg2.Games.PathOfAngels.RelicNamespace
 import Dregg2.Games.PathOfAngels.SignalTriangulation
 import Dregg2.Games.PathOfAngels.FiniteTables
 import Dregg2.Games.PathOfAngels.BlackBoxReconstruction
@@ -292,15 +293,15 @@ def contributionBudgetJson (b : ContributionBudget) : String :=
     ",\"score\":" ++ toString b.score.val ++
     ",\"relics\":" ++ toString b.relics.val ++ "}"
 
-def contributionJsonWithRelics (c : Contribution) (relics : List RelicId) : String :=
+def contributionJsonWithRelics (c : Contribution) (relics : RelicList c.relics) : String :=
   "{\"intel\":" ++ toString c.intel.val ++
     ",\"supplies\":" ++ toString c.supplies.val ++
     ",\"cohesion\":" ++ toString c.cohesion.val ++
     ",\"influence\":" ++ toString c.influence.val ++
     ",\"score\":" ++ toString c.score.val ++
-    ",\"relics\":" ++ jsonArray (relics.map (toString ·.value)) ++ "}"
+    ",\"relics\":" ++ jsonArray (relics.numbers.map toString) ++ "}"
 
-def worldStateJsonWith (w : WorldState) (relics : List RelicId)
+def worldStateJsonWith (w : WorldState) (relics : RelicList w.discoveredRelics)
     (artifacts : List ArtifactRef) : String :=
   "{\"intel\":" ++ toString w.intel.val ++
     ",\"supplies\":" ++ toString w.supplies.val ++
@@ -308,7 +309,7 @@ def worldStateJsonWith (w : WorldState) (relics : List RelicId)
     ",\"influence\":" ++ toString w.influence.val ++
     ",\"score\":" ++ toString w.score.val ++
     ",\"discovered_relics\":" ++
-      jsonArray (relics.map (toString ·.value)) ++
+      jsonArray (relics.numbers.map toString) ++
     ",\"beta_artifacts\":" ++
       jsonArray (artifacts.map artifactRefJson) ++
     ",\"sequence\":" ++ toString w.sequence ++ "}"
@@ -1093,8 +1094,8 @@ def signalReward : Contribution :=
     cohesion := ⟨10, by decide⟩
     influence := ⟨5, by decide⟩
     score := ⟨500, by decide⟩
-    relics := {⟨1⟩}
-    relics_bounded := by simp [RELIC_LIMIT] }
+    relics := {relicSlot ⟨1⟩ 0}
+    relics_bounded := by decide }
 
 theorem signalReward_within : signalReward.within signalBudget = true := by
   decide
@@ -1122,11 +1123,11 @@ def signalMission (runSeed : Digest32)
     contentSession := signalContentSession
     runSeed := runSeed
     budget := signalBudget
-    allowedRelics := {⟨1⟩}
+    allowedRelics := {relicSlot ⟨1⟩ 0}
     privacy := .public
     ballot := .none
     artifact_matches := rfl
-    allowed_relics_bounded := by simp [MISSION_RELIC_LIMIT] }
+    allowed_relics_bounded := by decide }
 
 /-- The draw context of a Signal mission does not depend on its run seed.  Stated on
 the ACTUAL emitter and over OPEN digests, so a caller that needs it does not have to
@@ -1328,8 +1329,8 @@ def relayReward : Contribution :=
     cohesion := ⟨20, by decide⟩
     influence := ⟨5, by decide⟩
     score := ⟨650, by decide⟩
-    relics := {⟨2⟩}
-    relics_bounded := by simp [RELIC_LIMIT] }
+    relics := {relicSlot ⟨2⟩ 0}
+    relics_bounded := by decide }
 
 theorem relayReward_within : relayReward.within relayBudget = true := by
   decide
@@ -1352,7 +1353,7 @@ def relayMission (runSeed : Digest32)
     contentSession := relayContentSession
     runSeed := runSeed
     budget := relayBudget
-    allowedRelics := {⟨2⟩}
+    allowedRelics := {relicSlot ⟨2⟩ 0}
     privacy := .public
     ballot := .none
     artifact_matches := rfl
@@ -1423,8 +1424,8 @@ def salvageReward : Contribution :=
     cohesion := ⟨10, by decide⟩
     influence := ⟨15, by decide⟩
     score := ⟨750, by decide⟩
-    relics := {⟨3⟩}
-    relics_bounded := by simp [RELIC_LIMIT] }
+    relics := {relicSlot ⟨3⟩ 0}
+    relics_bounded := by decide }
 
 theorem salvageReward_within : salvageReward.within salvageBudget = true := by
   decide
@@ -1447,7 +1448,7 @@ def salvageMission (runSeed : Digest32)
     contentSession := salvageContentSession
     runSeed := runSeed
     budget := salvageBudget
-    allowedRelics := {⟨3⟩}
+    allowedRelics := {relicSlot ⟨3⟩ 0}
     privacy := .public
     ballot := .none
     artifact_matches := rfl
@@ -1549,8 +1550,8 @@ def blackBoxReward : Contribution :=
     cohesion := ⟨15, by decide⟩
     influence := ⟨10, by decide⟩
     score := ⟨900, by decide⟩
-    relics := {⟨4⟩}
-    relics_bounded := by simp [RELIC_LIMIT] }
+    relics := {relicSlot ⟨4⟩ 0}
+    relics_bounded := by decide }
 
 theorem blackBoxReward_within : blackBoxReward.within blackBoxBudget = true := by
   decide
@@ -1573,7 +1574,7 @@ def blackBoxMission (runSeed : Digest32)
     contentSession := blackBoxContentSession
     runSeed := runSeed
     budget := blackBoxBudget
-    allowedRelics := {⟨4⟩}
+    allowedRelics := {relicSlot ⟨4⟩ 0}
     privacy := .public
     ballot := .none
     artifact_matches := rfl
@@ -1663,15 +1664,15 @@ def descentBudget : ContributionBudget :=
 
 /-- The preview reward banks the east pair — the one single-spur line that meets
 `BANK_TARGET` — so its relic set is exactly what `Config.terminalContribution`
-produces for a sling holding both east relics: `eastRelic` ⟨7⟩ and
-`eastSecondRelic` ⟨8⟩. -/
+produces for a sling holding both east relics: `eastRelic` (slot 2 of mission 5)
+and `eastSecondRelic` (slot 3). -/
 def descentReward : Contribution :=
   { intel := ⟨20, by decide⟩
     supplies := ⟨20, by decide⟩
     cohesion := ⟨15, by decide⟩
     influence := ⟨20, by decide⟩
     score := ⟨1050, by decide⟩
-    relics := {⟨7⟩, ⟨8⟩}
+    relics := {relicSlot ⟨5⟩ 2, relicSlot ⟨5⟩ 3}
     relics_bounded := by decide }
 
 theorem descentReward_within : descentReward.within descentBudget = true := by
@@ -1684,8 +1685,9 @@ def descentArtifact (sourceDigest contentDigest : Digest32) : ArtifactRef :=
     contentDigest }
 
 /-- Four allowed relics, because a descent Config declares four: the east spur
-holds two (`Chamber.relicCount`), so ⟨5⟩ mouth, ⟨6⟩ west, ⟨7⟩ east, ⟨8⟩ east
-second. -/
+holds two (`Chamber.relicCount`), so slot 0 mouth, slot 1 west, slot 2 east, slot
+3 east-second — all four inside mission 5's block (`RelicNamespace`), which is
+what stops them colliding with missions 6 and 7 the way `{5,6,7,8}` did. -/
 def descentMission (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     MissionSpec :=
@@ -1698,7 +1700,7 @@ def descentMission (runSeed : Digest32)
     contentSession := descentContentSession
     runSeed := runSeed
     budget := descentBudget
-    allowedRelics := {⟨5⟩, ⟨6⟩, ⟨7⟩, ⟨8⟩}
+    allowedRelics := {relicSlot ⟨5⟩ 0, relicSlot ⟨5⟩ 1, relicSlot ⟨5⟩ 2, relicSlot ⟨5⟩ 3}
     privacy := .public
     ballot := .none
     artifact_matches := rfl
@@ -1712,7 +1714,8 @@ theorem descentReward_accepted (runSeed : Digest32)
   refine ⟨descentReward_within, ?_⟩
   -- The allowlist of `descentMission` is a literal that ignores every digest
   -- argument, so the subset claim is closed by computation once stated over it.
-  show descentReward.relics ⊆ ({⟨5⟩, ⟨6⟩, ⟨7⟩, ⟨8⟩} : Finset RelicId)
+  show descentReward.relics ⊆
+    ({relicSlot ⟨5⟩ 0, relicSlot ⟨5⟩ 1, relicSlot ⟨5⟩ 2, relicSlot ⟨5⟩ 3} : Finset RelicId)
   decide
 
 /-- Total, like `relayConfig`: `DeckDescent.boardFromRunSeed` is total, and
@@ -1723,10 +1726,10 @@ def descentConfig (runSeed : Digest32)
   { board := DeckDescent.boardFromRunSeed runSeed
     mission := descentMission runSeed federationId sourceDigest contentDigest contentRoot
       activationDigest
-    mouthRelic := ⟨5⟩
-    westRelic := ⟨6⟩
-    eastRelic := ⟨7⟩
-    eastSecondRelic := ⟨8⟩
+    mouthRelic := relicSlot ⟨5⟩ 0
+    westRelic := relicSlot ⟨5⟩ 1
+    eastRelic := relicSlot ⟨5⟩ 2
+    eastSecondRelic := relicSlot ⟨5⟩ 3
     reward := descentReward
     reward_accepted := descentReward_accepted runSeed federationId sourceDigest contentDigest
       contentRoot activationDigest
@@ -1798,16 +1801,17 @@ def artificerBudget : ContributionBudget :=
     relics := ⟨1, by decide⟩ }
 
 /-- The bench pays in INTEL, which is what the game produces: a documented
-mechanism.  One relic, ⟨6⟩ — the mission id, which is what the browser's catalog
-consumer pins each mission's allowlist against. -/
+mechanism.  One relic, slot 0 of mission 6's block.  ⚠ It used to be ⟨6⟩ — the
+bare mission id — under a convention that every game banks exactly one relic;
+Deck Descent banks four, and that convention put relic 6 in two missions at once. -/
 def artificerReward : Contribution :=
   { intel := ⟨45, by decide⟩
     supplies := ⟨5, by decide⟩
     cohesion := ⟨10, by decide⟩
     influence := ⟨15, by decide⟩
     score := ⟨800, by decide⟩
-    relics := {⟨6⟩}
-    relics_bounded := by simp [RELIC_LIMIT] }
+    relics := {relicSlot ⟨6⟩ 0}
+    relics_bounded := by decide }
 
 theorem artificerReward_within : artificerReward.within artificerBudget = true := by
   decide
@@ -1830,7 +1834,7 @@ def artificerMission (runSeed : Digest32)
     contentSession := artificerContentSession
     runSeed := runSeed
     budget := artificerBudget
-    allowedRelics := {⟨6⟩}
+    allowedRelics := {relicSlot ⟨6⟩ 0}
     privacy := .public
     ballot := .none
     artifact_matches := rfl
@@ -1922,8 +1926,8 @@ def ventReward : Contribution :=
     cohesion := ⟨15, by decide⟩
     influence := ⟨5, by decide⟩
     score := ⟨750, by decide⟩
-    relics := {⟨7⟩}
-    relics_bounded := by simp [RELIC_LIMIT] }
+    relics := {relicSlot ⟨7⟩ 0}
+    relics_bounded := by decide }
 
 theorem ventReward_within : ventReward.within ventBudget = true := by
   decide
@@ -1946,7 +1950,7 @@ def ventMission (runSeed : Digest32)
     contentSession := ventContentSession
     runSeed := runSeed
     budget := ventBudget
-    allowedRelics := {⟨7⟩}
+    allowedRelics := {relicSlot ⟨7⟩ 0}
     privacy := .public
     ballot := .none
     artifact_matches := rfl
@@ -2010,9 +2014,74 @@ structure GameContentDigests where
   ventCrawl : Digest32
 deriving DecidableEq
 
-private def missionCatalogJson (mission : MissionSpec) (title engineModule ruleset : String)
-    (actionLimit : Nat) (allowedRelics : List RelicId) (descriptorPath : String)
-    (disclosure : String) : String :=
+/-- A mission AS PUBLISHED IN A SHARED BUNDLE.  The strings beside the spec are the
+catalog's own columns; the last two fields are the reason this structure exists.
+
+⚠ Until 2026-08-08 the emitter took `allowed_relics` as a free `List RelicId`
+beside the mission, so every theorem about `mission.allowedRelics` was a theorem
+about an object the rendered bytes did not have to agree with — Deck Descent could
+have proved `{5,6,7,8}` accepted and emitted `[5]`, and nothing would have looked.
+`relics` now CARRIES the proof that it is exactly the mission's allowlist, and
+`owned` carries the proof that the allowlist stays inside this mission's relic
+block.  A mission that claims a relic belonging to another mission cannot be made
+into a `CatalogMission` at all: the emitter refuses to elaborate, rather than the
+client refusing to load. -/
+structure CatalogMission where
+  mission : MissionSpec
+  title : String
+  engineModule : String
+  ruleset : String
+  actionLimit : Nat
+  descriptorPath : String
+  disclosure : String
+  /-- The exact array rendered into `allowed_relics`, proved to be the allowlist. -/
+  relics : RelicList mission.allowedRelics
+  /-- ⚑ Every relic this mission declares is inside its own block. -/
+  owned : mission.relicsOwned
+
+/-- ⚑ **No two published missions can claim the same relic.**  Stated over ANY two
+`CatalogMission`s with different ids, not over the seven in today's bundle, so the
+eighth game inherits it without anyone re-checking the first seven.  This is the
+theorem the client's `catalog-relic-collision` refusal mirrors. -/
+theorem CatalogMission.allowlists_disjoint (a b : CatalogMission)
+    (hne : a.mission.missionId ≠ b.mission.missionId) :
+    Disjoint a.mission.allowedRelics b.mission.allowedRelics :=
+  Dregg2.Games.PathOfAngels.allowlists_disjoint a.mission b.mission a.owned b.owned hne
+
+/-- ⚑ **The catalog-level guarantee, general in the number of games.**  A list of
+published missions with distinct ids has pairwise-disjoint allowlists.  Proved by
+induction rather than over today's seven, so enrolling an eighth game re-proves
+nothing: it inherits this the moment it carries a `CatalogMission.owned`. -/
+theorem pairwise_disjoint_of_ids_nodup (entries : List CatalogMission)
+    (h : (entries.map (fun entry => entry.mission.missionId)).Nodup) :
+    entries.Pairwise
+      (fun a b => Disjoint a.mission.allowedRelics b.mission.allowedRelics) := by
+  induction entries with
+  | nil => exact List.Pairwise.nil
+  | cons entry rest ih =>
+      rw [List.map_cons, List.nodup_cons] at h
+      refine List.Pairwise.cons ?_ (ih h.2)
+      intro other hother
+      refine CatalogMission.allowlists_disjoint entry other (fun hEq => h.1 ?_)
+      exact List.mem_map.mpr ⟨other, hother, hEq.symm⟩
+
+/-- The same guarantee at the level of the rendered arrays: a relic NUMBER emitted
+for one mission cannot be emitted for another. -/
+theorem CatalogMission.rendered_relics_disjoint (a b : CatalogMission)
+    (hne : a.mission.missionId ≠ b.mission.missionId)
+    (relic : RelicId) (hra : relic ∈ a.relics.values) : relic ∉ b.relics.values := by
+  rw [a.relics.mem_iff] at hra
+  rw [b.relics.mem_iff]
+  exact Finset.disjoint_left.mp (CatalogMission.allowlists_disjoint a b hne) hra
+
+private def missionCatalogJson (entry : CatalogMission) : String :=
+  let mission := entry.mission
+  let title := entry.title
+  let engineModule := entry.engineModule
+  let ruleset := entry.ruleset
+  let actionLimit := entry.actionLimit
+  let descriptorPath := entry.descriptorPath
+  let disclosure := entry.disclosure
   "    {\"mission_id\":" ++ toString mission.missionId.value ++
   ",\"title\":" ++ jsonString title ++
   ",\"engine_module\":" ++ jsonString engineModule ++
@@ -2036,26 +2105,168 @@ private def missionCatalogJson (mission : MissionSpec) (title engineModule rules
     ",\"derivation_module\":\"Dregg2.Games.PathOfAngels.HiddenInstance\"" ++
     ",\"commitment_published_in\":\"slot-opening\"}" ++
   ",\"budget\":" ++ contributionBudgetJson mission.budget ++
-  ",\"allowed_relics\":" ++ jsonArray (allowedRelics.map (toString ·.value)) ++
+  /- Rendered from `entry.relics`, whose `complete` field proves it IS
+  `mission.allowedRelics` and whose `ascending` field proves the order the curator
+  requires.  There is no second list to drift from the first. -/
+  ",\"allowed_relics\":" ++ jsonArray (entry.relics.numbers.map toString) ++
   ",\"descriptor_path\":" ++ jsonString descriptorPath ++
   ",\"allowed_beta_discoveries\":[" ++ artifactRefJson mission.artifact ++ "]}"
 
+/-- Applying a contribution to the EMPTY world leaves exactly that contribution's
+relics behind.  Needed so the preview fixture can render one relic list for both
+the contribution and the world it produces without the two being free to differ. -/
+theorem applyContribution_empty_discoveredRelics {mission : MissionSpec}
+    {c : Contribution} {after : WorldState}
+    (h : applyContribution mission c WorldState.empty = some after) :
+    after.discoveredRelics = c.relics := by
+  unfold applyContribution at h
+  split at h
+  · injection h with heq
+    rw [← heq]
+    simp [WorldState.empty]
+  · contradiction
+
+#assert_axioms applyContribution_empty_discoveredRelics
+
+/-- ⚠ The preview world is COMPUTED here rather than passed in.  It is
+`applyContribution mission reward WorldState.empty` — the same value the per-game
+`xxxPreview` defs hold — and computing it is what lets the emitted
+`discovered_relics` carry a proof that it is the contribution's own relic set. -/
 private def previewFixtureJson (id : String) (mission : MissionSpec) (reward : Contribution)
-    (relics : List RelicId) (preview : Option WorldState) : String :=
+    (relics : RelicList reward.relics) : String :=
   "    {\"id\":" ++ jsonString id ++
   ",\"mission_id\":" ++ toString mission.missionId.value ++
-  ",\"base_world\":" ++ worldStateJsonWith WorldState.empty [] [] ++
+  ",\"base_world\":" ++
+    worldStateJsonWith WorldState.empty ⟨[], by simp [WorldState.empty], by simp⟩ [] ++
   ",\"contribution\":" ++ contributionJsonWithRelics reward relics ++
   ",\"preview_world\":" ++
-    (match preview with
+    (match h : applyContribution mission reward WorldState.empty with
      | none => "null"
-     | some world => worldStateJsonWith world relics [mission.artifact]) ++ "}"
+     | some world =>
+         worldStateJsonWith world
+           ⟨relics.values,
+            by rw [applyContribution_empty_discoveredRelics h]; exact relics.complete,
+            relics.ascending⟩
+           [mission.artifact]) ++ "}"
 
-def catalogJson (federationId sourceDigest contentRoot : Digest32)
-    (digests : GameContentDigests) : String :=
+/-- The seven published missions, each carrying the two relic obligations.
+
+⚠ MISSION order — `mission_id`-ascending — which is NOT the path-ascending order
+the manifest and the content root use.  See the note in `canonicalArtifacts`. -/
+def catalogMissions (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) : List CatalogMission :=
   /- The activation digest necessarily depends on the detached signature over the
   finished manifest, so it cannot occur inside that manifest without a hash cycle.
   Runtime activation replaces this zero only after signature verification. -/
+  let inactiveActivation : Digest32 := taggedBytes32 []
+  let unbound := UNBOUND_RUN_SEED
+  [ { mission := signalMission unbound federationId sourceDigest digests.signal contentRoot
+        inactiveActivation
+      title := "Signal Triangulation"
+      engineModule := "Dregg2.Games.PathOfAngels.SignalTriangulation"
+      ruleset := "signal-v2"
+      actionLimit := SignalTriangulation.MAX_TURNS
+      descriptorPath := "games/signal-triangulation.json"
+      disclosure := "oracle-only"
+      relics := RelicList.ofLiteral [relicSlot ⟨1⟩ 0] {relicSlot ⟨1⟩ 0} rfl (by decide) (by decide)
+      owned := relicsOwned_of_literals _ ⟨1⟩ {relicSlot ⟨1⟩ 0} rfl rfl (by decide) }
+  , { mission := relayMission unbound federationId sourceDigest digests.relay contentRoot
+        inactiveActivation
+      title := "Relay Repair"
+      engineModule := "Dregg2.Games.PathOfAngels.RelayRepair"
+      ruleset := "relay-v3"
+      actionLimit := RelayRepair.MAX_TURNS
+      descriptorPath := "games/relay-repair.json"
+      disclosure := "per-run-open"
+      relics := RelicList.ofLiteral [relicSlot ⟨2⟩ 0] {relicSlot ⟨2⟩ 0} rfl (by decide) (by decide)
+      owned := relicsOwned_of_literals _ ⟨2⟩ {relicSlot ⟨2⟩ 0} rfl rfl (by decide) }
+  , { mission := salvageMission unbound federationId sourceDigest digests.salvage contentRoot
+        inactiveActivation
+      title := "Salvage Lock"
+      engineModule := "Dregg2.Games.PathOfAngels.SalvageLock"
+      ruleset := "salvage-v2"
+      actionLimit := SalvageLock.MAX_TURNS
+      descriptorPath := "games/salvage-lock.json"
+      disclosure := "oracle-only"
+      relics := RelicList.ofLiteral [relicSlot ⟨3⟩ 0] {relicSlot ⟨3⟩ 0} rfl (by decide) (by decide)
+      owned := relicsOwned_of_literals _ ⟨3⟩ {relicSlot ⟨3⟩ 0} rfl rfl (by decide) }
+  , { mission := blackBoxMission unbound federationId sourceDigest digests.blackBox contentRoot
+        inactiveActivation
+      title := "Black Box Reconstruction"
+      engineModule := "Dregg2.Games.PathOfAngels.BlackBoxReconstruction"
+      ruleset := "blackbox-v2"
+      actionLimit := BlackBoxReconstruction.MAX_TURNS
+      descriptorPath := "games/black-box-reconstruction.json"
+      disclosure := "oracle-only"
+      relics := RelicList.ofLiteral [relicSlot ⟨4⟩ 0] {relicSlot ⟨4⟩ 0} rfl (by decide) (by decide)
+      owned := relicsOwned_of_literals _ ⟨4⟩ {relicSlot ⟨4⟩ 0} rfl rfl (by decide) }
+  , { mission := descentMission unbound federationId sourceDigest digests.deckDescent contentRoot
+        inactiveActivation
+      title := "Deck Descent"
+      engineModule := "Dregg2.Games.PathOfAngels.DeckDescent"
+      ruleset := "descent-v1"
+      actionLimit := DeckDescent.AIR
+      descriptorPath := "games/deck-descent.json"
+      disclosure := "oracle-only"
+      /- ⚑ FOUR relics, and this is the mission that made the namespace visible.
+      They are slots 0..3 of mission 5's own block, so a fifth game banking four
+      relics collides with nothing by construction. -/
+      relics := RelicList.ofLiteral
+        [relicSlot ⟨5⟩ 0, relicSlot ⟨5⟩ 1, relicSlot ⟨5⟩ 2, relicSlot ⟨5⟩ 3]
+        {relicSlot ⟨5⟩ 0, relicSlot ⟨5⟩ 1, relicSlot ⟨5⟩ 2, relicSlot ⟨5⟩ 3} rfl
+        (by decide) (by decide)
+      owned := relicsOwned_of_literals _ ⟨5⟩
+        {relicSlot ⟨5⟩ 0, relicSlot ⟨5⟩ 1, relicSlot ⟨5⟩ 2, relicSlot ⟨5⟩ 3} rfl rfl
+        (by decide) }
+  , { mission := artificerMission unbound federationId sourceDigest digests.artificer contentRoot
+        inactiveActivation
+      title := "Artificer Logic"
+      engineModule := "Dregg2.Games.PathOfAngels.ArtificerLogic"
+      ruleset := "artificer-v1"
+      actionLimit := ArtificerLogic.ACTION_LIMIT
+      descriptorPath := "games/artificer-logic.json"
+      disclosure := "oracle-only"
+      relics := RelicList.ofLiteral [relicSlot ⟨6⟩ 0] {relicSlot ⟨6⟩ 0} rfl (by decide) (by decide)
+      owned := relicsOwned_of_literals _ ⟨6⟩ {relicSlot ⟨6⟩ 0} rfl rfl (by decide) }
+  , { mission := ventMission unbound federationId sourceDigest digests.ventCrawl contentRoot
+        inactiveActivation
+      title := "Vent Crawl"
+      engineModule := "Dregg2.Games.PathOfAngels.VentCrawl"
+      ruleset := "push-your-luck-v1"
+      actionLimit := VentCrawl.ACTION_LIMIT
+      descriptorPath := "games/vent-crawl.json"
+      disclosure := "oracle-only"
+      relics := RelicList.ofLiteral [relicSlot ⟨7⟩ 0] {relicSlot ⟨7⟩ 0} rfl (by decide) (by decide)
+      owned := relicsOwned_of_literals _ ⟨7⟩ {relicSlot ⟨7⟩ 0} rfl rfl (by decide) } ]
+
+/-- The published mission ids, independent of every digest the bundle binds — the
+projection does not mention them, so this closes by `rfl`. -/
+theorem catalogMissions_ids (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) :
+    (catalogMissions federationId sourceDigest contentRoot digests).map
+      (fun entry => entry.mission.missionId)
+      = [⟨1⟩, ⟨2⟩, ⟨3⟩, ⟨4⟩, ⟨5⟩, ⟨6⟩, ⟨7⟩] := rfl
+
+/-- ⚑ **The emitted catalog cannot contain a relic collision.**  Distinct mission
+ids (above, by `rfl`) plus the block discipline every entry carries
+(`CatalogMission.owned`) give pairwise-disjoint allowlists.  This is the fact the
+counter-9 bundle violated: Deck Descent's `{5,6,7,8}` met Artificer's `{6}` and
+Vent Crawl's `{7}` in one signed catalog. -/
+theorem catalogMissions_allowlists_pairwise_disjoint
+    (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests) :
+    (catalogMissions federationId sourceDigest contentRoot digests).Pairwise
+      (fun a b => Disjoint a.mission.allowedRelics b.mission.allowedRelics) :=
+  pairwise_disjoint_of_ids_nodup _
+    (by rw [catalogMissions_ids federationId sourceDigest contentRoot digests]; decide)
+
+#assert_axioms CatalogMission.allowlists_disjoint
+#assert_axioms CatalogMission.rendered_relics_disjoint
+#assert_axioms pairwise_disjoint_of_ids_nodup
+#assert_axioms catalogMissions_ids
+#assert_axioms catalogMissions_allowlists_pairwise_disjoint
+
+def catalogJson (federationId sourceDigest contentRoot : Digest32)
+    (digests : GameContentDigests) : String :=
   let inactiveActivation : Digest32 := taggedBytes32 []
   let unbound := UNBOUND_RUN_SEED
   let signal := signalMission unbound federationId sourceDigest digests.signal contentRoot inactiveActivation
@@ -2074,41 +2285,26 @@ def catalogJson (federationId sourceDigest contentRoot : Digest32)
   mission list and a non-ascending artifact list, so the two orders have to disagree
   on purpose. -/
   let missions :=
-    [ missionCatalogJson signal "Signal Triangulation"
-        "Dregg2.Games.PathOfAngels.SignalTriangulation" "signal-v2"
-        SignalTriangulation.MAX_TURNS [⟨1⟩] "games/signal-triangulation.json" "oracle-only"
-    , missionCatalogJson relay "Relay Repair" "Dregg2.Games.PathOfAngels.RelayRepair"
-        "relay-v3" RelayRepair.MAX_TURNS [⟨2⟩] "games/relay-repair.json" "per-run-open"
-    , missionCatalogJson salvage "Salvage Lock" "Dregg2.Games.PathOfAngels.SalvageLock"
-        "salvage-v2" SalvageLock.MAX_TURNS [⟨3⟩] "games/salvage-lock.json" "oracle-only"
-    , missionCatalogJson blackBox "Black Box Reconstruction"
-        "Dregg2.Games.PathOfAngels.BlackBoxReconstruction" "blackbox-v2"
-        BlackBoxReconstruction.MAX_TURNS [⟨4⟩] "games/black-box-reconstruction.json"
-        "oracle-only"
-    , missionCatalogJson descent "Deck Descent"
-        "Dregg2.Games.PathOfAngels.DeckDescent" "descent-v1"
-        DeckDescent.AIR [⟨5⟩, ⟨6⟩, ⟨7⟩, ⟨8⟩] "games/deck-descent.json" "oracle-only"
-    , missionCatalogJson artificer "Artificer Logic"
-        "Dregg2.Games.PathOfAngels.ArtificerLogic" "artificer-v1"
-        ArtificerLogic.ACTION_LIMIT [⟨6⟩] "games/artificer-logic.json" "oracle-only"
-    , missionCatalogJson vent "Vent Crawl" "Dregg2.Games.PathOfAngels.VentCrawl"
-        "push-your-luck-v1"
-        VentCrawl.ACTION_LIMIT [⟨7⟩] "games/vent-crawl.json" "oracle-only" ]
+    (catalogMissions federationId sourceDigest contentRoot digests).map missionCatalogJson
+  /- Each preview renders ONE relic list for both the contribution and the world it
+  produces, and that list carries a proof that it is the reward's own relic set.
+  ⚠ Descent's preview banks TWO of its four declared relics — the east pair — which
+  is why a preview is a SUBSET of the allowlist and never equal to it. -/
   let fixtures :=
-    [ previewFixtureJson "signal-solved-preview-v1" signal signalReward [⟨1⟩]
-        (signalPreview unbound federationId sourceDigest digests.signal contentRoot inactiveActivation)
-    , previewFixtureJson "relay-solved-preview-v1" relay relayReward [⟨2⟩]
-        (relayPreview unbound federationId sourceDigest digests.relay contentRoot inactiveActivation)
-    , previewFixtureJson "salvage-solved-preview-v1" salvage salvageReward [⟨3⟩]
-        (salvagePreview unbound federationId sourceDigest digests.salvage contentRoot inactiveActivation)
-    , previewFixtureJson "blackbox-solved-preview-v1" blackBox blackBoxReward [⟨4⟩]
-        (blackBoxPreview unbound federationId sourceDigest digests.blackBox contentRoot inactiveActivation)
-    , previewFixtureJson "descent-solved-preview-v1" descent descentReward [⟨7⟩, ⟨8⟩]
-        (descentPreview unbound federationId sourceDigest digests.deckDescent contentRoot inactiveActivation)
-    , previewFixtureJson "artificer-solved-preview-v1" artificer artificerReward [⟨6⟩]
-        (artificerPreview unbound federationId sourceDigest digests.artificer contentRoot inactiveActivation)
-    , previewFixtureJson "vent-solved-preview-v1" vent ventReward [⟨7⟩]
-        (ventPreview unbound federationId sourceDigest digests.ventCrawl contentRoot inactiveActivation) ]
+    [ previewFixtureJson "signal-solved-preview-v1" signal signalReward
+        ⟨[relicSlot ⟨1⟩ 0], by decide, by decide⟩
+    , previewFixtureJson "relay-solved-preview-v1" relay relayReward
+        ⟨[relicSlot ⟨2⟩ 0], by decide, by decide⟩
+    , previewFixtureJson "salvage-solved-preview-v1" salvage salvageReward
+        ⟨[relicSlot ⟨3⟩ 0], by decide, by decide⟩
+    , previewFixtureJson "blackbox-solved-preview-v1" blackBox blackBoxReward
+        ⟨[relicSlot ⟨4⟩ 0], by decide, by decide⟩
+    , previewFixtureJson "descent-solved-preview-v1" descent descentReward
+        ⟨[relicSlot ⟨5⟩ 2, relicSlot ⟨5⟩ 3], by decide, by decide⟩
+    , previewFixtureJson "artificer-solved-preview-v1" artificer artificerReward
+        ⟨[relicSlot ⟨6⟩ 0], by decide, by decide⟩
+    , previewFixtureJson "vent-solved-preview-v1" vent ventReward
+        ⟨[relicSlot ⟨7⟩ 0], by decide, by decide⟩ ]
   "{\n" ++
   "  \"format\":\"POAG1-CATALOG\",\n" ++
   "  \"schema_version\":1,\n" ++
@@ -2135,6 +2331,17 @@ def schemaJson : String :=
       "\"games/black-box-reconstruction.json\",\"games/deck-descent.json\"," ++
       "\"games/relay-repair.json\",\"games/salvage-lock.json\"," ++
       "\"games/signal-triangulation.json\",\"games/vent-crawl.json\"]},\n" ++
+  /- Relic ids are ONE namespace across every mission — the world holds a single
+  `discovered_relics` set — so the rule that stops two missions naming the same relic
+  has to be PUBLISHED rather than assumed.  `block_width` is rendered from
+  `MISSION_RELIC_BLOCK` itself, so a client that pins a different width refuses a
+  bundle it genuinely disagrees with rather than one it merely mis-copied. -/
+  "    \"relic_namespace\":{\"scheme\":\"per-mission-block\"," ++
+    "\"block_width\":" ++ toString MISSION_RELIC_BLOCK ++ "," ++
+    "\"owner\":\"relic_id / block_width == mission_id\"," ++
+    "\"cross_mission\":\"disjoint-by-construction\"," ++
+    "\"authored_in\":\"Dregg2.Games.PathOfAngels.RelicNamespace\"," ++
+    "\"violation\":\"refuse\"},\n" ++
   "    \"activation_digest\":{\"algorithm\":\"sha256\"," ++
     "\"domain\":\"pathofangels.network/activation-digest/v1\\u0000\"," ++
     "\"framing\":\"schema_len_be64 || schema_utf8 || manifest_sha256_raw32 || curator_pubkey_raw32 || content_epoch_be64 || counter_be64 || signature_raw64\"," ++
