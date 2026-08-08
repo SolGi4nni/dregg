@@ -663,7 +663,7 @@ is deleted — **do not delete it in this ceremony.**
 | §F4 night-watch emit | needs a curator-drawn slot secret | `openssl rand -hex 32` under `umask 077`, outside any repo |
 | §G1 wasm build | ~20 min; wasm32 compilability is **unverified** | run it; `Effect::Deshield` may or may not build under wasm32 — the recorded blocker is stale |
 | §G4 / §H | outward-facing and irreversible | orchestrator's call |
-| nextest-based gates | `cargo nextest list` blocked on a concurrent lane's build-directory lock, twice | ⚠ **but:** the reported "`.config/nextest.toml` is BROKEN, exit 96 on every profile" (from `f5be8e906`'s message) is **STALE** — measured with `tomllib`, the file parses and `profile.default.overrides[2]` contains **no** stray `#`. Re-check with `cargo nextest list` when the lock clears. |
+| nextest-based gates | not run to completion — a concurrent lane held the build-directory lock, then the unlocked run went into a cold multi-crate compile | ⚠ **The blocker is STALE, and this is now measured twice.** The reported "`.config/nextest.toml` is BROKEN, exit 96 on every profile" (from `f5be8e906`'s message) does not reproduce: `tomllib` parses the file and `profile.default.overrides[2]` contains **no** stray `#`; and `cargo nextest list -p dregg-sdk` got **past config load into `Compiling …`**, which it cannot do with an invalid filterset. Nothing here blocks the ceremony. |
 
 ### Not a ceremony step: `CANONICAL_STATE_SCHEMA_EPOCH`
 
