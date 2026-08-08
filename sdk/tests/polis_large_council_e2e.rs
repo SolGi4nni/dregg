@@ -117,13 +117,22 @@ fn map_field(runtime: &AgentRuntime, cell: CellId, key: u64) -> Option<[u8; 32]>
 /// ⚠ NAMED: the roots are read as EMPTY here because this harness's runtime never touches a note or
 /// a revocation (every turn is a `SetField`), which is what makes the reconstruction exact. A
 /// harness that spends or revokes must read the executor's own accumulators instead.
+///
+/// ⚑ AND "EMPTY" MEANS THE LIVE ACCUMULATOR'S EMPTY ROOT, NOT `heap_root::empty_heap_root_8()`.
+/// The side this is compared against is `TurnExecutor::consensus_state_commitment`, which is
+/// threaded `note_nullifiers/note_commitments/note_revoked.root8()` — for an untouched executor,
+/// `NullifierSet::new().root8()` / `CommitmentSet::new().root8()` / `RevokedSet::new().root8()`,
+/// i.e. exactly the three `rotation_witness::empty_*_root_8()` helpers. All three USED to equal
+/// `heap_root::empty_heap_root_8()`; `b20a2c50a` rebuilt every one of them as an exact
+/// tagged-linked-leaf tree (`FNI2`/`FCI2`/`FRI2`) on 2026-07-31, and from that commit the two
+/// nullifier/commitments sentinels here reconstructed a commitment the executor never computes.
 fn state_commitment(runtime: &AgentRuntime, cell: CellId) -> [u8; 32] {
     let ledger = runtime.ledger().lock().unwrap();
     dregg_turn::state_commit::consensus_state_commitment_with_roots(
         &ledger,
         &cell,
-        dregg_circuit::heap_root::empty_heap_root_8(),
-        dregg_circuit::heap_root::empty_heap_root_8(),
+        dregg_turn::rotation_witness::empty_nullifier_root_8(),
+        dregg_turn::rotation_witness::empty_commitments_root_8(),
         dregg_turn::rotation_witness::empty_revoked_root_8(),
     )
 }

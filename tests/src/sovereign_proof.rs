@@ -36,6 +36,14 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     // (empty) receipt chain. The executor verifier reads this back as OLD_COMMIT (PI 34).
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    // ⚑ THE LIVE REVOKED ROOT, not `heap_root::empty_heap_root_8()`. The producer this
+    // registration is checked against (`prove_sovereign_turn_rotated`) commits
+    // `rotation_witness::empty_revoked_root_8()` = `RevokedSet::new().root8()`. Those were the same
+    // value until `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree;
+    // from that commit this fixture registered an OLD_COMMIT over a DIFFERENT revocation set than
+    // the proof publishes, and `verify_and_commit_proof_rotated` — which binds the proof's
+    // OLD_COMMIT PIs to `bytes32_to_felt8(stored)` — rejected every honest turn here.
+    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(cell.clone());
     let cells_root = dregg_turn::rotation_witness::cells_root(&ctx_ledger);
@@ -44,7 +52,7 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
         cells_root,
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot,
         material: Default::default(),
     };

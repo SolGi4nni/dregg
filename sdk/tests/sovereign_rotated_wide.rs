@@ -79,6 +79,13 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     // receipt-chain iroot) — the SAME context the sovereign producer supplies.
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    // ⚑ THE LIVE REVOKED ROOT. `heap_root::empty_heap_root_8()` is the RETIRED
+    // `CanonicalHeapTree8` empty root and is no longer the empty root of any live accumulator:
+    // `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree, so from that
+    // commit a fixture that hand-wrote the sentinel here committed a DIFFERENT revocation set
+    // than the producer beside it published. BOUND ONCE and read by both sides, so a literal
+    // cannot drift from its twin again.
+    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let receipt_hashes: Vec<[u8; 32]> = vec![];
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -88,7 +95,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_hashes,
         &Default::default(),
     );
@@ -97,7 +104,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_hashes,
         &Default::default(),
     );
@@ -162,7 +169,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot: before_w.iroot,
         material: Default::default(),
     };
@@ -170,7 +177,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot: after_w.iroot,
         material: Default::default(),
     };
@@ -209,6 +216,7 @@ fn wide_sovereign_forged_anchor_is_rejected() {
     let (before_cell, after_cell) = sovereign_transfer_cells(100_000, 100);
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
     let before_w = rw::produce(
@@ -216,7 +224,7 @@ fn wide_sovereign_forged_anchor_is_rejected() {
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &[],
         &Default::default(),
     );
@@ -225,7 +233,7 @@ fn wide_sovereign_forged_anchor_is_rejected() {
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &[],
         &Default::default(),
     );
@@ -346,6 +354,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
     // The turn-context (single-cell ledger, empty maps, empty receipt iroot) — the producer's context.
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let receipt_hashes: Vec<[u8; 32]> = vec![];
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -355,7 +364,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_hashes,
         &Default::default(),
     );
@@ -364,7 +373,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_hashes,
         &Default::default(),
     );
@@ -462,7 +471,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot: before_w.iroot,
         material: Default::default(),
     };
@@ -470,7 +479,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot: after_w.iroot,
         material: Default::default(),
     };
@@ -587,6 +596,7 @@ fn flagday_transfer_witness(
 
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let receipt_hashes: Vec<[u8; 32]> = Vec::new();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -595,7 +605,7 @@ fn flagday_transfer_witness(
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_hashes,
         &Default::default(),
     );
@@ -604,7 +614,7 @@ fn flagday_transfer_witness(
         &ctx_ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_hashes,
         &Default::default(),
     );

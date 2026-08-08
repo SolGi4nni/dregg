@@ -34,6 +34,13 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
 
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    // ⚑ THE LIVE REVOKED ROOT. `heap_root::empty_heap_root_8()` is the RETIRED
+    // `CanonicalHeapTree8` empty root and is no longer the empty root of any live accumulator:
+    // `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree, so from that
+    // commit a fixture that hand-wrote the sentinel here committed a DIFFERENT revocation set
+    // than the producer beside it published. BOUND ONCE and read by both sides, so a literal
+    // cannot drift from its twin again.
+    let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(cell.clone());
     let cells_root = dregg_turn::rotation_witness::cells_root(&ctx_ledger);
@@ -42,7 +49,7 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
         cells_root,
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot,
         material: Default::default(),
     };
@@ -189,6 +196,7 @@ mod record_pin_anchor {
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(cell.clone());
         let cells_root = rw::cells_root(&ctx_ledger);
@@ -197,7 +205,7 @@ mod record_pin_anchor {
             cells_root,
             nullifier_root,
             commitments_root,
-            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            revoked_root,
             iroot,
             material: Default::default(),
         };
@@ -309,6 +317,7 @@ mod record_pin_anchor {
         // Witness context, mirroring the cipherclerk producer's single-cell sovereign turn.
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -319,7 +328,7 @@ mod record_pin_anchor {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -329,7 +338,7 @@ mod record_pin_anchor {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -389,7 +398,7 @@ mod record_pin_anchor {
                 cells_root: rw::cells_root(&ctx_ledger),
                 nullifier_root,
                 commitments_root,
-                revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+                revoked_root,
                 iroot: after_w.iroot,
                 material: Default::default(),
             },
@@ -517,6 +526,7 @@ mod record_pin_anchor {
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -526,7 +536,7 @@ mod record_pin_anchor {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -535,7 +545,7 @@ mod record_pin_anchor {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -590,7 +600,7 @@ mod record_pin_anchor {
                 cells_root: rw::cells_root(&ctx_ledger),
                 nullifier_root,
                 commitments_root,
-                revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+                revoked_root,
                 iroot: after_w.iroot,
                 material: Default::default(),
             },
@@ -672,6 +682,7 @@ mod record_pin_anchor {
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(cell.clone());
         let cells_root = rw::cells_root(&ctx_ledger);
@@ -680,7 +691,7 @@ mod record_pin_anchor {
             cells_root,
             nullifier_root,
             commitments_root,
-            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            revoked_root,
             iroot,
             material: Default::default(),
         };
@@ -767,6 +778,7 @@ mod record_pin_anchor {
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -776,7 +788,7 @@ mod record_pin_anchor {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -785,7 +797,7 @@ mod record_pin_anchor {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -844,7 +856,7 @@ mod record_pin_anchor {
                 cells_root: rw::cells_root(&ctx_ledger),
                 nullifier_root,
                 commitments_root,
-                revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+                revoked_root,
                 iroot: after_w.iroot,
                 material: Default::default(),
             },
@@ -1148,6 +1160,7 @@ mod record_pin_anchor {
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(cell.clone());
         let cells_root = rw::cells_root(&ctx_ledger);
@@ -1156,7 +1169,7 @@ mod record_pin_anchor {
             cells_root,
             nullifier_root,
             commitments_root,
-            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            revoked_root,
             iroot,
             material: Default::default(),
         };
@@ -1262,6 +1275,7 @@ mod whole_turn_forest {
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(cell.clone());
         let cells_root = rw::cells_root(&ctx_ledger);
@@ -1270,7 +1284,7 @@ mod whole_turn_forest {
             cells_root,
             nullifier_root,
             commitments_root,
-            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            revoked_root,
             iroot,
             material: Default::default(),
         };
@@ -1464,6 +1478,7 @@ mod wall_a {
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let receipt_hashes: Vec<[u8; 32]> = Vec::new();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -1473,7 +1488,7 @@ mod wall_a {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -1482,7 +1497,7 @@ mod wall_a {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -1665,6 +1680,7 @@ mod multi_residue_record_pin {
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let mut ctx_ledger = Ledger::new();
         let _ = ctx_ledger.insert_cell(cell.clone());
         let cells_root = rw::cells_root(&ctx_ledger);
@@ -1673,7 +1689,7 @@ mod multi_residue_record_pin {
             cells_root,
             nullifier_root,
             commitments_root,
-            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            revoked_root,
             iroot,
             material: Default::default(),
         };

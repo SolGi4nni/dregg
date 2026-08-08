@@ -61,7 +61,12 @@ fn setup_with_ledger(balance: i64) -> (AgentCipherclerk, CellId, CellId, Ledger)
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
         commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        // ⚑ THE LIVE REVOKED ROOT. `heap_root::empty_heap_root_8()` is the RETIRED
+        // `CanonicalHeapTree8` empty root and stopped being the empty revoked root at `b20a2c50a`
+        // (`RevokedSet` became an exact tagged-linked-leaf `FRI2` tree). The producer this
+        // registration is verified against publishes `rw::empty_revoked_root_8()`, so the sentinel
+        // here registered an OLD_COMMIT over a revocation set no proof commits.
+        revoked_root: rw::empty_revoked_root_8(),
         iroot: rw::iroot(&[]),
         material: Default::default(),
     };

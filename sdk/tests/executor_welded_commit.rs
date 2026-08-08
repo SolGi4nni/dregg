@@ -77,7 +77,12 @@ fn setup(balance: u64) -> (Cell, CellId, V9RotationContext, [u8; 32]) {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
         commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        // ⚑ THE LIVE REVOKED ROOT. `heap_root::empty_heap_root_8()` is the RETIRED
+        // `CanonicalHeapTree8` empty root and is no longer the empty root of any live accumulator
+        // — `b20a2c50a` rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree. The
+        // `rw::produce` calls below are handed `ctx.revoked_root`, so the registered OLD_COMMIT and
+        // the witnesses the proof is minted from read ONE field rather than two literals.
+        revoked_root: dregg_turn::rotation_witness::empty_revoked_root_8(),
         iroot: rw::iroot(&[]),
         material: Default::default(),
     };
@@ -161,7 +166,7 @@ fn welded_transfer_commits_through_executor() {
         &ctx_ledger,
         &ctx.nullifier_root,
         &ctx.commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &ctx.revoked_root,
         &[],
         &Default::default(),
     );
@@ -170,7 +175,7 @@ fn welded_transfer_commits_through_executor() {
         &ctx_ledger,
         &ctx.nullifier_root,
         &ctx.commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &ctx.revoked_root,
         &[],
         &Default::default(),
     );
@@ -320,7 +325,9 @@ fn setup_bare(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
         commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        // ⚑ THE LIVE REVOKED ROOT — see `setup` above. The cipherclerk producer these tests drive
+        // (`execute_sovereign_turn_with_proof`) publishes under `rw::empty_revoked_root_8()`.
+        revoked_root: dregg_turn::rotation_witness::empty_revoked_root_8(),
         iroot: rw::iroot(&[]),
         material: Default::default(),
     };

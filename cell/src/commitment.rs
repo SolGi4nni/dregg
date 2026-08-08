@@ -834,16 +834,24 @@ pub struct V9RotationContext {
     /// lanes 68..=74). The native `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2 accumulator
     /// root the noteSpend grow-gate opens against (`EffectVmEmitRotationV3` writesTo8), sourced from
     /// `dregg_cell::nullifier_set::NullifierSet::root8` (the live (nf, value) map). The empty-accumulator
-    /// default is `dregg_turn::rotation_witness::empty_nullifier_root_8` (=
-    /// `dregg_circuit::heap_root::empty_heap_root_8`).
+    /// default is `dregg_turn::rotation_witness::empty_nullifier_root_8`.
+    ///
+    /// ⚑ **AND THAT IS NOT `dregg_circuit::heap_root::empty_heap_root_8`.** This doc said it was,
+    /// present tense, until 2026-08-07 — and it is where the belief came from that let ~100
+    /// fixtures hand-write the heap sentinel into this struct. The equality died on 2026-07-31 at
+    /// `b20a2c50a`, which rebuilt all three accumulators as exact tagged-linked-leaf trees
+    /// (`FNI2`/`FCI2`/`FRI2`); `heap_root::empty_heap_root_8` is the retired `CanonicalHeapTree8`
+    /// empty root and is now the empty root of NO live accumulator. The standing check is
+    /// `dregg_turn::rotation_witness`'s `the_retired_heap_sentinel_is_no_accumulator_empty_root`.
     pub nullifier_root: dregg_circuit::Faithful8,
     /// The committed FAITHFUL 8-felt note-COMMITMENTS-accumulator root (limb 27 lane-0 ‖ completion
     /// lanes 75..=81). The native `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2 accumulator
     /// root the noteCreate grow-gate opens against (`EffectVmEmitRotationV3.commitmentsInsertOp`,
     /// `commitmentsRootGroupCol`), sourced from `dregg_cell::commitment_set::CommitmentSet::root8`
     /// (the live (commitment, value) map). A turn-level set root, like `nullifier_root`. The
-    /// empty-accumulator default is `dregg_turn::rotation_witness::empty_commitments_root_8` (=
-    /// `dregg_circuit::heap_root::empty_heap_root_8`).
+    /// empty-accumulator default is `dregg_turn::rotation_witness::empty_commitments_root_8` —
+    /// **not** `dregg_circuit::heap_root::empty_heap_root_8`, which this doc claimed it equalled
+    /// until 2026-08-07; see the ⚑ on `nullifier_root` above.
     pub commitments_root: dregg_circuit::Faithful8,
     /// The committed FAITHFUL 8-felt CREDENTIAL-REVOCATION-accumulator root (base limb 37 lane-0 ‖
     /// completion lanes 82..=88 — the REVOKED-ROOT flag-day widened the base region 37→38 to seat it
@@ -853,7 +861,10 @@ pub struct V9RotationContext {
     /// the domain-separated capability provenance hash (`credNul`) and channel id (`chanNul`), value =
     /// `revocation_height`. Sourced from `dregg_cell::revoked_set::RevokedSet::root8` (the live
     /// `(credNul, height)` map); the empty-accumulator default is
-    /// `dregg_turn::rotation_witness::empty_revoked_root_8` (= `dregg_circuit::heap_root::empty_heap_root_8`).
+    /// `dregg_turn::rotation_witness::empty_revoked_root_8` — **not**
+    /// `dregg_circuit::heap_root::empty_heap_root_8`, which this doc claimed it equalled until
+    /// 2026-08-07; see the ⚑ on `nullifier_root` above. This is the field `c45814b9f` repaired in
+    /// three sites and this doc mis-taught in every other.
     pub revoked_root: dregg_circuit::Faithful8,
     /// The receipt-index MMR root, absorbed LAST.
     pub iroot: dregg_circuit::field::BabyBear,
