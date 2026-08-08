@@ -1,5 +1,167 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 8 — the IPA closing check is in a circuit, and `sg` is not in the equation any more
+
+`opening_is_vacuous_when_sg_is_free` — two `#assert_axioms`-gated theorems (`PastaIpaDeferral.lean:427`,
+`MinaWrapVerifierAir.lean:683`), refutable, not tautological — said the closing check
+`c·Q + delta = z₁·(sg + b₀·U) + z₂·H` **accepts at every value of everything else while `sg` is a free
+witness**. The MSM leg was in circuit; the closing group equation had **no AIR at all**. Nothing
+connected the two.
+
+⚑ **THE MOVE IS UPSTREAM'S OWN, READ AT SOURCE.** `poly-commitment/src/ipa.rs` does not defer the Tock
+`sg`: `SRS::verify` samples two randomisers (`:356-357`) and folds `sg == ⟨s, srs.g⟩` into the SAME
+terminal MSM — the `sg` base carries `neg_rand_base_i * opening.z1 - sg_rand_base_i` (`:410-411`) and
+the SRS bases carry `+ sg_rand_base_i · s_i` (`:413-425`). **That coefficient is zero at
+`sg_rand_base = −z₁·rand_base`, and `sg` leaves the equation.** `MinaWrapClosingAir.the_combined_check_is_
+constant_in_sg` is that as a theorem over an arbitrary `CommRing`/`Module`, and
+`the_eliminated_check_is_the_conjunction` is why it is **not a weakening**: the eliminated residual
+vanishes **iff** there exists an `sg` satisfying (A) and (B) together. Where upstream's random `ρ` carries
+a Schwartz–Zippel error term, this choice carries none — it is an exact elimination, not a fold.
+`the_eliminated_check_has_no_surjective_sg_map` then retires the vacuity the only honest way: its
+premise (the `sg`-side map is surjective) is FALSE here, because that map is constant.
+
+**LEAN-AUTHORED AIR** (`metatheory/Dregg2/Circuit/Emit/MinaWrapClosingAir.lean`, `#assert_axioms`-clean,
+zero `#guard`s, 33 named theorems). Three descriptors, the Pallas mirror of `MinaAccumulatorAir`'s Vesta
+ones, reusing every leg family that carries no prime: `dregg-mina-wrap-closing-{seg,final,srs}::v1`.
+`closingAddends` is a TOTAL FUNCTION of a generator list, `u⃗`, `z₁`, `b₀`, `z₂`, `delta`, `U`, `H` —
+⚑ **`sg` is not one of its arguments and there is no slot in the chain for it.**
+
+**BOTH POLARITIES, IN RELEASE, AND THE FALSIFIER IS THE FORGERY THE VACUITY THEOREM NAMES.**
+`EmitMinaWrapClosing.lean` CONSTRUCTS that prover: `SG_FORGED` is a real Pallas point that is not
+`⟨s,G⟩` and `DELTA_FORGED` is the `delta` that closes his chain.
+
+* his un-eliminated chain **VANISHES** (`free_sg_end 0 … 0`) and **PROVES** under `-final` — the vacuity
+  as a STARK proof rather than as a theorem about a model;
+* his OWN data through the eliminated manifest lands on `z₁·(sg* − ⟨s,G⟩) ≠ O` and is **REFUSED** —
+  `assert_violated_constraint_not_bus`, i.e. the `.last` discharge gate, not a LogUp imbalance; every
+  terminal limb is inside the declared 8-bit width so no range lookup is what refuses; and it goes
+  through `prove_vm_descriptor2_unchecked` so the producer pre-flight is not what spoke;
+* the honest pair at the same eight-row shape proves under both rungs, and the two routed traces publish
+  the **same** `c·Q` at `PI[0..95]` — only the terminal differs.
+
+**MEASURED.** `-seg`/`-final`: 3 048 declared / **10 756 committed**, 4 828 constraints, 192 PIs.
+`-srs`: 3 049 declared / **10 757 committed**, 4 831 constraints. Eight rows; inner LDE `2^3 · 2^6 = 2^9`.
+The leaf/fold adapter (`circuit-prove/src/mina_wrap_closing_fold.rs`) derives every engine with
+`recursion_layer_over` and carries the accumulator between segments with 96 `cb.connect`s — the
+accumulator's PI layout imported, not respelled.
+
+⚠ **WHAT IS NOT CLOSED, and none of it is softened.** (1) The scaling `−z₁·s_r·G_r` runs in the EMITTER;
+circuit / emitter / nowhere, no fourth place — `MinaAccumulatorAir` §10's trichotomy inherited whole.
+(2) `c·Q` enters as the published `PI[0..95]`; that it is the block's is a CONSUMER refusal.
+(3) ⚑⚑ **and this is where the free witness MOVED TO, named rather than left to be found**: nothing
+binds `delta`, `c`, `u⃗`, `z₁`, `z₂`, `b₀` to a transcript, and `delta` is a DECLARED manifest slot and a
+prover-supplied group element — so **this AIR refutes a free `sg` and does NOT refute a free `delta`.**
+Not the same hole: `sg`'s binding is ALGEBRAIC (`sg = ⟨s,srs.g⟩`, inside the closing equation, discharged
+by nothing in dregg until now) and `delta`'s is FIAT–SHAMIR (`SRS::verify` absorbs it before squeezing
+`c`), which is `MinaWrapOpeningGate` §3 / `MinaAccumulatorAir` residual 2 — open before this and open
+after it. (4) P10 is untouched. (5) ⚑ **The row is `PastaCurveSound`'s 3 048-column
+one, NOT `PastaCurveScheduled`'s 481/1 499.** The cost law is linear in COLUMNS, so this leaf is ~7×
+more expensive than it needs to be; what blocks the port is that the scheduled layout is one op per row
+behind a 33-phase shift register, so a chain needs a phase-gated carry plus a re-run of `AirCrossRow`'s
+composition. **Undone work, not a theorem of the model.** (6) `MinaAccumulatorAir` §8's value-level
+routing bridge is not re-derived at the Pallas descriptor; `only_the_closing_routing_leg_targets_the_
+addend_table` is `decide`d here and the lemmas after it are prime-free, so the port is mechanical.
+
+**FLAG DAY:** none. Nothing re-emits, nothing re-genesises, no VK rotates — the three descriptors are NEW
+and live in `circuit/tests/fixtures/`, deliberately not `descriptors/by-name/` (the `-srs` manifest carries
+the proof's own `delta`, so there is one descriptor per opening proof and a by-name entry would be a lie
+about what is fixed). `PROVENANCE.json` is not stamped.
+
+
+## ⛑⛑⛑⛑ AUGUST 8 — the packing had no injectivity, and the seam could not be welded because the column was not published
+
+Two items the `BODYHASH` derivation left named, both priced by the lane that built it. Neither was a
+design fork; both were the same shape — **a fact proved about an object no gate reached.**
+
+### 1. `pack_to_fields` was not injective, and "not injective" is not a figure of speech
+
+`MinaStateBodyHashChain` §8 residual 2: *"nothing forces each chunk `< 2^n`, without which the
+packing is not injective."* `Bridge/MinaPackInjective.lean` is the arithmetic, and the alias it
+exhibits is one addition wide:
+
+    packToFields ⟨[], [(1,1),(0,1)]⟩ = [2] = packToFields ⟨[], [(0,1),(2,1)]⟩
+
+Two different bodies, the **same 49 absorbed field elements**, therefore the same `state_body_hash`,
+the same 25-link chain, the same root — **and every link honest.** That is the aliasing family this
+campaign has closed five times, at the one rung that still had it.
+
+`packing_is_injective`: fix the field stream, fix the WIDTH SCHEDULE, put every chunk below its
+declared width, and the packed output determines the chunk stream chunk-value by chunk-value. All
+three hypotheses are **refuted when dropped** (`the_range_/the_schedule_/the_positive_width_
+hypothesis_is_load_bearing`), and `the_real_block_stream_satisfies_the_hypotheses` says the premise
+is not empty on the object the chain absorbs.
+
+`Circuit/Emit/MinaBodyPreimageBitsAir.lean` is the **Lean-authored** gate that discharges it:
+`dregg-mina-body-preimage-bits::v1`, one row, 2 381 `gBool` legs over the packed half of
+`Body.to_input` and 302 limb legs composing the eleven packed field elements, all 302 published.
+
+⛑ **THE BRIEF SAID "booleanity for the 781, declared-width for the rest" AND THE FIELD SAID
+OTHERWISE.** At BabyBear a 32- or 64-bit chunk has no column to live in (`p ≈ 2^31`), so every chunk
+is a bit slice and the 38 wide ones are gated by the SAME `x·(x−1) = 0` the 781 booleans are —
+`bitsToNat_lt` is that identification: `n` boolean columns cannot denote a value `≥ 2^n`.
+
+⛑ **AND THE PRICE MOVED THE OTHER WAY FROM THE BRIEF, MEASURED IN THE UNIT THAT BINDS.** The brief
+warned the chunk gates would ADD range lookups and to price them in COMMITTED width. They add none:
+a booleanity assertion is a degree-2 window gate, not a bus query, so `MainLayout::build` appends no
+nibble aux block. **2 683 declared → 2 683 committed, 1.00×**, against `pasta-fp-chainlink`'s
+469 → 1 037 (2.21×) and the accumulator's 3 048 → 10 756 (3.53×, of which range decomposition is
+71.7%). First rung in this cone whose aux block is empty.
+
+⛑ **THE LIMB ALLOCATION IS `⌈W_e/8⌉` AND THAT IS A REFUSAL, NOT A SAVING.** A uniform 32-limb block
+would publish **fifty** columns whose only gate is `PLIMB = 0` — fifty decorative anchors, on a
+ratchet already red on six unrelated descriptors. The empty limb is unrepresentable instead
+(`no_published_limb_is_inert`).
+
+**WHAT IT BUYS, IN THE UNITS THE CAMPAIGN USES:** of the preimage's **38 whole field elements +
+2 381 bits**, this constrains **all 2 381 bits and none of the 38 field elements.** The eleven
+packed elements now pin every chunk exactly once; the 38 remain what `PICKLES_OPENING_WITNESSED`
+covers.
+
+### 2. `piCount` 20 → 37 — the seam is welded to the ABSORBED STREAM, not to `(salt, BODYHASH)`
+
+`minaLink_body_hash_is_joined_but_not_published` named the cause exactly: *"a `proofBind`'s
+`commit`/`vk` name PUBLISHED values and a recursion fold reads `air_public_targets`, so an
+unpublished `BODYHASH` cannot be `cb.connect`ed at all."* So it is published — PI 20..28 — and the
+body-hash chain's **8-lane ordered transcript accumulator** with it, PI 29..36.
+
+⛑ **THE ACCUMULATOR IS THE WHOLE CONTENT, AND THE VACUITY WAS NAMED BEFORE ANYONE COULD BUILD IT:**
+*"a bind of `(salt, BODYHASH)` alone would be VACUOUS … `perm` is a permutation, so 25 links from a
+fixed head with free absorbed inputs reach every field element."* The commitment is
+`salt("MinaProtoStateBody") ‖ BODYHASH ‖ acc` — 27 + 9 + 8 = 44 lanes — against
+`dregg-pasta-fp-chainlink::v1`'s fingerprint.
+
+⛑⛑ **AND THE RE-AIMED TRIPWIRE FIRED. REPORT IT AS THE MECHANISM WORKING.** The ORIGINAL trigger
+(*"it reds the day `state_body_hash` acquires its own sub-proof"*) did **not** fire when that rung
+landed on 08-07, because the derivation was a sibling chain welded executor-side — a watcher aimed
+at the right column and the wrong event. It was re-aimed at `isPiBound = false`. That is now FALSE,
+and the firing is recorded **as a term** rather than as a commit message:
+`the_unpublished_body_hash_claim_is_now_refuted`. A tripwire merely deleted when its trigger arrives
+leaves no evidence it ever fired — which is the failure the re-aiming was itself a response to.
+
+**FLAG DAY.** `dregg-mina-lightclient-link::v1` re-emits: `trace_width` **40 → 57**, `piCount`
+**20 → 37**, constraints **72 → 99**, legs **43 → 62**; **its VK rotates**, so
+`LightClientMinaAir.LINK_VK_LANES` moves and `dregg-mina-lightclient-verify::v1` re-emits and re-VKs
+— **every previously produced `MinaHeadProofWire` fails to verify.** `mina_head_predicate_vk()` is
+blake3 over the descriptor NAME, which did not move, so **nothing re-genesises.**
+⚠ **THE OLD SHAPE REFUSES RATHER THAN REINTERPRETS**: a 40-wide trace hits `"base row width … must
+equal descriptor trace_width"` and a 20-PI vector hits `"public input count … != descriptor
+public_input_count"`. Both, not either.
+⚠ Rust consumers that must move with it, named so the break is findable:
+`circuit-prove/tests/mina_link_segment_multirow.rs`, `circuit/tests/mina_statehash_seam_proves.rs`
+(`proofBindsOf` is TWO seams now), `circuit/tests/mina_transcript_carrier_binding.rs`,
+`turn/src/executor/mina_head_verifier.rs`.
+
+### ⚠ WHAT A PROVER STILL CHOOSES — plainly
+
+**The 38 whole field elements of the body preimage, and which 2 381 bits.** The chunk gates say the
+bits ARE bits and that the eleven packed elements determine them; they do not say those bits are a
+Mina block body. And publication buys the weld's REACHABILITY, not the weld: until a fold
+`cb.connect`s the 302 bit-gate PI slots to the chain's links 19..24 absorbed blocks — and pins the
+`32 − ⌈W_e/8⌉` high limbs to zero (`the_high_limbs_of_the_real_elements_are_zero`) — and connects
+the link's 17 new slots to the chain root's claim lanes, both ties are EXECUTOR comparisons. **The
+choice moved twice and has not disappeared.**
+
+
 ## ⛑⛑⛑⛑ AUGUST 7 — a malformed signature wire was an honest REJECT, on all four verify paths
 
 `d62ec21d7`. The class `a02306c5e` closed on the admission oracle was still open on every signature

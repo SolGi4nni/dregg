@@ -88,6 +88,12 @@ pub mod mina_pasta_fixture_suite;
 /// Lean-authored `dregg-pasta-fq-chainlink::v1` leaf, and the fold that carries the sponge state
 /// from link to link INSIDE the recursion.
 pub mod mina_phase2_chain_leaf;
+/// ⚑⚑ **THE IPA CLOSING CHECK AS A RECURSION TREE.** The Lean-authored
+/// `dregg-mina-wrap-closing-{seg,final,srs}::v1` leaves — kimchi's own combined MSM at
+/// `sg_rand_base = −z₁·rand_base`, the coefficient at which `sg` leaves the equation — and the fold
+/// that carries the accumulator POINT between segments with `cb.connect`. This is the leg
+/// `opening_is_vacuous_when_sg_is_free` was waiting for.
+pub mod mina_wrap_closing_fold;
 /// ⚑ THE FINALIZE CONJUNCTION AND THE ENDOMORPHISM LIFT, FOLDED — the Lean-authored
 /// `dregg-mina-wrap-conjunction::v1` and `dregg-mina-xi-endo-lift::v1` as recursion leaves, and the
 /// node that `cb.connect`s their 32 published ξ limbs so the two halves are ONE value in-circuit

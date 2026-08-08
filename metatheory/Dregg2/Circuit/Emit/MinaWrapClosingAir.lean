@@ -133,8 +133,20 @@ with one adapter.
    free — the chain forces it to be the negation of the declared sum — but whether the `c·Q` a node
    compares against is the block's is a CONSUMER obligation, exactly `MinaAccumulatorAir`'s
    residual 1. Nothing here ties the chain to a Mina head.
-3. **The challenges `u⃗` are not bound to a transcript by anything here**, in circuit exactly as
-   natively. `MinaAccumulatorAir` residual 2, inherited unchanged.
+3. ⚑⚑ **AND HERE IS WHERE THE VACUITY MOVED TO, SAID PLAINLY RATHER THAN LEFT TO BE FOUND.**
+   Nothing here binds `delta`, `c`, `u⃗`, `z₁`, `z₂` or `b₀` to a transcript. `delta` is a DECLARED
+   manifest slot and a prover-supplied group element, so a prover who may choose it freely can
+   satisfy this check at every value of everything else — by `deltaFor`, which is the emitter's own
+   function. **That is a free witness, and it is the same SHAPE as the one this file retires.**
+
+   It is not the same HOLE, and the difference is the whole point of the file. `sg`'s binding is an
+   ALGEBRAIC relation to the SRS (`sg = ⟨s, srs.g⟩`) which lives inside the closing equation and
+   which nothing in dregg discharged; that one is closed here, by elimination. `delta`'s binding is
+   a FIAT–SHAMIR relation — `SRS::verify` absorbs `delta` into the sponge before squeezing `c` — and
+   it lives in the transcript, which is `MinaWrapOpeningGate`'s §3 and `MinaAccumulatorAir`'s
+   residual 2, open before this file and open after it. **Retiring one free witness while another
+   stands is progress only if the second one is named, so it is named: the closing check in this
+   AIR refutes a free `sg` and does NOT refute a free `delta`.**
 4. **P10, the opening-soundness floor, is untouched.** That a prover which passes the closing check
    must KNOW an opening is the IPA/dlog extraction argument, undischarged here and everywhere in
    this stack. This file changes what the CHECK is, never what passing it proves.
