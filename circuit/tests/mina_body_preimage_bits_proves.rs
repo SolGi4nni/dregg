@@ -35,6 +35,37 @@
 //! cd metatheory && lake env lean --run MinaBodyBitsEmit.lean ../circuit/tests/fixtures
 //! ```
 //!
+//! ## ⚠⚠ THIS FILE HAS NEVER RUN, AND THE REASON IS NOT THIS FILE
+//!
+//! Measured 2026-08-08, and the FIRST diagnosis was wrong — recorded here because a guess in an
+//! assertion becomes a diagnosis. The commit that landed this said *"the workspace cargo lock ate
+//! three attempts"*; the lock is real (five sibling `cargo test` processes) but it is a DELAY, not
+//! the cause. The terminal cause is that **the workspace does not build at all**:
+//!
+//! ```text
+//! error: failed to run custom build command for `dregg-lean-ffi`
+//!   panicked at dregg-lean-ffi/build.rs:1294:
+//!   DREGG_REQUIRE_LEAN/current release gate refuses a stale verified runtime: `lake build` of the
+//!   FFI + gate modules exited exit status: 1 (a module failed to elaborate)
+//! ```
+//!
+//! and `lake build Dregg2.Ffi` names it exactly:
+//!
+//! ```text
+//! Dregg2/Games/PathOfAngels/NetworkJudgeWire.lean:1648: `native_decide` evaluated that the
+//!   proposition is false
+//! Dregg2/Games/PathOfAngels/NetworkJudgeWire.lean:1678: compiled-pin FAIL:
+//!   fixture_output_semantic_inhabited depends on axioms [sorryAx]
+//! ```
+//!
+//! That module is **not in `Dregg2.lean`'s import closure** (which is why the whole-tree
+//! `lake build Dregg2` this lane ran is green at 10 683 jobs) and its last touch is `8a336a74e`,
+//! a Path-of-Angels commit. It is not this lane's, and the correct response is NOT to disable
+//! `DREGG_REQUIRE_LEAN` — this file's subject is the verified runtime.
+//!
+//! ⚠ **So there is no `test result:` line anywhere for this file, which means NOTHING RAN.** Do not
+//! read it as a gate until it prints one. When the Path-of-Angels red clears:
+//!
 //! Run: `cargo test -p dregg-circuit --release --test mina_body_preimage_bits_proves -- --nocapture`
 
 use dregg_circuit::descriptor_ir2::{
