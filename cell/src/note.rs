@@ -749,8 +749,18 @@ mod tests {
     // `faithful_v2_commitment_and_nullifier_bind_every_high_byte` fifty lines above)
     // reference neither. The feature gated NOTHING in this crate except these six items
     // — the same sin the manifest already records for the deleted `prover` feature, one
-    // level worse: it made five injectivity teeth invisible rather than merely lying
+    // level worse: it made four injectivity teeth invisible rather than merely lying
     // about a name. `zkvm` is deleted; see `cell/Cargo.toml`.
+    //
+    // ⚑ AND IT WAS FOUR, NOT FIVE. Un-gating them made them run; it did not make them all
+    // bite. `poseidon2_commitment_deterministic` was
+    //     assert_eq!(n.poseidon2_commitment(), n.poseidon2_commitment())
+    // — a PURITY CHECK on a pure function of `&self`, sitting under this header's
+    // "256-bit binding" claim and green under every defect the four beside it refuse.
+    // Measured 2026-08-08: it passes with `poseidon2_commitment` truncated to
+    // `owner[0..4]`, and it passes with the body replaced by a constant. It is rewritten
+    // below as a real determinism tooth over INDEPENDENTLY CONSTRUCTED equal notes; only
+    // the four `binds_*` tests above are injectivity teeth.
     fn note_diff_at(field: &str, byte_index: usize) -> (Note, Note) {
         let owner = test_owner(7);
         let fields = [3u64, 250, 0, 0, 0, 0, 0, 0];
@@ -842,15 +852,65 @@ mod tests {
         );
     }
 
+    /// ⚑ THIS WAS `assert_eq!(n.poseidon2_commitment(), n.poseidon2_commitment())` — a PURITY
+    /// CHECK on a pure function of `&self`, under a section header claiming 256-bit binding.
+    /// It is green under every truncation the four teeth above refuse, and green under any
+    /// commitment defect whatsoever, because calling one pure function twice can only disagree
+    /// if the compiler is broken. A fifth test that cannot fail dilutes the four that can.
+    ///
+    /// It now asserts what its name says: the commitment is determined by the note's CONTENT,
+    /// not by which object, which CONSTRUCTOR, or which serialization produced it. Both arms
+    /// build a note INDEPENDENT of the base (no shared `Note` value), and both are refutable:
+    ///
+    ///  * **the two constructors.** [`Note::with_randomness`] derives `creation_nonce` by
+    ///    BLAKE3 over (owner ‖ randomness) under a domain string, and `creation_nonce` is one
+    ///    of the four fields the commitment absorbs. Re-deriving that rule here and feeding it
+    ///    to [`Note::with_nonce`] pins the derivation itself — change the domain string, the
+    ///    absorbed fields, or their order, and this reds.
+    ///  * **the serde round-trip.** `Note` is `Serialize`/`Deserialize` and ALL FOUR of its
+    ///    fields are committed. A field dropped or defaulted on the wire (a `#[serde(skip)]`,
+    ///    a rename) yields a note that re-commits to a DIFFERENT value while every equality
+    ///    assertion on the struct elsewhere in this module still passes.
     #[test]
-    fn poseidon2_commitment_deterministic() {
-        let n = Note::with_nonce(
-            test_owner(7),
-            [3, 250, 0, 0, 0, 0, 0, 0],
-            [55u8; 32],
-            [66u8; 32],
+    fn poseidon2_commitment_deterministic_across_independent_constructions() {
+        let owner = test_owner(7);
+        let fields = [3u64, 250, 0, 0, 0, 0, 0, 0];
+        let randomness = [55u8; 32];
+
+        let base = Note::with_randomness(owner, fields, randomness);
+
+        // (1) The OTHER constructor, over this test's own re-derivation of the documented
+        // `creation_nonce` rule — an independently built note with the same content.
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-note creation-nonce v1");
+        hasher.update(&owner);
+        hasher.update(&randomness);
+        let mut nonce = [0u8; 32];
+        nonce.copy_from_slice(hasher.finalize().as_bytes());
+        let rebuilt = Note::with_nonce(owner, fields, randomness, nonce);
+        assert_eq!(
+            rebuilt, base,
+            "with_nonce over the re-derived creation_nonce must reconstruct with_randomness's \
+             note — the nonce derivation is part of what the commitment binds"
         );
-        assert_eq!(n.poseidon2_commitment(), n.poseidon2_commitment());
+        assert_eq!(
+            rebuilt.poseidon2_commitment(),
+            base.poseidon2_commitment(),
+            "two independently constructed notes with identical content must commit identically"
+        );
+
+        // (2) A serde round-trip is a third independent construction of the same content.
+        let wire = postcard::to_allocvec(&base).expect("a note serializes");
+        let decoded: Note = postcard::from_bytes(&wire).expect("a note round-trips");
+        assert_eq!(
+            decoded.poseidon2_commitment(),
+            base.poseidon2_commitment(),
+            "a note that survived the wire must commit to the same value — every field the \
+             commitment absorbs has to survive serialization"
+        );
+
+        // The 32-byte encoding inherits the same determinism.
+        assert_eq!(rebuilt.commitment(), base.commitment());
+        assert_eq!(decoded.commitment(), base.commitment());
     }
 
     // ─── NoteBatcher tests ──────────────────────────────────────────────────

@@ -48,10 +48,9 @@
 #     `dfa_routing_emit_gate::perf_prove_verify_breakdown` = "PERF PROBE with NO assertion".
 #   * `fixture-mint` — tests whose effect is to WRITE a fixture into the tree.
 #
-# ⚑ AND FIVE GPU TESTS ARE IN NEITHER PROFILE (measured 2026-08-07). `[profile.gpu]` names
-# three binaries and six test names; `[profile.armed]`'s exclusion names the same six. These
-# five are in neither list, so the GPU lane never runs them AND the CPU nightly would red on
-# them (they assert a real adapter):
+# ⚑ AND FIVE GPU TESTS WERE IN NEITHER PROFILE (measured 2026-08-07; ⚑ REPAIRED 2026-08-08).
+# `[profile.gpu]` named three binaries and six test names; `[profile.armed]`'s exclusion named
+# the same six. These five were in neither list:
 #     gpu_lde_parity_apex_scale_dim0_fold                          (circuit-prove/src/gpu_backend.rs)
 #     deployed_arities_are_bit_exact_against_pinned_plonky3        (gpu_hidingfri_fold_differential)
 #     lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact    (gpu_hidingfri_ir2_e2e)
@@ -59,9 +58,24 @@
 #     deployed_kernel_step_cpu_vs_gpu_across_fri_parameterizations (gpu_kernel_step_reparam_measure)
 # `.config/nextest.toml`'s own doctrine already names this hazard — "a renamed GPU tooth
 # drops out of `gpu` and into `armed`, i.e. onto GPU-less boxes, where it is the guaranteed
-# red the GPU exclusion exists to prevent" — but these never ENTERED either list. They are
-# rostered `gpu` here so the census is complete; the `.config/nextest.toml` repair is a
-# separate change and is NOT smuggled into this roster.
+# red the GPU exclusion exists to prevent" — but these never ENTERED either list.
+#
+# ⚠ AND THE ROW BELOW USED TO SAY "the CPU nightly would red on them", WHICH IS NOT TRUE and
+# is worth correcting rather than deleting, because it names the WRONG lane and so the wrong
+# repair. Checked 2026-08-08 against what the scheduled lanes actually select: the nightly
+# derives its targets from THIS roster (`--emit-cargo-targets`), and that emitter already
+# `--skip`ped `gpu_lde_parity_apex_scale_dim0_fold` by name — it is a lib test, and `--lib`
+# selects the whole lib target — while the other four live in binaries no armed route names,
+# so nothing ever compiled them. The real exposure was `[profile.armed]`, i.e.
+# `scripts/test-gauntlet.sh armed` on whatever box a human typed it on, which no schedule
+# runs and which is exactly why nobody had seen the red.
+#
+# THE REPAIR, 2026-08-08: all five are now in `[profile.gpu]` and excluded from
+# `[profile.armed]` (both edits in one commit — splitting them is how this recurs), and
+# `scripts/test-gauntlet.sh gpu` exports `DREGG_REQUIRE_WGPU=1`, without which three of them
+# assert-fail on line 1 of their own lane. They remain rostered `gpu` here, and `gpu` still
+# means UNARMED: no scheduled lane in this repository has an adapter. What changed is that
+# the lane which does have one now runs them, and no CPU lane can.
 #
 # ⚑ THIS ROSTER SAYS NOTHING ABOUT WHETHER A TOOTH BITES. The standing reminder is
 # `armed-teeth.yml`'s own first measurement: arming the glob-covered set produced
@@ -100,6 +114,7 @@ armed-dark dregg-circuit-prove canary__the_state_node_accepts_the_app_root_forge
 armed-dark dregg-circuit-prove canary_neutering_the_node8_site_lets_the_forgery_fold   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
 armed-dark dregg-circuit-prove carried_binding_proof_unlinked_to_root_is_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
 armed-dark dregg-circuit-prove deco_leaf_proof_serializes_and_reads_back_claim   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove derive_deployed_apex_vk_identity_and_check_fixture   # ⚑ ARMED 2026-08-08 BY SPLITTING THE WRITER OUT. It was `fixture-mint` — A REAL PIN WELDED TO A WRITER: it asserted the gnark fixture matched the apex VK identity derived from a fresh fold at HEAD AND rewrote chain/gnark/fixtures/apex_vk_identity.json, i.e. a check that reads its own input, so the one governance anchor with teeth ran NOWHERE. The write is now emit_deployed_apex_vk_identity_artifact; what remains asserts the governance pin plus BOTH committed artifacts against the HEAD derivation, and writes nothing. Its binary was already selected for this lane by shrink_pinned_to_foreign_apex_vk_rejects.
 armed-dark dregg-circuit-prove deployed_mpt_holding_turn_forged_commitment_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
 armed-dark dregg-circuit-prove deployed_mpt_holding_turn_honest_accepts   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
 armed-dark dregg-circuit-prove disagreeing_published_root_is_rejected_by_the_app_root_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
@@ -164,8 +179,8 @@ armed-dark dregg-circuit-prove zero_balance_does_not_fold   # DARK at 2026-08-07
 
 # ── gpu ───────────────────────────────────────────────────────────────────
 gpu dregg-circuit-prove both_dispatch_branches_mint_the_same_bytes   # [profile.gpu]
-gpu dregg-circuit-prove deployed_arities_are_bit_exact_against_pinned_plonky3   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
-gpu dregg-circuit-prove deployed_kernel_step_cpu_vs_gpu_across_fri_parameterizations   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove deployed_arities_are_bit_exact_against_pinned_plonky3   # ⚑ ADDED to [profile.gpu] + [profile.armed]'s exclusion on 2026-08-08; it was in NEITHER, so the GPU lane never ran it and `test-gauntlet.sh armed` swept it onto GPU-less boxes
+gpu dregg-circuit-prove deployed_kernel_step_cpu_vs_gpu_across_fri_parameterizations   # ⚑ ADDED to [profile.gpu] + [profile.armed]'s exclusion on 2026-08-08; it was in NEITHER, so the GPU lane never ran it and `test-gauntlet.sh armed` swept it onto GPU-less boxes
 gpu dregg-circuit-prove gpu_babybear_dft_parity_and_speed   # [profile.gpu]
 gpu dregg-circuit-prove gpu_babybear_lde_residency_hit_and_root_parity   # [profile.gpu]
 gpu dregg-circuit-prove gpu_babybear_merkle_parity_and_speed   # [profile.gpu]
@@ -174,13 +189,13 @@ gpu dregg-circuit-prove gpu_backend_real_shrink_gpu_vs_cpu_measured   # [profile
 gpu dregg-circuit-prove gpu_bn254_mmcs_wide_leaf_parity   # [profile.gpu]
 gpu dregg-circuit-prove gpu_dft_parity_vs_radix2   # [profile.gpu]
 gpu dregg-circuit-prove gpu_lde_device_residency_hit_fallback_and_root_parity   # [profile.gpu]
-gpu dregg-circuit-prove gpu_lde_parity_apex_scale_dim0_fold   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove gpu_lde_parity_apex_scale_dim0_fold   # ⚑ ADDED to [profile.gpu] + [profile.armed]'s exclusion on 2026-08-08; it was in NEITHER, so the GPU lane never ran it and `test-gauntlet.sh armed` swept it onto GPU-less boxes
 gpu dregg-circuit-prove gpu_mmcs_root_parity_openings_and_reject   # [profile.gpu]
-gpu dregg-circuit-prove lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact   # ⚑ ADDED to [profile.gpu] + [profile.armed]'s exclusion on 2026-08-08; it was in NEITHER, so the GPU lane never ran it and `test-gauntlet.sh armed` swept it onto GPU-less boxes
 gpu dregg-circuit-prove on_device_async_bn254_root_matches_cpu   # [profile.gpu]
 gpu dregg-circuit-prove real_fold_layer_byte_identical_on_gpu_and_measured   # [profile.gpu]
 gpu dregg-circuit-prove recursion_tower_large_regime_byte_identical_on_gpu   # [profile.gpu]
-gpu dregg-circuit-prove required_hidingfri_refuses_disabled_gpu_merkle_stage   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove required_hidingfri_refuses_disabled_gpu_merkle_stage   # ⚑ ADDED to [profile.gpu] + [profile.armed]'s exclusion on 2026-08-08; it was in NEITHER, so the GPU lane never ran it and `test-gauntlet.sh armed` swept it onto GPU-less boxes
 gpu dregg-circuit-prove saved_cpu_shrink_shape_report   # [profile.gpu]
 gpu dregg-circuit-prove saved_shrink_transcript_parity_report   # [profile.gpu]
 
@@ -202,7 +217,7 @@ exclusive dregg-circuit-prove the_rotated_leaf_at_the_split_engine   # its own #
 exclusive dregg-circuit-prove the_split_mint_proves_the_same_eight_additions   # its own #[ignore] reason says run ALONE; [profile.armed] is test-threads=4
 
 # ── fixture-mint ──────────────────────────────────────────────────────────
-fixture-mint dregg-circuit-prove derive_deployed_apex_vk_identity_and_check_fixture   # ⚑ A REAL PIN WELDED TO A WRITER: it "asserts the gnark fixture matches" the apex VK identity derived from a fresh fold at HEAD, AND "(re)writes chain/gnark/fixtures/apex_vk_identity.json". The write is what disqualifies it from a nightly, so the deployed apex VK pin runs NOWHERE. Splitting the assert from the write would let it be armed.
+fixture-mint dregg-circuit-prove emit_deployed_apex_vk_identity_artifact   # the WRITE half of the 2026-08-08 split (was fused into derive_deployed_apex_vk_identity_and_check_fixture): derives the identity from a fresh HEAD fold, asserts the governance pin, THEN writes chain/gnark/fixtures/apex_vk_identity.json. Still NOT ARMED — and now for its real reason alone.
 fixture-mint dregg-circuit-prove export_real_shrink_fri_fixture_for_gnark   # its effect is to WRITE a fixture into the tree
 
 # ── other-lane ────────────────────────────────────────────────────────────

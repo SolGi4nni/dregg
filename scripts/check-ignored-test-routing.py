@@ -147,7 +147,7 @@ ROUTES = {
 # unrouted test gains a route. Never the other way round to make a red go green —
 # that is the move this entire family of sweeps exists to make impossible.
 FLOOR_ARMED = 21
-FLOOR_ARMED_DARK = 71
+FLOOR_ARMED_DARK = 72
 CEILING_UNROUTED = 152
 
 IGNORE_ATTR = re.compile(r"^\s*#\[(?:ignore\b|cfg_attr\([^)]*\bignore\b)")

@@ -124,7 +124,18 @@ case "$mode" in
       "$@" ;;
   armed)         exec cargo nextest run --profile armed --release --run-ignored ignored-only "$@" ;;
   list-armed)    exec cargo nextest list --profile armed --run-ignored ignored-only "$@" ;;
-  gpu)           exec cargo nextest run --profile gpu   --release --run-ignored ignored-only "$@" ;;
+  # ⚑ `DREGG_REQUIRE_WGPU=1` IS PART OF THE LANE, NOT A CALLER'S OPTION (2026-08-08).
+  # Three members of `[profile.gpu]` open with
+  #     assert_eq!(std::env::var("DREGG_REQUIRE_WGPU").as_deref(), Ok("1"), …)
+  # — `lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact`,
+  # `required_hidingfri_refuses_disabled_gpu_merkle_stage` and
+  # `deployed_kernel_step_cpu_vs_gpu_across_fri_parameterizations` — because without the
+  # strict posture a silent all-CPU fallback is reported as a GPU result. They were in
+  # NEITHER nextest profile until 2026-08-08; putting them in `gpu` without this export
+  # would have armed three tests that fail on their own lane by construction, which is how
+  # an escape hatch becomes routine. The variable is read only on the HidingFRI path, so it
+  # cannot change the six original members' verdicts (see `[profile.gpu]`'s header).
+  gpu)           exec env DREGG_REQUIRE_WGPU=1 cargo nextest run --profile gpu --release --run-ignored ignored-only "$@" ;;
   list-gpu)      exec cargo nextest list --profile gpu   --run-ignored ignored-only "$@" ;;
   -*)
     # bare flags → default profile (e.g. `test-gauntlet.sh -p dregg-turn`)

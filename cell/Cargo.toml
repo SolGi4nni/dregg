@@ -24,10 +24,13 @@ default = []
 # crate cannot see `dregg-commit`". So the feature selected two crates nothing in here
 # could reference.
 #
-# What it DID gate was six items, all of them in `note.rs`'s test module: the five
-# Poseidon2 note-commitment INJECTIVITY teeth (`…binds_owner_high_bytes`,
+# What it DID gate was six items, all of them in `note.rs`'s test module: FOUR Poseidon2
+# note-commitment INJECTIVITY teeth (`…binds_owner_high_bytes`,
 # `…binds_creation_nonce_high_bytes`, `…binds_randomness_high_bytes`,
-# `…binds_full_u64_value_and_asset_type`, `…deterministic`) and their shared helper.
+# `…binds_full_u64_value_and_asset_type`), a FIFTH that was not a tooth at all
+# (`poseidon2_commitment_deterministic`, a purity check `f(x) == f(x)` on a pure function —
+# rewritten 2026-08-08 as `…_deterministic_across_independent_constructions`, see the
+# ⚑ block above it in `note.rs`), and their shared helper.
 # `zkvm` is not in `default`; no `--features`/`--all-features` line in any workflow,
 # script or manifest in this workspace named it; and its ONLY enabler was
 # `circuit/sp1-guest`, a SEPARATE workspace (`[workspace]` in its own manifest)

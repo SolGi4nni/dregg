@@ -169,8 +169,11 @@ pub const APEX_VK_LANES: usize = 8;
 /// VK material is content-independent (two proofs of the same circuit over
 /// different data carry identical material) and — with the accumulator's WRAP
 /// step ON — depth-invariant, so a fresh fold of ANY chain at HEAD derives
-/// the deployed circuit's identity. `derive_deployed_apex_vk_identity_and_check_fixture`
-/// (tests/apex_shrink_gnark_fixture.rs) is the minting + differential gate.
+/// the deployed circuit's identity. Two tests in tests/apex_shrink_gnark_fixture.rs
+/// carry it, SPLIT 2026-08-08 so the check no longer reads its own input:
+/// `derive_deployed_apex_vk_identity_and_check_fixture` is the pure CHECK (governance
+/// pin + differential against BOTH committed artifacts, writing nothing, and therefore
+/// armable), and `emit_deployed_apex_vk_identity_artifact` is the MINTER.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApexVkIdentity {
     /// Artifact schema version.
@@ -223,17 +226,19 @@ pub struct ApexVkIdentity {
 /// claim moved; the recursion *shape* did.
 ///
 /// **The flag day, named:** re-derive with
-/// `cargo test -p dregg-circuit-prove --release --test apex_shrink_gnark_fixture derive_deployed
-/// -- --ignored --nocapture`, then update, together and in one commit:
+/// `cargo test -p dregg-circuit-prove --release --test apex_shrink_gnark_fixture
+/// emit_deployed_apex_vk_identity_artifact -- --ignored --nocapture`, then update, together and
+/// in one commit:
 ///   1. this constant,
 ///   2. `chain/gnark/settlement_circuit.go`'s `DreggApexRecursionVk`,
 ///   3. `chain/gnark/fixtures/apex_vk_identity.json` (`recursion_vk_hex` **and** the 8
-///      `apex_preprocessed_commit` lanes — the derivation lane rewrites it),
+///      `apex_preprocessed_commit` lanes — `emit_deployed_apex_vk_identity_artifact`
+///      rewrites it; the CHECK lane asserts it and never writes),
 ///   4. `chain/gnark/fixtures/apex_shrink_fri_real.json`'s `apex_preprocessed_commit`, which the
 ///      Go cross-artifact differential (`TestApexPinFixtureMatchesDerivedDeployedIdentity`)
 ///      requires to equal (3).
 ///
-/// ⚠ The derivation lane asserts this pin BEFORE it emits, so it fails closed with the two
+/// ⚠ The emitter asserts this pin BEFORE it writes, so it fails closed with the two
 /// fingerprints in the message rather than silently re-stamping the artifact — which is the
 /// behaviour to keep. Until all four move together, every consumer of the identity artifact
 /// refuses to load, which is the correct posture and not a bug.
@@ -253,7 +258,7 @@ pub fn check_apex_vk_identity_pin(id: &ApexVkIdentity) -> Result<(), String> {
             "apex VK identity fingerprint {} != governance-pinned DREGG_APEX_RECURSION_VK {} — \
              either the identity artifact is doctored/stale, or the apex circuit changed and \
              governance has not re-pinned the anchor (re-derive via \
-             derive_deployed_apex_vk_identity_and_check_fixture, then update the constant here \
+             emit_deployed_apex_vk_identity_artifact, then update the constant here \
              AND chain/gnark/settlement_circuit.go DreggApexRecursionVk)",
             id.recursion_vk_hex, DREGG_APEX_RECURSION_VK,
         ))
@@ -298,10 +303,11 @@ pub fn derive_apex_vk_identity(
                       DREGG_APEX_RECURSION_VK / DreggApexRecursionVk constant (the \
                       weak-subjectivity anchor); apex_preprocessed_commit is the flattened \
                       preprocessed commitment the fingerprint hashes (the ApexVkLanes value the \
-                      gnark SettlementCircuit bakes as its apex-VK pin). Regenerate + \
-                      differential-check against the proof fixture: cargo test -p \
+                      gnark SettlementCircuit bakes as its apex-VK pin). Re-mint: cargo test -p \
                       dregg-circuit-prove --release --test apex_shrink_gnark_fixture \
-                      derive_deployed -- --ignored --nocapture"
+                      emit_deployed_apex_vk_identity_artifact -- --ignored --nocapture. \
+                      Check it (writes nothing): the same target with \
+                      derive_deployed_apex_vk_identity_and_check_fixture"
             .to_string(),
     })
 }
@@ -384,7 +390,7 @@ pub fn shrink_apex_to_outer_exposed<SC: crate::apex_shrink::OuterShrinkConfig>(
 ) -> Result<ApexShrinkProof<SC>, String> {
     // Pin to the apex's own preprocessed commitment (the fixture-mint path:
     // the apex IS the deployed dregg apex, so its commitment IS the deployed
-    // value — the derivation test `derive_deployed_apex_vk_identity_and_check_fixture`
+    // value — the check test `derive_deployed_apex_vk_identity_and_check_fixture`
     // re-derives that value from a FRESH fold at HEAD via
     // [`derive_apex_vk_identity`] and asserts the fixture matches). A
     // settlement SERVICE receiving untrusted apexes should call

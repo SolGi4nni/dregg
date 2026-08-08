@@ -224,6 +224,21 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     );
 }
 
+/// ⚑ THIS TOOTH USED TO ASSERT ONLY `catch_unwind(…).is_err()` — "something panicked" —
+/// with no completeness pole and no look at the payload. `create_gpu_zk_config_seeded`
+/// reaches `enforce_required_gpu_hiding_boundary`, which under `DREGG_REQUIRE_WGPU=1`
+/// carries TWO asserts: the disabled-Merkle-stage one and a "no portable wgpu adapter"
+/// one. Only the ORDER of those two statements made the old assertion mean what its name
+/// says; reorder them, delete the stage check, or break wgpu init in any way that panics,
+/// and the tooth stays green while the thing it is named for is gone. That is the refusal-
+/// renders-as-the-expected-verdict shape, and a refusal test with no honest pole cannot
+/// tell "it refused for my reason" from "it refuses always".
+///
+/// So it now checks the two things the name already claimed:
+///   1. the PAYLOAD names the disabled Merkle stage — an adapter refusal is a DIFFERENT
+///      refusal and must not be read as this one;
+///   2. the CONTROL POLE: with the stage enabled, the same call SUCCEEDS. That is what
+///      makes (1) evidence about the stage rather than about the constructor.
 #[test]
 #[ignore = "hostile strict-boundary polarity: run with DREGG_REQUIRE_WGPU=1"]
 fn required_hidingfri_refuses_disabled_gpu_merkle_stage() {
@@ -233,6 +248,14 @@ fn required_hidingfri_refuses_disabled_gpu_merkle_stage() {
         "this refusal gate must run in the strict posture"
     );
     let previous = std::env::var_os("DREGG_GPU_BABYBEAR_MMCS");
+
+    // THE CONTROL POLE, first: with the stage ENABLED the strict config builds. Without
+    // this, "it panicked" is satisfied by a constructor that panics unconditionally.
+    unsafe { std::env::remove_var("DREGG_GPU_BABYBEAR_MMCS") };
+    let honest = std::panic::catch_unwind(|| {
+        let _ = create_gpu_zk_config_seeded(MMCS_SEED, PCS_SEED);
+    });
+
     // Each nextest test has its own process; no other test can observe this
     // hostile stage override. Rust 2024 makes environment mutation explicitly
     // unsafe because it would race in a shared process.
@@ -244,8 +267,26 @@ fn required_hidingfri_refuses_disabled_gpu_merkle_stage() {
         Some(value) => unsafe { std::env::set_var("DREGG_GPU_BABYBEAR_MMCS", value) },
         None => unsafe { std::env::remove_var("DREGG_GPU_BABYBEAR_MMCS") },
     }
+
     assert!(
-        refusal.is_err(),
-        "strict GPU config silently accepted an explicitly disabled Merkle stage"
+        honest.is_ok(),
+        "the strict GPU HidingFRI config REFUSED with the Merkle stage enabled — the refusal \
+         below would then be evidence about nothing. On the GPU lane this means the adapter \
+         boundary (or wgpu init) is broken, not the stage gate"
+    );
+    let payload = match refusal {
+        Ok(()) => panic!("strict GPU config silently accepted an explicitly disabled Merkle stage"),
+        Err(payload) => payload,
+    };
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&'static str>().copied())
+        .unwrap_or("<non-string panic payload>")
+        .to_string();
+    assert!(
+        message.contains("DREGG_GPU_BABYBEAR_MMCS"),
+        "the strict boundary refused, but NOT for the disabled Merkle stage — it said {message:?}. \
+         A refusal that renders as the expected verdict is not the expected verdict"
     );
 }

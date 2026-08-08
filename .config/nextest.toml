@@ -439,8 +439,34 @@ fail-fast = true
 # target was `-p dregg-circuit-prove`; `package()` expresses that INSIDE the filter, because `-p`
 # on the command line makes every OTHER profile's `binary()` names unresolvable and nextest then
 # refuses to run at all.
+#
+# ⚑ FIVE GPU TEETH WERE IN NEITHER LIST (fixed 2026-08-08). Measured 2026-08-07 by
+# `.github/ignored-test-routes.txt`'s census: `[profile.gpu]` named three binaries and six
+# test names, this exclusion named the same nine, and these five appeared in neither —
+#     gpu_lde_parity_apex_scale_dim0_fold                          (circuit-prove/src/gpu_backend.rs)
+#     deployed_arities_are_bit_exact_against_pinned_plonky3        (gpu_hidingfri_fold_differential)
+#     lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact    (gpu_hidingfri_ir2_e2e)
+#     required_hidingfri_refuses_disabled_gpu_merkle_stage         (gpu_hidingfri_ir2_e2e)
+#     deployed_kernel_step_cpu_vs_gpu_across_fri_parameterizations (gpu_kernel_step_reparam_measure)
+# — so the GPU lane never ran them AND `armed` swept them onto whatever box typed the
+# command. That is precisely the hazard the ⚠⚠ block at the top of this file names ("a
+# renamed GPU tooth drops out of `gpu` and into `armed`, i.e. onto GPU-less boxes"),
+# reached by never ENTERING either list rather than by a rename. All four clauses below
+# are added to BOTH profiles in the same edit; splitting them is how this recurs.
+#
+# ⚠ AND `[profile.gpu]` ALONE WAS NOT ENOUGH TO ARM THEM. Three of the five open with
+# `assert_eq!(std::env::var("DREGG_REQUIRE_WGPU").as_deref(), Ok("1"))` — they are
+# meaningful only in the strict posture, and `scripts/test-gauntlet.sh gpu` did not set it,
+# so listing them here without that would have armed three tests that cannot pass on their
+# own lane. The script now exports it; see its `gpu)` row.
+#
+# Three are named by `binary(...)` on purpose: nextest HARD-ERRORS on an unresolvable
+# `binary()` and is SILENT on an unresolvable `test(~)` (measured, see the top of this
+# file), so the self-validating operator is used wherever the target permits it. Only
+# `gpu_lde_parity_apex_scale_dim0_fold` needs `test(~)`, because it is a LIB test and no
+# `binary()` names a lib target.
 [profile.armed]
-default-filter = 'package(dregg-circuit-prove) and not (binary(gpu_babybear_merkle_e2e) or binary(gpu_backend_shrink_e2e) or binary(gpu_recursion_fold_e2e) or test(~gpu_dft_parity_vs_radix2) or test(~gpu_mmcs_root_parity_openings_and_reject) or test(~gpu_bn254_mmcs_wide_leaf_parity) or test(~gpu_lde_device_residency_hit_fallback_and_root_parity) or test(~gpu_babybear_lde_residency_hit_and_root_parity) or test(~on_device_async_bn254_root_matches_cpu))'
+default-filter = 'package(dregg-circuit-prove) and not (binary(gpu_babybear_merkle_e2e) or binary(gpu_backend_shrink_e2e) or binary(gpu_recursion_fold_e2e) or binary(gpu_hidingfri_fold_differential) or binary(gpu_hidingfri_ir2_e2e) or binary(gpu_kernel_step_reparam_measure) or test(~gpu_dft_parity_vs_radix2) or test(~gpu_mmcs_root_parity_openings_and_reject) or test(~gpu_bn254_mmcs_wide_leaf_parity) or test(~gpu_lde_device_residency_hit_fallback_and_root_parity) or test(~gpu_babybear_lde_residency_hit_and_root_parity) or test(~gpu_lde_parity_apex_scale_dim0_fold) or test(~on_device_async_bn254_root_matches_cpu))'
 # Real folds: warn late. A tooth killed at a timeout is a tooth that did not bite,
 # so the warn period stays at five minutes and the kill is deliberately enormous —
 # 300s × 12 = 3600s per tooth. This profile had NO `terminate-after` at all, which
@@ -457,8 +483,17 @@ test-threads = 4
 # Every test here asserts a real adapter and is `#[ignore]`d. Run it ONLY on a box
 # with a GPU: `scripts/test-gauntlet.sh gpu`. On a GPU-less host these SHOULD red —
 # that is the fail-closed posture working, not a bug to route around.
+#
+# ⚠ THE LANE EXPORTS `DREGG_REQUIRE_WGPU=1` (`scripts/test-gauntlet.sh gpu`). The three
+# HidingFRI/kernel-step teeth added below refuse to run without it — their first statement
+# asserts it — and the variable is read at exactly four sites, all on the HidingFRI path
+# (`gpu_backend.rs`: `enforce_required_gpu_hiding_boundary`, `GpuHidingFriFold::new`,
+# `prove_vm_descriptor2_gpu_zk`, `require_hiding_gpu_dispatch_since`). None of the six
+# original members touches any of them, so the export cannot change their verdict; checked
+# file by file rather than assumed, because "the fallback test" is a name that invites the
+# opposite guess (`gpu_lde_device_residency_hit_fallback_and_root_parity` reads no env at all).
 [profile.gpu]
-default-filter = 'binary(gpu_babybear_merkle_e2e) or binary(gpu_backend_shrink_e2e) or binary(gpu_recursion_fold_e2e) or test(~gpu_dft_parity_vs_radix2) or test(~gpu_mmcs_root_parity_openings_and_reject) or test(~gpu_bn254_mmcs_wide_leaf_parity) or test(~gpu_lde_device_residency_hit_fallback_and_root_parity) or test(~gpu_babybear_lde_residency_hit_and_root_parity) or test(~on_device_async_bn254_root_matches_cpu)'
+default-filter = 'binary(gpu_babybear_merkle_e2e) or binary(gpu_backend_shrink_e2e) or binary(gpu_recursion_fold_e2e) or binary(gpu_hidingfri_fold_differential) or binary(gpu_hidingfri_ir2_e2e) or binary(gpu_kernel_step_reparam_measure) or test(~gpu_dft_parity_vs_radix2) or test(~gpu_mmcs_root_parity_openings_and_reject) or test(~gpu_bn254_mmcs_wide_leaf_parity) or test(~gpu_lde_device_residency_hit_fallback_and_root_parity) or test(~gpu_babybear_lde_residency_hit_and_root_parity) or test(~gpu_lde_parity_apex_scale_dim0_fold) or test(~on_device_async_bn254_root_matches_cpu)'
 # 300s × 4 = 1200s. A wedged GPU is a REAL failure mode here and it does not
 # self-clear: a hung driver call blocks forever, and with `test-threads = 1` below
 # it blocks the ENTIRE lane behind it, not just itself. Twenty minutes is far
