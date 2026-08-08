@@ -587,7 +587,13 @@ pub fn wire_commit_8(pre_limbs: &[BabyBear], iroot: BabyBear) -> dregg_circuit::
 /// It is deliberately the SAME body as the cell-side twin: the limbs come from
 /// [`dregg_cell::commitment::compute_rotated_pre_limbs`], so there is ONE limb-fill in the tree
 /// rather than two that agree until they do not. [`produce`] now delegates here, and
-/// `the_two_producers_are_one_body` in this module's tests is the standing check.
+/// `the_witness_and_the_anchor_are_one_body_under_one_context` in this module's tests is the
+/// standing check.
+///
+/// ⚠ That citation read `the_two_producers_are_one_body` until 2026-08-07 — a test name with no
+/// `fn` anywhere in the workspace. A `test(~…)` selector for a name that outlived its referent is
+/// **silent** under nextest (`AGENTS.md`), so a filter aimed at this check would have run zero
+/// tests and exited 0.
 pub fn produce_in_ctx(
     cell: &Cell,
     ctx: &dregg_cell::commitment::V9RotationContext,
@@ -1150,14 +1156,31 @@ mod tests {
     /// What stands here instead is the equation the ALIGNMENT needs, and it needs no copy:
     ///
     /// 1. `produce(loose parts…) == produce_in_ctx(cell, ctx(loose parts…))` — so "hand the prover
-    ///    the executor's `V9RotationContext`" is a ONE-ARGUMENT change rather than a rewrite; and
-    /// 2. the witness's limbs, chip-chained, ARE
+    ///    the executor's `V9RotationContext`" is a ONE-ARGUMENT change rather than a rewrite;
+    /// 2. the witness's 1-felt `wireCommitR` twin — `RotationWitness::state_commit`, the value the
+    ///    rotated trace's row-0 `B_STATE_COMMIT` carrier carries — IS
+    ///    `cell::commitment::compute_canonical_state_commitment_v9_felt(cell, ctx)`; and
+    /// 3. the witness's limbs, chip-chained, ARE
     ///    `state_commit::cell_state_commitment(cell, ctx)` — the value the receipt carries, the
     ///    executor signs and the committee attests. There is one commitment function; what the two
     ///    sides disagree about is only WHICH CONTEXT, which is the whole of
     ///    `tests/receipt_state_commit_is_not_the_proof_state_commit.rs`.
-    #[test]
-    fn the_witness_and_the_anchor_are_one_body_under_one_context() {
+    ///
+    /// ⚑ LEG (2) WAS MISSING AND THAT IS WHY THREE `circuit/tests/effect_vm_rotation_flip.rs`
+    /// teeth had to find the last drift instead. This tie checked leg (1) and leg (3) — the CHIP
+    /// chain — and never the 1-felt twin, which is precisely the object those three differentials
+    /// (`G3`, `G4`, `§4.2`) compare against the trace. The measured drift was a CONTEXT drift:
+    /// `produce` was handed `empty_revoked_root_8()` while the cell-side context beside it was
+    /// hand-written `heap_root::empty_heap_root_8()`, the same value until `b20a2c50a` rebuilt
+    /// `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree.
+    ///
+    /// ⚑ AND THE TIE IS NOW RED-PROVABLE WITHOUT A MUTATION. The body takes the cell-side
+    /// `revoked_root` as a parameter, so
+    /// [`the_tie_goes_red_when_the_cell_side_context_drifts`] re-runs it with exactly the stale
+    /// sentinel that caused the drift and REQUIRES the panic. No `if false &&` scaffold, no window
+    /// in a shared tree, and the demonstration cannot rot: if the two roots ever became equal
+    /// again the `should_panic` test goes red, which is the honest verdict either way.
+    fn the_witness_and_the_anchor_are_one_body(cell_side_revoked_root: dregg_circuit::Faithful8) {
         let c = cell(0x5A, 4242);
         let mut ledger = Ledger::new();
         ledger.insert_cell(c.clone()).unwrap();
@@ -1189,7 +1212,9 @@ mod tests {
             "the delegated fill must still be the full absorption vector"
         );
 
-        let ctx = dregg_cell::commitment::V9RotationContext {
+        // (1) — the producer's OWN context, so this leg is about `produce` vs `produce_in_ctx` and
+        // nothing else.
+        let producer_ctx = dregg_cell::commitment::V9RotationContext {
             cells_root: cells_root(&ledger),
             nullifier_root,
             commitments_root,
@@ -1199,20 +1224,89 @@ mod tests {
         };
         assert_eq!(
             w,
-            produce_in_ctx(&c, &ctx),
+            produce_in_ctx(&c, &producer_ctx),
             "produce ≡ produce_in_ctx ∘ ctx"
         );
 
-        // (2) — the SAME limbs the consensus anchor commits, under the SAME context. The anchor is
-        // the CHIP chain (`from_wire_commit_chip`); `RotationWitness::state_commit` is the 1-felt
-        // `wireCommitR`, which is a different chain over the same limbs — so compare the limbs
-        // through the anchor's own function rather than comparing the two chains.
+        // The CELL-SIDE context — identical to the producer's on the honest call, and the one
+        // knob the red-proof turns.
+        let ctx = dregg_cell::commitment::V9RotationContext {
+            revoked_root: cell_side_revoked_root,
+            ..producer_ctx
+        };
+
+        // (2) — THE 1-FELT TWIN. `RotationWitness::state_commit` is `wire_commit(pre_limbs, iroot)`
+        // and the cell side is `v9_wire_commit` over `compute_rotated_pre_limbs`: the same chain,
+        // and this is the object the rotated trace publishes on `B_STATE_COMMIT`. If this equality
+        // is not asserted HERE it is only asserted three crates away, inside proving tests that
+        // take minutes, which is how the last drift stayed hidden.
+        assert_eq!(
+            w.state_commit,
+            dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(&c, &ctx),
+            "the witness's 1-felt wireCommitR twin and the cell-side rotated commitment are ONE \
+             value under ONE context — this is the felt the rotated trace carries on B_STATE_COMMIT"
+        );
+
+        // (3) — the SAME limbs the consensus anchor commits, under the SAME context. The anchor is
+        // the CHIP chain (`from_wire_commit_chip`), a different chain over the same limbs, so this
+        // leg compares through the anchor's own function.
         assert_eq!(
             dregg_circuit::Faithful8::from_wire_commit_chip(&w.pre_limbs, w.iroot).to_bytes32(),
             crate::state_commit::cell_state_commitment(&c, &ctx),
             "the witness producer and the consensus anchor must be one commitment function; only \
              the CONTEXT is allowed to differ between the proof and the receipt"
         );
+    }
+
+    #[test]
+    fn the_witness_and_the_anchor_are_one_body_under_one_context() {
+        the_witness_and_the_anchor_are_one_body(empty_revoked_root_8());
+    }
+
+    /// ⚑ **THE RED-PROOF OF THE TIE ABOVE, AS A TEST RATHER THAN AS A PROMISE.**
+    ///
+    /// Re-runs the tie with the cell side holding `dregg_circuit::heap_root::empty_heap_root_8()`
+    /// — the retired `CanonicalHeapTree8` empty root — where the producer holds
+    /// [`empty_revoked_root_8`]. That is not a hypothetical: it is the exact pair of literals that
+    /// sat on the two sides of `circuit/tests/effect_vm_rotation_flip.rs`'s G3/G4/§4.2
+    /// differentials, and the drift they produced survived because this tie handed BOTH sides the
+    /// same value and never compared the 1-felt twin at all.
+    ///
+    /// `expected` pins leg (2) specifically, so a version of this file that deleted the 1-felt
+    /// assertion and kept only the chip leg would fail this test rather than pass it.
+    #[test]
+    #[should_panic(expected = "the witness's 1-felt wireCommitR twin")]
+    fn the_tie_goes_red_when_the_cell_side_context_drifts() {
+        the_witness_and_the_anchor_are_one_body(dregg_circuit::heap_root::empty_heap_root_8());
+    }
+
+    /// The retired heap sentinel is NOT the empty root of any live accumulator, and the three live
+    /// empty roots are pairwise distinct.
+    ///
+    /// `dregg_circuit::heap_root::empty_heap_root_8()` USED to be what
+    /// `empty_nullifier_root_8` / `empty_commitments_root_8` / `empty_revoked_root_8` returned. It
+    /// is now the empty root of a tree none of them is, and it still appears as a stand-in for all
+    /// three in fixtures across `circuit/tests`, `sdk/tests`, `perf` and `tests/src`. Where both
+    /// sides of a comparison use the same stand-in nothing is visible; where one side is a real
+    /// producer default, the commitment silently moves. This names the trap so a reader meets it
+    /// before a differential does — and it goes red the day any of these four converge, which
+    /// would make those fixtures accidentally correct rather than correct.
+    #[test]
+    fn the_retired_heap_sentinel_is_no_accumulator_empty_root() {
+        let heap = dregg_circuit::heap_root::empty_heap_root_8();
+        let nul = empty_nullifier_root_8();
+        let com = empty_commitments_root_8();
+        let rev = empty_revoked_root_8();
+        for (name, live) in [("nullifier", nul), ("commitments", com), ("revoked", rev)] {
+            assert_ne!(
+                heap, live,
+                "heap_root::empty_heap_root_8() is NOT the empty {name} root — a fixture that \
+                 substitutes it commits a different accumulator than the producer does"
+            );
+        }
+        assert_ne!(nul, com, "FNI2 / FCI2 are domain-separated even when empty");
+        assert_ne!(nul, rev, "FNI2 / FRI2 are domain-separated even when empty");
+        assert_ne!(com, rev, "FCI2 / FRI2 are domain-separated even when empty");
     }
 
     #[test]

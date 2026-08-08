@@ -5635,6 +5635,15 @@ impl AgentCipherclerk {
         //    context (the receipt log does not change mid-proof).
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+        // ⚑ BOUND ONCE, and it must be — the `before_commit_8` debug cross-check below rebuilds a
+        // `V9RotationContext` to re-derive what these producers publish, and it hand-wrote
+        // `heap_root::empty_heap_root_8()` for this field while the producers were handed
+        // `empty_revoked_root_8()`. Those were the same value until `b20a2c50a` rebuilt `RevokedSet`
+        // as an exact tagged-linked-leaf (`FRI2`) tree; after it, the cross-check recomputed a
+        // DIFFERENT revocation set than the proof published, so the `debug_assert_eq!` fired on
+        // every honest non-grow-gate sovereign turn in a debug build and was compiled out of
+        // `--release` — the `daf38eb87` shape this crate has already been bitten by once.
+        let revoked_root = dregg_turn::rotation_witness::empty_revoked_root_8();
         let receipt_hashes: Vec<[u8; 32]> = self
             .receipt_chain
             .iter()
@@ -5668,7 +5677,7 @@ impl AgentCipherclerk {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &Default::default(),
         );
@@ -5677,7 +5686,7 @@ impl AgentCipherclerk {
             &ctx_ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_hashes,
             &after_material,
         );
@@ -6063,7 +6072,7 @@ impl AgentCipherclerk {
                     cells_root: rw::cells_root(&ctx_ledger),
                     nullifier_root,
                     commitments_root,
-                    revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+                    revoked_root,
                     iroot: before_w.iroot,
                     material: Default::default(),
                 },

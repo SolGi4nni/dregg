@@ -252,6 +252,14 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    // ⚑ BOUND ONCE, READ BY BOTH SIDES OF EVERY DIFFERENTIAL BELOW. The `V9RotationContext` the
+    // cell-side v9 commitment is rebuilt under further down MUST be the context the producer was
+    // handed, or the "two independent paths to the same object" differential compares two
+    // different turns. This was a LITERAL on each side — `empty_revoked_root_8()` in the `produce`
+    // call, `heap_root::empty_heap_root_8()` in the context — the same value until `b20a2c50a`
+    // rebuilt `RevokedSet` as an exact tagged-linked-leaf (`FRI2`) tree. From that commit the two
+    // sides committed different revocation sets and G3 was measuring the fixture, not the circuit.
+    let revoked_root = rw::empty_revoked_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
     let before_w = rw::produce(
@@ -259,7 +267,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         &ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_log,
         &Default::default(),
     );
@@ -268,7 +276,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         &ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_log,
         &Default::default(),
     );
@@ -384,7 +392,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         cells_root: rw::cells_root(&ledger),
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot: before_w.iroot,
         material: Default::default(),
     };
@@ -566,6 +574,8 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    // BOUND ONCE — see the ⚑ in `rotated_transfer_proves_verifies_differential_and_refuses_ghost`.
+    let revoked_root = rw::empty_revoked_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
     let before_w = rw::produce(
@@ -573,7 +583,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         &ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_log,
         &Default::default(),
     );
@@ -582,7 +592,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         &ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_log,
         &Default::default(),
     );
@@ -605,7 +615,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         cells_root: rw::cells_root(&ledger),
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot: before_w.iroot,
         material: Default::default(),
     };
@@ -1481,6 +1491,10 @@ fn rotated_carrier_octets_carry_real_child_vk_and_contract_hash_three_way() {
 
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    // BOUND ONCE — see the ⚑ in `rotated_transfer_proves_verifies_differential_and_refuses_ghost`.
+    // This test escaped the drift only because it compares an octet SLICE (89..=112), which the
+    // revoked-root limbs (37 ‖ 82..=88) do not reach; the trap was still armed here.
+    let revoked_root = rw::empty_revoked_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[7u8; 32]];
 
     let before_cell = producer_cell(40_000, 0);
@@ -1512,7 +1526,7 @@ fn rotated_carrier_octets_carry_real_child_vk_and_contract_hash_three_way() {
             &ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_log,
             &Default::default(),
         );
@@ -1521,7 +1535,7 @@ fn rotated_carrier_octets_carry_real_child_vk_and_contract_hash_three_way() {
             &ledger,
             &nullifier_root,
             &commitments_root,
-            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &revoked_root,
             &receipt_log,
             &material,
         );
@@ -1544,7 +1558,7 @@ fn rotated_carrier_octets_carry_real_child_vk_and_contract_hash_three_way() {
                 cells_root: rw::cells_root(&ledger),
                 nullifier_root,
                 commitments_root,
-                revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+                revoked_root,
                 iroot: after_w.iroot,
                 material,
             },
@@ -2514,6 +2528,8 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
+    // BOUND ONCE — see the ⚑ in `rotated_transfer_proves_verifies_differential_and_refuses_ghost`.
+    let revoked_root = rw::empty_revoked_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
     let before_w = rw::produce(
@@ -2521,7 +2537,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
         &ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_log,
         &Default::default(),
     );
@@ -2530,7 +2546,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
         &ledger,
         &nullifier_root,
         &commitments_root,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
+        &revoked_root,
         &receipt_log,
         &Default::default(),
     );
@@ -2573,7 +2589,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
         cells_root: rw::cells_root(&ledger),
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot: before_w.iroot,
         material: Default::default(),
     };
@@ -2600,7 +2616,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
         cells_root: rw::cells_root(&ledger),
         nullifier_root,
         commitments_root,
-        revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+        revoked_root,
         iroot: after_w.iroot,
         material: Default::default(),
     };
