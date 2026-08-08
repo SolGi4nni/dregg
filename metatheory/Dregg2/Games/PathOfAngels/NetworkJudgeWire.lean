@@ -34,6 +34,48 @@ abbrev OUTPUT_FORMAT : String := "POA-SIGNAL-OUT-1"
 abbrev WIRE_NAT_LIMIT : Nat := 2 ^ 64 - 1
 abbrev WIRE_ID_LIMIT : Nat := 2 ^ 32 - 1
 abbrev WIRE_ARTIFACT_LIMIT : Nat := 4096
+
+/-! ## ⚑ Which limit bounds a relic ID
+
+Three constants are called a relic limit and **none of the other two bounds an id**:
+
+* `RELIC_LIMIT = 64` — how many relics ONE CONTRIBUTION may carry.  It is a COUNT
+  everywhere it appears: `Contribution.relics_bounded` is a `card`,
+  `ContributionBudget.relics : Fin (RELIC_LIMIT + 1)` is a count, and
+  `parseNatList … RELIC_LIMIT` bounds the list's **length**.
+* `MISSION_RELIC_LIMIT = 4096` — how many relics ONE MISSION may ALLOW.  Also a
+  `card` (`MissionSpec.allowed_relics_bounded`).
+* `MAX_RELICS_PER_MISSION = 16` in `poa-curator` — the signer's per-mission COUNT
+  cap, and therefore the width of a relic block (`MISSION_RELIC_BLOCK`).
+
+`WIRE_ID_LIMIT` is the id ceiling, and `strictNatListB` is where the two meet: its
+`limit` argument bounds the list's LENGTH while every VALUE is checked against
+`WIRE_ID_LIMIT`.  Reading `parseNatList … RELIC_LIMIT` as "a relic id is at most 64"
+is the misreading these theorems exist to close: Deck Descent's ids 80..83 are
+wire-legal, and were before the partition too. -/
+
+/-- A block's ids are wire-representable exactly while the mission id is under
+`WIRE_ID_LIMIT / MISSION_RELIC_BLOCK` — i.e. the scheme carries 2^28 missions before
+an id stops fitting the transport, which is the real bound on how far it scales. -/
+theorem relicSlot_wire_representable (mission : MissionId) {slot : Nat}
+    (hmission : mission.value < (WIRE_ID_LIMIT + 1) / MISSION_RELIC_BLOCK)
+    (hslot : slot < MISSION_RELIC_BLOCK) :
+    (relicSlot mission slot).value ≤ WIRE_ID_LIMIT := by
+  simp only [relicSlot, MISSION_RELIC_BLOCK, WIRE_ID_LIMIT] at *
+  omega
+
+/-- Every id in the block of every mission the bundle can publish
+(`MAX_MISSIONS_PER_EPOCH = 8` in `poa-curator`) is wire-representable — over the WHOLE
+block, not over the allowlists that happen to be declared today, so a mission adding a
+slot cannot leave the range this checked. -/
+theorem published_relic_blocks_are_wire_representable :
+    ((List.range 8).flatMap fun mission =>
+        (List.range MISSION_RELIC_BLOCK).map fun slot =>
+          (relicSlot ⟨mission⟩ slot).value).all (· ≤ WIRE_ID_LIMIT) = true := by
+  decide
+
+#assert_axioms relicSlot_wire_representable
+#assert_axioms published_relic_blocks_are_wire_representable
 /-! `consumedRuns` is presently a bounded per-content-epoch replay window.  A
 deployment must roll the epoch or replace the explicit population with an
 authenticated accumulator before reaching this limit; silently dropping rows
