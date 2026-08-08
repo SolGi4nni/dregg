@@ -397,6 +397,127 @@ mod tests {
         );
     }
 
+    /// ⚑ **TWO HONEST NODES APPLY THE SAME FINALIZED SET IN DIFFERENT ORDERS.**
+    ///
+    /// The test above pins what the identity cursor DOES guarantee across a
+    /// catch-up reorg — every finalized block executes exactly once — and it
+    /// compares the union of the two batches as a SORTED SET. That is the
+    /// blindness this test removes.
+    ///
+    /// `pending` serves "the finalized blocks not yet executed, in the CURRENT
+    /// tau order". Which blocks are "not yet executed" is a function of WHEN
+    /// this node polled, which is local wall-clock, not consensus. So on the
+    /// counterexample growth two honest nodes running identical code over the
+    /// identical final lace produce different APPLICATION SEQUENCES:
+    ///
+    /// * the node that polled BEFORE validator 4 caught up executes the base
+    ///   order, then the late blocks — so `41` lands at the END;
+    /// * the node that first polled AFTER the catch-up executes `grown` in one
+    ///   batch — so `41` lands MID-PREFIX, where tau puts it.
+    ///
+    /// Both are "correct" by exactly-once. They are not the same sequence, and
+    /// `blocklace_sync`'s post-finalization predicates are order-sensitive: the
+    /// agent-scoped receipt-continuity check compares a turn's
+    /// `previous_receipt_hash` against `cclerk.agent_receipt_head_hash(agent)`,
+    /// a value that is a pure function of the order in which that agent's turns
+    /// were applied. Two same-agent turns straddling the shift therefore get
+    /// OPPOSITE `receipt-chain-mismatch` verdicts on the two nodes — a
+    /// consensus-level disagreement about what the ledger contains, reached
+    /// without any equivocation, any Byzantine validator, or any un-verified
+    /// ordering twin. `ordering::tau` is a pure function of the lace here; both
+    /// nodes ran the SAME order function on the SAME lace.
+    ///
+    /// This is the boundary `TauPrefixMonotone.lean` names. Its
+    /// `tau_executed_prefix_fixed` — "the executed region is bit-identical" —
+    /// holds under `FinalizedRegionStable`, and the counterexample below IS a
+    /// witness that the hypothesis fails. The identity cursor's answer to that
+    /// failure preserves LIVENESS (exactly-once) and abandons the ORDER
+    /// AGREEMENT the theorem was supplying. The node checks `stableCheck`
+    /// nowhere; `observe_order` only counts the shift and logs it.
+    #[test]
+    fn two_honest_nodes_that_polled_at_different_times_apply_a_different_sequence() {
+        let (base, grown, id41, _id42) = lag_trace_orders();
+
+        // NODE L (lagged behind validator 4's catch-up): polled at `base`, then
+        // again at `grown`.
+        let mut lagged = ExecutionCursor::new();
+        let mut seq_lagged: Vec<BlockId> = Vec::new();
+        for id in lagged.pending(&base) {
+            lagged.mark_executed(id);
+            seq_lagged.push(id);
+        }
+        for id in lagged.pending(&grown) {
+            lagged.mark_executed(id);
+            seq_lagged.push(id);
+        }
+
+        // NODE P (its first poll already saw the catch-up): one batch at `grown`.
+        let mut prompt = ExecutionCursor::new();
+        let mut seq_prompt: Vec<BlockId> = Vec::new();
+        for id in prompt.pending(&grown) {
+            prompt.mark_executed(id);
+            seq_prompt.push(id);
+        }
+
+        // ANTI-VACUITY 1: both nodes really did execute the whole finalized set.
+        let mut set_l = seq_lagged.clone();
+        let mut set_p = seq_prompt.clone();
+        set_l.sort();
+        set_p.sort();
+        let mut want = grown.clone();
+        want.sort();
+        assert_eq!(set_l, want, "node L executed exactly the finalized set");
+        assert_eq!(set_p, want, "node P executed exactly the finalized set");
+        assert!(!want.is_empty(), "the finalized set must be non-empty");
+
+        // ANTI-VACUITY 2: node P's sequence IS the current tau order, so the
+        // disagreement below is not two arbitrary permutations — one of them is
+        // the order the verified rule actually names.
+        assert_eq!(
+            seq_prompt, grown,
+            "node P applies the current tau order verbatim"
+        );
+
+        // THE DIVERGENCE: same set, same code, same lace — different sequence.
+        assert_ne!(
+            seq_lagged, seq_prompt,
+            "the two honest nodes must be shown to APPLY A DIFFERENT SEQUENCE; if this \
+             passes, the order-agreement hazard has been closed and this test should be \
+             re-read, not deleted"
+        );
+
+        // Name the inversion concretely, so a future reader sees the mechanism
+        // and not just an inequality: there is a pair whose relative order flips.
+        let pos = |seq: &[BlockId], id: &BlockId| seq.iter().position(|x| x == id).unwrap();
+        let inverted: Vec<(BlockId, BlockId)> = grown
+            .iter()
+            .flat_map(|a| grown.iter().map(move |b| (*a, *b)))
+            .filter(|(a, b)| a != b)
+            .filter(|(a, b)| {
+                (pos(&seq_lagged, a) < pos(&seq_lagged, b))
+                    != (pos(&seq_prompt, a) < pos(&seq_prompt, b))
+            })
+            .collect();
+        assert!(
+            !inverted.is_empty(),
+            "a sequence difference must exhibit at least one inverted pair"
+        );
+        // The catch-up block is in one of them: node P applies it mid-prefix,
+        // node L applies it after everything the base order already covered.
+        assert!(
+            inverted.iter().any(|(a, b)| *a == id41 || *b == id41),
+            "the catch-up block 41 must be one side of an inverted pair"
+        );
+        assert!(
+            pos(&seq_lagged, &id41) >= base.len(),
+            "node L applies 41 AFTER the whole base order"
+        );
+        assert!(
+            pos(&seq_prompt, &id41) < base.len(),
+            "node P applies 41 INSIDE the region node L had already executed"
+        );
+    }
+
     /// The stableCheck observability signal: a pure extension is stable; the
     /// catch-up reorg trips the signal exactly once and is absorbed.
     #[test]
