@@ -88,7 +88,10 @@ fn measure(
     let rust_s = time_median(iters, || {
         let mut ledger = pre_ledger.clone();
         let r = executor.execute(&turn, &mut ledger);
-        debug_assert!(r.is_committed(), "{name}: rust turn must commit");
+        // HARD, not `debug_assert`. This is the RUST side of the FFI-tax ratio; a refused
+        // Rust turn is cheaper than a committed one, so a silent refusal here would have
+        // INFLATED the reported Lean-FFI overhead. See `symbolic_collapse.rs::run_batch`.
+        assert!(r.is_committed(), "{name}: rust turn must commit, got {r:?}");
         r
     });
 

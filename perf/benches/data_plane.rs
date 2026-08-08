@@ -96,7 +96,10 @@ fn bench_data_plane(c: &mut Criterion) {
             },
             |mut bus| {
                 let msgs = bus.drain(black_box(&recipient));
-                debug_assert_eq!(msgs.len(), 1, "one box delivered");
+                // HARD, not `debug_assert` (`[profile.bench]` has no `debug-assertions`):
+                // setup enqueued exactly one box, so a drain of 0 means this leg timed an
+                // EMPTY drain. See `symbolic_collapse.rs::run_batch`.
+                assert_eq!(msgs.len(), 1, "one enqueued box must be delivered");
                 black_box(msgs);
             },
             BatchSize::SmallInput,
@@ -119,7 +122,13 @@ fn bench_data_plane(c: &mut Criterion) {
                     )
                     .expect("authorized send admits");
                 let msgs = bus.drain(&recipient);
-                debug_assert_eq!(msgs.len(), 1);
+                // HARD, not `debug_assert`: one enqueue then one drain. A 0 here means the
+                // enqueue+drain "unit of work" moved no message at all.
+                assert_eq!(
+                    msgs.len(),
+                    1,
+                    "the enqueue+drain unit must move one message"
+                );
                 black_box(msgs);
             },
             BatchSize::SmallInput,
@@ -152,7 +161,10 @@ fn bench_data_plane(c: &mut Criterion) {
                             0,
                         )
                         .expect("publish to a live topic");
-                    debug_assert_eq!(out.len(), s, "every subscriber gets a delivery");
+                    // HARD, not `debug_assert`: the whole point of `publish_fanout_{s}` is
+                    // that it fans out to S subscribers. A short fan-out is a cheaper number
+                    // for a smaller job. See `symbolic_collapse.rs::run_batch`.
+                    assert_eq!(out.len(), s, "all {s} subscribers must get a delivery");
                     black_box(out);
                 },
                 BatchSize::SmallInput,

@@ -23,7 +23,15 @@ fn bench_executor_turn(c: &mut Criterion) {
             executor_transfer_turn,
             |(mut ledger, turn)| {
                 let result = executor.execute(black_box(&turn), black_box(&mut ledger));
-                debug_assert!(result.is_committed(), "honest open-cell turn must commit");
+                // HARD, not `debug_assert`. `[profile.bench]` sets no `debug-assertions`, so
+                // in the only configuration this file is ever built the guard did not exist —
+                // and `TurnResult::Rejected` is CHEAPER to reach than a commit, so a world
+                // refusing every turn published a faster number, green. See
+                // `symbolic_collapse.rs::run_batch` for the full account of the class.
+                assert!(
+                    result.is_committed(),
+                    "honest open-cell turn must commit, got {result:?}"
+                );
                 black_box(result);
             },
             criterion::BatchSize::SmallInput,

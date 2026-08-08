@@ -117,7 +117,14 @@ fn bench_membrane(c: &mut Criterion) {
             },
             |(mut fork, owner, guest, docs)| {
                 let sf = mint(&mut fork, owner, guest, docs);
-                debug_assert_eq!(sf.embedded.len(), 1, "docs is embedded");
+                // HARD, not `debug_assert`: minting with nothing embedded is a materially
+                // cheaper mint than the one this bench claims to measure. See
+                // `symbolic_collapse.rs::run_batch`.
+                assert_eq!(
+                    sf.embedded.len(),
+                    1,
+                    "the docs cap must be embedded by mint"
+                );
                 black_box((fork, sf));
             },
             BatchSize::SmallInput,

@@ -47,7 +47,14 @@ fn bench_contrast(c: &mut Criterion) {
             executor_transfer_turn,
             |(mut ledger, turn)| {
                 let result = executor.execute(black_box(&turn), black_box(&mut ledger));
-                debug_assert!(result.is_committed(), "honest open-cell turn must commit");
+                // HARD, not `debug_assert` — and this leg is the DENOMINATOR of the headline
+                // proving multiplier this whole bench exists to state. A refused turn is
+                // cheaper than a committed one, so a silently-refusing executor would have
+                // made the multiplier read LARGER. See `symbolic_collapse.rs::run_batch`.
+                assert!(
+                    result.is_committed(),
+                    "honest open-cell turn must commit, got {result:?}"
+                );
                 black_box(result);
             },
             criterion::BatchSize::SmallInput,

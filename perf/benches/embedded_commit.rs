@@ -61,7 +61,11 @@ fn bench_embedded_commit(c: &mut Criterion) {
         b.iter(|| {
             let out = shadow_exec_full_forest_auth(black_box(&wire)).expect("embedded kernel runs");
             let v = decode_shadow_verdict(&out).expect("verdict decodes");
-            debug_assert!(v.body_committed());
+            // HARD, not `debug_assert` — the (a) leg above times the raw kernel run, so
+            // this (b) leg's whole added claim is that the verdict it decodes is an ACCEPT.
+            // Its value is already established: the identical condition is asserted on the
+            // same wire in this function's setup. See `symbolic_collapse.rs::run_batch`.
+            assert!(v.body_committed(), "decoded verdict must accept, got {v:?}");
             black_box(v);
         });
     });

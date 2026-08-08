@@ -31,7 +31,7 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use dregg_perf::regime;
 use dregg_turn::collapse::WitnessMode;
-use starbridge_v2::world::{World, demo_world, transfer};
+use starbridge_v2::world::{CommitOutcome, World, demo_world, transfer};
 
 /// The batch-size ladder: how many turns make up one interactive session.
 fn batch_sizes() -> &'static [usize] {
@@ -53,21 +53,56 @@ fn fresh_world() -> (World, dregg_cell::CellId, dregg_cell::CellId) {
 
 /// Commit `n` single-transfer turns of `1` unit each from `treasury` to `user`
 /// against `world` (in whatever witness mode the world is currently in). Returns
-/// the number that committed (asserted == n in the bench).
+/// `n` — it REFUSES rather than returning a short count.
+///
+/// ⚑ THIS FUNCTION USED TO SWALLOW REFUSALS, AND THAT IS THE DEFECT, NOT THE
+/// MISSING ASSERT. It read
+///
+/// ```ignore
+/// if world.commit_turn(turn).is_committed() { committed += 1; }
+/// ```
+///
+/// which discards BOTH the refusal and its reason, and left the only check to a
+/// `debug_assert_eq!(committed, n)` in the callers. `[profile.bench]` sets no
+/// `debug-assertions`, so in the configuration these benches are actually built the
+/// assert does not exist. A world refusing EVERY turn therefore timed the *refusal*
+/// path — strictly cheaper than a commit — and criterion published a FASTER number,
+/// green, with nothing anywhere saying that zero turns had committed. Those are the
+/// numbers `docs/PERFORMANCE.md` quotes.
+///
+/// Promoting the callers' `debug_assert_eq!` to a hard `assert_eq!` would catch it,
+/// but it reports `0 != 8` — the reason is already gone by then, thrown away here.
+/// `CommitOutcome::Rejected` carries a `String`; the refusal is named at the site
+/// that observes it. (`Queued` is the third outcome and also not a commit: a
+/// SUSPENDED world stages turns instead of running them, which would likewise have
+/// read as a very fast batch.)
+///
+/// The check is unconditional on purpose. It costs one enum discriminant test per
+/// turn against a real executor turn — unmeasurable — and a correctness check that
+/// only exists in a profile the benchmark is never built in is not a check.
 fn run_batch(
     world: &mut World,
     treasury: dregg_cell::CellId,
     user: dregg_cell::CellId,
     n: usize,
 ) -> usize {
-    let mut committed = 0;
-    for _ in 0..n {
+    for i in 0..n {
         let turn = world.turn(treasury, vec![transfer(treasury, user, 1)]);
-        if world.commit_turn(turn).is_committed() {
-            committed += 1;
+        match world.commit_turn(turn) {
+            CommitOutcome::Committed { .. } => {}
+            CommitOutcome::Rejected { reason, at_action } => panic!(
+                "turn {i}/{n} of an honest treasury->user batch was REFUSED at action \
+                 {at_action:?}: {reason} — this benchmark's number is meaningless when the \
+                 world refuses, because the refusal path is CHEAPER than the commit it is \
+                 supposed to be timing"
+            ),
+            CommitOutcome::Queued { agent } => panic!(
+                "turn {i}/{n} was QUEUED (world suspended, staged under agent {agent:?}), not \
+                 committed — the executor never ran, so nothing here was timed"
+            ),
         }
     }
-    committed
+    n
 }
 
 fn bench_symbolic_collapse(c: &mut Criterion) {
@@ -82,8 +117,9 @@ fn bench_symbolic_collapse(c: &mut Criterion) {
                 fresh_world,
                 |(mut world, treasury, user)| {
                     world.set_witness_mode(WitnessMode::Full);
+                    // `run_batch` refuses; a returned count is `n` by construction, so
+                    // re-asserting it here would be a check that cannot fail.
                     let committed = run_batch(&mut world, treasury, user, n);
-                    debug_assert_eq!(committed, n, "every honest full turn must commit");
                     black_box(committed);
                 },
                 BatchSize::SmallInput,
@@ -97,8 +133,15 @@ fn bench_symbolic_collapse(c: &mut Criterion) {
                 |(mut world, treasury, user)| {
                     world.set_witness_mode(WitnessMode::Symbolic);
                     let committed = run_batch(&mut world, treasury, user, n);
-                    debug_assert_eq!(committed, n, "every honest symbolic turn must commit");
-                    debug_assert_eq!(world.symbolic_pending(), n, "symbolic turns buffered");
+                    // THE leg that distinguishes this bench from `full_batch`: symbolic mode
+                    // must actually DEFER the witnesses, not merely be asked to. If nothing
+                    // buffered, this timed Full-mode work under a Symbolic label — a faster
+                    // number for the wrong reason. Hard, not `debug_assert`: see `run_batch`.
+                    assert_eq!(
+                        world.symbolic_pending(),
+                        n,
+                        "symbolic mode must buffer all {n} turns"
+                    );
                     black_box(committed);
                 },
                 BatchSize::SmallInput,
@@ -112,15 +155,17 @@ fn bench_symbolic_collapse(c: &mut Criterion) {
                 || {
                     let (mut world, treasury, user) = fresh_world();
                     world.set_witness_mode(WitnessMode::Symbolic);
-                    let committed = run_batch(&mut world, treasury, user, n);
-                    debug_assert_eq!(committed, n);
+                    run_batch(&mut world, treasury, user, n);
                     world
                 },
                 |mut world| {
                     let collapsed = world
                         .collapse()
                         .expect("honest symbolic batch must collapse");
-                    debug_assert_eq!(collapsed, n, "all buffered turns collapse");
+                    // The whole point of the `collapse_N` number is that it materializes N
+                    // deferred witnesses. A collapse of 0 is instant and would read as a
+                    // spectacular result. Hard, not `debug_assert`: see `run_batch`.
+                    assert_eq!(collapsed, n, "all {n} buffered turns must collapse");
                     black_box(collapsed);
                 },
                 BatchSize::SmallInput,
