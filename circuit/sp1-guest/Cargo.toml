@@ -22,6 +22,12 @@ serde = { version = "1", features = ["derive"] }
 blake3 = { version = "1", default-features = false }
 # Real evaluation logic from the workspace crates, compiled without crypto/randomness deps.
 token = { path = "../../token", default-features = false, features = ["zkvm"] }
-dregg-cell = { path = "../../cell", default-features = false, features = ["zkvm"] }
+# `features = ["zkvm"]` DROPPED 2026-08-07. `dregg-cell`'s `zkvm` feature is deleted: it
+# selected two optional deps (`dregg-commit` / `dregg-dsl-runtime`) that no code in `cell/src`
+# referenced, and its only real effect was to `#[cfg]` five Poseidon2 note-commitment
+# injectivity teeth out of every native build. This manifest — a SEPARATE workspace on
+# riscv32im-succinct-zkvm-elf — was its sole enabler, which is why those teeth had never run.
+# See `cell/Cargo.toml`.
+dregg-cell = { path = "../../cell", default-features = false }
 rmp-serde = "1.3"
 globset = "0.4"

@@ -14,9 +14,32 @@ default = []
 # `dregg-circuit` is now an always-present dependency (the canonical
 # capability-root scheme `dregg_circuit::cap_root` is load-bearing in the
 # always-on `compute_canonical_state_commitment`, so it must not be
-# feature-gated). `zkvm` additionally pulls in the proof-carrying helpers
-# (`dregg-commit` / `dregg-dsl-runtime`).
-zkvm = ["dep:dregg-commit", "dep:dregg-dsl-runtime"]
+# feature-gated).
+#
+# `zkvm` IS GONE (2026-08-07), and it went the same way `prover` did — except this one
+# did real damage on its way out. It was
+#     zkvm = ["dep:dregg-commit", "dep:dregg-dsl-runtime"]
+# and BOTH optional deps were dead: `grep -rn 'dregg_commit\|dregg_dsl_runtime' cell/src/`
+# returns only comments, one of which (`commitment.rs:763`) states outright that "this
+# crate cannot see `dregg-commit`". So the feature selected two crates nothing in here
+# could reference.
+#
+# What it DID gate was six items, all of them in `note.rs`'s test module: the five
+# Poseidon2 note-commitment INJECTIVITY teeth (`…binds_owner_high_bytes`,
+# `…binds_creation_nonce_high_bytes`, `…binds_randomness_high_bytes`,
+# `…binds_full_u64_value_and_asset_type`, `…deterministic`) and their shared helper.
+# `zkvm` is not in `default`; no `--features`/`--all-features` line in any workflow,
+# script or manifest in this workspace named it; and its ONLY enabler was
+# `circuit/sp1-guest`, a SEPARATE workspace (`[workspace]` in its own manifest)
+# targeting `riscv32im-succinct-zkvm-elf` — so Cargo feature unification could not
+# reach a native build from it even in principle. Measured 2026-08-07:
+# `cargo nextest list -p dregg-cell` at HEAD listed 1084 tests and NONE of those five.
+# They had never executed in any ordinary build, on any box.
+#
+# The tests need nothing the feature provided (`Note::poseidon2_commitment` is and always
+# was unconditional), so they are now plain `#[test]`s and the feature — with its two dead
+# optional deps — is deleted. `circuit/sp1-guest/Cargo.toml` dropped its
+# `features = ["zkvm"]` in the same change; nothing else forwarded it.
 # `prover` IS GONE. It was `prover = []` — zero forwards, zero `#[cfg]` sites — retained
 # "so downstream `dregg-cell/prover` forwards remain valid". There were none left: the two
 # that existed (`dregg-turn`'s and `dregg-sdk`'s) were both deleted, and their manifests say
@@ -99,8 +122,6 @@ dregg-circuit = { path = "../circuit" }
 # (the `federation-verifier` feature is NOT pulled), so this is acyclic —
 # dregg-dfa's default deps are blake3/serde/postcard, none of which reach cell.
 dregg-dfa = { path = "../dfa" }
-dregg-commit = { path = "../commit", optional = true }
-dregg-dsl-runtime = { path = "../dregg-dsl-runtime", optional = true }
 dregg-types = { path = "../types" }
 serde = { version = "1", features = ["derive", "std"] }
 serde_json = { workspace = true }

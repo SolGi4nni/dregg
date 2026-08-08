@@ -734,8 +734,23 @@ mod tests {
     // `owner[0..4]` / `creation_nonce[0..4]` / `randomness[0..4]` (and the low 32
     // bits of value/asset_type) and PASS once every limb is fed. Each case
     // mutates a byte ABOVE the first 4-byte chunk, which the legacy form ignored.
-
-    #[cfg(feature = "zkvm")]
+    //
+    // ⚑ THESE FIVE WERE `#[cfg(feature = "zkvm")]` AND THEREFORE RAN NOWHERE, EVER.
+    // Measured 2026-08-07: `zkvm` is not in `dregg-cell`'s `default`, no `--features`
+    // line in any workflow, script or manifest in this workspace names it, and its ONLY
+    // enabler was `circuit/sp1-guest` — a SEPARATE workspace targeting
+    // `riscv32im-succinct-zkvm-elf`, so feature unification could never reach a native
+    // test build. `cargo nextest list -p dregg-cell` at HEAD listed 1084 tests and none
+    // of these.
+    //
+    // The gate was also GRATUITOUS, which is why removing it is a repair and not a
+    // relaxation: `zkvm` selects `dregg-commit` + `dregg-dsl-runtime`, and these tests
+    // (like `poseidon2_commitment` itself, and like the ungated
+    // `faithful_v2_commitment_and_nullifier_bind_every_high_byte` fifty lines above)
+    // reference neither. The feature gated NOTHING in this crate except these six items
+    // — the same sin the manifest already records for the deleted `prover` feature, one
+    // level worse: it made five injectivity teeth invisible rather than merely lying
+    // about a name. `zkvm` is deleted; see `cell/Cargo.toml`.
     fn note_diff_at(field: &str, byte_index: usize) -> (Note, Note) {
         let owner = test_owner(7);
         let fields = [3u64, 250, 0, 0, 0, 0, 0, 0];
@@ -756,7 +771,6 @@ mod tests {
         (base, mutated)
     }
 
-    #[cfg(feature = "zkvm")]
     #[test]
     fn poseidon2_commitment_binds_owner_high_bytes() {
         // Bytes 4, 8, 16 are all ABOVE the legacy first-4-byte window.
@@ -770,7 +784,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zkvm")]
     #[test]
     fn poseidon2_commitment_binds_creation_nonce_high_bytes() {
         for idx in [4usize, 8, 16, 31] {
@@ -783,7 +796,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zkvm")]
     #[test]
     fn poseidon2_commitment_binds_randomness_high_bytes() {
         for idx in [4usize, 8, 16, 31] {
@@ -796,7 +808,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zkvm")]
     #[test]
     fn poseidon2_commitment_binds_full_u64_value_and_asset_type() {
         let owner = test_owner(7);
@@ -831,7 +842,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "zkvm")]
     #[test]
     fn poseidon2_commitment_deterministic() {
         let n = Note::with_nonce(
