@@ -123,9 +123,19 @@ mod tests {
     use crate::limbs::BABYBEAR_P;
 
     /// The inequality the whole design rests on: a lane can never need reducing.
+    ///
+    /// ⚑ The `LANE_RADIX < BABYBEAR_P` half is two constants, so it is a BUILD obligation and is
+    /// discharged as one below; what remains here is the part a running check decides — that the
+    /// encoder's actual output stays inside the radix over a real range of inputs.
+    const NO_LANE_EVER_REDUCES: () = assert!(
+        LANE_RADIX < BABYBEAR_P,
+        "a lane radix at or above the modulus makes the varlen encoding a mod-p map"
+    );
+    const _: () = NO_LANE_EVER_REDUCES;
+
+    /// …and the encoder's ACTUAL output honours it, over a real range of payload lengths.
     #[test]
-    fn no_lane_ever_reduces() {
-        assert!(LANE_RADIX < BABYBEAR_P);
+    fn no_lane_ever_reduces_over_real_payloads() {
         for len in 0..200usize {
             let data: Vec<u8> = (0..len)
                 .map(|i| (i as u8).wrapping_mul(37) ^ 0xA5)

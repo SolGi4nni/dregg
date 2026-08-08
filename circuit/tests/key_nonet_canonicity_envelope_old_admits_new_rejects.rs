@@ -233,11 +233,9 @@ fn the_nonet_geometry_is_the_layouts_and_not_a_stride() {
         B_PUBKEY_OCTET + 8,
         "the ninth lane is NOT adjacent to its octet — never stride it"
     );
-    assert!(
-        B_PUBKEY_NINTH_LANE < NUM_PRE_LIMBS,
-        "the ninth lane must be an ABSORBED pre-limb or the envelope range-checks a felt the \
-         anchor never sees (Lean `lane8_is_absorbed_iff`)"
-    );
+    // ⚑ `B_PUBKEY_NINTH_LANE < NUM_PRE_LIMBS` (Lean `lane8_is_absorbed_iff`) is const-asserted in
+    // `dregg_circuit::effect_vm::PUBKEY_NONET_LANE_COL`'s initializer — a build obligation, so this
+    // file cannot even link against a layout where the envelope range-checks an unabsorbed felt.
     assert_eq!((KEY_LANE_BITS, KEY_TOP_BITS), (29, 24));
     assert_eq!(
         8 * KEY_LANE_BITS + KEY_TOP_BITS,

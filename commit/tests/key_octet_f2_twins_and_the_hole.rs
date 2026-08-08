@@ -526,6 +526,13 @@ const NONET_IMAGE_BITS: f64 = 256.0;
 /// collision-against-collision and the two numbers cannot be confused for one another.
 const RETIRED_OCTET_IMAGE_BITS: f64 = 240.0;
 
+/// ⚑ The nonet's image strictly exceeds the retired octet's. If these two numbers ever met, the
+/// flag day this file documents bought nothing and every "old admits, new rejects" claim in the
+/// tree is describing a widening that did not happen. Two constants: a build obligation.
+const THE_NONET_STRICTLY_WIDENED_THE_IMAGE: () =
+    assert!(NONET_IMAGE_BITS > RETIRED_OCTET_IMAGE_BITS);
+const _: () = THE_NONET_STRICTLY_WIDENED_THE_IMAGE;
+
 #[test]
 fn floor_nonet_retains_all_256_source_bits_as_a_bit_permutation() {
     // The packing is `lo | mid1<<8 | mid2<<16 | (hi & 0x3F)<<24` — an OR of DISJOINT bit ranges,
@@ -615,7 +622,8 @@ fn floor_nonet_retains_all_256_source_bits_as_a_bit_permutation() {
     // (e) hence the IMAGE is exactly 2^256, established, not assumed — the source is 32 bytes, so
     // the encoding step loses NOTHING and there is no encoding collision to quantify.
     assert_eq!(NONET_IMAGE_BITS, retained.len() as f64);
-    assert!(NONET_IMAGE_BITS > RETIRED_OCTET_IMAGE_BITS);
+    // (`NONET_IMAGE_BITS > RETIRED_OCTET_IMAGE_BITS` is two constants — a build obligation,
+    //  const-asserted beside their definitions.)
 }
 
 #[test]

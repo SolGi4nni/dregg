@@ -30,18 +30,41 @@ BUILT AGAINST monolith checkpoint `85170b24c` (STEP 1b — all Emit consumers gr
      column. Forcing: `Satisfied2` ⟹ the teeth felt IS a fields-map value membership-authenticated
      under the committed ~124-bit `fields_root` (`fieldsReadAt8`). NOT geometry (plan §1 / O3).
 
-## ⚑ THE EXECUTOR-COMPRESS VERDICT (verified at `85170b24c`, do not fudge)
+## ⚑ THE EXECUTOR-COMPRESS VERDICT — REWRITTEN 2026-08-08, AND THE OLD ONE WAS A LIVE WOUND
 
-  * **sovereign — MATCH.** `proof_verify.rs:2548 pubkey_to_witness_key_commit` =
-    `commit/src/typed.rs::canonical_32_to_felts_4`: 8 limbs via `canonical_32_to_felts_8`
-    (**30-bit packing**: `lo | mid1<<8 | mid2<<16 | (hi&0x3F)<<24` per 4-byte group), then FOUR
-    `hash_4_to_1` compressions over the interleave quads `[0,1,2,3] · [4,5,6,7] · [0,4,2,6] ·
-    [1,5,3,7]` (`quadIdx`). `hash_4_to_1(x) = perm(st[0..4]=x, st[4]=4, 0…)[0]` is EXACTLY the
-    deployed chip's arity-4 row (`chip_absorb_all_lanes(4, x)[0]` — `st[4] = arity` for arity 4,
-    lanes 7.. zero-padded). So the KEY_COMMIT teeth (4 felts, `columns.rs::WITNESS_KEY_COMMIT_0..3`
-    = aux offsets 23..26, ABSOLUTE cols 113..=116 = AUX_BASE + offset, row-0-pinned to PI) are FOUR arity-4 chip lookups over the committed octet —
-    `withSovereignKeyCommit` realizes the executor's function EXACTLY. ⚑ The STEP-2 producer fill
-    of the pubkey octet must therefore be `canonical_32_to_felts_8(pubkey)` (the 30-bit form).
+  * **sovereign — MATCH, over the NONET.** `TurnExecutor::pubkey_to_witness_key_commit`
+    (`turn/src/executor/proof_verify.rs`), `trace_rotated::append_sovereign_key_commit_rider` and
+    `keyCommitSpec` below are all `effect_vm::helpers::key_commit_teeth_from_nonet`: the nine
+    base-`2^29` lanes of the key (`helpers::key_limbs9`, Lean authority
+    `Circuit.KeyLanes9.keyToLanes9`), then FOUR `hash_4_to_1` compressions over the interleave quads
+    `[0,1,2,3] · [4,5,6,7] · [8,0,4,2] · [1,5,3,7]` (`quadIdx`, whose Rust twin
+    `helpers::KEY_COMMIT_QUAD_IDX` is generated from THIS matrix by `EmitLayoutManifest`).
+    `hash_4_to_1(x) = perm(st[0..4]=x, st[4]=4, 0…)[0]` is EXACTLY the deployed chip's arity-4 row
+    (`chip_absorb_all_lanes(4, x)[0]`), so the KEY_COMMIT teeth (4 felts,
+    `columns.rs::WITNESS_KEY_COMMIT_0..3` = aux offsets 23..26, row-0-pinned to PI) are FOUR arity-4
+    chip lookups over the committed nonet. ⚑ The producer fill of the pubkey nonet is
+    `helpers::key_limbs9(pubkey)` into `PUBKEY_NONET_LANE_COL`.
+
+    ⚠ **WHAT THIS PARAGRAPH SAID BEFORE, AND WHY IT MATTERED.** It said the quads were
+    `[0,1,2,3]·[4,5,6,7]·[0,4,2,6]·[1,5,3,7]` over the eight-column OCTET, and that
+    `commit/src/typed.rs::canonical_32_to_felts_4` was that function. Both halves rotted, in
+    opposite directions and on different days:
+
+      1. `6441705e8` (the key-nonet flag day) rewrote `canonical_32_to_felts_4` into ONE arity-16
+         absorb over the nonet and re-pointed the executor at it, on a census that recorded the
+         four-felt id fold as "off-AIR — no descriptor width, no PI count, no VK". The census missed
+         `pubkey_to_witness_key_commit`, which IS that function and IS on-AIR. From that commit the
+         executor's teeth and the published teeth were DIFFERENT FUNCTIONS: transcript divergence,
+         `InvalidPowWitness`, and `rotated_sovereign_make_sovereign_proves_and_verifies` red while
+         its nine record-pin siblings passed.
+      2. Independently, the octet cover was never enough. Lane 8 carries source bit 255, which is an
+         Ed25519 key's x-sign, so `A` and `−A` — a keypair the attacker holds the private half of —
+         published BIT-IDENTICAL teeth. Re-pointing the executor back at the octet recipe would have
+         made the member green again while re-opening exactly that.
+
+    The repair does both at once: nine lanes in the AIR (row 2 `[0,4,2,6] → [8,0,4,2]`, unchanged
+    arity and unchanged `KEY_COMMIT_SPAN`) and ONE named Rust denotation the executor, the producer
+    rider and this spec all name.
 
   * **membership — MISMATCH (named, not fudged).** `membership_verifier.rs:67 compress` =
     `poseidon2::hash_many(BabyBear::encode_hash(pk))`: (i) `encode_hash` = **full 32-bit LE limbs**
@@ -378,39 +401,161 @@ an EXACT match (4 × arity-4 = `hash_4_to_1` interleave); membership is chip-nat
 /-- The wide permutation output of a chip absorb (the `capPermOut`/`fieldsPermOut` shape). -/
 def permOutOf (A : List ℤ → Digest8) : List ℤ → List ℤ := fun xs => List.ofFn (A xs)
 
-/-! ### §2a — sovereign: the 4-felt KEY_COMMIT interleave (`canonical_32_to_felts_4`). -/
+/-! ### §2a — sovereign: the 4-felt KEY_COMMIT interleave over the committed **NONET**.
 
-/-- The `canonical_32_to_felts_4` interleave matrix (`commit/src/typed.rs:586`): quad `q`'s `j`-th
-input limb. Rows: `[0,1,2,3] · [4,5,6,7] · [0,4,2,6] · [1,5,3,7]`. -/
-def quadIdx (q j : Fin 4) : Fin 8 :=
+⚑ **THE NINTH LANE ENTERS THE TEETH (2026-08-08).** Until today this section read the committed
+EIGHT columns `B_PUBKEY8 .. +8` and nothing else. Those eight are the base-`2^29` nonet's lanes
+0..7; lane 8 — `B_PUBKEY_NINTH_LANE`, the column the key-nonet flag day allocated — was absorbed
+into `state_commit` and read by the canonicity range lookup, but **no key-commit quad touched it**.
+An Ed25519 key keeps its x-sign in source bit 255, which is bit 23 of lane 8 and of NO other lane,
+so `A` and `−A` produced BIT-IDENTICAL KEY_COMMIT teeth: the deployed sovereign teeth could not
+separate a key from its negation. `keyCommitSpec` is now a function of all nine lanes.
+
+**The cover is full at UNCHANGED arity and UNCHANGED span.** Row 2 moves `[0,4,2,6] → [8,0,4,2]`:
+still four inputs, still four quads, still `KEY_COMMIT_SPAN = 32`, still four arity-4 chip rows.
+Lane 6 is retained by row 1 and lane 0 by row 0, so nothing is dropped —
+`quadIdx_covers_every_lane` proves the union is all of `Fin 9` and
+`quadIdx_row2_reads_the_ninth_lane` names where lane 8 enters. -/
+
+/-- **THE NINTH LANE OF A CARRIER OCTET**, as the positional map `ROTATED_OCTET_BASES →
+ROTATED_OCTET_NINTH_LANES` the emitted layout carries (Rust twin
+`layout_generated::ROTATED_OCTET_NINTH_LANES`, whose positional parity with `ROTATED_OCTET_BASES`
+`effect_vm::helpers::PUBKEY_NONET_LANE_COL` asserts at compile time). Each value is read from
+`EffectVmEmitRotationV3`, which reads it from the verified `RotatedLayout.octetLaneCol` — this file
+re-spells no coordinate.
+
+⚠ NOT a stride. The ninth lanes sit 74–97 columns past their octets, past the whole completion
+band; `octetBase + 8` is `fields[0]`'s completion window. -/
+def ninthLaneOf (octetBase : Nat) : Nat :=
+  if octetBase = B_CHILD_VK8 then Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_CHILD_VK_NINTH_LANE
+  else if octetBase = B_CONTRACT_HASH8 then
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_CONTRACT_HASH_NINTH_LANE
+  else Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_PUBKEY_NINTH_LANE
+
+theorem ninthLaneOf_pubkey : ninthLaneOf B_PUBKEY8
+    = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_PUBKEY_NINTH_LANE := by decide
+
+theorem ninthLaneOf_childVk : ninthLaneOf B_CHILD_VK8
+    = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_CHILD_VK_NINTH_LANE := by decide
+
+theorem ninthLaneOf_contractHash : ninthLaneOf B_CONTRACT_HASH8
+    = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_CONTRACT_HASH_NINTH_LANE := by decide
+
+/-- ⚑ **THE NINTH LANE IS NOT ADJACENT TO ITS OCTET.** The one shape a reader is tempted to write
+(`octetBase + 8`) lands inside the fields completion band. Stated so the temptation is refuted by a
+term rather than by a comment. -/
+theorem ninthLaneOf_pubkey_is_not_flush : ninthLaneOf B_PUBKEY8 ≠ B_PUBKEY8 + 8 := by decide
+
+/-- **THE NINE COMMITTED COLUMNS of a carrier NONET** in the block based at `blockBase`: lanes 0..7
+are the contiguous octet, lane 8 is [`ninthLaneOf`]. The nonet column map the KEY_COMMIT quads read
+— the Lean twin of `effect_vm::helpers::PUBKEY_NONET_LANE_COL` (offset by `blockBase`). -/
+def nonetLaneCol (blockBase octetBase : Nat) : Fin 9 → Nat := fun i =>
+  if i.val < 8 then blockBase + octetBase + i.val else blockBase + ninthLaneOf octetBase
+
+theorem nonetLaneCol_octet (blockBase octetBase : Nat) (i : Fin 9) (hi : i.val < 8) :
+    nonetLaneCol blockBase octetBase i = octetGroupCol blockBase octetBase ⟨i.val, hi⟩ := by
+  simp [nonetLaneCol, octetGroupCol, hi]
+
+theorem nonetLaneCol_lane8 (blockBase octetBase : Nat) :
+    nonetLaneCol blockBase octetBase 8 = blockBase + ninthLaneOf octetBase := by
+  simp [nonetLaneCol]
+
+/-- The committed nonet read off the row env. -/
+def nonetVals (env : VmRowEnv) (blockBase octetBase : Nat) : Fin 9 → ℤ :=
+  fun i => env.loc (nonetLaneCol blockBase octetBase i)
+
+/-- Lanes 0..7 of the nonet ARE the octet this file's other gates read — the two views agree where
+they overlap, so `withOctetTeeth` and `withSovereignKeyCommit` cannot drift onto different columns. -/
+theorem nonetVals_octet (env : VmRowEnv) (blockBase octetBase : Nat) (i : Fin 9) (hi : i.val < 8) :
+    nonetVals env blockBase octetBase i = octetVals env blockBase octetBase ⟨i.val, hi⟩ := by
+  simp [nonetVals, octetVals, groupVal, nonetLaneCol_octet blockBase octetBase i hi]
+
+/-- The KEY_COMMIT interleave matrix: quad `q`'s `j`-th input LANE of the committed nonet. Rows:
+`[0,1,2,3] · [4,5,6,7] · [8,0,4,2] · [1,5,3,7]`.
+
+⚑ Row 2's first entry is the ninth lane. It replaced a lane-6 read that row 1 already carried, so
+the arity did not move and neither did the span. -/
+def quadIdx (q j : Fin 4) : Fin 9 :=
   match q.val, j.val with
   | 0, 0 => 0 | 0, 1 => 1 | 0, 2 => 2 | 0, 3 => 3
   | 1, 0 => 4 | 1, 1 => 5 | 1, 2 => 6 | 1, 3 => 7
-  | 2, 0 => 0 | 2, 1 => 4 | 2, 2 => 2 | 2, 3 => 6
+  | 2, 0 => 8 | 2, 1 => 0 | 2, 2 => 4 | 2, 3 => 2
   | 3, 0 => 1 | 3, 1 => 5 | 3, 2 => 3 | 3, 3 => 7
   | _, _ => 0
 
--- The matrix IS the executor's interleave (all four rows pinned).
-#guard decide ((List.finRange 4).map (quadIdx 0) = ([0, 1, 2, 3] : List (Fin 8)))
-#guard decide ((List.finRange 4).map (quadIdx 1) = ([4, 5, 6, 7] : List (Fin 8)))
-#guard decide ((List.finRange 4).map (quadIdx 2) = ([0, 4, 2, 6] : List (Fin 8)))
-#guard decide ((List.finRange 4).map (quadIdx 3) = ([1, 5, 3, 7] : List (Fin 8)))
+/-- The four rows, named. (Ex-`#guard`s — `docs/GUARD-DISCIPLINE.md`: the Rust twin
+`effect_vm::helpers::KEY_COMMIT_QUAD_IDX` is generated from this very matrix, so these are the pins
+a hand-edit on either side has to survive.) -/
+theorem quadIdx_row0 : (List.finRange 4).map (quadIdx 0) = ([0, 1, 2, 3] : List (Fin 9)) := by decide
 
-/-- Quad `q`'s 4 input column expressions, read off the committed octet. -/
+theorem quadIdx_row1 : (List.finRange 4).map (quadIdx 1) = ([4, 5, 6, 7] : List (Fin 9)) := by decide
+
+theorem quadIdx_row2 : (List.finRange 4).map (quadIdx 2) = ([8, 0, 4, 2] : List (Fin 9)) := by decide
+
+theorem quadIdx_row3 : (List.finRange 4).map (quadIdx 3) = ([1, 5, 3, 7] : List (Fin 9)) := by decide
+
+/-- ⚑⚑ **THE FULL COVER — the load-bearing claim of the 2026-08-08 repair.** EVERY lane of the
+committed nonet is read by SOME quad. Without this the teeth are a function of a proper subset of
+the committed key and two distinct keys agreeing off that subset publish identical teeth; with it,
+a change in any lane changes the input list of at least one arity-4 chip row. -/
+theorem quadIdx_covers_every_lane : ∀ l : Fin 9, ∃ q j : Fin 4, quadIdx q j = l := by decide
+
+/-- …and WHERE the ninth lane enters: quad 2, input 0, and nowhere else. This is the coordinate an
+Ed25519 key's x-sign (source bit 255 = lane 8 bit 23) travels through, so it is the coordinate that
+separates a key from its negation. -/
+theorem quadIdx_row2_reads_the_ninth_lane :
+    quadIdx 2 0 = 8 ∧ (∀ q j : Fin 4, quadIdx q j = 8 → q = 2 ∧ j = 0) := by decide
+
+/-- The arity did NOT move: every quad still absorbs exactly four lanes, so the emitted chip rows
+are the same arity-4 rows the deployed table already admits and `KEY_COMMIT_SPAN` is unchanged. -/
+theorem quadIdx_arity_is_four (q : Fin 4) : ((List.finRange 4).map (quadIdx q)).length = 4 := rfl
+
+/-- Quad `q`'s 4 input column expressions, read off the committed nonet. -/
 def quadCols (blockBase octetBase : Nat) (q : Fin 4) : List EmittedExpr :=
-  (List.finRange 4).map (fun j => EmittedExpr.var (octetGroupCol blockBase octetBase (quadIdx q j)))
+  (List.finRange 4).map (fun j => EmittedExpr.var (nonetLaneCol blockBase octetBase (quadIdx q j)))
 
 theorem quadCols_eval (blockBase octetBase : Nat) (q : Fin 4) (env : VmRowEnv) :
     (quadCols blockBase octetBase q).map (·.eval env.loc)
       = (List.finRange 4).map
-          (fun j => octetVals env blockBase octetBase (quadIdx q j)) := by
-  simp [quadCols, EmittedExpr.eval, octetVals, groupVal, List.map_map, Function.comp_def]
+          (fun j => nonetVals env blockBase octetBase (quadIdx q j)) := by
+  simp [quadCols, EmittedExpr.eval, nonetVals, List.map_map, Function.comp_def]
 
-/-- **The executor's KEY_COMMIT function over the committed octet** — quad `q`'s single squeezed
-felt: `A (interleave q oct) 0`. At `A := chip_absorb_all_lanes` this IS
-`canonical_32_to_felts_4(pubkey)[q]` (arity-4 chip row ≡ `hash_4_to_1`, verified — module doc). -/
-def keyCommitSpec (A : List ℤ → Digest8) (oct : Digest8) (q : Fin 4) : ℤ :=
-  A ((List.finRange 4).map (fun j => oct (quadIdx q j))) 0
+/-- **The executor's KEY_COMMIT function over the committed nonet** — quad `q`'s single squeezed
+felt: `A (interleave q non) 0`. At `A := chip_absorb_all_lanes` this IS
+`effect_vm::helpers::key_commit_teeth_from_nonet(nonet)[q]`, which is what
+`TurnExecutor::pubkey_to_witness_key_commit` and
+`trace_rotated::append_sovereign_key_commit_rider` BOTH call (arity-4 chip row ≡ `hash_4_to_1`,
+verified — module doc). -/
+def keyCommitSpec (A : List ℤ → Digest8) (non : Fin 9 → ℤ) (q : Fin 4) : ℤ :=
+  A ((List.finRange 4).map (fun j => non (quadIdx q j))) 0
+
+/-- ⚑ **THE SEPARATION, AT THE SPEC.** Any two committed nonets that differ in lane 8 — and `(A,
+−A)` differ in lane 8 and NOWHERE ELSE, since an Ed25519 key's x-sign is source bit 255 — feed quad
+2 two DIFFERENT input lists. So under any `A` that separates those two lists (which the chip
+soundness supplies as collision resistance, not injectivity — say it at that resolution) the
+published teeth differ. Under the retired `[0,4,2,6]` matrix all four quads received identical input
+lists on that pair and NO hypothesis on `A` could have separated them: the teeth were a function of
+lanes 0..7 alone. -/
+theorem lane8_reaches_quad2_input (non non' : Fin 9 → ℤ) (h8 : non 8 ≠ non' 8) :
+    (List.finRange 4).map (fun j => non (quadIdx 2 j))
+      ≠ (List.finRange 4).map (fun j => non' (quadIdx 2 j)) := by
+  intro h
+  have h0 : non (quadIdx 2 0) = non' (quadIdx 2 0) := by
+    have := congrArg (fun xs => xs.getD 0 0) h
+    simpa using this
+  rw [quadIdx_row2_reads_the_ninth_lane.1] at h0
+  exact h8 h0
+
+#assert_axioms ninthLaneOf_pubkey
+#assert_axioms ninthLaneOf_pubkey_is_not_flush
+#assert_axioms nonetVals_octet
+#assert_axioms quadIdx_row0
+#assert_axioms quadIdx_row1
+#assert_axioms quadIdx_row2
+#assert_axioms quadIdx_row3
+#assert_axioms quadIdx_covers_every_lane
+#assert_axioms quadIdx_row2_reads_the_ninth_lane
+#assert_axioms lane8_reaches_quad2_input
 
 /-- The 4 × 8 appendix digest-column groups (quad `q`, lane `i`) based at `dgBase`. -/
 def keyCommitDigestCol (dgBase : Nat) (q : Fin 4) : Fin 8 → Nat :=
@@ -431,13 +576,16 @@ def keyCommitConstraints (blockBase octetBase dgBase teethPiLo : Nat) : List VmC
   ++ ((List.finRange 4).map (fun q =>
       VmConstraint2.base (.gate (eqGate (teethPiLo + q.val) (keyCommitDigestCol dgBase q 0)))))
 
-/-- The key-commit appendix span: 4 quads × 8 digest lanes. -/
+/-- The key-commit appendix span: 4 quads × 8 digest lanes. ⚑ UNCHANGED by the ninth-lane repair —
+the cover widened from eight lanes to nine INSIDE the existing four arity-4 rows, so no column, no
+table and no PI moved. -/
 def KEY_COMMIT_SPAN : Nat := 32
 
 /-- **`withSovereignKeyCommit base teethPiLo`** — a descriptor WIDENED by the key-commit appendix:
-the 4 published KEY_COMMIT teeth (`SOVEREIGN_WITNESS_KEY_COMMIT`, `columns.rs` aux offsets 23..26 = ABSOLUTE cols 113..=116,
-row-0-pinned to PI) are forced equal to the in-AIR `canonical_32_to_felts_4` of the committed
-BEFORE-block pubkey octet (the OPERATED cell's owner key — `before_cell.public_key()`). -/
+the 4 published KEY_COMMIT teeth (`SOVEREIGN_WITNESS_KEY_COMMIT`, `columns.rs` aux offsets 23..26,
+row-0-pinned to PI) are forced equal to the in-AIR `key_commit_teeth_from_nonet` of the committed
+BEFORE-block pubkey NONET — lanes 0..7 at `B_PUBKEY8`, lane 8 at `B_PUBKEY_NINTH_LANE` (the
+OPERATED cell's owner key — `before_cell.public_key()`). -/
 def withSovereignKeyCommit (base : EffectVmDescriptor2) (teethPiLo : Nat) :
     EffectVmDescriptor2 :=
   { base with
@@ -447,7 +595,8 @@ def withSovereignKeyCommit (base : EffectVmDescriptor2) (teethPiLo : Nat) :
 
 /-- **The generalized key-commit forcing** — any descriptor containing the fragment forces, under
 the chip-table soundness, every published KEY_COMMIT tooth EQUAL to the executor's compress of the
-committed octet: `teeth[q] = A (interleave q (committed pubkey8)) 0`. -/
+committed NONET: `teeth[q] = A (interleave q (committed pubkey nonet)) 0` — nine lanes, so a key
+and its negation (which differ only in lane 8) cannot publish the same teeth. -/
 theorem keyCommitConstraints_force (A : List ℤ → Digest8) (hash : List ℤ → ℤ)
     (d : EffectVmDescriptor2) (blockBase octetBase dgBase teethPiLo : Nat)
     (hsub : ∀ c ∈ keyCommitConstraints blockBase octetBase dgBase teethPiLo, c ∈ d.constraints)
@@ -457,7 +606,7 @@ theorem keyCommitConstraints_force (A : List ℤ → Digest8) (hash : List ℤ �
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ q : Fin 4, (envAt t i).loc (teethPiLo + q.val)
-      = keyCommitSpec A (octetVals (envAt t i) blockBase octetBase) q := by
+      = keyCommitSpec A (nonetVals (envAt t i) blockBase octetBase) q := by
   intro q
   set e := envAt t i with he
   have hlastf : (i + 1 == t.rows.length) = false := by
@@ -476,13 +625,13 @@ theorem keyCommitConstraints_force (A : List ℤ → Digest8) (hash : List ℤ �
     (quadCols blockBase octetBase q) (digestCols (keyCommitDigestCol dgBase q)) hlen hmem
   rw [digestCols_map, quadCols_eval] at hforce
   have hreal : permOutOf A ((List.finRange 4).map
-      (fun j => octetVals e blockBase octetBase (quadIdx q j)))
+      (fun j => nonetVals e blockBase octetBase (quadIdx q j)))
       = List.ofFn (A ((List.finRange 4).map
-          (fun j => octetVals e blockBase octetBase (quadIdx q j)))) := rfl
+          (fun j => nonetVals e blockBase octetBase (quadIdx q j)))) := rfl
   rw [hreal] at hforce
   have hgrp := List.ofFn_inj.mp hforce
   have hlane0 : e.loc (keyCommitDigestCol dgBase q 0)
-      = keyCommitSpec A (octetVals e blockBase octetBase) q := by
+      = keyCommitSpec A (nonetVals e blockBase octetBase) q := by
     have := congrFun hgrp 0
     simpa [groupVal, keyCommitSpec] using this
   -- the weld pins the tooth to lane 0.
@@ -503,8 +652,10 @@ theorem keyCommitConstraints_force (A : List ℤ → Digest8) (hash : List ℤ �
 
 /-- **`withSovereignKeyCommit_forces` — THE SOVEREIGN KEYSTONE.** A `Satisfied2` of the welded
 descriptor, under the chip soundness, forces the 4 published KEY_COMMIT teeth EQUAL to
-`canonical_32_to_felts_4` (at `A := chip_absorb_all_lanes`) of the committed BEFORE pubkey octet —
-a forged owner key is UNSAT for a ledgerless client (P1 + P2 together, no laundered vacuity). -/
+`key_commit_teeth_from_nonet` (at `A := chip_absorb_all_lanes`) of the committed BEFORE pubkey
+NONET — a forged owner key is UNSAT for a ledgerless client (P1 + P2 together, no laundered
+vacuity), and since 2026-08-08 that includes a key swapped for its NEGATION, which lane 8 is the
+only committed column to see. -/
 theorem withSovereignKeyCommit_forces (A : List ℤ → Digest8) (hash : List ℤ → ℤ)
     (base : EffectVmDescriptor2) (teethPiLo : Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
@@ -513,12 +664,13 @@ theorem withSovereignKeyCommit_forces (A : List ℤ → Digest8) (hash : List �
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ q : Fin 4, (envAt t i).loc (teethPiLo + q.val)
-      = keyCommitSpec A (octetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q :=
+      = keyCommitSpec A (nonetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q :=
   keyCommitConstraints_force A hash _ BEFORE_BLOCK_BASE B_PUBKEY8 base.traceWidth teethPiLo
     (fun _ hc => List.mem_append_right _ hc) minit mfin maddrs t hChip hsat i hi hnotlast hcells
 
 /-- **TOOTH — `withSovereignKeyCommit_rejects_forged`.** A row whose published KEY_COMMIT tooth is
-NOT the compress of the committed pubkey octet (a forged sovereign key) is UNSAT. -/
+NOT the compress of the committed pubkey NONET (a forged sovereign key — including the negation of
+the honest one) is UNSAT. -/
 theorem withSovereignKeyCommit_rejects_forged (A : List ℤ → Digest8) (hash : List ℤ → ℤ)
     (base : EffectVmDescriptor2) (teethPiLo : Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
@@ -526,7 +678,7 @@ theorem withSovereignKeyCommit_rejects_forged (A : List ℤ → Digest8) (hash :
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) (q : Fin 4)
     (hforged : (envAt t i).loc (teethPiLo + q.val)
-      ≠ keyCommitSpec A (octetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q) :
+      ≠ keyCommitSpec A (nonetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q) :
     ¬ Satisfied2 hash (withSovereignKeyCommit base teethPiLo) minit mfin maddrs t :=
   fun hsat => hforged
     (withSovereignKeyCommit_forces A hash base teethPiLo minit mfin maddrs t hChip hsat
@@ -730,16 +882,48 @@ theorem withMembershipPubkeyCompress_rejects_forged (A : List ℤ → Digest8) (
 #assert_axioms withMembershipPubkeyCompress_forces
 #assert_axioms withMembershipPubkeyCompress_rejects_forged
 
--- Self-tests: tuple shapes (the 25-wide chip tuple: 1 arity + CHIP_RATE inputs + 8 lanes),
--- fragment sizes, and a concrete keyCommitSpec evaluation (the [0,4,2,6] interleave bites).
-#guard (keyCommitLookup 0 104 900 0).tuple.length == 25
-#guard (pubkeyCompressLookup 0 104 900).tuple.length == 25
-#guard (keyCommitConstraints 0 104 900 950).length == 8
-#guard (pubkeyCompressConstraints 0 104 900 950).length == 2
-#guard (pubkeyNode8Inputs 0 104).length == 16
-#guard decide (keyCommitSpec (fun xs _ => xs.sum) (fun i => (i.val : ℤ)) 2 = 12)
-#guard decide (keyCommitSpec (fun xs _ => xs.sum) (fun i => (i.val : ℤ)) 3 = 16)
-#guard decide (pubkeyCompress1Spec (fun xs _ => xs.sum) (fun i => (i.val : ℤ)) = 28)
+-- Shape pins: tuple shapes (the 25-wide chip tuple: 1 arity + CHIP_RATE inputs + 8 lanes) and
+-- fragment sizes. ⚑ The key-commit fragment is UNCHANGED in every one of these by the ninth-lane
+-- repair — that is the claim "full cover at unchanged arity and unchanged span" cashed out.
+theorem keyCommitLookup_tuple_len (blockBase octetBase dgBase : Nat) (q : Fin 4) :
+    (keyCommitLookup blockBase octetBase dgBase q).tuple.length = 25 := rfl
+
+theorem pubkeyCompressLookup_tuple_len (blockBase octetBase dgBase : Nat) :
+    (pubkeyCompressLookup blockBase octetBase dgBase).tuple.length = 25 := rfl
+
+theorem keyCommitConstraints_len (blockBase octetBase dgBase teethPiLo : Nat) :
+    (keyCommitConstraints blockBase octetBase dgBase teethPiLo).length = 8 := rfl
+
+theorem pubkeyCompressConstraints_len (blockBase octetBase dgBase leafTeethCol : Nat) :
+    (pubkeyCompressConstraints blockBase octetBase dgBase leafTeethCol).length = 2 := rfl
+
+theorem pubkeyNode8Inputs_len (blockBase octetBase : Nat) :
+    (pubkeyNode8Inputs blockBase octetBase).length = 16 := rfl
+
+/-- A concrete `keyCommitSpec` evaluation on the identity nonet under a summing `A`. The point is
+that it BITES: `12` was the answer under the retired `[0,4,2,6]` matrix and `14` is the answer under
+`[8,0,4,2]`, so a silent revert to eight lanes fails here. -/
+theorem keyCommitSpec_quad2_on_identity_nonet :
+    keyCommitSpec (fun xs _ => xs.sum) (fun i => (i.val : ℤ)) 2 = 14 := by decide
+
+theorem keyCommitSpec_quad3_on_identity_nonet :
+    keyCommitSpec (fun xs _ => xs.sum) (fun i => (i.val : ℤ)) 3 = 16 := by decide
+
+/-- ⚑ **AND IT SEPARATES A KEY FROM ITS NEGATION, computably.** Two nonets identical on lanes 0..7
+and differing only in lane 8 — the shape `(A, −A)` presents — publish DIFFERENT quad-2 teeth under
+the summing `A`. Under the retired matrix both sides were `12`. This is the exhibit at the spec; the
+exhibit at the deployed prover is `circuit-prove/tests/sovereign_key_negation_teeth_separate.rs`. -/
+theorem keyCommitSpec_separates_a_lane8_flip :
+    keyCommitSpec (fun xs _ => xs.sum) (fun i => (i.val : ℤ)) 2
+      ≠ keyCommitSpec (fun xs _ => xs.sum)
+          (fun i => if i = 8 then (9 : ℤ) else (i.val : ℤ)) 2 := by decide
+
+theorem pubkeyCompress1Spec_on_identity_octet :
+    pubkeyCompress1Spec (fun xs _ => xs.sum) (fun i => (i.val : ℤ)) = 28 := by decide
+
+#assert_axioms keyCommitConstraints_len
+#assert_axioms keyCommitSpec_quad2_on_identity_nonet
+#assert_axioms keyCommitSpec_separates_a_lane8_flip
 
 /-! ## §3 — THE FIELDS-ROOT READ-OPEN (membership `authorized_root`).
 

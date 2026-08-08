@@ -2067,6 +2067,17 @@ mod tests {
     use super::*;
     use crate::refusal::must_refuse_or_unsat_panic;
 
+    /// ⚑ **THE 30-BIT RANGE GATE HAS SOMETHING TO REFUSE — AT BUILD TIME.** If `2^30` ever reached
+    /// or passed `p`, every residue would be in range and the range lookups the descriptor emits
+    /// would forbid nothing while still costing 120 aux columns. Both operands are constants, so
+    /// this was an `assert!` inside one `#[test]`: an obligation the whole crate had already been
+    /// built against, reported only if that test ran.
+    const THIRTY_BIT_RANGE_IS_NOT_VACUOUS: () = assert!(
+        (1u64 << 30) < crate::field::BABYBEAR_P as u64,
+        "2^30 must be strictly below p or the emitted range gate cannot bite"
+    );
+    const _: () = THIRTY_BIT_RANGE_IS_NOT_VACUOUS;
+
     /// The acceptance gate: a SATISFYING transfer assignment proves+verifies, and
     /// a TAMPERED one (breaking the conservation gate) is rejected. This proves the
     /// generic Lean-descriptor AIR genuinely enforces the emitted constraints.
@@ -2268,10 +2279,9 @@ mod tests {
         assert_eq!(desc.air_width(), 11 + 4 * 30);
 
         // The bound is non-vacuous: 2^30 < p, so residues in [2^30, p) exist and are rejectable.
-        assert!(
-            (1u64 << 30) < BABYBEAR_P as u64,
-            "2^30 must be < p for the gate to bite"
-        );
+        // Both operands are constants, so the obligation is discharged against the BUILD rather
+        // than inside this one test — see `THIRTY_BIT_RANGE_IS_NOT_VACUOUS` just below the
+        // `mod tests` opening.
 
         // ---- Honest in-range witness: kT0/goodTurn/goodPost (all balances small) ----
         // [srcPre, dstPre, srcPost, dstPost, amt, auth, nonneg, avail, distinct, srcLive, dstLive]

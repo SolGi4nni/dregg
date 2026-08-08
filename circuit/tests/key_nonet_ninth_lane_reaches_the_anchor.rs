@@ -80,18 +80,15 @@ fn the_geometry_reached_187_and_every_lane_has_a_column() {
         ROTATED_OCTET_NINTH_LANES[2], B_PUBKEY_NINTH_LANE,
         "the octet-parallel table and the named constant must be the same column"
     );
-    assert!(
-        B_PUBKEY_NINTH_LANE > B_PUBKEY_OCTET + 8,
-        "the ninth lane is NOT adjacent to its octet — that discontinuity is why nothing here may \
-         be reconstructed with a stride"
-    );
+    // The two structural facts this test used to assert at RUNTIME — lane 8 is an ABSORBED
+    // pre-limb, and it is NOT flush against its octet — are const-asserted inside
+    // `dregg_circuit::effect_vm::PUBKEY_NONET_LANE_COL`'s initializer, so a re-emit that broke
+    // either one would fail to COMPILE `dregg-circuit` rather than fail this one test. Asserting
+    // them again here reads as a second check and is not one.
 
     // LEG 2 — it is an ABSORBED pre-limb, which is the whole point. `wireCommitR` folds
     // `[0, NUM_PRE_LIMBS)`; a column at or past that index is in the appendix and carries nothing.
-    assert!(
-        B_PUBKEY_NINTH_LANE < NUM_PRE_LIMBS,
-        "lane 8's column must be inside the absorbed pre-limb region or state_commit never sees it"
-    );
+    // (absorbed-pre-limb: const-asserted in `PUBKEY_NONET_LANE_COL`, see LEG 1 above)
 
     // LEG 3 — the PRODUCERS' column map agrees. `PUBKEY_NONET_LANE_COL` is what
     // `compute_rotated_pre_limbs` and `rotation_witness::produce` actually write through, so this

@@ -627,18 +627,21 @@ mod tests {
     /// THE RANGE GADGET NON-VACUITY GUARD (soundness regression). `RANGE_BITS` must
     /// carve a window strictly below the field's negative reps, else every diff
     /// decomposes and the check is VACUOUS.
-    #[test]
-    #[allow(clippy::assertions_on_constants)]
-    fn range_gadget_is_not_vacuous() {
+    ///
+    /// ⚑ Both operands are constants. This was a `#[test]` wearing
+    /// `#[allow(clippy::assertions_on_constants)]`; the lint was right. A vacuous solvency range
+    /// gadget is a state no build should survive, so the guard refuses the BUILD.
+    const RANGE_GADGET_IS_NOT_VACUOUS: () = {
         assert!(
             RANGE_BITS < 31,
-            "RANGE_BITS={RANGE_BITS} >= 31 makes the solvency range proof VACUOUS"
+            "RANGE_BITS >= 31 makes the solvency range proof VACUOUS"
         );
         assert!(
             (1u64 << RANGE_BITS) < (BABYBEAR_P as u64) - 1,
-            "the honest window [0,2^{RANGE_BITS}) must lie strictly below p-1"
+            "the honest window [0, 2^RANGE_BITS) must lie strictly below p-1"
         );
-    }
+    };
+    const _: () = RANGE_GADGET_IS_NOT_VACUOUS;
 
     fn solvent_witness(reserve: u64, liability: u64) -> SolvencyWitness {
         SolvencyWitness {

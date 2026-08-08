@@ -284,10 +284,10 @@ fn old_admits_new_rejects_at_the_published_state_commit() {
     // ⚑ The absorption is what carries any of this: limb 186 is INSIDE the folded range. A column
     // at or past `NUM_PRE_LIMBS` would live in the appendix and `wireCommitR` would never see it —
     // which is precisely the state the pre-cutover geometry was in.
-    assert!(
-        B_PUBKEY_NINTH_LANE < NUM_PRE_LIMBS,
-        "the ninth lane must be an ABSORBED pre-limb or none of the above means anything"
-    );
+    // ⚑ Absorbed-pre-limb is a BUILD obligation, not a runtime one: `B_PUBKEY_NINTH_LANE <
+    // NUM_PRE_LIMBS` is const-asserted in `dregg_circuit::effect_vm::PUBKEY_NONET_LANE_COL`'s
+    // initializer, so a re-emit that moved lane 8 into the appendix could not compile the crate
+    // this test links against. Re-asserting it here could only ever agree.
 }
 
 #[test]

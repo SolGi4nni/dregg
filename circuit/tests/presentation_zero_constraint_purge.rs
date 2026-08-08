@@ -238,7 +238,14 @@ fn the_swept_layout_is_the_dispatched_descriptors() {
     );
     // The freshness columns sit ABOVE the summary, so the sweep's `0..SUMMARY_WIDTH` never
     // perturbs `diff`/`hi` and the range lookups stay satisfied under every summary forgery.
-    assert!(VERIFIER >= SUMMARY_WIDTH);
-    assert!(NOT_AFTER > VERIFIER && DIFF > NOT_AFTER && HI > DIFF);
+    // ⚑ Every operand is an emitted-layout constant, so the ORDER is a build obligation: a
+    // re-emit that interleaved the freshness columns with the summary would make the sweep below
+    // perturb `diff`/`hi` and quietly turn a forgery tooth into a range-lookup tooth. Discharged
+    // at build time so the sweep cannot be written against a layout that no longer holds.
+    const FRESHNESS_SITS_ABOVE_THE_SUMMARY: () = {
+        assert!(VERIFIER >= SUMMARY_WIDTH);
+        assert!(NOT_AFTER > VERIFIER && DIFF > NOT_AFTER && HI > DIFF);
+    };
+    const _: () = FRESHNESS_SITS_ABOVE_THE_SUMMARY;
     assert_eq!(PRES_WIDTH, HI + 1);
 }

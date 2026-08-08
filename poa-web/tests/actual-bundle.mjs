@@ -13,10 +13,13 @@ export async function actualBundleFiles() {
     key: new Uint8Array(await readFile(curatorKey)),
     schema: await actualBytes("schema.json"),
     catalog: await actualBytes("catalog.json"),
+    artificer: await actualBytes("games/artificer-logic.json"),
     blackbox: await actualBytes("games/black-box-reconstruction.json"),
+    descent: await actualBytes("games/deck-descent.json"),
     relay: await actualBytes("games/relay-repair.json"),
     salvage: await actualBytes("games/salvage-lock.json"),
     signal: await actualBytes("games/signal-triangulation.json"),
+    vent: await actualBytes("games/vent-crawl.json"),
   };
 }
 
@@ -43,10 +46,14 @@ export async function actualFetch(overrides = {}) {
     "poa-curator-key.json": files.key,
     "schema.json": files.schema,
     "catalog.json": files.catalog,
+    // ⚠ MANIFEST order, not lexicographic: artificer-logic is the FIRST game.
+    "games/artificer-logic.json": files.artificer,
     "games/black-box-reconstruction.json": files.blackbox,
+    "games/deck-descent.json": files.descent,
     "games/relay-repair.json": files.relay,
     "games/salvage-lock.json": files.salvage,
     "games/signal-triangulation.json": files.signal,
+    "games/vent-crawl.json": files.vent,
     ...overrides,
   });
 }

@@ -57,24 +57,26 @@ inside a live range is one the slot's own mask fires on. ⚑ `indicator_sum` is 
 underneath, and it is also why the mask is `0` on the HANDOVER transition where a slot changes
 hands: exactly the discipline `alloc_disjoint` makes reachable.
 
-## ⚠ WHAT IS STILL A PREMISE — two, both selector plumbing, both transmutable
+## ⚑⚑ THE TWO SELECTOR PREMISES ARE DISCHARGED — in `Emit.AirSelectorForcing`, 2026-08-08
 
-Neither is a theorem of the model; both are **undone work with a known shape**, named so the next
-pass has a target rather than a caveat.
+`PhaseIndicator` and `RowsSat` were the two things §6 was conditional on. Both are now theorems of
+the emitted block's own legs (`AirSelectorForcing.phaseIndicator_of_selectorLegs`,
+`AirSelectorForcing.rowsSat_of_scheduleLegs`), and
+`AirSelectorForcing.pallasScheduledBlock_forces_the_rcb_formula` is §6 with no selector premise
+left. **Do not quote §6 as conditional on the selector reading honestly.**
 
-1. **`PhaseIndicator`** — *at row `t`, phase column `i` reads `1` when `i = t`, `0` otherwise.*
-   What is meant to force it is `selShiftLegs` (`s₀ = 1` on `.first`, `nxt(sᵢ₊₁) = loc(sᵢ)` on the
-   transition) plus `selBooleanLegs` + `selOneHotLeg`. ⚑ The shift half is a plain induction and
-   needs nothing; the half that needs an argument this file does not make is *`sᵢ = 0` at row 0 for
-   `i ≥ 1`*, which is booleanity + sum-to-one **over a prime field**.
-2. **`RowsSat`** — *row `i` satisfies op `i`'s core gates at the allocated columns.* What forces it
-   is `scheduleLegs`, whose every gate is `gateBy (SEL i)` of a core gate, together with
-   `PhaseIndicator`'s `SEL i = 1` at row `i`. The missing step is the `filter isGate` /
-   `mulCore_legs_are_the_gates` bookkeeping, per kind.
+⚠ **AND `PhaseIndicator` WAS NOT MERELY UNDONE — ITS OLD STATEMENT WAS FALSE OF THE DESCRIPTOR.**
+It read `tr t (SEL i) = if i = t then 1 else 0` over **ℤ**. `AirLeg.forces` on a window is
+`body ≡ 0 [ZMOD PMOD]`, so a trace with `tr 0 (SEL 0) = 1 + P` satisfies every selector leg and
+refutes the ℤ form: nothing could ever have forced it, and a proof of it would have been a proof
+about a different object. It is now stated mod `P`, which pulled `indicator_sum_modEq`,
+`carryMask_is_one` and `carried_of_carryLeg` into the same reading. **No soundness is relaxed by
+that** — the congruence is what `prove_vm_descriptor2` performs, and it is the same reading every
+other lemma in this file was already in.
 
-⚠ Neither premise is about crossing a row boundary, which is what makes them a different job from
-the one this file does. Do not read that as "therefore small": until they land, §6 is *forcing
-conditional on the selector reading honestly*, and it should be quoted that way.
+The shift half of the phase register is a plain induction; the half that needed the argument is
+`sᵢ ≡ 0` at row 0 for `i ≥ 1`, and that is booleanity + sum-to-one **over a prime field** —
+`AirSelectorForcing.bits_onehot`, on `Prime (2013265921 : ℤ)`.
 
 ## Axiom hygiene
 
@@ -754,11 +756,17 @@ def rowEnv (tr : RowTrace) (pub chal : Assignment) (t : Nat) :
     Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv :=
   { loc := tr t, nxt := tr (t + 1), pub := pub, chal := chal }
 
-/-- ⚑ **THE PHASE REGISTER READS AS THE ONE-HOT ROW INDICATOR.** The premise `selShiftLegs`,
-`selBooleanLegs` and `selOneHotLeg` exist to force; carried in §7's statements rather than assumed
-silently. -/
+/-- ⚑ **THE PHASE REGISTER READS AS THE ONE-HOT ROW INDICATOR** — `AirSelectorForcing` proves it
+from `selShiftLegs` + `selBooleanLegs` + `selOneHotLeg`, so this is no longer a premise anything
+assumes silently.
+
+⚠ **MOD `P`, AND THE ℤ-EQUALITY FORM WAS UNFORCEABLE.** Until 2026-08-08 this read
+`tr t (SEL i) = if i = t then 1 else 0` over ℤ. No leg can supply that: `AirLeg.forces` on a window
+is `body ≡ 0 [ZMOD PMOD]`, so a trace with `tr 0 (SEL 0) = 1 + P` satisfies every selector leg and
+refutes the ℤ form. The premise was not merely undone work — it was **false of the descriptor**, and
+a proof of it would have been a proof about a different object. -/
 def PhaseIndicator (tr : RowTrace) : Prop :=
-  ∀ t, t < 33 → ∀ i, i < 34 → tr t (SEL i) = if i = t then 1 else 0
+  ∀ t, t < 33 → ∀ i, i < 34 → tr t (SEL i) ≡ (if i = t then 1 else 0) [ZMOD P]
 
 theorem sumLoc_eval (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv) :
     ∀ l : List Nat, (sumLoc l).eval env = (l.map env.loc).sum
@@ -766,13 +774,13 @@ theorem sumLoc_eval (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv) :
   | c :: cs => by
       simp [sumLoc, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, sumLoc_eval env cs]
 
-/-- ⚑ **A ONE-HOT SUM OVER A DUPLICATE-FREE INDEX LIST IS THE MEMBERSHIP INDICATOR.** This is what
-makes `carryMask` exactly `1` on a transition the slot must hold across, and exactly `0` on the
-handover transition where the slot changes hands — the property `alloc_disjoint` is there to make
-reachable. -/
-theorem indicator_sum (f : Nat → ℤ) (t : Nat) :
-    ∀ l : List Nat, l.Nodup → (∀ i ∈ l, f i = if i = t then 1 else 0) →
-      (l.map f).sum = if t ∈ l then 1 else 0 := by
+/-- ⚑ **A ONE-HOT SUM OVER A DUPLICATE-FREE INDEX LIST IS THE MEMBERSHIP INDICATOR** — in the
+congruence reading, which is the only one a window leg can supply. This is what makes `carryMask`
+read `1` on a transition the slot must hold across, and `0` on the handover transition where the
+slot changes hands — the property `alloc_disjoint` is there to make reachable. -/
+theorem indicator_sum_modEq (f : Nat → ℤ) (t : Nat) :
+    ∀ l : List Nat, l.Nodup → (∀ i ∈ l, f i ≡ (if i = t then 1 else 0) [ZMOD P]) →
+      (l.map f).sum ≡ (if t ∈ l then 1 else 0) [ZMOD P] := by
   intro l
   induction l with
   | nil => intro _ _; simp
@@ -780,12 +788,19 @@ theorem indicator_sum (f : Nat → ℤ) (t : Nat) :
       intro hnd hf
       have hnc : c ∉ cs := (List.nodup_cons.mp hnd).1
       have hcs := ih (List.nodup_cons.mp hnd).2 (fun i hi => hf i (List.mem_cons_of_mem _ hi))
-      rw [List.map_cons, List.sum_cons, hf c (List.mem_cons_self ..), hcs]
+      have hhead := hf c (List.mem_cons_self ..)
+      rw [List.map_cons, List.sum_cons]
       by_cases hc : c = t
-      · subst hc
-        simp [hnc]
-      · have h1 : ¬ (t = c) := fun h => hc h.symm
-        simp only [if_neg hc, List.mem_cons, h1, false_or, zero_add]
+      · have htc : t ∉ cs := by rw [← hc]; exact hnc
+        have hmem : t ∈ c :: cs := List.mem_cons.mpr (Or.inl hc.symm)
+        rw [if_pos hc] at hhead
+        rw [if_neg htc] at hcs
+        rw [if_pos hmem]
+        simpa using hhead.add hcs
+      · have hne : ¬ (t = c) := fun h => hc h.symm
+        rw [if_neg hc] at hhead
+        simp only [List.mem_cons, hne, false_or]
+        simpa using hhead.add hcs
 
 theorem carryPhases_nodup (k : Nat) : (carryPhases k).Nodup :=
   List.Nodup.filter _ (List.nodup_range)
@@ -802,30 +817,40 @@ theorem carryMask_eq (k : Nat) : carryMask k = sumLoc (carryPhases k) := by
 theorem carryPhases_lt {k i : Nat} (h : i ∈ carryPhases k) : i < 33 :=
   List.mem_range.mp (List.mem_of_mem_filter h)
 
-/-- ⚑⚑ **THE CARRY MASK IS `1` ON A TRANSITION THE SLOT MUST HOLD ACROSS.** -/
+/-- ⚑⚑ **THE CARRY MASK READS `1` ON A TRANSITION THE SLOT MUST HOLD ACROSS** — mod `P`, because
+`PhaseIndicator` is mod `P` and nothing sharper is forceable. -/
 theorem carryMask_is_one (tr : RowTrace) (pub chal : Assignment) (hp : PhaseIndicator tr)
     {k t : Nat} (ht : t < 33) (hmem : t ∈ carryPhases k) :
-    (carryMask k).eval (rowEnv tr pub chal t) = 1 := by
+    (carryMask k).eval (rowEnv tr pub chal t) ≡ 1 [ZMOD P] := by
   have hval : ∀ i ∈ carryPhases k,
-      (rowEnv tr pub chal t).loc i = if i = t then 1 else 0 := by
+      (rowEnv tr pub chal t).loc i ≡ (if i = t then 1 else 0) [ZMOD P] := by
     intro i hi
     exact hp t ht i (by have := carryPhases_lt hi; omega)
-  rw [carryMask_eq, sumLoc_eval, indicator_sum _ t _ (carryPhases_nodup k) hval, if_pos hmem]
+  rw [carryMask_eq, sumLoc_eval]
+  have h := indicator_sum_modEq _ t _ (carryPhases_nodup k) hval
+  rwa [if_pos hmem] at h
 
 /-- ⚑ **ONE CARRY LEG, CASHED.** `AirLeg.forces` on a `.transition` window is `body ≡ 0 [ZMOD
-PMOD]`; with the mask at `1` that is exactly `nxt c ≡ loc c`. -/
+PMOD]`; with the mask congruent to `1` that is exactly `nxt c ≡ loc c`. ⚑ The `isFirst` flag is
+free: the `.transition` arm of `forces` does not read it, and taking it as a parameter is what lets
+one hypothesis about **row `t` of the emitted block** serve both this and the selector legs. -/
 theorem carried_of_carryLeg (tr : RowTrace) (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily)
-    (pub chal : Assignment) (hp : PhaseIndicator tr) {k c t : Nat}
+    (pub chal : Assignment) (hp : PhaseIndicator tr) {k c t : Nat} {isFirst : Bool}
     (ht : t < 33) (hmem : t ∈ carryPhases k)
     (hleg : (Dregg2.Circuit.EffectAirIR.AirLeg.window
               ⟨.transition, .mul (carryMask k)
                 (.add (.nxt c) (.mul (.const (-1)) (.loc c)))⟩).forces
-              tf (rowEnv tr pub chal t) false false) :
+              tf (rowEnv tr pub chal t) isFirst false) :
     tr (t + 1) c ≡ tr t c [ZMOD P] := by
-  have hb := hleg rfl
-  rw [Dregg2.Circuit.DescriptorIR2.WindowExpr.eval,
-    carryMask_is_one tr pub chal hp ht hmem] at hb
-  simp only [Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, one_mul] at hb
+  have hb0 := hleg rfl
+  rw [Dregg2.Circuit.DescriptorIR2.WindowExpr.eval] at hb0
+  simp only [Dregg2.Circuit.DescriptorIR2.WindowExpr.eval] at hb0
+  have hm := carryMask_is_one tr pub chal hp ht hmem
+  have hb : (rowEnv tr pub chal t).nxt c + -1 * (rowEnv tr pub chal t).loc c ≡ 0 [ZMOD P] := by
+    have h1 := Int.ModEq.mul_right
+      ((rowEnv tr pub chal t).nxt c + -1 * (rowEnv tr pub chal t).loc c) hm.symm
+    rw [one_mul] at h1
+    exact h1.trans hb0
   have hdvd : P ∣ (tr (t + 1) c + -1 * tr t c) := Int.modEq_zero_iff_dvd.mp hb
   have : P ∣ (tr t c - tr (t + 1) c) := by
     have := dvd_neg.mpr hdvd
@@ -849,7 +874,7 @@ theorem live_transitions_are_carry_phases :
 trace that satisfies `pallasScheduledDesc` has, via `pallasScheduledDesc_certified`. -/
 def CarryLegsHold (tr : RowTrace) (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily)
     (pub chal : Assignment) : Prop :=
-  ∀ t, t < 33 → ∀ l ∈ carryLegs, l.forces tf (rowEnv tr pub chal t) false false
+  ∀ t, t < 33 → ∀ l ∈ carryLegs, l.forces tf (rowEnv tr pub chal t) (decide (t = 0)) false
 
 /-- ⚑⚑⚑ **`SlotsCarry` IS A THEOREM, NOT A PREMISE.** The premise §5 consumes is discharged from
 the emitted block's own carry legs. -/
@@ -868,7 +893,7 @@ theorem slotsCarry_of_carryLegs (tr : RowTrace) (tf : Dregg2.Circuit.DescriptorI
   refine List.mem_flatMap.mpr ⟨slotOf v, List.mem_range.mpr hk, ?_⟩
   exact List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
 
-#assert_axioms indicator_sum
+#assert_axioms indicator_sum_modEq
 #assert_axioms carryMask_is_one
 #assert_axioms carried_of_carryLeg
 #assert_axioms live_transitions_are_carry_phases

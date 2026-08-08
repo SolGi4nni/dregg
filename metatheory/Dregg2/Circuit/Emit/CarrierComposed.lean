@@ -63,7 +63,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationWide (wideAppend isLegacyCommitPin1
 open Dregg2.Circuit.Emit.CarrierOctetGates
   (withSovereignKeyCommit withSovereignKeyCommit_forces withSovereignKeyCommit_rejects_forged
    satisfied2_of_withSovereignKeyCommit
-   keyCommitSpec octetVals permOutOf B_PUBKEY8 BEFORE_BLOCK_BASE)
+   keyCommitSpec nonetVals permOutOf B_PUBKEY8 BEFORE_BLOCK_BASE)
 open Dregg2.Circuit.Emit.CapOpenEmit (transferV3)
 
 set_option autoImplicit false
@@ -99,7 +99,7 @@ theorem makeSovereignV3Keyed_forces (A : List ℤ → Digest8) (hash : List ℤ 
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ q : Fin 4, (envAt t i).loc (SOVEREIGN_KEY_COMMIT_COL + q.val)
-      = keyCommitSpec A (octetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q :=
+      = keyCommitSpec A (nonetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q :=
   withSovereignKeyCommit_forces A hash makeSovereignV3 SOVEREIGN_KEY_COMMIT_COL
     minit mfin maddrs t hChip hsat i hi hnotlast hcells
 
@@ -111,7 +111,7 @@ theorem makeSovereignV3Keyed_rejects_forged (A : List ℤ → Digest8) (hash : L
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) (q : Fin 4)
     (hforged : (envAt t i).loc (SOVEREIGN_KEY_COMMIT_COL + q.val)
-      ≠ keyCommitSpec A (octetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q) :
+      ≠ keyCommitSpec A (nonetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q) :
     ¬ Satisfied2 hash makeSovereignV3Keyed minit mfin maddrs t :=
   withSovereignKeyCommit_rejects_forged A hash makeSovereignV3 SOVEREIGN_KEY_COMMIT_COL
     minit mfin maddrs t hChip i hi hnotlast hcells q hforged
@@ -275,7 +275,7 @@ theorem makeSovereignV3Deployed_publishes_key_commit (A : List ℤ → Digest8) 
     (hlen : 1 < t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t 0).loc col ∧ (envAt t 0).loc col < 2013265921) :
     ∀ q : Fin 4, (envAt t 0).pub ((withDfaRcPins makeSovereignV3).piCount + q.val)
-      ≡ keyCommitSpec A (octetVals (envAt t 0) BEFORE_BLOCK_BASE B_PUBKEY8) q [ZMOD 2013265921] := by
+      ≡ keyCommitSpec A (nonetVals (envAt t 0) BEFORE_BLOCK_BASE B_PUBKEY8) q [ZMOD 2013265921] := by
   intro q
   have h0 : 0 < t.rows.length := Nat.lt_trans Nat.zero_lt_one hlen
   have hnotlast : 0 + 1 ≠ t.rows.length := by omega
@@ -304,7 +304,7 @@ theorem makeSovereignV3Deployed_rejects_forged_pi (A : List ℤ → Digest8) (ha
     (hlen : 1 < t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t 0).loc col ∧ (envAt t 0).loc col < 2013265921) (q : Fin 4)
     (hforged : ¬ ((envAt t 0).pub ((withDfaRcPins makeSovereignV3).piCount + q.val)
-      ≡ keyCommitSpec A (octetVals (envAt t 0) BEFORE_BLOCK_BASE B_PUBKEY8) q [ZMOD 2013265921])) :
+      ≡ keyCommitSpec A (nonetVals (envAt t 0) BEFORE_BLOCK_BASE B_PUBKEY8) q [ZMOD 2013265921])) :
     ¬ Satisfied2 hash makeSovereignV3Deployed minit mfin maddrs t :=
   fun hsat => hforged
     (makeSovereignV3Deployed_publishes_key_commit A hash minit mfin maddrs t hChip hsat hlen
@@ -331,7 +331,7 @@ theorem makeSovereignV3DeployedWide_publishes_key_commit (A : List ℤ → Diges
     (hlen : 1 < t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t 0).loc col ∧ (envAt t 0).loc col < 2013265921) :
     ∀ q : Fin 4, (envAt t 0).pub ((withDfaRcPins makeSovereignV3).piCount + q.val)
-      ≡ keyCommitSpec A (octetVals (envAt t 0) BEFORE_BLOCK_BASE B_PUBKEY8) q [ZMOD 2013265921] := by
+      ≡ keyCommitSpec A (nonetVals (envAt t 0) BEFORE_BLOCK_BASE B_PUBKEY8) q [ZMOD 2013265921] := by
   intro q
   have h0 : 0 < t.rows.length := Nat.lt_trans Nat.zero_lt_one hlen
   have hnotlast : 0 + 1 ≠ t.rows.length := by omega

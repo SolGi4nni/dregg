@@ -64,6 +64,14 @@ const ADD_Z_LIMB8: usize = 269;
 /// `(−2^240) mod p_felt`. Adding this to `z` limb 0 while adding `1` to `z` limb 8 changes the gate
 /// body by `∓(δ₀ + 2^240)`, which is `0 mod p_felt` and a 241-bit nonzero integer.
 const DELTA0: u64 = 1_450_097_237;
+
+/// ⚑ `0 < δ₀ < p_felt`. At `δ₀ = 0` the "compensating pair" is the identity and every falsifier in
+/// this file proves something true of doing nothing; at `δ₀ >= p_felt` it is not a felt at all.
+const DELTA0_IS_A_NONZERO_CANONICAL_FELT: () = {
+    assert!(DELTA0 > 0, "δ₀ must be nonzero, so the ℤ sum is > 2^240");
+    assert!(DELTA0 < P_FELT, "δ₀ must be a canonical felt");
+};
+const _: () = DELTA0_IS_A_NONZERO_CANONICAL_FELT;
 const DELTA8: u64 = 1;
 
 fn windowed_descriptor() -> EffectVmDescriptor2 {
@@ -111,11 +119,10 @@ fn the_compensating_pair_is_invisible_mod_p_felt_and_nonzero_over_z() {
         0,
         "δ₀ + 2^240 must vanish mod p_felt"
     );
-    assert!(
-        DELTA0 > 0,
-        "…and δ₀ must be nonzero, so the ℤ sum is > 2^240"
-    );
-    assert!(DELTA0 < P_FELT, "δ₀ is a canonical felt");
+    // ⚑ `0 < δ₀ < p_felt` is two comparisons between constants — a build obligation, and the one
+    // that makes this whole file a falsifier rather than a tautology: at `δ₀ = 0` the "invisible"
+    // perturbation is the identity and every §-below claim is trivially true. Discharged at build
+    // time in `DELTA0_IS_A_NONZERO_CANONICAL_FELT` beside the constant.
 }
 
 /// ⚑ **THE FALSIFIER, ADD.** Two cells of the honest Lean witness's last row are moved. Constraint

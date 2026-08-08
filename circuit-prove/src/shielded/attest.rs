@@ -611,33 +611,38 @@ mod tests {
         );
     }
 
-    /// RANGE GADGET NON-VACUITY (the soundness regression guard). The threshold
-    /// range proof is only meaningful if `RANGE_BITS` carves a window BELOW the
-    /// field's negative reps. This pins the invariant two ways:
+    /// RANGE GADGET NON-VACUITY (the soundness regression guard), LEG 1 — the STRUCTURAL
+    /// invariant. The threshold range proof is only meaningful if `RANGE_BITS` carves a window
+    /// BELOW the field's negative reps: every BabyBear felt fits in 31 bits, so a 31-bit (or
+    /// wider) window would make EVERY diff decomposable and the check vacuous.
     ///
-    /// 1. `RANGE_BITS < 31`: every BabyBear felt fits in 31 bits, so a 31-bit (or
-    ///    wider) window would make EVERY diff decomposable and the check vacuous.
-    /// 2. Boundary adversary: a cell exactly ONE below the threshold (`diff = -1`,
-    ///    field rep `p - 1 ≈ 2^31`, the smallest-magnitude negative rep) must be
-    ///    rejected — if even this just-barely-negative diff were representable, the
-    ///    gadget would pass everyone.
-    #[test]
-    // Intentional compile-constant non-vacuity guard (RANGE_BITS is a const by design).
-    #[allow(clippy::assertions_on_constants)]
-    fn threshold_range_gadget_is_not_vacuous() {
-        // (1) The structural invariant: the window must lie below the field width.
+    /// ⚑ **AT BUILD TIME.** This carried
+    /// `#[allow(clippy::assertions_on_constants)]` and a comment calling it "intentional" — but the
+    /// lint was right and the `allow` was the wrong answer to it. A `RANGE_BITS` that made the
+    /// gadget vacuous is a state no build should survive, and an `assert!` inside a `#[test]`
+    /// reports it only after everything downstream has already compiled, and only if the test runs.
+    const THRESHOLD_RANGE_IS_NOT_VACUOUS: () = {
+        // The window must lie below the field width: every BabyBear felt fits in 31 bits, so a
+        // 31-bit (or wider) window makes EVERY diff decomposable.
         assert!(
             RANGE_BITS < 31,
-            "RANGE_BITS={RANGE_BITS} >= 31 makes the threshold range proof VACUOUS \
-             (every BabyBear felt fits in 31 bits → every diff decomposes)"
+            "RANGE_BITS >= 31 makes the threshold range proof VACUOUS (every BabyBear felt fits \
+             in 31 bits, so every diff decomposes)"
         );
-        // 2^RANGE_BITS must be strictly below the smallest negative rep (p-1).
+        // …and 2^RANGE_BITS must be strictly below the smallest negative rep (p-1).
         assert!(
             (1u64 << RANGE_BITS) < (BABYBEAR_P as u64) - 1,
-            "the honest window [0,2^{RANGE_BITS}) must lie strictly below p-1"
+            "the honest window [0, 2^RANGE_BITS) must lie strictly below p-1"
         );
+    };
+    const _: () = THRESHOLD_RANGE_IS_NOT_VACUOUS;
 
-        // (2) The boundary adversary: attr = threshold - 1 (the tightest miss).
+    /// RANGE GADGET NON-VACUITY, LEG 2 — the BOUNDARY ADVERSARY, which only a running prover can
+    /// decide. A cell exactly ONE below the threshold (`diff = -1`, field rep `p - 1 ≈ 2^31`, the
+    /// smallest-magnitude negative rep) must be rejected: if even this just-barely-negative diff
+    /// were representable, the gadget would pass everyone.
+    #[test]
+    fn threshold_range_gadget_is_not_vacuous() {
         let pred = Predicate::Threshold { threshold: 1_000 };
         let circuit = attest_circuit(&pred);
         let just_under = AttestWitness {

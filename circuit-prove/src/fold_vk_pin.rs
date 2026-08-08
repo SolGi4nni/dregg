@@ -195,12 +195,30 @@ pub fn child_vk_commit(
 mod tests {
     use super::*;
 
-    /// The pin's width is the digest width, and it is not zero — a zero-width pin would connect
-    /// nothing and this module would be decoration.
+    /// The pin's width is the width of the thing it pins — measured off the PCS commitment TYPE,
+    /// not off the constant the width is defined as.
+    ///
+    /// ⚑ **WHAT THIS FILE USED TO ASSERT.** Three lines: `== 8`, `== DIGEST_ELEMS`, and `> 0`.
+    /// `VK_PIN_FELTS_PER_CHILD` **is** `DIGEST_ELEMS` by definition twenty lines up, so the second
+    /// was `x == x`; the third is implied by the first; and none of the three could fail at any
+    /// width the recursion config could be re-pointed to. A second spelling of a constant is not a
+    /// check. The pin's cost is a property of [`RecursionCommit`] — the commitment
+    /// `pin_preprocessed_commit` walks — so that is where it is now read from: if `MyPcs` were
+    /// re-pointed at an MMCS with a different digest arity while `DIGEST_ELEMS` stayed 8, the
+    /// `alloc_const`/`connect` count would follow the TYPE and this goes red.
+    ///
+    /// ⚠ Stated at the resolution it holds at: today both paths bottom out in the same
+    /// `recursion-verify` constant, so this separates a re-pointed PCS from a stale width — it does
+    /// NOT independently witness the vendored loop's trip count.
     #[test]
     fn the_pin_is_one_const_and_one_connect_per_digest_element() {
-        assert_eq!(VK_PIN_FELTS_PER_CHILD, 8);
-        assert_eq!(VK_PIN_FELTS_PER_CHILD, DIGEST_ELEMS);
-        assert!(VK_PIN_FELTS_PER_CHILD > 0);
+        let felts_in_a_real_commitment =
+            size_of::<RecursionCommit>() / size_of::<p3_uni_stark::Val<DreggRecursionConfig>>();
+        assert_eq!(
+            VK_PIN_FELTS_PER_CHILD, felts_in_a_real_commitment,
+            "the pin must issue one alloc_const + one connect per element the child's preprocessed \
+             commitment ACTUALLY carries"
+        );
+        assert_eq!(VK_PIN_FELTS_PER_CHILD, 8, "the deployed digest arity");
     }
 }

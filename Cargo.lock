@@ -6669,6 +6669,7 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
+ "starbridge-polis",
  "tracing",
 ]
 

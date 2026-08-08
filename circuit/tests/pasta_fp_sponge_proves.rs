@@ -75,6 +75,18 @@ const YSEL_BASE: usize = 424;
 const WSEL_BASE: usize = 430;
 const PC_COL: usize = 436;
 const IMM_BASE: usize = 437;
+
+/// ⚑ **THE COLUMN ORDER, PINNED AT BUILD TIME.** Every index above is a transcription of the
+/// emitted program layout; if two of them ever crossed, every witness builder in this file would
+/// be writing into the wrong column and the proofs would still be *about something*, just not
+/// about the sponge. The immediate block must also end flush at `PROG_WIDTH` — no slack, no
+/// overrun.
+const THE_COLUMN_ORDER_IS_THE_LAYOUTS: () = {
+    assert!(SEL_MUL < REG_BASE && REG_BASE < XSEL_BASE);
+    assert!(XSEL_BASE < YSEL_BASE && YSEL_BASE < WSEL_BASE && WSEL_BASE < PC_COL);
+    assert!(PC_COL < IMM_BASE && IMM_BASE + SK == PROG_WIDTH);
+};
+const _: () = THE_COLUMN_ORDER_IS_THE_LAYOUTS;
 const NREG: usize = 6;
 
 /// `MinaWrapVerifierSponge.ROWS_PER_ROUND` — 21 multiplies + 9 additions.
@@ -808,8 +820,7 @@ fn the_fp_leg_is_the_fq_program_at_the_other_constants() {
         FULL_ROUNDS * 12
     );
 
-    // Selector columns exist where the layout says (a drift here would silently re-address).
-    assert!(SEL_MUL < REG_BASE && REG_BASE < XSEL_BASE);
-    assert!(XSEL_BASE < YSEL_BASE && YSEL_BASE < WSEL_BASE && WSEL_BASE < PC_COL);
-    assert!(PC_COL < IMM_BASE && IMM_BASE + SK == PROG_WIDTH);
+    // Selector columns exist where the layout says — see `THE_COLUMN_ORDER_IS_THE_LAYOUTS` at
+    // module scope. Every operand is a constant, so a drift that silently re-addressed the
+    // selectors is a build error rather than a late report from whichever test ran first.
 }

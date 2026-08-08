@@ -50,6 +50,16 @@ const TERM_ROWS: usize = WINDOWS * STEP_SRS;
 /// `PastaMsmBucketed.bucketedRows STEP_SRS FULL_BITS BEST_C` = `fusedAdds` = `20 * 73_740`.
 const BUCKETED_ROWS: usize = 1_474_800;
 
+/// ⚑ `PastaMsmBucketed.the_srs_manifest_really_pads` — the declared manifest is strictly longer
+/// than its real content, which is the whole premise of the over-count this file measures. Both
+/// operands are constants, so it is a build obligation and not something one `#[test]` discovers.
+const THE_SRS_MANIFEST_REALLY_PADS: () = assert!(
+    TERM_ROWS < BUCKETED_ROWS,
+    "the SRS manifest no longer pads: its declared row count is not above its real content, so \
+     there is no over-count for this file to bracket"
+);
+const _: () = THE_SRS_MANIFEST_REALLY_PADS;
+
 /// The distinct rows of the SRS manifest, in first-declaration order: one per generator, then the
 /// all-zero pad. A generator row is `[i + 1, limbs..]`; the pad is `[0; SRS_TUP]`.
 ///
@@ -138,12 +148,9 @@ fn the_pad_row_pushes_the_height_up_a_rung() {
         "so the pre-2026-08-06 figure was low by exactly 2x"
     );
 
-    // …and the pad really is emitted: the manifest is longer than its real content.
-    assert!(
-        TERM_ROWS < BUCKETED_ROWS,
-        "PastaMsmBucketed.the_srs_manifest_really_pads: {TERM_ROWS} real rows padded to \
-         {BUCKETED_ROWS}"
-    );
+    // …and the pad really is emitted: the manifest is longer than its real content. Two
+    // constants, so this is a build obligation — see `THE_SRS_MANIFEST_REALLY_PADS` below the
+    // constants' definitions.
 }
 
 /// ⚑ **THE OVER-COUNT, BRACKETED.** `PastaMsmBucketed.srs_declared_overcounts_committed_by_10x`

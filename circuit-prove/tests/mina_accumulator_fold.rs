@@ -301,35 +301,36 @@ fn the_leaf_wrap_cost_tracks_columns_and_not_rows() {
         a.trace_width
     );
 
-    // ⚑ THE CONTROL. Eight times the inner rows must not move the wrap circuit by even 1%. If this
-    // ever fails, the cost law changed and "make the leaf taller" stopped being free.
-    assert!(
-        ACC_WRAP_OPS_8_ROWS - ACC_WRAP_OPS_1_ROW < ACC_WRAP_OPS_1_ROW / 100,
-        "8x the inner ROWS moved the wrap circuit by {} ops out of {ACC_WRAP_OPS_1_ROW} — the cost \
-         law measured on 2026-08-06 says rows are free",
-        ACC_WRAP_OPS_8_ROWS - ACC_WRAP_OPS_1_ROW
-    );
-
-    // ⚑ THE TREATMENT. 6.5x the inner COLUMNS, at 1/256th the rows, costs >10x the wrap circuit.
-    assert!(
-        ACC_WRAP_OPS_8_ROWS > 10 * CHAINLINK_WRAP_OPS,
-        "the accumulator wrap is {ACC_WRAP_OPS_8_ROWS} ops against the chainlink's \
-         {CHAINLINK_WRAP_OPS} — the width term is what this file exists to name"
-    );
-
-    // ⚑ 68.3 GiB. Stated in BOTH unit systems and asserted in both, because the first draft of this
-    // assertion compared the DECIMAL figure (73.3 GB) against a BINARY threshold (70 GiB) and went
-    // red — a unit slip is exactly how a memory figure drifts into a flattering one.
-    assert!(
-        MEASURED_LEAF_PEAK_BYTES > 73 * 1_000_000_000,
-        "73.3 GB decimal"
-    );
-    assert!(
-        MEASURED_LEAF_PEAK_BYTES > 68 * 1024 * 1024 * 1024,
-        "68.3 GiB binary"
-    );
-    // …and that is 71% of a 96 GiB box, which is why a co-tenant run met the OOM killer.
-    assert!(MEASURED_LEAF_PEAK_BYTES * 10 > 7 * 96 * 1024 * 1024 * 1024);
+    // ⚑ **THE COST LAW, AS A BUILD OBLIGATION.** Every remaining leg of this tooth relates
+    // measurements this file RECORDS as constants — the control (8x the inner ROWS moves the wrap
+    // circuit by under 1%), the treatment (6.5x the inner COLUMNS costs >10x), and the leaf's peak
+    // RSS in BOTH unit systems, because the first draft of the memory assertion compared a DECIMAL
+    // figure against a BINARY threshold and a unit slip is exactly how a memory figure drifts into
+    // a flattering one. Nothing in them can be decided by running anything, so a recorded figure
+    // edited into an inconsistent set fails the BUILD rather than waiting for a test run.
+    const THE_COST_LAW_THIS_FILE_RECORDS: () = {
+        assert!(
+            ACC_WRAP_OPS_8_ROWS - ACC_WRAP_OPS_1_ROW < ACC_WRAP_OPS_1_ROW / 100,
+            "8x the inner ROWS moved the wrap circuit by more than 1% — the cost law measured on \
+         2026-08-06 says rows are free"
+        );
+        assert!(
+            ACC_WRAP_OPS_8_ROWS > 10 * CHAINLINK_WRAP_OPS,
+            "the accumulator wrap is no longer >10x the chainlink's — the width term is what this \
+         file exists to name"
+        );
+        assert!(
+            MEASURED_LEAF_PEAK_BYTES > 73 * 1_000_000_000,
+            "73.3 GB decimal"
+        );
+        assert!(
+            MEASURED_LEAF_PEAK_BYTES > 68 * 1024 * 1024 * 1024,
+            "68.3 GiB binary"
+        );
+        // …and that is 71% of a 96 GiB box, which is why a co-tenant run met the OOM killer.
+        assert!(MEASURED_LEAF_PEAK_BYTES * 10 > 7 * 96 * 1024 * 1024 * 1024);
+    };
+    const _: () = THE_COST_LAW_THIS_FILE_RECORDS;
 }
 
 /// ⚑⚑ **WHERE A FOLDABLE ACCUMULATOR LEAF WOULD COME FROM — 446 COLUMNS, DERIVED FROM THE EMITTED
