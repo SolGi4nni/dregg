@@ -395,7 +395,6 @@ never-run starbridge-v2 test migrate_shell_dispatch   # `process-pd`: unix fork/
 # `lean-seed-member-freshness-red` `--self-test`). Its second `#[test]`,
 # `the_freshness_reader_can_go_red`, is pure strings + a scratch temp tree and would pass
 # anywhere; it is not separable from the target. Owner: dregg-lean-ffi.
-never-run dregg-lean-ffi test linked_archive_freshness   # `lean-lib` + an archive whose members postdate a checkout: unreachable on a hosted runner by construction (see the block above). Seed-side twin: scripts/check-lean-seed-member-freshness.py, in local-gates.sh.
 
 # ── FORGOTTEN (16): nothing but wiring stands between these and a green run. ──────────
 # Every row here is cheap, hosted-runnable, and dark for no reason anyone chose. This is
