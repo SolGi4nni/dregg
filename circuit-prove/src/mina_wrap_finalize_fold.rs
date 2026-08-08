@@ -76,6 +76,7 @@ use crate::gpu_backend::{
 };
 use crate::ivc_turn_chain::{expose_claim_instance_index, ir2_leaf_wrap_config};
 use crate::plonky3_recursion_impl::recursive::{DreggRecursionConfig, recursion_layer_over};
+use crate::seam::{SeamSpec, apply_seam, xi_seam};
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
 
@@ -302,15 +303,26 @@ fn prove_ir2_leaf(
 ///
 /// Verifies both children in-circuit and then:
 ///
-/// * `connect(endo.xi[i], conj.xi[i])` for all **32** limbs — the carry. Elementwise, 255 bits, **no
-///   digest and therefore no birthday bound**. A prover whose conjunction reads an ξ the endo-lift
-///   did not produce has no satisfying assignment, so there is no parent proof.
+/// * applies the **ξ seam** — [`crate::seam::xi_seam`], the Lean-emitted
+///   `MinaSeams.xiSeam` — welding all **32** limbs of the endo-lift's lifted-ξ block to the
+///   conjunction's record-ξ block. Elementwise, 255 bits, **no digest and therefore no birthday
+///   bound**. A prover whose conjunction reads an ξ the endo-lift did not produce has no
+///   satisfying assignment, so there is no parent proof. ⚑ This function authors NO index
+///   arithmetic: the pin list is the emitted object, `S1 =
+///   the_xi_seam_welds_the_lift_to_the_record` proves it names exactly the two published ξ blocks,
+///   and `S2 = xi_seam_certifies` (refutable: `xi_seam_S2_needs_the_seam`) is the composition.
 /// * exposes `endo.v' ‖ conj.zeta ‖ conj.zetaw ‖ conj.r ‖ conj.b0` — ξ itself is deliberately NOT
 ///   re-published: it is now an internal wire of the aggregation, and a root that re-published it
 ///   would read as though the two halves were still separately checkable.
 /// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child's preprocessed commitment in-circuit
 /// ([`crate::fold_vk_pin`]). Without it the two `require_claim` lane-count checks are the only
 /// gate, and a same-shape/different-constants endo-lift or conjunction descriptor passes them.
+///
+/// # Refusals
+///
+/// Beyond the claim-width checks: the seam's two ends are checked against the descriptors this
+/// module actually loads, by name AND by RECOMPUTED fingerprint lanes
+/// ([`crate::seam::SeamEnd::require_matches`]) — a stale emitted seam is a loud error here.
 ///
 /// ⚠ `config` here is [`finalize_root_config`], the FOLD engine — **not** the inner descriptor
 /// engine the two leaves are handed. Both are `DreggRecursionConfig` and nothing in the type system
@@ -324,6 +336,12 @@ pub fn fold_endo_into_finalize(
 ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
     let endo_idx = require_claim(endo, "endo-lift leaf", ENDO_PI_COUNT)?;
     let conj_idx = require_claim(conj, "conjunction leaf", CONJ_PI_COUNT)?;
+
+    // ⚑ THE SEAM, read rather than authored — and refused if it does not name the two descriptors
+    // this fold verifies (fingerprint lanes recomputed, not trusted).
+    let seam: SeamSpec = xi_seam()?;
+    seam.left.require_matches(&endo_lift_descriptor()?)?;
+    seam.right.require_matches(&conjunction_descriptor()?)?;
 
     // ⚠ No host pre-flight against `pins` — the refusal must be the circuit's.
     let endo_input = endo.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
@@ -344,10 +362,10 @@ pub fn fold_endo_into_finalize(
         debug_assert_eq!(c.len(), CONJ_PI_COUNT);
 
         // ⚑ THE CARRY. The endo-lift's OUTPUT block IS the conjunction's ξ block, limb for limb,
-        // enforced in-circuit rather than asserted by a test over two PI files.
-        for i in 0..SK {
-            cb.connect(e[ENDO_PI_XI + i], c[CONJ_PI_XI + i]);
-        }
+        // enforced in-circuit rather than asserted by a test over two PI files. The 32 welds are
+        // the emitted seam's, applied — not re-derived offsets.
+        let issued = apply_seam(cb, e, c, &seam);
+        debug_assert_eq!(issued, SK);
 
         let mut parent: Vec<Target> = Vec::with_capacity(FINALIZE_CLAIM_LEN);
         parent.extend_from_slice(&e[ENDO_PI_VPRIME..ENDO_PI_VPRIME + SK]);
@@ -363,41 +381,24 @@ pub fn fold_endo_into_finalize(
         .map_err(|e| format!("endo -> finalize fold failed: {e}"))
 }
 
-/// ⚑ **THE THIRD LEG, AND IT IS NAMED HERE RATHER THAN IN A SUMMARY.**
+/// ⚑ **THE THIRD LEG IS NOW AN EMITTED OBJECT, NOT A FUNCTION IN THIS FILE.**
 ///
 /// The 46-leaf Fq-transcript fold (`mina_phase2_chain_leaf::prove_chain_fold`) exposes
 /// `in_state(96) ‖ out_state(96) ‖ transcript_acc(8)`, and `MinaPhase2Chain`'s
 /// `the_chain_ends_at_the_blocks_challenges` says outgoing lane 0's **low 128 bits** are the block's
-/// own `v′`. Connecting that to [`CLAIM_VPRIME`] is what would stop `v′` being a prover-chosen
-/// value — and it is the seam this function DECLARES:
+/// own `v′`. Connecting that to [`CLAIM_VPRIME`] is what stops `v′` being a prover-chosen value.
 ///
-/// * the low **16** limbs of the chain root's outgoing lane-0 block are the endo-lift's `v′` limbs
-///   `0..16`;
-/// * the endo-lift's `v′` limbs `16..32` are **zero** — `v′` is 128 bits and a `v′` with high limbs
-///   set would be a different prechallenge in the same 32-limb slot.
+/// `connect_chain_root_v_prime` used to live here as Rust index arithmetic — the function `git
+/// grep` once found in exactly three places: a docblock, its own definition, and a test saying it
+/// is NOT what the test does. It is DELETED, not aliased. The seam is now the Lean-emitted
+/// [`crate::seam::v_prime_seam`] (`MinaSeams.vPrimeSeam`, 16 welds + 16 zero-pins — without the
+/// zero-pins a prover picks 128 free high bits and "low 128 bits" is not what the weld enforces),
+/// with S1 `the_v_prime_seam_is_the_terminal_squeeze` — the theorem the R1 obligation in
+/// `mina_kimchi_verifier_gadget.rs` asked for by name — and S2 `v_prime_seam_certifies`
+/// (refutable: `v_prime_seam_S2_needs_the_seam`). Its one applier is
+/// [`crate::mina_kimchi_verifier_gadget::fold_transcript_into_finalize`], through
+/// [`crate::seam::apply_seam`].
 ///
-/// Both halves are needed: without the second, a prover picks 128 free high bits and the "low 128
-/// bits" reading is not what the connect enforces.
-///
-/// ⚠ **The caller supplies the chain root.** This module does not run the 46-leaf fold (measured
-/// 1037 s) and does not pretend to; `mina_wrap_finalize_fold.rs`'s tests exercise the seam against a
-/// SINGLE chain link, which fixes the last absorption and leaves the 45 before it unfixed.
-pub fn connect_chain_root_v_prime(
-    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-    chain_out_lane0: &[Target],
-    v_prime: &[Target],
-    zero: Target,
-) {
-    debug_assert_eq!(chain_out_lane0.len(), SK);
-    debug_assert_eq!(v_prime.len(), SK);
-    for i in 0..V_PRIME_LIMBS {
-        cb.connect(chain_out_lane0[i], v_prime[i]);
-    }
-    for slot in v_prime.iter().take(SK).skip(V_PRIME_LIMBS) {
-        cb.connect(*slot, zero);
-    }
-}
-
 /// `v′ = LINK_V_RAW % 2^128`, and `128 / 8 = 16`.
 pub const V_PRIME_LIMBS: usize = 16;
 

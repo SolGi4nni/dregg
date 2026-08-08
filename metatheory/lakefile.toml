@@ -104,6 +104,26 @@ root = "MinaChainEmit"
 name = "mina_fp_chain_emit"
 root = "MinaFpChainEmit"
 
+# mina_finalize_scalars_emit — `dregg-mina-finalize-scalars::v1`: the descriptor, the real-block
+# honest trace/PIs, two refusal traces and the lct-shift port exhibit. COMPILED for the same
+# measured reason as the chain emitters (the interpreter is ~50x slower on trace rendering).
+# Deliberately NOT in defaultTargets.
+#
+#     lake build mina_finalize_scalars_emit
+#     ./.lake/build/bin/mina_finalize_scalars_emit ../circuit/tests/fixtures
+[[lean_exe]]
+name = "mina_finalize_scalars_emit"
+root = "MinaFinalizeScalarsEmit"
+
+# emit_seam_specs — the byte source for `circuit/descriptors/seams/` (SeamSpec JSONs + the port
+# census). A lakefile target ON PURPOSE: `EmitMinaWrapClosing.lean`'s header names the
+# scratch-driver-with-no-target shape as a defect (an API change stays CI-green until a human
+# re-runs the emit); this one is `lake exe emit_seam_specs` and builds with the tree. Tiny data —
+# the interpreter route (`lake env lean --run EmitSeamSpecs.lean`) is instant too.
+[[lean_exe]]
+name = "emit_seam_specs"
+root = "EmitSeamSpecs"
+
 # Market/* — DrEX (Dragon's Egg Exchange): the Lean-first proof-carrying exchange tower
 # (namespace `Market`, composing with Dregg2.Intent + Dregg2.Intent.Ring). Root module
 # `Market` (./Market.lean) aggregates Market/*; also imported from the Dregg2 root so the

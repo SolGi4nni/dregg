@@ -539,10 +539,12 @@ fn a_conjunction_at_another_xi_cannot_be_folded() {
 /// the same bytes `mina_xi_endo_weld.rs` welds — so the seam's arithmetic is checked and its
 /// absence from the circuit is stated rather than implied.
 ///
-/// ⚠ **This is a HOST assertion.** Making it a constraint is `connect_chain_root_v_prime`, and it
-/// needs a chain-fold ROOT, which is 46 leaves and 45 folds (measured 1037 s in
-/// `mina_phase2_chain_fold.rs` §5). Until a caller runs that fold and passes its root here, the
-/// finalize root's `v′` is a prover-chosen 128-bit value.
+/// ⚠ **This is a HOST assertion.** Making it a constraint is the `v′` seam
+/// (`dregg_circuit_prove::seam::v_prime_seam`, the Lean-emitted `MinaSeams.vPrimeSeam`, applied by
+/// `mina_kimchi_verifier_gadget::fold_transcript_into_finalize`), and it needs a chain-fold ROOT,
+/// which is 46 leaves and 45 folds (measured 1037 s in `mina_phase2_chain_fold.rs` §5). Until a
+/// caller runs that fold and passes its root there, the finalize root's `v′` is a prover-chosen
+/// 128-bit value.
 #[test]
 fn the_chain_roots_v_prime_is_the_endo_lifts_input_but_only_host_side() {
     let lines: Vec<&str> = CHAIN_PIS_ALL
@@ -582,9 +584,10 @@ fn the_chain_roots_v_prime_is_the_endo_lifts_input_but_only_host_side() {
 
 /// ⚑ **THE PRICE'S TWO ATOMS, MEASURED ON THE ARTIFACTS.**
 ///
-/// `MinaWrapVerifierAir` §5b re-prices one in-AIR Wrap verification at **144 751 608 committed
-/// cells** — `34 816` sound complete additions at `3 048` columns plus `170 940` sound ALU rows at
-/// `226`. Those two widths are the whole re-derivation, and in Lean they come from the AIRs' own
+/// `MinaWrapVerifierAir` §5b re-prices one in-AIR Wrap verification at **161 308 368 committed
+/// cells** — `34 816` sound complete additions at `3 048` columns plus `244 200` sound ALU rows at
+/// `226`. (It read `144 751 608 / 170 940` until 2026-08-08; the Poseidon round was counted at 21
+/// instructions where the emitted round is 30. The two ATOM WIDTHS this test asserts did not move.) Those two widths are the whole re-derivation, and in Lean they come from the AIRs' own
 /// allocators. This asserts them against the SERVED descriptors, which is the other source.
 ///
 /// ⚠ What this does NOT establish: that any trace of these descriptors IS a Wrap verification. §5b

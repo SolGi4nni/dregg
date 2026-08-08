@@ -1,5 +1,282 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 8 (SEAMS EMIT OR PORT) — every `bound := none` `proofBind` is now a DECLARED PORT with a named cover or a COUNTED wound; the connectivity census counts CONSTRAINTS, not declarations
+
+The class, verified at source: `circuit/src/descriptor_ir2.rs`'s `proofBind` arm emits polynomials
+over a seam's `commit` lanes only inside `if let Some(b) = &p.bound` — and **every deployed Mina
+light-client seam is `bound := none`**, so the headline claims "`TIP_STATE` joined in-circuit",
+"`OWNHASH` is the image of its row", the link's `salt ‖ BODYHASH ‖ acc` and the `-fs` weld's 192
+lanes all named columns in NO emitted polynomial. ⛑ **And the instrument was complicit:**
+`LightClientAnchorConnectivity.relatedCols` unioned `commit`/`vk`/`bound` UNCONDITIONALLY, so its
+`18 → 9` decorative census was quoted below as gate coverage while measuring an IR field.
+
+**No `bound` was flipped, and each per-seam docblock's reason held under audit** — the commit lanes
+are PI-bound columns or descriptor constants, so a `bound` congruence could only compare them to
+themselves (the decoration trap; the accumulator head can bind because its claim is an emit-time
+CONSTANT, `headBoundLanes`, and its both-polarity AIR-refusal suite `the_wrong_head_claim_is_
+refused_by_the_air` runs the falsifier constructively). The repair is the other two legs of the
+no-third-state gate:
+
+- **THE INSTRUMENT** (`LightClientAnchorConnectivity`): `relatedCols`' `.proofBind` arm is
+  emission-faithful — one entry per emitted polynomial of arity ≥ 2 (vk lanes under a pin join the
+  GUARD; commit lanes join only under a `bound`); the declaration reading survives as
+  `declaredCols`, named. Literals moved, none narrated: mina-verify decorative `9 → 36`
+  (`[12…29] ++ [40…48] ++ [68…76]` — anchor, tip, both commitment blocks), mina-link `0 → 17`
+  (`BODYHASH` + `BODY_ACC`, and ⛑ **the eight `BODY_ACC` lanes are UNREAD — no width lookup at
+  all**), five-verify census `53 → 80`. Same fix one rail down: `Seam.legJoinsAcross` gained an
+  emission-faithful `.bind` arm, without which `portIslandFree` would refuse exactly the islands
+  the port mechanism exists for. ⚠ RESIDUAL, named: `EffectAirIR.AirLeg.readCols` still returns a
+  bind's whole declaration, and `minaLinkTiedAir`'s `pinsTied` verdict passes THROUGH it — the
+  body pins are "tied" only by the seam declaration; an emission-faithful `readCols` reds that
+  `TiedAir` until the body columns get real readers.
+- **THE PORTS** (`MinaSeams` §8b): the head verify AIR is `headPortedAir` — anchor + tip ports
+  COVERED by the new emitted `headTipSeam` (`seam-head-tip-to-link.json`: the executor's REFUSAL
+  13/14a/14b as an object, 19 pins, elementwise, no digest; 14c is affine and stays the
+  executor's, said so); the chainlink-commitment port is a `WeldCover` naming
+  `check_transcript_binding` (REFUSAL 4 — called in the dispatch, both polarities tested); ⛑⛑⛑
+  **the conjunction-commitment port's weld is DEAD CODE, found while declaring its cover**:
+  `check_conjunction_binding` (REFUSAL 15) is defined, documented, CALLED BY NOTHING — the head
+  wire carries no conjunction sub-proof fields to call it with, and it has zero tests. The
+  `EffectsHashMismatch` class, again: in-AIR the head forces `FINALIZE_XI_B_PROVED = 1` and the
+  `CONJ_VK` program pin, and the nine published `CONJ_PI` lanes are compared to nothing any node
+  runs. Counted (`the_conjunction_commitment_port_has_no_live_weld = 1`, literal `[conjPiPort]`);
+  the owed object is wire fields (REQUIRED, old blobs refuse to decode) + the dispatch call +
+  both polarities — the exact shape REFUSAL 4 already has. `linkPortedAir` declares the body ports and
+  ⛑⛑ **`the_link_body_ports_have_no_registered_cover = 2` is the wound as a shrinking number**:
+  no fold `cb.connect`s and no executor compares the seventeen published body slots against
+  `MinaStateBodyHashChain`'s root — `turn`'s `LINK_PI_BODYHASH_BASE`/`LINK_PI_BODY_ACC_BASE` have
+  no reader. The owed object is that seventeen-slot weld. Red pole: `anchor_h_is_not_a_port`.
+- **BYTES:** no descriptor re-emits, **no VK rotates** — the seams' wire bytes are untouched;
+  `circuit/descriptors/seams/` gains `seam-head-tip-to-link.json` and a verify row in `ports.json`
+  (seam-covered rows only; `seam_specs.rs` gate 3 stays a hard invariant and now recomputes the
+  head/link fingerprints from the served descriptors, the `ABSORB_VK_LANES` class pre-empted for
+  this seam).
+
+## ⛑⛑⛑⛑ AUGUST 8 — SEAM-FORCING IS A THEOREM: `SeamSpec` + S1/S2 + PORTS, the three running seams migrated, the fold functions reduced to readers
+
+Four "true about the wrong object" incidents shared one form — *a claim true of the FOLD, attributed
+to the AIR* — with the forcing living in recursion-wiring `cb.connect`s that only PROSE named,
+invisible to `#assert_axioms`, the descriptor JSON, `pinsTied`, every census in the tree. The seam is
+now an OBJECT: **`Dregg2.Circuit.Emit.SeamSpec`** (generic: ends keyed by descriptor name +
+`Faithful9` fingerprint lanes, pin pairs, zero-pins; `SeamEq`/`SeamCertifies`/`CertifiedSeam`; the
+`digitsVal_limb`/`limb_inj`/`prefix_weld` limb arithmetic; `PiPort`/`PortedAir`/`CoveredPort`) and
+**`MinaSeams`** (the three deployed instances), emitted to **`circuit/descriptors/seams/*.json`** by
+the lakefile exe `emit_seam_specs` — the byte-diff against the bootstrap render was IDENTICAL, and the
+tracked bytes are the Lean emitter's.
+
+**THE THREE MIGRATED.** `xiSeam` (32 welds, `fold_endo_into_finalize`), `vPrimeSeam` (16 + 16
+zero-pins), `freshSpongeSeam` (96 zero-pins) — the last two are the kimchi gadget's whole 128.
+`connect_chain_root_v_prime` is **DELETED, not aliased** (it was the function `git grep` once found in
+a docblock, its own definition, and a test disclaiming it). Both fold functions are now READERS:
+`circuit-prove/src/seam.rs::apply_seam` issues every connect from the parsed artifact, the folds
+author **zero index arithmetic**, and each seam END is refused unless its RECOMPUTED
+`effect_vm_descriptor2_semantic_fingerprint` lanes match the descriptor actually loaded — a stale
+emitted seam is a loud error at fold-configuration time, not a silent misname (the `ABSORB_VK_LANES`
+class, pre-empted).
+
+**S1 — the pin lists denote the published slots they claim** — as kernel-constructed MEMBERSHIPS in
+the real `EffectAir` leg lists: `the_xi_seam_welds_the_lift_to_the_record` (endo `OUT` `.last` pins
+<-> conjunction `XI_CL` `.first` pins), **`the_v_prime_seam_is_the_terminal_squeeze`** — the theorem
+the kimchi gadget's R1 obligation asked for BY NAME, now closed — and
+`the_fresh_sponge_seam_zeroes_the_whole_incoming_state`. R1 and (at the seam layer) R2 of the
+gadget's verification path are marked CLOSED in its header; R3 is untouched and says so.
+
+**S2 — composition, REFUTABLE, both poles.** `xi_seam_certifies` :
+`EndoLeafSays ∧ ConjLeafSays ∧ SeamEq → FinalizeRootSays` over the children's own vocabulary
+(`endoLiftQ`, `PastaIPA.bEval`); `v_prime_seam_certifies` lands `v′ = outLane0 mod 2^128` via the
+general `prefix_weld` (the "low 128 bits" reading as arithmetic — the zero-pins are the half a bare
+16-limb weld would not carry); `fresh_sponge_seam_certifies` collapses the fold's origin to
+`newSponge.st`. ⛑ THE POLES: `the_xi_seam_composes_on_the_block` — `SeamEq` is INHABITED at block
+539508's own claims (an S2 over unsatisfiable `SeamEq` would certify nothing) — and the REFUTERS:
+**`xi_seam_S2_needs_the_seam`** (KERNEL-CLEAN: a fully sentence-satisfying conjunction claim with
+ξ = 0 against the honest endo leaf — both child sentences hold, the composed sentence is false) and
+**`v_prime_seam_S2_needs_the_seam`** (compiled: zero `v′` against the real chain forces
+`0 = WRAP_V_CHAL`). ⚠ fresh-sponge's dropped-seam form is NOT refutable at this layer — its composed
+sentence is existential over the tape (refuting it = inverting Poseidon); labelled in the file,
+terminal there; the `transcript_acc` weld is the next object. ⚠ S2 composes claim SENTENCES — it does
+not discharge the children's standings (the endo machine still has no `_of_sat` theorem; WHICH tape
+the chain absorbed is still the host `transcript_acc` comparison, said in `ChainRootSays`'
+docstring).
+
+**THE PORT — the wound made unrepresentable.** `conjunctionPortedAir` declares the conjunction's ξ
+blocks (cols `[0,64)`, PI `[0,32)`) its ONE port; `portIslandFree` is
+`no_arithmetic_call_names_an_xi_block` inverted into a decidable island verdict with FULL leg
+coverage (`conjunction_xi_island_is_free`, `native_decide` + `#assert_compiled` — closes that
+theorem's own base-list caveat at compiled trust); `zeta_is_not_a_port` is the red pole (seedLegs
+join ζ to the fold registers, the verdict refuses). `xiPortCovered : CoveredPort` cannot ELABORATE
+without a covering seam, and `every_declared_port_is_covered_by_a_named_seam` + the Rust artifact
+census (`circuit-prove/tests/seam_specs.rs`, which also pins the emitted pin lists to the deployed
+claim layouts and recomputes every end fingerprint) are the standing gates. **A free-but-published
+block now either has a named seam or the build says so; "closed by constraint" has its third honest
+value: closed by seam S, theorem S2.**
+
+**BONUS WELD, kernel-clean and general:** `bEval_eq_bPoly` — `PastaIPA.bEval` (direct `x^2^j`
+powers; a kernel decide through it is `npowRec`-linear and infeasible) and
+`MinaWrapOpeningGate.bPoly` (the squaring tower) proved ONE polynomial, which is what lets the
+honest pole cite `b0_is_the_b_polynomial` instead of an impossible kernel evaluation. Two
+implementations of the b-polynomial stopped being twins today.
+
+**RE-MARKS.** The kimchi gadget's in-file table now carries closure kind ∈ {AIR, SEAM, HOST, ABSENT}
+with a named artifact per row (`xiCorrect`/`v′`/fresh-sponge -> SEAM + their S1/S2;
+tape-is-this-block's -> HOST); `docs/PICKLES-VERIFY-BLOCK-LEG-TABLE.md` gains the SEAM closure kind +
+§7 (the three tower-side rows, and the three claims that were stronger than their mechanism restated:
+*"53/53 forced"* = 3/53 unconditional; *"66 fold sites pin VK identity"* = wiring + consumer refusal,
+`fold_vk_pin.rs`'s own words; `xiCorrect` = SEAM). `MinaWrapConjunctionAir`'s xiCorrect sections now
+name the seam object instead of ending at prose.
+
+⚠ **WHAT A SEAM DOES NOT BUY, once:** `apply_seam` is still Rust recursion wiring on the undischarged
+FRI/STARK floor; no AIR was authored anywhere in this campaign (House Law #1 — the distinction is
+exactly what got formalized). ⚠ **AND THE MECHANISM IS OPT-IN — say the residual plainly.** Can a
+conjunct still be forced somewhere no object names? For the three migrated seams and the declared ξ
+port: NO — every forced slot has a named artifact with S1/S2 and a census that refuses removal. In
+general: YES, still — a NEW free-block pair added without a `PiPort` declaration reproduces the wound
+(nothing yet runs the island verdict over the whole emitted corpus and demands every free island be
+declared — the `PinsTiedCensus`-shaped tree-wide sweep is UNDONE WORK with a named shape), and a NEW
+fold can still hand-author `cb.connect`s without a `SeamSpec` (no ratchet scans `circuit-prove` for
+raw connects outside `seam.rs`; second named residual). What changed is that the declared cases are
+now unrepresentable-wrong instead of prose, and the pattern is one import away for the next author.
+⚠ `check-recursion-closure.py` GREEN (14 rows / 21 assertions);
+`check-guard-discipline.py` carries FOUR pre-existing sibling reds (TauPrefixMonotone,
+BlocklaceFinality above baseline; CarrierOctetGates, PicklesWrapShapeGate stale) — not this lane's,
+not touched. **No descriptor byte moved, no VK rotated, `PROVENANCE.json` untouched** — the seams
+are NEW artifacts in a NEW directory the descriptor gates do not walk, gated by their own Rust suite
++ the Lean census instead.
+
+## ⛑⛑⛑⛑ AUGUST 8 — TWO MORE `vkPin`s NAMED PROGRAMS NO DESCRIPTOR IN THIS TREE HAS, AND ONE WAS DEFERRED INSIDE THE INSTRUMENT THAT WOULD HAVE CAUGHT IT
+
+The wraplink defect — *a re-emit moved a descriptor's bytes, the `vkPin` literal did not follow, and
+a deployed bind ended up naming a program no descriptor in this tree has* — is written up in three
+docblocks as a thing that happened ONCE (`75df624cf`) and was closed. **It had happened twice more,
+both were RED AT HEAD, and the gates had been saying so.** Measured with every by-name descriptor
+byte-identical to `git show HEAD:`, so neither is a working-tree artifact.
+
+* **`LightClientMinaLinkAir.ABSORB_VK_LANES`** — `067f63780` re-emitted `pasta-fp-absorb.json`; the
+  literal did not follow. `mina_statehash_seam_proves::the_seam_pins_the_real_absorb_program` had
+  been red on exactly that comparison ever since. `[446814635, 83884421, …]` → **`[484507606,
+  137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268]`**
+  (`fp=d6ffe0dc44ed069d…`).
+* **`LightClientMinaAir.CHAINLINK_VK_LANES`** — `pasta-fq-chainlink.json` was re-emitted and
+  LANDED; the literal did not. `[40589529, 494773874, …]` → **`[158847877, 496723774, 21376199,
+  142114031, 147792743, 382053460, 529402576, 480024227, 2342666]`** (`fp=85d377c9e76cb31f…`).
+* **`MinaAccumulatorAir.MINA_HEAD_VK_LANES`** — stale downstream of the second, reported by
+  `mina_accumulator_head_proves::the_pinned_head_program_is_the_served_head_descriptor`.
+
+⚑⚑ **THE SECOND ONE IS THE LESSON, NOT THE DRIFT.** `mina_transcript_carrier_binding.rs` carried a
+2026-08-06 note in its own docblock: *"`pasta-fq-chainlink.json` … are UNCOMMITTED-MODIFIED in the
+shared tree by a sibling lane's re-emit batch … against a WORKING TREE that has picked up that batch
+this test is RED, and against HEAD it is GREEN. The pin is correct as committed … it is not this
+file's to chase."* Every word was true when written, and it **expired the moment the batch landed** —
+written into the one instrument that would otherwise have said so. **A DATED VERDICT ABOUT A WORKING
+TREE OUTLIVES THE TREE IT WAS MEASURED ON.** A red deferred to another lane needs a trigger that
+fires when its premise changes; do not park the deferral in the gate.
+
+⚠ **EVERY VALUE IS RECOMPUTED FROM THE EMITTED BYTES** — `cargo run -p dregg-circuit --example
+conj_fingerprint -- <artifact>` over each served descriptor, never transcribed from a docblock and
+never copied to make a check agree. The ABSORB nine have a second independent source:
+`MinaWrapClosingAir.ABSORB_VK_LANES` already carried them, having deliberately refused to copy the
+stale number in order to agree with it.
+
+**FLAG DAY.** `dregg-mina-lightclient-link-v1.json` re-emits — geometry UNCHANGED (57 / 37 / 99),
+**exactly one `vk_pin` moved** — and its own fingerprint moves with it, `[485689086, …]` →
+`[521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626]`
+(`fp=9b5310dfefcd5ec0…`), so `LightClientMinaAir.LINK_VK_LANES` moves, so
+`dregg-mina-lightclient-verify-v1.json` re-emits and re-VKs, so `MINA_HEAD_VK_LANES` moves, so
+`mina-accumulator-head{,-genesis}.json` re-emit. **Every previously produced `MinaHeadProofWire`
+fails to verify.** `mina_head_predicate_vk()` is blake3 over the descriptor NAME, which did not
+move, so **nothing re-genesises.** ⚠ Both `FORGED_VK_LANES` and `FORGED_LINK_VK_LANES` follow their
+honest vectors — the Lean falsifiers `#assert_axioms`-failed the instant the literals moved and
+they did not, which is the staleness tooth `mina_transcript_carrier_binding` asked for on 08-06
+working exactly as intended.
+
+⚠ **THE OLD SHAPE REFUSES RATHER THAN REINTERPRETS**, on both axes: a 20-PI segment vector fails
+`check_segment_binding`'s arity check (`MINA_LINK_PI_COUNT` 20 → 37) and a 40-wide trace fails
+`base row width … must equal descriptor trace_width` (40 → 57).
+
+⚑ **ALL FOUR ARTIFACTS RE-EMITTED FROM LEAN AND INSTALLED**, none hand-edited:
+`dregg-mina-lightclient-link-v1.json` (`EmitByName`), `dregg-mina-lightclient-verify-v1.json`
+(`EmitInAirPickles`) and `mina-accumulator-head{,-genesis}.json` (`EmitMinaAccumulator desc
+head|head-genesis`). ⚠ The whole-surface `emit-descriptors.sh` was deliberately NOT run — in a tree
+with several lanes mid-edit it would sweep their in-flight Lean into the artifacts. `EmitByName`'s
+other 124 rows were checked byte-identical to disk BEFORE each install, which is what makes a
+surgical install safe *and* is itself the evidence that nothing else moved.
+✅ **AND THE CLOSING CHECK IS THE WHOLE SURFACE:** a final `EmitByName` run reproduces **126 of 126
+by-name descriptors byte-for-byte against disk, zero differing.** That is the property the
+`descriptor-drift` gate exists to hold, measured directly rather than inferred from the four files
+this lane touched.
+
+**GEOMETRY IS UNCHANGED AT EVERY RUNG** and that is the shape of the day: link 57/37/99, verify
+77/39/74, accumulator head 3068/201/4843 — **exactly one `vk_pin` moved in each.** A pin flag day
+that moves no geometry is one that a shape check cannot see, which is why the recompute gates are
+the only instrument that ever reported it.
+
+⚠ **AND THE RUST VERIFICATION IS ONE TEST DEEP, NOT FOUR.** `mina_statehash_seam_proves` measured
+**5 tests run: 5 passed** after the repair (all five were red at HEAD). The other binaries could not
+be built at all, behind two successive shared-tree blockers, neither this lane's:
+
+1. a sibling's in-flight `circuit-prove/src/seam.rs` (`include_str!` of three
+   `circuit/descriptors/seams/*.json` that did not exist yet) — since resolved;
+2. ⚑⚑ **`dregg-lean-ffi`'s build script fail-closes the WHOLE WORKSPACE, and the cause is a
+   MOVING TARGET.** It refuses to produce a verified runtime archive whenever
+   `lake build Dregg2.FFI` does not elaborate: *"the current-source IR tree is not coherent enough
+   … do not satisfy a current-source verification claim by restoring an older seed."* That gate is
+   RIGHT and should not be softened. But it means **any half-finished Lean module anywhere in the
+   FFI closure blocks every Rust test in the repository**, and while this lane watched, the
+   offending module changed twice inside one session:
+
+   * `Dregg2/Distributed/FinalityGate.lean:244` — a **`#guard`**,
+     `finalizeGate (encodeLaceWire 3 trace3Participants trace3) == "F=1:0,2:0,…"` **did not
+     evaluate to `true`**, in a file then UNMODIFIED against HEAD: an upstream consensus change had
+     moved the wire encoding under a downstream guard. *Per-file green, red umbrella.* Since fixed.
+   * `Dregg2/Distributed/RoundAdvanceGate.lean` — an **UNTRACKED** new file, mid-proof:
+     `:187` unsolved goals, and `:280`/`:423` **axiom-hygiene FAIL … depends on non-kernel axioms
+     [sorryAx]** on `advanceGateFast_eq` and `round_advance_eq_gate`.
+
+⚠ **THE COUPLING IS THE FINDING, NOT EITHER MODULE.** A consensus lane iterating on gate proofs
+takes the entire workspace's Rust test surface down with it, one incomplete module at a time, and
+nothing tells the lane that. Two candidate reliefs, neither taken here because both are that lane's
+call: keep in-progress gate modules OUT of the `Dregg2.FFI` closure until they close, or give the
+FFI gate a way to name WHICH module refused it in its own error (today it says only "a module failed
+to elaborate" and the reader has to run `lake build Dregg2.FFI` by hand to find out — this lane did,
+twice).
+
+**Re-run once `Dregg2.FFI` elaborates:** `cargo nextest run --no-fail-fast -p dregg-circuit --test
+mina_transcript_carrier_binding --test mina_lightclient_carrier_proves --test
+mina_accumulator_head_proves`. ⚠ Read the `test result:` line, never the exit code — three attempts
+here exited 0 having built nothing at all.
+
+**⚑ AND `chain/gnark` WAS IN NO WORKFLOW AT ALL.** The only Go module in the repository — the BN254
+settlement wrap, the Lean-emitted R1CS templates, the apex-VK governance pin — measured by grep
+across `.github/workflows/`: no `go`, no `gnark`, no `chain/`. Wired as `ci.yml`'s `gnark` job and a
+`local-gates.sh` row, both with a FLOOR on tests actually executed. ⚠ Its own header says what it
+is: a differential over committed artifacts, which detects DISAGREEMENT and never STALENESS. The
+freshness instrument is `derive_deployed_apex_vk_identity_and_check_fixture` (route `armed-dark`),
+which folds a fresh apex at HEAD — armed on 08-08 by splitting the WRITER out of it.
+
+**⚑⚑ THE SETTLEMENT PATH ACCEPTS CHAINS OF EXACTLY ONE LENGTH, AND NOW SAYS SO.**
+`DREGG_APEX_PINNED_CHAIN_TURNS = 2` (`apex_shrink_gnark_export.rs`). The apex is not depth-invariant
+— `RecursionVk`, VK core and root spine all differ at 2/3/4/5 turns — so the governance anchor, the
+identity artifact and the gnark circuit's baked constants are ONE circuit's. It was always enforced,
+by `check_apex_vk_identity_pin` failing closed, and **nothing asserted it**;
+`root_vk_spine_varies_with_chain_length` is renamed
+`the_apex_identity_is_one_chain_length_and_every_other_length_is_refused` and now checks both
+polarities — the pinned length ACCEPTS, 3/4/5 are REFUSED. ⚠ **Length-genericity is wanted and is
+NOT taken here**, and that is a recorded decision rather than a cost estimate hardening into a
+constraint: publishing the spine (arity 25 → 33) would leave `apexPreprocessedCommit` length-specific
+anyway. It is root-shape normalization in the recursion tower (`normalize_to_shape_spike`).
+
+⚠ **AND ONE STAMP IS DELIBERATELY NOT WRITTEN.**
+`bridge/mina-zkapp/fixtures/stepmain-step-r8-finalize-gates.provenance.json` is stale: the artifact's
+own sha256 still matches, but **17 of its 112 stamped cone modules have drifted** and the stamped
+`git.head` is 741 commits back. It is DETECTED and fail-closed — `node scripts/stepmain-shape-diff.mjs`
+exits **3** with *"emitted from a DIFFERENT source cone: sidecar 58a52343c9d30730… vs
+96010583c8bfa8d4… for the tree right now"*, naming 26 moved modules. A clean stamp would have to
+cover: a fresh `DREGG_SM=step` emission, the artifact sha256 it produced, the cone digest of the tree
+that produced it, AND `cone_dirty_at_head` empty at a real commit. That last leg is why this is the
+operator's ceremony and not a lane's — `writeFixtureProvenance` REFUSES to stamp from a working tree
+no commit contains, and this tree is dirty across dozens of cone modules right now. Refreshing it
+means `node scripts/stepmain-region-conformance.mjs --emit --refresh-fixture` from a clean checkout,
+not an edit to the JSON.
+
 ## ⛑⛑⛑⛑ AUGUST 8 — `delta` was free by ONE ADDITION, and the fix is a transcript weld, not an algebraic one
 
 The closing AIR's own §3 said `delta` is free. That was PROSE. It is now an equation, and the equation is
@@ -893,21 +1170,31 @@ schedule) versus §17's `ftcTV` ladders over SRS Lagrange doublings, with no σ-
 DIFFERENT object — the wrap machine's internal absorb/fold split, not the phase-1 tape's provenance.
 One weld does not close both; it is the sibling cone's and it is still open.
 
-### THE 53, RE-COUNTED
+### THE 53, RE-COUNTED — **AND SPLIT BY WHAT ACTUALLY SHUTS THEM**
 
-| tape elements | count | forced by | can an on-curve-and-wrong point still survive? |
-|---|---|---|---|
-| `public_comm` | **2** | the block's own 40-element public input + SRS Lagrange basis | **NO** |
-| 2 prev, `z_comm`, 15 `w_comm` | **36** | `COMBINE_POINTS` → the ξ-aggregate → `opening_relation_holds` | only if substituted in BOTH lists |
-| 7 `t_comm` chunks | **14** | `TCHUNKS` → `ftComm` → aggregate slot 3 → the same opening | only if substituted in BOTH lists |
-| verifier-index digest | **1** | the sha256-pinned Wrap VK's 28 commitments | only by re-deriving from a substituted VK |
+| tape elements | count | closed by | closure kind | can an on-curve-and-wrong point still survive? |
+|---|---|---|---|---|
+| `public_comm` | **2** | the block's own 40-element public input + SRS Lagrange basis | **UNCONDITIONAL** — built by the kernel, not read off the proof | **NO** |
+| verifier-index digest | **1** | the sha256-pinned Wrap VK's 28 commitments | **UNCONDITIONAL** — derived from a byte-pinned fixture | only by re-deriving from a substituted VK |
+| 2 prev, `z_comm`, 15 `w_comm` | **36** | `COMBINE_POINTS` → the ξ-aggregate → `opening_relation_holds` | ⚠ **CONDITIONAL on P10** | only if substituted in BOTH lists |
+| 7 `t_comm` chunks | **14** | `TCHUNKS` → `ftComm` → aggregate slot 3 → the same opening | ⚠ **CONDITIONAL on P10** | only if substituted in BOTH lists |
 
-**53/53 forced. Zero free constants.** ⚠ And the floor under 50 of them is unchanged: `opening_
-relation_holds` inherits the IPA `msm == 0` opening-soundness floor (P10), **unmoved**. Deriving the
-digest removed a CARRIER; it did not verify Mina.
+⚑ **3/53 UNCONDITIONAL. 50/53 CONDITIONAL ON AN UNDISCHARGED FLOOR.** `opening_relation_holds`
+inherits the IPA `msm == 0` opening-soundness floor (P10), **unmoved** — so for fifty of the
+fifty-three the sentence is *"substituting this coordinate is refused **if** the IPA opening is
+sound"*, and that antecedent is exactly what the tree has not discharged. Deriving the digest
+removed a CARRIER; it did not verify Mina.
+
+⚠ **THIS PARAGRAPH READ "53/53 forced. Zero free constants."** until 2026-08-08, with the P10
+narrowing appended as a following sentence. The narrowing was TRUE and PRESENT and still lost the
+argument to the headline, because a reader who stops at the bold clause has already been told the
+answer. The count is not wrong; the word "forced", unsplit, is — 50 of the 53 are forced *modulo a
+floor nothing has closed*. **Never state this count without the split.**
 
 
-## ⛑⛑⛑ AUGUST 6 (WHOSE HASH) — the last witnessed hash in the Mina light-client path: `OWNHASH` becomes the **IMAGE of its row**, and the price the file had been carrying was wrong by **26×**
+## ⛑⛑⛑ AUGUST 6 (WHOSE HASH) — the last witnessed hash in the Mina light-client path: `OWNHASH` is **CO-COMMITTED with its row and DERIVED IN A SIBLING SUB-PROOF**, and the price the file had been carrying was wrong by **26×**
+
+⚠ **CLOSURE KIND, CORRECTED 2026-08-08. This headline said `OWNHASH` becomes "the IMAGE of its row", which reads as an in-AIR functional relation.** The 54-lane state-hash `proofBind` also carries `bound := none`, so — as above — none of its lanes enter an emitted polynomial; the `perm(state+[x,y,0])` derivation lives in a SEPARATE `dregg-pasta-fp-absorb::v1` sub-proof that a consumer verifies. The entry's own body already conceded it (*"Connectivity is still CO-OCCURRENCE; the derivation is `seam_derives_the_own_hash`, which takes `StateHashEngine` as a named hypothesis"*) — **the headline outran the body, which is the whole failure mode.** ⚠ Compounding: `ABSORB_VK_LANES` is recorded stale at HEAD, so the pinned lanes may name a program no descriptor has.
 
 `LINK_OK` was retired yesterday by binding the head's `TIP_STATE` to a segment sub-proof. The file
 that landed it said, in its own header, exactly what it had not closed: *"`OWNHASH` is a FREE WITNESS
@@ -1610,7 +1897,9 @@ rotation + descriptor re-emit. ⚠ **NO re-emit happened here, so NO `VK-REGEN-L
 re-emit has a real environmental precondition this tree keeps hitting: `emit_descriptors.py` refuses to
 stamp while `metatheory/Dregg2` is sibling-dirty (Aug 5 hit exactly this).
 
-## ⛑⛑⛑ AUGUST 5 (WHOSE TIP) — **the Mina head's claimed tip is JOINED IN-CIRCUIT**: `LINK_OK` stops being a bare `= 1`, the decorative census goes 18 → 9 with the denominator fixed, and the served-but-unasked-for segment descriptor is now DISPATCHED
+## ⛑⛑⛑ AUGUST 5 (WHOSE TIP) — **the Mina head's claimed tip is JOINED TO A SEGMENT SUB-PROOF, BY A CONSUMER REFUSAL**: `LINK_OK` stops being a bare `= 1`, the census of anchors with no downstream reader goes 18 → 9 with the denominator fixed, and the served-but-unasked-for segment descriptor is now DISPATCHED
+
+⚠ **CLOSURE KIND, CORRECTED 2026-08-08. This headline said "JOINED IN-CIRCUIT" and that is stronger than the mechanism.** The segment bind declares `commit := TIP_STATE 0..8` with `bound := none`, and `circuit/src/descriptor_ir2.rs:4017` only emits polynomials over `commit` inside `if let Some(b) = &p.bound`. **With `bound := none` the `TIP_STATE` columns appear in no emitted constraint at all** — the arm emits `guard·(guard−1)` and the nine `vk_pin` lanes, nothing more. What actually refuses a wrong tip is `turn/src/executor/mina_head_verifier.rs` (refusals 11–14). The declaration is real, the dispatch is real, the sub-proof is real; the *gate* is not. ⚠ And the `18 → 9` census counts the IR field `guard ++ commit ++ vk ++ bound` as one connectivity component (`LightClientAnchorConnectivity.lean:266`) — **it measures a declaration, not a polynomial.**
 
 Two machine-checked absences, both closed on the emitted bytes.
 
@@ -2264,7 +2553,9 @@ whole opening chain for ONE bit. That is a further ~2× on a rung that now costs
 a real recompute and it is left standing deliberately rather than bundled into a hoist whose equality
 would need its own theorem.
 
-## ⛑⛑⛑ AUGUST 5 (ξ STOPS BEING TOLD) — **the aggregate's scalars were the verifier's to be told; ξ is now COMPUTED from the block's own sponge and crosses to the chain on 32 shared felts** — and the aggregate's own digits are still a DESCRIPTOR parameter, which is where the next lane starts
+## ⛑⛑⛑ AUGUST 5 (ξ STOPS BEING TOLD) — **the aggregate's scalars were the verifier's to be told; ξ is now COMPUTED from the block's own sponge, and two DESCRIPTOR-CONSTANT blocks of 32 felts are proved equal** — and the aggregate's own digits are still a DESCRIPTOR parameter, which is where the next lane starts
+
+⚠ **CLOSURE KIND, CORRECTED 2026-08-08. "crosses to the chain on 32 shared felts" reads as a wire tie; it is not one.** `MinaWrapXiEndoLift.the_endo_output_block_is_the_chain_input_block` is `by decide` on two PI vectors that are both baked descriptor constants — a consumer that verifies both artifacts and compares the two slices learns they agree, which is a CONSUMER COMPARISON at fixed values, not a constraint joining two live traces. The entry's own table marked only its third row *"⚠ DESCRIPTOR-to-descriptor, not a wire tie"* and left this one unmarked though it is the same kind of object.
 
 `MinaWrapXiAggregateMsm` §4 named the residual in its author's own words — *"the aggregate's scalar
 multiplication is now the trace's work; the aggregate's scalars are still the verifier's to be

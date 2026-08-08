@@ -53,9 +53,17 @@ pub mod field_delta_range_air;
 pub mod gnark_witness_export;
 pub use gnark_witness_export::export_gnark_witness_json;
 /// ⚑ THE CHILD-VK IDENTITY PIN every 2-to-1 fold in this crate takes: the expected preprocessed
-/// commitment of each child, `connect`ed in-circuit to `alloc_const`s of that value, so a child of
-/// identical table shape and different preprocessed CONTENT (a descriptor with the same constraint
-/// structure and different round constants) is refused by the parent circuit rather than folded.
+/// commitment of each child, `connect`ed to `alloc_const`s of that value, so a child of identical
+/// table shape and different preprocessed CONTENT (a descriptor with the same constraint structure
+/// and different round constants) is refused by the parent's witness solver rather than folded.
+///
+/// ⚠ **CLOSURE KIND: RECURSION WIRING PLUS A CONSUMER REFUSAL — NOT A CONSTRAINT.** This module
+/// authors **no AIR** (House Law #1: every AIR under these towers comes out of Lean). `alloc_const`
+/// + `connect` in the Rust-authored recursion verifier is not a Lean-authored gate, and what it
+/// establishes "proves on a box": it inherits the undischarged FRI/STARK floor. And a *tracked* pin
+/// read alone says only "this parent folded the children it folded" — what makes it NAME a circuit
+/// is the consumer comparing the parent `RecursionVk` fingerprint against its anchor. Write "every
+/// fold takes the pin"; do not write "every fold FORCES child VK identity by constraint".
 ///
 /// ⚠ It was called `mina_fold_vk_pin` while only the Mina tower used it. It is not Mina-specific
 /// and never was — the leaf adapters, the joint-turn nodes, the cohort spine, the solvency union
@@ -115,6 +123,7 @@ pub mod private_raid_assignment;
 pub mod private_shuffle;
 pub mod private_shuffle_fair;
 pub mod recursive_witness_bundle;
+pub mod seam;
 pub mod shielded;
 pub mod shielded_exact_apex_v4;
 pub mod shielded_whole_note_swap_substrate;

@@ -38,17 +38,21 @@
 //! Every lane below is read from a child's OWN FRI-bound `air_public_targets`, never from a free
 //! scalar the aggregation circuit invents. **128 in-circuit constraints**, in three groups:
 //!
-//! 1. **The fresh-sponge pin — 96 connects.** `chain.in_state[k] == 0` for all 96 limbs. Before
+//! 1. **The fresh-sponge SEAM — 96 zero-pins.** `chain.in_state[k] == 0` for all 96 limbs. Before
 //!    this, `ChainClaim::starts_from_a_fresh_sponge` was a HOST predicate: a prover could publish a
 //!    chain root that starts from a sponge state of its choosing and the finalize root would never
-//!    notice. It is now a constraint of the parent proof.
+//!    notice. It is now a constraint of the parent proof — and the pin list is the Lean-emitted
+//!    `MinaSeams.freshSpongeSeam` (`circuit/descriptors/seams/seam-chain-fresh-sponge.json`), S1
+//!    `the_fresh_sponge_seam_zeroes_the_whole_incoming_state`, S2 `fresh_sponge_seam_certifies`.
 //! 2. **The `v′` weld — 16 connects.** `chain.out_state` lane 0's low 16 limbs ARE the endo-lift's
 //!    `v′` limbs `0..16`. This is the one that makes `v′` derived rather than chosen.
 //! 3. **The truncation pin — 16 connects.** `v′` limbs `16..32` are pinned to zero. Without it,
 //!    "the low 128 bits of the terminal squeeze" is not what the weld enforces — a prover picks 128
-//!    free high bits and the reading is false. Groups 2 and 3 are both
-//!    [`crate::mina_wrap_finalize_fold::connect_chain_root_v_prime`], reused rather than re-typed,
-//!    so there is ONE definition of this seam in the workspace.
+//!    free high bits and the reading is false. Groups 2 and 3 are ONE emitted object,
+//!    `MinaSeams.vPrimeSeam` (`circuit/descriptors/seams/seam-chain-vprime-to-finalize.json`) —
+//!    the seam `connect_chain_root_v_prime` used to hand-author, now read through
+//!    [`crate::seam::apply_seam`] with S1 `the_v_prime_seam_is_the_terminal_squeeze` (the theorem
+//!    R1 below asked for by name) and S2 `v_prime_seam_certifies`, shown refutable.
 //!
 //! ⚑ A `cb.connect` to a `define_const` **is** a pin at the pinned fork rev, and that was MEASURED,
 //! not read: `circuit-prove/tests/const_pin_probe.rs` records the answer flipping at `fc3c6df`,
@@ -92,11 +96,16 @@
 //!    witness. Nothing in this fold moves that, and nothing in this fold binds `sg`. ⚑ Read
 //!    §"WHERE THE PASTA ARITHMETIC LIVES" for what would.
 //! 2. **Not finalize.** Upstream Pickles' `finalize_other_proof` is a FOUR-way AND; the conjunction
-//!    child forces TWO conjuncts (`xiCorrect`, `bCorrect`). `cipCorrect` and `plonkChecksPassed` are
+//!    child carries TWO conjuncts — `bCorrect`, forced by its own gates, and `xiCorrect`, which is
+//!    a comparison of two FREE columns and is forced by THIS MODULE's 32 `cb.connect`s rather than
+//!    by the AIR (`MinaWrapConjunctionAir.no_arithmetic_call_names_an_xi_block`). `cipCorrect` and `plonkChecksPassed` are
 //!    absent BY CONSTRUCTION, not stubbed — `MinaWrapConjunctionAir` §"WHAT THIS OBJECT FORCES"
 //!    states that comparing `cip` against a ξ-fold with a FREE `ft_eval0` column forces nothing.
 //! 3. ⚑ **THE CHILD-VK PIN IS NOW TAKEN AT EVERY FOLD — and the entry that stood here said the
-//!    opposite, so read what changed and what did not.** The hole was real:
+//!    opposite, so read what changed and what did not.** ⚠ *Taken*, not *forced*: the pin is
+//!    recursion wiring plus a consumer fingerprint refusal, authors no AIR, and inherits the
+//!    undischarged FRI/STARK floor (`crate::fold_vk_pin`, "AND THE VERB MATTERS"). The hole was
+//!    real:
 //!    [`RecursionOutput::into_recursion_input`] passes `expected_preprocessed_commit: None`
 //!    (`recursion/src/recursion.rs`), and `RecursionInput::BatchStark`'s own docblock on that field
 //!    says what it costs — *"without this pin its VALUE is unconstrained — a from-scratch prover
@@ -143,14 +152,17 @@
 //! element does not fit a lane. So the question is not "how do we avoid Pasta ops" but *which ones
 //! are in-circuit and which are a leaf's witness with the recursion carrying the claim*. As built:
 //!
-//! | Kimchi verifier step | Where it lives | What binds it |
+//! | Kimchi verifier step | Closure kind | Named artifact |
 //! |---|---|---|
-//! | Fq sponge absorb/squeeze (46 permutations) | **in-AIR**, Lean `dregg-pasta-fq-chainlink::v1` | 45×96 `cb.connect`s carry the state; per-leaf Poseidon commitment over the absorbed limbs folds into `transcript_acc` |
-//! | `ScalarChallenge(v′) → ξ` endo lift | **in-AIR**, Lean `dregg-mina-xi-endo-lift::v1` | 32 `cb.connect`s to the conjunction's ξ block |
-//! | `v′` provenance | **in-circuit HERE** | the 16+16 connects of this module |
-//! | `bEval`, `xiCorrect`, challenge/inverse reciprocity | **in-AIR**, Lean `dregg-mina-wrap-conjunction::v1` | its own constraints |
-//! | `cip`, `ft_eval0`, `plonkChecks` | **NOWHERE** | nothing — absent by construction |
-//! | **IPA opening / the `sg` MSM** | **NOWHERE** | nothing — and `opening_is_vacuous_when_sg_is_free` is the theorem that says so |
+//! | Fq sponge absorb/squeeze (46 permutations) | **AIR**, Lean `dregg-pasta-fq-chainlink::v1` | 45×96 `cb.connect`s carry the state; per-leaf Poseidon commitment over the absorbed limbs folds into `transcript_acc` |
+//! | `ScalarChallenge(v′) → ξ` endo lift | **AIR**, Lean `dregg-mina-xi-endo-lift::v1` | the machine's own program legs (⚠ completeness-grade: no `_of_sat` theorem, the file says so) |
+//! | fresh sponge start `(0,0,0)` | **SEAM** `dregg-seam-chain-fresh-sponge::v1` | S1 `the_fresh_sponge_seam_zeroes_the_whole_incoming_state`, S2 `fresh_sponge_seam_certifies` |
+//! | `v′` provenance | **SEAM** `dregg-seam-chain-vprime-to-finalize::v1` | S1 `the_v_prime_seam_is_the_terminal_squeeze`, S2 `v_prime_seam_certifies` + refuter `v_prime_seam_S2_needs_the_seam` |
+//! | `bEval`, challenge/inverse reciprocity | **AIR**, Lean `dregg-mina-wrap-conjunction::v1` | `conjunction_forces` |
+//! | `xiCorrect` | **SEAM** `dregg-seam-xi-endo-to-conjunction::v1` | ⚠ NOT the AIR's own constraints — both ξ blocks are a declared PORT there (`conjunctionPortedAir`, the object form of `no_arithmetic_call_names_an_xi_block`); S1 `the_xi_seam_welds_the_lift_to_the_record`, S2 `xi_seam_certifies` + refuter `xi_seam_S2_needs_the_seam` |
+//! | `cip`, `ft_eval0`, `plonkChecks` | **ABSENT** | nothing — absent by construction |
+//! | **IPA opening / the `sg` MSM** | **ABSENT** | nothing — and `opening_is_vacuous_when_sg_is_free` is the theorem that says so |
+//! | the tape is THIS block's | **HOST** | the `transcript_acc` comparison against `host_chain_transcript_acc` — §"WHAT THE ROOT DOES NOT SAY" item 0 |
 //!
 //! ⚠ **"Put it in the witness" is only sound if something else binds it, and for `sg` nothing does.**
 //! The Pasta *scalar* arithmetic is the tractable half: it is field arithmetic over a 255-bit
@@ -169,20 +181,23 @@
 //! set. A refinement of it must be a theorem **about that emitted object**, and there are three
 //! statements, in dependency order:
 //!
-//! * **R1 — the wiring denotes the seam.** Today `connect_chain_root_v_prime`'s index arithmetic
-//!   (`0..16` welded, `16..32` zeroed, at claim offsets `STATE_WIDTH + 0·SK` and `KV_VPRIME`) is
-//!   Rust. Lean must EMIT it: a `chainToFinalizePins : List (Nat × Nat)` beside
-//!   `MinaPhase2Chain.chainPins`, with `theorem the_v_prime_seam_is_the_terminal_squeeze` proving
-//!   the pin list is exactly the low-128-bit truncation of outgoing lane 0. The Rust side then
-//!   *reads* that list instead of computing offsets — the same move
-//!   `mina_phase2_chain_leaf` made for `chainPins`. **This is the only leg that removes hand-written
-//!   Rust from the trusted path, and it is the one to do first.**
-//! * **R2 — the composition denotes the conjunction.** A theorem that the parent claim of the fold
-//!   is the AND of the two child claims under the seam substitution: `chainClaim c ∧ finalizeClaim f
-//!   ∧ seam c f → kimchiClaim (fold c f)`, over the SAME `Dregg2` predicates
-//!   `the_chain_ends_at_the_blocks_challenges` and `MinaWrapConjunctionAir`'s conjuncts are stated
-//!   against. ⚠ This must be stated so it is **refutable**: drop the seam hypothesis and it must
-//!   fail to prove. A `P → P` here would be worth nothing and this repo has shipped one.
+//! * **R1 — the wiring denotes the seam. ⚑ CLOSED 2026-08-08.** The index arithmetic (`0..16`
+//!   welded, `16..32` zeroed, plus the 96 fresh-sponge zero-pins) is now Lean-EMITTED:
+//!   `MinaSeams.vPrimeSeam` / `MinaSeams.freshSpongeSeam` →
+//!   `circuit/descriptors/seams/*.json`, with **`the_v_prime_seam_is_the_terminal_squeeze`** — the
+//!   theorem this obligation asked for by name — proving the pin list is exactly the low-128-bit
+//!   truncation of outgoing lane 0 (register-4 `.last` pins of the chain descriptor, `VP` `.first`
+//!   pins of the endo-lift). This module *reads* the seam ([`crate::seam::apply_seam`]) and
+//!   computes no offsets — the same move `mina_phase2_chain_leaf` made for `chainPins`.
+//! * **R2 — the composition denotes the conjunction. ⚑ CLOSED at the seam layer, 2026-08-08, and
+//!   REFUTABLE as demanded.** `MinaSeams.v_prime_seam_certifies` :
+//!   `ChainRootSays ∧ FinalizePublishesVPrime ∧ SeamEq → KimchiVPrimeSays` (the welded `v′` IS
+//!   `out_lane0 mod 2^128`), and `v_prime_seam_S2_needs_the_seam` proves the implication with
+//!   `SeamEq` DELETED is **false** on the real block-539508 chain claim. Likewise
+//!   `xi_seam_certifies` / `xi_seam_S2_needs_the_seam` one fold down, and
+//!   `fresh_sponge_seam_certifies` for group 1. ⚠ These compose CLAIM SENTENCES; they do not
+//!   discharge the child sentences themselves (the chain side's per-link forcing and the
+//!   conjunction's `conjunction_forces` carry their own standings), and R3 below is untouched.
 //! * **R3 — the claim is Kimchi's.** The terminal obligation, and the honest one to name as far
 //!   away: `kimchiClaim` implies the Kimchi verifier's own predicate. It **cannot be discharged
 //!   while the opening is out of circuit** — R3 is exactly `cipCorrect ∧ plonkChecksPassed ∧
@@ -199,11 +214,10 @@ use p3_recursion::{BatchOnly, RecursionOutput, Target};
 use crate::fold_vk_pin::FoldVkPins;
 use crate::gpu_backend::prove_recursion_aggregation_auto_with_expose;
 use crate::ivc_turn_chain::expose_claim_instance_index;
-use crate::mina_phase2_chain_leaf::{CHAIN_CLAIM_LEN, STATE_WIDTH};
-use crate::mina_wrap_finalize_fold::{
-    CLAIM_VPRIME, FINALIZE_CLAIM_LEN, SK, connect_chain_root_v_prime,
-};
+use crate::mina_phase2_chain_leaf::{CHAIN_CLAIM_LEN, STATE_WIDTH, chain_link_descriptor};
+use crate::mina_wrap_finalize_fold::{CLAIM_VPRIME, FINALIZE_CLAIM_LEN, SK, endo_lift_descriptor};
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
+use crate::seam::{SeamSpec, apply_seam, fresh_sponge_seam, v_prime_seam};
 
 type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
 
@@ -256,10 +270,12 @@ pub const GADGET_CONNECTS: usize = STATE_WIDTH + V_PRIME_LIMBS + (SK - V_PRIME_L
 /// 200-lane left child and a 160-lane right child are the only shapes whose lane offsets this
 /// module's index arithmetic is about, and folding some other root would be reading a claim as a
 /// sentence it does not say.
-/// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child root's preprocessed commitment in-circuit
-/// ([`crate::fold_vk_pin`]) — the top of a tower whose every fold now takes one. Pinning only
-/// here would have closed almost nothing: the substitution was available at each of the 45 chain
-/// folds beneath it.
+/// ⚑ **AND THE CHILD-VK PIN.** `pins` fixes each child root's preprocessed commitment through the
+/// recursion verifier's `alloc_const` + `connect` ([`crate::fold_vk_pin`]) — the top of a tower
+/// whose every fold now takes one. Pinning only here would have closed almost nothing: the
+/// substitution was available at each of the 45 chain folds beneath it. ⚠ Wiring plus a consumer
+/// fingerprint refusal, not a constraint; "in-circuit" here means the recursion circuit, which is
+/// Rust-authored and not an AIR.
 ///
 /// ⚠ `config` is [`kimchi_root_config`]. Both children are ROOTS minted at the recursion engine's
 /// fixed point, so this layer verifies there and mints there; handing it either child tower's INNER
@@ -276,6 +292,17 @@ pub fn fold_transcript_into_finalize(
         "endo/conjunction finalize root",
         FINALIZE_CLAIM_LEN,
     )?;
+
+    // ⚑ THE TWO SEAMS, read rather than authored. Each end is refused unless it names the
+    // descriptor this tower actually loads — by name AND recomputed fingerprint lanes.
+    let fresh: SeamSpec = fresh_sponge_seam()?;
+    let vprime: SeamSpec = v_prime_seam()?;
+    let chain_desc = chain_link_descriptor()?;
+    let endo_desc = endo_lift_descriptor()?;
+    fresh.left.require_matches(&chain_desc)?;
+    fresh.right.require_matches(&endo_desc)?;
+    vprime.left.require_matches(&chain_desc)?;
+    vprime.right.require_matches(&endo_desc)?;
 
     // ⚠ No host pre-flight against `pins` — the refusal must be the circuit's.
     let chain_input = chain_root.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
@@ -295,28 +322,17 @@ pub fn fold_transcript_into_finalize(
         debug_assert_eq!(c.len(), CHAIN_CLAIM_LEN);
         debug_assert_eq!(f.len(), FINALIZE_CLAIM_LEN);
 
-        // The one constant this gadget needs. `alloc_const` is a PIN at the pinned fork rev —
-        // `ConstAir`'s `eval` constrains `main.value[i] == prep.value[i]` — measured in
-        // `const_pin_probe.rs`, not read off a docblock.
-        let zero = cb.alloc_const(
-            <RecursionChallenge as p3_field::PrimeCharacteristicRing>::ZERO,
-            "kimchi gadget: the zero the fresh sponge and the v' truncation are pinned to",
-        );
-
-        // ⚑ GROUP 1 — THE FRESH-SPONGE PIN. The chain started at `(0,0,0)`, as a constraint of this
-        // proof rather than as a host predicate a reader may forget to call.
-        for k in 0..STATE_WIDTH {
-            cb.connect(c[k], zero);
-        }
-
-        // ⚑ GROUPS 2 AND 3 — THE `v′` WELD AND ITS TRUNCATION PIN, through the ONE definition of
-        // this seam in the workspace.
-        connect_chain_root_v_prime(
-            cb,
-            &c[CHAIN_OUT_LANE0..CHAIN_OUT_LANE0 + SK],
-            &f[CLAIM_VPRIME..CLAIM_VPRIME + SK],
-            zero,
-        );
+        // ⚑ GROUP 1 — THE FRESH-SPONGE SEAM (`MinaSeams.freshSpongeSeam`, 96 zero-pins). The chain
+        // started at `(0,0,0)`, as a constraint of this proof rather than as a host predicate a
+        // reader may forget to call. The zero-pin is a `connect` to an `alloc_const`, which IS a
+        // pin at the pinned fork rev — measured in `const_pin_probe.rs`, not read off a docblock.
+        //
+        // ⚑ GROUPS 2 AND 3 — THE `v′` SEAM (`MinaSeams.vPrimeSeam`, 16 welds + 16 zero-pins),
+        // through the ONE definition of this seam in the workspace: the emitted object whose S1 is
+        // `the_v_prime_seam_is_the_terminal_squeeze` and whose S2 is `v_prime_seam_certifies`.
+        // This gadget authors no index arithmetic for either.
+        let issued = apply_seam(cb, c, f, &fresh) + apply_seam(cb, c, f, &vprime);
+        debug_assert_eq!(issued, GADGET_CONNECTS);
 
         let mut parent: Vec<Target> = Vec::with_capacity(KIMCHI_CLAIM_LEN);
         // The tape this whole sentence is about, carried up from the left child.

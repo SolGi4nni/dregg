@@ -76,6 +76,17 @@ CHAL blocks per row and would say so in `NIN`.
 ## ⚑ WHAT THIS OBJECT FORCES — stated at this tree's resolution, not at the name's
 
 1. **`xiCorrect`** — `op.xiSqueeze = dv.xi`, limbwise, over blocks the thread holds constant.
+   ⚠⚠ **AND ON ITS OWN THIS FORCES NOTHING**, which is why it heads the list rather than hiding in
+   it. Both blocks are FREE columns: `no_arithmetic_call_names_an_xi_block` is the theorem that no
+   arithmetic leg of this AIR reads either, so the conjunct says *"two columns of the prover's
+   choosing agree"*. The forcing lives in the 32 `cb.connect`s of
+   `mina_wrap_finalize_fold::fold_endo_into_finalize` — **a CONSUMER's constraint, real in the
+   fold, not in this AIR.** §"WHAT `xiCorrect` DOES NOT BUY" is the long form. Never list this
+   conjunct without its closure kind — which, since 2026-08-08, is a NAMED OBJECT: closure kind
+   **seam**, `dregg-seam-xi-endo-to-conjunction::v1` (`MinaSeams.xiSeam`, emitted to
+   `circuit/descriptors/seams/`), S1 `the_xi_seam_welds_the_lift_to_the_record`, S2
+   `xi_seam_certifies` with refuter `xi_seam_S2_needs_the_seam`; and the ξ blocks are this AIR's
+   declared PORT (`MinaSeams.conjunctionPortedAir`), censused by `CoveredPort`.
 2. **`bCorrect`, at full fidelity and now against `PastaIPA.bEval` ITSELF.** `conjunction_forces`
    concludes `dv.b ≡ bEval ζ chals + r · bEval ζω chals (mod q)` where `chals` is the vector the
    trace's own rows supplied — not a re-description of the circuit's arithmetic, but the spec
@@ -684,7 +695,18 @@ sponge — here it came out of a witness generator.
 so a conjunction reading an ξ the endo-lift did not produce has no satisfying assignment and there is
 no root. **That is a consumer's constraint, not this descriptor's** — exactly the standing this file
 gives `WRAP_FS_PROVED`'s chain-root weld, and it is said here so a reader of `xiCorrect` alone cannot
-mistake it for a check. -/
+mistake it for a check.
+
+⚑⚑ **2026-08-08 — AND THAT SEAM IS NOW AN OBJECT, NOT THIS PARAGRAPH.** The fold reads the
+Lean-emitted `MinaSeams.xiSeam` (`circuit/descriptors/seams/seam-xi-endo-to-conjunction.json`,
+applied through `circuit-prove/src/seam.rs::apply_seam`) and authors no index arithmetic. S1
+(`the_xi_seam_welds_the_lift_to_the_record`) proves the pin list names exactly the two published ξ
+blocks; S2 (`xi_seam_certifies`) composes the two leaves' sentences across it and is REFUTABLE
+(`xi_seam_S2_needs_the_seam`: without `SeamEq` the implication is false on concrete claims). The
+two ξ blocks are this AIR's declared PORT — `MinaSeams.conjunctionPortedAir`, whose island verdict
+`conjunction_xi_island_is_free` closes this section's own base-list coverage caveat at compiled
+trust, and whose census entry (`xiPortCovered : CoveredPort`) cannot elaborate without a covering
+seam. A future free-but-published block either names its seam or the build refuses. -/
 
 /-- The BASE columns every arithmetic call in this AIR names — the `xB`/`yB` arguments of each
 `mulAt` / `addAt` / `subAt`, and the value slots they write. An off-by-one in the allocator moves one
@@ -705,7 +727,10 @@ families this cannot reach** — measured, not guessed: a sound MULTIPLY is ~68 
 walks every one of their `readCols`, so nine multiplies exceed the 200 000-heartbeat budget where
 seven add/sub-heavy calls do not. Their bases are in `arithmeticBases` above, read directly off
 `roundLegsAt` / `reciprocityLegs` / `lrCoefLegs`. ⚠ That base list is the ONE place an omission could
-hide, and this comment is here so the theorem's name does not imply coverage it lacks. -/
+hide, and this comment is here so the theorem's name does not imply coverage it lacks.
+⚑ 2026-08-08: `MinaSeams.conjunction_xi_island_is_free` closes that hole at COMPILED trust — a
+`native_decide` + `#assert_compiled` walk of EVERY leg's `readCols`, with `zeta_is_not_a_port` as
+its red pole. The kernel-clean partials here remain the kernel's share of the fact. -/
 theorem the_non_round_legs_read_no_xi_column :
     (bTerminalLegs ++ ubCoefLegs ++ negCoefLegs).all
       (fun l => l.readCols.all (fun c => decide (2 * SK ≤ c))) = true := by decide
