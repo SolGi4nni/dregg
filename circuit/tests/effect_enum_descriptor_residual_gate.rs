@@ -26,7 +26,11 @@
 //!      `try_convert_turn_effects_to_vm` over a turn carrying each `RefusedResidual` verb
 //!      (top-level AND nested inside `ExerciseViaCapability`) and requires a by-name `Err`; and it
 //!      requires a `NamedResidual` and a `Descriptor` control to project `Ok`. So "fail-closed" is
-//!      a checked fact here, not prose.
+//!      a checked fact here, not prose. ⚑ "each" is itself checked, by
+//!      `every_refused_residual_is_actually_exercised`: the sample list must equal
+//!      `EXPECTED_REFUSED_RESIDUALS`. It did not when `Deshield` was classified (2026-08-07) — the
+//!      ledger row and the pinned set were updated and the sample list was left at three, so the
+//!      newest and most consequential fail-closed claim in the file was the one nothing ran.
 //!
 //! ## The two residual KINDS (they are not the same posture, and must not read as if they were)
 //!
@@ -116,9 +120,23 @@
 //! a `Descriptor`-classified verb whose bridge arm was removed or narrowed would go silent while
 //! this table still claimed a rung. That direction is
 //! `tests/src/every_variant_roundtrip.rs::every_effect_variant_round_trips_through_projection`
-//! (every variant projects to a non-NoOp sequence, or is refused BY NAME as an explicitly listed
-//! out-of-AIR-domain variant — its `VM_DOMAIN_EXCLUSIONS` is the same two verbs as
-//! `EXPECTED_REFUSED_RESIDUALS` here, over the SDK producer-side twin).
+//! (every variant it enumerates projects to a non-NoOp sequence, or is refused BY NAME as an
+//! explicitly listed out-of-AIR-domain variant), over the SDK producer-side twin.
+//!
+//! ⚠ CORRECTED 2026-08-07. This used to say that file's `VM_DOMAIN_EXCLUSIONS` "is the same two
+//! verbs as `EXPECTED_REFUSED_RESIDUALS` here". It no longer is, in BOTH directions, and reading
+//! the two lists as mirrors would overstate the twin's coverage:
+//!
+//! * `EXPECTED_REFUSED_RESIDUALS` is now FOUR (`Shield` 2026-08-06, `Deshield` 2026-08-07);
+//!   `VM_DOMAIN_EXCLUSIONS` is still the two PQ verbs.
+//! * That is not drift in the twin's list — it is that the twin's variant table enumerates NO
+//!   shielded verb at all (`Shield`, `Deshield` and `ShieldedTransfer` have no `Variant` row), so
+//!   there is nothing there for the exclusion list to name. Its census is of the variants it
+//!   builds, not of `Effect`.
+//!
+//! So the producer-side twin says nothing about the shielded boundary verbs today. The
+//! `Descriptor`-arm-went-silent direction is covered by it only for the verbs it enumerates; the
+//! shielded ones rely on THIS file's tooth 4 for their fail-closed posture.
 //!
 //! Run: `cargo test -p dregg-circuit --test effect_enum_descriptor_residual_gate`.
 
@@ -237,6 +255,21 @@ circuit_witness_ledger! {
          name, so no proof-carrying turn can contain it. Closure = an on-ramp EffectVM \
          descriptor (registry member + producer + VK epoch)",
     ),
+    // Deshield (added 2026-08-07): the shielded OFF-ramp. Its two proofs — the complete spend
+    // under the live committed root and the Lean-emitted `dregg-shielded-deshield-value-link::v1`
+    // — are verified executor-side (`apply_deshield`) and have NO deployed EffectVM row, so the
+    // checked projection REFUSES it BY NAME (`effect_vm_bridge.rs`, `ShieldedEffect("Deshield")`,
+    // and the SDK producer twin in `sdk/src/cipherclerk.rs`) — a fail-closed residual, not a
+    // silent one. ⚑ This is the residual that matters MOST of the three to keep fail-closed: it
+    // is the direction that moves value OUT of the pool and into the cleartext ledger, so a
+    // projection that admitted it silently would put an un-witnessed credit on a proof-carrying
+    // turn. Closure = an off-ramp EffectVM descriptor (registry + producer + VK epoch).
+    Deshield              => Witness::RefusedResidual(
+        "shielded OFF-ramp verb: the complete-spend proof and the deshield value-link proof are \
+         verified executor-side and have no deployed AIR row. FAIL-CLOSED: the checked EffectVM \
+         projection refuses the turn by name, so no proof-carrying turn can contain it. \
+         Closure = an off-ramp EffectVM descriptor (registry member + producer + VK epoch)",
+    ),
     // ── The PQ identity authority plane (classified 2026-07-25; the verbs landed at
     //    `turn/src/action.rs:1569,1582` without this decision being made, which is exactly what
     //    tooth 1 exists to stop). See this file's WOUND section for the full statement of what a
@@ -289,7 +322,11 @@ const EXPECTED_RESIDUALS: [&str; 5] = [
 /// The EXACT pinned REFUSED-residual set: no rung, and the checked projection refuses by name.
 /// A verb leaves ONLY by gaining a deployed rung (at which point the projection must stop refusing
 /// it and `refused_residuals_are_refused_by_the_live_projection` reds until this list is updated).
-const EXPECTED_REFUSED_RESIDUALS: [&str; 3] = ["CreateHybridCell", "RotatePqIdentity", "Shield"];
+/// ⚑ 3 -> 4 on 2026-08-07: `Deshield`, the shielded OFF-ramp. It enters BY NAME, which is the
+/// only way in — and it is the entry that matters most to keep fail-closed, because it is the
+/// direction that moves value OUT of the pool into the cleartext ledger.
+const EXPECTED_REFUSED_RESIDUALS: [&str; 4] =
+    ["CreateHybridCell", "RotatePqIdentity", "Shield", "Deshield"];
 
 /// The member keys of the committed V3 registry TSV (column 0).
 fn registry_keys(tsv: &str) -> std::collections::BTreeSet<&str> {
@@ -430,10 +467,27 @@ fn turn_with(cell: dregg_cell::CellId, effect: Effect) -> dregg_turn::turn::Turn
     }
 }
 
-/// The two PQ verbs, as the projection sees them. The payloads are never inspected — the refusal
-/// is structural and fires before any crypto — so a well-formed-length key with an empty signature
-/// is the honest minimal sample.
+/// **Every `RefusedResidual` verb, as the projection sees it.** The payloads are never inspected —
+/// the refusal is structural and fires before any crypto — so a well-formed-length key with an
+/// empty signature is the honest minimal sample.
+///
+/// ⚑ This list must cover `EXPECTED_REFUSED_RESIDUALS` EXACTLY, and
+/// `every_refused_residual_is_actually_exercised` is what makes that a checked fact rather than a
+/// convention. Without it the gate's headline claim — "the refusal is EXECUTED, not asserted" — is
+/// true only of whichever verbs someone remembered to sample: a new `RefusedResidual` row could be
+/// added to the ledger, pass every assertion in this file, and never once have its refusal run.
+/// That is exactly what happened when `Deshield` was classified on 2026-08-07 and the sample list
+/// was left at three.
 fn refused_effect_samples(cell: dregg_cell::CellId) -> Vec<(&'static str, Effect)> {
+    /// The spent-note half a shielded spend carries. Structurally minimal: the projection refuses
+    /// on the VERB, so no proof bytes are ever parsed.
+    fn an_input() -> dregg_turn::action::ShieldedInputPayload {
+        dregg_turn::action::ShieldedInputPayload {
+            nullifier: 0x68,
+            spend_wide_binding: [0u32; 16],
+            spend_proof: Vec::new(),
+        }
+    }
     vec![
         (
             "CreateHybridCell",
@@ -467,7 +521,40 @@ fn refused_effect_samples(cell: dregg_cell::CellId) -> Vec<(&'static str, Effect
                 spending_proof: Vec::new(),
             },
         ),
+        (
+            "Deshield",
+            Effect::Deshield {
+                value: 1,
+                asset_type: 0,
+                note_commitment: dregg_cell::NoteCommitment([0x69; 32]),
+                encrypted_note: Vec::new(),
+                input: an_input(),
+                link_proof: Vec::new(),
+            },
+        ),
     ]
+}
+
+/// TOOTH: the sample list above must cover the pinned `RefusedResidual` set EXACTLY.
+///
+/// `refused_residuals_are_refused_by_the_live_projection` iterates the SAMPLES and checks each is
+/// classified — the direction that catches a sample without a ledger row. This is the other
+/// direction, and it is the one that matters: a ledger row without a sample is a `RefusedResidual`
+/// claim about the production projection that **nothing ever runs**. Fail-closed is then prose.
+#[test]
+fn every_refused_residual_is_actually_exercised() {
+    let cell = dregg_cell::Cell::with_balance([0x5b; 32], [0u8; 32], 1).id();
+    let sampled: std::collections::BTreeSet<&str> = refused_effect_samples(cell)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    let pinned: std::collections::BTreeSet<&str> = EXPECTED_REFUSED_RESIDUALS.into_iter().collect();
+    assert_eq!(
+        sampled, pinned,
+        "every pinned RefusedResidual verb needs a sample in `refused_effect_samples` (else its \
+         fail-closed claim is never executed), and every sample needs a pinned row (else it \
+         exercises a posture the ledger does not claim)"
+    );
 }
 
 /// TOOTH: `RefusedResidual` is a claim about the PRODUCTION projection, so execute it.

@@ -68,7 +68,6 @@ use dregg_app_framework::{
 use dregg_cell::interface::{ArgsSchema, InterfaceDescriptor, MethodSig, Semantics, method_symbol};
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::program::{CellProgram, StateConstraint, TransitionCase, TransitionGuard};
-use dregg_cell::{Credential, Requirement};
 use dregg_turn::Turn;
 use dregg_turn::action::Action;
 use dregg_types::CellId;
@@ -128,14 +127,27 @@ pub const VERSION_SLOT: usize = 0;
 /// [`InterfaceRegistry`] (see [`register_interface`]) so the Service Explorer
 /// resolves the real auth + seam shape, not the permissive derived default.
 pub fn interface_descriptor() -> InterfaceDescriptor {
+    // ⚑ `MethodSig::auth_required` is [`AuthRequired`], NOT `dregg_cell::Requirement`, and that is
+    // deliberate: b3ef43204's own commit message names it the RESIDUAL it did not migrate (it is
+    // committed descriptor shape — `MethodSig::auth_leaf_lanes` encodes the tier + vk limbs into
+    // the `interface_id`), and `Requirement::from_interface_auth` is the single named bridge that
+    // reads it. That same commit nevertheless rewrote these two constructors to `Requirement`,
+    // which never compiled. They are back on the field's own type, at the values they carried
+    // before it.
     let sig_mutator = |name: &str, args: u8| MethodSig {
         args_schema: ArgsSchema::Fixed(args),
-        auth_required: Requirement::AtLeast(Credential::Signature),
+        auth_required: AuthRequired::Signature,
         ..MethodSig::replayable(method_symbol(name))
     };
+    // ⚑ `None` here is PUBLIC (ungated), not the lattice TOP. The field decides it, and the
+    // deciding evidence is the gate that CONSUMES it: `InvokeAuthority::satisfies`
+    // (`dregg-payable/src/routing.rs:66`) reads `AuthRequired::None` as "satisfied by anything".
+    // `Requirement::from_interface_auth` states the same reading for this exact field and records
+    // that the opposite one (`Root`) shipped for one commit and produced a live contradiction.
+    // These three reads are the OFE / attestation seams — ungated is what they mean.
     let serviced_read = |name: &str, args: u8| MethodSig {
         args_schema: ArgsSchema::Fixed(args),
-        auth_required: Requirement::Root,
+        auth_required: AuthRequired::None,
         semantics: Semantics::Serviced,
         ..MethodSig::replayable(method_symbol(name))
     };
@@ -440,7 +452,7 @@ mod tests {
         assert!(matches!(
             refused,
             BotServiceError::Refused(InvokeRefused::Unauthorized {
-                required: Requirement::AtLeast(Credential::Signature),
+                required: AuthRequired::Signature,
                 ..
             })
         ));

@@ -935,9 +935,72 @@ fn splice_obj_name(ir_root: &Path, c: &Path) -> String {
     name
 }
 
+/// The CONTENT identity of one emitted Lean C facet, as the recompile key.
+///
+/// ⚑ WHY THIS EXISTS — mtime is not a staleness key here, and trusting it shipped a broken archive.
+///
+/// Measured 2026-08-07. `dregg-sdk`'s lib test could not link:
+/// `_lp_Dregg2_Dregg2_Games_PathOfAngels_SalvageCrate_genesis` undefined, while two archive members
+/// that CALL it (`Dregg2_Games_PathOfAngels_SlotDeriveRuntime.o`, `…_StationCrateOpen.o`) were
+/// present and fresh. The cause was entirely local to one build-script `OUT_DIR`
+/// (`dregg-lean-ffi-374971d1d00b637a`): its cached `Dregg2_Games_PathOfAngels_SalvageCrate.o` was
+/// 171,352 bytes stamped 03:15, every other OUT_DIR held the 176,248-byte object that defines the
+/// symbol, and `SalvageCrate.c` itself was stamped **03:01** — OLDER than the stale object. So
+/// `newer_than(c, obj)` was FALSE, the facet was never recompiled, and the splice happily repacked
+/// a `.o` compiled from a superseded `.c` into the archive.
+///
+/// An mtime that does not advance past its own artifact is ordinary here, not exotic: `.lake/build`
+/// trees get restored by `rsync -a` and by `lake exe cache get`, both of which PRESERVE source
+/// mtimes, and this repo's build lanes do exactly that. Every such restore silently pins whatever
+/// objects a given OUT_DIR already had.
+///
+/// Lake writes a content hash beside every emitted facet (`Foo.c.hash`), so the honest key is right
+/// there. This reads it, and falls back to `(len, mtime)` only when it is absent — never to mtime
+/// alone. The value is recorded per-object in the OUT_DIR cache; a mismatch (or a missing stamp)
+/// recompiles, so an object whose provenance we cannot confirm is rebuilt rather than shipped.
+fn facet_content_key(c: &Path) -> String {
+    let hash_path = {
+        let mut s = c.as_os_str().to_os_string();
+        s.push(".hash");
+        PathBuf::from(s)
+    };
+    if let Ok(h) = std::fs::read_to_string(&hash_path) {
+        let h = h.trim();
+        if !h.is_empty() {
+            return format!("lakehash:{h}");
+        }
+    }
+    // No lake hash (a hand-placed or older IR tree): fall back to size + mtime. Still strictly
+    // more than mtime alone — a same-second rewrite that changes length is caught.
+    match std::fs::metadata(c) {
+        Ok(m) => {
+            let nanos = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("lenmtime:{}:{nanos}", m.len())
+        }
+        // Unreadable source: a key nothing can match, so we always recompile (and leanc reports
+        // the real error) rather than silently keeping a cached object.
+        Err(_) => "unreadable".to_string(),
+    }
+}
+
+/// The stamp file recording the [`facet_content_key`] the cached `<obj>` was compiled from.
+fn facet_stamp_path(obj: &Path) -> PathBuf {
+    let mut s = obj.as_os_str().to_os_string();
+    s.push(".srckey");
+    PathBuf::from(s)
+}
+
 /// `true` iff `target` is missing or older than `src` (the "recompile this" predicate — mirrors the
 /// script's `[ ! -f "$out" ] || [ "$c" -nt "$out" ]`). Treats unreadable mtimes as "stale" so we
 /// fail toward recompiling rather than shipping a stale object.
+///
+/// ⚠ NOT sufficient on its own for the Lean C facets — see [`facet_content_key`]. It is kept as an
+/// additional trigger (OR'd with the content key), never as the only one.
 fn newer_than(src: &Path, target: &Path) -> bool {
     let Ok(target_meta) = std::fs::metadata(target) else {
         return true;
@@ -1370,18 +1433,37 @@ fn build_dregg2_archive(
     if let Ok(entries) = std::fs::read_dir(&obj_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with("Dregg2_") && name.ends_with(".o") && !expected.contains(&name) {
+            if !name.starts_with("Dregg2_") {
+                continue;
+            }
+            // A removed/renamed module's cached object (and its provenance stamp) must go, or the
+            // splice keeps putting it back.
+            let orphan_obj = name.ends_with(".o") && !expected.contains(&name);
+            let orphan_stamp = name
+                .strip_suffix(".srckey")
+                .map(|o| !expected.contains(o))
+                .unwrap_or(false);
+            if orphan_obj {
                 let _ = std::fs::remove_file(entry.path());
                 pruned = true;
+            } else if orphan_stamp {
+                let _ = std::fs::remove_file(entry.path());
             }
         }
     }
 
-    let mut jobs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    // The recompile decision, keyed on the facet's CONTENT (see `facet_content_key`) and NOT on
+    // mtime alone — an `.o` whose recorded source key does not match the `.c` sitting there now is
+    // stale even when its mtime is newer, which is precisely how a superseded `SalvageCrate.o`
+    // rode into one OUT_DIR's archive and left `dregg-sdk` unable to link.
+    let mut jobs: Vec<(PathBuf, PathBuf, String)> = Vec::new();
     for c in &c_files {
         let obj = obj_dir.join(splice_obj_name(&ir_root, c));
-        if newer_than(c, &obj) {
-            jobs.push((c.clone(), obj));
+        let key = facet_content_key(c);
+        let recorded = std::fs::read_to_string(facet_stamp_path(&obj)).ok();
+        let key_mismatch = recorded.as_deref().map(str::trim) != Some(key.as_str());
+        if key_mismatch || newer_than(c, &obj) {
+            jobs.push((c.clone(), obj, key));
         }
     }
 
@@ -1393,7 +1475,7 @@ fn build_dregg2_archive(
              bounded leanc worker(s) …",
             jobs.len(),
         );
-        let outcomes = build_parallel::run_indexed(&jobs, workers, |(c, obj)| {
+        let outcomes = build_parallel::run_indexed(&jobs, workers, |(c, obj, _key)| {
             // `-fPIC` so the spliced objects are position-independent: the SAME archive
             // then serves both link modes (static bins AND the `DREGG_LEAN_LINK=shared`
             // cdylib link, e.g. the sdk-py pyo3 module). No-op on macOS (PIC is the
@@ -1409,10 +1491,15 @@ fn build_dregg2_archive(
                 .output()
         });
         let mut failed = false;
-        for ((c, obj), outcome) in jobs.iter().zip(&outcomes) {
-            if !matches!(outcome, Ok(output) if output.status.success()) {
-                // Drop a stale/partial object so the next build retries this `.c`.
+        for ((c, obj, key), outcome) in jobs.iter().zip(&outcomes) {
+            if matches!(outcome, Ok(output) if output.status.success()) {
+                // Record the source key this object was compiled from. Written ONLY on success, so
+                // a failed/partial compile leaves no stamp and the next build retries.
+                let _ = std::fs::write(facet_stamp_path(obj), key);
+            } else {
+                // Drop a stale/partial object AND its stamp so the next build retries this `.c`.
                 let _ = std::fs::remove_file(obj);
+                let _ = std::fs::remove_file(facet_stamp_path(obj));
                 failed = true;
                 println!(
                     "cargo:warning=dregg-lean-ffi: leanc failed on {}",
@@ -1527,8 +1614,107 @@ fn build_dregg2_archive(
     } else {
         gc_unreachable_members(archive, out_dir);
     }
+
+    // (6) SELF-RESOLUTION. The archive's own Dregg2 slice must define every Dregg2 symbol it
+    // references. See `assert_dregg2_self_resolving` for why this is the check that was missing.
+    assert_dregg2_self_resolving(archive);
+
     // Reached only on the SUCCESS path: the archive holds this checkout's Dregg2 objects.
     false
+}
+
+/// **The archive must resolve its OWN Dregg2 symbols — checked, not assumed.**
+///
+/// ⚑ THE GAP THIS CLOSES. Two completeness checks already ran above and NEITHER could see this:
+///
+/// * `archive_dregg2_complete` asks only whether the required-export MANIFEST (`dregg_*`) is
+///   exported. A missing *internal* Lean symbol is not on that manifest, so the slice reads
+///   "complete".
+/// * `complete_initializer_closure` chases undefined `initialize_*` edges only. An ordinary
+///   undefined function symbol — `_lp_Dregg2_Dregg2_Games_PathOfAngels_SalvageCrate_genesis`, say —
+///   is not an init edge, so it walks straight past it.
+///
+/// So on 2026-08-07 the archive shipped with `SlotDeriveRuntime.o` and `StationCrateOpen.o` both
+/// CALLING `SalvageCrate.genesis` and no member defining it. Every gate here reported success; the
+/// failure surfaced hours later and two crates away, as `dregg-sdk`'s lib test refusing to link,
+/// where it reads as an SDK problem rather than an archive problem.
+///
+/// The invariant is not a new demand — it is what the splice already intends. The initial splice is
+/// scoped to `Dregg2/FFI.lean`'s transitive IMPORT closure, and imports are transitive, so a kept
+/// module's callees are kept too **by construction**. The only ways to break it are a partial
+/// `.lake/build/ir` tree (a concurrent or interrupted `lake build`) or a stale cached object — both
+/// of which produce an archive that cannot link and must not be shipped. Measured on a healthy
+/// archive: 7,323 undefined symbols, of which **zero** are `Dregg2` (the rest resolve from the Lean
+/// sysroot at the final link, which is correct and not this check's business).
+///
+/// This PANICS rather than warning. There is no honest degraded mode: the archive is already
+/// unlinkable, and every option other than refusing amounts to handing a downstream crate a broken
+/// artifact and a misleading error. A panic also records no fingerprint, so the next build re-runs
+/// the script — which is exactly the remedy when the cause was a `lake build` still in flight.
+fn assert_dregg2_self_resolving(archive: &Path) {
+    let Ok(out) = Command::new(nm_tool()).arg("-g").arg(archive).output() else {
+        println!(
+            "cargo:warning=dregg-lean-ffi: could not run `nm` on {} — the Dregg2 self-resolution \
+             check did not run.",
+            archive.display()
+        );
+        return;
+    };
+    if !out.status.success() {
+        println!(
+            "cargo:warning=dregg-lean-ffi: `nm -g` failed on {} — the Dregg2 self-resolution check \
+             did not run.",
+            archive.display()
+        );
+        return;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut defined: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut undefined: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for line in text.lines() {
+        // `nm -g` rows are `[addr] <type> <symbol>`; undefined rows carry no address.
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        let (ty, sym) = match toks.as_slice() {
+            [ty, sym] if ty.len() == 1 => (*ty, *sym),
+            [_addr, ty, sym] if ty.len() == 1 => (*ty, *sym),
+            _ => continue,
+        };
+        if ty == "U" || ty == "u" {
+            undefined.insert(sym);
+        } else {
+            defined.insert(sym);
+        }
+    }
+    // Scoped to Dregg2 on purpose: toolchain/mathlib symbols are legitimately resolved by the Lean
+    // sysroot static libs at the FINAL link, not by this archive.
+    let mut missing: Vec<&str> = undefined
+        .iter()
+        .copied()
+        .filter(|s| s.contains("Dregg2") && !defined.contains(s))
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    missing.sort();
+    let shown: Vec<&str> = missing.iter().copied().take(12).collect();
+    panic!(
+        "dregg-lean-ffi: the Lean archive {} references {} Dregg2 symbol(s) that NO member of it \
+         defines, so it cannot link. First: {shown:?}\n\
+         \n\
+         This means the spliced Dregg2 slice is INCOMPLETE, not that a downstream crate is wrong — \
+         the crate whose link fails is just the first one to notice. Two causes produce it:\n\
+         \n\
+         1. A PARTIAL `metatheory/.lake/build/ir` tree — a `lake build` still running, or one that \
+            was interrupted. Let it finish and build again; nothing else is needed.\n\
+         2. A STALE cached object in this OUT_DIR. The recompile key is now the facet's CONTENT \
+            (`facet_content_key`), so this should be self-healing; if it is not, delete \
+            `<OUT_DIR>/dregg2_closure_objs/` and rebuild.\n\
+         \n\
+         Refusing here rather than shipping the archive: every alternative hands a downstream crate \
+         an unlinkable artifact and an error that points at the wrong file.",
+        archive.display(),
+        missing.len(),
+    );
 }
 
 /// Discover every `.lake/build/ir` directory that can supply a `.c` for the dependency closure:
