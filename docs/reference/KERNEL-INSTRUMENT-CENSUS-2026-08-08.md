@@ -211,11 +211,27 @@ mina_observer::tests::a_foreign_challenge_vector_is_refused_through_the_opening_
 no verdict decoding, so it is independent of every fix in this document (verified: the
 `prove_opening_check` path contains zero `verified_*`/`shadow_*`/`decode_gate_bit` calls).
 
-So `MinaOpeningCheckError::ArtifactDrift`/`DescriptorShapeMismatch` is a **working instrument that
-is red right now**, saying the compiled-in Mina opening-check descriptors no longer match their
-pins or their expected shape — which is exactly what BR-4 predicts happens while the only
-re-deriving descriptor gate never completes. **Not touched by this lane** (it is a world problem,
-not a gate problem, and it belongs to whoever is re-emitting). Recorded so it is findable.
+The exact refusal, captured 2026-08-08:
+
+```
+the pinned descriptors must resolve: DescriptorMalformed {
+  artifact: "pasta-rcb-sg-derive-0-of-10922.json",
+  why: "constant at byte 169907 does not fit a BabyBear felt (19 decimal digits,
+        p_babybear = 2013265921). A gate body carrying it cannot round-trip the field, so its
+        integer semantics say nothing about any proof over it. Re-emit on a felt-sized encoding
+        (Dregg2.Circuit.Emit.PastaFieldSound), or parse through the named unsound escape." }
+```
+
+So this is **not** a hash drift — it is `parse_vm_descriptor2` exercising a **felt-width soundness
+refusal** against a compiled-in Mina opening-check descriptor whose constants do not fit the field
+the proof is taken over. A working instrument, red at HEAD, correctly saying the artifact needs a
+re-emit — which is precisely what BR-4 predicts while the only re-deriving descriptor gate never
+completes. It also touches the felt-width campaign (`project-felt-width-repair-campaign`: width
+bounds the IMAGE, not the attack).
+
+**Not touched by this lane.** It is a world problem, not a gate problem — the fix is a re-emit on
+`PastaFieldSound`, which belongs to whoever owns the Mina opening-check emitter. Recorded here so
+it is findable, and so nobody "fixes" it by routing through the named unsound escape.
 
 ## BR-5 — ⚑⚑⚑ Three Lean-seed freshness gates, none wired to any workflow
 
@@ -489,6 +505,19 @@ activated-content conjunct), `poa_activated_content.rs` (`native_available`),
 The one INVERTED guard (`absent_native_export_refuses_preparation_without_a_rust_twin`) is
 deliberately left on a newly-separated raw `native_present()` bit, because the absence of the
 export is that test's subject — with a comment saying so, and its residual named.
+
+**Red-proof, constructive, three legs** (measured 2026-08-08 on a box where the archive IS linked,
+so the absent case had to be planted):
+
+| leg | state | result |
+|---|---|---|
+| A — control | plant compiled in but inactive | `rollback_requires_recorded_digest_and_exact_target_world` … **1 passed** (794 s of real work) |
+| B — plant ACTIVE, guard armed (the default) | `native_present()` forced `false` | **FAILED**, `MISSING VERIFIED CAPABILITY: cannot exercise the PoA world-activation verified authority path (dregg_poa_world_activation_*)` |
+| — | plant removed, worktree re-verified identical to the commit | `git diff` clean |
+
+The plant was asserted to have landed (`grep -c` = 1) before leg B's verdict was read. **Leg B is
+the whole finding**: that same state — no linked archive — printed `ok` before this change, for
+this test and twenty others.
 
 ---
 
