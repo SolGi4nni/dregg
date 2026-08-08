@@ -187,6 +187,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
         "federation admission falls back to the seeds-only Rust gate",
     ),
     (
+        "dregg_round_advance",
+        "the ES round-advance gate compiles out and the round producer advances on cordiality \
+         alone — the ASYNCHRONY instance's advance rule (CM Alg. 4:59) under the prospective \
+         round-robin leader, the exact mixed-halves liveness defect the gate exists to close \
+         (READING-DAG-BFT-2026-08-08 §5.3)",
+    ),
+    (
         "dregg_captp_validate_handoff",
         "SIX verified gates go at once (CapTP handoff/GC-drop/pipeline + coord 2PC/causal/\
          shared-budget); the 2PC decider silently reverts on the live coordinator path",
@@ -2754,6 +2761,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_handler_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_finalize_gate_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_strand_admit_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_round_advance_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_distributed_exports_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_decide_refines_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_direct_present)");
@@ -3249,6 +3257,20 @@ fn main() {
              Rust gate). Rebuild the archive (it splices Dregg2.Distributed.StrandAdmission) to \
              enable the Lean-backed F-4 admission gate."
         );
+    }
+
+    // The verified ES ROUND-ADVANCE GATE export (`dregg_round_advance`) lives in
+    // `Dregg2.Distributed.RoundAdvanceGate`, also OUTSIDE the FFI module's import closure. Same
+    // splice/probe discipline as the finality/strand gates: once the module is `lake build`-t its
+    // object is spliced in (the self-linking closure follows the C shim's
+    // `initialize_…_RoundAdvanceGate` ref) and this symbol appears; until then we compile the
+    // bridge out and the node's round producer takes the DECLARED bypass back to the
+    // cordiality-only advance (the asynchrony rule — `node::round_advance_gate` warns loudly).
+    let round_advance_present = archive_exports(&build_archive, "dregg_round_advance");
+    if round_advance_present {
+        println!("cargo:rustc-cfg=dregg_round_advance_present");
+    } else {
+        absent_export_warn("dregg_round_advance");
     }
 
     // The verified CapTP+coord DISTRIBUTED-EXPORTS module (`dregg_captp_validate_handoff` and its five
@@ -4255,6 +4277,9 @@ fn main() {
     }
     if strand_admit_present {
         shim.define("DREGG_STRAND_ADMIT", None);
+    }
+    if round_advance_present {
+        shim.define("DREGG_ROUND_ADVANCE", None);
     }
     if distributed_exports_present {
         shim.define("DREGG_DISTRIBUTED_EXPORTS", None);

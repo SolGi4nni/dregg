@@ -23,11 +23,12 @@ pub use lean_direct::{
 pub mod distributed_ffi;
 
 pub use distributed_ffi::{
-    decode_tau_order, distributed_exports_available, shadow_captp_pipeline_resolve,
-    shadow_captp_process_drop, shadow_captp_validate_handoff, shadow_coord_2pc_decide,
-    shadow_coord_causal_order, shadow_coord_shared_budget, shadow_strand_admit, shadow_tau_order,
-    strand_admit_available, tau_order_available, verified_2pc_decide, verified_admits,
-    verified_handoff_non_amplifying, verified_happened_before, verified_tau_order, Decision2pc,
+    decode_tau_order, distributed_exports_available, round_advance_available,
+    shadow_captp_pipeline_resolve, shadow_captp_process_drop, shadow_captp_validate_handoff,
+    shadow_coord_2pc_decide, shadow_coord_causal_order, shadow_coord_shared_budget,
+    shadow_round_advance, shadow_strand_admit, shadow_tau_order, strand_admit_available,
+    tau_order_available, verified_2pc_decide, verified_admits, verified_handoff_non_amplifying,
+    verified_happened_before, verified_tau_order, Decision2pc,
 };
 
 /// The VERIFIED LIGHT-CLIENT verify-logic gates (ETH sync-committee / Tendermint stake-weighted /

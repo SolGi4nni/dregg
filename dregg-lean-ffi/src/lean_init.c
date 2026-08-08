@@ -90,6 +90,24 @@ extern lean_object *initialize_Dregg2_Dregg2_Distributed_StrandAdmission(uint8_t
 extern lean_object *dregg_strand_admit(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED ES ROUND-ADVANCE GATE
+ * (`Dregg2.Distributed.RoundAdvanceGate.advanceWireGate`): decodes a wire-encoded
+ * `(round, timeout-bit, wavelength, participants, lace)` query
+ * (`"r=<round>;t=<0|1>;w=<W>;P=<participants>;B=<blocks>"` — the tail is the finality gate's lace
+ * grammar), runs the VERIFIED Cordial-Miners Alg. 4:67-75 advance predicate (advance a cordial
+ * round only on leader present/ratified/super-ratified or timeout), and returns `"1"` (advance) /
+ * `"0"` (hold) / `"ERR"` (fail-closed - the node HOLDS). The round producer calls this before
+ * honoring a `RoundPlan::Advance`.
+ *
+ * GATED on DREGG_ROUND_ADVANCE: like the finality/strand gates, this export lives in a module
+ * OUTSIDE the FFI module's import closure, so (a) build.rs probes the archive and only `#define`s
+ * DREGG_ROUND_ADVANCE when the symbol is present, and (b) `dregg_ffi_init` must ALSO run the
+ * module's own initializer. */
+#ifdef DREGG_ROUND_ADVANCE
+extern lean_object *initialize_Dregg2_Dregg2_Distributed_RoundAdvanceGate(uint8_t builtin);
+extern lean_object *dregg_round_advance(lean_object *input);
+#endif
+
 /* The @[export]ed Lean `String -> String` VERIFIED CapTP + COORDINATION decision gates
  * (`Dregg2.Exec.DistributedExports`): six wire-in/wire-out exports the captp/coord runtime invokes
  * so it computes its verdict FROM the verified Lean rule itself (dreggrs Rust → differential):
@@ -1166,6 +1184,18 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(ares);
+#endif
+#ifdef DREGG_ROUND_ADVANCE
+    /* The ES round-advance module is also OUTSIDE the FFI closure; initialize it explicitly so
+     * `dregg_round_advance` is callable. Its dependency closure (BlocklaceFinality/FinalityGate)
+     * is re-entrant-safe under Lean's init guards (shared with the gates above). */
+    lean_object *ragres = initialize_Dregg2_Dregg2_Distributed_RoundAdvanceGate(1);
+    if (!lean_io_result_is_ok(ragres)) {
+        lean_io_result_show_error(ragres);
+        lean_dec_ref(ragres);
+        return 1;
+    }
+    lean_dec_ref(ragres);
 #endif
 #ifdef DREGG_DISTRIBUTED_EXPORTS
     /* The CapTP+coord distributed-exports module is also OUTSIDE the FFI closure; initialize it
@@ -3253,6 +3283,29 @@ size_t dregg_strand_admit_str(const char *in_utf8, char *out, size_t out_cap) {
     return full;
 }
 #endif /* DREGG_STRAND_ADMIT */
+
+/* dregg_round_advance_str — the C string bridge over the Lean `String -> String` VERIFIED ES
+ * ROUND-ADVANCE GATE export. Identical marshalling discipline as the bridges above; it drives
+ * `dregg_round_advance`, whose input wire is
+ * `"r=<round>;t=<0|1>;w=<W>;P=<participants>;B=<blocks>"` and whose output is `"1"` (advance) /
+ * `"0"` (hold) / `"ERR"` (fail-closed on a malformed wire - the node HOLDS). Same return contract
+ * (full byte length; (size_t)-1 only on an unusable buffer). */
+#ifdef DREGG_ROUND_ADVANCE
+size_t dregg_round_advance_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_round_advance(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif /* DREGG_ROUND_ADVANCE */
 
 /* dregg_decide_refines_str — the C string bridge over the Lean `String -> String` VERIFIED
  * FLOW-REFINEMENT DECISION GATE export. Identical marshalling discipline as the bridges above; it
