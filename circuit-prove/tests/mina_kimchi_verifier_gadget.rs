@@ -39,6 +39,27 @@
 //!   guess becomes a datum.
 //! * **§4** — `#[ignore]`d for wall clock: the whole tower, 46 chain leaves + 45 chain folds + the
 //!   endo leaf + the conjunction leaf + the finalize fold + the gadget fold, root verified.
+//!   ⚑⚑ **IT RAN, 2026-08-08, AND THIS IS THE FIRST TIME IT HAS EVER COMPLETED** — the entry below
+//!   that said "§4 has never been attempted" is discharged. `test result: ok. 1 passed; 0 failed`,
+//!   **1 261.88 s (21.0 min)** wall, **16.18 GiB maxrss / 22.32 GiB peak footprint** for the whole
+//!   binary:
+//!
+//! ```text
+//!   chain root       1 192 660 ms   (46 leaves + 45 folds)   38 queries   |D⁽⁰⁾| 2^21 over 2^18
+//!   finalize root       58 465 ms   (endo 14.6 s, conj 36.8 s, fold 7.1 s)
+//!                                                            38 queries   |D⁽⁰⁾| 2^20 over 2^17
+//!   gadget fold         10 599 ms   (128 in-circuit connects)
+//!                                                            38 queries   |D⁽⁰⁾| 2^21 over 2^18
+//!   root claim: v' = 330305781815358857211111367912836029937 — block 539508's own polyscale
+//!   prechallenge, DERIVED from the transcript; transcript_acc == the host fold of the real tape.
+//! ```
+//!
+//! ⚠ **DO NOT READ THE CHAIN ROOT'S 1 192 s AS A REGRESSION AGAINST THE 1 037 s BASELINE.** This
+//! ran on a 12-core box carrying a load average near **110** from six sibling proving lanes; the
+//! 1 037 s figure is from 2026-08-05 at an unrecorded load, and two runs on this box twenty
+//! minutes apart differ by 2× from co-tenancy alone. **This run is evidence that the tower COMPLETES
+//! and what it EMITS, not evidence about its wall clock.** The controlled wall-clock comparison —
+//! same binary, same box, back to back — is in `mina_towers_mint_at_their_own_engine.rs`.
 //!
 //! ## ⚑ THERE IS NO CHEAP POSITIVE, AND THAT IS A PROPERTY OF THE GADGET, NOT AN OMISSION
 //!
@@ -80,10 +101,15 @@
 //!
 //! ⚑ **This cost is INHERITED, not introduced here.** The conjunction leaf wrap is
 //! `mina_wrap_finalize_fold`'s, and this gadget's own contribution is 128 `connect`s in an
-//! aggregation circuit. But it means **§3 and §4 are not safely runnable on a loaded shared box**,
-//! and the honest statement is that neither has completed: §1 and §2 pass, §3 was killed by its own
-//! watchdog, and §4 has never been attempted. Give it a quiet box, or a cgroup
-//! (`swarm-build`, hbox-only — the mac has no containment at all).
+//! aggregation circuit. But it meant **§3 and §4 were not safely runnable on a loaded shared box**,
+//! and the honest statement then was that neither had completed: §1 and §2 passed, §3 was killed by
+//! its own watchdog, and §4 had never been attempted.
+//!
+//! ⚑⚑ **BOTH RAN ON 2026-08-08, ON A BOX AT LOAD ~110, AND NEITHER NEEDED A CGROUP.** What changed
+//! is not the box: the whole tower was switched to the two-engine shape and every layer now commits
+//! an 8× smaller LDE domain. §3 peaks at 21.60 GiB and §4 — 46 chain leaves, 45 folds, the endo and
+//! conjunction leaves, three folds — peaks at **22.32 GiB**, below where ONE conjunction leaf wrap
+//! used to sit.
 
 use std::path::PathBuf;
 use std::time::Instant;

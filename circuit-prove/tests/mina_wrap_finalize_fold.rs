@@ -43,8 +43,9 @@
 //!    §"WHAT THIS OBJECT FORCES"), because comparing `cip` against a ξ-fold with a free `ft_eval0`
 //!    column forces nothing.
 //! 3. **`v′` is published, not derived.** Tying it to the block's own Fq transcript is the 46-leaf
-//!    chain fold's job (`mina_phase2_chain_fold.rs`, 1037 s); §4 exercises the seam's ARITHMETIC
-//!    against the tracked link-45 vector and says plainly that it is not the in-circuit connect.
+//!    chain fold's job (`mina_phase2_chain_fold.rs`; ⚠ the 1 037 s once quoted here was that fold
+//!    at the OLD single-engine shape); §4 exercises the seam's ARITHMETIC against the tracked
+//!    link-45 vector and says plainly that it is not the in-circuit connect.
 //! 4. **ζ, ζω and `r` are published and derived by nothing here.**
 //!
 //! ## ⚑ RELEASE, DELIBERATELY

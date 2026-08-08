@@ -35,6 +35,15 @@
 //! figure for the tower that exists now.** ⚠ **Every chain-root VK rotates**; an operator's
 //! `DREGG_MINA_CHAIN_ROOT_VK` must be re-extracted from an honest fold.
 //!
+//! **MEASURED 2026-08-08 at the split** (96 GiB M2 Max, load ~110, six sibling proving lanes):
+//! §0–§4 ran **8/8 in 349.3 s**; §1's two leaves took 37.5 s and its fold 23.3 s. ⚑ The 46-leaf
+//! fold this file's §5 builds was run to completion by `mina_kimchi_verifier_gadget.rs` §4 on the
+//! same day through the identical `prove_chain_fold` and the same 46 witnesses: **1 192 660 ms,
+//! root verified**, committed `|D⁽⁰⁾| = 2^21` over a `2^18` trace where the single-engine shape
+//! would have committed `2^24`. ⚠ **That wall clock is NOT comparable to the 1 037 s baseline** —
+//! this box was carrying a load average near 110 and the baseline's load was never recorded. The
+//! controlled same-binary before/after lives in `mina_towers_mint_at_their_own_engine.rs`.
+//!
 //! ## ⚑ RELEASE, DELIBERATELY
 //!
 //! Algebraic refusals are `debug_assert` panics in debug and clean `Err(..)` in release, so a
