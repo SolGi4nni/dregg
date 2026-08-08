@@ -789,7 +789,11 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          -- it ASSERTS both disagreements, so closing either one reds it.
          -- ⚑ RENAMED 2026-08-06 (`…_are_a_fixture_and_a_step_digest`): slot 11's half of that name
          -- was the fixture claim this pass refuted, and a name is a claim.
-         slot_eleven_agrees_and_slot_twelve_is_an_arity_mismatch
+         -- ⚑ RENAMED AGAIN 2026-08-08 (`…_slot_twelve_is_an_arity_mismatch`): the ARITY was refuted
+         -- at source on 2026-08-07 and the name outlived it by a day. What blocks slot 12 is one
+         -- VALUE — `G` — and `KimchiStepMainPins13
+         -- .the_cone_of_word_fifty_four_holds_no_published_statement_entry` is the cone that says so.
+         slot_eleven_agrees_and_slot_twelve_still_disagrees
          -- ⚑ Joined 2026-08-06 with slot 11's derivation. The first hands this file's own
          -- `hash_messages_for_next_wrap_proof` Mina's thirty prechallenges and lands on the
          -- marshaller's slot 11 — sixteen Poseidon permutations against a numeral, which is the

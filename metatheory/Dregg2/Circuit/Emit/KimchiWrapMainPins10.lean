@@ -113,8 +113,12 @@ theorem close_rung_extends_bullet (t : WrapData) (wired : Bool) :
 
 #assert_axioms close_rung_extends_bullet
 
-/-- ⚑⚑⚑ **SLOT 11 AGREES WITH MINA'S FORTY (2026-08-06). SLOT 12 DOES NOT, AND WHAT BLOCKS IT
-IS AN ARITY, NOT A VALUE.**
+/-- ⚑⚑⚑ **SLOT 11 AGREES WITH MINA'S FORTY (2026-08-06). SLOT 12 DOES NOT, AND WHAT BLOCKS IT IS
+ONE VALUE — `G` — WHOSE REPAIR IS THE ACCUMULATOR CHECK'S OPENING LEG.**
+
+⚠ This header read *"WHAT BLOCKS IT IS AN ARITY, NOT A VALUE"* until 2026-08-08. The arity was
+refuted on 2026-08-07 and the name was never corrected; the entry below carries all three refuted
+explanations and the measured one.
 
 `wrap_main` is handed forty words, CONSTRAINS twenty-four and READS six more; the ten it neither
 reads nor checks are `Spec.T.Constant` padding and the lookup `Opt` (§10). So the denominator is
@@ -158,10 +162,11 @@ the object it is about.
     its own challenge polynomial, the hash hashed what it was given. The marshaller reads the step
     statement now (`step_statement_prechallenges`), and the last conjunct below is the old refusal
     INVERTED: all thirty inputs coincide, and `whCloseDigest shapeWrap` **is** Mina's slot 11.
-  * ⚠ **SLOT 12 — `messages_for_next_step_proof`, AND IT IS NOT AN ARITY GAP ANY MORE.** §18's
-    `prevRows` ties Mina's slot 12 to packed word 54 by `Field.Assert.equal`, and the wrap DERIVES
-    NOTHING for it. This entry has now been wrong twice about WHY it misses, and both wrong answers
-    were the same shape — a structural explanation for what is a VALUE difference:
+  * ⚠ **SLOT 12 — `messages_for_next_step_proof`. IT IS NOT AN ARITY GAP AND IT IS NOT A FIXPOINT.**
+    §18's `prevRows` ties Mina's slot 12 to packed word 54 by `Field.Assert.equal`, and the wrap
+    DERIVES NOTHING for it. This entry has now been wrong **three** times about WHY it misses, and
+    all three wrong answers were the same shape — a structural explanation for what is a VALUE
+    difference:
 
       1. *"the step assembly's outer hash against the marshaller's, closing when the outer hash
          produces what the marshaller computes"* — refuted by the index repair;
@@ -170,6 +175,20 @@ the object it is about.
          The arities DO agree now (`marshal::STEP_RECURSION_SLOTS = gates::STEP_RULE_N_PREVIOUS = 1`,
          `gate_c` prints `MATCH=true`), the app state agrees (two words on both sides), the index
          agrees (`MinaWrapOwnVerifierKey`), **and slot 12 still misses.**
+      3. ⚑ *"closing it is a FIXPOINT — making the wire record carry segment D's `G` and lifts moves
+         the step proof's public input at word 54; the step transcript absorbs the public-input
+         commitment; `solveG`'s output is derived from that transcript"* — **refuted on 2026-08-08
+         by computing the cone.** `KimchiStepMainPins13
+         .the_cone_of_word_fifty_four_holds_no_published_statement_entry` exhibits word 54's ENTIRE
+         preimage — `hmOutSpec` names it, so it is not an approximation — as seventy-six cells:
+         56 `MinaWrapOwnVerifierKey.INDEX_WORDS`, 2 app-state words, `G`, 16 `liftOf … (uChal k)`.
+         **Not one of the sixty-seven published statement entries is in it, and neither is
+         `STEP_PREVCOMM_XY`.** The step statement is not upstream of word 54; the pass order is
+         `previous commitments → step transcript → {G, lifts} → segment D → word 54`, and word 54
+         is settled at the third arrow. ⚠ The one link that *looks* circular — segment D absorbing
+         dregg's own wrap verification key — is the same asymmetry §10b measures from the other
+         side: the wrap pins the STEP key as `Inner_curve.constant` (coefficients), the step takes
+         the WRAP key as `w.exists` (a WITNESS, `idxOVar`), and a witness does not enter a key.
 
     ⚑ **WHAT IS ACTUALLY LEFT, MEASURED BY `segd_slot12_probe` RATHER THAN INFERRED.** Hand
     openmina's own `MessagesForNextStepProof::hash()` segment D's OWN preimage — 56 index
@@ -180,18 +199,27 @@ the object it is about.
     absorbs the step assembly's own `G` (`solveG`'s output, §19) and its own sixteen
     `to_field_checked` lifts, while `gate_c` hashes the WIRE record's
     `challenge_polynomial_commitments` and `step_old_bulletproof_challenges`
-    (`marshal.rs:578-608`) — numbers the marshaller CHOSE and the step assembly never derived.
+    (`marshal.rs:578-608`) — the wrap proof's own kimchi recursion commitment and a chosen
+    prechallenge ladder, neither of which the step assembly derived.
 
-    ⚠ ⚑ **AND CLOSING IT IS A FIXPOINT, WHICH IS WHY IT IS NOT A ONE-LINE MARSHALLER EDIT.** Making
-    the wire record carry segment D's `G` and lifts moves the step proof's PUBLIC INPUT at word 54;
-    the step transcript absorbs the public-input commitment; `solveG`'s output is derived from that
-    transcript. Naming that loop is the whole content of this entry — the previous two answers each
-    priced a repair that would not have closed it.
+    ⚠ ⚑⚑ **AND THE RESIDUE, NAMED: IT IS THE ACCUMULATOR CHECK'S OPENING LEG (#11) WEARING A PUBLIC
+    WORD.** The sixteen close in one pass — `prove_step`'s `step_pre` is a
+    `k·0x9E3779B97F4A7C15 | 1` ladder where the assembly's own sixteen prechallenges belong, and
+    those are transcript-derived and unmoved by anything downstream. `G` does not. `record
+    .challenge_polynomial_commitments[0]` is the wrap proof's kimchi recursion commitment, which
+    kimchi forces to be `commit(b_poly(chals))` (`prove_wrap`: *"an unrelated point makes
+    `batch_verify` return `OpenProof` — measured, first run"*), while segment D absorbs `solveG`'s
+    SOLVE, because §17 measured that this assembly has no IPA opening to take a real
+    `challenge_polynomial_commitment` from. **Pinning `G` to the real accumulator turns `equal_g`
+    into the two-dimensional discrete log in `⟨G + b·u, H⟩`** —
+    `KimchiStepMainPins12` §17(g) and `KimchiStepMainPins13` §18(g) already price exactly that, and
+    call it item #11. So the last of the forty is an ASSUMPTION this assembly has never discharged,
+    not an iteration and not a marshaller edit.
 
 ⚠ **AND THIS THEOREM IS A REFUSAL SHAPED TO SHRINK, like `STATEMENT_BLOCKED`.** Its second conjunct
 asserts a DISAGREEMENT. Close it and it goes red at the place the claim is made, and the counts above
 have to be rewritten — which is the only direction this file should ever move. -/
-theorem slot_eleven_agrees_and_slot_twelve_is_an_arity_mismatch :
+theorem slot_eleven_agrees_and_slot_twelve_still_disagrees :
     Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 11 0
       = whCloseDigest shapeWrap
   ∧ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
@@ -209,6 +237,6 @@ theorem slot_eleven_agrees_and_slot_twelve_is_an_arity_mismatch :
   ∧ 40 - 10 = 30 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> native_decide
 
-#assert_compiled slot_eleven_agrees_and_slot_twelve_is_an_arity_mismatch
+#assert_compiled slot_eleven_agrees_and_slot_twelve_still_disagrees
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

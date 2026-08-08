@@ -712,7 +712,12 @@ theorem the_bend_moves_every_transcript_derived_public_word :
 /-! ### §10b — ⚑⚑⚑ **COEFFICIENTS vs WITNESS: is the step↔wrap dependency a FIXPOINT?**
 
 This section exists because "it is a fixpoint" was written once about slot 12, cited by three
-docblocks and a Rust comment, and never measured. A kimchi verification key is a commitment to the
+docblocks and a Rust comment, and never measured. ⚑ **IT WAS WRITTEN A SECOND TIME, ABOUT THE SAME
+SLOT, ON 2026-08-07** (`KimchiWrapMainPins10`: *"making the wire record carry segment D's `G` and
+lifts moves the step proof's PUBLIC INPUT at word 54"*) and refuted the same way on 2026-08-08 —
+`KimchiStepMainPins13.the_cone_of_word_fifty_four_holds_no_published_statement_entry` computes word
+54's whole seventy-six-cell preimage and finds no published statement entry in it. Twice in one cone,
+so the rule this section states is the operative one: **compute the cone; do not read the graph.** A kimchi verification key is a commitment to the
 `kind`, the `permVars` and the **`coeffs`** of a gate list — `wrapGates` is exactly that triple — so
 the question *"does the wrap VK depend on the step proof"* is the question *"does anything the step
 proof determines reach a wrap gate's coefficients"*, and it is decidable by evaluation.
@@ -1258,12 +1263,19 @@ words, W-WRAPHACK's two `hash_messages_for_next_wrap_proof` squeezes, W-PREV's
 Those rows placed, emitted and rendered; they had no satisfying WITNESS.
 
 ✅ ⚑⚑ **FIVE OF THE SIX ARE CLOSED (55/56 on 2026-08-06; 27/28/37 on 2026-08-07), AND THE SIXTH IS
-AN ARITY GAP, NOT A WIRING ONE.**
+ONE VALUE IN A SEVENTY-SIX-CELL PREIMAGE THE TWO SIDES OTHERWISE SHARE.**
 `KimchiWrapMainField.the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one`
 names what agrees, and `KimchiWrapMain.finsponge_has_a_witness_on_the_published_statement` evaluates
 the assert that now passes at ZERO differences. What is left is packed word 54:
-`messages_for_next_step_proof`, where segment D hashes 56+20 and the marshaller's
-`MessagesForNextStepProof::hash()` hashes 56+36 (`KimchiWrapMainPins10`).
+`messages_for_next_step_proof`.
+
+⚠ **THIS PARAGRAPH SAID "AN ARITY GAP … segment D hashes 56+20 and the marshaller's
+`MessagesForNextStepProof::hash()` hashes 56+36" UNTIL 2026-08-08, AND BOTH HALVES WERE REFUTED THE
+DAY BEFORE.** `marshal::STEP_RECURSION_SLOTS = gates::STEP_RULE_N_PREVIOUS = 1`, and
+`segd_slot12_probe` hands openmina's own hasher segment D's own 56+20 preimage and gets segment D's
+squeeze back TO THE DIGIT. The two sides hash the same shape and differ on one family — `G`, which
+segment D takes from `solveG` and the marshaller from the wrap proof's kimchi recursion commitment.
+`KimchiWrapMainPins10`'s entry carries the three refuted explanations and the measured residue.
 
 ✅ ⚑⚑ **AND IT WAS PRICED AS A STEP-SIDE FIXPOINT, WHICH IS WHY IT DID NOT HAPPEN FOR A DAY.**
 This paragraph read: *"Each of the six words is an x_hat MSM entry, so writing the derivation into
@@ -1290,7 +1302,10 @@ theorem the_chain_stops_at_the_statements_derived_words :
     ∧ prevWordVal (PREV_MSG_NEXT_STEP + 2) = whPrevDigest 1
     -- ⚠ …and what IS left, exhibited rather than described: word 54 is not Mina's slot 12. That is
     -- the step assembly's own segment-D squeeze against the marshaller's
-    -- `MessagesForNextStepProof::hash()`, and the two hash preimages of different ARITY.
+    -- `MessagesForNextStepProof::hash()`. ⚑ The two preimages have the SAME shape (76 cells) and
+    -- differ in ONE family, `G` — this comment read "of different ARITY" until 2026-08-08, a day
+    -- after `STEP_RECURSION_SLOTS` closed the arity. See `KimchiStepMainPins13
+    -- .the_cone_of_word_fifty_four_holds_no_published_statement_entry`.
     ∧ prevWordVal PREV_MSG_NEXT_STEP
         ≠ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
     ∧ (rungsUpto .prev).contains .split = true

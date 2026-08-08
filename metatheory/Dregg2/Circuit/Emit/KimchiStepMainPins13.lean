@@ -4,6 +4,11 @@
 The values these are stated about are in `…Fixture`; the emission is in `…Core`.
 -/
 import Dregg2.Circuit.Emit.KimchiStepMainFixture
+-- ⚑ §18b's cone reads the PUBLISHED statement and the marshaller's own accumulator, to show that
+-- neither is in word 54's preimage. `KimchiStepWrapChainFixture` imports `PastaField` and nothing
+-- else, so this edge cannot cycle; it is the same edge `KimchiWrapHackDigest` already carries and
+-- names.
+import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
 
 namespace Dregg2.Circuit.Emit.KimchiStepMain
 
@@ -429,5 +434,100 @@ what it does not:
                 (jOf bpGResolvedA) (bpBOf tSwapAbs) BP_Z1 BP_Z2
 #guard (jacEqM pN (bpRhs (bpUOf tSwapAbs) GENERATORS_H (jOf bpGHonestA) (bpBOf tSwapAbs)
                      BP_Z1 BP_Z2) (jOf (bpLhsOf tSwapAbs))) == false
+
+/-! ### §18b — ⚑⚑⚑ **THE TRANSITIVE INPUT CONE OF PACKED WORD 54, COMPUTED RATHER THAN ASSERTED.**
+
+Word 54 is `messages_for_next_step_proof`, and it is Mina's wrap public-input **slot 12** — the one
+slot of the forty the emitted wrap vector does not agree with
+(`KimchiWrapMainPins12.the_forty_agree_but_for_the_arity_mismatched_slot`, 39 of 40). Three
+structural explanations for that miss have been written into `KimchiWrapMainPins10` and refuted at
+source: the outer hash (refuted by the index repair), an arity gap (refuted 2026-08-07 —
+`marshal::STEP_RECURSION_SLOTS = gates::STEP_RULE_N_PREVIOUS = 1`), and a **fixpoint**:
+
+> *"Making the wire record carry segment D's `G` and lifts moves the step proof's PUBLIC INPUT at
+> word 54; the step transcript absorbs the public-input commitment; `solveG`'s output is derived
+> from that transcript."*
+
+⚑ **THAT IS FALSE, AND THIS IS THE MEASUREMENT RATHER THAN A READING OF THE DEFINITION GRAPH.**
+`hmOutSpec` names word 54's ENTIRE preimage, so the cone is not an approximation: it is the
+`ws` list, seventy-six cells, and the theorem exhibits all four families at their own sources.
+
+  * 56 — `MinaWrapOwnVerifierKey.INDEX_WORDS`, dregg's own wrap verification key. ⚠ This is the one
+    link that *looks* circular and is not, for exactly the reason `§10b` measures on the other side:
+    the wrap circuit pins the STEP key as `Inner_curve.constant` (coefficients), while the step
+    circuit takes the WRAP key as `w.exists` (a **witness**, `idxOVar`). A witness does not enter a
+    verification key, so the wrap VK is a function of the step VK and not conversely
+    (`KimchiStepWrapChain.the_wrap_gates_carry_the_step_key_and_none_of_the_step_proofs_values`).
+  * 2 — the app state, `hmOVal`, closed arithmetic.
+  * 2 — `G`, `solveG`'s output, a function of the transcript over the PREVIOUS proof's commitments.
+  * 16 — `liftOf … (uChal k)`, the same transcript's own prechallenges, lifted.
+
+**And the negative leg is the whole point: not one of the sixty-seven published statement entries is
+in the cone, and neither is `STEP_PREVCOMM_XY`** — the commitment the marshaller chose, which is what
+words 55 and 56 are computed from (`whPrevDigest`). So word 54 is not downstream of the step
+statement, of the step proof, or of the marshaller. **The dependency is a DAG and the pass order
+terminates in ONE pass:**
+
+    block 539508's commitments  →  step transcript  →  { G , the 16 lifts }  →  segment D  →  word 54
+                                →  whPrevDigest → words 55/56 → step public input → step proof
+
+Word 54 is settled at the third arrow; nothing after it re-enters. `whPrevDigest` hangs off the same
+first arrow and off `STEP_PREVCOMM_XY`, which is an ARGUMENT to `create_recursive` rather than a
+value it returns — that is `KimchiWrapMainPins12.the_wraphack_tape_reads_no_published_statement_entry`,
+and it is why 55/56 closed in one re-prove on 2026-08-06.
+
+⚠ ⚑ **SO WHAT DOES BLOCK SLOT 12 IS NOT A LOOP — IT IS (g) ABOVE WEARING A PUBLIC WORD.** The two
+sides of slot 12 hash the same seventy-six-cell shape (`segd_slot12_probe` reproduces this squeeze to
+the digit with openmina's own `MessagesForNextStepProof::hash()`), and they disagree on ONE family:
+`G`. Segment D absorbs `solveG`'s SOLVE, because §17 measured that this assembly has no IPA opening
+to take a real `challenge_polynomial_commitment` from; the marshaller fills the same wire field from
+`proof.prev_challenges[0].comm`. **Making them one object means pinning `G`, and §17(g)/(g) above
+already price that: with `G` fixed, re-closing `equal_g` is the two-dimensional discrete log in
+`⟨G + b·u, H⟩` — the accumulator check's OPENING leg, item #11.** That is an assumption, not an
+iteration, and it is the honest name for the last of the forty.
+
+⚑ Stated at `shapeStep` — the shape whose 67 published entries `KimchiStepWrapChainFixture` carries
+and whose word 54 the wrap ladder ties Mina's slot 12 to. `tS` is the smoke assembly and its word 54
+is a different number. -/
+theorem the_cone_of_word_fifty_four_holds_no_published_statement_entry :
+    (let cone := tStep.specD.ws.map (·.2)
+     -- (1) the CONE IS the whole preimage, and it is 56 + 2 + 2 + 16.
+     cone.length == N_IDX_WORDS + N_HM_APP + 2 + shapeStep.bRounds
+     && cone.length == 76
+     -- (2) …whose squeeze IS word 54, and word 54 IS published entry 64.
+     && hmOutDigestOf shapeStep tStep.sp tStep.gXY
+          == (tStep.segD.states.getLastD []).getD 0 0
+     && Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.getD 64 0
+          == hmOutDigestOf shapeStep tStep.sp tStep.gXY
+     -- (3) the four families, each against its OWN source rather than against a copy.
+     && (List.range N_IDX_WORDS).all (fun i =>
+          cone.getD i 0 == Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey.INDEX_WORDS.getD i 0)
+     && (List.range N_HM_APP).all (fun i => cone.getD (N_IDX_WORDS + i) 0 == hmOVal i)
+     && cone.getD (N_IDX_WORDS + N_HM_APP) 0 == tStep.gXY.1
+     && cone.getD (N_IDX_WORDS + N_HM_APP + 1) 0 == tStep.gXY.2
+     && (List.range shapeStep.bRounds).all (fun k =>
+          cone.getD (N_IDX_WORDS + N_HM_APP + 2 + k) 0
+            == liftOf shapeStep tStep.sp (shapeStep.uChal k))
+     -- (4) ⚑⚑ NOT ONE of the sixty-seven published entries is in it — including 64 itself, so the
+     -- squeeze is not its own input either.
+     && (cone.filter (fun v =>
+          Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.contains v)).length == 0
+     && Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.length == 67
+     -- (5) …nor is `STEP_PREVCOMM_XY`, the accumulator the MARSHALLER chose and the only step-side
+     -- object words 55/56 are a function of.
+     && Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.all
+          (fun v => !cone.contains v)
+     && Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PREVCOMM_XY.length == 2
+     -- (6) ⚑ ANTI-VACUITY. A cone of zeros, or one nothing reads, would satisfy (4) and (5) and say
+     -- nothing: every one of the seventy-six is nonzero, and bending EITHER coordinate of the one
+     -- family that disagrees with Mina moves word 54.
+     && (cone.filter (fun v => v != 0)).length == 76
+     && (hmOutDigestOf shapeStep tStep.sp (fAdd tStep.gXY.1 1, tStep.gXY.2)
+          != hmOutDigestOf shapeStep tStep.sp tStep.gXY)
+     && (hmOutDigestOf shapeStep tStep.sp (tStep.gXY.1, fAdd tStep.gXY.2 1)
+          != hmOutDigestOf shapeStep tStep.sp tStep.gXY)) = true := by
+  native_decide
+
+#assert_compiled the_cone_of_word_fifty_four_holds_no_published_statement_entry
 
 end Dregg2.Circuit.Emit.KimchiStepMain
