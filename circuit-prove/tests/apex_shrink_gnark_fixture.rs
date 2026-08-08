@@ -3,12 +3,14 @@
 //! `chain/gnark/fixtures/apex_shrink_fri_real.json`.
 //!
 //! Same real objects as `apex_shrink_bn254_tooth.rs` (a 2-turn rotated
-//! chain → `ir2_leaf_wrap` apex → BN254-native shrink proof) — except the
+//! chain → turn-chain-root apex → BN254-native shrink proof) — except the
 //! turn BODY is `IncrementNonce`, not the tooth's `Transfer` (see
 //! [`make_turn`] for why), plus:
 //!
-//! 1. the shrink proof is CACHED (postcard, under `target/`) so re-exports
-//!    skip the ~20-minute fold+shrink when a verified cache exists;
+//! 1. the shrink proof is CACHED (postcard, outside the lane build tree — see
+//!    [`shrink_cache_dir`]) so re-exports skip the fold+shrink when a verified
+//!    cache exists. MEASURED 2026-08-08 on a COLD cache: 48s (fold 16s, shrink
+//!    prove 32s), not the "~20 minutes" this said for months;
 //! 2. `export_real_shrink_fri_fixture` mirrors the batch verifier's pre-FRI
 //!    transcript and re-runs the FRI core host-side with real p3 components —
 //!    the export FAILS unless the real `pcs.verify` accepts from the mirrored
@@ -112,12 +114,14 @@ fn repo_root() -> PathBuf {
 
 /// Cache v3: the EXPOSED-claim shrink proof (shrink_apex_to_outer_exposed,
 /// now WITH the apex-VK pin + 8 re-exposed VK-core lanes) plus the chain's
-/// expected 33-lane channel, so cache-hit runs can still assert the binding
-/// without re-folding the apex. (v2 cached the 25-lane pre-pin proof — the
-/// filename bump retires it.)
+/// expected [`EXPOSED_SHRINK_CLAIM_LANES`]-lane channel, so cache-hit runs can still assert
+/// the binding without re-folding the apex. (v2 cached the 25-lane pre-pin proof — the
+/// filename bump retires it.) ⚠ The cached ENVELOPE is keyed only on the VK epoch, so a
+/// change to the channel's SHAPE at a fixed epoch is caught by the load-time claim-match
+/// self-check, not by the filename.
 ///
 /// LANE-INDEPENDENT + VK-EPOCH-KEYED: the cache lives OUTSIDE the per-lane
-/// build tree so the ~20-min fold+shrink is reused ACROSS lanes (a fresh
+/// build tree so the ~48s fold+shrink is reused ACROSS lanes (a fresh
 /// `pbuild`/`hbuild` lane no longer re-pays it), not just within one
 /// `target/`. The directory is, in order of preference:
 ///   1. `$DREGG_SHRINK_CACHE_DIR` (explicit override), else
@@ -351,7 +355,9 @@ fn real_shrink_proof(outer_config: &DreggOuterConfig) -> BatchStarkProof<DreggOu
 /// `apex_vk_identity.json` must equal the HEAD derivation, rather than being
 /// silently re-stamped to whatever HEAD says.
 #[test]
-#[ignore = "SLOW (one real 2-turn fold, ~4 min): derives the deployed apex VK identity at HEAD \
+#[ignore = "one real 2-turn fold, MEASURED 14s on an M-series laptop (the \"~4 min\" this said \
+            until 2026-08-08 was off by ~17x and is why the flag day was priced in hours): \
+            derives the deployed apex VK identity at HEAD \
             and asserts the governance pin, the committed identity artifact and the gnark proof \
             fixture all agree with it. WRITES NOTHING — the emitter is \
             emit_deployed_apex_vk_identity_artifact"]
@@ -435,8 +441,9 @@ fn derive_deployed_apex_vk_identity_and_check_fixture() {
 /// content. It is here because it answers the design question with an observation instead of an
 /// assumption, and because it will fail loudly if the fold is ever made shape-invariant.
 #[test]
-#[ignore = "SLOW (two real folds, ~30s): MEASURES whether the root VK spine varies with chain \
-            length — the fact that decides whether the settlement path may BAKE the spine"]
+#[ignore = "FOUR real folds (2,3,4,5 turns), MEASURED 106s: MEASURES whether the root VK spine \
+            varies with chain length — the fact that decides whether the settlement path may \
+            BAKE the spine, and the refutation of the depth-invariance claim"]
 fn root_vk_spine_varies_with_chain_length() {
     use dregg_circuit_prove::apex_shrink_gnark_export::{
         APEX_CLAIM_LANES, VK_SPINE_LANES, apex_root_vk_spine, derive_apex_vk_identity,
@@ -490,7 +497,7 @@ fn root_vk_spine_varies_with_chain_length() {
 /// is a nightly that edits the repository. Run it by hand, as step 3 of the
 /// apex-VK flag day (`apex_shrink_gnark_export::DREGG_APEX_RECURSION_VK`).
 #[test]
-#[ignore = "SLOW (one real 2-turn fold, ~4 min) and it WRITES \
+#[ignore = "one real 2-turn fold, MEASURED 16s, and it WRITES \
             chain/gnark/fixtures/apex_vk_identity.json — run by hand during an apex-VK flag day"]
 fn emit_deployed_apex_vk_identity_artifact() {
     use dregg_circuit_prove::apex_shrink_gnark_export::check_apex_vk_identity_pin;
@@ -549,7 +556,7 @@ fn apex_vk_identity_pin_rejects_mismatched_fingerprint() {
 /// exporter test above, which mints the fixture through the same
 /// `shrink_apex_to_outer_exposed_pinned_to(honest)` path.
 #[test]
-#[ignore = "SLOW (one real 2-turn fold, ~4 min): run with --ignored — the apex-VK-pin REJECT canary"]
+#[ignore = "one real 2-turn fold, MEASURED ~15s: run with --ignored — the apex-VK-pin REJECT canary"]
 fn shrink_pinned_to_foreign_apex_vk_rejects() {
     use dregg_circuit_prove::apex_shrink_gnark_export::{
         ApexVkCommit, shrink_apex_to_outer_exposed_pinned_to,
@@ -582,8 +589,10 @@ fn shrink_pinned_to_foreign_apex_vk_rejects() {
 }
 
 #[test]
-#[ignore = "SLOW unless the shrink-proof cache exists (one real 2-turn fold + BN254-native shrink \
-            prove, ~20 min); run with --ignored — emits chain/gnark/fixtures/apex_shrink_fri_real.json"]
+#[ignore = "one real 2-turn fold + BN254-native shrink prove + export. MEASURED 2026-08-08 on a \
+            COLD cache: 49s total (fold 16s, shrink prove 32s, export+selfcheck 0.3s). The \
+            \"~20 min\" this said before was ~25x high and made this re-export look like a \
+            day's work. Run with --ignored — emits chain/gnark/fixtures/apex_shrink_fri_real.json"]
 fn export_real_shrink_fri_fixture_for_gnark() {
     let outer_config = create_outer_config();
     let proof = real_shrink_proof(&outer_config);
