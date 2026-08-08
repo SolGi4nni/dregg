@@ -643,17 +643,20 @@ The `approves(l, ·)` filter is CM Alg. 1:17: membership in `[l]` is automatic b
 set IS `[l]`, so what remains is the equivocation clause, evaluated — as the paper quantifies it —
 over `[l]`, i.e. against `closureLace B l.id`.
 
-⚑ **THE EQUIVOCATION CLAUSE HERE IS INERT UNTIL THE TWO-TIPS FLOOR IS RESTORED — and the two are
-one property split across two files.** `hasEquivInPast Bl P l.id c` can only fire if creator `c` has
-TWO blocks at one round inside `[l]`. Under a one-tip-per-creator dissemination rule no block ever
-carries an equivocating PAIR into any closure: a receiver holding one half and a leader observing
-the other never put both in the same causal past, so the filter is a no-op however faithfully it is
-written. CM Alg. 1:5 is explicit that a block points at **"at most two tips per miner"**, and its
-whole exclusion story (Alg. 1:17 `approves`, Fig. 1.B's blue block observing both red blocks and
-approving neither) presupposes it. So: restoring the two-tips evidence floor is a PRECONDITION for
-exclusion-by-causal-past to do anything at all, and it lives in `blocklace/`
-(`finality.rs::CreatorTips`), not here. A reader who checks only this file will conclude the
-exclusion is live. It is not, yet. -/
+⚑ **THIS CLAUSE DOES NOT STAND ALONE — it is one half of a property split across two files, and the
+other half is `blocklace/src/finality.rs`.** `hasEquivInPast Bl P l.id c` can only fire if creator
+`c` has TWO blocks at one round inside `[l]`. Under a one-tip-per-creator dissemination rule that is
+unreachable: a receiver holding one fork half and a leader observing the other never put both in the
+same causal past, so the filter would be a no-op however faithfully written. CM Alg. 1:5 is explicit
+that a block points at **"at most two tips per miner"**, and its whole exclusion story (Alg. 1:17
+`approves`, Fig. 1.B's blue block observing both red blocks and approving neither) presupposes it.
+
+The floor EXISTS as of `89238335a`: `finality.rs::CreatorTips::Pair` pins a detected equivocating
+pair so the next locally-authored block points at BOTH halves, welding the evidence into our own
+chain and thence into later anchors' closures. So this clause is live rather than vestigial — but
+only because of that, and a change that relaxes tip-pinning silently disarms an exclusion rule
+written in a different language in a different directory. Neither file is sufficient on its own;
+this note exists so a reader of either one learns that. -/
 def anchorSegment (B : Lace) (participants : List AuthorId)
     (prevCovered : List BlockId) (l : Block) : List BlockId :=
   let Bl := closureLace B l.id
