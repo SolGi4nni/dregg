@@ -437,11 +437,25 @@ mod tests {
         // Round 3.
         let preds_r3 = vec![r2_1_id, r2_2_id, r2_3_id];
         let r3_1 = make_block(1, 2, preds_r3.clone(), b"m1-r3");
-        lace.insert(r3_1).unwrap();
+        let r3_1_id = lace.insert(r3_1).unwrap();
         let r3_2 = make_block(2, 2, preds_r3.clone(), b"m2-r3");
-        lace.insert(r3_2).unwrap();
+        let r3_2_id = lace.insert(r3_2).unwrap();
         let r3_3 = make_block(3, 2, preds_r3.clone(), b"m3-r3");
-        lace.insert(r3_3).unwrap();
+        let r3_3_id = lace.insert(r3_3).unwrap();
+
+        // Rounds 4-6. Under CM Def. 6 (`ordering::tau`'s anchor-chain rule) an anchor orders its
+        // OWN closure, so the members' rounds 1-3 are ordered by wave 1's anchor at round 4; a
+        // three-round lace would finalize a single block and the assertions below would be free.
+        let mut prev = vec![r3_1_id, r3_2_id, r3_3_id];
+        for round in 4..=6u64 {
+            let mut this = Vec::new();
+            for creator in 1u8..=3u8 {
+                let payload = vec![b'm', creator + b'0', b'-', b'r', round as u8 + b'0'];
+                let block = make_block(creator, round - 1, prev.clone(), &payload);
+                this.push(lace.insert(block).unwrap());
+            }
+            prev = this;
+        }
 
         // Run tau_unified.
         let result = crate::ordering::tau_unified(&lace, &group, &config);
@@ -462,7 +476,11 @@ mod tests {
         }
 
         // Should still finalize member blocks.
-        assert_eq!(result.len(), 9, "should finalize all 9 member blocks");
+        assert_eq!(
+            result.len(),
+            10,
+            "should finalize all 9 member blocks of rounds 1-3, plus wave 1's anchor"
+        );
     }
 
     // ─── Test 5: Cross-group proof delivery via DAG ─────────────────────────

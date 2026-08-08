@@ -19,7 +19,7 @@
 //! # The closure (this module)
 //!
 //! The corrected theorem (`tau_finalized_prefix_monotone`) shows prefix stability
-//! is a CONDITIONAL property (`FinalizedRegionStable`) the node cannot discharge
+//! was a CONDITIONAL property the node could not discharge
 //! locally. So the cursor must not depend on it: this module tracks executed
 //! blocks **by identity** (`BlockId` = blake3 of signed content; one id per
 //! `(creator, seq)` by the verified insert's equivocation exclusion) and each
@@ -429,7 +429,7 @@ mod tests {
     ///
     /// This is the boundary `TauPrefixMonotone.lean` names. Its
     /// `tau_executed_prefix_fixed` — "the executed region is bit-identical" —
-    /// holds under `FinalizedRegionStable`, and the counterexample below IS a
+    /// holds under `ClosedExtension` + `ChainExtends`, and the trace below WAS a
     /// witness that the hypothesis fails. The identity cursor's answer to that
     /// failure preserves LIVENESS (exactly-once) and abandons the ORDER
     /// AGREEMENT the theorem was supplying. The node checks `stableCheck`

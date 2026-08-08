@@ -6,9 +6,27 @@
 //! by a supermajority chain at the wave's end, it becomes a final leader and
 //! anchors a segment of the total order.
 //!
-//! The `tau` function walks finalized leaders sequentially, collecting each
-//! leader's "new" causal past (blocks not yet ordered by a prior leader) and
-//! deterministically sorting them via `xsort`.
+//! The `tau` function (CM Def. 6 / Alg. 2:32,35,37,41–46) takes ONE head — the
+//! DEEPEST final leader (`last_final_leader()`, Alg. 2:44–46) — and recurses
+//! BACKWARD through `previous_ratified_leader` (Alg. 2:41–43), producing an
+//! anchor chain `[b₁, …, b_k = head]`. Folding that chain left to right, each
+//! anchor `l` contributes `xsort(l, [l] \ [prev])`: the blocks of the anchor's
+//! OWN inclusive causal past `[l]` that the previous anchor's closure did not
+//! already cover. **Finality is consulted exactly once — choosing the head — and
+//! nowhere in the recursion** (CM Def. 6: "when τ′ is called with a leader b, it
+//! makes a recursive call with a leader ratified by b, which is not necessarily
+//! super-ratified").
+//!
+//! That single structural fact is what makes the history append-only. The
+//! previous rule folded over `find_all_final_leaders` and gave each anchor a
+//! *coverage* = the union of the causal pasts of every wave-END block **in the
+//! live lace** that ratified it — a strict superset of `[anchor]` that GREW WITH
+//! ARRIVALS, so a late honest wave-end ratifier for an already-final wave spliced
+//! blocks MID-PREFIX. A closure is fixed forever by the anchor's own signed hash
+//! pointers, so the new segments cannot move. The price is CM's real latency: a
+//! block at round `r` is ordered by the first final leader that OBSERVES it,
+//! which is at a strictly greater round — never by a ratifier at its own wave's
+//! end. On a 3-round / one-wave lace `tau` therefore emits exactly the anchor.
 //!
 //! # Key Definitions
 //!
@@ -521,6 +539,163 @@ fn find_all_final_leaders(
     final_leaders
 }
 
+// ─── The Anchor Chain — CM Alg. 2 lines 32, 35, 41–46 ────────────────────────
+//
+// CM's τ does NOT fold over "every final leader in the live lace". It takes ONE head — the deepest
+// final leader (`last_final_leader()`, Alg. 2:44–46) — and recurses backward through
+// `previous_ratified_leader` (Alg. 2:41–43), a walk quantified entirely over the ANCHOR'S OWN
+// CLOSURE `[b1]`:
+//
+//     41: procedure previous_ratified_leader(b1):
+//     42:    return arg_{b∈R} max depth(b)
+//     43:    where R = {b ∈ [b1] \ {b1} : b.creator = leader(depth(b)) ∧ ratifies([b1], b)}
+//
+// ⚑ CLOSURE-LOCALITY IN RUST. The Lean model evaluates depths, `approves`/`ratifies` and the
+// equivocation guard against `closureLace B l.id` — the sub-lace induced by the anchor's inclusive
+// causal past. Here the equivalent is: every read is restricted to that past, which is what these
+// functions do (the candidate set is `causal_past_inclusive(b1)`, and `ratifies` with `b1` as the
+// OBSERVER already ranges over exactly `[b1]`). Two facts make a second, closure-local round map
+// unnecessary:
+//   * `compute_rounds` over the closure gives the SAME depths as over the whole lace whenever the
+//     lace is predecessor-closed, which the admission path guarantees
+//     (`Blocklace::insert` rejects with `InsertError::MissingPredecessors`); and
+//   * `EquivocationIndex` is queried as "≥2 members of a conflicting-block group lie in `past`",
+//     and `past ⊆ closure`, so restricting the index to the closure cannot change the answer.
+//
+// VERIFIED MODEL: `BlocklaceFinality.isLeaderBlock` / `previousRatifiedLeader` /
+// `ratifiedLeaderChain`.
+
+/// **`is_leader_block`** — CM Def. 23 / Alg. 2:43,46 `b.creator = leader(depth(b))`: `b` sits at a
+/// wave-START round AND its creator is that wave's round-robin leader.
+///
+/// A block with no round assignment (a non-participant under `compute_rounds_filtered`) is not a
+/// leader block. Mirrors `BlocklaceFinality.isLeaderBlock`.
+fn is_leader_block(
+    blocklace: &Blocklace,
+    rounds: &HashMap<BlockId, u64>,
+    participants: &[[u8; 32]],
+    config: &OrderingConfig,
+    block_id: &BlockId,
+) -> bool {
+    let Some(block) = blocklace.get(block_id) else {
+        return false;
+    };
+    let Some(&round) = rounds.get(block_id) else {
+        return false;
+    };
+    let wave = round_to_wave(round, config.wavelength);
+    round == wave_first_round(wave, config.wavelength)
+        && wave_leader(wave, participants) == block.creator
+}
+
+/// **`previous_ratified_leader`** — CM Alg. 2:41–43. The DEEPEST leader block, other than `b1`
+/// itself, that lies in `b1`'s closure `[b1]` AND is ratified by `b1`.
+///
+/// **Finality is not consulted**, exactly as in the paper: the recursion walks *ratified* leaders,
+/// which need not be super-ratified. Only the head (`find_all_final_leaders().last()`) is final.
+///
+/// The argmax tie-break: two leader blocks at the same depth are by the same miner (same wave
+/// slot), mutually non-observing, hence an equivocating pair — CM Prop. 9's `=` case, which its
+/// proof discharges from "a supermajority of correct miners" (at most one of an equivocating pair
+/// can hold supermajority approval, Lem. 31). We break by `id` so the function is total and
+/// deterministic rather than leaving a `choice`; under the fault bound the tie cannot arise among
+/// *ratified* candidates. The comparison is the lexicographic max of `(depth, id)` — an
+/// order-independent fold, so iterating the closure as a `HashSet` stays deterministic.
+///
+/// ⚠ The tie-break direction is transcribed from `BlocklaceFinality.previousRatifiedLeader`, whose
+/// fold `if dc < db || (dc == db && c.id < b.id) then b else c` keeps the LARGER id at equal depth.
+///
+/// # Panics
+///
+/// Panics if `participants` is empty (via [`wave_leader`]); both callers return early on that.
+#[allow(clippy::too_many_arguments)]
+fn previous_ratified_leader(
+    cache: &PastCache,
+    blocklace: &Blocklace,
+    rounds: &HashMap<BlockId, u64>,
+    equiv: &EquivocationIndex,
+    participants: &[[u8; 32]],
+    config: &OrderingConfig,
+    b1: &BlockId,
+) -> Option<BlockId> {
+    // `[b1]` — the anchor's inclusive causal past IS the closure the paper quantifies over.
+    let closure = causal_past_inclusive(cache, blocklace, b1);
+
+    let mut best: Option<(u64, BlockId)> = None;
+    for &candidate in closure.iter() {
+        // `R = {b ∈ [b1] \ {b1} : …}`.
+        if candidate == *b1 {
+            continue;
+        }
+        if !is_leader_block(blocklace, rounds, participants, config, &candidate) {
+            continue;
+        }
+        let Some(block) = blocklace.get(&candidate) else {
+            continue;
+        };
+        // `ratifies([b1], b)` — `b1` is the observer, so this ranges over exactly `[b1]`.
+        if !ratifies(
+            cache,
+            blocklace,
+            equiv,
+            b1,
+            &candidate,
+            &block.creator,
+            participants,
+        ) {
+            continue;
+        }
+        let depth = rounds.get(&candidate).copied().unwrap_or(0);
+        best = match best {
+            None => Some((depth, candidate)),
+            Some(cur) if cur < (depth, candidate) => Some((depth, candidate)),
+            keep => keep,
+        };
+    }
+
+    best.map(|(_, id)| id)
+}
+
+/// **`ratified_leader_chain`** — CM Alg. 2:33–36 walked backward from `head`, materialised
+/// OLDEST-FIRST so the ordering fold reads left to right: `[b₁, …, b_k = head]`.
+///
+/// A pure function of `[head]`. The fuel bound is `|[head]|`: each step strictly shrinks the
+/// closure (the predecessor lies in `[b] \ {b}`, and the lace is acyclic), so every chain element
+/// is a distinct member of `[head]` — and being closure-local, that bound does not move when the
+/// lace grows. Mirrors `BlocklaceFinality.ratifiedLeaderChain`.
+fn ratified_leader_chain(
+    cache: &PastCache,
+    blocklace: &Blocklace,
+    rounds: &HashMap<BlockId, u64>,
+    equiv: &EquivocationIndex,
+    participants: &[[u8; 32]],
+    config: &OrderingConfig,
+    head: BlockId,
+) -> Vec<BlockId> {
+    let fuel = causal_past_inclusive(cache, blocklace, &head).len();
+    let mut chain = vec![head];
+    let mut current = head;
+    for _ in 0..fuel {
+        match previous_ratified_leader(
+            cache,
+            blocklace,
+            rounds,
+            equiv,
+            participants,
+            config,
+            &current,
+        ) {
+            None => break,
+            Some(prev) => {
+                chain.push(prev);
+                current = prev;
+            }
+        }
+    }
+    chain.reverse();
+    chain
+}
+
 // ─── xsort: Deterministic Topological Sort ───────────────────────────────────
 
 /// Deterministic topological sort of a subset of blocks.
@@ -588,33 +763,111 @@ fn xsort(cache: &PastCache, blocklace: &Blocklace, blocks: &HashSet<BlockId>) ->
 
 // ─── The Tau Function ────────────────────────────────────────────────────────
 
-/// Extract the total order from the blocklace (the tau function).
+/// Extract the total order from the blocklace (the tau function, CM Def. 6).
 ///
-/// Returns block IDs in their finalized total order. For each finalized leader,
-/// the ordered segment is drawn from the UNION of the causal pasts of all
-/// wave-end blocks BY ENROLLED PARTICIPANTS that ratify that leader (which is broader than the
-/// leader's own causal past), minus what earlier leaders already covered, excluding
-/// blocks from creators that equivocated (as visible from the leader), and — since the
-/// enrollment repair — excluding blocks from creators that are not in `participants`.
+/// Returns block IDs in their finalized total order. The rule takes ONE head — the DEEPEST final
+/// leader (Alg. 2:44–46) — walks backward to the anchor chain `[b₁, …, b_k = head]` through
+/// [`previous_ratified_leader`] (Alg. 2:41–43), and folds it left to right. **The per-anchor input
+/// is the anchor's OWN inclusive causal past `[l]`** (Alg. 2:37, `xsort(l, [l] \ [b₂])`), minus the
+/// previous anchor's closure, minus blocks whose creator equivocated as visible from `l` (CM Alg.
+/// 1:17 `approves`), minus blocks whose creator is not in `participants` (the enrollment repair).
 ///
-/// A leader anchors only when a supermajority of DISTINCT ENROLLED participants have wave-end
-/// blocks ratifying it ([`ratifies_enrolled`], HORIZONLOG B6) — a non-participant's block counts
-/// toward neither the threshold nor the coverage. And it cannot move the WAVE CLOCK either:
-/// [`compute_rounds`] maxes only over predecessors created by `participants`, so a non-participant
-/// chain adds no depth and cannot change which round a block sits at.
+/// It is NOT a union of ratifier pasts. That is the whole point: a closure is fixed forever by the
+/// anchor's own signed hash pointers, so a late-arriving wave-end ratifier can no longer splice
+/// blocks into the middle of an already-emitted prefix.
+///
+/// A leader becomes the HEAD only when a supermajority of DISTINCT ENROLLED participants have
+/// wave-end blocks ratifying it ([`ratifies_enrolled`], HORIZONLOG B6). Finality is consulted
+/// there and NOWHERE ELSE — the chain walk accepts merely-ratified leaders, per CM Def. 6. A
+/// non-participant cannot move the WAVE CLOCK either: [`compute_rounds`] maxes only over
+/// predecessors created by `participants`.
 ///
 /// Uses default configuration (wavelength = 3).
 ///
 /// VERIFIED MODEL: this finalization rule is modeled faithfully and executably in Lean at
 /// `metatheory/Dregg2/Distributed/BlocklaceFinality.lean` (`tauOrder`, built from `computeRounds`
-/// / `findAllFinalLeaders`), which proves single-leader-per-wave safety and wires the computed
-/// order into the verified executor. The Rust↔Lean agreement is enforced by the differential tests
+/// / `findAllFinalLeaders` / `lastFinalLeader` / `ratifiedLeaderChain` / `anchorSegment`), which
+/// proves single-leader-per-wave safety and wires the computed order into the verified executor.
+/// The Rust↔Lean agreement is enforced by the differential tests
 /// `tests::test_tau_differential_against_lean_model` / `test_tau_differential_equivocator_excluded`.
 pub fn tau(blocklace: &Blocklace, participants: &[[u8; 32]]) -> Vec<BlockId> {
     tau_with_config(blocklace, participants, &OrderingConfig::default())
 }
 
+/// The ordering fold of CM Def. 6, written left to right over the anchor chain:
+///
+/// ```text
+/// τ′(b) := xsort(b, [b])                     if [b] has no leader ratified by b, else
+///          τ′(b′) · xsort(b, [b] \ [b′])     if b′ is the last leader ratified by b in [b]
+/// ```
+///
+/// `prev` carries `[b′]`, the PREVIOUS anchor's inclusive causal past (empty for the first anchor)
+/// — never a ratifier union. The per-block filter is CM Alg. 1:17's `approves(l, ·)`: membership in
+/// `[l]` is automatic because the candidate set IS `[l]`, so what remains is the equivocation
+/// clause, evaluated against `[l]`.
+///
+/// ⚑ THE ENROLLMENT FILTER SITS HERE, INSIDE THE SEGMENT, NOT ON THE FINISHED ORDER — and that is
+/// where this mirror legitimately differs in *shape* from the Lean. In Lean the two placements are
+/// the SAME VALUE (`tauOrder`'s docstring proves it: the fold's carried closure never reads the
+/// segment, and `List.filter` distributes over the `++`-fold). That argument needs the linearizer
+/// to be a KEY sort, insensitive to which other elements are present — Lean's `xsortBy` sorts by
+/// `(round, id)`, so it is. **Rust's [`xsort`] is not**: it is a Kahn sweep over the segment's own
+/// causal subgraph with a min-block-id ready heap, so an extra element can change WHEN a block
+/// becomes ready and therefore the relative order of the blocks around it. Leaving a
+/// non-participant's block in the segment would let it reorder honest blocks even with the wave
+/// clock filtered. Filtering before `xsort` makes the segment (and its `local_predecessors`)
+/// identical on two nodes with identical enrolled sub-laces.
+///
+/// ⚠ NAMED RESIDUAL, NOT closed: `xsort` (Kahn-min-id) and `xsortBy` (`(round, id)`) are still
+/// different linearizers — OPEN-CM-XSORT, named in the Lean header — and they coincide only on
+/// traces where every block acks all of the previous layer, which is what the differential tests
+/// use. That is a separate defect and belongs in its own pass.
+///
+/// VERIFIED MODEL: `BlocklaceFinality.anchorSegment` / `tauStep` / `tauOrder`.
+fn order_over_anchor_chain(
+    cache: &PastCache,
+    blocklace: &Blocklace,
+    equiv: &EquivocationIndex,
+    participant_set: &HashSet<[u8; 32]>,
+    chain: &[BlockId],
+) -> Vec<BlockId> {
+    let mut ordered = Vec::new();
+    // `[b₂]` of CM Alg. 2:37 — empty before the first anchor.
+    let mut prev: Rc<HashSet<BlockId>> = Rc::new(HashSet::new());
+
+    for anchor in chain {
+        let anchor_past = causal_past_inclusive(cache, blocklace, anchor);
+        let segment: HashSet<BlockId> = anchor_past
+            .iter()
+            .copied()
+            .filter(|bid| !prev.contains(bid))
+            .filter(|bid| match blocklace.get(bid) {
+                Some(block) => {
+                    !equiv.equivocates_in_past(&block.creator, &anchor_past)
+                        && participant_set.contains(&block.creator)
+                }
+                None => false,
+            })
+            .collect();
+
+        ordered.extend(xsort(cache, blocklace, &segment));
+        prev = anchor_past;
+    }
+
+    ordered
+}
+
 /// Like `tau`, but with explicit configuration.
+///
+/// CM Def. 6 / Alg. 2:32,35,37,41–46, in three steps: pick the head (`find_all_final_leaders`'
+/// LAST entry — the wave loop runs in increasing wave order, so the last is the deepest — Alg.
+/// 2:44–46), walk back to the anchor chain, fold the chain emitting each anchor's own closure
+/// minus the previous anchor's. See [`tau`] and [`order_over_anchor_chain`].
+///
+/// ⚑ THIS IS THE DIFFERENTIAL SIBLING, NOT THE RULE. The authoritative order is the Lean
+/// `BlocklaceFinality.tauOrder` via `@[export] dregg_tau_order`; this mirrors it so
+/// `poll_finalized_blocks`' per-poll `coord(&lean_order) != coord(&rust_order)` check stays silent
+/// on an attacked lace instead of alarming on a divergence that is the fix working.
 pub fn tau_with_config(
     blocklace: &Blocklace,
     participants: &[[u8; 32]],
@@ -638,120 +891,23 @@ pub fn tau_with_config(
         config,
     );
 
-    let mut ordered = Vec::new();
-    let mut prev_covered: HashSet<BlockId> = HashSet::new();
+    // `last_final_leader()` (Alg. 2:44–46): the DEEPEST final leader, and the ONLY place finality
+    // is consulted. No final leader ⇒ nothing is ordered.
+    let Some(&head) = final_leaders.last() else {
+        return vec![];
+    };
 
-    for leader_id in &final_leaders {
-        // The leader's "coverage" is the union of causal pasts of all blocks
-        // at the wave-end round that ratify this leader. This captures all blocks
-        // that are ordered by this leader's finalization.
-        let leader_round = rounds.get(leader_id).copied().unwrap_or(1);
-        let leader_wave = round_to_wave(leader_round, config.wavelength);
-        let wave_end = wave_last_round(leader_wave, config.wavelength);
-        let leader_creator = blocklace
-            .get(leader_id)
-            .map(|b| b.creator)
-            .unwrap_or([0u8; 32]);
+    let chain = ratified_leader_chain(
+        &cache,
+        blocklace,
+        &rounds,
+        &equiv,
+        participants,
+        config,
+        head,
+    );
 
-        // Collect the union of causal pasts of all ENROLLED wave-end blocks that ratify. The
-        // enrollment half is the B6 repair (`ratifies_enrolled`): an unenrolled ack must not decide
-        // WHERE an honest block lands in the total order, because non-participants' blocks are
-        // exactly the ones honest nodes are not guaranteed to have all seen — letting them shape
-        // coverage breaks the reduction `tauOrder_deterministic` rests on ("agreement reduces to
-        // seeing the same lace"). Mirrors `BlocklaceFinality.leaderCoverage`.
-        let mut coverage: HashSet<BlockId> = HashSet::new();
-        for (id, r) in &rounds {
-            let Some(observer) = blocklace.get(id) else {
-                continue;
-            };
-            if *r == wave_end
-                && ratifies_enrolled(
-                    &cache,
-                    blocklace,
-                    &equiv,
-                    id,
-                    &observer.creator,
-                    leader_id,
-                    &leader_creator,
-                    participants,
-                )
-            {
-                let past = causal_past_inclusive(&cache, blocklace, id);
-                coverage.extend(past.iter().copied());
-            }
-        }
-
-        // Blocks new to this leader's segment: in coverage but not in
-        // any previous leader's coverage.
-        let leader_past = causal_past_inclusive(&cache, blocklace, leader_id);
-        let new_blocks: HashSet<BlockId> = coverage
-            .difference(&prev_covered)
-            .copied()
-            .filter(|bid| {
-                // Exclude blocks from creators that equivocated (as visible from leader).
-                if let Some(block) = blocklace.get(bid) {
-                    !equiv.equivocates_in_past(&block.creator, &leader_past)
-                        // …and blocks from creators outside the committee (see the enrollment note
-                        // below). Applied HERE, before `xsort`, not to the finished order.
-                        && participant_set.contains(&block.creator)
-                } else {
-                    false
-                }
-            })
-            .collect();
-
-        let sorted = xsort(&cache, blocklace, &new_blocks);
-        ordered.extend(sorted);
-
-        prev_covered = coverage;
-    }
-
-    // ── THE ENROLLMENT FILTER — the differential mirror of the verified rule's `enrolledId` ──────
-    //
-    // `coverage` is the union of the causal pasts of the wave-end blocks that ratify the leader,
-    // and the `new_blocks` filter above subtracts only `prev_covered` and equivocators. So a block
-    // from a creator that is NOT in `participants` is ordered — and served to the executor — the
-    // moment one honest node acks it. Measured on a 4-creator / 3-round lace with 3 enrolled: the
-    // finalized set was 12 coordinates, 100% of the lace, including all three of the unenrolled
-    // creator's blocks. `participants` was consulted for the round-robin leader schedule and the
-    // supermajority count, and NEVER for who may be ordered at all.
-    //
-    // This function's docstring used to carry that as a PRECONDITION ("assumes all blocks belong to
-    // participants"), which `tau_unified` below states explicitly as the difference between the two.
-    // The precondition is not enforceable on the live path: the pinned-ingest roster
-    // (`finality.rs::enroll_pq`) is INSERT-ONLY while the constitution's participant set shrinks on
-    // a membership change, and `finality.rs::from_checkpoint_trusted` — the node's restart path —
-    // re-inserts every persisted block with no signature, roster or closure check. So the rule
-    // enforces it itself, and this is a plain subtraction: on a lace where every creator IS a
-    // participant the filter is the identity (`BlocklaceFinality.tauOrder_enrolled_eq_unfiltered`
-    // proves exactly that, and its `#guard`s witness it on `trace3`/`traceMW4`).
-    //
-    // ⚑ THIS IS THE DIFFERENTIAL SIBLING, NOT THE RULE. The authoritative order is the Lean
-    // `BlocklaceFinality.tauOrder` via `@[export] dregg_tau_order`; the filter LIVES there
-    // (`enrolledId`, proved by `tauOrder_only_enrolled`) and this mirrors it so
-    // `poll_finalized_blocks`' per-poll `coord(&lean_order) != coord(&rust_order)` check stays
-    // silent on an attacked lace instead of alarming on a divergence that is the fix working.
-    //
-    // ⚑ THE FILTER SITS INSIDE `new_blocks`, NOT ON THE FINISHED ORDER — and that is where the two
-    // implementations legitimately differ. In Lean the two placements are the SAME VALUE (the
-    // docstring of `tauOrder` proves it: `prev_covered` is set from `coverage`, never from the
-    // segment, and `List.filter` distributes over the `++`-fold). That argument needs the
-    // linearizer to be a KEY sort, insensitive to which other elements are present — Lean's
-    // `xsortBy` sorts by `(round, id)`, so it is. **Rust's [`xsort`] is not**: it is a Kahn sweep
-    // over the segment's own causal subgraph with a min-block-id ready-heap, so an extra element
-    // can change WHEN a block becomes ready and therefore the relative order of the blocks around
-    // it. Leaving a non-participant's block in the segment would let it reorder honest blocks even
-    // with the wave clock filtered — the same "the order must be a function of the enrolled
-    // sub-lace" property this pass is about, leaking through a second seam. Filtering before
-    // `xsort` makes the segment (and its `local_predecessors`, which restrict the causal past to
-    // the segment) identical on two nodes with identical enrolled sub-laces.
-    //
-    // ⚠ NAMED RESIDUAL, measured here and NOT closed: `xsort` (Kahn-min-id) and `xsortBy`
-    // (`(round, id)`) are still different linearizers — OPEN-CM-XSORT, named in the Lean header —
-    // and they coincide only on traces where every block acks all of the previous layer, which is
-    // what the differential tests use. That is a separate defect from this one and belongs in its
-    // own pass.
-    ordered
+    order_over_anchor_chain(&cache, blocklace, &equiv, &participant_set, &chain)
 }
 
 // ─── Cordiality Check ────────────────────────────────────────────────────────
@@ -1010,7 +1166,9 @@ fn compute_rounds_filtered(
 /// all of the previous layer. That is OPEN-CM-XSORT, named in the Lean header, and it is a
 /// different defect from this one.
 ///
-/// The algorithm is the same as `tau_with_config`, but:
+/// The algorithm is the same as `tau_with_config` — CM Def. 6's head selection, backward anchor
+/// chain and closure-difference fold, sharing [`ratified_leader_chain`] and
+/// [`order_over_anchor_chain`] with it — but:
 /// 1. `compute_rounds_filtered` only counts blocks from `reference_group.participants`
 /// 2. Wave assignment uses filtered rounds
 /// 3. Leader selection from reference group only
@@ -1046,70 +1204,23 @@ pub fn tau_unified(
         config,
     );
 
-    let mut ordered = Vec::new();
-    let mut prev_covered: HashSet<BlockId> = HashSet::new();
+    // `last_final_leader()` (Alg. 2:44–46) — the deepest final leader, and the only consultation of
+    // finality. The chain walk below accepts merely-RATIFIED leaders (CM Def. 6).
+    let Some(&head) = final_leaders.last() else {
+        return vec![];
+    };
 
-    for leader_id in &final_leaders {
-        // Compute coverage the same way as tau_with_config, but using filtered rounds.
-        let leader_round = rounds.get(leader_id).copied().unwrap_or(1);
-        let leader_wave = round_to_wave(leader_round, config.wavelength);
-        let wave_end = wave_last_round(leader_wave, config.wavelength);
-        let leader_creator = blocklace
-            .get(leader_id)
-            .map(|b| b.creator)
-            .unwrap_or([0u8; 32]);
+    let chain = ratified_leader_chain(
+        &cache,
+        blocklace,
+        &rounds,
+        &equiv,
+        participants,
+        config,
+        head,
+    );
 
-        // Collect the union of causal pasts of all wave-end blocks that ratify. `ratifies_enrolled`
-        // rather than `ratifies` so both orderings read the SAME ratifier rule; here it is provably
-        // the identity (`compute_rounds_filtered` assigns no round to a non-participant, so no
-        // non-participant block is ever at `wave_end`), and stating it makes it impossible for a
-        // change to the round filter to silently reopen the B6 hole on this path.
-        let mut coverage: HashSet<BlockId> = HashSet::new();
-        for (id, r) in &rounds {
-            let Some(observer) = blocklace.get(id) else {
-                continue;
-            };
-            if *r == wave_end
-                && ratifies_enrolled(
-                    &cache,
-                    blocklace,
-                    &equiv,
-                    id,
-                    &observer.creator,
-                    leader_id,
-                    &leader_creator,
-                    participants,
-                )
-            {
-                let past = causal_past_inclusive(&cache, blocklace, id);
-                coverage.extend(past.iter().copied());
-            }
-        }
-
-        // Blocks new to this leader's segment: in coverage but not previously covered.
-        // FILTER: only include blocks from reference group participants.
-        let leader_past = causal_past_inclusive(&cache, blocklace, leader_id);
-        let new_blocks: HashSet<BlockId> = coverage
-            .difference(&prev_covered)
-            .copied()
-            .filter(|bid| {
-                if let Some(block) = blocklace.get(bid) {
-                    // Only include blocks from participants (not external strands).
-                    participant_set.contains(&block.creator)
-                        && !equiv.equivocates_in_past(&block.creator, &leader_past)
-                } else {
-                    false
-                }
-            })
-            .collect();
-
-        let sorted = xsort(&cache, blocklace, &new_blocks);
-        ordered.extend(sorted);
-
-        prev_covered = coverage;
-    }
-
-    ordered
+    order_over_anchor_chain(&cache, blocklace, &equiv, &participant_set, &chain)
 }
 
 // ─── Constitution-Aware Ordering ─────────────────────────────────────────────
@@ -1423,14 +1534,44 @@ mod tests {
             "the wave-end round is the committee's own three blocks again"
         );
 
-        // ── BOTH POLES ON THE ORDER ITSELF: the committee still finalizes all nine, and it
-        //    finalizes IDENTICALLY to a node that never received the relay at all.
+        // ── RE-ARMED AT WAVE 1. Under CM Def. 6 an anchor orders its OWN closure, so a one-wave
+        //    (3-round) lace finalizes exactly the anchor and nothing else — the liveness pole has
+        //    to be armed at the depth where the committee's rounds 1-3 are actually ORDERED, which
+        //    is when wave 1's anchor appears at round 4 and observes them. Rounds 4-6, same shape.
+        let mut prev_round = l3.clone();
+        for round in 4..=6u64 {
+            let this_round: Vec<BlockId> = participants
+                .iter()
+                .enumerate()
+                .map(|(i, &p)| {
+                    push(
+                        &mut bl,
+                        p,
+                        round - 1,
+                        prev_round.clone(),
+                        0x40 + (round as u8) * 8 + i as u8,
+                    )
+                })
+                .collect();
+            prev_round = this_round;
+        }
+
+        // ── BOTH POLES ON THE ORDER ITSELF: the committee still finalizes everything it produced
+        //    through round 3, and it finalizes IDENTICALLY to a node that never received the relay.
         let order = tau(&bl, &participants);
         assert_eq!(
             order.len(),
-            9,
-            "[LIVENESS] the honest committee still finalizes everything"
+            10,
+            "[LIVENESS] the honest committee still finalizes everything: 3 participants x rounds \
+             1-3 ordered by wave 1's anchor, plus wave 0's anchor in its own segment"
         );
+        let ordered: HashSet<BlockId> = order.iter().copied().collect();
+        for id in l1.iter().chain(l2.iter()).chain(l3.iter()) {
+            assert!(
+                ordered.contains(id),
+                "every enrolled block of rounds 1-3 must be finalized once wave 1 anchors"
+            );
+        }
         assert!(
             order.iter().all(|id| {
                 let c = bl.get(id).unwrap().creator;
@@ -1452,46 +1593,81 @@ mod tests {
         assert_eq!(hon_max, hon_pre_max);
     }
 
+    /// ONE wave orders exactly its anchor; the wave's other blocks are ordered by the NEXT anchor
+    /// that observes them.
+    ///
+    /// RE-ARMED for CM Def. 6. This used to assert "3 nodes x 3 rounds = 9 blocks finalized at one
+    /// wave". That premise is gone with the τ re-authoring: an anchor's segment is its OWN closure
+    /// `[l]`, and wave 0's anchor is a genesis block whose closure is just itself, so a one-wave
+    /// lace orders ONE block. The nine only become ordered when wave 1's anchor observes them —
+    /// that is CM's real latency, not a regression. Both depths are asserted here so the change is
+    /// visible at the point where it happens.
     #[test]
     fn test_three_node_one_wave_finalized() {
         let participants = vec![make_key(1), make_key(2), make_key(3)];
-        let (bl, _) = build_full_blocklace(&participants, 3);
+        let (bl, by_round) = build_full_blocklace(&participants, 3);
 
         let result = tau(&bl, &participants);
 
-        // All 9 blocks should be finalized (3 nodes * 3 rounds, no equivocation).
+        // ONE wave: exactly the wave-0 anchor (creator 1's genesis, the round-robin leader).
         assert_eq!(
             result.len(),
-            9,
-            "all 9 blocks should be ordered, got {}",
+            1,
+            "one wave orders exactly its anchor's closure, got {}",
             result.len()
         );
+        assert_eq!(
+            bl.get(&result[0]).unwrap().creator,
+            participants[0],
+            "the ordered block is wave 0's round-robin leader"
+        );
+        assert!(by_round[0].contains(&result[0]));
 
         // Determinism check.
         let result2 = tau(&bl, &participants);
         assert_eq!(result, result2);
+
+        // TWO waves: wave 1's anchor observes rounds 1-3, so all nine of them land, plus the
+        // wave-1 anchor itself = 10.
+        let (bl6, _) = build_full_blocklace(&participants, 6);
+        let result6 = tau(&bl6, &participants);
+        assert_eq!(
+            result6.len(),
+            10,
+            "two waves: 3 nodes x 3 rounds ordered by wave 1's anchor, plus wave 0's anchor, got {}",
+            result6.len()
+        );
     }
 
     /// DIFFERENTIAL: the Rust `ordering::tau` finalization AGREES with the verified Lean model
     /// (`metatheory/Dregg2/Distributed/BlocklaceFinality.lean::tauGolden`) on this exact trace.
     ///
     /// The Lean module is a faithful, executable model of THIS function (`compute_rounds` /
-    /// `find_all_final_leaders` / `tau`). Its `#guard`-checked golden vector for the 3-node /
-    /// 3-round fully-connected lace is the finalized order projected to `(creator, seq)`:
+    /// `find_all_final_leaders` / `last_final_leader` / `ratified_leader_chain` / `anchorSegment`).
     ///
-    ///   tauGolden = [(1,0),(2,0),(3,0),(1,1),(2,1),(3,1),(1,2),(2,2),(3,2)]
+    /// **DEEPENED TO SIX ROUNDS for CM Def. 6.** The fixture used to be the 3-node / 3-round
+    /// fully-connected lace, whose Lean golden was all nine blocks. Under the re-authored τ that
+    /// lace's golden is `[10]` — ONE block, wave 0's genesis anchor, whose closure is itself — so
+    /// the 3-round differential would be trivial. Rounds 4-6 make wave 1 anchor (creator 2's block
+    /// at round 4, Lean id `23`), and the Lean golden becomes the ten-block vector
     ///
-    /// i.e. round-major (by `seq`), and within a round the three concurrent blocks (creators
-    /// 1,2,3). The absolute `BlockId` differs (blake3 hash here vs. an abstract `Nat` in Lean),
-    /// and the *within-round* tie-break is the named OPEN-CM-XSORT residual (Rust breaks by
-    /// block-id, Lean by `(round,id)`), so the load-bearing differential is at the ROUND-COHORT
-    /// level: the sequence of round cohorts, and each cohort's `{creator}` set, must match the
-    /// Lean golden vector exactly. This is the consensus pillar's model⟺node connection: the
-    /// running `tau` reproduces the order the verified model proves safe.
+    ///   tauOrder = [10, 20, 30, 11, 21, 31, 12, 22, 32, 23]
+    ///
+    /// i.e. wave 0's anchor alone, then wave 1's segment: everything in `[23]` that `[10]` did not
+    /// cover, round-major. Projected to `(creator, seq)`:
+    ///
+    ///   tauGolden = [(1,0),(2,0),(3,0),(1,1),(2,1),(3,1),(1,2),(2,2),(3,2),(2,3)]
+    ///
+    /// The absolute `BlockId` differs (blake3 hash here vs. an abstract `Nat` in Lean), and the
+    /// *within-cohort* tie-break is the named OPEN-CM-XSORT residual (Rust breaks by block-id, Lean
+    /// by `(round,id)`), so the load-bearing differential is at the SEQ-COHORT level: the sequence
+    /// of seq cohorts, and each cohort's `{creator}` set, must match the Lean golden exactly. Note
+    /// the cohorts are no longer uniform — `[1] [3] [3] [3]` — which is itself the shape of the
+    /// anchor-chain fold and would not survive a return to the coverage rule.
     #[test]
     fn test_tau_differential_against_lean_model() {
         let participants = vec![make_key(1), make_key(2), make_key(3)];
-        let (bl, _) = build_full_blocklace(&participants, 3);
+        let (bl, _) = build_full_blocklace(&participants, 6);
         let result = tau(&bl, &participants);
 
         // Project the finalized order to (creator_byte, seq) — the differential coordinate.
@@ -1500,7 +1676,7 @@ mod tests {
             .filter_map(|id| bl.get(id).map(|b| (b.creator[0], b.sequence)))
             .collect();
 
-        // The Lean golden vector, round-major by seq, creators {1,2,3} per round.
+        // The Lean golden vector for `trace3` grown by a full second wave.
         let lean_golden: Vec<(u8, u64)> = vec![
             (1, 0),
             (2, 0),
@@ -1511,27 +1687,40 @@ mod tests {
             (1, 2),
             (2, 2),
             (3, 2),
+            (2, 3),
         ];
 
-        // ROUND-COHORT agreement: group both into cohorts of 3 (one per round/seq), sort each
-        // cohort by creator (the within-round tie-break is OPEN-CM-XSORT, not load-bearing), and
-        // require the cohort sequence to be identical to the Lean model's.
         assert_eq!(
             projected.len(),
             lean_golden.len(),
-            "same number of finalized blocks as Lean model"
+            "same number of finalized blocks as the Lean model, got {projected:?}"
         );
-        let cohorts = |v: &[(u8, u64)]| -> Vec<Vec<(u8, u64)>> {
-            v.chunks(3)
-                .map(|c| {
-                    let mut c = c.to_vec();
-                    c.sort();
-                    c
-                })
-                .collect()
+
+        // SET agreement first: exactly the Lean model's coordinates, no more, no fewer.
+        let mut sorted_rust = projected.clone();
+        sorted_rust.sort();
+        let mut sorted_lean = lean_golden.clone();
+        sorted_lean.sort();
+        assert_eq!(
+            sorted_rust, sorted_lean,
+            "Rust tau must finalize exactly the Lean model's (creator, seq) coordinates"
+        );
+
+        // SEQ-COHORT agreement: group CONSECUTIVE equal-seq entries (a cohort is emitted
+        // contiguously by both implementations) and compare the cohort sequence.
+        let cohorts = |v: &[(u8, u64)]| -> Vec<(u64, Vec<u8>)> {
+            let mut out: Vec<(u64, Vec<u8>)> = Vec::new();
+            for &(creator, seq) in v {
+                match out.last_mut() {
+                    Some((s, creators)) if *s == seq => creators.push(creator),
+                    _ => out.push((seq, vec![creator])),
+                }
+            }
+            for (_, creators) in &mut out {
+                creators.sort();
+            }
+            out
         };
-        // Each chunk in the Rust result IS a single seq cohort (round-major: tau emits a leader's
-        // new coverage, which for the full lace is exactly the next round's cohort).
         let rust_seqs: Vec<u64> = projected.iter().map(|(_, s)| *s).collect();
         assert!(
             rust_seqs.windows(2).all(|w| w[0] <= w[1]),
@@ -1540,8 +1729,18 @@ mod tests {
         assert_eq!(
             cohorts(&projected),
             cohorts(&lean_golden),
-            "Rust ordering::tau round-cohorts must equal the verified Lean model's tauGolden cohorts \
+            "Rust ordering::tau seq-cohorts must equal the verified Lean model's tauGolden cohorts \
              (consensus model⟺node differential)"
+        );
+        // The anchor-chain fold made visible: wave 0's anchor IS a segment of its own, so it leads
+        // the order regardless of block-id. Under the coverage rule the first segment was the whole
+        // wave-0 coverage in one `xsort`, whose leading element was whichever genesis block
+        // happened to carry the smallest blake3 id.
+        assert_eq!(
+            projected[0],
+            (1, 0),
+            "wave 0's anchor must lead the order — it is a one-block segment, not the min-id \
+             element of a coverage sweep"
         );
     }
 
@@ -1621,7 +1820,10 @@ mod tests {
             "the unenrolled creator must not be enrolled — else this test has no adversary"
         );
         let all_creators = vec![make_key(1), make_key(2), make_key(3), unenrolled];
-        let (bl, blocks_by_round) = build_full_blocklace(&all_creators, 3);
+        // SIX rounds, not three: under CM Def. 6 an anchor orders its own closure, so the enrolled
+        // committee's rounds 1-3 are ordered by wave 1's anchor at round 4. At three rounds the
+        // refusal below would be satisfied by a τ that emits a single block, which proves nothing.
+        let (bl, blocks_by_round) = build_full_blocklace(&all_creators, 6);
 
         // ANTI-VACUITY 1 — the adversary is genuinely in the lace, at every round.
         let unenrolled_in_lace = bl
@@ -1630,7 +1832,7 @@ mod tests {
             .filter(|b| b.creator == unenrolled)
             .count();
         assert_eq!(
-            unenrolled_in_lace, 3,
+            unenrolled_in_lace, 6,
             "the unenrolled creator must have a block at every round — else nothing to refuse"
         );
         // ANTI-VACUITY 2 — honest blocks ACK it, so it is load-bearing in the causal past and
@@ -1667,9 +1869,9 @@ mod tests {
         // rule that finalizes nothing.
         assert_eq!(
             result.len(),
-            9,
-            "all NINE enrolled blocks must still finalize (3 participants x 3 rounds) — a rule \
-             that refuses everyone is not a fix"
+            10,
+            "all NINE enrolled blocks of rounds 1-3 must still finalize, plus wave 1's anchor — a \
+             rule that refuses everyone is not a fix"
         );
         let mut projected: Vec<(u8, u64)> = result
             .iter()
@@ -1690,12 +1892,14 @@ mod tests {
                 (2, 0),
                 (2, 1),
                 (2, 2),
+                (2, 3),
                 (3, 0),
                 (3, 1),
                 (3, 2)
             ],
             "the finalized (creator, seq) set must be exactly the three enrolled participants' \
-             nine blocks — the Lean `tauGolden traceUnenrolled == tauGolden trace3` guard"
+             rounds 1-3 plus wave 1's anchor (creator 2, seq 3) — the Lean \
+             `tauGolden traceUnenrolled == tauGolden trace3` guard"
         );
     }
 
@@ -1707,13 +1911,16 @@ mod tests {
     fn test_tau_enrollment_filter_is_identity_on_enrolled_lace() {
         for n in 3..=5usize {
             let participants: Vec<[u8; 32]> = (1..=n as u8).map(make_key).collect();
-            let (bl, _) = build_full_blocklace(&participants, 3);
+            // SIX rounds: CM Def. 6 orders a wave's blocks at the NEXT anchor that observes them,
+            // so "every block still finalizes" is a claim about rounds 1-3 once wave 1 anchors.
+            let (bl, _) = build_full_blocklace(&participants, 6);
             let result = tau(&bl, &participants);
             assert_eq!(
                 result.len(),
-                n * 3,
-                "on an ENROLLED lace every block still finalizes at n={n} — the enrollment filter \
-                 must be a pure subtraction of NON-participants, never a liveness trade"
+                3 * n + 1,
+                "on an ENROLLED lace every block of rounds 1-3 still finalizes at n={n} (plus \
+                 wave 1's anchor) — the enrollment filter must be a pure subtraction of \
+                 NON-participants, never a liveness trade"
             );
             // and every finalized creator is a participant (trivially, but it pins the direction).
             for id in &result {
@@ -1881,17 +2088,19 @@ mod tests {
 
         // POLE 2 — THE HONEST COMMITTEE STILL FINALIZES. Same lace, validator 3 back at the wave
         // end, nothing else changed: all nine enrolled blocks finalize, in round-major order.
-        let (bl_full, _) = build_lace_by_round(&[
-            vec![make_key(1), make_key(2), make_key(3), unenrolled],
-            vec![make_key(1), make_key(2), make_key(3), unenrolled],
-            vec![make_key(1), make_key(2), make_key(3), unenrolled],
-        ]);
+        // RE-ARMED AT SIX ROUNDS for CM Def. 6 — an anchor orders its own closure, so rounds 1-3
+        // are ordered by wave 1's anchor at round 4. At three rounds this pole would assert only
+        // that the anchor itself survives, which does not distinguish a working committee from a
+        // stalled one.
+        let full_round = vec![make_key(1), make_key(2), make_key(3), unenrolled];
+        let (bl_full, _) = build_lace_by_round(&vec![full_round; 6]);
         let live = tau(&bl_full, &participants);
         assert_eq!(
             live.len(),
-            9,
-            "with the full enrolled committee at the wave end, all NINE enrolled blocks must still \
-             finalize — a ratifier gate that stops everything anchoring is not a fix"
+            10,
+            "with the full enrolled committee at the wave end, all NINE enrolled blocks of rounds \
+             1-3 must still finalize (plus wave 1's anchor) — a ratifier gate that stops \
+             everything anchoring is not a fix"
         );
         for id in &live {
             assert!(
@@ -1965,15 +2174,13 @@ mod tests {
         );
 
         // THE HONEST POLE, same shape: put the committee at the wave end and it anchors.
-        let (bl_ok, _) = build_lace_by_round(&[
-            participants.clone(),
-            participants.clone(),
-            participants.clone(),
-        ]);
+        // Six rounds, because CM Def. 6 orders rounds 1-3 at wave 1's anchor (see the τ docstring).
+        let (bl_ok, _) = build_lace_by_round(&vec![participants.clone(); 6]);
         assert_eq!(
             tau(&bl_ok, &participants).len(),
-            9,
-            "the honest 3-node lace must still finalize all nine blocks"
+            10,
+            "the honest 3-node lace must still finalize all nine of its rounds 1-3 blocks, plus \
+             wave 1's anchor"
         );
     }
 
@@ -2020,18 +2227,16 @@ mod tests {
             enrolled_ratifiers.len()
         );
 
-        // THE HONEST POLE — the full committee at the wave end finalizes all TWELVE enrolled blocks.
-        let (bl_full, _) = build_lace_by_round(&[
-            all_creators.clone(),
-            all_creators.clone(),
-            all_creators.clone(),
-        ]);
+        // THE HONEST POLE — the full committee at the wave end finalizes all TWELVE enrolled
+        // blocks of rounds 1-3, plus wave 1's anchor. Six rounds, because CM Def. 6 orders a
+        // wave's blocks at the next anchor that observes them.
+        let (bl_full, _) = build_lace_by_round(&vec![all_creators.clone(); 6]);
         let live = tau(&bl_full, &participants);
         assert_eq!(
             live.len(),
-            12,
-            "4 enrolled participants x 3 rounds must still finalize with the unenrolled creator \
-             present throughout"
+            13,
+            "4 enrolled participants x rounds 1-3 must still finalize (plus wave 1's anchor) with \
+             the unenrolled creator present throughout"
         );
         for id in &live {
             assert_ne!(
@@ -2097,34 +2302,42 @@ mod tests {
         }
     }
 
+    /// Concurrent blocks INSIDE one segment are linearized by block ID.
+    ///
+    /// RE-ARMED for CM Def. 6, and the cohort moved deliberately. This used to read the tie-break
+    /// off the three GENESIS blocks, which no longer exhibits it: wave 0's anchor is a segment of
+    /// its own, so creator 1's genesis is emitted first regardless of its id and its two concurrent
+    /// siblings land in the NEXT segment. A segment boundary is not a tie-break. The round-2 cohort
+    /// is three concurrent blocks that all sit inside wave 1's single segment, which is where
+    /// `xsort`'s min-block-id ready heap actually decides.
     #[test]
     fn test_concurrent_blocks_deterministic_tiebreaker() {
         let participants = vec![make_key(1), make_key(2), make_key(3)];
-        let (bl, blocks_by_round) = build_full_blocklace(&participants, 3);
+        let (bl, blocks_by_round) = build_full_blocklace(&participants, 6);
 
         let result = tau(&bl, &participants);
         let result2 = tau(&bl, &participants);
         assert_eq!(result, result2, "tau must be deterministic");
 
-        // The three genesis blocks are concurrent. Verify they appear in ID order.
-        let genesis_ids = &blocks_by_round[0];
-        let genesis_positions: Vec<(usize, BlockId)> = genesis_ids
+        // The three round-2 blocks are concurrent AND in one segment. Verify they appear in ID
+        // order, consecutively.
+        let cohort_ids = &blocks_by_round[1];
+        let mut cohort_positions: Vec<(usize, BlockId)> = cohort_ids
             .iter()
             .filter_map(|id| result.iter().position(|x| x == id).map(|pos| (pos, *id)))
             .collect();
 
-        // All genesis blocks should be in the output.
-        assert_eq!(genesis_positions.len(), 3);
+        assert_eq!(
+            cohort_positions.len(),
+            3,
+            "all three round-2 blocks must be ordered"
+        );
+        cohort_positions.sort_by_key(|(pos, _)| *pos);
 
-        // Sort by position to check ordering.
-        let mut sorted_by_pos = genesis_positions.clone();
-        sorted_by_pos.sort_by_key(|(pos, _)| *pos);
-
-        // They should be sorted by ID (since they're concurrent).
-        for window in sorted_by_pos.windows(2) {
+        for window in cohort_positions.windows(2) {
             assert!(
                 window[0].0 < window[1].0,
-                "genesis blocks should maintain consistent order"
+                "concurrent blocks should maintain consistent order"
             );
             assert!(
                 window[0].1 < window[1].1,
@@ -2133,6 +2346,13 @@ mod tests {
         }
     }
 
+    /// Two waves produce a two-anchor chain, and the SECOND anchor's segment is its own closure
+    /// minus the first anchor's — not the union of its ratifiers' pasts.
+    ///
+    /// RE-ARMED for CM Def. 6: this asserted 18 (3 nodes x 6 rounds), which was the coverage rule
+    /// reaching down from the round-6 ratifiers. An anchor now orders only what IT observes, so
+    /// rounds 5-6 wait for wave 2's anchor and the six-round lace finalizes 10. The nine-round
+    /// extension below shows the third anchor picking rounds 4-6 up.
     #[test]
     fn test_multiple_waves() {
         let participants = vec![make_key(1), make_key(2), make_key(3)];
@@ -2141,8 +2361,19 @@ mod tests {
         let config = OrderingConfig { wavelength: 3 };
         let result = tau_with_config(&bl, &participants, &config);
 
-        // All 18 blocks (3 nodes * 6 rounds) should be finalized across 2 waves.
-        assert_eq!(result.len(), 18, "got {} blocks, expected 18", result.len());
+        // Chain [wave-0 anchor, wave-1 anchor]: 1 + (rounds 1-3 minus the wave-0 anchor, plus the
+        // wave-1 anchor) = 1 + 9.
+        assert_eq!(result.len(), 10, "got {} blocks, expected 10", result.len());
+
+        // Three waves: chain [wave-0, wave-1, wave-2], the last segment adding rounds 4-6.
+        let (bl9, _) = build_full_blocklace(&participants, 9);
+        let result9 = tau_with_config(&bl9, &participants, &config);
+        assert_eq!(
+            result9.len(),
+            19,
+            "got {} blocks, expected 19 (1 + 9 + 9)",
+            result9.len()
+        );
     }
 
     #[test]
@@ -2181,22 +2412,34 @@ mod tests {
         );
     }
 
+    /// **PREFIX MONOTONICITY — the property the CM Def. 6 re-authoring exists to buy.**
+    ///
+    /// STRENGTHENED, and re-armed at a depth where it can fail. The old shape grew a 3-round lace
+    /// to 6 and asserted only that the earlier blocks SURVIVED in the same relative order; at three
+    /// rounds the earlier order is a single block, so the `windows(2)` loop had nothing to check.
+    /// It also never asserted the real property. Under the coverage rule the old order was not even
+    /// a PREFIX of the new one — a wave-end ratifier arriving for an already-final wave pulled its
+    /// own past into that wave's segment, splicing blocks into the MIDDLE. An anchor's segment is
+    /// now a function of its own signed hash pointers, so growing the lace can only APPEND.
     #[test]
     fn test_monotonicity() {
         let participants = vec![make_key(1), make_key(2), make_key(3)];
-        let (mut bl, blocks_by_round) = build_full_blocklace(&participants, 3);
+        let (mut bl, blocks_by_round) = build_full_blocklace(&participants, 6);
 
-        let result_after_wave1 = tau(&bl, &participants);
-        assert!(!result_after_wave1.is_empty(), "wave 1 should finalize");
+        let order_at_6 = tau(&bl, &participants);
+        assert_eq!(
+            order_at_6.len(),
+            10,
+            "two waves must finalize the anchor chain's ten blocks — else the prefix below is \
+             trivially preserved"
+        );
 
-        // Extend to 6 rounds (wave 2).
-        let last_round_blocks = blocks_by_round.last().unwrap().clone();
-        let mut prev_round_blocks = last_round_blocks;
-
-        for round in 4..=6u64 {
+        // Extend to 9 rounds (wave 2 anchors).
+        let mut prev_round_blocks = blocks_by_round.last().unwrap().clone();
+        for round in 7..=9u64 {
             let mut current_round_blocks = Vec::new();
             for (i, &participant) in participants.iter().enumerate() {
-                let seq = (round - 1) as u64;
+                let seq = round - 1;
                 let payload = vec![round as u8, i as u8];
                 let block = make_block(participant, seq, prev_round_blocks.clone(), payload);
                 let id = block.id();
@@ -2206,30 +2449,27 @@ mod tests {
             prev_round_blocks = current_round_blocks;
         }
 
-        let result_after_wave2 = tau(&bl, &participants);
+        let order_at_9 = tau(&bl, &participants);
+        assert!(
+            order_at_9.len() > order_at_6.len(),
+            "the grown lace must finalize strictly more — else 'prefix' is vacuous"
+        );
 
-        // Everything from wave 1 must still be present.
-        for &block_id in &result_after_wave1 {
-            assert!(
-                result_after_wave2.contains(&block_id),
-                "previously finalized block must remain"
-            );
-        }
-
-        // Relative order must be preserved.
-        let positions: Vec<usize> = result_after_wave1
-            .iter()
-            .map(|id| result_after_wave2.iter().position(|x| x == id).unwrap())
-            .collect();
-        for window in positions.windows(2) {
-            assert!(window[0] < window[1], "relative order must be preserved");
-        }
+        // THE PROPERTY: not "still present in the same relative order", but a literal PREFIX.
+        assert_eq!(
+            &order_at_9[..order_at_6.len()],
+            &order_at_6[..],
+            "the finalized order must GROW BY APPENDING: the shorter order is a prefix of the \
+             longer one, with nothing spliced into the middle"
+        );
     }
 
     #[test]
     fn test_seven_node_same_order_all_nodes() {
-        let participants: Vec<[u8; 32]> = (1..=7u8).map(|i| make_key(i)).collect();
-        let (bl, _) = build_full_blocklace(&participants, 3);
+        let participants: Vec<[u8; 32]> = (1..=7u8).map(make_key).collect();
+        // SIX rounds: CM Def. 6 orders rounds 1-3 at wave 1's anchor, so a 3-round lace would have
+        // every node agreeing on a single block.
+        let (bl, _) = build_full_blocklace(&participants, 6);
 
         let results: Vec<Vec<BlockId>> = (0..7).map(|_| tau(&bl, &participants)).collect();
 
@@ -2244,7 +2484,11 @@ mod tests {
             !results[0].is_empty(),
             "7-node system should finalize blocks"
         );
-        assert_eq!(results[0].len(), 21, "7 nodes * 3 rounds = 21 blocks");
+        assert_eq!(
+            results[0].len(),
+            22,
+            "7 nodes * rounds 1-3 = 21 blocks, plus wave 1's anchor"
+        );
     }
 
     #[test]
@@ -2319,11 +2563,28 @@ mod tests {
         // Round 3.
         let preds3 = vec![a2_id, b2_id, c2_id];
         let a3 = make_block(make_key(1), 2, preds3.clone(), vec![9]);
+        let a3_id = a3.id();
         let b3 = make_block(make_key(2), 2, preds3.clone(), vec![10]);
+        let b3_id = b3.id();
         let c3 = make_block(make_key(3), 2, preds3.clone(), vec![11]);
+        let c3_id = c3.id();
         bl.insert_unverified(a3).unwrap();
         bl.insert_unverified(b3).unwrap();
         bl.insert_unverified(c3).unwrap();
+
+        // Rounds 4-6, all payloads non-empty. Needed because CM Def. 6 orders a wave's blocks at
+        // the NEXT anchor that observes them: at three rounds `tau` emits only the wave-0 anchor,
+        // and a one-block order cannot exhibit the empty-payload filter at all.
+        let mut prev = vec![a3_id, b3_id, c3_id];
+        for round in 4..=6u64 {
+            let mut this = Vec::new();
+            for (i, &p) in participants.iter().enumerate() {
+                let block = make_block(p, round - 1, prev.clone(), vec![round as u8, i as u8 + 1]);
+                this.push(block.id());
+                bl.insert_unverified(block).unwrap();
+            }
+            prev = this;
+        }
 
         let turns = finalized_turns(&bl, &participants);
 
@@ -2395,7 +2656,9 @@ mod tests {
         // When the blocklace contains ONLY member blocks, tau_unified should
         // produce the same result as tau.
         let participants = vec![make_key(1), make_key(2), make_key(3)];
-        let (bl, _) = build_full_blocklace(&participants, 3);
+        // Six rounds so the two implementations are compared on a full anchor CHAIN, not on the
+        // single-block order a one-wave lace produces under CM Def. 6.
+        let (bl, _) = build_full_blocklace(&participants, 6);
 
         let config = OrderingConfig::default();
         let group = ReferenceGroup::new(participants.clone(), 10);
@@ -2416,7 +2679,8 @@ mod tests {
         // in the output and they should not affect the ordering of member blocks.
         let members = vec![make_key(1), make_key(2), make_key(3)];
         let externals = vec![make_key(10), make_key(11)];
-        let (bl, _, external_ids) = build_mixed_blocklace(&members, &externals, 3);
+        // Six rounds: CM Def. 6 orders rounds 1-3 at wave 1's anchor.
+        let (bl, _, external_ids) = build_mixed_blocklace(&members, &externals, 6);
 
         let config = OrderingConfig::default();
         let group = ReferenceGroup::new(members.clone(), 10);
@@ -2442,7 +2706,11 @@ mod tests {
         }
 
         // Should still finalize member blocks.
-        assert_eq!(result.len(), 9, "3 members * 3 rounds = 9 member blocks");
+        assert_eq!(
+            result.len(),
+            10,
+            "3 members * rounds 1-3 = 9 member blocks, plus wave 1's anchor"
+        );
     }
 
     #[test]
@@ -2457,11 +2725,12 @@ mod tests {
 
         let result = tau_unified(&bl, &group, &config);
 
-        // Should finalize across 2 waves (6 rounds / 3 wavelength = 2 waves).
+        // Two waves ⇒ a two-anchor chain: wave 0's anchor alone, then everything wave 1's anchor
+        // observes (rounds 1-3) plus itself. Rounds 5-6 wait for wave 2 — CM Def. 6's latency.
         assert_eq!(
             result.len(),
-            18,
-            "3 members * 6 rounds = 18 member blocks, got {}",
+            10,
+            "3 members * rounds 1-3 = 9 member blocks, plus wave 1's anchor, got {}",
             result.len()
         );
     }
@@ -2508,8 +2777,9 @@ mod tests {
         assert_eq!(group.timeout_waves, constitution.timeout_waves);
         assert_eq!(group.routes_commitment, constitution.routes_commitment);
 
-        // Build a blocklace and verify identical ordering.
-        let (bl, _) = build_full_blocklace(&constitution.participants, 3);
+        // Build a blocklace and verify identical ordering. Six rounds so the comparison runs over
+        // a full anchor chain rather than the single block a one-wave lace orders.
+        let (bl, _) = build_full_blocklace(&constitution.participants, 6);
         let config = OrderingConfig::default();
 
         let result_constitution = tau_with_constitution(&bl, &constitution);
@@ -2533,7 +2803,8 @@ mod tests {
             make_key(5),
             make_key(6),
         ];
-        let (bl, _) = build_full_blocklace(&all_members, 3);
+        // Six rounds: CM Def. 6 orders each group's rounds 1-3 at its own wave-1 anchor.
+        let (bl, _) = build_full_blocklace(&all_members, 6);
 
         let config = OrderingConfig::default();
 
@@ -2546,8 +2817,8 @@ mod tests {
         let result_b = tau_unified(&bl, &group_b, &config);
 
         // Both should produce finalized output.
-        assert_eq!(result_a.len(), 9, "group A should finalize 9 blocks");
-        assert_eq!(result_b.len(), 9, "group B should finalize 9 blocks");
+        assert_eq!(result_a.len(), 10, "group A should finalize 10 blocks");
+        assert_eq!(result_b.len(), 10, "group B should finalize 10 blocks");
 
         // The outputs should be completely disjoint (different members).
         let set_a: HashSet<BlockId> = result_a.iter().copied().collect();
@@ -2629,13 +2900,32 @@ mod tests {
         }
         member_blocks_by_round.push(round_blocks);
 
+        // Rounds 4-6: needed because CM Def. 6 orders rounds 1-3 at wave 1's anchor. The external
+        // chain is still referenced only from round 2, which is what the depth assertions read.
+        for round in 4..=6u64 {
+            let preds = member_blocks_by_round[(round - 2) as usize].clone();
+            let mut round_blocks = Vec::new();
+            for (i, &participant) in members.iter().enumerate() {
+                let block = make_block(
+                    participant,
+                    round - 1,
+                    preds.clone(),
+                    vec![round as u8, i as u8],
+                );
+                let id = block.id();
+                bl.insert_unverified(block).unwrap();
+                round_blocks.push(id);
+            }
+            member_blocks_by_round.push(round_blocks);
+        }
+
         // Verify filtered rounds are not inflated by the external chain.
         let group = ReferenceGroup::new(members.clone(), 10);
         let (rounds, max_round) = compute_rounds_filtered(&bl, &group);
 
         assert_eq!(
-            max_round, 3,
-            "max round should be 3 (not inflated by external chain)"
+            max_round, 6,
+            "max round should be 6 (not inflated by the 10-deep external chain)"
         );
 
         // Round 1 members should be at round 1.
@@ -2657,7 +2947,11 @@ mod tests {
         // tau_unified should still finalize correctly.
         let config = OrderingConfig::default();
         let result = tau_unified(&bl, &group, &config);
-        assert_eq!(result.len(), 9, "should finalize all 9 member blocks");
+        assert_eq!(
+            result.len(),
+            10,
+            "should finalize all 9 member blocks of rounds 1-3, plus wave 1's anchor"
+        );
 
         // External blocks should not appear.
         for &block_id in &result {
