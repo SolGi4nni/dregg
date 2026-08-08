@@ -399,9 +399,22 @@ the federation id is INSIDE the mission this config authorizes.  `FIXTURE_CANON_
 moved for the same reason — the canon state carries the federation id too.  Both were
 recomputed with `sha256sum` over the exact UTF-8 bytes Lean emits, an independent
 implementation from `sha256Wire?`, which is what makes the pin a gate rather than a
-constant checked against its own definition. -/
+constant checked against its own definition.
+
+⚠ RE-PINNED A THIRD TIME on 2026-08-08, by the relic-namespace partition of `049c1dab4`.
+`signalMission.allowedRelics` and `signalReward.relics` are both `{relicSlot ⟨1⟩ 0}`, which
+that commit moved from `1` to `1 * MISSION_RELIC_BLOCK + 0 = 16`, and BOTH are rendered
+inside the authorized config — so the config bytes moved and this hash with them.
+`FIXTURE_CANON_SHA256` did NOT move and is untouched below: the genesis canon carries an
+EMPTY world, so it renders `"discovered_relics":[]` and holds no relic id at all.  That is
+the check working: re-deriving it reproduced `f770d6bd…` byte-for-byte, which is what says
+the recomputation below changed only what the namespace actually touched.
+
+Recomputed over the exact UTF-8 bytes Lean emits, by `python3 hashlib` and by Node
+`crypto.createHash("sha256")` independently — agreeing, and neither of them
+`sha256Wire?`. -/
 abbrev FIXTURE_CONFIG_SHA256 : String :=
-  "31ba37b4bebba44252b2b4da96c4d13a411e75b6d2b106f5459cb2b9ebca7b17"
+  "522cb2c079ec217acc778011c1a7d89a4e5ec2a2f4ea305846c6d20eaadeefd1"
 abbrev FIXTURE_CANON_SHA256 : String :=
   "f770d6bd6fd3fe09ec7c2fe882b74aa655c4ce6687f1a01e02e4faa468ba6181"
 

@@ -1517,13 +1517,26 @@ def fixtureInputWire : SignalInputWire where
 
 def fixtureInputBytes : String := fixtureInputWire.toJson
 
+/-- ⚑ The banked relics are TAKEN FROM THE EMITTED REWARD, not spelled here.
+
+A relic id is a GLOBALLY SHARED namespace — `WorldState.discoveredRelics` is one
+`Finset RelicId` that every mission's contribution is unioned into — so its numbering
+is owned by `RelicNamespace.relicSlot`, not by this fixture.  Spelling a literal here
+made this file go stale the moment the namespace was partitioned: the fixture said
+`[1]` while `signalReward.relics` became `{relicSlot ⟨1⟩ 0} = {16}`, and
+`fixture_output_semantic_inhabited` correctly refused the whole output because
+`applyContribution` no longer reproduced the stated post-world.  Reading the reward's
+own rendering means the next renumbering moves this fixture with it.
+
+The metrics below stay literal on purpose: those are this reward's own values, not a
+shared numbering, and a change to them SHOULD fail here. -/
 def fixturePostWorldWire : WorldStateWire where
   intel := 25
   supplies := 15
   cohesion := 10
   influence := 5
   score := 500
-  discoveredRelics := [1]
+  discoveredRelics := fixtureInputWire.config.reward.relics
   betaArtifacts := [fixtureInputWire.config.mission.artifact]
   sequence := 1
 

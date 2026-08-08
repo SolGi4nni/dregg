@@ -16,7 +16,12 @@ const OUTPUT_FILE: &str = include_str!("fixtures/poa-network-genesis-output-v1.j
 const CONFIG_FILE: &str = include_str!("fixtures/poa-network-genesis-config-v1.json");
 const CANON_FILE: &str = include_str!("fixtures/poa-network-genesis-canon-v1.json");
 
-const CONFIG_SHA256: &str = "31ba37b4bebba44252b2b4da96c4d13a411e75b6d2b106f5459cb2b9ebca7b17";
+// ⚠ MOVED 2026-08-08 by the relic-namespace partition (`049c1dab4`): the authorized config
+// renders `allowed_relics` and `reward.relics`, both `{relicSlot ⟨1⟩ 0}`, which that commit moved
+// from `1` to `1 * MISSION_RELIC_BLOCK + 0 = 16`. The four frozen fixtures beside this file were
+// re-frozen from Lean in the same pass and differ from their predecessors in exactly those two
+// arrays. `CANON_SHA256` did NOT move: the genesis Canon carries an empty world.
+const CONFIG_SHA256: &str = "522cb2c079ec217acc778011c1a7d89a4e5ec2a2f4ea305846c6d20eaadeefd1";
 const CANON_SHA256: &str = "f770d6bd6fd3fe09ec7c2fe882b74aa655c4ce6687f1a01e02e4faa468ba6181";
 
 fn fixture(bytes: &'static str) -> &'static str {
