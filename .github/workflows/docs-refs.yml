@@ -31,14 +31,32 @@
 #   UTF-8 run can green vacuously by scanning only part of the corpus.
 name: docs-refs
 
+# ⚑ IT HAD NEVER RUN, AND THE TRIGGER IS WHY (2026-08-08). `gh run list --workflow=docs-refs.yml`
+# returns an EMPTY LIST: not one run, ever. Two reasons compounding, and the second is the
+# instructive one:
+#   * this repository pushes straight to `main` and opens few PRs, so a `pull_request`-only
+#     workflow is a workflow that mostly does not exist here; and
+#   * the `paths:` filter was `docs/** | site/** | …` — i.e. it asked to be woken when the PROSE
+#     changes. But `scripts/check-doc-refs.sh`'s own pre-push message states the mechanism:
+#     "A reference dies when the CODE moves, so this fires on commits that touch no markdown."
+#     A path filter over `docs/**` is therefore precisely inverted: the commit that KILLS a
+#     reference is the one that deletes or moves the .rs, and that commit could never trigger
+#     this job. Measured today: `3ec27de26` (delete the Rust-authored shielded-spend tower) left
+#     99 dead references across 14 targets, and the only thing in the repository that noticed was
+#     a PER-CLONE pre-push hook — opt-in via scripts/install-hooks.sh, which neither
+#     scripts/bootstrap.sh nor any workflow calls. Same class as the two gates the
+#     `commit-hygiene` job in ci-invariants.yml was added for on the same day.
+# So: `push` to main, and NO path filter. Cost is find + one awk pass over ~450 files, seconds.
+# ⚠ EXPECTED RED ON ARRIVAL, with a named owner: those 99 refs are `3ec27de26`'s to repair or to
+# reword (docs/SUPERSEDED/** and docs/audit/** are already excluded below as deliberate churn
+# records). The hook has been refusing every push in the tree since, so this is a wound already
+# being paid for at the push boundary — this makes it VISIBLE on the checks page instead of only
+# to whoever happens to have hooks installed.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
   pull_request:
-    paths:
-      - 'docs/**'
-      - 'site/**'
-      - 'scripts/check-doc-refs.sh'
-      - '.github/workflows/docs-refs.yml'
 
 permissions:
   contents: read
