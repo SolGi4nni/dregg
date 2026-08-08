@@ -123,6 +123,32 @@ pub struct WrapProofShape {
     /// nothing would report `0` here and the observer's tests refuse that.
     pub field_elements_checked: usize,
 
+    // ── B1's object: the `prev_evals` walk (`verification.rs:568-629`) ───────────────
+    //
+    // ⚑ Added 2026-08-08. `prev_evals` is the ONE place in this proof where an evaluation
+    // is a genuinely variable-length `ArrayN16` (`mina_pickles.rs`'s `ev` closure), so
+    // upstream's `non_chunking` — `a.len() <= 1 && b.len() <= 1` over every yielded pair —
+    // is a real runtime check. It was not made anywhere on this path.
+    //
+    // These two travel to `Dregg2.Bridge.PicklesWrapShapeGate` as `pe` and `pm`. The gate
+    // checks `0 < pe` and `pm <= 1`, and `maxPairLen_le_one_iff_nonChunking` proves the
+    // MAXIMUM decides exactly what the LIST predicate decides — so the summary is a
+    // reduction, not a number travelling beside the object it is supposed to describe.
+    /// `deferred_values.bulletproof_challenges.len()`. **16** (`BACKEND_TICK_ROUNDS_N`) —
+    /// the count `to_public_input`'s schedule needs to reach the index's `public = 40`
+    /// (`prepared_statement.rs:124,179`). Reported rather than assumed so the gate can
+    /// COMPUTE the produced public-input length instead of being handed it.
+    pub bulletproof_challenge_count: usize,
+    /// How many `(zeta, zeta_omega)` pairs the `prev_evals` walk yielded. **43** on a
+    /// no-lookup index: 15 `w` + 15 `coefficients` + `z` + 6 `s` + 6 unconditional
+    /// selectors, every optional evaluation being `None` and yielding nothing. Carried so
+    /// an empty walk — which `non_chunking` accepts VACUOUSLY (`nonChunking_nil`) — is a
+    /// refusal at the gate rather than an accept.
+    pub prev_eval_pairs: usize,
+    /// The largest length any `prev_evals` vector reported. **1** on a single-chunk proof;
+    /// upstream refuses anything above `1`.
+    pub prev_eval_max_len: usize,
+
     // ── the CHAIN projection: what this proof SAYS ABOUT ITS PARENT'S PROOF ──────────
     //
     // ⚑ This is the proof↔proof binding, and it is the reason the four fields below are
@@ -671,16 +697,25 @@ pub(crate) fn decode_proof_at(r: &mut Reader<'_>) -> Result<WrapProofShape, Wrap
 
     // ── prev_evals ─────────────────────────────────────────────────────────────
     // The previous proof's evaluations, in the Wrap proof's SCALAR field.
-    let ev = |r: &mut Reader<'_>| -> Result<u64, WrapProofError> {
-        let a = r.arrayn(16, |r| r.field(FQ, "prev_evals"))?;
-        let b = r.arrayn(16, |r| r.field(FQ, "prev_evals"))?;
-        Ok(a + b)
-    };
+    // ⚑ B1 (`verification.rs:568-629`) — the pair COUNT and the MAXIMUM vector length are
+    // accumulated here and decided by the Lean gate. `arrayn` returns how many elements it
+    // read, which is exactly the `a.len()` / `b.len()` upstream compares against `1`.
+    let mut prev_eval_pairs = 0usize;
+    let mut prev_eval_max_len = 0usize;
     let mut prev_ev_checked = 0u64;
     r.field(FQ, "prev_evals.public_input.0")?;
     r.field(FQ, "prev_evals.public_input.1")?;
     checked += 2;
     {
+        // `ev` and `go` are scoped to this block: both hold mutable borrows of the three
+        // accumulators, which the struct construction below reads.
+        let mut ev = |r: &mut Reader<'_>| -> Result<u64, WrapProofError> {
+            let a = r.arrayn(16, |r| r.field(FQ, "prev_evals"))?;
+            let b = r.arrayn(16, |r| r.field(FQ, "prev_evals"))?;
+            prev_eval_pairs += 1;
+            prev_eval_max_len = prev_eval_max_len.max(a as usize).max(b as usize);
+            Ok(a + b)
+        };
         let mut go = |r: &mut Reader<'_>| -> Result<(), WrapProofError> {
             prev_ev_checked += ev(r)?;
             Ok(())
@@ -701,7 +736,28 @@ pub(crate) fn decode_proof_at(r: &mut Reader<'_>) -> Result<WrapProofShape, Wrap
                     .err("an optional lookup/foreign-field evaluation is present: not modelled");
             }
         }
-        r.pseq(5, |r| r.opt(&mut go))?; // lookup_sorted
+        // ⚑⚑ B2 (`verification.rs:120-127`), CLOSED 2026-08-08. Until now this line read
+        // `r.pseq(5, |r| r.opt(&mut go))?` — it WALKED a present `lookup_sorted[i]` and
+        // accepted it, while every sibling optional group above and below refused. With all
+        // eight feature flags false (enforced at :592-600), `validate_feature_flags` requires
+        // `lookups_per_row_2 = lookups_per_row_3 = lookups_per_row_4 = false`, hence every
+        // `lookup_sorted[i]` ABSENT — so a `Some` here is exactly a `validate_feature_flags`
+        // violation that this path ACCEPTED and upstream REFUSES. Proven flagless-equivalent
+        // by `PicklesVerifyPreamble.the_flagless_contract_is_a_theorem` (`rfl`, over every
+        // presence record) and non-vacuous by `the_flagless_contract_is_not_vacuous`.
+        // ⚠ STAYS A `pseq`: `lookup_sorted` is a `PaddedSeq<_, 5>` and `pseq` consumes the
+        // TERMINATOR after the five elements. Replacing it with a bare `for` loop drops that
+        // byte and every subsequent field decodes one byte early — which is exactly what
+        // `real_devnet_block_proof_decodes_to_the_pinned_shape` caught.
+        r.pseq(5, |r| {
+            if r.opt(&mut go)? {
+                return r.err(
+                    "a lookup_sorted evaluation is present while every feature flag is \
+                     clear: validate_feature_flags refuses this proof",
+                );
+            }
+            Ok(())
+        })?;
         for _ in 0..5 {
             // runtime_lookup_table, runtime_lookup_table_selector, xor_lookup_selector,
             // lookup_gate_lookup_selector, range_check_lookup_selector
@@ -806,6 +862,12 @@ pub(crate) fn decode_proof_at(r: &mut Reader<'_>) -> Result<WrapProofShape, Wrap
         branch_proofs_verified,
         branch_domain_log2,
         field_elements_checked: checked,
+        // ⚑ B1 + C3's input. `bp_challenges` is read by `pseq_v(16, …)`, which refuses any
+        // other count, so this is `16` on every proof that decodes at all — reported rather
+        // than hard-coded at the gate so the gate COMPUTES the produced public-input length.
+        bulletproof_challenge_count: bp_challenges.len(),
+        prev_eval_pairs,
+        prev_eval_max_len,
         sg,
         acc_comm,
         bp_challenges,
@@ -873,6 +935,32 @@ mod tests {
         assert_eq!(
             shape.field_elements_checked, 294,
             "the canonicality check must actually run on every field element"
+        );
+
+        // ⚑ THE FOUR LEGS ADDED 2026-08-08, MEASURED ON THE REAL OBJECT. These are the
+        // numbers `Dregg2.Bridge.PicklesWrapShapeGate`'s `NCHAL` / `PREV_EVAL_PAIRS` /
+        // `PREV_EVAL_MAXLEN` are pinned at, and this is where they are measured rather than
+        // asserted — a Lean constant that disagreed with the real block would redden HERE.
+        assert_eq!(
+            shape.bulletproof_challenge_count, 16,
+            "`BACKEND_TICK_ROUNDS_N`; `to_public_input` needs exactly this many to reach 40"
+        );
+        assert_eq!(
+            shape.prev_eval_pairs, 43,
+            "15 w + 15 coefficients + z + 6 s + 6 unconditional selectors, every optional \
+             evaluation absent — an empty walk would make `non_chunking` a vacuous accept"
+        );
+        assert_eq!(
+            shape.prev_eval_max_len, 1,
+            "`non_chunking` (verification.rs:628) demands every prev_evals vector be <= 1"
+        );
+        // ⚑ AND THE PACKING SCHEDULE REACHES THE INDEX'S DECLARED COUNT. This is C3's
+        // terminal `assert_eq!(fields.len(), npublic_input)` (`prepared_statement.rs:179`)
+        // and D1's `verifier.rs:816-820`, computed from the wire rather than trusted.
+        assert_eq!(
+            24 + shape.bulletproof_challenge_count,
+            MinaWrapIndexParams::DEVNET_BLOCKCHAIN.public_len,
+            "the packing produces `24 + nChal` words and must equal the index's `public`"
         );
 
         // ⚑ THE CHAIN PROJECTION IS NOT VACUOUS. A decoder that quietly left these at their

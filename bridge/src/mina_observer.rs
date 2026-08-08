@@ -1132,6 +1132,14 @@ impl<R: MinaRpc> MinaObserver<R> {
                 idx.chunk_size,
                 idx.ipa_rounds,
                 shape.ipa_rounds,
+                // ⚑ The four legs added 2026-08-08 (`Dregg2.Circuit.Emit.PicklesVerifyPreamble`).
+                // `bulletproof_challenge_count` is what the gate uses to COMPUTE the produced
+                // public-input length, so `verifier.rs:816-820`'s equality is finally an
+                // equality between two derived quantities rather than `0 < <trusted config>`.
+                shape.bulletproof_challenge_count,
+                shape.branch_domain_log2 as usize,
+                shape.prev_eval_pairs,
+                shape.prev_eval_max_len,
             )
             .map_err(|why| ObserveError::VerifiedGateUnavailable { why })?;
             if verdict != dregg_lean_ffi::MinaWrapShapeVerdict::Accept {
@@ -2672,6 +2680,151 @@ mod tests {
                 "a REAL Mina proof must reach the gate, not be refused by the decode: {other:?}"
             ),
         }
+    }
+
+    /// ⚑⚑⚑ **BOTH POLARITIES ON THE FOUR LEGS ADDED 2026-08-08** — through the DEPLOYED
+    /// C-ABI seam, not through a Rust reimplementation of the decision.
+    ///
+    /// The honest devnet shape is ACCEPTED on the same rail every falsifier runs on, so no
+    /// refusal below is about the rail. Then each of the four legs is moved ALONE, and the
+    /// first case is the one that matters: `pl = 41` is the accept the gate that shipped
+    /// until today let through — its only public-input conjunct was `0 < publicLen` against
+    /// TRUSTED CONFIG, so it compared a constant to zero
+    /// (`PicklesWrapShapeGate.the_old_public_conjunct_could_not_fail_on_this_path`). The
+    /// 41-word index is not hypothetical: `MinaWrapVkDigestChain.the_index_digest_cannot_see_the_circuit_shape`
+    /// proves it has the SAME VK digest as the 40-word one.
+    #[test]
+    fn the_four_new_preamble_legs_discriminate_through_the_deployed_gate() {
+        let _ = dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::mina_wrap_shape_ok_available(),
+            "dregg_mina_wrap_shape_ok (the four legs added 2026-08-08)",
+        );
+        if !dregg_lean_ffi::mina_wrap_shape_ok_available() {
+            // Fail-closed: with no archive there is no verdict to read. `demand_lean` above
+            // panics under `DREGG_TEST_REQUIRE_LEAN=1`, so this is not a silent skip.
+            eprintln!("dregg_mina_wrap_shape_ok absent — no verdict rendered");
+            return;
+        }
+        // The honest devnet 539508 shape, measured by
+        // `real_devnet_block_proof_decodes_to_the_pinned_shape`.
+        let honest = |pl: usize, bc: usize, bd: usize, pe: usize, pm: usize| {
+            dregg_lean_ffi::verified_mina_wrap_shape_ok(
+                2, 2, 2, pl, 15, 6, 15, 7, 1, 15, 15, bc, bd, pe, pm,
+            )
+            .expect("the gate is present, so it must render a verdict")
+        };
+        use dregg_lean_ffi::MinaWrapShapeVerdict::{Accept, Reject};
+
+        // ── the positive pole, on the rail every falsifier below uses ────────────────
+        assert_eq!(
+            honest(40, 16, 16, 43, 1),
+            Accept,
+            "the REAL devnet block 539508 shape must be ACCEPTED — the same object \
+             `real_block_wrap_shape_accepts` proves it accepts"
+        );
+
+        // ── D1b: the 41-word index the OLD gate admitted and the VK digest cannot see ──
+        assert_eq!(
+            honest(41, 16, 16, 43, 1),
+            Reject,
+            "an index declaring 41 public inputs against a 40-word packing is \
+             VerifyError::IncorrectPubicInputLength upstream (verifier.rs:816-820)"
+        );
+        assert_eq!(honest(39, 16, 16, 43, 1), Reject, "…and 39 the other way");
+
+        // ── C3: the packing's own input. One challenge short produces 39 words. ────────
+        assert_eq!(
+            honest(40, 15, 16, 43, 1),
+            Reject,
+            "15 bulletproof challenges pack to 39 words, not the index's 40"
+        );
+        assert_eq!(honest(40, 17, 16, 43, 1), Reject, "…and 17 pack to 41");
+
+        // ── B3: the step-domain bound, at the boundary ─────────────────────────────────
+        assert_eq!(
+            honest(40, 16, 17, 43, 1),
+            Reject,
+            "domain_log2 = 17 exceeds BACKEND_TICK_ROUNDS_N = 16 (verification.rs:648-651)"
+        );
+        assert_eq!(
+            honest(40, 16, 16, 43, 1),
+            Accept,
+            "…and 16 is ACCEPTED at the boundary — a `< 16` transcription would reject \
+             every real Mina block"
+        );
+
+        // ── B1: a chunked previous evaluation, and the vacuous empty walk ──────────────
+        assert_eq!(
+            honest(40, 16, 16, 43, 2),
+            Reject,
+            "a prev_evals vector of length 2 violates non_chunking (verification.rs:628)"
+        );
+        assert_eq!(
+            honest(40, 16, 16, 0, 1),
+            Reject,
+            "an EMPTY prev_evals walk — which `non_chunking` accepts VACUOUSLY \
+             (`nonChunking_nil`) — must be refused, not read as an accept"
+        );
+
+        // ⚑ AND THE OLD ELEVEN-FIELD WIRE IS FAIL-CLOSED, not a silent skip of four legs.
+        let stale = dregg_lean_ffi::shadow_mina_wrap_shape_ok(
+            "ip=2;pc=2;pv=2;pl=40;w=15;s=6;cf=15;tc=7;ck=1;ir=15;pr=15",
+        )
+        .expect("the gate is present");
+        assert_eq!(
+            stale, "ERR",
+            "the pre-2026-08-08 wire must not parse — an observer that was not rebuilt \
+             refuses every block rather than skipping the new legs"
+        );
+    }
+
+    /// ⚑⚑ **B2, CLOSED IN THE CODEC** — a `lookup_sorted` evaluation present while every
+    /// feature flag is clear is exactly a `validate_feature_flags` violation
+    /// (`verification.rs:120-127`; with all flags false every `lookups_per_row_*` is false,
+    /// so every slot must be `None` — `PicklesVerifyPreamble.the_flagless_contract_is_a_theorem`).
+    /// Until 2026-08-08 this decoder WALKED such a proof and accepted it, while refusing every
+    /// sibling optional group. The falsifier flips ONE `Option` tag byte from `0` to `1`.
+    #[test]
+    fn a_present_lookup_sorted_evaluation_is_refused_by_the_codec() {
+        use base64::Engine as _;
+        let rpc = MockMinaRpc::linked_chain(700, 703);
+        let observer = MinaObserver::new(config(700, 1), rpc);
+        let chain = observer.rpc.best_chain(16).unwrap();
+        let b64 = chain[0].protocol_state_proof.clone();
+        assert!(!b64.is_empty(), "the mock must serve a real proof");
+        // Same trim `decode_protocol_state_proof` applies: the served value carries `=` padding.
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(b64.trim_end_matches('='))
+            .expect("the pinned fixture is base64url");
+
+        // The honest bytes decode — so the refusal below is about the forgery, not the rail.
+        crate::mina_pickles::decode_proof_bytes(&raw)
+            .expect("the HONEST real devnet proof must decode");
+
+        // Find the five consecutive `lookup_sorted` Option tags. They are the only run of
+        // five zero bytes that sits between the eight optional lookup/foreign-field tags and
+        // the five runtime/xor tags, so locate it by re-decoding after each candidate flip and
+        // keeping the one that changes the verdict for the RIGHT reason.
+        let mut fired = false;
+        for i in 0..raw.len() {
+            if raw[i] != 0 {
+                continue;
+            }
+            let mut forged = raw.clone();
+            forged[i] = 1;
+            let Err(e) = crate::mina_pickles::decode_proof_bytes(&forged) else {
+                continue;
+            };
+            if e.reason.contains("lookup_sorted evaluation is present") {
+                fired = true;
+                break;
+            }
+        }
+        assert!(
+            fired,
+            "flipping a lookup_sorted Option tag must produce the validate_feature_flags \
+             refusal — if no byte reaches it, the leg is not on the decode path"
+        );
     }
 
     // ---- ⚑ THE PROOF↔PROOF CHAIN: the binding, and the falsifier that fires ----

@@ -1213,11 +1213,17 @@ pub fn mina_wrap_shape_wire(
     idx_chunk_size: usize,
     idx_ipa_rounds: usize,
     proof_ipa_rounds: usize,
+    bulletproof_challenge_count: usize,
+    branch_domain_log2: usize,
+    prev_eval_pairs: usize,
+    prev_eval_max_len: usize,
 ) -> String {
     format!(
         "ip={idx_prev_challenges};pc={proof_prev_challenges};pv={proof_prev_challenge_vectors};\
          pl={idx_public_len};w={w_comm};s={s_evals};cf={coefficients};tc={t_comm};\
-         ck={idx_chunk_size};ir={idx_ipa_rounds};pr={proof_ipa_rounds}"
+         ck={idx_chunk_size};ir={idx_ipa_rounds};pr={proof_ipa_rounds};\
+         bc={bulletproof_challenge_count};bd={branch_domain_log2};\
+         pe={prev_eval_pairs};pm={prev_eval_max_len}"
     )
 }
 
@@ -1244,6 +1250,10 @@ pub fn verified_mina_wrap_shape_ok(
     idx_chunk_size: usize,
     idx_ipa_rounds: usize,
     proof_ipa_rounds: usize,
+    bulletproof_challenge_count: usize,
+    branch_domain_log2: usize,
+    prev_eval_pairs: usize,
+    prev_eval_max_len: usize,
 ) -> Result<MinaWrapShapeVerdict, String> {
     let wire = mina_wrap_shape_wire(
         idx_prev_challenges,
@@ -1257,6 +1267,10 @@ pub fn verified_mina_wrap_shape_ok(
         idx_chunk_size,
         idx_ipa_rounds,
         proof_ipa_rounds,
+        bulletproof_challenge_count,
+        branch_domain_log2,
+        prev_eval_pairs,
+        prev_eval_max_len,
     );
     let out = shadow_mina_wrap_shape_ok(&wire)?;
     Ok(if decode_gate_bit("dregg_mina_wrap_shape_ok", &out)? {

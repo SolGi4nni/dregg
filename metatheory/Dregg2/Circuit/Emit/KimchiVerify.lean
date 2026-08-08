@@ -135,12 +135,28 @@ the commitments in the phase-1 transcript, the challenge digest in the phase-2 t
 b-poly evaluations at the head of the `combined_inner_product` poly list — is §2b/§7b below and is
 CHECKED, not waived. -/
 
-/-- **`shapeOkRec`** — every length/shape assert of `to_batch`'s preamble, with the REAL recursion
-check: `proof.prev_challenges.len() == verifier_index.prev_challenges`
-(`verifier.rs:810-813`, `VerifyError::IncorrectPrevChallengesLength`). -/
+/-- **`shapeOkRec`** — SOME of the length/shape asserts of `to_batch`'s preamble, with the REAL
+recursion check: `proof.prev_challenges.len() == verifier_index.prev_challenges`
+(`verifier.rs:810-813`, `VerifyError::IncorrectPrevChallengesLength`).
+
+⚠ **CORRECTED 2026-08-08.** This docblock used to say "**every** length/shape assert of
+`to_batch`'s preamble". It is not, and the overstatement hid a live defect for the gate that
+consumes it:
+
+  * the second conjunct is `0 < publicLen`, NOT `verifier.rs:816-820`'s equality
+    `public_input.len() == verifier_index.public` — see the comment on that line;
+  * `check_proof_evals_len` (`verifier.rs:822-831`) has no conjunct here at all.
+
+Both legs, and five more, now live in `Dregg2.Circuit.Emit.PicklesVerifyPreamble`, and
+`Dregg2.Bridge.PicklesWrapShapeGate.preambleLegsOk` conjoins the ones the deployed path can
+evaluate. `the_old_public_conjunct_could_not_fail_on_this_path` records what the second conjunct
+was worth on that path: nothing. -/
 def shapeOkRec (idxPrevLen prevLen publicLen wLen sLen coeffLen tCommLen chunkSize : Nat) : Bool :=
   decide (prevLen = idxPrevLen)              -- verifier.rs:810-813 (was frozen at `= 0`)
-  && decide (0 < publicLen)                  -- public input present (verifier.rs:816-820)
+  -- ⚠ NOT `verifier.rs:816-820`. That line compares the length `to_public_input` PRODUCED
+  -- against the index's `public`; this is only "non-empty". The real equality is
+  -- `PicklesVerifyPreamble.publicInputLenOk`, conjoined by `PicklesWrapShapeGate.preambleLegsOk`.
+  && decide (0 < publicLen)                  -- public input NON-EMPTY (a weaker, different check)
   && decide (wLen = COLUMNS)                 -- 15 witness commitments (verifier.rs:173-177)
   && decide (sLen = PERMUTS - 1)             -- 6 σ evaluations (verifier.rs:967-1181)
   && decide (coeffLen = COLUMNS)             -- 15 coefficient columns
