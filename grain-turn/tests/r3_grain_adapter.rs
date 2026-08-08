@@ -41,13 +41,20 @@ fn chain_head(legs: &[dregg_circuit_prove::ivc_turn_chain::FinalizedTurn]) -> [u
 #[ignore = "SLOW: per-field-write IR-v2 batch proves + a recursive fold (~minutes); run with --ignored"]
 fn r3_verifies_a_real_driven_grain_session() {
     // The DECISION is the Lean-proven verifier; without the extracted core linked there is
-    // NO Rust fallback (by design). Report and stop rather than assert a decision we don't
-    // have — mirrors grain-verify's own R3 test.
-    if !dregg_lean_ffi::grain_r3_verify_core_available() {
-        eprintln!(
-            "R3: the Lean-proven core `dregg_grain_r3_verify` is not linked — rebuild \
-             dregg-lean-ffi to splice Dregg2.Grain.R3Verify, then re-run. (No Rust fallback.)"
-        );
+    // NO Rust fallback (by design).
+    //
+    // ⚑ ARMED (2026-08-08). This was the raw availability bit + `eprintln!` + `return`, which is
+    // the BR-3 shape: cargo prints `ok`, the eprintln is swallowed without `--nocapture`, and the
+    // whole R3 adapter claim is unasserted. `grain-turn` and `grain-verify` were the last two
+    // crates depending on `dregg-lean-ffi` with a runtime skip guard and ZERO `demand_lean` —
+    // `persist/` was converted on 2026-08-08 and these two were missed by the same sweep.
+    // `demand_lean` PANICS naming the capability unless `DREGG_TEST_ALLOW_MISSING_LEAN=1` is the
+    // declared opt-IN, in which case it returns false and this `return` is the honest skip.
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::grain_r3_verify_core_available(),
+        "the Lean-proven R3 verifier core (dregg_grain_r3_verify / Dregg2.Grain.R3Verify) — \
+         rebuild dregg-lean-ffi to splice it; there is NO Rust fallback for this decision",
+    ) {
         return;
     }
 

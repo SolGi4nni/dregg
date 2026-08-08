@@ -119,6 +119,46 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash scripts/check-floor-baseline-preflight.sh --rev HEAD
 
+      # ⚑ THE THIRD HOOK-ONLY GATE, and it is about the ARMING of every other gate (2026-08-08).
+      #
+      # `grep -rn check-lean-seed .github/` returned hits in ONE file — `dark-targets.txt`, i.e.
+      # prose. All three Lean-seed gates lived solely in `scripts/local-gates.sh`, hand-invoked.
+      #
+      # WHAT THE SUBJECT IS. `dregg-lean-ffi/libdregg_lean.a` is what makes `#[cfg(dregg_*_present)]`
+      # compile at all. Without a key-matched seed, build.rs emits no cfgs, every gated module
+      # compiles out, and ~43 verified-gate tests print `ok` having asserted nothing — the exact
+      # mechanism behind `deployed_constraint_probe` printing `8 passed` daily 07-30 → 08-06 with
+      # six of eight assertions false. So this is not one gate among many; it is the question of
+      # whether the others ran.
+      #
+      # ONLY THIS ONE OF THE THREE IS HOSTED-RUNNABLE, and saying which and why is the point:
+      #   * THIS gate is two strings — the `DREGG_CLOSURE_HASH` typed into
+      #     `dregg-lean-ffi/lean-seed.pin` vs the one `scripts/lean-seed-key.sh` computes by
+      #     hashing the `Dregg2.FFI` closure FILES on disk. No network, no `lake`, no cargo, no
+      #     mtimes, ~2s, and the closure hash is platform-independent (the platform enters the
+      #     asset KEY, not the closure hash), so a runner and a laptop must agree.
+      #   * `check-lean-seed-closure.sh` needs the archive present; it is already reached in CI
+      #     indirectly, from `scripts/fetch-lean-seed.sh` (ci.yml:573, :1291 and the
+      #     `.github/actions/lean-seed` composite), where it grades the freshly downloaded
+      #     candidate before install.
+      #   * `check-lean-seed-member-freshness.py` compares `ar` member mtimes against `.lean`
+      #     mtimes. `actions/checkout` does not preserve mtimes, so on a hosted runner every
+      #     member reads stale by construction and the gate is a wall, not a gate. It stays a
+      #     local-gates row — the same reason `.github/dark-targets.txt` accepts its Rust twin
+      #     `linked_archive_freshness` as dark. Do NOT wire it here.
+      #
+      # ⚠ EXPECTED RED AT THE COMMIT THAT WIRED IT, and the fix is an OUTWARD act, not a code
+      # change: `lean-seed.pin` carries an EMPTY `DREGG_CLOSURE_HASH` after the 2026-08-07
+      # closure-key flag day, which the gate treats as MAXIMAL drift and fails outright (it
+      # refuses to read "no pin" as "no drift" — that is how eleven days of a stale seed stayed
+      # invisible). Clearing it means cutting a seed:
+      #     gh workflow run lean-seed.yml -f platforms=linux-x86_64
+      # Owner: ember (publishing a release asset). Do NOT clear this by relaxing the gate, by
+      # dropping this step, or by hand-editing the pin.
+      - name: The published Lean seed matches the tree it claims to arm
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-lean-seed-freshness.sh
+
   # ── invariant 1: the whole tree compiles (every member) ─────────────────────────────────
   tree-builds:
     name: Invariant 1 — THE TREE BUILDS (cargo check --keep-going)

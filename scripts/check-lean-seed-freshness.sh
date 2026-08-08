@@ -82,7 +82,17 @@ fi
 
 # How far behind, in COMMITS to the Lean tree — a more honest unit than wall-clock, because the
 # cost of staleness is measured in unreviewed Lean, not in elapsed days.
+#
+# ⚠ It was computed here and PRINTED NOWHERE (fixed 2026-08-08 when this gate was wired into
+# ci-invariants.yml): the comment above promised the more honest unit and the report only ever
+# carried the days. And a SHALLOW checkout — `actions/checkout` defaults to depth 1, and the job
+# that runs this uses depth 2 for a different gate — makes `rev-list --count` answer about the
+# fetched slice, not the history, so it is reported as unknown there rather than as a small
+# number that looks like a fact.
 behind="$(git rev-list --count HEAD -- metatheory/Dregg2 2>/dev/null || echo '?')"
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  behind="? (shallow checkout — the commit count is not answerable here)"
+fi
 days="?"
 if [ -n "$pin_when" ]; then
   if now=$(date -u +%s) && then_=$(date -u -j -f "%Y-%m-%d" "$pin_when" +%s 2>/dev/null || date -u -d "$pin_when" +%s 2>/dev/null); then
@@ -94,7 +104,7 @@ cat <<EOF
 check-lean-seed-freshness: THE PUBLISHED SEED DOES NOT MATCH THIS TREE.
   pin  $pin_tag  DREGG_CLOSURE_HASH=${pin_closure:0:12}  GENERATED_UTC=$pin_when
   HEAD                DREGG_CLOSURE_HASH=${head_closure:0:12}
-  drift: $days day(s)
+  drift: $days day(s), $behind commit(s) to metatheory/Dregg2
 
   CONSEQUENCE: CI downloads this seed to arm the verified cores. Where it does not match, the
   ~43 tests behind \`if !<x>_available() { SKIP }\` assert NOTHING and still report ok.

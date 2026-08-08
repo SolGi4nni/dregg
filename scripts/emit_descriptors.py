@@ -2217,19 +2217,40 @@ def verify_workflow_refs() -> list[str]:
     composite = sorted(p for p in tracked
                        if p.startswith(".github/") and not p.startswith(".github/workflows/")
                        and p.rsplit("/", 1)[-1] in ("action.yml", "action.yaml"))
-    if composite:
-        sys.exit(
-            "emit_descriptors: a LOCAL COMPOSITE ACTION is now tracked (" + ", ".join(composite)
-            + ") and verify_workflow_refs does not scan it. Its `run:` steps invoke repo paths "
-            "exactly like a workflow's, so this leg's coverage claim is no longer exhaustive. "
-            "EXTEND the leg to composite actions (mind the resolution difference: `uses:` is "
-            "relative to the action directory, `run:` cwd is the workspace root) — do not silence "
-            "this by deleting the check."
-        )
 
     # (lineno, kind, token, resolved_rel) for the sites that survive to the exists+tracked test,
     # and a reason-tagged bucket for every site that does not.
     findings: list[str] = []
+
+    # ── ⚑ A COVERAGE GAP IS A FINDING, NOT AN ABORT (changed 2026-08-08) ────────────────────
+    # This was `sys.exit(...)`, and `.github/actions/lean-seed/action.yml` landed on 2026-08-07 —
+    # so from that day `--verify-provenance` STOPPED REACHING ITS OWN SUBJECT. It is called from
+    # `verify_provenance` before the sha256-of-every-descriptor-against-PROVENANCE.json
+    # comparison, so the whole stamp check died here: the 2026-08-08 nightly's output is SIX
+    # LINES, four leg counters and this message, with no `verify-provenance: PASS/FAIL` line at
+    # all. A gate about descriptor bytes was reporting only on how well one of its side-legs
+    # covers the CI medium.
+    #
+    # This is the identical mask `scripts/check-descriptor-drift.sh:159-171` names and fixed two
+    # days earlier — "a 45-file descriptor drift went unreported because an unstamped-artifact
+    # preflight failure exited first; one gate's cheap leg hid the other leg's verdict, and the
+    # cheap leg is not the one the gate is named after." Same shape, one file over.
+    #
+    # NOTHING IS WEAKENED: this is still a FAILURE — `verify_workflow_refs`'s findings are
+    # `failures.extend`ed by `verify_provenance`, which exits nonzero on any. It simply no longer
+    # gets to be the ONLY thing you learn. The scope claim below is correspondingly narrowed to
+    # what this leg actually implements, out loud, rather than being asserted and then aborted on.
+    if composite:
+        findings.append(
+            "COVERAGE GAP (this leg, not the tree): a LOCAL COMPOSITE ACTION is tracked ("
+            + ", ".join(composite)
+            + ") and verify_workflow_refs does not scan it. Its `run:` steps invoke repo paths "
+            "exactly like a workflow's, so this leg's coverage claim is NOT exhaustive: an "
+            "uncommitted script invoked from a composite action is invisible here. EXTEND the "
+            "leg to composite actions (mind the resolution difference: `uses:` is relative to "
+            "the action directory, `run:` cwd is the workspace root) — do not silence this by "
+            "deleting the check."
+        )
     inflight: list[str] = []
     notcheckable: dict[str, list[str]] = {}
     unlexable: list[str] = []

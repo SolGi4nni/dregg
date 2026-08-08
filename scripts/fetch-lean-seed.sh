@@ -213,13 +213,22 @@ fi
 # This FAILS rather than warns. A seed that cannot arm the gates it is fetched to arm is
 # not a slower seed, it is a silent one, and installing it is how eleven days of green
 # happened over disarmed teeth. Re-cut with `gh workflow run lean-seed.yml`.
-if [ -x "$(dirname "$0")/check-lean-seed-closure.sh" ]; then
-  if ! "$(dirname "$0")/check-lean-seed-closure.sh" "$TMP/libdregg_lean.a"; then
-    die "the downloaded archive is SHORT of the Dregg2.FFI boundary closure (report above).
+# ⚠ AND IT RUNS UNCONDITIONALLY (2026-08-08). This was `if [ -x <script> ]; then … fi`, so the
+# ONLY reader of `check-lean-seed-closure.sh` in any workflow — it is reached from ci.yml:573,
+# ci.yml:1291 and every lane using `.github/actions/lean-seed` — vanished silently the moment the
+# file lost its `+x` bit or its name changed, and the seed installed anyway. A gate whose absence
+# is indistinguishable from its pass is not a gate; the guard that was there to be tolerant of a
+# missing script was tolerant of exactly the failure the script exists to prevent. Invoked through
+# `bash` so the mode bit is not part of the contract, and an ABSENT script is a FAULT.
+CLOSURE_GATE="$(dirname "$0")/check-lean-seed-closure.sh"
+[ -f "$CLOSURE_GATE" ] || die "scripts/check-lean-seed-closure.sh is MISSING.
+  It is the only check that the downloaded archive carries the Dregg2.FFI boundary closure, and
+  refusing to install is the correct answer to not being able to ask. Restore the script."
+if ! bash "$CLOSURE_GATE" "$TMP/libdregg_lean.a"; then
+  die "the downloaded archive is SHORT of the Dregg2.FFI boundary closure (report above).
   NOT installing: a seed that leaves verified gates dark is worse than no seed, because
   every test behind \`if !<x>_available() { SKIP }\` then reports ok having asserted nothing.
   Cut a fresh one:  gh workflow run lean-seed.yml"
-  fi
 fi
 
 # ── ⚠ PER-MEMBER FRESHNESS IS *NOT* CHECKED HERE, AND THAT IS DELIBERATE (2026-08-07) ────

@@ -164,15 +164,19 @@ fn forge_last_post_state(mut chain: Vec<FinalizedTurn>) -> Vec<FinalizedTurn> {
 #[ignore = "SLOW: real recursion folds (~minutes each, 5 folds: 1 honest-setup anchor + 4 poles); run with --ignored"]
 fn r3_whole_history_unfoolable_decided_by_lean() {
     // The DECISION is the Lean-proven verifier: without the extracted core in the linked
-    // archive there is NO Rust fallback (by design). If it is absent, the archive needs a
-    // rebuild that splices `Dregg2.Grain.R3Verify` — report and stop rather than assert a
-    // Rust decision we deliberately do not have.
-    if !dregg_lean_ffi::grain_r3_verify_core_available() {
-        eprintln!(
-            "R3: the Lean-proven core `dregg_grain_r3_verify` is not in the linked archive — \
-             rebuild dregg-lean-ffi to splice Dregg2.Grain.R3Verify, then re-run. \
-             (No Rust fallback for the R3 accept decision by design.)"
-        );
+    // archive there is NO Rust fallback (by design).
+    //
+    // ⚑ ARMED (2026-08-08) — see the twin in `grain-turn/tests/r3_grain_adapter.rs`. The raw bit
+    // + `eprintln!` + `return` is the BR-3 shape: this test is named for an UNFOOLABILITY claim
+    // decided in Lean, and on an archive-less lane it reported `ok` having decided nothing.
+    // `demand_lean` PANICS naming the capability; `DREGG_TEST_ALLOW_MISSING_LEAN=1` is the
+    // declared opt-IN that restores the skip.
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::grain_r3_verify_core_available(),
+        "the Lean-proven R3 whole-history verifier core (dregg_grain_r3_verify / \
+         Dregg2.Grain.R3Verify) — rebuild dregg-lean-ffi to splice it; there is NO Rust \
+         fallback for the R3 accept decision",
+    ) {
         return;
     }
 
