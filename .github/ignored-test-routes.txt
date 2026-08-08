@@ -1,0 +1,360 @@
+# IGNORED-TEST ROUTES — where every `#[ignore]`d test in this workspace actually runs.
+#
+# THE READER IS `scripts/check-ignored-test-routing.py`; read its header for the full
+# argument. The short version: `#[ignore]` in this tree does not mean "broken", it means
+# "a real recursion fold that takes minutes". `armed-teeth.yml` exists to run those on a
+# schedule — and it decides WHICH by globbing filenames:
+#
+#     for f in circuit-prove/tests/*tooth*.rs circuit-prove/tests/*teeth*.rs
+#
+# so a tooth earns its nightly by living in a file whose NAME contains "tooth". Measured
+# 2026-08-07 at HEAD, that reached 20 of the 282 `#[ignore]`d tests in the workspace, and
+# left 71 adversarial teeth in `dregg-circuit-prove` alone reached by nothing — including
+# `custom_binding_production_path`'s two forged-rejection poles, `fold_unfoolability_forge`,
+# `accumulator::online_mixed_root_forgery_rejected`, `membership_binding_mechanism`'s forged
+# pole, `recursion_vk_determinism`, and every one of the 28 in `circuit-prove/src/` (a
+# `--test <binary>` list cannot name a LIB test at all, so no glob over `tests/*.rs` could
+# ever have reached those, however it was spelled).
+#
+# ── FORMAT ───────────────────────────────────────────────────────────────────────────
+#     <route> <package> <test_fn>   # why
+# One row per `#[ignore]`d test. The gate FAILS if a test has no row, if a row names a
+# test that no longer exists, if an armed count falls below its floor, or if `unrouted`
+# rises above its ceiling.
+#
+# ⚠ `unrouted` IS AN ALLOWED ANSWER AND IS THE HONEST ONE for a test nothing runs.
+# Inventing a lane that does not run it is not. The count is a downward-only ratchet.
+#
+# ── WHAT THE CENSUS FOUND, BEYOND THE GLOB ───────────────────────────────────────────
+# ⚑ Widening `binding-teeth` to the whole package would NOT have been right, and the
+# tree's own `#[ignore]` reasons say why. `[profile.armed]` is
+# `package(dregg-circuit-prove) and not (<six gpu names>)` at `test-threads = 4`, and
+# sweeping it onto `ubuntu-latest` (4 vCPU / 16 GB) would have swept in:
+#
+#   * `oversized` — `leaf_wrap_mint_blowup_repricing::the_deployed_mint_is_the_measured_wall`
+#     records "~118 GiB peak footprint (> RAM)", and `mina_accumulator_fold`'s three record
+#     117.8–118.3 GiB. On a 16 GB runner that is an OOM, and an OOM reads as a failing tooth.
+#   * `exclusive` — `production_leaves_mint_at_their_own_engine`'s two say "Run ALONE under
+#     /usr/bin/time -l". At `test-threads = 4` they still produce a number; it is just wrong.
+#   * `measurement` — probes with no adversarial claim. One says so in its own reason:
+#     `dfa_routing_emit_gate::perf_prove_verify_breakdown` = "PERF PROBE with NO assertion".
+#   * `fixture-mint` — tests whose effect is to WRITE a fixture into the tree.
+#
+# ⚑ AND FIVE GPU TESTS ARE IN NEITHER PROFILE (measured 2026-08-07). `[profile.gpu]` names
+# three binaries and six test names; `[profile.armed]`'s exclusion names the same six. These
+# five are in neither list, so the GPU lane never runs them AND the CPU nightly would red on
+# them (they assert a real adapter):
+#     gpu_lde_parity_apex_scale_dim0_fold                          (circuit-prove/src/gpu_backend.rs)
+#     deployed_arities_are_bit_exact_against_pinned_plonky3        (gpu_hidingfri_fold_differential)
+#     lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact    (gpu_hidingfri_ir2_e2e)
+#     required_hidingfri_refuses_disabled_gpu_merkle_stage         (gpu_hidingfri_ir2_e2e)
+#     deployed_kernel_step_cpu_vs_gpu_across_fri_parameterizations (gpu_kernel_step_reparam_measure)
+# `.config/nextest.toml`'s own doctrine already names this hazard — "a renamed GPU tooth
+# drops out of `gpu` and into `armed`, i.e. onto GPU-less boxes, where it is the guaranteed
+# red the GPU exclusion exists to prevent" — but these never ENTERED either list. They are
+# rostered `gpu` here so the census is complete; the `.config/nextest.toml` repair is a
+# separate change and is NOT smuggled into this roster.
+#
+# ⚑ THIS ROSTER SAYS NOTHING ABOUT WHETHER A TOOTH BITES. The standing reminder is
+# `armed-teeth.yml`'s own first measurement: arming the glob-covered set produced
+# **4 passed / 11 FAILED of 17**. Routing is a precondition for biting, never evidence of it.
+
+# ── armed-nightly ─────────────────────────────────────────────────────────
+armed-nightly dregg-circuit-prove budget__the_state_weld_costs_this_much   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove canary__the_pre_flip_deployed_pair_accepts_the_forged_root_the_state_node_refuses   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_bridge_mint_forged_identity_rejected   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_bridge_mint_honest_accepts   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_custom_turn_forged_rejected   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_custom_turn_forged_root_rejected   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_custom_turn_honest_accepts   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_dfa_turn_forged_rc_rejected   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_dfa_turn_honest_accepts   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_dfa_zero_sentinel_witness_refused   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_factory_turn_forged_child_vk_rejected   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_factory_turn_honest_accepts   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_hatchery_turn_forged_contract_hash_rejected   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_hatchery_turn_honest_accepts   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_membership_turn_forged_root_rejected   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_membership_turn_honest_accepts   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_private_graph_rewrite_attests_a_precommitted_cell_root_to_a_light_client   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_stripe_mint_forged_identity_rejected   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove deployed_stripe_mint_honest_accepts   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+armed-nightly dregg-circuit-prove real_apex_shrinks_bn254_native_and_verifies   # armed-teeth.yml binding-teeth — runs today (via the filename glob this roster replaces)
+
+# ── armed-dark ────────────────────────────────────────────────────────────
+armed-dark dregg-circuit-prove a_commitment_only_leaf_is_refused_by_the_state_node   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove a_state_only_leaf_is_refused_by_the_app_root_node   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove accumulate_rejects_discontinuity   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove accumulate_rejects_pin_mismatch_fail_closed   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove app_root_leaf_exposes_the_bound_published_root   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove canary__the_commitment_only_node_accepts_the_forgery_the_state_node_refuses   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove canary__the_state_node_accepts_the_app_root_forgery_the_keystone_refuses   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove canary_neutering_the_node8_site_lets_the_forgery_fold   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove carried_binding_proof_unlinked_to_root_is_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove deco_leaf_proof_serializes_and_reads_back_claim   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove deployed_mpt_holding_turn_forged_commitment_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove deployed_mpt_holding_turn_honest_accepts   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove disagreeing_published_root_is_rejected_by_the_app_root_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove every_published_root_lane_is_bound_by_the_app_root_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove every_state_prefix_lane_is_bound_by_the_state_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove exact_census_binds_to_setfield_prefix_and_terminal_custom   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove faithful_note_spend_hiding_proves_and_all_public_mutations_refuse   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove fold_honest_identity_connects   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove fold_mismatched_identity_unsat   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove foreign_circuit_root_is_refused_by_vk_pin   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove forged_amount_does_not_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove forged_balance_does_not_fold   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove forged_commit_lane_refused   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove forged_link_stream_is_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove forged_payment_hash_does_not_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove forged_root_custom_proof_is_rejected_by_the_state_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove forged_sibling_into_the_node8_site_is_refused   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove honest_app_root_bound_turn_binds_in_the_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove honest_deco_proves_as_foldable_leaf_and_exposes_claim   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove honest_holding_proves_as_foldable_leaf   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove honest_node8_cap_membership_proves_folds_and_verifies   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove honest_private_preference_direct_ir2_fold_binds   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove honest_state_bound_custom_turn_binds_in_the_fold   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove honest_zkoracle_1kib_proves_and_exposes_claim   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove honest_zkoracle_max_body_proves_and_exposes_claim   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove incremental_accumulate_verifies_whole_history   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove k_fold_turn_chain_proves_and_verifies   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove lied_length_lane_refused   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove membership_binding_forged_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove membership_binding_honest_folds   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove mixed_root_forgery_executes_A_claims_B   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove node8_leaf_exposes_the_same_pi_commitment_the_node_connects   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove online_mixed_root_forgery_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove pinned_fold_rejects_foreign_vk_in_circuit   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove pinned_leaf_identity_rejects_foreign_child_in_band   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove private_graph_cell_direct_fold_binds_state_vk_and_stored_graph_root   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove private_preference_direct_fold_refuses_wrong_vk_old_new_and_app_root   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove production_custom_turn_forged_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove production_custom_turn_forged_root_rejected   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove production_custom_turn_honest_accepts   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove recursion_vk_fingerprint_deterministic_in_process_and_cross_process   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove running_vk_fixed_point_is_value_independent   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove scan_state_root_equals_serial_root   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove shrink_pinned_to_foreign_apex_vk_rejects   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove staged_exact_v3_hiding_proves_and_verifies   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove stale_genesis_chain_still_verifies_no_freshness_anchor   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove state_leaf_exposes_the_commitment_and_the_bound_state_prefix   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove t3_ivc_root_k2   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove t3_ivc_root_k3   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove tampered_body_limb_stale_claim_refused   # DARK: a lib test, which a --test <binary> list cannot name even in principle
+armed-dark dregg-circuit-prove tampered_root_octet_does_not_fold   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove two_arbitrary_genesis_chains_share_vk_and_both_verify   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove two_step_inductive_core_proves_and_verifies   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove ungated_prover_with_forged_post_commit_cannot_produce_a_root   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove welded_umem_chain_folds_recursive   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove whole_chain_proof_bytes_roundtrip_and_tamper   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove wide_welded_umem_chain_folds_recursive   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove wire_num_turns_aliases_mod_p_and_mod_2_32   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove wrap_grows_vk_when_disabled   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove wrapped_running_vk_is_constant_across_depth   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+armed-dark dregg-circuit-prove zero_balance_does_not_fold   # DARK at 2026-08-07: in circuit-prove/tests/ but outside the *tooth*/*teeth* glob
+
+# ── gpu ───────────────────────────────────────────────────────────────────
+gpu dregg-circuit-prove both_dispatch_branches_mint_the_same_bytes   # [profile.gpu]
+gpu dregg-circuit-prove deployed_arities_are_bit_exact_against_pinned_plonky3   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove deployed_kernel_step_cpu_vs_gpu_across_fri_parameterizations   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove gpu_babybear_dft_parity_and_speed   # [profile.gpu]
+gpu dregg-circuit-prove gpu_babybear_lde_residency_hit_and_root_parity   # [profile.gpu]
+gpu dregg-circuit-prove gpu_babybear_merkle_parity_and_speed   # [profile.gpu]
+gpu dregg-circuit-prove gpu_backend_full_fold_second_driver_against_saved_cpu   # [profile.gpu]
+gpu dregg-circuit-prove gpu_backend_real_shrink_gpu_vs_cpu_measured   # [profile.gpu]
+gpu dregg-circuit-prove gpu_bn254_mmcs_wide_leaf_parity   # [profile.gpu]
+gpu dregg-circuit-prove gpu_dft_parity_vs_radix2   # [profile.gpu]
+gpu dregg-circuit-prove gpu_lde_device_residency_hit_fallback_and_root_parity   # [profile.gpu]
+gpu dregg-circuit-prove gpu_lde_parity_apex_scale_dim0_fold   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove gpu_mmcs_root_parity_openings_and_reject   # [profile.gpu]
+gpu dregg-circuit-prove lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove on_device_async_bn254_root_matches_cpu   # [profile.gpu]
+gpu dregg-circuit-prove real_fold_layer_byte_identical_on_gpu_and_measured   # [profile.gpu]
+gpu dregg-circuit-prove recursion_tower_large_regime_byte_identical_on_gpu   # [profile.gpu]
+gpu dregg-circuit-prove required_hidingfri_refuses_disabled_gpu_merkle_stage   # NOT in [profile.gpu] AND not excluded from [profile.armed] — a GPU tooth the GPU lane never runs and the CPU nightly would red on
+gpu dregg-circuit-prove saved_cpu_shrink_shape_report   # [profile.gpu]
+gpu dregg-circuit-prove saved_shrink_transcript_parity_report   # [profile.gpu]
+
+# ── measurement ───────────────────────────────────────────────────────────
+measurement dregg-circuit-prove apex_shrink_blowup_query_tradeoff_sweep   # a probe, not a tooth — no adversarial claim
+measurement dregg-circuit-prove apex_verifier_air_trace_anatomy   # a probe, not a tooth — no adversarial claim
+measurement dregg-circuit-prove candidate_configs_are_runnable_and_measured   # a probe, not a tooth — no adversarial claim
+measurement dregg-circuit-prove fri_regrid_post_s2_mocked_width_measure   # a probe, not a tooth — no adversarial claim
+measurement dregg-circuit-prove perf_prove_verify_breakdown   # a probe, not a tooth — no adversarial claim
+measurement dregg-circuit-prove profile_the_fold   # a probe, not a tooth — no adversarial claim
+measurement dregg-circuit-prove the_preprocessed_side_is_not_the_wall_and_the_blowup_is   # a probe, not a tooth — no adversarial claim
+
+# ── oversized ─────────────────────────────────────────────────────────────
+oversized dregg-circuit-prove the_deployed_mint_is_the_measured_wall   # recorded peak footprint exceeds a hosted runner (ubuntu-latest = 16 GB)
+
+# ── exclusive ─────────────────────────────────────────────────────────────
+exclusive dregg-circuit-prove the_rotated_leaf_at_the_deployed_engine   # its own #[ignore] reason says run ALONE; [profile.armed] is test-threads=4
+exclusive dregg-circuit-prove the_rotated_leaf_at_the_split_engine   # its own #[ignore] reason says run ALONE; [profile.armed] is test-threads=4
+exclusive dregg-circuit-prove the_split_mint_proves_the_same_eight_additions   # its own #[ignore] reason says run ALONE; [profile.armed] is test-threads=4
+
+# ── fixture-mint ──────────────────────────────────────────────────────────
+fixture-mint dregg-circuit-prove derive_deployed_apex_vk_identity_and_check_fixture   # its effect is to WRITE a fixture into the tree
+fixture-mint dregg-circuit-prove export_real_shrink_fri_fixture_for_gnark   # its effect is to WRITE a fixture into the tree
+
+# ── other-lane ────────────────────────────────────────────────────────────
+other-lane dregg-braid-hook braid_outcome_weld_bites   # armed-teeth.yml feature-gated-prove-teeth (--features prove --test weld_canary)
+other-lane dregg-entity-compose a_wrong_entity_outcome_does_not_prove   # armed-teeth.yml feature-gated-prove-teeth (--features prove --test leaf_prove)
+other-lane dregg-entity-compose entity_composition_leaf_proves_and_binds_its_commitment   # armed-teeth.yml feature-gated-prove-teeth (--features prove --test leaf_prove)
+other-lane dreggnet-companion a_wings_attunement_is_welded_to_its_cell   # armed-teeth.yml feature-gated-prove-teeth (--features prove --test wing_weld)
+other-lane grain-turn r3_verifies_a_real_driven_grain_session   # armed-teeth.yml lean-hard-mode (--features prover --test r3_grain_adapter)
+
+# ── unrouted ──────────────────────────────────────────────────────────────
+unrouted agent-platform a_rented_grain_thinks_live   # nothing runs it
+unrouted android-cell android_app_presents_through_deos_compositor_with_cap_gate   # nothing runs it
+unrouted android-cell android_input_changes_the_live_frame   # nothing runs it
+unrouted android-cell live_android_cell_checkpoints_as_umem   # nothing runs it
+unrouted android-cell live_checkpointed_runtime_is_load_bearing   # nothing runs it
+unrouted android-cell live_intent_routes_through_the_gate_on_the_device   # nothing runs it
+unrouted deos-hermes live_authors_card_via_run_js   # nothing runs it
+unrouted deos-hermes live_completion_yields_a_nonempty_brainstep   # nothing runs it
+unrouted deos-hermes live_hermes_acp_handshake_and_gateway_seam   # nothing runs it
+unrouted deos-hermes live_hermes_acp_in_band_refusal   # nothing runs it
+unrouted deos-hermes narrator_turn_is_provably_from_the_live_model   # nothing runs it
+unrouted deos-matrix live_servername_discovery_login   # nothing runs it
+unrouted dregg-agent kimi_live_brain_reasons_over_a_real_call   # nothing runs it
+unrouted dregg-auth credential_pq_cost   # nothing runs it
+unrouted dregg-blocklace soak_kill_tolerance_sweep_across_committee_sizes   # nothing runs it
+unrouted dregg-bridge devnet_solana_lock_mirrors_and_pays_a_lease   # nothing runs it
+unrouted dregg-bridge local_feed_proves_a_real_holding_end_to_end   # nothing runs it
+unrouted dregg-bridge local_solana_lock_verifies_and_mints   # nothing runs it
+unrouted dregg-bridge real_mina_claims_discharge_and_a_forged_one_does_not   # nothing runs it
+unrouted dregg-cell bench_apply_delta_single_transfer   # nothing runs it
+unrouted dregg-chutes-e2ee attested_chat_against_real_tee_instance   # nothing runs it
+unrouted dregg-circuit ab_microbench_old_vs_new   # nothing runs it
+unrouted dregg-circuit attack_one_point   # nothing runs it
+unrouted dregg-circuit benchmark_exact_aafi_replay_scaling   # nothing runs it
+unrouted dregg-circuit commit_pow_price_per_bit   # nothing runs it
+unrouted dregg-circuit every_provable_descriptor_at_every_parity_point   # nothing runs it
+unrouted dregg-circuit external_witness_proves_and_verifies   # nothing runs it
+unrouted dregg-circuit mina_opening_shape_measurement   # nothing runs it
+unrouted dregg-circuit one_point   # nothing runs it
+unrouted dregg-circuit packed_one_point   # nothing runs it
+unrouted dregg-circuit search_cap_lane0_collision   # nothing runs it
+unrouted dregg-circuit search_fields_lane0_collision   # nothing runs it
+unrouted dregg-circuit search_heap_lane0_collision   # nothing runs it
+unrouted dregg-circuit wall_measurement   # nothing runs it
+unrouted dregg-circuit zz_mine_gentian_collision_salts   # nothing runs it
+unrouted dregg-circuit-prove a_one_segment_chain_is_the_final_rung   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove hash_swap_lde_share_is_config_independent   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove hash_swap_merkle_commit_at_root_geometry   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove hash_swap_open_at_root_geometry   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove hash_swap_permutation_microbench   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove mint_and_export_mina_shrink_fixture   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+armed-nightly dregg-circuit-prove real_apex_terminates_mina_native_and_verifies   # RUNS TODAY in binding-teeth (mina_terminal_tooth.rs matches the glob). Mina otherwise stays unrouted here, but REMOVING an armed tooth is a regression, so this one keeps its lane.
+unrouted dregg-circuit-prove the_fold_refuses_two_segments_that_do_not_chain   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove the_split_chain_folds_and_the_root_carries_both_endpoints   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove the_whole_body_hash_chain_folds   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove the_whole_kimchi_verifier_tower_proves_over_block_539508   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove the_whole_phase2_transcript_folds_into_one_claim   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove the_wrap_cost_tracks_committed_width_not_declared_width   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove where_the_accumulator_leaf_wrap_cost_goes   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-deco-prove deco_prover_full_stark_roundtrip_mints   # nothing runs it
+unrouted dregg-exec-lean revoke_of_non_delegated_child_rejected_by_rust_surfaced_not_replayed   # nothing runs it
+unrouted dregg-firmament confined_homeserver_serves_200_through_firmament   # nothing runs it
+unrouted dregg-lightclient finality_cert_rejects_lane0_colliding_fork   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_accepts_finalized_history   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_anchors_genesis   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_dedups_repeated_signers   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_refuses_when_unanchored   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_rejects_cert_for_other_root   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_rejects_classical_only_quorum   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_rejects_fork_by_foreign_committee   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_rejects_sub_quorum_cert   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_rejects_tampered_aggregate   # nothing runs it
+unrouted dregg-lightclient finalized_light_client_rejects_unbound_finality_cert   # nothing runs it
+unrouted dregg-lightclient light_client_attests_whole_history   # nothing runs it
+unrouted dregg-lightclient light_client_rejects_corrupted_aggregate   # nothing runs it
+unrouted dregg-lightclient light_client_reports_the_relayers_inflated_count   # nothing runs it
+unrouted dregg-lightclient vk_anchor_is_circuit_shape_not_history_content   # nothing runs it
+unrouted dregg-multiway-tug app_root_weld_refuses_disagreeing_winner_through_verify_history   # nothing runs it
+unrouted dregg-multiway-tug match_win_output_is_attested   # nothing runs it
+unrouted dregg-multiway-tug membership_play_folds_over_the_real_cell_and_lightclient_accepts   # nothing runs it
+unrouted dregg-multiway-tug private_match_folds_and_lightclient_accepts   # nothing runs it
+unrouted dregg-multiway-tug the_leg_octet_exposes_the_committed_field_values   # nothing runs it
+unrouted dregg-multiway-tug win_folds_over_the_real_cell_and_lightclient_accepts   # nothing runs it
+unrouted dregg-narrator live_bedrock_converse_meters_exact_usage   # nothing runs it
+unrouted dregg-node an_underfunded_player_is_refused_with_the_fee_named   # nothing runs it
+unrouted dregg-node genuine_exact_proof_crosses_one_producer_gate_and_binds_distinct_full_receipt   # nothing runs it
+unrouted dregg-node n4_survives_a_validator_kill   # nothing runs it
+unrouted dregg-node n5_survives_a_validator_kill   # nothing runs it
+unrouted dregg-node retained_history_folds_and_verifies_like_compress_history   # nothing runs it
+unrouted dregg-node the_first_turn_ceremony_settles_when_driven_by_the_commands   # nothing runs it
+unrouted dregg-param-compose a_duplicated_subject_does_not_prove   # nothing runs it
+unrouted dregg-param-compose a_tampered_node8_digest_lane_does_not_prove   # nothing runs it
+unrouted dregg-param-compose a_wrong_outcome_does_not_prove   # nothing runs it
+unrouted dregg-param-compose composition_leaf_proves_and_binds_its_commitment   # nothing runs it
+unrouted dregg-param-compose the_lean_descriptor_really_proves_over_the_produced_witness   # nothing runs it
+unrouted dregg-param-compose the_realistic_shape_proves_as_a_single_leaf   # nothing runs it
+unrouted dregg-recursion-verify the_whole_chain_root_binds_to_the_deployed_sub_proof   # nothing runs it
+unrouted dregg-redteam devnet_garbage_does_not_5xx   # nothing runs it
+unrouted dregg-redteam devnet_rotating_xff_does_not_mint_fresh_buckets_f1   # nothing runs it
+unrouted dregg-redteam devnet_status_withholds_private_counts_f8   # nothing runs it
+unrouted dregg-tee-verify real_quote_full_dcap_verify   # nothing runs it
+unrouted dregg-turn search_cells_root_lane0_collision   # nothing runs it
+unrouted dregg-wasm full_fold_core_folds_and_lightclient_accepts   # nothing runs it
+unrouted dregg-zkoracle-live bedrock_attested_by_separate_pinned_notary   # nothing runs it
+unrouted dregg-zkoracle-live bedrock_attested_under_durable_pinned_notary   # nothing runs it
+unrouted dregg-zkoracle-live bedrock_mpctls_attests_real_claude_output   # nothing runs it
+unrouted dreggnet-game-board a_chain_mixing_windowed_and_plain_turns_is_refused   # nothing runs it
+unrouted dreggnet-game-board a_forged_automaton_coordinate_alone_breaks_the_seam   # nothing runs it
+unrouted dreggnet-game-board a_mismatched_mid_breaks_the_board_window_seam_and_is_refused   # nothing runs it
+unrouted dreggnet-game-board a_mismatched_mid_does_not_fold_on_the_deployed_prover   # nothing runs it
+unrouted dreggnet-game-board a_played_round_lowers_to_a_resolve_leaf_then_a_step_leaf   # nothing runs it
+unrouted dreggnet-game-board automatafl_match_plays_folds_submits_and_ranks   # nothing runs it
+unrouted dreggnet-game-board both_games_rank_on_the_same_proof_carrying_registry   # nothing runs it
+unrouted dreggnet-game-board multiway_tug_match_plays_folds_submits_and_ranks   # nothing runs it
+unrouted dreggnet-game-board the_hand_built_honest_round_is_accepted_and_matches_the_generated_one   # nothing runs it
+unrouted dreggnet-game-board the_honest_conflict_braid_folds_and_the_light_client_reads_the_roundstate_endpoints   # nothing runs it
+unrouted dreggnet-game-board the_honest_two_leg_match_folds_and_the_light_client_reads_the_final_position   # nothing runs it
+unrouted dreggnet-game-board the_played_round_mints_two_chained_leaves   # nothing runs it
+unrouted dreggnet-game-board the_root_window_is_the_genesis_and_final_board_in_the_clear   # nothing runs it
+unrouted dreggnet-game-board the_surface_played_conflicted_turn_folds_to_one_verifying_proof   # nothing runs it
+unrouted dreggnet-game-board the_windows_chain_leaf_to_leaf_across_the_mid_and_across_rounds   # nothing runs it
+unrouted dreggnet-prove-service a_tampered_folded_proof_is_rejected   # nothing runs it
+unrouted dreggnet-prove-service automatafl_match_folds_off_path_to_a_verifying_proof   # nothing runs it
+unrouted dreggnet-prove-service the_gpu_dispatch_probe_is_wired   # nothing runs it
+unrouted dreggnet-prove-service tug_match_folds_off_path_to_a_verifying_proof   # nothing runs it
+unrouted dreggnet-prove-service two_matches_fold_concurrently   # nothing runs it
+unrouted dreggnet-web federation_settle_lands_a_turn_on_a_running_node   # nothing runs it
+unrouted dreggnet-web measure_the_real_bundle   # nothing runs it
+unrouted dreggnet-web print_operator_cell_id   # nothing runs it
+unrouted dungeon-on-dregg real_bedrock_brain_narrates_and_binds_a_real_attestation   # nothing runs it
+unrouted fhegg-fhe bench_paired_readback_crossover   # nothing runs it
+unrouted fhegg-fhe bench_residency_thesis_upload_once_fold_k_times   # nothing runs it
+unrouted fhegg-fhe deployed_918_by_918_dense_pbs_matches_tfhe_and_reuses_device_keys   # nothing runs it
+unrouted fhegg-fhe deployed_fhe_uint32_block_lut_matches_tfhe_and_remains_high_level_usable   # nothing runs it
+unrouted fhegg-fhe deployed_fhe_uint32_ciphertext_gt_resident_matches_tfhe_and_selects_privately   # nothing runs it
+unrouted fhegg-fhe deployed_fhe_uint32_scalar_gt_is_all_block_wgpu_and_drives_control_flow   # nothing runs it
+unrouted fhegg-fhe deployed_fhe_uint32_scalar_gt_resident_matches_roundtrip_baseline   # nothing runs it
+unrouted fhegg-fhe deployed_q0_q1_q2_forward_inverse_batch_crossover_is_exact   # nothing runs it
+unrouted fhegg-fhe distributed_verified_open_carries_a_certificate_and_a_forgery_is_refused   # nothing runs it
+unrouted fhegg-fhe exact_ntt_matches_cpu_for_two_level_full_width_external_product   # nothing runs it
+unrouted fhegg-fhe exact_ntt_matches_full_width_oracle_and_reports_crossover   # nothing runs it
+unrouted fhegg-fhe production_q0_q1_q2_odd_forward_inverse_are_wgpu_resident_and_exact   # nothing runs it
+unrouted fhegg-fhe require_real_wgpu_bfv_and_torus_residency   # nothing runs it
+unrouted fhegg-fhe require_real_wgpu_private_book_signed_dot_residency   # nothing runs it
+unrouted fhegg-fhe required_complete_msm_matches_dalek_and_verifier_refuses_bad_boundaries   # nothing runs it
+unrouted fhegg-fhe required_wgpu_group_add_matches_canonical_dalek_bytes_and_refuses_malformed_points   # nothing runs it
+unrouted fhegg-fhe required_wgpu_prepares_exact_windows_and_proves_through_the_owned_seam   # nothing runs it
+unrouted fhegg-fhe three_party_processes_open_verified_at_t_and_refuse_below_it   # nothing runs it
+unrouted fhegg-fhe three_party_processes_run_the_relinearization_ceremony   # nothing runs it
+unrouted game-turn-slice forged_combat_witness_does_not_prove   # nothing runs it
+unrouted game-turn-slice forged_game_commitment_rejected   # nothing runs it
+unrouted game-turn-slice forged_ordering_rejects   # nothing runs it
+unrouted game-turn-slice game_program_leaf_accepts   # nothing runs it
+unrouted game-turn-slice game_rule_proves_as_foldable_leaf_with_bound_commitment   # nothing runs it
+unrouted game-turn-slice game_turn_folds_and_lightclient_accepts   # nothing runs it
+unrouted grain-verify r3_whole_history_unfoolable_decided_by_lean   # nothing runs it
+unrouted pg-dregg tier_c_real_proof_attests_and_tamper_is_refused   # nothing runs it
+unrouted procgen-dregg live_drand_fetch_of_todays_round_verifies   # nothing runs it
+unrouted procgen-dregg live_hybrid_day_seeds   # nothing runs it
+unrouted spween-dregg per_turn_cost   # nothing runs it
+unrouted starbridge-domains live_lookup_real_domain   # nothing runs it
+unrouted starbridge-v2 projection_cost_is_flat_in_cell_count   # nothing runs it
+unrouted starbridge-v2 x3_cost_decomposition   # nothing runs it

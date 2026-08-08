@@ -241,6 +241,60 @@ jobs:
       # the failure mode this whole workflow is a response to. So both counts are floored
       # against a MEASURED baseline, and the run's own libtest output — not its exit code —
       # is what proves the teeth executed.
+      #
+      # ⚑⚑ AND THE GLOB IS GONE (2026-08-07), BECAUSE WIDENING IT WAS NEVER GOING TO BE
+      # ENOUGH. Every fix above widened the PATTERN — `*_binding_deployed_tooth` → the noun
+      # `*tooth*`/`*teeth*` — while leaving the SELECTOR a filename. A test earned its
+      # nightly by living in a file with the right name, which is not a property of the test.
+      #
+      # MEASURED AT HEAD 2026-08-07, over every `#[ignore]` attribute in the workspace (282):
+      #
+      #     armed-nightly (this job, via the glob)     21
+      #     DARK — reached by nothing at all           71   ← in `dregg-circuit-prove` alone
+      #
+      # The 71 include `custom_binding_production_path`'s `production_custom_turn_forged_rejected`
+      # and `…forged_root_rejected`, `fold_unfoolability_forge`'s two, `accumulator`'s nine
+      # (among them `online_mixed_root_forgery_rejected` and `forged_link_stream_is_rejected`),
+      # `membership_binding_mechanism`'s forged pole, `mpt_holding_fold_pilot`'s six, and
+      # `recursion_vk_determinism`.
+      #
+      # ⚠ TWENTY-EIGHT OF THEM COULD NEVER HAVE BEEN REACHED BY ANY GLOB, HOWEVER SPELLED.
+      # They are `#[ignore]`d LIB tests in `circuit-prove/src/` (`joint_turn_recursive.rs`'s
+      # twelve, `deco_leaf_adapter.rs`'s six, `zkoracle_leaf_adapter.rs`'s five, …), and this
+      # job's selector is a list of `--test <binary>` flags, which names integration-test
+      # binaries only. `--lib` is a different flag and nothing passed it. So the glob was not
+      # merely narrow; for that half it was the wrong KIND of selector.
+      #
+      # The list now comes from `.github/ignored-test-routes.txt` — a per-test roster in which
+      # EVERY `#[ignore]`d test in the workspace carries a route, checked by
+      # `scripts/check-ignored-test-routing.py` in the step below. The roster selects by TEST
+      # NAME; the script only translates that into the `--lib`/`--test` flags cargo needs. The
+      # pair is what stops both rots: a transcribed roster cannot go empty by a rename, and a
+      # completeness gate over it cannot go stale, because its ground truth is the tree's own
+      # `#[ignore]` attributes re-read on every run.
+      #
+      # ⚠ WHY THE 71 GO IN A SEPARATE JOB (`dark-binding-teeth`) AND NOT IN THIS ONE. Their
+      # aggregate wall clock on a hosted runner has never been measured — same footing
+      # `feature-gated-prove-teeth` landed on, and its header says so in as many words. A lane
+      # that already works must not be able to time out behind an unmeasured one.
+      #
+      # ⚠ AND WHY THE WHOLE PACKAGE WAS *NOT* THE ANSWER, even though `[profile.armed]`
+      # (`package(dregg-circuit-prove) and not (<gpu>)`) is exactly the non-rotting shape and
+      # is already in `.config/nextest.toml`. The tree's own `#[ignore]` reasons refuse it:
+      #   * `leaf_wrap_mint_blowup_repricing::the_deployed_mint_is_the_measured_wall` records
+      #     "~118 GiB peak footprint (> RAM)"; `mina_accumulator_fold`'s three record
+      #     117.8–118.3 GiB. `ubuntu-latest` is 16 GB. That is an OOM, and an OOM here reads
+      #     as a failing tooth.
+      #   * `production_leaves_mint_at_their_own_engine`'s two say "Run ALONE under
+      #     /usr/bin/time -l". `[profile.armed]` is `test-threads = 4`; they would still
+      #     produce a number, and it would be wrong.
+      #   * Seven are MEASUREMENTS with no adversarial claim — one, `dfa_routing_emit_gate::
+      #     perf_prove_verify_breakdown`, says "PERF PROBE with NO assertion" in its own reason.
+      #   * Two MINT FIXTURES into the tree.
+      # Those get their true routes in the roster instead of a nightly that cannot serve them.
+      - name: Every `#[ignore]`d test carries a route
+        run: python3 scripts/check-ignored-test-routing.py
+
       - name: Arm the deployed binding teeth
         run: |
           # ⚠ `set +e` IS LOAD-BEARING. GitHub runs `run:` blocks under
@@ -252,30 +306,21 @@ jobs:
           # the status we saved.
           set +e
           set -uo pipefail
-          # Measured 2026-07-25: 13 tooth/teeth files in circuit-prove/tests/, carrying 17
-          # `#[ignore]`d teeth under the old 8-file glob. Floors are a RATCHET — raise them
-          # when the set grows; never lower one to make a red lane green.
-          FLOOR_FILES=13
-          FLOOR_TEETH=17
-          shopt -s nullglob
-          TEETH=()
-          FILES=()
-          for f in circuit-prove/tests/*tooth*.rs circuit-prove/tests/*teeth*.rs; do
-            FILES+=("$f")
-            TEETH+=(--test "$(basename "$f" .rs)")
-          done
-          n_files=${#FILES[@]}
-          echo "armed-teeth: derived $n_files tooth/teeth file(s):"
-          printf '  %s\n' "${FILES[@]}"
-          if [ "$n_files" -lt "$FLOOR_FILES" ]; then
-            echo "::error::armed-teeth derived $n_files tooth file(s), below the measured floor of $FLOOR_FILES."
-            echo "::error::Arming fewer teeth than exist makes this lane GREEN over tests it never ran —"
-            echo "::error::the exact failure it exists to prevent. Re-point the glob, or (if teeth were"
-            echo "::error::deliberately deleted) lower FLOOR_FILES in the SAME commit that deletes them."
-            exit 1
-          fi
+          # Measured 2026-08-07: the `armed-nightly` route holds 21 teeth. Floors are a
+          # RATCHET — raise them when the set grows; never lower one to make a red lane green.
+          # (The old FLOOR_FILES is gone with the glob: a count of FILES was only ever a proxy
+          # for a count of TESTS, and it is the wrong one — four of the fourteen files the glob
+          # matched carry no `#[ignore]` at all, and 28 of the teeth it could not reach are in
+          # no `tests/` file.)
+          FLOOR_TEETH=21
+          # Derived from the ROSTER, not from filenames. `--emit-cargo-targets` fails loudly
+          # (exit 2) if the route covers no live test, so an empty selection can never present
+          # as a green lane that ran nothing.
+          TARGETS=$(python3 scripts/check-ignored-test-routing.py --emit-cargo-targets armed-nightly) || exit 1
+          echo "armed-teeth: rostered targets: $TARGETS"
+          # shellcheck disable=SC2086
           cargo test -p dregg-circuit-prove --release --no-fail-fast \
-            "${TEETH[@]}" \
+            $TARGETS \
             -- --ignored --nocapture 2>&1 | tee armed-teeth.log
           status=${PIPESTATUS[0]}
           # THE FLOOR ON WHAT ACTUALLY RAN. `cargo test` exits 0 for a binary that matched no
@@ -291,6 +336,110 @@ jobs:
             exit 1
           fi
           exit "$status"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THE DARK SET — 71 `#[ignore]`d teeth in `dregg-circuit-prove` that, at HEAD on
+  # 2026-08-07, were reached by NOTHING. Not by `ci.yml` (`cargo test` never runs an
+  # ignored test), not by `binding-teeth` above (its selector was a filename glob), not by
+  # `scripts/test-gauntlet.sh armed` (that is a command a human types, and its own header
+  # records that no workflow invokes it).
+  #
+  # THE LIST IS NOT A GLOB AND NOT A TRANSCRIPTION EITHER — it is the `armed-dark` route of
+  # `.github/ignored-test-routes.txt`, over which `scripts/check-ignored-test-routing.py`
+  # holds a COMPLETENESS gate: every `#[ignore]`d test in the workspace must carry a route,
+  # every route must name a live test, and both armed counts are floored. See the long block
+  # above `binding-teeth`'s arming step for why every previous fix widened the pattern and
+  # left the selector wrong.
+  #
+  # ⚠ THIS JOB'S COST HAS NEVER BEEN MEASURED ON A HOSTED RUNNER, AND THAT IS SAID HERE
+  # RATHER THAN GUESSED. What IS measured is the per-test cost the teeth themselves record:
+  # ~9 of the 71 are "one real leaf wrap (~tens of seconds)", most are "~minutes", and
+  # `accumulator`'s and `ivc_turn_chain_rotated`'s are multi-turn folds. The four tests whose
+  # own reasons record a 118 GiB peak, the two that demand "Run ALONE", the seven pure
+  # measurements and the two fixture-minters are NOT here — they carry `oversized` /
+  # `exclusive` / `measurement` / `fixture-mint` routes precisely so that a nightly cannot
+  # sweep them up. If this job times out or OOMs anyway, that is a REAL FINDING about the
+  # folds' cost and belongs in this header — not a reason to quietly drop targets. It is a
+  # SEPARATE JOB from `binding-teeth` for exactly that reason: an unmeasured lane must not be
+  # able to time out the one that already works.
+  #
+  # ⚠ AND IT IS EXPECTED TO BE RED AT LANDING. `binding-teeth`'s own first arming measured
+  # 4 passed / 11 FAILED of 17, with one producer/descriptor drift accounting for nine.
+  # Arming a test nobody ran is how you find out; a declared red is the product.
+  dark-binding-teeth:
+    name: Dark binding teeth — the 71 reached by nothing (--ignored)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true   # include_str!'d staged registries live in LFS (.gitattributes)
+
+      # Same disk reclaim as `binding-teeth` and ci.yml's Linux test job.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Every `#[ignore]`d test carries a route
+        run: python3 scripts/check-ignored-test-routing.py
+
+      - name: Arm the dark teeth
+        run: |
+          # `set +e` is load-bearing for the same reason it is in `binding-teeth`: under
+          # GitHub's `-eo pipefail` the floor check after a red `cargo test` is unreachable
+          # code, i.e. a guard on the guard that cannot fire.
+          set +e
+          set -uo pipefail
+          FLOOR_TEETH=71
+          # ⚑ `--lib` IS THE HALF NO GLOB COULD EVER HAVE EXPRESSED. 28 of these teeth are
+          # `#[ignore]`d LIB tests in `circuit-prove/src/` — `joint_turn_recursive.rs`'s
+          # twelve (four of them `forged_*`/`canary__*` refusal poles), `deco_leaf_adapter`'s
+          # six, `zkoracle_leaf_adapter`'s five, `private_preference_cell`'s two. A list of
+          # `--test <binary>` flags names integration binaries only; `--lib` is a different
+          # flag and nothing in this repository passed it at this package.
+          #
+          # The emitted `--skip`s are not tidiness either: `--lib` selects the WHOLE lib
+          # target, which includes `src/gpu_backend.rs`'s seven adapter-asserting teeth — a
+          # guaranteed red on this GPU-less runner, and the exact failure `[profile.armed]`'s
+          # GPU exclusion exists to prevent. They are skipped BY NAME.
+          TARGETS=$(python3 scripts/check-ignored-test-routing.py --emit-cargo-targets armed-dark) || exit 1
+          echo "dark-teeth: rostered targets: $TARGETS"
+          # shellcheck disable=SC2086
+          cargo test -p dregg-circuit-prove --release --no-fail-fast \
+            $TARGETS \
+            -- --ignored --nocapture 2>&1 | tee dark-teeth.log
+          status=${PIPESTATUS[0]}
+          # THE FLOOR ON WHAT ACTUALLY RAN — `cargo test` exits 0 for a binary that matched
+          # no test, so the exit code cannot tell "71 teeth bit" from "the filter matched
+          # nothing". Sum libtest's own report.
+          ran=$(sed -nE 's/^test result:.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/p' dark-teeth.log \
+                 | awk '{s+=$1+$2} END {print s+0}')
+          echo "dark-teeth: $ran tooth assertion(s) actually executed (floor $FLOOR_TEETH)."
+          if [ "$ran" -lt "$FLOOR_TEETH" ]; then
+            echo "::error::only $ran dark tooth(s) executed, below the roster's floor of $FLOOR_TEETH."
+            echo "::error::A lane that runs fewer teeth than it claims is a lane reporting on tests"
+            echo "::error::that did not happen. Do not lower the floor to clear this."
+            exit 1
+          fi
+          exit "$status"
+
+      - name: Upload the dark-teeth log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dark-teeth-log
+          path: dark-teeth.log
+          retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────────────────
   # THE SECOND AXIS (see the header). `binding-teeth` above arms tests that CI compiles
@@ -903,7 +1052,7 @@ jobs:
 
   page-on-red:
     name: Page a human when a tooth is red
-    needs: [binding-teeth, feature-gated-prove-teeth, lean-hard-mode, gpui-gated-desktop-teeth]
+    needs: [binding-teeth, dark-binding-teeth, feature-gated-prove-teeth, lean-hard-mode, gpui-gated-desktop-teeth]
     # `always()` so this still runs after the teeth job fails; fire only on a real
     # failure (never on cancelled/skipped — lean-hard-mode is dispatch-gated and is
     # `skipped` on every scheduled run).
@@ -918,9 +1067,14 @@ jobs:
     # The job existed, floored what it executed, and reported into silence: a gate whose red
     # nobody receives is a gate nobody has. Found by the lane that armed three more teeth into
     # it, which is the reason to make an arming lane check its own delivery path.
+    #
+    # ⚑ `dark-binding-teeth` joined on 2026-08-07 IN THE SAME COMMIT that created it — the
+    # lesson above, applied at birth rather than a day later. A job that arms 71 teeth nothing
+    # had ever run, and whose red reaches nobody, has moved the silence rather than ended it.
     if: >-
       ${{ always() && github.event_name != 'pull_request'
           && (needs.binding-teeth.result == 'failure'
+              || needs.dark-binding-teeth.result == 'failure'
               || needs.feature-gated-prove-teeth.result == 'failure'
               || needs.lean-hard-mode.result == 'failure'
               || needs.gpui-gated-desktop-teeth.result == 'failure') }}
