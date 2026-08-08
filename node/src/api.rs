@@ -11468,6 +11468,22 @@ mod tests {
             note_tree_root: [0u8; 32],
             spending_proof: vec![],
         },
+        // ⚑ FLAG DAY: the off-ramp. `Deshield` is a Refused residual — there is no EffectVM
+        // rung for it yet, and both the executor and the SDK projector refuse it BY NAME
+        // rather than admitting it without a circuit statement. The macro is wildcard-free,
+        // so this row is what lets `cargo test -p dregg-node` compile at all.
+        Deshield => GateClass::Refused, Effect::Deshield {
+            value: 1,
+            asset_type: 0,
+            note_commitment: dregg_cell::NoteCommitment([0x69; 32]),
+            encrypted_note: vec![],
+            input: dregg_turn::action::ShieldedInputPayload {
+                nullifier: 0x69,
+                spend_wide_binding: [0u32; 16],
+                spend_proof: vec![],
+            },
+            link_proof: vec![],
+        },
     }
 
     fn observed_gate_class(actor: &CellId, effect: &Effect) -> GateClass {
