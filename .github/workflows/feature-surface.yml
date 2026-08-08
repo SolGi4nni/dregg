@@ -101,26 +101,47 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-06-21
+
+      # ══════════════════════════════════════════════════════════════════════════════════════
+      # ⚑ THE SELF-TEST RUNS FIRST, AND BEFORE THE TOOLCHAIN (2026-08-08).
+      #
+      # This job's three gates are independent, and until now they were sequenced worst-first:
+      # the RATCHET'S OWN CAN-GO-RED PROOF was step 5 of 5, behind both tier checks and behind
+      # a toolchain install it does not use — so it was the FIRST thing silenced by any bite
+      # anywhere above it, and the one whose silence means the most. A guard that proves it can
+      # refuse must not be able to be skipped by the thing it guards.
+      #
+      # It needs NO cargo (its own banner says so: synthetic logs, no cargo, and it never reads
+      # the real plan or the real known-red file), so it can and does run before the toolchain
+      # step, exactly like the STATIC-ONLY SELF-PROOF at the head of ci.yml's `gates-executed`.
+      # `!cancelled()` on the other two keeps all three verdicts independent — the pattern
+      # ci.yml's `clippy-correctness` was repaired to on 2026-08-03.
+      # ══════════════════════════════════════════════════════════════════════════════════════
+      - name: The T3 ratchet can go red in both directions (synthetic logs, no cargo, no toolchain)
+        run: scripts/feature-t3-sweep.sh --self-test
+
       # The STATIC phase needs no cargo at all — it parses Cargo.toml with tomllib and compares
       # the tree to the ledger, so it still runs when nothing in the tree compiles. That is
       # deliberate: the 2026-07-20 blackout worked precisely by making a whole crate's tests
       # un-compilable, and a gate that needs a working build to say anything inherits that.
       - name: Static gate — every (crate, feature) pair is tiered, no row is stale
+        if: ${{ !cancelled() }}
         run: python3 scripts/check-feature-tiers.py
+
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        if: ${{ !cancelled() }}
+        with:
+          toolchain: nightly-2026-06-21
       # The cargo cross-checks ADD failures and never subtract them: C1 holds the static
       # enumerator to `cargo metadata`'s answer (the tomllib reimplementation of cargo's
       # implicit-optional-dep rule is exactly the kind of thing that drifts), and C2 refuses a
       # T1 claim the default resolve does not actually back.
+      # This is the ONE step here that needs cargo, so it is the one that names the toolchain
+      # in its condition — a `cargo metadata` with no cargo is not a green, it is a fault.
       - name: Cargo cross-checks — enumeration vs `cargo metadata`, and every T1 claim
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         run: python3 scripts/check-feature-tiers.py --verify-enumeration --verify-t1
-      # The sweep's ratchet has its own poles and they cost nothing, so they run on EVERY push
-      # even though the sweep itself does not. A judgement nobody can show going red is not a
-      # judgement, and the cheap half of proving it should not wait for the nightly.
-      - name: The T3 ratchet can go red in both directions (synthetic logs, no cargo)
-        run: scripts/feature-t3-sweep.sh --self-test
 
   # ── THE COMPILE SWEEP. Nightly + main + manual; sharded so no shard runs long. ──────────
   t3-compile-sweep:

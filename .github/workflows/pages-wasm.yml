@@ -181,42 +181,113 @@ jobs:
       - name: Bake the card gallery pages (deos-view native example)
         run: cd deos-view && cargo run -q --no-default-features --features web --example web_render_card
 
-      # UPLOADS BEFORE THE TEETH, DELIBERATELY. A tooth that bites below must turn THIS
-      # run red without withholding the artifacts — the fast path then deploys them with a
-      # visible "known broken" marker instead of refusing to publish a docs change. Move
-      # the teeth above these steps and you re-create the coupling the split removed.
+      # ══════════════════════════════════════════════════════════════════════════════════════
+      # ⚑ MEASURED 2026-08-08: THE TEETH BELOW HAVE NEVER RUN, AND `continue-on-error` IS NOT
+      # WHY. Run 30807214969 (2026-08-03) and 30259636913 (2026-07-27) are the only two runs of
+      # this workflow on record, and BOTH died in the `Bake the card gallery pages` step above:
+      #
+      #     thread 'main' panicked at deos-view/examples/web_render_card.rs:535:5:
+      #     the page carries the trust banner, the unverified-by-default card, and the attest gate
+      #     ##[error]Process completed with exit code 101.
+      #
+      # GitHub stops a job at the first failed step, so on both runs the two uploads below did
+      # NOT happen and the browser-surface teeth did NOT execute — the block right underneath
+      # this one asserted the opposite ("a tooth that bites below must turn THIS run red without
+      # withholding the artifacts") and the sequencing never delivered it. `summary` then
+      # correctly reported the run NOT CONSUMABLE, which is the only reason it was visible at
+      # all. The `continue-on-error` on the teeth was a debate about a step that never got to
+      # speak.
+      #
+      # `if: ${{ !cancelled() }}` on all three is what makes the header's stated design TRUE:
+      # publish what was built, then bite. The bake failure stays red and stays attributed to
+      # the bake step — it is deos-view's `web_render_card` assertion, and it is a real finding
+      # for that surface's owner, not this workflow's to paper over.
+      # `if-no-files-found: error` is deliberately kept: an upload of nothing must not read as
+      # a publish.
+      # ══════════════════════════════════════════════════════════════════════════════════════
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: wasm-cards
           path: wasm/pkg
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: cards-baked
           path: deos-view/target/web-out/dist
           if-no-files-found: error
 
       - name: The browser-surface teeth (light-client freshness + transclusion polarities)
-        # The SAME script scripts/build-pages-dist.sh runs. Here it is green-or-bust: this
-        # job built that wasm, so a bite is a real break in what this run just produced —
-        # the baked light-client aggregate no longer attesting under the engine, or the
-        # transclusion forge-refusal path having stopped refusing. Regeneration command is
-        # in the script's header.
-        # ⚑ STAGING POSTURE (2026-07-26, ember's call): these surfaces are NOT READY, and a
-        # permanent red for a thing we know is not ready is worse than no signal — it is exactly
-        # the "red as steady state" pathology that let a five-day CI blackout go unnoticed
-        # (docs/WOUND-ci-gates-dead-since-2026-07-20.md: 60 runs, 0 successes, red carried no
-        # information). So this REPORTS and does not fail. It stays VISIBLE in the summary.
+        # The SAME script scripts/build-pages-dist.sh runs. This job built that wasm, so a bite
+        # is a real break in what this run just produced — the baked light-client aggregate no
+        # longer attesting under the engine, or the transclusion forge-refusal path having
+        # stopped refusing. Regeneration commands are in the script's header.
         #
-        # KNOWN STAGING GAP, declared rather than alarmed about: site/light-client/history.json
-        # dates from the initial commit and 245+ commits have since touched wasm/, circuit-prove/
-        # and dregg-lightclient/, so the freshness tooth bites by construction. Regeneration
-        # command is in the script header.
+        # ⚑ THE BLANKET `continue-on-error: true` IS GONE (2026-08-08), AND THIS IS STRICTLY
+        # TIGHTER THAN WHAT IT REPLACES. It exempted BOTH teeth and, worse, it erased the
+        # distinction the script's own header says callers MUST make:
+        #     exit 0 = both teeth green · exit 1 = a tooth BIT · exit 2 = there was NOTHING TO TEST
+        # Under `continue-on-error` all three read identically on the checks page — including
+        # exit 2, which is the fail-open shape this repo forbids: a gate whose input is absent
+        # reporting as if it had measured something.
         #
-        # WHEN WE LEAVE STAGING: drop continue-on-error and this becomes a real gate. That is a
-        # one-line change and it is the point at which "the wasm surfaces work" becomes a claim.
-        continue-on-error: true
-        run: bash scripts/check-web-surface-teeth.sh wasm/pkg
+        # WHAT IS EXEMPT NOW IS ONE NAMED TOOTH, NOT THE SURFACE. The staging posture
+        # (2026-07-26, ember's call) is about ONE declared-stale artifact:
+        # `site/light-client/history.json` dates from the initial commit and 245+ commits have
+        # since touched wasm/, circuit-prove/ and dregg-lightclient/, so `TOOTH
+        # light-client-freshness` bites BY CONSTRUCTION and a permanent red for a thing we know
+        # is not ready carries no information. That exemption is now spelled by NAME. The
+        # transclusion tooth — a verified include shows the committed bytes, a live read follows
+        # an amend, a receipt-pinned backlink is recorded, and a byte-tamper forge is REFUSED
+        # with `ContentHashMismatch` — was never part of that argument and is a REAL GATE from
+        # this commit: a surface that stops refusing is not a staging gap.
+        #
+        # WHEN WE LEAVE STAGING: regenerate the aggregate (command in the script header) and
+        # delete the `light-client-freshness` arm below. Until then the exemption is one grep
+        # for one string, visible in this file, and it CANNOT cover a second failure: any other
+        # bite, and any exit that is not 0/1/2, fails the step.
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          set -uo pipefail
+          bash scripts/check-web-surface-teeth.sh wasm/pkg 2>&1 | tee web-surface-teeth.log
+          teeth=${PIPESTATUS[0]}
+          echo "check-web-surface-teeth: exit=$teeth"
+          case "$teeth" in
+            0)
+              echo "browser-surface teeth: BOTH GREEN."
+              exit 0 ;;
+            2)
+              echo "::error::check-web-surface-teeth exited 2 — there was NOTHING TO TEST (no"
+              echo "::error::bundle at wasm/pkg, no node, or no baked aggregate). This job BUILT"
+              echo "::error::that bundle, so an absent input here is a FAULT, not a pass. Exit 2"
+              echo "::error::used to be indistinguishable from a green under continue-on-error."
+              exit 1 ;;
+            1) ;;
+            *)
+              echo "::error::check-web-surface-teeth exited $teeth, which is not one of its three"
+              echo "::error::documented statuses (0 green / 1 a tooth bit / 2 nothing to test)."
+              exit 1 ;;
+          esac
+          # exit 1: a tooth bit. Exactly one bite is declared, by name.
+          if grep -q 'TOOTH transclusion' web-surface-teeth.log; then
+            echo "::error::THE TRANSCLUSION TOOTH BIT. This is not the declared staging gap: the"
+            echo "::error::include/backlink/live-read/forge-refusal surface is expected to hold"
+            echo "::error::today, and a surface that stops REFUSING is as broken as one that"
+            echo "::error::stops loading. See the bite above."
+            exit 1
+          fi
+          if grep -q 'TOOTH light-client-freshness' web-surface-teeth.log; then
+            echo "::warning::light-client freshness tooth bit — the DECLARED staging gap"
+            echo "(site/light-client/history.json predates 245+ commits to wasm/, circuit-prove/"
+            echo "and dregg-lightclient/). Regenerate it and delete this arm; see the step's"
+            echo "comment. The transclusion tooth is a hard gate and did NOT bite."
+            exit 0
+          fi
+          echo "::error::the script exited 1 but named no TOOTH in its output, so the exemption"
+          echo "::error::above cannot tell which surface broke. Refusing to interpret it."
+          exit 1
 
   # ── what this run published, in one place ────────────────────────────────────
   summary:

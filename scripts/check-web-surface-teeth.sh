@@ -42,6 +42,17 @@
 # Exit 2 = the bundle is ABSENT/unusable, i.e. there was nothing to test. Callers MUST
 #          distinguish 2 from 1: 1 is "the surface is broken", 2 is "the surface is not
 #          in this build at all", and those get different treatment in the site.
+#
+# ⚑ BOTH TEETH ALWAYS RUN (2026-08-08). Until now this file was `set -e` end to end with the
+# two node invocations in sequence, so TOOTH 1 biting ended the script and TOOTH 2 never
+# executed — a gate behind a red gate, one level below the CI step that says so. That was not
+# hypothetical: `site/light-client/history.json` is a DECLARED-stale artifact and tooth 1 bites
+# BY CONSTRUCTION today (see pages-wasm.yml's step comment), so the transclusion polarities —
+# a verified include shows the committed bytes, a live read follows an amend, a receipt-pinned
+# backlink is recorded, and a byte-tamper forge is REFUSED with ContentHashMismatch — could not
+# be measured at all while that stayed true, and a caller reading exit 1 could not tell that.
+# Each tooth is now run with `set +e` around it, both verdicts are printed, and the exit code
+# is unchanged: 0 iff BOTH are green. The contract callers depend on (0/1/2) is identical.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -63,7 +74,10 @@ if [ ! -s "$HISTORY" ]; then
   exit 2
 fi
 
+bit=0
+
 # ── TOOTH 1: light-client freshness ──────────────────────────────────────────────
+set +e
 node --input-type=module -e "
 import { readFileSync } from 'node:fs';
 const m = await import('$PKG/dregg_wasm.js');
@@ -78,6 +92,8 @@ if (!v.aggregate_attested) {
 }
 console.log('light-client freshness tooth: the baked aggregate attests, legs 1+2 (' + v.num_turns + ' turns; finality_attested=' + v.finality_attested + ')');
 "
+t1=$?
+[ "$t1" -eq 0 ] || bit=1
 
 # ── TOOTH 2: transclusion, both polarities ───────────────────────────────────────
 node --input-type=module -e "
@@ -112,3 +128,12 @@ if (!forge.refused || forge.reason !== 'ContentHashMismatch') {
 }
 console.log('transclusion tooth: include verifies + backlink pinned + live follows + the forge is refused (' + forge.reason + ')');
 "
+t2=$?
+[ "$t2" -eq 0 ] || bit=1
+set -e
+
+# BOTH verdicts, always, so a caller can act on the PAIR rather than on whichever ran first.
+printf 'check-web-surface-teeth: light-client-freshness=%s transclusion=%s\n' \
+  "$([ "$t1" -eq 0 ] && echo green || echo BIT)" \
+  "$([ "$t2" -eq 0 ] && echo green || echo BIT)"
+exit "$bit"

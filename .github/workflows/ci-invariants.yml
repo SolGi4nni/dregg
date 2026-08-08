@@ -57,6 +57,68 @@ jobs:
       - name: ci-invariants.sh structural
         run: bash scripts/ci-invariants.sh structural
 
+  # ══════════════════════════════════════════════════════════════════════════════════════════
+  # ⚑ THE TWO GATES ONLY A PER-CLONE HOOK RAN (2026-08-08).
+  #
+  # `scripts/check-dangling-imports.sh` and `scripts/check-floor-baseline-preflight.sh` were
+  # invoked from EXACTLY ONE place in the repository: `scripts/git-hooks/pre-commit`. That is
+  # per-clone opt-in — `scripts/install-hooks.sh` is called by neither `scripts/bootstrap.sh`
+  # nor any workflow — and `--no-verify` turns it off for anyone who has it. So the strongest
+  # gate in the tree for two real, repeatedly-paid wounds had NO READER IN CI AT ALL, and
+  # `grep -rn check-dangling-imports .github/` returned zero hits.
+  #
+  # THE WOUNDS, both measured and both recent:
+  #   * DANGLING IMPORT — four times on 2026-08-03 (`a0a7da66f`, `ad0e55b57` twice, and the
+  #     revert `1feb6210f` half-repaired) HEAD carried an `import Dregg2.Foo` with no committed
+  #     `metatheory/Dregg2/Foo.lean`. Every clean build of HEAD then died in ~2 seconds at
+  #     `[0/0] Running job computation`, before elaborating anything — and it died for the OTHER
+  #     lanes, never for the one that broke it. `git commit --only` is PATH-granular and
+  #     `metatheory/Dregg2.lean` is the hottest file in the tree; the mechanism is structural.
+  #   * UNBASELINED FLOOR CARRIER — `915437862f` landed five declarations taking floors this
+  #     tree PROVES FALSE at deployed BabyBear parameters with no `FloorRatchetBaseline` entry.
+  #     Green on its own files; `lake build Dregg2` red for every other lane until a stranger
+  #     bisected it.
+  #
+  # THE HOOK STAYS THE PRIMARY: only it can PREVENT the commit, and prevention is the point
+  # (CI's detection is what we already had, twice). This job is the BACKSTOP for the two states
+  # the hook cannot cover — an uninstalled clone and `--no-verify` — and it is the reader that
+  # makes the gates visible on the checks page at all.
+  #
+  # NEITHER NEEDS A TOOLCHAIN. Both are bash + git + python3 and finish in about a second, which
+  # is why they are their own tiny job rather than steps appended to a heavy one: nothing here
+  # can be silenced by a build. `!cancelled()` on each so the two verdicts stay independent.
+  # ══════════════════════════════════════════════════════════════════════════════════════════
+  commit-hygiene:
+    name: Commit hygiene (dangling imports + floor-baseline preflight — the hook-only gates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # depth 2: `check-floor-baseline-preflight.sh --rev HEAD` judges a commit against its
+      # OWN PARENT (that is what makes "INTRODUCED by this commit" meaningful, and what stops
+      # the demonstration passing the moment a carrier is anywhere in HEAD). A depth-1 checkout
+      # has no parent and the script cannot answer.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # ⚠ THIS ONE IS COMPLETE, and it is the one that matters most. `--ref HEAD` asks the
+      # WHOLE-TREE question — { every `^import Dregg2…` } MINUS { every metatheory .lean } must
+      # be empty — so it catches a dangling import no matter which commit introduced it, and it
+      # fails closed on a degenerate scan (under 600 modules or 600 imports = exit 3, because a
+      # checker that silently finds nothing to check passes forever).
+      - name: No commit may name a Lean module it does not contain
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-dangling-imports.sh --ref HEAD
+
+      # ⚠ AND THIS ONE IS PER-COMMIT, so say what it does NOT cover: `--rev HEAD` grades the
+      # TIP of the push against its parent. A push of several commits has its middle commits
+      # graded by the hook (which sees each one) and not here. That is the honest split — the
+      # hook is the per-commit gate, this is the backstop — and it is stated rather than implied.
+      # A commit touching no `metatheory/**.lean` prints "no files to scan" and exits 0.
+      - name: A new refuted-floor carrier must arrive with its baseline entry
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-floor-baseline-preflight.sh --rev HEAD
+
   # ── invariant 1: the whole tree compiles (every member) ─────────────────────────────────
   tree-builds:
     name: Invariant 1 — THE TREE BUILDS (cargo check --keep-going)

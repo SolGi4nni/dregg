@@ -361,19 +361,41 @@ never-run deos-hermes test node_backed_round_trip   # `node-brain`, ditto.
 #
 # ⚠ PLATFORM DARKNESS, WHICH THIS SWEEP CANNOT SEE AND WHICH ALREADY COST.
 # `scripts/check-lean-marshal.sh` (ci.yml's `lean-marshal-gate`) arms exactly two of
-# dregg-lean-ffi's SIX whole-file `#![cfg(feature = "lean-lib")]` probes by name:
-# `embeddable_runtime_probe` and `overspend_probe`. So the four above are unarmed — but
-# `embeddable_runtime_probe` is ALSO `#![cfg(target_os = "macos")]` and that job runs on
-# `ubuntu-latest`, so it has reported `ok. 0 passed` on every CI run since it was wired,
-# while `embeddable_runtime_probe_linux` — the Linux twin written precisely for that
-# runner — is named by nothing at all. One probe runs empty, its twin never runs, and
-# the gate is green. This sweep keys on FEATURES, not on the runner's OS, so it can see
-# the twin and not the empty one. Stated, not hidden.
+# dregg-lean-ffi's whole-file `#![cfg(feature = "lean-lib")]` probes by name:
+# `embeddable_runtime_probe` and `overspend_probe`. The rest are armed by that job's
+# `Lean runtime probes nothing else builds` step, which now names TEN of them (2026-08-08:
+# the four it carried plus poa_dark_bazaar_judge / poa_records / poa_signal_feedback /
+# poa_slot_derive / poa_station_daily / trustline_step_oracle, all six of which this sweep
+# was reporting UNLISTED) — but `embeddable_runtime_probe` is ALSO
+# `#![cfg(target_os = "macos")]` and that job runs on `ubuntu-latest`, so it has reported
+# `ok. 0 passed` on every CI run since it was wired, while `embeddable_runtime_probe_linux`
+# — the Linux twin written precisely for that runner — was named by nothing at all. One
+# probe runs empty, its twin never ran, and the gate was green. This sweep keys on
+# FEATURES, not on the runner's OS, so it can see the twin and not the empty one. Stated,
+# not hidden.
 
-# ── ENVIRONMENT / PLATFORM (3) ───────────────────────────────────────────────────────
+# ── ENVIRONMENT / PLATFORM (4) ───────────────────────────────────────────────────────
 never-run starbridge-web test pty_ws_e2e   # `pty-ws-server`: a real PTY + websocket server end to end.
 never-run starbridge-web test web_panes_wasm   # `gpui-web` + `target_arch = "wasm32"`: needs wasm-pack in a browser, not `cargo test`.
 never-run starbridge-v2 test migrate_shell_dispatch   # `process-pd`: unix fork/socketpair + seatbelt-or-LSM sandbox; also needs `embedded-executor`.
+# ⚑ THE ONE OF THE 2026-08-08 EIGHT THAT IS NOT WIRING (decided per target, not by class).
+# `linked_archive_freshness` compares each `Dregg2_<Mod>.o` member's `ar` mtime against the
+# mtime of `metatheory/Dregg2/<Mod>.lean`. `actions/checkout` DOES NOT PRESERVE MTIMES — it
+# writes every source file at checkout time — while a fetched seed archive's members carry
+# the stamps of the box that built it, necessarily earlier. So on any hosted runner EVERY
+# resolvable member reads stale past the 120s rounding slack and the test fails by
+# construction, no matter how fresh the seed is. That is a check that CANNOT PASS there, and
+# requiring one is how an escape hatch becomes routine — it is a real gate on a box that
+# BUILT the archive, and a wall anywhere else. Do NOT "fix" it by raising
+# AR_MTIME_RESOLUTION_SLACK_SECS; the file says so itself and it would be a staleness budget.
+# WHAT COVERS THE SAME QUESTION IN CI'S ABSENCE, verified present at this commit rather than
+# relayed: `scripts/check-lean-seed-member-freshness.py`, which asks the identical per-member
+# question of the SEED at a fixed path with no cargo and no mtimes-from-checkout, and has two
+# rows in `scripts/local-gates.sh` (`lean-seed-member-freshness` and its
+# `lean-seed-member-freshness-red` `--self-test`). Its second `#[test]`,
+# `the_freshness_reader_can_go_red`, is pure strings + a scratch temp tree and would pass
+# anywhere; it is not separable from the target. Owner: dregg-lean-ffi.
+never-run dregg-lean-ffi test linked_archive_freshness   # `lean-lib` + an archive whose members postdate a checkout: unreachable on a hosted runner by construction (see the block above). Seed-side twin: scripts/check-lean-seed-member-freshness.py, in local-gates.sh.
 
 # ── FORGOTTEN (16): nothing but wiring stands between these and a green run. ──────────
 # Every row here is cheap, hosted-runnable, and dark for no reason anyone chose. This is

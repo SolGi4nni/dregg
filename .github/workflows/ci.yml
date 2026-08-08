@@ -167,6 +167,39 @@ jobs:
       # dregg-chain matrix. If this reds on a compile error, that IS the finding — a test
       # population that had never been built. Fix the drift; do not delete the step.
       - run: cargo test -p dregg-doc --features substrate
+      # ⚑ THE SHIPPED SUBMITTER, ARMED (2026-08-08 — one of the eight rows the execution sweep
+      # was carrying unlisted). `dreggnet-catalog`'s `private_bazaar_submit_binary` spawns the
+      # REAL `dregg-private-bazaar-submit` executable over a real pipe and checks what it left
+      # behind: exit codes, no secret in the operator's scrollback, and a durably chained record
+      # whose reopen re-validates schema, checksum, scope, sequence, predecessor link, the
+      # proved-family type gate and the roster. It exists because
+      # `PrivateBazaarSealedIngressQueue::submit` documented itself "THE PRODUCTION INGRESS"
+      # while having 0 production callers and 11 test callers (measured 2026-07-28) — and the
+      # test that closes that had itself never run.
+      #
+      # WHY THIS IS AN ARM AND NOT A `never-run ` ROW, decided per target rather than by class:
+      # its three `private-bazaar-live` SIBLINGS are allowlisted with "needs a pinned
+      # roster/reward/executor policy + a durable authority directory", and that reason is FALSE
+      # for this one — read the file: it SYNTHESIZES the whole deployment (a fixed 3-member
+      # `GuildRoster`, a fixed `GuildReward`, both commitments derived the way the deployment
+      # derives them, a `tempfile` authority dir) and never opens a signing seed. No network, no
+      # daemon, no key, no prover — its own header says "transport wiring only, and it mints no
+      # proof at all". Copying the siblings' sentence onto it would have been the bulk-add.
+      # COST is measured, not guessed: `dreggnet-catalog:private-bazaar-live` is a T3 pair in
+      # scripts/feature-tiers.tsv and is NOT in feature-t3-known-red.tsv, so the nightly sweep
+      # already compiles it clean; the T3 sweep's own measurement is a ~20s mean per pair. What
+      # was missing was EXECUTION, which T3 explicitly does not provide.
+      # `--test` SCOPE IS DELIBERATE: a bare `-p dreggnet-catalog --features private-bazaar-live`
+      # would also run `private_bazaar_production_relation`, whose `never-run ` row IS accurate
+      # (it wants real deployment config) — arming it by accident is how an allowlist row goes
+      # stale and a job goes red for a reason nobody chose.
+      # The bin is built by cargo because the test names it with
+      # `env!("CARGO_BIN_EXE_dregg-private-bazaar-submit")`.
+      # ⚠ NOT verified green locally when landed (the shared cargo target lock was held by a
+      # co-tenant build) — same basis as the `dregg-doc --features substrate` row above. If this
+      # reds, THAT IS THE FINDING: a shipped ingress whose only caller was a test that no job
+      # ran. Fix the drift; do not delete the step.
+      - run: cargo test -p dreggnet-catalog --features private-bazaar-live --test private_bazaar_submit_binary
 
   # solana-lock is a DELIBERATE standalone workspace (keeps the Solana/SBF dep
   # tree out of the main one — see solana-lock/Cargo.toml). That isolation also
@@ -938,9 +971,69 @@ jobs:
           # `never` here, not a sed pipeline: this log is read by machines only.
           CARGO_TERM_COLOR: never
         run: |
+          # `set +e` is load-bearing, exactly as in `lean-marshal-gate`'s probe step below:
+          # GitHub runs `run:` under `bash -e {0}`, so without it a non-zero cargo aborts the
+          # step and every floor below becomes unreachable code. The old line ended `|| true`,
+          # which had the same effect and THREW THE STATUS AWAY; this keeps it.
+          set +e
           set -uo pipefail
           cargo clippy --workspace --all-targets --keep-going --message-format=short \
-            > clippy-correctness.log 2>&1 || true
+            > clippy-correctness.log 2>&1
+          cargo_status=$?
+
+          # ══ THE FLOOR — AN EMPTY LOG MUST NOT READ AS CLEAN (2026-08-08) ══════════════
+          # The line above used to end `|| true`, and the ONLY reader was the `grep` below.
+          # A `grep` that matches nothing exits 1, the `if` takes its else branch, and the
+          # step prints `correctness: clean.` and exits 0 — so EVERY way for clippy to die
+          # before emitting a diagnostic reported this HARD GATE as passing: `cargo: command
+          # not found` (127), a toolchain without the clippy component ("error: no such
+          # command: `clippy`"), an OOM kill, a full disk. Nothing distinguished them from a
+          # clean workspace, and the three darkness sweeps below inherit the same log.
+          #
+          # It is the same shape as the `CARGO_TERM_COLOR` wound this step's own comment
+          # records — a reader anchored on text that was not there — one layer out: there
+          # the pattern could not match, here there was nothing to match against. Every
+          # other floored gate in this file already carries one (`lean-marshal-gate`'s
+          # `-lt 18` assertion-count floor, `gates-executed`'s recorded manifest); this leg
+          # was the outlier.
+          #
+          # THREE CHEAP FACTS, and each one is a thing cargo ITSELF produces:
+          #   1. the status is one cargo can return: 0 (clean) or 101 (it compiled and
+          #      something failed). 127/126/>128 mean the process never was cargo.
+          #   2. the log carries a TERMINAL MARKER — cargo's `Finished` line, or at least
+          #      one `could not compile`. Either proves the invocation reached its end.
+          #      An early death has neither.
+          #   3. the log is not trivially short.
+          # Deliberately NOT a floor on `Checking`/`Compiling` counts: a warm
+          # `Swatinem/rust-cache` restore makes cargo print nothing at all for fresh units,
+          # so such a floor would red on exactly the runs it should be quietest on.
+          lines=$(wc -l < clippy-correctness.log | tr -d ' ')
+          finished=$(grep -cE '^\s*Finished ' clippy-correctness.log)
+          could_not=$(grep -cE 'could not compile' clippy-correctness.log)
+          echo "clippy sweep: exit=$cargo_status · ${lines} log line(s) · ${finished} Finished · ${could_not} could-not-compile"
+          if [ "$cargo_status" != 0 ] && [ "$cargo_status" != 101 ]; then
+            echo "::error::cargo clippy exited $cargo_status — that is not a status cargo produces for a"
+            echo "::error::compile outcome (0 = clean, 101 = it ran and something failed). The process"
+            echo "::error::was not cargo, or it was killed. NOTHING below this line measured the tree."
+            tail -40 clippy-correctness.log
+            exit 1
+          fi
+          if [ "$finished" -eq 0 ] && [ "$could_not" -eq 0 ]; then
+            echo "::error::cargo clippy emitted NEITHER a \`Finished\` line NOR a \`could not compile\`"
+            echo "::error::in ${lines} line(s) of output, so the invocation never reached its end. A"
+            echo "::error::log with no terminal marker cannot distinguish a clean workspace from a"
+            echo "::error::clippy that died before its first diagnostic — and the two darkness sweeps"
+            echo "::error::below read THIS SAME LOG, so they would have gone quiet with it."
+            tail -40 clippy-correctness.log
+            exit 1
+          fi
+          if [ "$lines" -lt 10 ]; then
+            echo "::error::clippy-correctness.log is ${lines} line(s). A sweep over ~225 workspace"
+            echo "::error::members cannot be that quiet; the reader has nothing to read."
+            cat clippy-correctness.log
+            exit 1
+          fi
+
           # A correctness lint is `deny` via [workspace.lints.clippy], so it lands as
           # `error: <message>` on a source line. Compile errors (E0xxx) are the separate
           # dark-target debt and are reported, not gated, here.
@@ -1224,7 +1317,28 @@ jobs:
       # `ok. 0 passed` rather than failing when its cfg is off, so an exit code cannot
       # distinguish "the probes ran" from "the probes compiled away". Assert the number
       # of assertions, not the status.
-      - name: Lean runtime probes nothing else builds (4 unarmed + the Linux twin)
+      # ⚑ SIX MORE PROBES, ARMED (2026-08-08). Six of the eight rows `check-never-run-targets.py`
+      # was reporting UNLISTED at HEAD are `dregg-lean-ffi` tests carrying a whole-file
+      # `#![cfg(feature = "lean-lib")]`, and every one of them is the same class this step was
+      # created for — a probe over a REAL `@[export]` in the archive, written after this list was
+      # last touched and named by no workflow since:
+      #     poa_dark_bazaar_judge_probe 3 · poa_records_probe 3 · poa_signal_feedback_probe 8
+      #     poa_slot_derive_probe 3 · poa_station_daily_probe 6 · trustline_step_oracle_probe 5
+      # Two of them exist SPECIFICALLY to occupy the polarity a landed export deletes: the seam's
+      # in-module test is `#[cfg(not(all(lean_lib_present, dregg_..._present)))]`, so shipping the
+      # export removes the seam's only test, and these assert AVAILABILITY rather than skipping on
+      # it. Between the pair one always runs — except that this half ran nowhere.
+      # They belong here rather than in an allowlist because THIS is the job that fetches the
+      # archive; the alternative arming site (`scripts/test-poa.sh`, via path-of-angels.yml) is
+      # `workflow_dispatch`-only on a self-hosted runner, i.e. armed by a human or not at all.
+      # ⚠ AND SAY THE STANDING STATE OUT LOUD: this step is currently UNREACHED, because the
+      # seed fetch above 404s (`no asset named libdregg_lean-Linux-x86_64-v4.30.0-<key>.a.zst on
+      # release 'lean-seed'` — every push, see this job's log). Arming them here is the honest
+      # answer to "can any invocation run this target", and the seed pipeline is a separate,
+      # separately-red leg that names its own cause. It is not a way to make this one quiet: the
+      # floor below is raised to match, so a run that reaches this step and does NOT execute all
+      # of them fails.
+      - name: Lean runtime probes nothing else builds (10 probes + the Linux twin)
         if: steps.pin.outputs.armed == '1'
         run: |
           # `set +e` is load-bearing: GitHub runs `run:` under `bash -eo pipefail`, so
@@ -1238,16 +1352,30 @@ jobs:
             --test deployed_constraint_probe \
             --test multiway_tug_oracle_probe \
             --test embeddable_runtime_probe_linux \
+            --test poa_dark_bazaar_judge_probe \
+            --test poa_records_probe \
+            --test poa_signal_feedback_probe \
+            --test poa_slot_derive_probe \
+            --test poa_station_daily_probe \
+            --test trustline_step_oracle_probe \
             -- --nocapture 2>&1 | tee lean-probes.log
           status=${PIPESTATUS[0]}
           ran=$(sed -nE 's/^test result:.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/p' lean-probes.log \
                  | awk '{s+=$1+$2} END {print s+0}')
           echo "lean runtime probes: $ran assertion(s) executed."
-          # Measured 2026-07-25 from the sources: deployed_constraint_probe 8,
-          # multiway_tug_oracle_probe 8, handler_cutover_probe 1,
-          # embeddable_runtime_probe_linux 1 (Linux only) = 18.
-          if [ "$ran" -lt 18 ]; then
-            echo "::error::only $ran probe assertion(s) ran, below the measured floor of 18."
+          # RE-MEASURED FROM THE SOURCES 2026-08-08 (`grep -c '^#\[test\]'` per file, and every
+          # `#[test]` in all ten is unconditional once `lean-lib` is on — the only `#[cfg]`
+          # occurrences in these files are inside doc comments):
+          #   deployed_constraint_probe 10 · multiway_tug_oracle_probe 8 · handler_cutover_probe 1
+          #   embeddable_runtime_probe_linux 1 (Linux only) · poa_dark_bazaar_judge_probe 3
+          #   poa_records_probe 3 · poa_signal_feedback_probe 8 · poa_slot_derive_probe 3
+          #   poa_station_daily_probe 6 · trustline_step_oracle_probe 5           = 48
+          # ⚠ THE OLD FLOOR OF 18 WAS ALREADY STALE BEFORE THE SIX ARRIVED: it was measured on
+          # 2026-07-25 with `deployed_constraint_probe` at 8, and that file now carries 10. A
+          # floor that drifts DOWN from the population it floors stops being a floor, so it is
+          # re-derived here rather than nudged.
+          if [ "$ran" -lt 48 ]; then
+            echo "::error::only $ran probe assertion(s) ran, below the measured floor of 48."
             echo "::error::These probes report \`ok. 0 passed\` when their cfg is off, so a green"
             echo "::error::exit code here means nothing on its own. Either \`lean-lib\` did not"
             echo "::error::activate, or a whole-file cfg (platform!) emptied a probe. Do NOT lower"
@@ -1386,7 +1514,33 @@ jobs:
       # were not merely slow but HARD-RED: they sed'd for the deleted `path = "…"` line) — so no
       # lane can provision differently again.
       - name: Fetch pinned mathlib4 (prebuilt oleans into metatheory/.lake/packages/mathlib)
+        id: mathlib
         run: bash scripts/ci-mathlib-cache.sh
+
+      # ══════════════════════════════════════════════════════════════════════════════════════
+      # ⚑ SEVEN INDEPENDENT GATES, SEVEN INDEPENDENT VERDICTS (2026-08-08).
+      #
+      # The seven steps below — zero-sorry, crypto linking seam, cone-cutover post-state,
+      # refuted-floor ratchet, the Claims axiom ledger, the orphan gate and the tug artifact
+      # drift gate — check SEVEN DIFFERENT THINGS. GitHub Actions stops a job at the first
+      # FAILED step, so until now the first of them to bite silenced the other six and this
+      # job's red said "zero-sorry" while saying NOTHING about the axiom ledger, the ratchet,
+      # the orphans or the deployed tug referee.
+      #
+      # This is the SAME defect `clippy-correctness` above was repaired for on 2026-08-03,
+      # at more than twice the blast radius (three steps there, seven here) — and it is the
+      # repo's own recorded lesson from the wasm job: A GATE BEHIND A RED GATE IS NOT A GATE.
+      # Measured there: 31 of 34 runs `skipped`, and a real widening went dark for ~11 hours.
+      #
+      # WHAT THE CONDITION IS, AND WHY IT IS NOT A BARE `!cancelled()`. These seven need
+      # `lake` and the pinned mathlib oleans; they do NOT need each other. So the condition
+      # is `the PROVISIONING succeeded`, not `the previous gate succeeded`. Without the
+      # `steps.mathlib` clause a failed cache fetch would send all seven into a from-source
+      # mathlib compile against a 330-minute timeout this job has already been killed by —
+      # seven false reds and no verdict, which is worse than the silence it replaces.
+      # `!cancelled()` is still required: supplying ANY `if:` drops the implicit `success()`,
+      # and without it these would also run while the job is being torn down.
+      # ══════════════════════════════════════════════════════════════════════════════════════
 
       # The guard itself: build the corpus and FAIL on ANY `declaration uses
       # \`sorry\`` warning (covers sorry/admit/sorryAx, since admit & sorryAx
@@ -1394,6 +1548,7 @@ jobs:
       # two-layer design (this textual net + the Claims.lean #assert_axioms
       # ledger). The corpus must remain at ZERO sorry forever.
       - name: Zero-sorry guard
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         run: bash scripts/axiom-hygiene-guard.sh
 
       # CRYPTO LINKING-SEAM GAUNTLET (2026-07-17, CI-meaningfulness audit).
@@ -1426,6 +1581,7 @@ jobs:
       # five-module ML-DSA `VerifyCore{EqSpecW,UseHint,HashFrame,ArgRows,ArgAssembly}`
       # chain lives in the `metatheory-pq-apex` job below, for the reasons given there.
       - name: Crypto linking-seam gauntlet (SignCoreSpec/EncapsCoreSpec/AcvpKats — now root-reachable; kept as belt-and-suspenders)
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         env:
           AXIOM_GUARD_TARGETS: Dregg2.Crypto.CryptoVerifyAll
         run: bash scripts/axiom-hygiene-guard.sh
@@ -1453,6 +1609,7 @@ jobs:
       # script additionally requires the tool's own success line in the output — a run that
       # silently skipped the check fails here rather than passing.
       - name: Cone-cutover textual post-state (the Dregg2.lean WIRING check, no cache can answer it)
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         working-directory: metatheory
         run: bash scripts/cone_cutover_textual_check.sh
 
@@ -1473,6 +1630,7 @@ jobs:
       # hits: deleting one line would have disarmed the gate with no signal.
       # Baseline is a RATCHET — it may only ever go DOWN; raising it requires a visible edit.
       - name: Refuted-floor accrual gate (presence + canary + build — a gate that can vanish is not a gate)
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         working-directory: metatheory
         run: bash scripts/floor_ratchet_check.sh
 
@@ -1499,6 +1657,7 @@ jobs:
       # warm tree: ~2m53s wall / ~90s CPU. A red here is a REAL axiom leak in a keystone the
       # corpus advertises as proved: read the named decl, do not delete the pin.
       - name: Corpus-wide axiom-hygiene ledger (Dregg2.Claims — 280 pins, imported by nothing)
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         working-directory: metatheory
         run: lake build Dregg2.Claims
 
@@ -1573,6 +1732,7 @@ jobs:
       # a sorry in any of them. The folded AXIOM_GUARD_TARGETS becomes the space-separated build
       # list; the guard applies the identical textual net, closing the coverage hole.
       - name: Orphan gate (39 modules reachable from no CI target — the CryptoVerifyAll siblings)
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         env:
           AXIOM_GUARD_TARGETS: >-
             Dregg2.Apps.ColonistJob
@@ -1633,6 +1793,7 @@ jobs:
       # Cheap by construction: the oleans are already built by the step above, so this is a
       # re-run of one emit plus a diff.
       - name: Tug program artifact matches its Lean source (drift gate)
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         run: bash dregg-multiway-tug/program/regen.sh --check
 
   # ── THE ML-DSA VERIFY-CORE APEX SPINE, IN ITS OWN LANE (2026-07-25) ─────────────────
@@ -1713,11 +1874,16 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Fetch pinned mathlib4 (prebuilt oleans into metatheory/.lake/packages/mathlib)
+        id: mathlib
         run: bash scripts/ci-mathlib-cache.sh
 
+      # Same two-independent-verdicts condition as `metatheory-no-sorry` above, for the same
+      # reason at a smaller blast radius: the apex spine and the two expensive orphans share
+      # only their PROVISIONING. A red spine must not delete the orphans' verdict.
       # The five spine modules ride in as ArgAssembly's transitive imports; naming the apex
       # rather than the five keeps this target honest if the chain grows another rung.
       - name: The apex spine (VerifyCore{EqSpecW,UseHint,HashFrame,ArgRows,ArgAssembly})
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         env:
           AXIOM_GUARD_TARGETS: Dregg2.Crypto.VerifyCoreArgAssembly
         run: bash scripts/axiom-hygiene-guard.sh
@@ -1740,6 +1906,7 @@ jobs:
       # "separate leaf so the refinement surface does not pay for the golden" posture is already
       # the documented precedent in `Dregg2.lean`'s `ParamComposeGolden` line.
       - name: The two orphans too expensive for the default build (MlKemKeygenRefine 31 min, AutomataflNGenGolden 2.98 MB golden)
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' }}
         env:
           AXIOM_GUARD_TARGETS: >-
             Dregg2.Crypto.MlKemKeygenRefine
@@ -1767,29 +1934,23 @@ jobs:
         with:
           lfs: true
 
-      - name: Install elan (Lean toolchain manager)
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            -o elan-init.sh
-          bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-
-      # Same shared provisioning script as the two metatheory jobs — see the ⚑ block on
-      # metatheory-no-sorry's fetch step for what it replaced and what that cost.
-      - name: Fetch pinned mathlib4 (prebuilt oleans into metatheory/.lake/packages/mathlib)
-        run: bash scripts/ci-mathlib-cache.sh
-
-      # The emit installs three WHOLE Lean-authored Rust modules
-      # (circuit/src/effect_vm/*_generated.rs) and normalizes them through rustfmt, so the
-      # generator's bytes equal what the pre-commit hook and `cargo fmt --all -- --check`
-      # produce. Materialize the PINNED rustfmt up front: relying on the runner image's stable
-      # rustfmt (or on rustup's implicit toolchain-file auto-install) would let a different
-      # rustfmt decide the generated bytes, and this gate would then report a fake drift.
-      - name: Install the pinned rustfmt (generated-Rust normalization)
-        run: |
-          channel="$(grep -m1 '^channel' rust-toolchain.toml | cut -d'"' -f2)"
-          rustup toolchain install "$channel" --profile minimal --component rustfmt
-          rustfmt --version
+      # ══════════════════════════════════════════════════════════════════════════════════════
+      # ⚑ THE TWO STATIC GATES RUN FIRST, AND THEY NEED NO LEAN (2026-08-08).
+      #
+      # This job carries THREE independent gates. Two of them — the provenance stamp and the
+      # emit-gate weld — are python + git, take about five seconds between them, and touch
+      # neither `lake` nor `cargo`. They used to sit at the BOTTOM, behind elan, behind a
+      # mathlib cache fetch, behind a rustfmt install and behind a ~1h Lean re-derivation, so:
+      #   * a failed `ci-mathlib-cache.sh` took both of them dark with it, and
+      #   * a bite from the ~1h drift gate silenced the emit-gate weld entirely.
+      # Neither depends on anything those steps establish. This is the wasm job's own recorded
+      # rule — "A GATE BEHIND A RED GATE IS NOT A GATE ... ask whether it must precede this
+      # one; the default answer is no" — applied to the two steps in this file that could
+      # answer with no toolchain at all.
+      #
+      # `!cancelled()` on each so the three verdicts stay independent, and the Lean-dependent
+      # one additionally requires its PROVISIONING (see the same block in metatheory-no-sorry).
+      # ══════════════════════════════════════════════════════════════════════════════════════
 
       # ⚑ THE STAMP, before the ~1h re-derivation below. `--verify-provenance` checks every
       # committed descriptor byte against `circuit/descriptors/PROVENANCE.json` — and until
@@ -1803,13 +1964,8 @@ jobs:
       # local-gates.sh). ~5s: python + git, no Lean, no cargo. Deliberately BEFORE the drift gate
       # — it is the cheap half of the same question.
       - name: Descriptor provenance stamp (bytes match the stamp)
+        if: ${{ !cancelled() }}
         run: python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD
-
-      # Regenerates from Lean and `git diff --exit-code`s the descriptors + the
-      # *_FP constants. On drift: prints the offending diff + the fix command and
-      # exits nonzero. See docs/DESCRIPTOR-EMIT.md.
-      - name: Descriptor drift gate
-        run: bash scripts/check-descriptor-drift.sh
 
       # The emit-gate CROSS-LANGUAGE weld: every GOLDEN_JSON literal in
       # circuit-prove/tests/*_emit_gate.rs must be byte-identical to a Lean
@@ -1819,4 +1975,42 @@ jobs:
       # Static (no lake/cargo), <1s. Found 3 committed drifted pairs on arrival
       # (fold/derivation/garbled-eval, 2026-07-16 — see TESTQALOG.md).
       - name: Emit-gate weld (Rust golden == Lean pin)
+        if: ${{ !cancelled() }}
         run: python3 scripts/check-emit-gate-weld.py
+
+      - name: Install elan (Lean toolchain manager)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            -o elan-init.sh
+          bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # Same shared provisioning script as the two metatheory jobs — see the ⚑ block on
+      # metatheory-no-sorry's fetch step for what it replaced and what that cost.
+      - name: Fetch pinned mathlib4 (prebuilt oleans into metatheory/.lake/packages/mathlib)
+        id: mathlib
+        run: bash scripts/ci-mathlib-cache.sh
+
+      # The emit installs three WHOLE Lean-authored Rust modules
+      # (circuit/src/effect_vm/*_generated.rs) and normalizes them through rustfmt, so the
+      # generator's bytes equal what the pre-commit hook and `cargo fmt --all -- --check`
+      # produce. Materialize the PINNED rustfmt up front: relying on the runner image's stable
+      # rustfmt (or on rustup's implicit toolchain-file auto-install) would let a different
+      # rustfmt decide the generated bytes, and this gate would then report a fake drift.
+      - name: Install the pinned rustfmt (generated-Rust normalization)
+        id: rustfmt
+        run: |
+          channel="$(grep -m1 '^channel' rust-toolchain.toml | cut -d'"' -f2)"
+          rustup toolchain install "$channel" --profile minimal --component rustfmt
+          rustfmt --version
+
+      # Regenerates from Lean and `git diff --exit-code`s the descriptors + the
+      # *_FP constants. On drift: prints the offending diff + the fix command and
+      # exits nonzero. See docs/DESCRIPTOR-EMIT.md.
+      # Both of its inputs are named in the condition: without the mathlib cache this
+      # re-derivation compiles mathlib from source against a 330-minute timeout, and without
+      # the PINNED rustfmt it reports a FAKE drift (the normalization is what the diff is
+      # taken over) — so a green from either absence would be a lie in a different direction.
+      - name: Descriptor drift gate
+        if: ${{ !cancelled() && steps.mathlib.outcome == 'success' && steps.rustfmt.outcome == 'success' }}
+        run: bash scripts/check-descriptor-drift.sh
