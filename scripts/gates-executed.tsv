@@ -13,7 +13,8 @@
 # The expected set has to be RECORDED, not derived: a set inferred at runtime from the same
 # source the accident removes will always agree that nothing was expected. That is the whole
 # design. The checker additionally hardcodes the two floors — `law1_enforcement_gate` by name,
-# and >= 23 emit gates — in reviewed CODE, so emptying this file is not a way to go green.
+# and >= 22 emit gates (23 until 94c14004f deleted one WITH its Lean emitter) — in reviewed CODE,
+# so emptying this file is not a way to go green.
 #
 # COLUMNS (tab-separated; blank lines and '#' comments ignored):
 #   crate      cargo package name; run as `cargo test -p <crate> --test <stem>`
@@ -41,10 +42,25 @@
 #
 # Counted 2026-07-25 against HEAD: 24 binaries, 23 emit gates, 191 tests.
 #
+# ⚑ RE-COUNTED 2026-08-07: 23 binaries, 22 emit gates, 188 tests. The three `#!` numbers below had
+# been stale since 94c14004f and 02abe2483, and a stale count is not a cosmetic defect here — it
+# fails the STATIC phase, and the static phase REFUSES to run the dynamic one ("executing a set
+# that is already known to be wrong would only launder it"). So all 188 recorded gate executions
+# were going unchecked, on a red nobody owned. What actually moved:
+#   * `94c14004f` DELETED the bridge-action binding AIR — `BridgeActionEmit.lean` (225 lines) and
+#     `BridgeActionRefine.lean` (361) — and took `bridge_action_emit_gate.rs` and its 5 rows with
+#     them. That is one binary and one emit gate gone with their subject; `MIN_EMIT_GATES` in
+#     check-gates-executed.py moves 23 -> 22 for the same reason and says so there.
+#   * `02abe2483` corrected the adjacency rows ("named ten adjacency tests, eight of which no
+#     longer exist"), a net -1 on the test count.
+#   * +1: `law1_enforcement_gate`'s new `teeth::the_scope_is_git_tracked_files_not_the_filesystem`,
+#     which pins that the gate's scope is `git ls-files` and not the filesystem — the fix for the
+#     untracked `headver/` scratch checkout being walked as source.
+#
 # crate	stem	test_path	expect
-#!EXPECT_GATE_FILES=24
-#!EXPECT_EMIT_GATES=23
-#!EXPECT_TESTS=193
+#!EXPECT_GATE_FILES=23
+#!EXPECT_EMIT_GATES=22
+#!EXPECT_TESTS=188
 dregg-circuit-prove	law1_enforcement_gate	law1_no_new_rust_authored_constraints	run
 dregg-circuit-prove	law1_enforcement_gate	law1_no_new_rust_authored_air_accepts	run
 dregg-circuit-prove	law1_enforcement_gate	teeth::destructuring_is_not_authoring	run
@@ -54,6 +70,7 @@ dregg-circuit-prove	law1_enforcement_gate	teeth::gpui_when_is_not_a_constraint	r
 dregg-circuit-prove	law1_enforcement_gate	teeth::comments_and_strings_are_not_algebra	run
 dregg-circuit-prove	law1_enforcement_gate	teeth::the_gate_goes_red_on_a_hand_written_air	run
 dregg-circuit-prove	law1_enforcement_gate	teeth::the_scope_reaches_outside_the_two_old_directories	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::the_scope_is_git_tracked_files_not_the_filesystem	run
 dregg-circuit-prove	law1_enforcement_gate	teeth::cfg_test_sites_are_counted_and_merely_attributed	run
 dregg-circuit-prove	law1_enforcement_gate	teeth::cfg_any_test_feature_is_not_test_only	run
 dregg-circuit-prove	accumulator_nonrev_emit_gate	accumulator_nonrev_emit_decodes_to_hand_built	run

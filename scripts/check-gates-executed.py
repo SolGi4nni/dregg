@@ -134,7 +134,16 @@ CRITICAL_CRATE = "dregg-circuit-prove"
 CRITICAL_TESTS_DIR = Path("circuit-prove") / "tests"
 LAW1_GATE = "law1_enforcement_gate"
 EMIT_GLOB = "*_emit_gate.rs"
-MIN_EMIT_GATES = 23  # counted 2026-07-25 (an earlier report said "about 25" -- it is 23)
+# ⚑ 23 -> 22 on 2026-08-07, and this is the ONE shape of shrink that is legitimate: the SUBJECT
+# was deleted, not the check. `94c14004f` deleted the bridge-action binding AIR outright --
+# `Dregg2/Circuit/Emit/BridgeActionEmit.lean` (225 lines) and `BridgeActionRefine.lean` (361) went
+# with `circuit-prove/tests/bridge_action_emit_gate.rs` and its 5 manifest rows, because its
+# enforcer never existed and its consumers carried an empty proof. A gate whose emitter no longer
+# exists cannot be "kept"; leaving the floor at 23 only makes this script red forever, and a floor
+# that is red forever protects nothing. If a *_emit_gate.rs ever disappears while its Lean emitter
+# is still in the tree, that is the ratchet break this floor is for -- do NOT lower it again for
+# that.
+MIN_EMIT_GATES = 22  # counted 2026-07-25 at 23; 22 since 94c14004f (see above)
 
 # Crates whose DIRECTORY is not their package name. Anything absent from this map is looked
 # for at <repo>/<crate>/tests, and a miss is a STATIC failure (a recorded gate with no file),

@@ -277,7 +277,7 @@
 //!     `game-turn-slice/src/compiler.rs`, `sdk/src/full_turn_proof.rs`, `turn/src/umem.rs`,
 //!     `tests/src/dsl_pipeline.rs` — the rest of the surface the two-directory scope hid.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -838,13 +838,81 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// ⚑ **THE REPOSITORY IS WHAT `git` TRACKS, NOT WHAT IS ON DISK** (added 2026-08-07).
+///
+/// The walker below is a filesystem walk, and a filesystem walk sees whatever a lane happened to
+/// leave lying around. `SKIP_DIRS` was the only defence and it is a DENY-LIST, so it can only ever
+/// name the scratch directories that already exist. It did not name `headver/` — a 679 MB
+/// **untracked, `.gitignore`d, separately-`git init`ed** checkout of HEAD that a lane creates to
+/// verify a build against the committed tree — and so the gate walked `headver/**/src/*.rs` as if
+/// it were source. MEASURED 2026-08-07: **2 890 `.rs` files under a `src/` inside `headver/`**, two
+/// of which define `air_accepts`. Every ledgered file was re-reported a second time under the
+/// `headver/` prefix, where no `BASELINE` row matches it, which is the gate's definition of a NEW
+/// violation — and the two `air_accepts` copies were unledgered by the same mechanism. **Two
+/// failing cases, both pure artefact**, and the ledger they printed was the ledger DUPLICATED.
+///
+/// That is a gate aimed at a directory that is not in the repository. A deny-list cannot fix it —
+/// the next scratch checkout has a different name. So scope is now an ALLOW-list taken from
+/// `git ls-files`: a file is in scope iff git tracks it. `SKIP_DIRS` stays because it is also the
+/// place a *tracked* directory is deliberately excluded (`docs/`'s byte-copies, `metatheory/`),
+/// and because the synthetic-tree red path has no git to ask.
+///
+/// **No fallback.** If `git ls-files` cannot be run or comes back empty, this PANICS rather than
+/// silently reverting to the untracked walk — a scope oracle that fails open is how the gate got
+/// here.
+///
+/// ⚠ **AND SAY WHAT IT NOW CANNOT SEE.** This narrows the gate in one real direction: a hand-written
+/// AIR in a brand-new `src/*.rs` that its author has written but not yet `git add`ed scores ZERO
+/// here, where the old walk would have caught it. That is the correct trade — an un-added file is
+/// not in the repository and cannot be reviewed, merged or built by anyone else, and the gate is a
+/// property of what the repository holds — but it is a hole, and the moment the file is added it
+/// closes. `git add -N` (intent-to-add, no content staged) is enough to bring it into scope, which
+/// is exactly how `the_scope_is_git_tracked_files_not_the_filesystem` proves both poles below.
+fn tracked_rs_under_src() -> BTreeSet<String> {
+    tracked_rs_in(&repo_root())
+}
+
+/// Parameterised on the root for the same reason `scan_tree` is: the tooth
+/// (`teeth::the_scope_is_git_tracked_files_not_the_filesystem`) drives THIS oracle over a real
+/// throwaway git repo rather than a reimplementation of it.
+fn tracked_rs_in(root: &Path) -> BTreeSet<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "-z", "--", "*.rs"])
+        .output()
+        .expect("LAW1 SCOPE ORACLE: `git ls-files` could not be run; refusing to scan an unbounded filesystem tree");
+    assert!(
+        out.status.success(),
+        "LAW1 SCOPE ORACLE: `git ls-files` exited {}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let set: BTreeSet<String> = String::from_utf8_lossy(&out.stdout)
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.replace('\\', "/"))
+        .collect();
+    assert!(
+        !set.is_empty(),
+        "LAW1 SCOPE ORACLE: `git ls-files -- *.rs` returned NOTHING. This repository has \
+         thousands of tracked .rs files, so an empty answer means the oracle is broken, not \
+         that the tree is empty. Refusing to report a green ledger from a scope of zero."
+    );
+    set
+}
+
 fn scan_repo() -> BTreeMap<String, Counts> {
-    scan_tree(&repo_root())
+    scan_tree(&repo_root(), Some(&tracked_rs_under_src()))
 }
 
 /// Parameterised on the root so the RED path (`teeth::the_gate_goes_red_on_a_hand_written_air`)
 /// exercises this exact walker over a synthetic tree instead of a reimplementation of it.
-fn scan_tree(root: &Path) -> BTreeMap<String, Counts> {
+///
+/// `tracked` is the allow-list described on [`tracked_rs_under_src`]. `None` means "there is no
+/// git here" and is used ONLY by the synthetic-tree teeth, which build their own root in a
+/// tempdir; the real scan always passes `Some`.
+fn scan_tree(root: &Path, tracked: Option<&BTreeSet<String>>) -> BTreeMap<String, Counts> {
     let mut found = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -871,6 +939,10 @@ fn scan_tree(root: &Path) -> BTreeMap<String, Counts> {
                 .replace('\\', "/");
             // Only compiled crate sources. `tests/` trees are a NAMED blind spot (module docs).
             if !rel.contains("/src/") {
+                continue;
+            }
+            // …and only files the repository actually holds. See `tracked_rs_under_src`.
+            if tracked.is_some_and(|t| !t.contains(&rel)) {
                 continue;
             }
             let Ok(raw) = std::fs::read_to_string(&p) else {
@@ -1546,6 +1618,7 @@ fn law1_no_new_rust_authored_air_accepts() {
 /// check has a different trigger word).
 fn scan_repo_all_src() -> Vec<String> {
     let root = repo_root();
+    let tracked = tracked_rs_under_src();
     let mut out = Vec::new();
     let mut stack = vec![root.clone()];
     while let Some(dir) = stack.pop() {
@@ -1570,7 +1643,8 @@ fn scan_repo_all_src() -> Vec<String> {
                 .unwrap_or(&p)
                 .to_string_lossy()
                 .replace('\\', "/");
-            if rel.contains("/src/") {
+            // Same scope oracle as `scan_tree`: tracked-and-under-`src/`, never "on disk".
+            if rel.contains("/src/") && tracked.contains(&rel) {
                 out.push(rel);
             }
         }
@@ -1731,6 +1805,91 @@ mod teeth {
     /// walker (`scan_tree`) and the REAL ratchet (`ratchet`) over a synthetic repo containing
     /// a hand-written Rust AIR, and asserts each failure mode fires. If someone neuters the
     /// scanner or the comparison, this goes red before the (green) production ledger can lie.
+    /// ⚑ **SCOPE IS `git ls-files`, NOT THE FILESYSTEM** — both poles, over a REAL throwaway git
+    /// repo, driving the REAL oracle (`tracked_rs_in`) and the REAL walker (`scan_tree`).
+    ///
+    /// The wound this pins: until 2026-08-07 the walker was a bare filesystem walk defended only by
+    /// a deny-list, so an untracked, `.gitignore`d 679 MB `headver/` scratch checkout of HEAD was
+    /// scanned as source and every ledgered file was re-reported under a `headver/` prefix that no
+    /// `BASELINE` row matches — two failing cases, both pure artefact, and a printed ledger that was
+    /// the real ledger duplicated.
+    ///
+    /// One pole alone would be worthless in either direction: "the untracked copy is ignored" is
+    /// satisfied by a gate that sees NOTHING, and "the tracked file is caught" is satisfied by the
+    /// old unbounded walk. Both, on byte-identical content differing only in whether git holds the
+    /// path, is the whole claim.
+    #[test]
+    fn the_scope_is_git_tracked_files_not_the_filesystem() {
+        let evil = "pub fn build(b: &mut Builder) {\n\
+                    \x20   b.assert_zero(&Head::lin(1, 0).add_const(-1));\n\
+                    \x20   b.push(ConstraintExpr::Binary { col: 4 });\n\
+                    }\n";
+        let tmp = std::env::temp_dir().join(format!("law1-scope-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let src = tmp.join("evilcrate/src");
+        std::fs::create_dir_all(&src).expect("tmp tree");
+
+        let git = |args: &[&str]| {
+            let st = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&tmp)
+                .args(args)
+                .output()
+                .expect("git runs");
+            assert!(st.status.success(), "git {args:?}: {st:?}");
+        };
+        git(&["init", "-q"]);
+
+        // Byte-identical content. The ONLY difference is whether git holds the path.
+        std::fs::write(src.join("tracked_air.rs"), evil).expect("write tracked");
+        std::fs::write(src.join("scratch_air.rs"), evil).expect("write scratch");
+        // `-N` (intent-to-add) stages the PATH without the content — the lightest thing that makes
+        // a file part of the repository, and enough for `git ls-files` to report it.
+        git(&["add", "-N", "evilcrate/src/tracked_air.rs"]);
+
+        let tracked = tracked_rs_in(&tmp);
+        assert!(
+            tracked.contains("evilcrate/src/tracked_air.rs"),
+            "the oracle must see the added path; got {tracked:?}"
+        );
+        assert!(
+            !tracked.contains("evilcrate/src/scratch_air.rs"),
+            "the oracle must NOT see the un-added path; got {tracked:?}"
+        );
+
+        // POLE 1 — the tracked violation is CAUGHT. Without this the fix is indistinguishable
+        // from blinding the gate.
+        let found = scan_tree(&tmp, Some(&tracked));
+        assert!(
+            found.contains_key("evilcrate/src/tracked_air.rs"),
+            "a TRACKED hand-written AIR must still be seen: {found:?}"
+        );
+        let v = ratchet(&tmp, &found, &[]);
+        assert!(
+            v.iter().any(|s| s.contains("NEW Rust-authored constraints")
+                && s.contains("evilcrate/src/tracked_air.rs")),
+            "…and must still fail the ratchet; got {v:?}"
+        );
+
+        // POLE 2 — the untracked twin is INVISIBLE. This is the `headver/` artefact, gone.
+        assert!(
+            !found.contains_key("evilcrate/src/scratch_air.rs"),
+            "an UNTRACKED scratch copy is not source and must not be reported: {found:?}"
+        );
+        assert_eq!(found.len(), 1, "exactly one file is in scope: {found:?}");
+
+        // CONTROL — with no oracle (`None`, the synthetic-tree path) the walker sees BOTH, so
+        // pole 2 is the tracking filter doing work and not the walker failing to reach the file.
+        let unfiltered = scan_tree(&tmp, None);
+        assert_eq!(
+            unfiltered.len(),
+            2,
+            "the walker itself reaches both files; only the oracle separates them: {unfiltered:?}"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
     #[test]
     fn the_gate_goes_red_on_a_hand_written_air() {
         let tmp = std::env::temp_dir().join(format!("law1-red-{}", std::process::id()));
@@ -1746,7 +1905,7 @@ mod teeth {
         )
         .expect("write evil");
 
-        let found = scan_tree(&tmp);
+        let found = scan_tree(&tmp, None);
         let key = "evilcrate/src/hand_written_air.rs";
         let counts = found.get(key).copied().unwrap_or_else(|| {
             panic!("the walker did not even SEE the hand-written AIR; found: {found:?}")
@@ -1815,7 +1974,7 @@ mod teeth {
         )
         .expect("write grown");
 
-        let found = scan_tree(&tmp);
+        let found = scan_tree(&tmp, None);
         let key = "evilcrate/src/grown.rs";
         let v = ratchet(&tmp, &found, &[(key, 1)]);
         let msg = v.join("\n");
