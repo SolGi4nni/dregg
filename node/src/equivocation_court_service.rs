@@ -466,9 +466,13 @@ pub fn execute_slash(
 
 /// THE GOSSIP HOOK: lace-detected fork evidence reaches the slash path.
 /// Called from `blocklace_sync::handle_push` for every retained
-/// [`EquivocationProof`] (after constitution auto-evict). Same-slot forks
+/// [`EquivocationProof`]. Membership is NEVER touched by detection
+/// (exclusion-by-past flag day 2026-08-08: the equivocator is excluded
+/// per-closure inside tau, and the pinned tips pair carries the evidence);
+/// this economic slash is the one detection-keyed reaction that remains,
+/// and it is deliberately beyond both source papers. Same-slot forks
 /// reduce to the wire value and adjudicate; different-seq incomparable
-/// forks stay on the membership path (the evidence module's named scope).
+/// forks are not same-slot-certifiable and stay evidence-only.
 /// Outcomes are logged, never propagated as errors — gossip handling must
 /// not fail on an unbonded or already-resolved equivocator.
 pub async fn slash_from_proof(state: &NodeState, proof: &EquivocationProof) {
@@ -478,8 +482,8 @@ pub async fn slash_from_proof(state: &NodeState, proof: &EquivocationProof) {
             tracing::debug!(
                 creator = %hex_encode(&proof.creator[..4]),
                 error = %e,
-                "fork proof is not same-slot-certifiable wire evidence; \
-                 membership auto-evict already handled it"
+                "fork proof is not same-slot-certifiable wire evidence; the \
+                 pinned tips pair still carries it into tau's per-closure exclusion"
             );
             return;
         }

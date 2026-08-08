@@ -843,6 +843,28 @@ impl PersistentStore {
     /// Committing `note_shielded.root8()` into that carrier needs a fifth `V9RotationContext` root
     /// — a new base limb plus a completion octet in the Lean-emitted `EffectVmEmitRotationV3` — and
     /// is a SEPARATE VK epoch (the L1 carrier work), deliberately not folded in here.
+    /// # Epoch 27 — EXCLUSION-BY-PAST: THE TIPS MAP CARRIES EVIDENCE PAIRS; AUTO-EVICT IS DELETED, 2026-08-08
+    ///
+    /// **WHAT SHAPE CHANGED.** `BlocklaceMeta::tips` (and `finality::CheckpointData::tips`) went
+    /// from `HashMap<creator, BlockId>` to `HashMap<creator, CreatorTips>` — one tip per honest
+    /// creator, a pinned incomparable PAIR per detected equivocator (the Cordial Miners Alg. 1:5
+    /// two-tips floor, so the fork evidence is carried into later blocks' closures instead of
+    /// sitting unreferenced). `LeaveReason::Evicted` is DELETED (constructed zero times), which
+    /// shifts the postcard tag of `LeaveReason::Timeout`.
+    ///
+    /// **WHY.** Equivocator exclusion was a node-local live mutation (`auto_evict` on gossip
+    /// arrival, mutating `participants` + threshold) — divergent across arrival orders (the
+    /// F-CO-1 silent-fork door) and reverted by restart. It is now the papers' predicate over
+    /// committed structure (`node(b) ∉ byz(⌊b⌋)`), evaluated per anchor closure inside τ; the
+    /// participant set changes only through voted, finalized membership proposals.
+    ///
+    /// **WHAT REFUSES TO LOAD / WHAT MUST BE RE-GENESISED.** A store stamped 26 is refused by
+    /// `enforce_canonical_state_schema_epoch` — **re-genesis**. (Postcard would also refuse the
+    /// old `tips` blob shape rather than reinterpret it.) The gossip `Frontier` message's `tips`
+    /// field changed identically: mixed-version committees cannot parse each other's frontiers,
+    /// so all validators redeploy together. Nothing about proofs, VKs, or the consensus anchor
+    /// moves.
+    ///
     /// # Epoch 26 — THE SHIELDED VALUE LINK IS IN THE AIR; THE PEDERSEN LEG IS DELETED, 2026-08-07
     ///
     /// **WHAT SHAPE CHANGED.** `ShieldedTransferPayload` lost `input_legs`, `output_legs`,
@@ -897,7 +919,7 @@ impl PersistentStore {
     /// Poseidon2 note commitments (spendable) and transfer-minted Ristretto points (not openable
     /// by any circuit, so value entering one was unrecoverable). It now holds ONE: every appended
     /// leaf is `hash_fact(v,[a,owner,rand])` and every appended leaf is spendable.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 26;
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 27;
 
     /// Open a persistent store backed by a file on disk.
     ///

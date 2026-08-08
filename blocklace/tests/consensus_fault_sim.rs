@@ -16,8 +16,10 @@
 //!               producers are up (`quorum_threshold(n) = supermajority(n)`).
 //!   * TOLERANCE— it survives f = ⌊(n−1)/3⌋ faults: kill f ⇒ still finalizes;
 //!               kill f+1 ⇒ it correctly STALLS (no finalization) — never forks.
-//!   * EXCLUSION— a Byzantine equivocator is detected, evicted, and anchors
-//!               nothing; the honest quorum finalizes identically through it.
+//!   * EXCLUSION— a Byzantine equivocator is detected and anchors nothing —
+//!               a PREDICATE over each anchor's closure (exclusion-by-past,
+//!               `node(b) ∉ byz(⌊b⌋)`), while the participant set stays FIXED
+//!               on every honest node; the quorum finalizes identically.
 //!
 //! ## Real-vs-engine honesty
 //!
@@ -67,14 +69,10 @@ fn pubkey(sk: &SigningKey) -> [u8; 32] {
     Block::hybrid_id(sk)
 }
 
-/// The **ed25519 strand key** — the space `Constitution::participants` is keyed by,
-/// and therefore the space `auto_evict` matches an equivocator in.
-///
-/// ⚑ This fixture used to hand `pubkey` (the hybrid id) to `Constitution::new`, so its
-/// constitution was HYBRID-keyed and the eviction assertion below passed. The real
-/// node's constitution is ED25519-keyed (`blocklace_sync` seeds it from
-/// `signing_key.verifying_key()`), so the same `auto_evict` call matched nothing and
-/// evicted no one on the live path. The node holds both spaces; so does this now.
+/// The **ed25519 strand key** — the space `Constitution::participants` is keyed by.
+/// The node holds both identity spaces (hybrid ids for tau, strand keys for the
+/// constitution); so does this fixture, and Scenario C asserts the constitution
+/// stays CONSTANT through an equivocation in the space it is actually keyed by.
 fn strand_key(sk: &SigningKey) -> [u8; 32] {
     sk.verifying_key().to_bytes()
 }
@@ -114,15 +112,15 @@ impl Node {
     }
 
     /// Receive one block as the live node does (`handle_push`): on an
-    /// `Equivocation` the block is RETAINED as evidence and the creator is
-    /// auto-evicted. Returns `true` iff an equivocation was surfaced.
+    /// `Equivocation` the block is RETAINED as evidence, the incomparable pair
+    /// is PINNED into the tips (the CM Alg. 1:5 two-tips floor), and the
+    /// constitution is NOT touched — exclusion is the per-closure predicate
+    /// inside tau, never a membership mutation (flag day 2026-08-08).
+    /// Returns `true` iff an equivocation was surfaced.
     fn receive(&mut self, block: Block) -> bool {
         match self.lace.receive_block(block) {
             Ok(()) => false,
-            Err(BlockError::Equivocation { proof, .. }) => {
-                self.constitution.auto_evict(&proof);
-                true
-            }
+            Err(BlockError::Equivocation { .. }) => true,
             Err(e) => panic!("[{}] unexpected receive error: {e:?}", self.name),
         }
     }
@@ -481,9 +479,10 @@ fn partition_heals_without_conflicting_finalization() {
 #[test]
 fn byzantine_equivocation_excluded_safety_and_liveness_held() {
     // n=4, f=1. One creator (C = index 3) is Byzantine and double-signs a slot.
-    // The 3 honest nodes (= quorum) must: detect it, evict it, finalize identically
-    // (SAFETY), never finalize the forked slot (EXCLUSION), and STILL finalize a
-    // non-trivial order through the fault (LIVENESS survives f Byzantine).
+    // The 3 honest nodes (= quorum) must: detect it, keep the participant set
+    // FIXED (exclusion is per-closure in tau, never a membership mutation),
+    // finalize identically (SAFETY), never finalize the forked slot
+    // (EXCLUSION), and STILL finalize a non-trivial order (LIVENESS).
     let n = 4;
     let keys: Vec<SigningKey> = (0..n).map(|i| key(50 + i as u8)).collect();
     let participants: Vec<[u8; 32]> = keys.iter().map(pubkey).collect();
@@ -543,32 +542,42 @@ fn byzantine_equivocation_excluded_safety_and_liveness_held() {
     // H2 sees only the left fork (a Byzantine node need not deliver both to everyone).
     nodes[2].receive(fork_left.clone());
 
-    // DETECTION + EXCLUSION (membership): C is an equivocator on the nodes that saw
-    // both, and evicted from their constitution; honest creators remain.
+    // DETECTION: C is an equivocator on the nodes that saw both halves — and the
+    // pair is PINNED as C's tips entry (the evidence floor), so the fork will be
+    // carried into the closure of whatever those nodes author next.
     for i in 0..2 {
         assert!(
             nodes[i].lace.equivocators().contains(&pk_c),
             "H{i} records C as equivocator"
         );
-        // ⚑ Queried in the ED25519 STRAND space the constitution is actually keyed
-        // by. Asking with `pk_c` (the hybrid id) is trivially false whether or not
-        // the eviction fired, which is how this assertion stayed green while
-        // `auto_evict` matched nothing on the live path.
         assert!(
-            !nodes[i]
-                .constitution
-                .current
-                .is_participant(&strand_key(&keys[3])),
-            "H{i} evicts C"
+            matches!(
+                nodes[i].lace.tips().get(&pk_c),
+                Some(dregg_blocklace::finality::CreatorTips::Pair(_, _))
+            ),
+            "H{i} pins C's incomparable pair as its tips entry"
         );
-        assert!(
-            nodes[i]
-                .constitution
-                .current
-                .is_participant(&strand_key(&keys[0])),
-            "H{i}: honest creator 0 must STILL be a participant — the anti-vacuity half. \
-             A wrong query space reports EVERY key absent, which would make the eviction \
-             assertion above meaningless."
+    }
+
+    // ⚑ THE PARTICIPANT SET NEVER MOVES — the anti-F-CO-1 tooth (flag day
+    // 2026-08-08). The old `auto_evict` shrank H0/H1 to n=3 while H2 (which saw
+    // one half) stayed at n=4: `wave_leader = participants[wave % n]` then
+    // elects DIFFERENT leaders for the same wave on honest nodes — a silent
+    // fork keyed on gossip arrival order. Now every honest node — full view or
+    // partial — keeps the IDENTICAL committed participant set, queried in the
+    // ED25519 strand space the constitution is actually keyed by.
+    for (i, node) in nodes.iter().enumerate() {
+        for k in &keys {
+            assert!(
+                node.constitution.current.is_participant(&strand_key(k)),
+                "H{i}: participant set must be untouched by equivocation \
+                 (exclusion is per-closure in tau, not a membership mutation)"
+            );
+        }
+        assert_eq!(
+            node.constitution.current.participant_count(),
+            n,
+            "H{i}: n and the threshold never key on arrival order"
         );
     }
 
@@ -912,9 +921,12 @@ fn outsider_relay_two_views(n: usize) -> (Node, Node, Vec<[u8; 32]>, Vec<[u8; 32
         .chain(l3.iter())
         .cloned()
         .collect();
-    let mut tips: HashMap<[u8; 32], BlockId> = HashMap::new();
+    let mut tips: HashMap<[u8; 32], dregg_blocklace::finality::CreatorTips> = HashMap::new();
     for b in &enrolled_only {
-        tips.insert(b.creator, b.id());
+        tips.insert(
+            b.creator,
+            dregg_blocklace::finality::CreatorTips::One(b.id()),
+        );
     }
     let ckpt = CheckpointData {
         blocks: enrolled_only.iter().map(|b| b.to_bytes()).collect(),

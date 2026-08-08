@@ -12,9 +12,10 @@
 //!   `metatheory/Dregg2/Distributed/BlocklaceFinality.lean`
 //!   (`finalLeaders_one_per_wave`, `tauOrder_deterministic`, equivocator
 //!   exclusion `finalLeaderAt_needs_unique_candidate`).
-//! * [`dregg_blocklace::constitution::ConstitutionManager::auto_evict`] — the
-//!   membership reaction the node fires from `handle_push` when an
-//!   `EquivocationProof` surfaces.
+//! * [`dregg_blocklace::constitution::ConstitutionManager`] — held constant:
+//!   since flag day 2026-08-08 (exclusion-by-past) an `EquivocationProof` NEVER
+//!   touches membership; exclusion is the per-closure predicate inside tau and
+//!   the detected pair is pinned into the tips as carried evidence.
 //!
 //! # The properties asserted (the load-bearing guarantees)
 //!
@@ -30,10 +31,10 @@
 //!
 //! 2. **Equivocator detection + exclusion = StrandIntegrity / BlocklaceFinality.**
 //!    A creator that forks (two distinct blocks at one `(creator, seq)`) is
-//!    detected on insert (`EquivocationProof` retained as evidence), auto-evicted
-//!    from the constitution, and — crucially — contributes NO block to the
-//!    finalized `tau` order on the honest nodes. The honest nodes still agree
-//!    with each other. This is the node-level witness of
+//!    detected on insert (`EquivocationProof` retained as evidence, the pair
+//!    pinned into the tips), the participant set stays FIXED — and, crucially,
+//!    the forker contributes NO block to the finalized `tau` order on the
+//!    honest nodes. The honest nodes still agree with each other. This is the node-level witness of
 //!    `BlocklaceFinality.finalLeaderAt_needs_unique_candidate` ("an equivocating
 //!    leader anchors nothing") and the Rust `ordering::tests::
 //!    test_tau_differential_equivocator_excluded`.
@@ -74,14 +75,9 @@ fn pubkey(sk: &SigningKey) -> [u8; 32] {
 /// (`blocklace_sync` seeds it from `signing_key.verifying_key()`, and
 /// `MembershipAction::Join` carries an ed25519 `node_id`).
 ///
-/// ⚑ THIS FIXTURE USED TO COLLAPSE THE TWO SPACES, and the collapse is what made its
-/// eviction assertion green. `40a331b35` ("sweepup missed files") flipped `pubkey` to
-/// `Block::hybrid_id` so tau's leader election matched the block creators — and the
-/// same value was then handed to `Constitution::new`, so the constitution here was
-/// HYBRID-keyed and `auto_evict` matched. The real node's constitution is ED25519-keyed,
-/// so on the live path the same call matched nothing and evicted no one, for eighteen
-/// days, invisibly. A fixture that holds one key where the node holds two cannot witness
-/// an identity-space gate; this one now holds both, as the node does.
+/// A fixture that holds one key where the node holds two cannot witness an
+/// identity-space gate; this one holds both, as the node does, and the
+/// membership-constancy assertions below query the strand space deliberately.
 fn strand_key(sk: &SigningKey) -> [u8; 32] {
     sk.verifying_key().to_bytes()
 }
@@ -115,18 +111,14 @@ impl Node {
     }
 
     /// Receive one block as the live node does, mirroring `handle_push`'s
-    /// equivocation reaction: on an `Equivocation` error the block is RETAINED as
-    /// evidence (the lace keeps it) and the creator is auto-evicted from the
-    /// constitution. Returns `true` if an equivocation was surfaced+evicted.
+    /// equivocation reaction since flag day 2026-08-08: the block is RETAINED
+    /// as evidence, the pair is pinned into the tips (`CreatorTips::Pair` —
+    /// the CM Alg. 1:5 evidence floor), and the constitution is NOT touched.
+    /// Returns `true` if an equivocation was surfaced.
     fn receive(&mut self, block: Block) -> bool {
         match self.lace.receive_block(block) {
             Ok(()) => false,
-            Err(BlockError::Equivocation { proof, .. }) => {
-                // This is precisely `node/src/blocklace_sync.rs::handle_push`'s
-                // `outcome.equivocations` loop calling `constitution.auto_evict`.
-                self.constitution.auto_evict(&proof);
-                true
-            }
+            Err(BlockError::Equivocation { .. }) => true,
             Err(e) => panic!("[{}] unexpected receive error: {e:?}", self.name),
         }
     }
@@ -399,39 +391,30 @@ fn three_nodes_partition_heal_equivocate_converge() {
     // Evidence is RETAINED, not lost: both forks live in the lace.
     assert!(node_a.lace.contains(&fork_left.id()) && node_a.lace.contains(&fork_right.id()));
 
-    // EXCLUSION (membership): the equivocator is auto-evicted from the constitution.
-    //
-    // ⚑ Queried in the ED25519 STRAND space, which is what the node's constitution is
-    // keyed by — `pk_c` (the hybrid consensus id) is never a member of it, so asking
-    // `is_participant(&pk_c)` would be trivially false and would assert NOTHING about
-    // whether the eviction fired. That trivial-false shape is exactly how this
-    // assertion survived `auto_evict` being dead on the live path.
+    // ⚑ MEMBERSHIP NEVER MOVES (flag day 2026-08-08, exclusion-by-past): the
+    // equivocator STAYS a constitutional participant on every honest node —
+    // queried in the ED25519 strand space the constitution is actually keyed
+    // by. The old `auto_evict` here made `n` a function of gossip arrival
+    // order (the F-CO-1 silent-fork door) and reverted on restart; exclusion
+    // is now the per-closure predicate below, and Π changes only by voted,
+    // finalized proposals.
     let strand_c = strand_key(&sk_c);
-    assert!(
-        !node_a.constitution.current.is_participant(&strand_c),
-        "A auto-evicts equivocator C from the constitution"
-    );
-    assert!(
-        !node_b.constitution.current.is_participant(&strand_c),
-        "B auto-evicts equivocator C from the constitution"
-    );
-    // Honest A and B remain participants — the ANTI-VACUITY half: a constitution the
-    // query space simply misses would report every key absent, including these two.
-    assert!(
-        node_a
-            .constitution
-            .current
-            .is_participant(&strand_key(&sk_a)),
-        "honest A must STILL be a participant — if this fails, the eviction assertions \
-         above are passing because the query space is wrong, not because C was evicted"
-    );
-    assert!(
-        node_a
-            .constitution
-            .current
-            .is_participant(&strand_key(&sk_b)),
-        "honest B must STILL be a participant (same anti-vacuity guard)"
-    );
+    for (name, node) in [("A", &node_a), ("B", &node_b)] {
+        assert!(
+            node.constitution.current.is_participant(&strand_c),
+            "{name}: the equivocator remains in the participant set — exclusion \
+             is per-closure in tau, never a membership mutation"
+        );
+        assert!(
+            node.constitution.current.is_participant(&strand_key(&sk_a))
+                && node.constitution.current.is_participant(&strand_key(&sk_b)),
+            "{name}: honest members remain participants (query-space anti-vacuity)"
+        );
+        assert_eq!(
+            node.constitution.current.version, 0,
+            "{name}: no constitutional amendment fired from gossip arrival"
+        );
+    }
 
     // EXCLUSION (finalized order): no forked block from C at the fork seq anchors
     // anything, and the two honest nodes STILL agree with each other (safety

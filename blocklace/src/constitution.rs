@@ -8,17 +8,32 @@
 //! - **Constitution**: the current participant set + threshold + version.
 //! - **MembershipProposal**: a proposal to join, leave, or amend the threshold.
 //! - **H-Rule**: changing the threshold from T to T' requires max(T, T') votes.
-//! - **Auto-eviction**: equivocation proofs immediately remove the equivocator.
 //! - **Timeout-based auto-leave**: nodes silent for `timeout_waves` waves are
 //!   proposed for removal. When they return, they re-join via a Join proposal.
 //! - **Voting via blocks**: votes reference the proposal block in their causal past.
 //! - **n=1 case**: with a single participant, every wave finalizes instantly (self
 //!   is always the leader with threshold=1). Adding a peer grows the threshold;
 //!   their timeout shrinks it back.
+//!
+//! ⚑ **The participant set NEVER mutates on an equivocation** (flag day
+//! 2026-08-08, exclusion-by-past). `auto_evict` — a node-local, gossip-arrival-
+//! ordered `participants.retain` + threshold recompute — is DELETED. It made the
+//! τ participant set a function of local arrival order (node A holding both fork
+//! halves ran at `n−1`, node B holding one ran at `n`; `wave_leader = participants
+//! [wave % n]` then elects different leaders for the same wave: the F-CO-1 silent
+//! fork through a second door), and it reverted on restart (never a block, never
+//! in `committee_replay`'s fold). Both source papers keep `Π` fixed on
+//! equivocation: exclusion is `node(b) ∉ byz(⌊b⌋)` — a predicate over each
+//! block's own causal closure (blocklace paper arXiv:2402.08068 §4.3; Cordial
+//! Miners `approves`, Alg. 1:17), evaluated inside τ (`ordering.rs::approves`,
+//! Lean `Dregg2.Distributed.ExclusionByPast` / `BlocklaceFinality.hasEquivInPast`),
+//! carried by the two-tips evidence floor (`finality.rs::CreatorTips`).
+//! Membership changes remain what they always were here: VOTED proposals folded
+//! from finalized blocks — committed state alone.
 
 use serde::{Deserialize, Serialize};
 
-use crate::finality::{BlockId, EquivocationProof};
+use crate::finality::BlockId;
 
 // ─── Constitution ──────────────────────────────────────────────────────────────
 
@@ -158,31 +173,6 @@ impl Constitution {
             }
         }
     }
-
-    /// Auto-evict an equivocator based on cryptographic proof.
-    ///
-    /// Since equivocation proofs are self-evident (two conflicting signed blocks),
-    /// this does NOT require a vote -- it applies immediately.
-    ///
-    /// ⚑ Matches on [`EquivocationProof::equivocator_ed25519`], the STRAND key, not
-    /// on `proof.creator`. `creator` is the HYBRID consensus id `H(ed25519 ‖ ml_dsa)`
-    /// and [`Self::participants`] is keyed by ed25519, so the old `proof.creator`
-    /// match could never succeed on the live path: `blocklace_sync::handle_push`
-    /// called this for every detected equivocation and it removed nobody, ever.
-    ///
-    /// Returns true if the equivocator was actually a participant and was removed.
-    pub fn auto_evict_equivocator(&mut self, proof: &EquivocationProof) -> bool {
-        let Some(evicted) = proof.equivocator_ed25519() else {
-            return false;
-        };
-        if !self.participants.contains(&evicted) {
-            return false;
-        }
-        self.participants.retain(|k| k != &evicted);
-        self.threshold = compute_threshold(self.participants.len());
-        self.version += 1;
-        true
-    }
 }
 
 // ─── Membership Proposals ──────────────────────────────────────────────────────
@@ -216,16 +206,18 @@ pub enum MembershipProposal {
 }
 
 /// Reason for a participant leaving the federation.
+///
+/// There is deliberately NO `Evicted`-on-equivocation variant: an equivocator is
+/// excluded from ordering by the per-closure predicate (`node(b) ∉ byz(⌊b⌋)`),
+/// never by a membership change — and the variant was constructed zero times
+/// (the never-keep-a-no-op rule). A committee that wants an equivocator OUT of
+/// the roster votes an ordinary `Leave` like any other membership change.
+/// (⚑ wire flag day: removing the variant shifts the postcard enum tags —
+/// old serialized proposals refuse to decode; the devnet re-genesis covers it.)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LeaveReason {
     /// Participant chose to leave.
     Voluntary,
-    /// Participant was evicted due to equivocation.
-    Evicted {
-        /// The two conflicting blocks (serialized for compactness).
-        block_a_bytes: Vec<u8>,
-        block_b_bytes: Vec<u8>,
-    },
     /// Participant timed out: no blocks produced for `timeout_waves` consecutive waves.
     /// The participant can rejoin by submitting a Join proposal once they come back online.
     Timeout {
@@ -531,27 +523,6 @@ impl ConstitutionManager {
                 self.last_active_wave.insert(node_key, self.current_wave);
             }
 
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Auto-evict an equivocator. Does not require voting.
-    ///
-    /// Returns true if the equivocator was removed from the constitution.
-    pub fn auto_evict(&mut self, proof: &EquivocationProof) -> bool {
-        if self.current.auto_evict_equivocator(proof) {
-            // Same identity space as the participant set: these three maps are all
-            // keyed by the ed25519 strand key, so they must be cleaned by it and
-            // never by `proof.creator` (the hybrid consensus id).
-            let evicted = proof
-                .equivocator_ed25519()
-                .expect("auto_evict_equivocator only returns true when the strand key resolves");
-            self.last_active_wave.remove(&evicted);
-            self.pending_timeout_leaves.remove(&evicted);
-            self.joined_at_wave.remove(&evicted);
-            self.history.push(self.current.clone());
             true
         } else {
             false
@@ -1097,13 +1068,6 @@ impl ConstitutionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::finality::{Block, Payload};
-    use ed25519_dalek::SigningKey;
-    use rand::rngs::OsRng;
-
-    fn random_key() -> SigningKey {
-        SigningKey::generate(&mut OsRng)
-    }
 
     fn make_node_key(byte: u8) -> [u8; 32] {
         [byte; 32]
@@ -1291,165 +1255,6 @@ mod tests {
 
         assert!(mgr.apply_if_passed(&proposal_block));
         assert_eq!(mgr.current.threshold, 2);
-    }
-
-    // ─── Auto-eviction: equivocator detected → immediately removed ──────────
-
-    #[test]
-    fn auto_eviction_equivocator_immediately_removed() {
-        let participants = make_participants(4);
-        let mut mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
-
-        let equivocator_key = random_key();
-        let equivocator_pub = equivocator_key.verifying_key().to_bytes();
-
-        // First, add the equivocator as a participant
-        mgr.current.participants.push(equivocator_pub);
-        mgr.current.participants.sort();
-        mgr.current.threshold = compute_threshold(mgr.current.participant_count());
-        mgr.current.version += 1;
-
-        assert!(mgr.current.is_participant(&equivocator_pub));
-        let count_before = mgr.current.participant_count();
-
-        // Create equivocation proof: two blocks at same seq with different content
-        let block_a = Block::new(
-            &equivocator_key,
-            1,
-            Payload::Data(b"version A".to_vec()),
-            vec![],
-        );
-        let block_b = Block::new(
-            &equivocator_key,
-            1,
-            Payload::Data(b"version B".to_vec()),
-            vec![],
-        );
-
-        let proof = EquivocationProof {
-            creator: equivocator_pub,
-            block_a,
-            block_b,
-        };
-
-        // Auto-evict: no voting needed
-        assert!(mgr.auto_evict(&proof));
-        assert!(!mgr.current.is_participant(&equivocator_pub));
-        assert_eq!(mgr.current.participant_count(), count_before - 1);
-    }
-
-    /// ⚑ **THE EVICTION TOOTH, WITH THE PROOF SHAPED AS THE ENGINE ACTUALLY BUILDS IT.**
-    ///
-    /// The two tests around this one hand-build an `EquivocationProof` whose `creator`
-    /// is the equivocator's **ed25519** key. `Blocklace::detect_equivocation` never
-    /// produces that: it sets `creator: block.creator`, the **hybrid** id
-    /// `H(ed25519 ‖ ml_dsa)`. So both of them were green against a proof no production
-    /// path can emit, while the live `blocklace_sync::handle_push` → `auto_evict` call
-    /// matched a hybrid id against an ed25519-keyed participant set and evicted NOBODY,
-    /// for every equivocation the node ever detected.
-    ///
-    /// This builds the proof the engine's way and asserts the eviction lands. The
-    /// `assert_ne!` is the anti-vacuity guard: if the two identity spaces ever
-    /// coincided, this test would be re-asserting its neighbours and proving nothing.
-    #[test]
-    fn auto_eviction_matches_the_strand_key_not_the_hybrid_creator() {
-        let equivocator_key = random_key();
-        let equivocator_ed = equivocator_key.verifying_key().to_bytes();
-        let block_a = Block::new(&equivocator_key, 1, Payload::Data(b"A".to_vec()), vec![]);
-        let block_b = Block::new(&equivocator_key, 1, Payload::Data(b"B".to_vec()), vec![]);
-        let hybrid = block_a.creator;
-
-        assert_ne!(
-            hybrid, equivocator_ed,
-            "the hybrid consensus id must differ from the ed25519 strand key — if they \
-             coincide this test asserts nothing"
-        );
-
-        // A constitution keyed the way the NODE keys it: ed25519 strand keys.
-        let mut participants = make_participants(3);
-        participants.push(equivocator_ed);
-        let mut mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
-        assert!(mgr.current.is_participant(&equivocator_ed));
-        assert!(
-            !mgr.current.is_participant(&hybrid),
-            "the hybrid id is NOT a member of an ed25519-keyed constitution — this is why \
-             matching on `proof.creator` could never evict anyone"
-        );
-        let before = mgr.current.participant_count();
-
-        // The proof EXACTLY as `Blocklace::detect_equivocation` emits it.
-        let proof = EquivocationProof {
-            creator: hybrid,
-            block_a,
-            block_b,
-        };
-        assert!(
-            mgr.auto_evict(&proof),
-            "an equivocation proof carrying the HYBRID creator must still evict the member \
-             it names — the strand key is on both exhibits"
-        );
-        assert!(!mgr.current.is_participant(&equivocator_ed));
-        assert_eq!(mgr.current.participant_count(), before - 1);
-        // The honest members are untouched — a wrong key space would evict none, and an
-        // over-broad one could evict more than the equivocator.
-        assert!(mgr.current.is_participant(&make_node_key(1)));
-        assert_eq!(mgr.last_wave_with_block_from(&equivocator_ed), None);
-    }
-
-    /// FAIL-CLOSED: two exhibits that disagree on their ed25519 half name no strand, so
-    /// nothing is evicted. Under `verify_hybrid` an equal `creator` forces an equal
-    /// `ed25519`, so a disagreement means at least one exhibit was never authenticated
-    /// (the `from_checkpoint_trusted` restore path) — and guessing which half is honest
-    /// would hand an attacker an eviction primitive against an arbitrary member.
-    #[test]
-    fn auto_eviction_refuses_a_proof_whose_exhibits_disagree_on_the_strand_key() {
-        let honest_key = random_key();
-        let attacker_key = random_key();
-        let honest_ed = honest_key.verifying_key().to_bytes();
-
-        let mut participants = make_participants(3);
-        participants.push(honest_ed);
-        let mut mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
-        assert!(mgr.current.is_participant(&honest_ed));
-        let before = mgr.current.participant_count();
-
-        // A forged pair: exhibit A is the honest member's block, exhibit B is the
-        // attacker's. They do not agree on the strand key, so no member is named.
-        let block_a = Block::new(&honest_key, 1, Payload::Data(b"A".to_vec()), vec![]);
-        let block_b = Block::new(&attacker_key, 1, Payload::Data(b"B".to_vec()), vec![]);
-        assert_ne!(block_a.ed25519, block_b.ed25519);
-        let proof = EquivocationProof {
-            creator: block_a.creator,
-            block_a,
-            block_b,
-        };
-
-        assert!(
-            !mgr.auto_evict(&proof),
-            "a proof whose exhibits disagree on the strand key must evict NOBODY"
-        );
-        assert!(mgr.current.is_participant(&honest_ed));
-        assert_eq!(mgr.current.participant_count(), before);
-    }
-
-    #[test]
-    fn auto_eviction_non_participant_returns_false() {
-        let participants = make_participants(3);
-        let mut mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
-
-        let non_member_key = random_key();
-        let non_member_pub = non_member_key.verifying_key().to_bytes();
-
-        let block_a = Block::new(&non_member_key, 1, Payload::Data(b"A".to_vec()), vec![]);
-        let block_b = Block::new(&non_member_key, 1, Payload::Data(b"B".to_vec()), vec![]);
-
-        let proof = EquivocationProof {
-            creator: non_member_pub,
-            block_a,
-            block_b,
-        };
-
-        assert!(!mgr.auto_evict(&proof));
     }
 
     // ─── Constitution versioning ────────────────────────────────────────────
@@ -1785,51 +1590,6 @@ mod tests {
 
     // ─── H-rule: can't lower threshold without new threshold's approval ─────
 
-    // ─── Auto-eviction: equivocator detected -> immediately removed ─────────
-
-    #[test]
-    fn auto_eviction_clears_timeout_tracking() {
-        let participants = make_participants(4);
-        let mut mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
-
-        let equivocator_key = random_key();
-        let equivocator_pub = equivocator_key.verifying_key().to_bytes();
-
-        // Add equivocator as participant
-        mgr.current.participants.push(equivocator_pub);
-        mgr.current.participants.sort();
-        mgr.current.threshold = compute_threshold(mgr.current.participant_count());
-        mgr.current.version += 1;
-
-        // Record some activity for the equivocator
-        mgr.record_activity(&equivocator_pub, 5);
-        assert_eq!(mgr.last_wave_with_block_from(&equivocator_pub), Some(5));
-
-        // Create equivocation proof
-        let block_a = Block::new(
-            &equivocator_key,
-            1,
-            Payload::Data(b"version A".to_vec()),
-            vec![],
-        );
-        let block_b = Block::new(
-            &equivocator_key,
-            1,
-            Payload::Data(b"version B".to_vec()),
-            vec![],
-        );
-        let proof = EquivocationProof {
-            creator: equivocator_pub,
-            block_a,
-            block_b,
-        };
-
-        // Auto-evict: no voting, clears timeout tracking
-        assert!(mgr.auto_evict(&proof));
-        assert!(!mgr.current.is_participant(&equivocator_pub));
-        assert_eq!(mgr.last_wave_with_block_from(&equivocator_pub), None);
-    }
-
     // ─── Timeout disabled when timeout_waves = 0 ────────────────────────────
 
     #[test]
@@ -2161,11 +1921,13 @@ mod tests {
         let participants = make_participants(3);
         let grp = GovernedReferenceGroup::open(participants.clone(), 10);
 
-        // Build a 3-round blocklace.
+        // Build a SIX-round blocklace. Three would not do: under CM Def. 6 (`ordering::tau`'s
+        // anchor-chain rule) a one-wave lace orders exactly its anchor, so the agreement below
+        // would be checked on a single block. Six rounds give a two-anchor chain.
         let mut bl = crate::Blocklace::new();
         let mut blocks_by_round: Vec<Vec<crate::BlockId>> = Vec::new();
 
-        for round in 1..=3u64 {
+        for round in 1..=6u64 {
             let preds: Vec<crate::BlockId> = if round == 1 {
                 vec![]
             } else {
@@ -2190,7 +1952,8 @@ mod tests {
         let result_direct = crate::ordering::tau_unified(&bl, grp.reference_group(), &config);
 
         assert_eq!(result_grp, result_direct);
-        assert_eq!(result_grp.len(), 9); // 3 participants * 3 rounds
+        // 3 participants x rounds 1-3, ordered by wave 1's anchor, plus wave 0's anchor.
+        assert_eq!(result_grp.len(), 10);
     }
 
     #[test]
@@ -2247,11 +2010,14 @@ mod tests {
         // and produce independent orderings.
         let all_participants: Vec<[u8; 32]> = (1..=6u8).map(make_node_key).collect();
 
-        // Build a shared blocklace with all 6 participants.
+        // Build a shared blocklace with all 6 participants. SIX rounds, not three: under CM
+        // Def. 6 (`ordering::tau`'s anchor-chain rule) each group's rounds 1-3 are ordered by its
+        // OWN wave-1 anchor at round 4, so a three-round lace would finalize one block per group
+        // and the disjointness check below would be nearly free.
         let mut bl = crate::Blocklace::new();
         let mut blocks_by_round: Vec<Vec<crate::BlockId>> = Vec::new();
 
-        for round in 1..=3u64 {
+        for round in 1..=6u64 {
             let preds: Vec<crate::BlockId> = if round == 1 {
                 vec![]
             } else {
@@ -2286,10 +2052,14 @@ mod tests {
         // Both should finalize their own members' blocks.
         assert_eq!(
             result_const.len(),
-            9,
-            "constitutional group: 3 members * 3 rounds"
+            10,
+            "constitutional group: 3 members * rounds 1-3, plus wave 1's anchor"
         );
-        assert_eq!(result_open.len(), 9, "open group: 3 members * 3 rounds");
+        assert_eq!(
+            result_open.len(),
+            10,
+            "open group: 3 members * rounds 1-3, plus wave 1's anchor"
+        );
 
         // Outputs should be completely disjoint (different members).
         let set_const: std::collections::HashSet<crate::BlockId> =

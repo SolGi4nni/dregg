@@ -3,8 +3,7 @@
 
 use dregg_blocklace::constitution::{ConstitutionManager, MembershipProposal, MembershipVote};
 use dregg_blocklace::finality::{
-    Block, BlockError, BlockId, Blocklace, EquivocationProof, FinalityLevel, FinalityTracker,
-    Payload,
+    Block, BlockError, BlockId, Blocklace, CreatorTips, FinalityLevel, FinalityTracker, Payload,
 };
 use ed25519_dalek::SigningKey;
 
@@ -152,10 +151,10 @@ fn check_equivocation_detection() -> Result<(), String> {
         .map_err(|e| format!("first evil block should be accepted: {e}"))?;
 
     // NON-VACUITY: the evil creator HOLDS a live tip under the label we are
-    // about to query. So the "tip withdrawn" check below observes a removal,
+    // about to query. So the "pair pinned" check below observes a transition,
     // rather than reporting absence for a key the lace never used — the exact
     // false green a stale Ed25519 label produces.
-    if lace.tips().get(&evil_id) != Some(&evil_block_1.id()) {
+    if lace.tips().get(&evil_id) != Some(&CreatorTips::One(evil_block_1.id())) {
         return Err("evil node's first block should be its live tip".into());
     }
 
@@ -178,14 +177,28 @@ fn check_equivocation_detection() -> Result<(), String> {
         }
     }
 
-    // The equivocator should be recorded, and its tip WITHDRAWN — checking the
-    // tip too keeps the identity keying honest: a label the lace never used
-    // would report "no tip" for a creator that does hold one.
+    // The equivocator is recorded, and its tips entry is PINNED to the
+    // detected incomparable pair (CM Alg. 1:5 two-tips evidence floor,
+    // exclusion-by-past flag day 2026-08-08): the next authored block points at
+    // BOTH halves, carrying the fork into every later closure — where the
+    // per-closure exclusion predicate (`approved_by` / Lean `ExcludedByPast`)
+    // actually reads it. Checking the pinned pair keeps the identity keying
+    // honest too: a label the lace never used would report "no entry".
     if !lace.equivocators().contains(&evil_id) {
         return Err("evil node should be in equivocators set".into());
     }
-    if lace.tips().contains_key(&evil_id) {
-        return Err("equivocator's tip should be withdrawn".into());
+    match lace.tips().get(&evil_id) {
+        Some(CreatorTips::Pair(a, b)) => {
+            let (x, y) = (evil_block_1.id(), evil_block_2.id());
+            if !((*a == x && *b == y) || (*a == y && *b == x)) {
+                return Err("pinned pair must be the two detected fork halves".into());
+            }
+        }
+        other => {
+            return Err(format!(
+                "equivocator's tips entry must be the pinned evidence pair, got {other:?}"
+            ));
+        }
     }
 
     Ok(())
@@ -254,7 +267,10 @@ fn check_finality_progression() -> Result<(), String> {
     Ok(())
 }
 
-/// Verify constitution membership change: propose, vote, apply, auto-evict.
+/// Verify constitution membership change: propose, vote, apply — and that an
+/// equivocation proof does NOT move membership (exclusion-by-past flag day
+/// 2026-08-08: exclusion is a per-closure predicate inside tau; `auto_evict`
+/// is deleted, so `Π` changes only through voted, finalized proposals).
 fn check_constitution_membership() -> Result<(), String> {
     // The participant set is the ed25519 STRAND space (`Constitution::participants`),
     // so a participant is a signing key's VERIFY key — not an arbitrary 32-byte label.
@@ -314,43 +330,24 @@ fn check_constitution_membership() -> Result<(), String> {
         ));
     }
 
-    // Auto-evict via equivocation proof. Built the way `Blocklace::detect_equivocation`
-    // builds it: `creator` is the HYBRID consensus id of the two exhibits, and the
-    // member being evicted is named by their ed25519 half (`equivocator_ed25519`).
-    let evil_key = &participant_keys[0];
-    let block_a = Block::new(evil_key, 1, Payload::Data(b"a".to_vec()), vec![]);
-    let block_b = Block::new(evil_key, 1, Payload::Data(b"b".to_vec()), vec![]);
-    let proof = EquivocationProof {
-        creator: block_a.creator,
-        block_a,
-        block_b,
-    };
-    if proof.creator == participants[0] {
-        return Err(
-            "the hybrid consensus id must differ from the ed25519 member key — \
-                    else this check cannot witness the eviction identity space"
-                .into(),
-        );
-    }
-
-    let evicted = manager.auto_evict(&proof);
-    if !evicted {
-        return Err("equivocator should be auto-evicted".into());
-    }
-
-    if manager.participants().len() != 4 {
+    // Version advanced exactly once (the voted join) — and there is no
+    // equivocation-keyed mutation left to fire: a member that equivocates STAYS
+    // a participant here (its blocks are excluded per-closure inside tau, and
+    // its removal, if the committee wants one, is an ordinary voted Leave).
+    // The deleted `auto_evict` made `n` a function of gossip arrival order —
+    // the F-CO-1 silent-fork door — and reverted on restart.
+    if manager.version() != 1 {
         return Err(format!(
-            "after eviction, expected 4 participants, got {}",
-            manager.participants().len()
-        ));
-    }
-
-    // Version should have advanced.
-    if manager.version() < 2 {
-        return Err(format!(
-            "version should be >= 2 after changes, got {}",
+            "version should be exactly 1 (the voted join), got {}",
             manager.version()
         ));
+    }
+    if !manager.current.is_participant(&participants[0]) {
+        return Err(
+            "a member that equivocates must REMAIN a participant — membership \
+             moves only by voted, finalized proposals"
+                .into(),
+        );
     }
 
     Ok(())

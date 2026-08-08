@@ -6,8 +6,15 @@
 //! - Quiescent operation (no messages when idle)
 //! - Efficient cordial dissemination (send peers blocks you think they need)
 //! - Leaderless total ordering via the tau function
-//! - Equivocation detection built into the data structure
-//! - Constitutional membership amendments via voting
+//! - Equivocation detection AND exclusion in the data structure: detection pins
+//!   the incomparable pair into the tips (`CreatorTips::Pair`, the CM Alg. 1:5
+//!   two-tips floor) so the fork is carried into later closures, where tau's
+//!   per-closure predicate excludes the equivocator (`node(b) ∉ byz(⌊b⌋)`,
+//!   arXiv:2402.08068 §4.3; Lean `Dregg2.Distributed.ExclusionByPast`). The
+//!   participant set NEVER changes on detection (flag day 2026-08-08 — the old
+//!   gossip-arrival `auto_evict` was the F-CO-1 fork through a second door and
+//!   reverted on restart)
+//! - Constitutional membership amendments via voting — the ONLY membership door
 //!
 //! The node participates in consensus by:
 //! 1. Creating blocks when turns are submitted
@@ -26,7 +33,7 @@ use dregg_blocklace::constitution::{
 use dregg_blocklace::dissemination::MAX_BLOCKS_PER_PUSH;
 use dregg_blocklace::finality::{
     Block, BlockError, BlockId, Blocklace, ConsensusTimePolicyV1, ConsensusTimedTurnPayloadV1,
-    FinalityLevel, MembershipAction, Payload, TurnArtifactBundle,
+    CreatorTips, FinalityLevel, MembershipAction, Payload, TurnArtifactBundle,
 };
 use dregg_blocklace::ordering::tau;
 use dregg_net::gossip::{GossipEvent, GossipNetwork, TopicHandle};
@@ -311,7 +318,11 @@ pub enum BlocklaceGossipMessage {
     /// nonce defeats that dedup so a stuck node's repeated frontier always reaches
     /// the peer and pulls the gap, every tick, until it advances.
     Frontier {
-        tips: HashMap<[u8; 32], BlockId>,
+        /// Per-creator tips: the chain head, or — for a detected equivocator —
+        /// the pinned evidence PAIR (CM Alg. 1:5 two-tips floor). ⚑ wire flag
+        /// day 2026-08-08: the value type changed from a bare `BlockId`; mixed
+        /// committees cannot parse each other's frontiers — redeploy together.
+        tips: HashMap<[u8; 32], CreatorTips>,
         nonce: u64,
         /// Finalization votes the sender currently holds (its own + any it has
         /// collected), piggybacked onto the frontier. The Frontier is the
@@ -839,6 +850,14 @@ pub struct BlocklaceHandle {
     /// heartbeat fires only when the node has genuinely produced nothing for a
     /// full idle window (mutation-driven production resets it).
     pub last_produced: Arc<RwLock<std::time::Instant>>,
+    /// CM Alg. 4:75's clock for the ES ROUND-ADVANCE GATE: *"timeout is measured from when round
+    /// r is cordial."* Armed at the first production attempt where the current round planned an
+    /// `Advance` (= the first local observation of cordiality at that round); consulted by
+    /// [`Self::es_advance_hold`] to derive the `timeoutFired` bit the verified Lean gate
+    /// (`Dregg2.Distributed.RoundAdvanceGate.advanceGate`, `@[export] dregg_round_advance`)
+    /// takes as input. The RULE lives in Lean; this is only the clock (time is I/O).
+    /// ⚠ NOT `blocklace_wave_timeout_ms` — that is governance proposal expiry.
+    pub round_advance_timer: Arc<std::sync::Mutex<crate::round_advance_gate::RoundAdvanceTimer>>,
     /// Set when a peer's non-Ack block (turn / membership / checkpoint) lands in
     /// our lace and is consumed by the cadence task, which answers with one
     /// `Payload::Ack` block linking the current tips. This is the REACTIVE,
@@ -1153,7 +1172,7 @@ impl BlocklaceHandle {
         let block = {
             let mut live = self.lace.write().await;
             let mut candidate = live.clone();
-            let predecessors: Vec<BlockId> = candidate.tips().values().copied().collect();
+            let predecessors: Vec<BlockId> = candidate.tip_ids();
             let producer_wall = producer_wall_unix_seconds()?;
             let block = produce_payload_with_consensus_time_v1(
                 &mut candidate,
@@ -1211,6 +1230,97 @@ impl BlocklaceHandle {
         self.push_new_blocks().await;
         debug!(block_id = %block_id, seq = block.seq, "produced heartbeat block");
         Some(block_id)
+    }
+
+    /// THE ES ROUND-ADVANCE GATE (CM Alg. 4:67–75) — consulted after `plan_round_block` says
+    /// `Advance` and BEFORE the block is authored. Returns `None` when the round may advance,
+    /// `Some(reason)` when this producer must HOLD the round this tick.
+    ///
+    /// The RULE is the verified Lean `Dregg2.Distributed.RoundAdvanceGate.advanceGate`
+    /// (`@[export] dregg_round_advance`; `round_advance_eq_gate` proves the wire verdict IS the
+    /// predicate): advance a cordial round only when the wave leader's block is present (wave
+    /// start) / ratified (mid-wave) / super-ratified (wave end) — or the timeout fired. CM §6.2:
+    /// the clauses exist because with a prospective (round-robin, genesis-published) leader the
+    /// adversary knows the schedule in advance; `plan_round_block` alone is the ASYNCHRONY
+    /// instance's advance rule (Alg. 4:59) and enforced no leader clause at all. Prop. 38's
+    /// liveness needs `timeout > ∆` — the timeout and its stated ∆ assumption live in
+    /// `crate::round_advance_gate::round_advance_timeout_ms` (⚠ NOT `blocklace_wave_timeout_ms`,
+    /// which is governance proposal expiry).
+    ///
+    /// The participant set is the SAME admission-filtered, committed-hybrid-id projection the
+    /// finalizer uses (`poll_finalized_blocks`'s pipeline): the gate picks the wave leader by
+    /// matching `participants[wave % n]` against block creators, so feeding it any other set
+    /// would gate against a different schedule than the one τ anchors.
+    ///
+    /// Fail-safety: a linked-but-erroring gate HOLDS unconditionally (an `ERR` is our encoder
+    /// bug); an ABSENT export takes the declared bypasses of `es_gate_bypass_allowed`
+    /// (archive-less build / `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`, both revoked by
+    /// `DREGG_REQUIRE_LEAN=1`) back to the pre-gate cordiality-only advance, loudly.
+    async fn es_advance_hold(
+        &self,
+        state: &NodeState,
+        lace: &Blocklace,
+        completing_round: u64,
+    ) -> Option<String> {
+        let raw_participants = {
+            let c = self.constitution.read().await;
+            c.current.participants.clone()
+        };
+        let admitted = crate::strand_admission_gate::admitted_participants(
+            &raw_participants,
+            &raw_participants,
+        );
+        let participants: Vec<[u8; 32]> = project_committed_participants(state, &admitted).await;
+        let timeout_ms = crate::round_advance_gate::round_advance_timeout_ms();
+        let timeout_fired = self
+            .round_advance_timer
+            .lock()
+            .expect("round-advance timer poisoned")
+            .timeout_fired(completing_round, timeout_ms);
+        use crate::round_advance_gate::EsAdvanceConsult;
+        match crate::round_advance_gate::consult(
+            lace,
+            &participants,
+            completing_round,
+            timeout_fired,
+        ) {
+            EsAdvanceConsult::Advance => None,
+            EsAdvanceConsult::Hold => {
+                let waiting_ms = self
+                    .round_advance_timer
+                    .lock()
+                    .expect("round-advance timer poisoned")
+                    .waiting_ms(completing_round);
+                Some(format!(
+                    "ES round-advance HOLD: round {completing_round} is cordial but the wave \
+                     leader's block is not yet present/ratified/super-ratified (waited \
+                     {waiting_ms} ms of the {timeout_ms} ms timeout)"
+                ))
+            }
+            EsAdvanceConsult::GateError(e) => Some(format!(
+                "ES round-advance gate ERROR at round {completing_round} (HOLDING, fail-closed): {e}"
+            )),
+            EsAdvanceConsult::ExportUnavailable(e) => {
+                if crate::round_advance_gate::es_gate_bypass_allowed(
+                    dregg_lean_ffi::round_advance_available(),
+                    allow_unverified_consensus(),
+                    require_verified_lean_gate(),
+                ) {
+                    warn!(
+                        completing_round,
+                        "ES round-advance export absent — DECLARED BYPASS taken (archive-less \
+                         build or DREGG_ALLOW_UNVERIFIED_CONSENSUS=1): advancing on cordiality \
+                         alone, the pre-gate asynchrony rule"
+                    );
+                    None
+                } else {
+                    Some(format!(
+                        "ES round-advance export missing at round {completing_round} and no \
+                         declared bypass (DREGG_REQUIRE_LEAN revokes them): {e}"
+                    ))
+                }
+            }
+        }
     }
 
     /// ROUND-DISCIPLINED block production (the Stage-5 finality mechanism).
@@ -1279,10 +1389,11 @@ impl BlocklaceHandle {
                 let mut tip_seq_round: Vec<(u64, u64)> = lace
                     .tips()
                     .values()
+                    .flat_map(CreatorTips::iter)
                     .map(|t| {
                         (
-                            lace.get(t).map(|b| b.seq).unwrap_or(0),
-                            lace.round_of(t).unwrap_or(0),
+                            lace.get(&t).map(|b| b.seq).unwrap_or(0),
+                            lace.round_of(&t).unwrap_or(0),
                         )
                     })
                     .collect();
@@ -1304,12 +1415,31 @@ impl BlocklaceHandle {
                 Vec::new(),
                 producer_wall,
             ),
-            RoundPlan::Advance { predecessors, .. } => produce_payload_with_consensus_time_v1(
-                &mut lace,
-                payload,
+            RoundPlan::Advance {
                 predecessors,
-                producer_wall,
-            ),
+                next_round,
+            } => {
+                // ── THE ES ROUND-ADVANCE GATE (CM Alg. 4:67–75, Lean-decided) ────────────
+                // `plan_round_block` is only line 68's cordiality; lines 69–75 (leader
+                // present/ratified/super-ratified ∨ timeout) are the verified gate. See
+                // `es_advance_hold`'s docstring for the rule, the ∆ assumption, and the
+                // fail-safety ladder.
+                let completing_round = next_round.saturating_sub(1);
+                if let Some(hold) = self.es_advance_hold(state, &lace, completing_round).await {
+                    debug!(
+                        completing_round,
+                        %hold,
+                        "round production HOLDING: cordial, but the ES advance gate refused"
+                    );
+                    return None;
+                }
+                produce_payload_with_consensus_time_v1(
+                    &mut lace,
+                    payload,
+                    predecessors,
+                    producer_wall,
+                )
+            }
         };
         let block = match produced {
             Ok(block) => block,
@@ -1363,12 +1493,33 @@ impl BlocklaceHandle {
                     Vec::new(),
                     producer_wall,
                 ),
-                RoundPlan::Advance { predecessors, .. } => produce_payload_with_consensus_time_v1(
-                    &mut candidate,
-                    payload,
+                RoundPlan::Advance {
                     predecessors,
-                    producer_wall,
-                ),
+                    next_round,
+                } => {
+                    // ── THE ES ROUND-ADVANCE GATE — same gate as `produce_round_block`'s
+                    // Advance arm (one rule, both producers; a private-dependent turn must not
+                    // advance a round the public producer would hold).
+                    let completing_round = next_round.saturating_sub(1);
+                    if let Some(hold) = self
+                        .es_advance_hold(state, &candidate, completing_round)
+                        .await
+                    {
+                        debug!(
+                            completing_round,
+                            %hold,
+                            "private-dependent round production HOLDING: cordial, but the ES \
+                             advance gate refused"
+                        );
+                        return Ok(None);
+                    }
+                    produce_payload_with_consensus_time_v1(
+                        &mut candidate,
+                        payload,
+                        predecessors,
+                        producer_wall,
+                    )
+                }
             }
             .map_err(|error| format!("private dependent round block production failed: {error}"))?;
             store
@@ -1457,7 +1608,7 @@ impl BlocklaceHandle {
         // not ordered/final) rather than serving an un-persisted authored turn.
         let store = { state.read().await.store.clone() };
         let mut lace = self.lace.write().await;
-        let predecessors: Vec<BlockId> = lace.tips().values().copied().collect();
+        let predecessors: Vec<BlockId> = lace.tip_ids();
         let producer_wall = match producer_wall_unix_seconds() {
             Ok(seconds) => seconds,
             Err(error) => {
@@ -1581,8 +1732,8 @@ impl BlocklaceHandle {
 
         // Get our latest block (just the one we created). Keyed by our HYBRID
         // creator id, the value `Block::new` actually stamps.
-        let our_tip = match lace.tips().get(&lace.self_creator()) {
-            Some(tip) => *tip,
+        let our_tip = match lace.creator_tip(&lace.self_creator()) {
+            Some(tip) => tip,
             None => {
                 debug!(
                     self_creator = %dregg_types::hex_encode(&lace.self_creator()[..4]),
@@ -1616,25 +1767,28 @@ impl BlocklaceHandle {
     /// blocks we lack. Cheap (one map of tip ids) and quiescent-friendly (only sent
     /// on join, on a slow timer, or when a gap is detected).
     pub async fn send_frontier(&self) {
-        let frontier_tips: HashMap<[u8; 32], BlockId> = {
+        let frontier_tips: HashMap<[u8; 32], CreatorTips> = {
             let lace = self.lace.read().await;
             let tips = lace.tips();
             // DAG structure gauges (emitted under the lace lock, so they reflect a
             // single consistent view): frontier width = number of per-creator tips;
-            // depth = the maximum round across those tips.
+            // depth = the maximum round across those tips (both halves of a
+            // pinned equivocation pair count — they are announced tips too).
             crate::metrics::set_blocklace_frontier(tips.len() as f64);
             let depth = tips
                 .values()
-                .filter_map(|t| lace.round_of(t))
+                .flat_map(CreatorTips::iter)
+                .filter_map(|t| lace.round_of(&t))
                 .max()
                 .unwrap_or(0);
             crate::metrics::set_blocklace_depth(depth as f64);
             let mut announced: Vec<(u64, u64)> = tips
                 .values()
+                .flat_map(CreatorTips::iter)
                 .map(|t| {
                     (
-                        lace.get(t).map(|b| b.seq).unwrap_or(0),
-                        lace.round_of(t).unwrap_or(0),
+                        lace.get(&t).map(|b| b.seq).unwrap_or(0),
+                        lace.round_of(&t).unwrap_or(0),
                     )
                 })
                 .collect();
@@ -2691,7 +2845,7 @@ impl BlocklaceHandle {
 
         // ── TAU-PREFIX-MONOTONE CLOSURE (identity cursor, not an index) ─────────────────────────
         // `TauPrefixMonotone.lean` proves tau's finalized prefix is stable only CONDITIONALLY
-        // (`FinalizedRegionStable`) and refutes the unconditional claim with an honest catch-up
+        // (`ClosedExtension` + `ChainExtends`, CM Def. 19 + Prop. 3) after the tau re-authoring;
         // trace (`lagBase → lagGrown`): a lagging validator's late wave-end block ratifies an
         // already-final leader, grows the wave's coverage, and sorts MID-PREFIX — so a bare index
         // cursor both RE-EXECUTES a block past the cursor and PERMANENTLY SKIPS the honest
@@ -4652,6 +4806,9 @@ pub(crate) async fn run_blocklace_sync_with_membership_policy(
             Duration::from_millis(1500),
         ))),
         last_produced: Arc::new(RwLock::new(std::time::Instant::now())),
+        round_advance_timer: Arc::new(std::sync::Mutex::new(
+            crate::round_advance_gate::RoundAdvanceTimer::default(),
+        )),
         ack_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         pending_payloads: Arc::new(RwLock::new(std::collections::VecDeque::new())),
         last_order_fingerprint: Arc::new(RwLock::new(None)),
@@ -5563,10 +5720,24 @@ async fn handle_push(
         crate::catchup::apply_with_buffering(&mut lace, &mut buffer, blocks)
     };
 
-    // Auto-evict any equivocators surfaced during application (keeps the block as
-    // evidence, mirrors the previous behaviour).
+    // EXCLUSION IS A PREDICATE OVER COMMITTED STRUCTURE, NEVER A LIVE MUTATION
+    // (flag day 2026-08-08, exclusion-by-past). This path used to call
+    // `constitution.auto_evict(proof)` here — retaining a participant out of the
+    // τ set and recomputing the threshold ON GOSSIP ARRIVAL. That made the
+    // participant set a function of local arrival order (the exact F-CO-1 fork
+    // the projection docblock forbids: a node holding both fork halves ran at
+    // n−1 while a peer holding one ran at n ⇒ different `wave_leader` for the
+    // same wave, silently), and it reverted on restart (never a block, absent
+    // from `committee_replay`'s fold). Both source papers keep Π fixed:
+    // exclusion is `node(b) ∉ byz(⌊b⌋)` — evaluated per anchor closure inside τ
+    // (`ordering.rs::approves` / Lean `hasEquivInPast`; spec + poles:
+    // `Dregg2.Distributed.ExclusionByPast`). What makes that predicate REACHABLE
+    // is the ingest itself: `insert_checked` pins the detected incomparable pair
+    // as the creator's `CreatorTips::Pair`, and the next block we author points
+    // at both halves (the CM Alg. 1:5 two-tips evidence floor), so the fork
+    // enters every later closure. Detection here therefore DECIDES WHETHER we
+    // log/slash — never WHAT any consensus verdict is.
     if !outcome.equivocations.is_empty() {
-        let mut constitution = handle.constitution.write().await;
         for proof in &outcome.equivocations {
             let creator_hex: String = proof.creator[..4]
                 .iter()
@@ -5575,30 +5746,28 @@ async fn handle_push(
             warn!(
                 from = %from,
                 creator = %creator_hex,
-                "equivocation detected from peer"
+                "equivocation detected from peer — evidence pair pinned into tips; \
+                 membership and threshold UNCHANGED (exclusion is per-closure in tau)"
             );
-            constitution.auto_evict(proof);
         }
-        drop(constitution);
 
-        // GOSSIP-LAYER PENALTY: the transport peer that relayed the equivocation
-        // is graylisted in the gossip reputation scoreboard — it is evicted from
-        // every topic's eclipse-resistant eager set so a Byzantine relay stops
-        // carrying full messages. This is distinct from the CONSENSUS-layer
-        // auto-evict above (which removes the *equivocating creator* from
-        // membership): here we penalize the *relay* at the network layer.
-        // (The block itself is still retained as slashable evidence and continues
-        // to propagate — only this peer's relay privilege is demoted.)
-        handle.gossip.penalize_equivocation_relay(from).await;
+        // NO RELAY PENALTY. The old `penalize_equivocation_relay(from)` graylisted
+        // the relaying peer out of EVERY topic's eager set — on the one message
+        // class the harm bound runs on. Under the blocklace paper (Prop. 5.5 /
+        // Lemma A.1) forwarding fork evidence is CORRECT behaviour by a correct
+        // node, and the connected-correct-graph hypothesis both propositions
+        // stand on is exactly what the penalty eroded: one fork block, broadcast
+        // once, demoted the mesh position of every honest node that forwarded it
+        // — a cheap, one-sided DoS amplifier against our own dissemination.
 
         // ADJUDICATION WELD (ORGANS §5 / CONSENSUS-FLEX §7): propagated fork
-        // evidence reaches the SLASH path, not just membership auto-evict.
-        // Each retained proof is reduced to the self-contained wire value
-        // (`EvidenceOfEquivocation`); if the equivocator posted a bond on
-        // this node, the exhibit slashes it as one conserved executor move
-        // from the bonded cell — no operator in the loop, no-double-resolve
-        // via the burned evidence digest. Unbonded / already-resolved /
-        // different-seq proofs are logged no-ops.
+        // evidence reaches the SLASH path (the one mechanism here that is
+        // legitimately beyond the papers). Each retained proof is reduced to the
+        // self-contained wire value (`EvidenceOfEquivocation`); if the
+        // equivocator posted a bond on this node, the exhibit slashes it as one
+        // conserved executor move from the bonded cell — no operator in the
+        // loop, no-double-resolve via the burned evidence digest. Unbonded /
+        // already-resolved / different-seq proofs are logged no-ops.
         for proof in &outcome.equivocations {
             crate::equivocation_court_service::slash_from_proof(state, proof).await;
         }
@@ -5816,8 +5985,13 @@ where
 async fn handle_frontier(
     handle: &BlocklaceHandle,
     from: SocketAddr,
-    their_tips: HashMap<[u8; 32], BlockId>,
+    their_tips: HashMap<[u8; 32], CreatorTips>,
 ) {
+    // Flatten to the announced tip-id set (≤ 2 per creator by type): every use
+    // below treats the frontier as "which blocks does the peer hold as maximal",
+    // and a pinned equivocation pair announces both halves — so fork evidence
+    // rides the SAME anti-entropy path as any other block.
+    let their_tips: Vec<BlockId> = their_tips.values().flat_map(CreatorTips::iter).collect();
     // SELF-HEALING PULL (the other half of reconciliation): a Frontier is push-only
     // on its own — the receiver computes what the SENDER lacks and pushes it. That
     // converges a peer that is strictly BEHIND, but NOT the concurrent case where
@@ -5837,12 +6011,12 @@ async fn handle_frontier(
     let (tips_to_pull, held): (Vec<BlockId>, Vec<(u64, u64)>) = {
         let lace = handle.lace.read().await;
         let to_pull = their_tips
-            .values()
+            .iter()
             .filter(|tip_id| !lace.contains(tip_id))
             .copied()
             .collect();
         let mut held: Vec<(u64, u64)> = their_tips
-            .values()
+            .iter()
             .filter_map(|t| lace.get(t).map(|b| (b.seq, lace.round_of(t).unwrap_or(0))))
             .collect();
         held.sort_unstable();
@@ -5893,7 +6067,7 @@ async fn handle_frontier(
         // matching the prior `if lace.contains(tip_id)` guard; the union is
         // inclusive of each seed, so the tips themselves are covered.
         let known_tips: Vec<&BlockId> = their_tips
-            .values()
+            .iter()
             .filter(|tip_id| lace.contains(tip_id))
             .collect();
         let their_known: std::collections::HashSet<BlockId> = lace.causal_past_union(known_tips);
@@ -6087,6 +6261,27 @@ pub(crate) fn plan_round_block(
     }
 
     if cohort_creators.len() >= supermajority {
+        // EVIDENCE FLOOR (CM Alg. 1:5, the two-tips rule in the direction that
+        // matters): also link BOTH halves of every pinned equivocating pair, so
+        // the fork enters this block's causal closure and the anchor-relative
+        // exclusion predicate (`approves` / Lean `hasEquivInPast`,
+        // `Dregg2.Distributed.ExclusionByPast`) can actually see it on the
+        // round-driven path — the dominant producer at n>1, which links round
+        // cohorts, not tips, and would otherwise never carry the pair. Only
+        // halves at rounds ≤ our cohort round are linked (a deeper half would
+        // inflate our next round; it is linked once our round catches up —
+        // until then the pin persists, bounded at 2 pointers per flagged
+        // creator). Authoring with both halves as predecessors clears the pin
+        // (`try_add_block_with_predecessors`' evidence weld), so the pair is
+        // carried once and then rides our own chain transitively.
+        for (_creator, a, b) in lace.pinned_evidence_pairs() {
+            for half in [a, b] {
+                let hr = round_of.get(&half).copied().unwrap_or(0);
+                if hr <= my_max_round && !cohort_blocks.contains(&half) {
+                    cohort_blocks.push(half);
+                }
+            }
+        }
         // Deterministic predecessor order (independent of HashMap iteration).
         cohort_blocks.sort_unstable_by_key(|a| a.0);
         RoundPlan::Advance {
@@ -6276,7 +6471,7 @@ async fn wave_open(handle: &BlocklaceHandle) -> bool {
     // well past is finalized-pending-execution (NOT a reason to mint more rounds), so
     // production goes quiescent and lets the executor catch up — no runaway, and the
     // turn still commits the moment its poll lands.
-    let tip_round = lace.tips().values().filter_map(|t| lace.round_of(t)).max();
+    let tip_round = lace.tip_ids().iter().filter_map(|t| lace.round_of(t)).max();
     const FINALITY_DEPTH_ROUNDS: u64 = 2 * 3; // 2 × wavelength (ordering default = 3)
 
     lace.iter().any(|(id, block)| {
@@ -15496,7 +15691,7 @@ mod tests {
         ) -> (u64, Option<BlockId>, Option<u64>) {
             let count = store.blocklace_block_count().expect("durable block count");
             let lace = handle.lace.read().await;
-            let tip = lace.tips().get(self_creator).copied();
+            let tip = lace.creator_tip(self_creator);
             let seq = tip.and_then(|id| lace.get(&id).map(|b| b.seq));
             (count, tip, seq)
         }
@@ -16419,6 +16614,9 @@ mod tests {
                 Duration::from_millis(1500),
             ))),
             last_produced: Arc::new(RwLock::new(std::time::Instant::now())),
+            round_advance_timer: Arc::new(std::sync::Mutex::new(
+                crate::round_advance_gate::RoundAdvanceTimer::default(),
+            )),
             ack_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pending_payloads: Arc::new(RwLock::new(std::collections::VecDeque::new())),
             last_order_fingerprint: Arc::new(RwLock::new(None)),

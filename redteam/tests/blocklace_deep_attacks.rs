@@ -210,10 +210,13 @@ fn deep_fork_within_single_merge_delta_is_flagged() {
         "FINDING: in-delta fork did not flag the creator (merge != receive_block)"
     );
     assert!(
-        !lace.tips().contains_key(&Block::hybrid_id(&me)),
-        "FINDING: equivocator left as a live tip after in-delta fork"
+        matches!(
+            lace.tips().get(&Block::hybrid_id(&me)),
+            Some(dregg_blocklace::finality::CreatorTips::Pair(_, _))
+        ),
+        "FINDING: in-delta fork must pin the evidence pair (never a live One-tip)"
     );
-    eprintln!("[BL DEEP 4] in-delta fork: DEFENDED (flagged + tip removed)");
+    eprintln!("[BL DEEP 4] in-delta fork: DEFENDED (flagged + pair pinned)");
 }
 
 // ===========================================================================
@@ -392,7 +395,7 @@ fn honest_checkpoint_still_restores_after_auth_hardening() {
     assert!(!restored.is_equivocator(&Block::hybrid_id(&me)));
     assert_eq!(
         restored.tips().get(&Block::hybrid_id(&me)),
-        Some(&b2.id()),
+        Some(&dregg_blocklace::finality::CreatorTips::One(b2.id())),
         "restored tip must be the authenticated seq-2 head"
     );
     eprintln!("[BL DEEP 5c / CHECKPOINT-AUTH] honest checkpoint restores cleanly: LIVE");

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
 
-use dregg_blocklace::finality::{Block, BlockId, Blocklace, CheckpointData};
+use dregg_blocklace::finality::{Block, BlockId, Blocklace, CheckpointData, CreatorTips};
 
 use crate::tables;
 use crate::{PersistentStore, Result, StoreError};
@@ -26,8 +26,12 @@ use crate::{PersistentStore, Result, StoreError};
 /// postcard-serialized blob under `BLOCKLACE_META_KEY`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlocklaceMeta {
-    /// Creator -> tip block ID (latest known block per participant).
-    pub tips: HashMap<[u8; 32], BlockId>,
+    /// Creator -> tips: the chain head, or — for a detected equivocator — the
+    /// pinned incomparable evidence PAIR (`CreatorTips::Pair`, the CM Alg. 1:5
+    /// two-tips floor). ⚑ schema flag day 2026-08-08 (exclusion-by-past): the
+    /// value type changed from a bare `BlockId`; an old blob refuses to decode
+    /// and the `CANONICAL_STATE_SCHEMA_EPOCH` bump re-genesises the store.
+    pub tips: HashMap<[u8; 32], CreatorTips>,
     /// Known equivocator public keys.
     pub equivocators: Vec<[u8; 32]>,
     /// Block IDs in their total order (tau output).

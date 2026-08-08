@@ -111,10 +111,10 @@ impl Node {
         self.lace.iter().map(|(id, _)| *id).collect()
     }
 
-    /// The honest per-creator tip map (the SSB feed heads), keyed by the HYBRID
-    /// creator id. Equivocators have NO tip (withdrawn on detection), so this is
-    /// the honest finalized frontier.
-    fn tips(&self) -> std::collections::HashMap<[u8; 32], BlockId> {
+    /// The per-creator tips (the SSB feed heads), keyed by the HYBRID creator
+    /// id. An equivocator's entry is its pinned evidence PAIR, never a live
+    /// chain head (the CM Alg. 1:5 two-tips floor, exclusion-by-past).
+    fn tips(&self) -> std::collections::HashMap<[u8; 32], dregg_blocklace::finality::CreatorTips> {
         self.lace.tips().clone()
     }
 
@@ -325,25 +325,31 @@ fn attack_byzantine_equivocation_detected_and_excluded() {
         "FINDING(StrandIntegrity BROKEN): node Q did NOT detect the equivocation"
     );
 
-    // (2) TIP WITHDRAWAL — the equivocator has NO honest feed head. The OLD
-    // overwriting `insert` would leave exactly one fork as the live tip.
-    // NON-VACUITY: the honest base creator DOES still hold a tip, so "no tip for
-    // `byz_id`" is a withdrawal we observed, not a map we are simply missing
-    // from (the shape a stale ed25519 key produced).
+    // (2) NO LIVE FEED HEAD — the equivocator's tips entry is the pinned
+    // evidence PAIR, never a `One` chain head. The OLD overwriting `insert`
+    // would leave exactly one fork as the live tip; the old post-audit shape
+    // deleted the entry and left the second fork unreachable by every closure.
+    // NON-VACUITY: the honest base creator DOES still hold a `One` tip, so the
+    // pair-shape assertions observe a transition, not a map we are simply
+    // missing from (the shape a stale ed25519 key produced).
     assert!(
-        p.tips().contains_key(&Block::hybrid_id(&honest_a)),
-        "the honest creator must still hold a live tip — otherwise the tip-absence \
+        matches!(
+            p.tips().get(&Block::hybrid_id(&honest_a)),
+            Some(dregg_blocklace::finality::CreatorTips::One(_))
+        ),
+        "the honest creator must still hold a live One-tip — otherwise the pair \
          assertions below are vacuous"
     );
-    assert!(
-        !p.tips().contains_key(&byz_id),
-        "FINDING(StrandIntegrity audit-A1 REGRESSED): equivocator still has a live tip on node P \
-         — a fork was silently retained as the feed head instead of being withdrawn"
-    );
-    assert!(
-        !q.tips().contains_key(&byz_id),
-        "FINDING(StrandIntegrity audit-A1 REGRESSED): equivocator still has a live tip on node Q"
-    );
+    for (name, node) in [("P", &p), ("Q", &q)] {
+        assert!(
+            matches!(
+                node.tips().get(&byz_id),
+                Some(dregg_blocklace::finality::CreatorTips::Pair(_, _))
+            ),
+            "FINDING(StrandIntegrity audit-A1 REGRESSED): node {name} must pin the \
+             equivocator's incomparable pair (never a live chain head, never absence)"
+        );
+    }
 
     // (3) CONVERGENCE despite the fork: both retain BOTH fork blocks as evidence,
     // so the content-addressed keysets match (the honest base + both forks).

@@ -103,12 +103,17 @@ fn attack_byzantine_self_fork_is_detected_and_evicted() {
         other => panic!("expected Equivocation, got {other:?}"),
     }
     assert!(lace.is_equivocator(&me_id));
-    // The tip is EVICTED — the equivocator no longer has a live strand head.
+    // The strand head is REPLACED by the pinned evidence pair (the CM Alg. 1:5
+    // two-tips floor, exclusion-by-past flag day 2026-08-08): the equivocator
+    // has no live chain head, and the fork is carried into later closures.
     assert!(
-        !lace.tips().contains_key(&me_id),
-        "equivocator's tip must be evicted"
+        matches!(
+            lace.tips().get(&me_id),
+            Some(dregg_blocklace::finality::CreatorTips::Pair(_, _))
+        ),
+        "equivocator's tips entry must be the pinned evidence pair"
     );
-    eprintln!("[BL ATTACK 1] self-fork: DEFENDED (detected + flagged)");
+    eprintln!("[BL ATTACK 1] self-fork: DEFENDED (detected + flagged + pair pinned)");
 }
 
 // ===========================================================================
@@ -288,7 +293,10 @@ fn probe_signature_malleability_framing() {
     // framing attempt, so a later `!framed_out` means the attack was REFUSED —
     // not that the creator was never tracked in the first place.
     assert!(!lace.is_equivocator(&honest_id));
-    assert_eq!(lace.tips().get(&honest_id), Some(&b1.id()));
+    assert_eq!(
+        lace.tips().get(&honest_id),
+        Some(&dregg_blocklace::finality::CreatorTips::One(b1.id()))
+    );
 
     let mut mal = b1.signature;
     // s' = s + L  (mod 2^256, little-endian add with carry).
@@ -329,10 +337,10 @@ fn probe_signature_malleability_framing() {
         !framed_out,
         "FINDING: honest creator framed as equivocator via signature malleability"
     );
-    // And the honest strand head is UNDISTURBED — no tip eviction.
+    // And the honest strand head is UNDISTURBED — no tip eviction, no pair.
     assert_eq!(
         lace.tips().get(&honest_id),
-        Some(&b1.id()),
+        Some(&dregg_blocklace::finality::CreatorTips::One(b1.id())),
         "honest creator's tip must survive the framing attempt"
     );
 }

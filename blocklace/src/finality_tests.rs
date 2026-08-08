@@ -9,7 +9,8 @@ use crate::dregg_bridge::{CodManager, DreggBlocklaceBridge, ExecutionTier, class
 use crate::finality::{
     Block, BlockError, Blocklace, CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS,
     CONSENSUS_TIME_V1_WIRE_LEN, ConsensusTimePolicyV1, ConsensusTimeV1, ConsensusTimeWireError,
-    ConsensusTimedTurnPayloadV1, FinalityLevel, FinalityTracker, Payload, TurnArtifactBundle,
+    ConsensusTimedTurnPayloadV1, CreatorTips, FinalityLevel, FinalityTracker, Payload,
+    TurnArtifactBundle,
 };
 
 fn random_key() -> SigningKey {
@@ -952,17 +953,27 @@ fn equivocator_blocks_dont_update_tips() {
 
     // B equivocates: two blocks at seq 1.
     let b1 = Block::new(&key_b, 1, Payload::Data(b"first".to_vec()), vec![]);
+    let b1_id = b1.id();
     let b2 = Block::new(&key_b, 1, Payload::Data(b"second".to_vec()), vec![]);
+    let b2_id = b2.id();
 
     lace.receive_block(b1).unwrap();
     let err = lace.receive_block(b2);
     assert!(err.is_err()); // equivocation detected
 
-    // B should be marked as equivocator and NOT in tips.
+    // B is marked as equivocator and its tips entry is the PINNED evidence
+    // pair (CM Alg. 1:5 two-tips floor) — both halves, so the next authored
+    // block carries the fork into its closure. The old shape (entry deleted)
+    // left the second half unreferenced forever.
     assert!(lace.is_equivocator(&creator_b));
-    assert!(!lace.tips().contains_key(&creator_b));
+    assert_eq!(
+        lace.tips().get(&creator_b),
+        Some(&CreatorTips::pair(b1_id, b2_id)),
+        "detection must pin the incomparable pair as B's tips"
+    );
 
-    // Further blocks from B should not update tips.
+    // Further blocks from B must NOT update the pinned entry (frozen; the
+    // flood bound stays ≤ 2 pointers for B no matter how much it forks).
     let b3 = Block::new(
         &key_b,
         2,
@@ -971,7 +982,11 @@ fn equivocator_blocks_dont_update_tips() {
     );
     // This will succeed since there's no matching seq=2 yet and it has no predecessors.
     let _ = lace.receive_block(b3);
-    assert!(!lace.tips().contains_key(&creator_b));
+    assert_eq!(
+        lace.tips().get(&creator_b),
+        Some(&CreatorTips::pair(b1_id, b2_id)),
+        "the pinned pair is frozen against later blocks from the equivocator"
+    );
 }
 
 // ─── Serialization Roundtrip ────────────────────────────────────────────────
@@ -1120,8 +1135,10 @@ fn merge_equivocator_blocks_marks_equivocator() {
 }
 
 #[test]
-fn merge_removes_tip_on_equivocation_detection() {
-    // Closes audit gap C: merge() must mirror receive_block()'s tip removal.
+fn merge_pins_evidence_pair_on_equivocation_detection() {
+    // Audit gap C, under the two-tips floor: merge() must mirror
+    // receive_block() — flag the creator AND pin the detected pair as its
+    // frozen tips entry, which later same-delta blocks must not overwrite.
     let key_a = random_key();
     let key_b = random_key();
     let creator_b = Block::hybrid_id(&key_b);
@@ -1131,8 +1148,8 @@ fn merge_removes_tip_on_equivocation_detection() {
     // Build three blocks: a good seq-1, a CONFLICTING seq-1, and a seq-2.
     // If merge fails to consult `equivocators` when deciding tips, the
     // seq-2 block from B (which arrives after the equivocation was
-    // detected within this same merge) will set tips[B] = seq-2, leaving
-    // dissemination/frontier state inconsistent with B's eviction.
+    // detected within this same merge) would overwrite the pinned pair,
+    // leaving dissemination/frontier state inconsistent with B's exclusion.
     let b1_good = Block::new(&key_b, 1, Payload::Data(b"good".to_vec()), vec![]);
     let b1_bad = Block::new(&key_b, 1, Payload::Data(b"bad".to_vec()), vec![]);
     let b2 = Block::new(&key_b, 2, Payload::Data(b"after".to_vec()), vec![]);
@@ -1140,10 +1157,13 @@ fn merge_removes_tip_on_equivocation_detection() {
     let result = lace.merge(vec![b1_good, b1_bad, b2]);
     assert!(result.is_ok());
     assert!(lace.is_equivocator(&creator_b));
-    assert!(
-        !lace.tips().contains_key(&creator_b),
-        "tip for equivocator must be removed by merge (audit gap C)"
-    );
+    match lace.tips().get(&creator_b) {
+        Some(CreatorTips::Pair(_, _)) => {}
+        other => panic!(
+            "merge must pin B's detected incomparable pair as its tips entry \
+             (frozen against the same-delta seq-2 block); got {other:?}"
+        ),
+    }
 }
 
 #[test]
@@ -1263,4 +1283,259 @@ fn merge_join_order_independent_with_fork_differential() {
     assert!(r1.is_equivocator(&byz_creator));
     assert!(r2.is_equivocator(&byz_creator));
     assert!(r3.is_equivocator(&byz_creator));
+}
+
+// ─── Exclusion-by-past: the two-tips evidence floor and its poles ───────────
+//
+// Flag day 2026-08-08. Exclusion of an equivocator is a PREDICATE over each
+// block's own causal closure (`node(b) ∉ byz(⌊b⌋)`, blocklace paper §4.3 —
+// Lean spec + poles: `Dregg2.Distributed.ExclusionByPast`), never a mutation
+// of live membership. What makes the predicate REACHABLE is the CM Alg. 1:5
+// two-tips floor: detection pins the incomparable pair as the creator's
+// `CreatorTips::Pair`, the next authored block points at both halves, and the
+// fork enters every later closure. These tests drive the floor and the three
+// poles the Lean theorems name: cross-node agreement (`excluded_agrees_across_
+// nodes`), restart durability (`excluded_recomputed_after_restart`), and the
+// partial-view safety pole (`honest_not_excluded`).
+
+/// THE FLOOR: detection pins the pair; the next authored block carries BOTH
+/// halves into its closure (asserted PRESENT before any verdict is read —
+/// the falsifier discipline); the anchor-relative predicate then fires; and
+/// the pin is welded away so later blocks repel the equivocator entirely.
+#[test]
+fn two_tips_floor_carries_pair_and_welds() {
+    let key_a = random_key();
+    let key_b = random_key();
+    let creator_b = Block::hybrid_id(&key_b);
+
+    let mut lace = Blocklace::new_simple(key_a);
+
+    let b1 = Block::new(&key_b, 1, Payload::Data(b"fork L".to_vec()), vec![]);
+    let b1_id = b1.id();
+    let b2 = Block::new(&key_b, 1, Payload::Data(b"fork R".to_vec()), vec![]);
+    let b2_id = b2.id();
+
+    lace.receive_block(b1).unwrap();
+    assert!(lace.receive_block(b2).is_err(), "fork detected");
+    assert_eq!(
+        lace.tips().get(&creator_b),
+        Some(&CreatorTips::pair(b1_id, b2_id)),
+        "detection pins the pair"
+    );
+
+    // The next authored block links BOTH halves (the tips ARE its predecessors).
+    let w = lace.add_block(Payload::Ack);
+    assert!(
+        w.predecessors.contains(&b1_id) && w.predecessors.contains(&b2_id),
+        "the authored block must point at both fork halves (CM Alg. 1:5)"
+    );
+
+    // MUTATION ASSERTED PRESENT BEFORE THE VERDICT: the pair is in w's closure.
+    let past = lace.causal_past(&w.id());
+    assert!(
+        past.contains(&b1_id) && past.contains(&b2_id),
+        "the incomparable pair must be IN the carrier's causal past"
+    );
+    // Now the verdict: the anchor-relative exclusion predicate fires — w
+    // observes the fork, so it approves NEITHER half.
+    assert!(!lace.approved_by(&w.id(), &b1_id));
+    assert!(!lace.approved_by(&w.id(), &b2_id));
+
+    // THE WELD: carrying the pair once clears the pin; from here on we repel —
+    // no further direct acks of the equivocator, evidence rides our own chain.
+    assert!(
+        !lace.tips().contains_key(&creator_b),
+        "the pinned pair is cleared once a local block carries both halves"
+    );
+    let w2 = lace.add_block(Payload::Ack);
+    assert!(
+        !w2.predecessors.contains(&b1_id) && !w2.predecessors.contains(&b2_id),
+        "later blocks never directly ack the equivocator again (repelling)"
+    );
+    // ... but still observe the pair transitively through our own chain.
+    let past2 = lace.causal_past(&w2.id());
+    assert!(past2.contains(&b1_id) && past2.contains(&b2_id));
+    assert!(!lace.approved_by(&w2.id(), &b1_id));
+}
+
+/// CROSS-NODE POLE: two nodes receive the fork halves in OPPOSITE orders —
+/// the one thing that differs between honest nodes, and the input the deleted
+/// `auto_evict` keyed consensus state on. After exchanging deltas their
+/// verdicts are identical on every (anchor, target) pair.
+#[test]
+fn exclusion_verdict_identical_across_arrival_orders() {
+    let key_a = random_key();
+    let key_c = random_key();
+    let key_b = random_key();
+    let creator_b = Block::hybrid_id(&key_b);
+
+    let b1 = Block::new(&key_b, 1, Payload::Data(b"fork L".to_vec()), vec![]);
+    let b1_id = b1.id();
+    let b2 = Block::new(&key_b, 1, Payload::Data(b"fork R".to_vec()), vec![]);
+    let b2_id = b2.id();
+
+    // Node A sees L then R; node C sees R then L.
+    let mut lace_a = Blocklace::new_simple(key_a);
+    lace_a.receive_block(b1.clone()).unwrap();
+    let _ = lace_a.receive_block(b2.clone());
+    let mut lace_c = Blocklace::new_simple(key_c);
+    lace_c.receive_block(b2).unwrap();
+    let _ = lace_c.receive_block(b1);
+
+    // Both flag B (the global eqvc set is arrival-order independent) …
+    assert!(lace_a.is_equivocator(&creator_b));
+    assert!(lace_c.is_equivocator(&creator_b));
+    // … and both pin the SAME pair as a set (the halves swap roles only).
+    let pair_of = |l: &Blocklace| match l.tips().get(&creator_b) {
+        Some(CreatorTips::Pair(x, y)) => {
+            let mut v = [*x, *y];
+            v.sort();
+            v
+        }
+        other => panic!("expected a pinned pair, got {other:?}"),
+    };
+    assert_eq!(pair_of(&lace_a), pair_of(&lace_c));
+
+    // Each authors a carrier, then they exchange everything (CRDT merge).
+    let w_a = lace_a.add_block(Payload::Ack);
+    let w_c = lace_c.add_block(Payload::Ack);
+    lace_a.merge(lace_c.all_blocks()).unwrap();
+    lace_c.merge(lace_a.all_blocks()).unwrap();
+    assert_eq!(lace_a.len(), lace_c.len(), "converged block sets");
+
+    // MUTATION PRESENT BEFORE VERDICT, on both nodes.
+    for lace in [&lace_a, &lace_c] {
+        for w in [&w_a, &w_c] {
+            let past = lace.causal_past(&w.id());
+            assert!(past.contains(&b1_id) && past.contains(&b2_id));
+        }
+    }
+    // The verdict is a function of committed structure alone: IDENTICAL on
+    // both nodes, for every anchor and every target (Lean
+    // `excluded_agrees_across_nodes`).
+    for anchor in [w_a.id(), w_c.id()] {
+        for target in [b1_id, b2_id] {
+            assert_eq!(
+                lace_a.approved_by(&anchor, &target),
+                lace_c.approved_by(&anchor, &target),
+                "cross-node verdict divergence at anchor {anchor:?} target {target:?}"
+            );
+            assert!(!lace_a.approved_by(&anchor, &target));
+        }
+    }
+}
+
+/// RESTART POLE — the one the deleted mutation failed. The exclusion verdict
+/// is recomputed identically from the persisted blocks by BOTH restore paths
+/// (authenticated re-derivation and trusted verbatim), because it is a
+/// function of the blocks alone (Lean `excluded_recomputed_after_restart`).
+/// Before this flag day, the eviction lived in `constitution.participants`,
+/// was never a block, and a restart silently reinstated the equivocator.
+#[test]
+fn exclusion_survives_restart_on_both_restore_paths() {
+    let key_a = random_key();
+    let key_b = random_key();
+    let creator_b = Block::hybrid_id(&key_b);
+
+    let mut lace = Blocklace::new_simple(key_a.clone());
+    let b1 = Block::new(&key_b, 1, Payload::Data(b"fork L".to_vec()), vec![]);
+    let b1_id = b1.id();
+    let b2 = Block::new(&key_b, 1, Payload::Data(b"fork R".to_vec()), vec![]);
+    let b2_id = b2.id();
+    lace.receive_block(b1).unwrap();
+    let _ = lace.receive_block(b2);
+    let w = lace.add_block(Payload::Ack);
+    let w_id = w.id();
+
+    // Pre-restart verdict, with the pair asserted present first.
+    assert!(lace.causal_past(&w_id).contains(&b1_id));
+    assert!(lace.causal_past(&w_id).contains(&b2_id));
+    assert!(!lace.approved_by(&w_id, &b1_id));
+    assert!(lace.is_equivocator(&creator_b));
+
+    let checkpoint = lace.checkpoint();
+
+    // Authenticated re-derivation (`from_checkpoint`): everything re-verified,
+    // tips/equivocators re-DERIVED from the blocks.
+    let restored = Blocklace::from_checkpoint(&checkpoint, key_a.clone(), 1).unwrap();
+    assert!(
+        restored.is_equivocator(&creator_b),
+        "equivocator flag re-derived from the blocks"
+    );
+    assert!(restored.causal_past(&w_id).contains(&b1_id));
+    assert!(restored.causal_past(&w_id).contains(&b2_id));
+    assert!(!restored.approved_by(&w_id, &b1_id));
+    assert!(!restored.approved_by(&w_id, &b2_id));
+
+    // Trusted verbatim restore (`from_checkpoint_trusted`, the node's own-disk
+    // boot path): identical verdict.
+    let trusted = Blocklace::from_checkpoint_trusted(&checkpoint, key_a, 1).unwrap();
+    assert!(trusted.is_equivocator(&creator_b));
+    assert!(!trusted.approved_by(&w_id, &b1_id));
+    assert!(!trusted.approved_by(&w_id, &b2_id));
+}
+
+/// PARTIAL-VIEW POLE: a node holding only ONE fork half excludes nobody its
+/// peers keep — no pair, no verdict (Lean `honest_not_excluded` /
+/// `demo_half_view_keeps_f1`). Exclusion becomes expressible exactly when the
+/// pair arrives, never on rumor.
+#[test]
+fn partial_view_does_not_exclude() {
+    let key_d = random_key();
+    let key_b = random_key();
+    let creator_b = Block::hybrid_id(&key_b);
+
+    let mut lace = Blocklace::new_simple(key_d);
+    let b1 = Block::new(&key_b, 1, Payload::Data(b"only half".to_vec()), vec![]);
+    let b1_id = b1.id();
+    lace.receive_block(b1).unwrap();
+
+    assert!(!lace.is_equivocator(&creator_b), "no pair ⇒ no flag");
+    assert_eq!(
+        lace.tips().get(&creator_b),
+        Some(&CreatorTips::One(b1_id)),
+        "B looks honest on this view: a single chain-head tip"
+    );
+
+    // A block authored on this view APPROVES B's half — B is kept.
+    let w = lace.add_block(Payload::Ack);
+    assert!(
+        lace.approved_by(&w.id(), &b1_id),
+        "a partial view must keep the member its peers keep"
+    );
+}
+
+/// THE FLOOD BOUND: a k-way fork pins exactly the FIRST detected pair — the
+/// pointer contribution per equivocator is ≤ 2 no matter how many
+/// incomparable blocks it mints (the cap half of CM Alg. 1:5, structural).
+#[test]
+fn pinned_pair_bounds_flood_at_two() {
+    let key_a = random_key();
+    let key_b = random_key();
+    let creator_b = Block::hybrid_id(&key_b);
+
+    let mut lace = Blocklace::new_simple(key_a);
+    let forks: Vec<Block> = (0..4u8)
+        .map(|i| Block::new(&key_b, 1, Payload::Data(vec![i]), vec![]))
+        .collect();
+    lace.receive_block(forks[0].clone()).unwrap();
+    for f in &forks[1..] {
+        let _ = lace.receive_block(f.clone());
+    }
+
+    match lace.tips().get(&creator_b) {
+        Some(CreatorTips::Pair(_, _)) => {}
+        other => panic!("expected the first pinned pair, got {other:?}"),
+    }
+    let b_tips: Vec<_> = lace
+        .tip_ids()
+        .into_iter()
+        .filter(|id| lace.get(id).map(|b| b.creator) == Some(creator_b))
+        .collect();
+    assert_eq!(
+        b_tips.len(),
+        2,
+        "≤ 2 pointers per creator, k-way fork or not"
+    );
+    assert_eq!(lace.len(), 5, "all fork blocks retained as evidence");
 }

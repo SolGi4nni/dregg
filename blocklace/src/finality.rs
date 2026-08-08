@@ -373,41 +373,22 @@ pub enum FinalityLevel {
 }
 
 /// Proof that a creator equivocated (produced conflicting blocks).
+///
+/// The pair of exhibits is the whole proof: two same-creator blocks,
+/// incomparable under `≺`. Detection PINS this pair as the creator's
+/// [`CreatorTips::Pair`] so it is carried into later blocks' closures, where
+/// the per-closure exclusion predicate reads it ([`Blocklace::approved_by`],
+/// Lean `Dregg2.Distributed.ExclusionByPast`). It never touches membership:
+/// the former `equivocator_ed25519` accessor existed solely for the deleted
+/// `auto_evict` membership mutation and is gone with it (exclusion-by-past
+/// flag day 2026-08-08).
 #[derive(Clone, Debug)]
 pub struct EquivocationProof {
     /// The equivocator's HYBRID consensus id (`Block::creator`) — the label the
-    /// lace's `equivocators` set, `tips` map and PQ roster are keyed by. It is
-    /// NOT a constitution participant key; see [`Self::equivocator_ed25519`].
+    /// lace's `equivocators` set, `tips` map and PQ roster are keyed by.
     pub creator: [u8; 32],
     pub block_a: Block,
     pub block_b: Block,
-}
-
-impl EquivocationProof {
-    /// The equivocator's **ed25519 strand key** — the identity space
-    /// `constitution::Constitution::participants` is keyed by, and therefore the
-    /// only one `auto_evict_equivocator` can match a member against.
-    ///
-    /// [`Self::creator`] is the hybrid id `H(ed25519 ‖ ml_dsa)`, a BLAKE3
-    /// commitment that is never equal to any ed25519 member key. Matching a
-    /// constitution member against it made auto-eviction unconditionally
-    /// fail-closed-dead: a proven equivocator was never removed from the
-    /// committee on the live path (`blocklace_sync::handle_push`).
-    ///
-    /// FAIL-CLOSED on disagreement. Both exhibits are same-`creator` by
-    /// construction (`detect_equivocation` groups on it), and under
-    /// [`Block::verify_hybrid`] an equal `creator` forces an equal `ed25519`
-    /// (the id commits to both halves). So a disagreement here means at least
-    /// one exhibit was never authenticated — the `from_checkpoint_trusted`
-    /// restore path re-inserts blocks with no signature check — and no strand
-    /// can be soundly named. `None` evicts nobody rather than guessing.
-    pub fn equivocator_ed25519(&self) -> Option<[u8; 32]> {
-        if self.block_a.ed25519 == self.block_b.ed25519 {
-            Some(self.block_a.ed25519)
-        } else {
-            None
-        }
-    }
 }
 
 /// Metrics snapshot for observability.
@@ -947,6 +928,81 @@ impl FinalityTracker {
 
 // ─── Blocklace Container ─────────────────────────────────────────────────────
 
+/// The tips a single creator contributes to the frontier — at most TWO, by type
+/// (Cordial Miners Alg. 1:5, "at most two tips per miner").
+///
+/// `One` is the honest steady state: a correct creator's blocks form a single
+/// virtual chain, so it has exactly one maximal block. `Pair` is pinned the
+/// moment an equivocation is DETECTED: the two halves of the detected
+/// incomparable pair. Keeping BOTH halves as tips is the CM two-tips rule read
+/// in the direction that matters — it is a *floor on the evidence*, not just a
+/// cap on the flood. The next block we author points at both halves, carrying
+/// the equivocating pair into that block's causal closure, where every
+/// anchor-relative exclusion predicate (`approved_by`, `ordering.rs::approves`,
+/// Lean `Dregg2.Distributed.ExclusionByPast` / `hasEquivInPast`) can actually
+/// see it. The previous shape — one tip per creator, dropped to zero on
+/// detection — retained the second fork block as an *unreferenced* block,
+/// outside every causal past, so `node(b) ∉ byz(⌊b⌋)` (blocklace paper
+/// arXiv:2402.08068 §4.3) had nothing to evaluate and exclusion had to become a
+/// node-local membership mutation instead (the F-CO-1 fork reopened).
+///
+/// The flood bound lives in the same place: an equivocator producing `k`
+/// mutually-incomparable blocks pins exactly the FIRST detected pair (the entry
+/// is frozen once the creator is flagged — see `insert_checked`), so our
+/// pointer contribution per creator is ≤ 2 regardless of `k`. CM's bound,
+/// enforced structurally by this type rather than by a runtime check.
+///
+/// WHICH pair gets pinned depends on local detection order and may differ
+/// between honest nodes — that is fine: the exclusion predicate is existential
+/// (`∃` an incomparable pair in the anchor's closure), so ANY carried pair
+/// yields the same per-anchor verdict, and the verdict is a function of the
+/// anchor's closure, never of which pair a particular node happened to carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CreatorTips {
+    /// The creator's single maximal block (honest virtual chain).
+    One(BlockId),
+    /// A detected equivocating pair, pinned as evidence to be carried into the
+    /// closure of the next locally-authored block. Frozen while the creator is
+    /// flagged; cleared once a locally-authored block points at both halves
+    /// (the evidence path is then welded through our own chain).
+    Pair(BlockId, BlockId),
+}
+
+impl CreatorTips {
+    /// Construct a pinned pair in CANONICAL (sorted-by-id) order, so the tips
+    /// entry — and everything derived from it (frontier announcements, the
+    /// authored predecessor list) — is byte-identical across nodes regardless
+    /// of which fork half arrived first. Which PAIR gets pinned may still
+    /// differ (see the type docs); its internal order never does.
+    pub fn pair(a: BlockId, b: BlockId) -> Self {
+        if a.0 <= b.0 {
+            CreatorTips::Pair(a, b)
+        } else {
+            CreatorTips::Pair(b, a)
+        }
+    }
+
+    /// Iterate the (one or two) tip ids.
+    pub fn iter(&self) -> impl Iterator<Item = BlockId> + '_ {
+        match *self {
+            CreatorTips::One(a) => [Some(a), None],
+            CreatorTips::Pair(a, b) => [Some(a), Some(b)],
+        }
+        .into_iter()
+        .flatten()
+    }
+
+    /// The primary tip: the creator's chain head for `One`; for a pinned
+    /// `Pair` there is no meaningful "latest" (the halves are incomparable),
+    /// so the first half is returned. Callers that need "the honest chain
+    /// head" should treat a `Pair` creator as an equivocator instead.
+    pub fn primary(&self) -> BlockId {
+        match *self {
+            CreatorTips::One(a) | CreatorTips::Pair(a, _) => a,
+        }
+    }
+}
+
 /// The blocklace: a local view of the global DAG.
 ///
 /// Each node maintains its own Blocklace instance. The blocklace grows monotonically
@@ -961,8 +1017,9 @@ impl FinalityTracker {
 pub struct Blocklace {
     /// All known blocks.
     pub(crate) blocks: HashMap<BlockId, Block>,
-    /// Per-creator tip tracking (latest block per creator).
-    tips: HashMap<[u8; 32], BlockId>,
+    /// Per-creator tip tracking: the creator's maximal block, or — for a
+    /// detected equivocator — the pinned evidence pair (see [`CreatorTips`]).
+    tips: HashMap<[u8; 32], CreatorTips>,
     /// Detected equivocators.
     equivocators: HashSet<[u8; 32]>,
     /// Our own HYBRID signing identity: the ed25519 key AND the ML-DSA-65 key its
@@ -1194,9 +1251,35 @@ impl Blocklace {
         }
     }
 
-    /// Get current tips (latest known block per creator).
-    pub fn tips(&self) -> &HashMap<[u8; 32], BlockId> {
+    /// Get current tips: per creator, the maximal block — or, for a detected
+    /// equivocator, the pinned evidence pair (see [`CreatorTips`]).
+    pub fn tips(&self) -> &HashMap<[u8; 32], CreatorTips> {
         &self.tips
+    }
+
+    /// All tip block ids, flattened across creators (≤ 2 per creator by type).
+    /// This is the pointer set a locally-authored block links: the honest
+    /// frontier PLUS both halves of every pinned equivocating pair — the CM
+    /// Alg. 1:5 evidence floor.
+    pub fn tip_ids(&self) -> Vec<BlockId> {
+        self.tips.values().flat_map(CreatorTips::iter).collect()
+    }
+
+    /// The primary tip for one creator (its chain head; for a flagged
+    /// equivocator, the first pinned half — see [`CreatorTips::primary`]).
+    pub fn creator_tip(&self, creator: &[u8; 32]) -> Option<BlockId> {
+        self.tips.get(creator).map(CreatorTips::primary)
+    }
+
+    /// The pinned evidence pairs: every creator whose tips entry currently
+    /// carries a detected incomparable pair not yet welded into a
+    /// locally-authored block's closure. The round-driven producer links these
+    /// so the pair reaches every later block's causal past.
+    pub fn pinned_evidence_pairs(&self) -> impl Iterator<Item = ([u8; 32], BlockId, BlockId)> + '_ {
+        self.tips.iter().filter_map(|(c, t)| match t {
+            CreatorTips::Pair(a, b) => Some((*c, *a, *b)),
+            CreatorTips::One(_) => None,
+        })
     }
 
     /// Get a reference to the signing key.
@@ -1217,7 +1300,7 @@ impl Blocklace {
     ///
     /// Failure is atomic: sequence, tips, frontier index, and block map remain unchanged.
     pub fn try_add_block(&mut self, payload: Payload) -> Result<Block, BlockError> {
-        let predecessors: Vec<BlockId> = self.tips.values().copied().collect();
+        let predecessors: Vec<BlockId> = self.tip_ids();
         self.try_add_block_with_predecessors(payload, predecessors)
     }
 
@@ -1245,7 +1328,20 @@ impl Blocklace {
         if let Some(frontier) = frontier {
             self.consensus_time_frontier_v1.insert(id, frontier);
         }
-        self.tips.insert(self.self_creator(), id);
+        self.tips.insert(self.self_creator(), CreatorTips::One(id));
+        // EVIDENCE WELD: any pinned equivocating pair whose BOTH halves this
+        // block just pointed at is now in our own tip's causal closure — every
+        // future block we author observes it transitively through our chain.
+        // Drop the pinned entry so the pair is carried ONCE (the CM two-tips
+        // floor is transient: carry the pair forward, then repel — no further
+        // direct acks of the equivocator; `insert_checked` never re-populates a
+        // flagged creator's entry).
+        self.tips.retain(|_, t| match t {
+            CreatorTips::Pair(a, b) => {
+                !(block.predecessors.contains(a) && block.predecessors.contains(b))
+            }
+            CreatorTips::One(_) => true,
+        });
         Ok(block)
     }
 
@@ -1279,8 +1375,9 @@ impl Blocklace {
     /// block or a superseded one.
     pub fn rollback_local_authored(&mut self, block_id: BlockId) -> bool {
         let self_creator = self.self_creator();
-        // Only ever roll back OUR OWN current tip.
-        if self.tips.get(&self_creator) != Some(&block_id) {
+        // Only ever roll back OUR OWN current tip. A `Pair` entry for self means
+        // we are a flagged self-equivocator — never roll back through that.
+        if self.tips.get(&self_creator) != Some(&CreatorTips::One(block_id)) {
             return false;
         }
         let seq = match self.blocks.get(&block_id) {
@@ -1296,7 +1393,7 @@ impl Blocklace {
             .map(Block::id);
         match prev_self_tip {
             Some(prev) => {
-                self.tips.insert(self_creator, prev);
+                self.tips.insert(self_creator, CreatorTips::One(prev));
             }
             None => {
                 self.tips.remove(&self_creator);
@@ -1317,7 +1414,7 @@ impl Blocklace {
         &mut self,
         payload: ConsensusTimedTurnPayloadV1,
     ) -> Result<Block, BlockError> {
-        let predecessors: Vec<BlockId> = self.tips.values().copied().collect();
+        let predecessors: Vec<BlockId> = self.tip_ids();
         self.add_consensus_timed_turn_v1_with_predecessors(payload, predecessors)
     }
 
@@ -1539,8 +1636,19 @@ impl Blocklace {
 
         // Check for equivocation.
         if let Some(proof) = self.detect_equivocation(&block) {
-            self.equivocators.insert(block.creator);
-            self.tips.remove(&block.creator);
+            // TWO-TIPS EVIDENCE FLOOR (CM Alg. 1:5): on FIRST detection, pin
+            // the incomparable pair as this creator's tips so the next block we
+            // author points at BOTH halves and carries the fork into its causal
+            // closure — the anchor-relative exclusion predicate needs the pair
+            // IN a closure to fire. The old `tips.remove` here left the second
+            // half unreferenced forever: evidence that was real and unreachable.
+            // A creator already flagged keeps its pinned pair (first pair wins;
+            // the bound stays ≤ 2 pointers per creator no matter how many
+            // further forks arrive).
+            if self.equivocators.insert(block.creator) {
+                self.tips
+                    .insert(block.creator, CreatorTips::pair(proof.block_a.id(), id));
+            }
             // Still insert the block (we keep evidence) but report the equivocation.
             self.blocks.insert(id, block);
             if let Some(frontier) = frontier {
@@ -1553,18 +1661,19 @@ impl Blocklace {
             });
         }
 
-        // Don't update tips for known equivocators.
+        // Don't update tips for known equivocators: a flagged creator's entry is
+        // either its frozen evidence pair or (post-weld / external flag) absent.
         if !self.equivocators.contains(&block.creator) {
             // Update tip if this is the highest seq for this creator.
             let should_update_tip = match self.tips.get(&block.creator) {
-                Some(current_tip_id) => {
-                    let current_tip = &self.blocks[current_tip_id];
+                Some(current) => {
+                    let current_tip = &self.blocks[&current.primary()];
                     block.seq > current_tip.seq
                 }
                 None => true,
             };
             if should_update_tip {
-                self.tips.insert(block.creator, id);
+                self.tips.insert(block.creator, CreatorTips::One(id));
             }
         }
 
@@ -1620,20 +1729,19 @@ impl Blocklace {
 
             // Check for equivocation.
             if let Some(proof) = self.detect_equivocation(&block) {
-                // Closes audit gap C in AUDIT-blocklace-consensus.md: merge()
-                // must mirror receive_block() and remove the equivocator's
-                // tip. Without this, subsequent blocks from the equivocator
-                // in the same delta could update tips for a creator we now
-                // know to be Byzantine — leaving stale tip state for the
-                // dissemination/frontier and multi-group block-creation
-                // codepaths to consume.
-                self.equivocators.insert(block.creator);
-                self.tips.remove(&block.creator);
+                // Mirrors `insert_checked` (audit gap C): the creator is
+                // flagged so later delta blocks cannot re-populate its tip —
+                // and, per the CM Alg. 1:5 evidence floor, the FIRST detected
+                // incomparable pair is PINNED as the creator's tips so the next
+                // authored block carries the fork into its closure.
+                if self.equivocators.insert(block.creator) {
+                    self.tips
+                        .insert(block.creator, CreatorTips::pair(proof.block_a.id(), id));
+                }
                 self.blocks.insert(id, block);
                 if let Some(frontier) = frontier {
                     self.consensus_time_frontier_v1.insert(id, frontier);
                 }
-                let _ = proof;
                 continue;
             }
 
@@ -1641,14 +1749,14 @@ impl Blocklace {
             if !self.equivocators.contains(&block.creator) {
                 // Update tip.
                 let should_update_tip = match self.tips.get(&block.creator) {
-                    Some(current_tip_id) => {
-                        let current_tip = &self.blocks[current_tip_id];
+                    Some(current) => {
+                        let current_tip = &self.blocks[&current.primary()];
                         block.seq > current_tip.seq
                     }
                     None => true,
                 };
                 if should_update_tip {
-                    self.tips.insert(block.creator, id);
+                    self.tips.insert(block.creator, CreatorTips::One(id));
                 }
             }
 
@@ -1955,17 +2063,29 @@ impl Blocklace {
         true
     }
 
-    /// Remove an equivocator from the blocklace.
+    /// Flag a creator as an equivocator on EXTERNAL evidence — evidence this
+    /// node does not hold as a local incomparable pair (e.g. a peer-supplied
+    /// proof naming blocks we have not received).
     ///
-    /// This marks the creator as an equivocator (if not already) and removes
-    /// their blocks from the tips map. The blocks themselves are retained as
-    /// evidence, but the equivocator will not be considered for tip tracking
-    /// or future operations.
+    /// The creator is flagged and its tip entry withdrawn: with no local pair
+    /// to pin, there is nothing to carry into a closure, and CM Def. 29
+    /// repelling says a node that has observed evidence stops acking the
+    /// equivocator's blocks entirely. In-band detection (`insert_checked` /
+    /// `merge`), which HOLDS both halves, pins them as a [`CreatorTips::Pair`]
+    /// instead so the evidence rides the DAG.
     ///
-    /// Returns `true` if this was a newly-detected equivocator.
+    /// Returns `true` if this was a newly-flagged equivocator.
     pub fn remove_equivocator(&mut self, creator: &[u8; 32]) -> bool {
         let was_new = self.equivocators.insert(*creator);
-        self.tips.remove(creator);
+        if was_new {
+            match self.tips.get(creator) {
+                // Never discard locally-held pinned evidence.
+                Some(CreatorTips::Pair(_, _)) => {}
+                _ => {
+                    self.tips.remove(creator);
+                }
+            }
+        }
         was_new
     }
 
@@ -2097,19 +2217,26 @@ impl Blocklace {
                 }
 
                 // Closure satisfied: run the same equivocation gate as
-                // receive_block, then insert.
-                if let Some(_proof) = lace.detect_equivocation(&block) {
-                    lace.equivocators.insert(block.creator);
-                    lace.tips.remove(&block.creator);
+                // receive_block, then insert. First detection pins the pair
+                // (the CM Alg. 1:5 evidence floor), mirroring `insert_checked`
+                // — so a restart re-derives a carried-evidence frontier, not a
+                // starved one. Which pair gets pinned may differ across
+                // re-derivations (map iteration order); any pair satisfies the
+                // existential exclusion predicate identically.
+                if let Some(proof) = lace.detect_equivocation(&block) {
+                    if lace.equivocators.insert(block.creator) {
+                        lace.tips
+                            .insert(block.creator, CreatorTips::pair(proof.block_a.id(), id));
+                    }
                     lace.blocks.insert(id, block);
                 } else {
                     if !lace.equivocators.contains(&block.creator) {
                         let should_update_tip = match lace.tips.get(&block.creator) {
-                            Some(tip_id) => lace.blocks[tip_id].seq < block.seq,
+                            Some(current) => lace.blocks[&current.primary()].seq < block.seq,
                             None => true,
                         };
                         if should_update_tip {
-                            lace.tips.insert(block.creator, id);
+                            lace.tips.insert(block.creator, CreatorTips::One(id));
                         }
                     }
                     if block.payload == Payload::Ack {
@@ -2151,8 +2278,15 @@ impl Blocklace {
         // detected above. We never trust it to UN-flag a creator.
         for e in &checkpoint.equivocators {
             if lace.equivocators.insert(*e) {
-                // Newly-named equivocator: withhold its tip too.
-                lace.tips.remove(e);
+                // Newly-named equivocator with no locally re-derived pair:
+                // withhold its tip (external-evidence repelling, as in
+                // `remove_equivocator`). A re-derived pinned pair is kept.
+                match lace.tips.get(e) {
+                    Some(CreatorTips::Pair(_, _)) => {}
+                    _ => {
+                        lace.tips.remove(e);
+                    }
+                }
             }
         }
 
@@ -2164,8 +2298,8 @@ impl Blocklace {
 
         // Derive self_seq from our own (authenticated) tip.
         let self_creator = lace.self_creator();
-        if let Some(tip_id) = lace.tips.get(&self_creator)
-            && let Some(tip_block) = lace.blocks.get(tip_id)
+        if let Some(tip_id) = lace.tips.get(&self_creator).map(CreatorTips::primary)
+            && let Some(tip_block) = lace.blocks.get(&tip_id)
         {
             lace.self_seq = tip_block.seq;
         }
@@ -2202,8 +2336,8 @@ impl Blocklace {
         lace.finality.ordering.attested = checkpoint.attested_block_ids.iter().copied().collect();
 
         let self_creator = lace.self_creator();
-        if let Some(tip_id) = lace.tips.get(&self_creator)
-            && let Some(tip_block) = lace.blocks.get(tip_id)
+        if let Some(tip_id) = lace.tips.get(&self_creator).map(CreatorTips::primary)
+            && let Some(tip_block) = lace.blocks.get(&tip_id)
         {
             lace.self_seq = tip_block.seq;
         }
@@ -2213,12 +2347,19 @@ impl Blocklace {
 }
 
 /// Snapshot of the blocklace state for persistence or new-node catch-up.
+///
+/// ⚑ SCHEMA FLAG DAY (2026-08-08, exclusion-by-past): `tips` is now
+/// `CreatorTips` (one tip per honest creator, a pinned evidence PAIR per
+/// detected equivocator — the CM Alg. 1:5 two-tips floor). A checkpoint
+/// serialized under the old `HashMap<_, BlockId>` shape REFUSES to
+/// deserialize; the paired `CANONICAL_STATE_SCHEMA_EPOCH` bump makes the node
+/// re-genesis its store rather than reinterpret old bytes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CheckpointData {
     /// All blocks in serialized form.
     pub blocks: Vec<Vec<u8>>,
-    /// Creator -> tip block ID.
-    pub tips: HashMap<[u8; 32], BlockId>,
+    /// Creator -> tips (chain head, or the pinned equivocation-evidence pair).
+    pub tips: HashMap<[u8; 32], CreatorTips>,
     /// Known equivocator public keys.
     pub equivocators: Vec<[u8; 32]>,
     /// Block IDs in their total order.
@@ -2731,10 +2872,16 @@ mod pq_hybrid_tests {
 
         let b1 = lace.add_block(Payload::Ack);
         assert_eq!(lace.self_seq, 1);
-        assert_eq!(lace.tips.get(&self_creator), Some(&b1.id()));
+        assert_eq!(
+            lace.tips.get(&self_creator),
+            Some(&CreatorTips::One(b1.id()))
+        );
         let b2 = lace.add_block(Payload::Data(b"x".to_vec()));
         assert_eq!(lace.self_seq, 2);
-        assert_eq!(lace.tips.get(&self_creator), Some(&b2.id()));
+        assert_eq!(
+            lace.tips.get(&self_creator),
+            Some(&CreatorTips::One(b2.id()))
+        );
         assert!(lace.blocks.contains_key(&b2.id()));
 
         // Roll back the second (un-persisted) block: seq → 1, tip → b1, b2 gone.
@@ -2745,7 +2892,7 @@ mod pq_hybrid_tests {
         );
         assert_eq!(
             lace.tips.get(&self_creator),
-            Some(&b1.id()),
+            Some(&CreatorTips::One(b1.id())),
             "tip restored to the prior self block"
         );
         assert!(

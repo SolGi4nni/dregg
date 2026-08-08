@@ -410,7 +410,7 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
         // yet an equivocator.
         assert_eq!(
             lace.tips().get(&peer_creator),
-            Some(&honest.id()),
+            Some(&dregg_blocklace::finality::CreatorTips::One(honest.id())),
             "[B] the honest peer block must be the peer's tip before the fork"
         );
         assert!(
@@ -441,19 +441,24 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
                 "[B] an equivocating block MUST be rejected as BlockError::Equivocation; got {other:?}"
             ),
         }
-        // The fork is REJECTED at the consensus level: the equivocator is recorded
-        // and — the load-bearing exclusion — its TIP is removed, so it anchors
-        // NOTHING in the `tau` order and contributes NO finalized turn (the fork
-        // block itself is retained only as an EVIDENCE exhibit, never as a live
-        // tip — `finality.rs::receive_block`).
+        // The fork is REJECTED at the consensus level: the equivocator is
+        // recorded, and its tips entry becomes the PINNED evidence pair (the CM
+        // Alg. 1:5 two-tips floor, exclusion-by-past flag day 2026-08-08): the
+        // next authored block links BOTH halves, so the fork enters later
+        // closures and the per-closure exclusion predicate (`approved_by` /
+        // Lean `ExcludedByPast`) sees it — that is what keeps the equivocator
+        // anchoring NOTHING in the tau order, on every honest node identically
+        // and across restarts.
         assert!(
             lace.equivocators().contains(&peer_creator),
             "[B] the forking creator must be recorded as an equivocator"
         );
-        assert_eq!(
-            lace.tips().get(&peer_creator),
-            None,
-            "[B] the equivocator's tip must be REMOVED so it anchors nothing in tau ordering"
+        assert!(
+            matches!(
+                lace.tips().get(&peer_creator),
+                Some(dregg_blocklace::finality::CreatorTips::Pair(_, _))
+            ),
+            "[B] the equivocator's tips entry must be the pinned evidence pair"
         );
     }
 
