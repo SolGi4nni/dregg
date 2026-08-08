@@ -64,12 +64,16 @@ theorem relicSlot_wire_representable (mission : MissionId) {slot : Nat}
   simp only [relicSlot, MISSION_RELIC_BLOCK, WIRE_ID_LIMIT] at *
   omega
 
-/-- Every id in the block of every mission the bundle can publish
-(`MAX_MISSIONS_PER_EPOCH = 8` in `poa-curator`) is wire-representable — over the WHOLE
-block, not over the allowlists that happen to be declared today, so a mission adding a
-slot cannot leave the range this checked. -/
+/-- Every id in the block of every mission the bundle can publish is wire-representable
+— over the WHOLE block, not over the allowlists that happen to be declared today, so a
+mission adding a slot cannot leave the range this checked.
+
+⚠ The range is mission ids `0..8` inclusive, not `0..7`: `poa-curator`'s
+`MAX_MISSIONS_PER_EPOCH = 8` caps the COUNT of missions in an epoch, and mission ids
+start at 1, so the eighth game is id **8**.  `List.range 8` would stop one short of the
+mission this is meant to cover. -/
 theorem published_relic_blocks_are_wire_representable :
-    ((List.range 8).flatMap fun mission =>
+    ((List.range 9).flatMap fun mission =>
         (List.range MISSION_RELIC_BLOCK).map fun slot =>
           (relicSlot ⟨mission⟩ slot).value).all (· ≤ WIRE_ID_LIMIT) = true := by
   decide
