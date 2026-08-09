@@ -39,7 +39,7 @@ test("loads the actual curator-authenticated Lean-emitted POAG1 bundle", async (
   ]);
 });
 
-test("the client accepts the curator-signed counter-9 seven-game bundle end to end", async () => {
+test("the client accepts the curator-signed counter-11 seven-game bundle end to end", async () => {
   const bundle = await loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",
@@ -47,7 +47,7 @@ test("the client accepts the curator-signed counter-9 seven-game bundle end to e
     expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: await actualFetch(),
   });
-  assert.equal(bundle.contentEpoch.counter, 10);
+  assert.equal(bundle.contentEpoch.counter, 11);
   assert.equal(bundle.manifest.artifacts.length, 9);
   const missions = await loadMissionCatalog(bundle);
   // MISSION order (1..7) — deliberately NOT the manifest's path order above.
@@ -63,7 +63,11 @@ test("the client accepts the curator-signed counter-9 seven-game bundle end to e
   const blackBox = missions.find((mission) => mission.gameId === "black-box-reconstruction");
   assert.equal(blackBox.missionId, 4);
   assert.equal(blackBox.ruleset, "blackbox-v2");
-  assert.equal(blackBox.actionLimit, 15);
+  // 15 was the worst case of the DUMBEST strategy: the two-class minimax was ALSO 15
+  // (Hall forces four eliminations to pin the first cell, and all four leave with it), so
+  // any systematic scan won 100% and no budget could have separated good play from it.
+  // A third answer class took the minimax to 11, so this is now the worst case of OPTIMAL play.
+  assert.equal(blackBox.actionLimit, 11);
   assert.equal(blackBox.instanceDisclosure, "oracle-only");
 });
 

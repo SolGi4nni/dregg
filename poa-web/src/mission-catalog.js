@@ -73,7 +73,7 @@ const GAME_SPECS = Object.freeze([
     engineModule: "Dregg2.Games.PathOfAngels.SalvageLock",
     ruleset: "salvage-v2",
     disclosure: "oracle-only",
-    actionLimit: 12,
+    actionLimit: 18, // 12 punished correct play: the budget sat exactly at the MEAN of optimal play, so a perfect player won 60%. 18 is the exact adversarial worst case of the one-bit game.
     descriptorPath: "games/salvage-lock.json",
     fixtureId: "salvage-solved-preview-v1",
   }),
@@ -85,7 +85,7 @@ const GAME_SPECS = Object.freeze([
     engineModule: "Dregg2.Games.PathOfAngels.BlackBoxReconstruction",
     ruleset: "blackbox-v2",
     disclosure: "oracle-only",
-    actionLimit: 15,
+    actionLimit: 11, // 15 was the worst case of the DUMBEST strategy — the two-class minimax was also 15, so any scan won 100%. A third answer class (earlier/placed/later) took the minimax to 11.
     descriptorPath: "games/black-box-reconstruction.json",
     fixtureId: "blackbox-solved-preview-v1",
   }),
