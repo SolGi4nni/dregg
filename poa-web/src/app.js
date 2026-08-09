@@ -598,7 +598,13 @@ function initializeSignal(descriptor) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `signal-choice signal-color-${symbol.id}`;
+    // The visible face carries the GLYPH beside the name, because the glyph is
+    // what a guess is drawn with in the history rows — the button is that legend.
+    // ⚠ The accessible name is the name alone: the emitted glyph for band 0 is
+    // the character "0", so the face reads "0 BAND 0" and a screen reader was
+    // announcing exactly that, twice over, six times.
     button.textContent = `${symbol.glyph} ${symbol.label}`;
+    button.setAttribute("aria-label", symbol.label);
     button.addEventListener("click", () => appendSymbol(symbol.id));
     return button;
   }));
@@ -845,7 +851,16 @@ function renderSignal() {
     row.querySelector(".history-result small").textContent = `${turn.present} DRIFT`;
     return row;
   });
-  byId("signal-history").replaceChildren(...rows);
+  // ⚑ The feedback log RESERVES 205px so the board does not jump as rows land,
+  // and before the first transmission that reservation was 205 blank pixels above
+  // the fold — which reads as something that failed to render, not as a log with
+  // nothing in it yet. It says which it is.
+  byId("signal-history").replaceChildren(...(rows.length > 0 ? rows : [(() => {
+    const empty = document.createElement("p");
+    empty.className = "signal-history__empty";
+    empty.textContent = "No transmission sent yet. Each one comes back here with how many bands were locked and how many drifted.";
+    return empty;
+  })()]));
   document.querySelectorAll(".signal-choice").forEach((button) => { button.disabled = run.solved || run.exhausted; });
   byId("signal-clear").disabled = run.solved || run.exhausted;
   renderDraft();

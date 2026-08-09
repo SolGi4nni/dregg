@@ -160,6 +160,7 @@ button:disabled { opacity: .32; cursor: not-allowed; }
 .signal-brief p { margin: 0; color: var(--soft); font: 14px/1.4 var(--serif); }
 .signal-wave { color: var(--acid); letter-spacing: -2px; opacity: .75; }
 .signal-history { min-height: 205px; display: flex; flex-direction: column; gap: 7px; }
+.signal-history__empty { margin: auto 0; max-width: 46ch; color: var(--dim); font: 11px/1.6 var(--mono); }
 .history-row { display: grid; grid-template-columns: 30px 1fr 110px; align-items: center; min-height: 35px; padding: 4px 9px; background: rgba(5,15,16,.37); border: 1px solid rgba(157,204,187,.08); }
 .history-num { color: var(--dim); font-size: 8px; }
 .history-sequence, .signal-draft { display: flex; gap: 8px; }
@@ -179,8 +180,16 @@ button:disabled { opacity: .32; cursor: not-allowed; }
 .signal-choice { width: auto; min-width: 52px; min-height: 34px; padding: 5px 10px; color: var(--signal-color); border: 1px solid color-mix(in srgb, var(--signal-color) 48%, transparent); background: color-mix(in srgb, var(--signal-color) 6%, transparent); cursor: pointer; font-size: 8px; }
 .signal-choice:hover:not(:disabled) { background: color-mix(in srgb, var(--signal-color) 15%, transparent); }
 .mission-actions { margin-top: 19px; display: flex; justify-content: flex-end; gap: 8px; }
-.receipt-slip { margin-top: 18px; padding: 14px; color: var(--soft); background: rgba(155,216,191,.06); border: 1px solid var(--line-bright); font-size: 9px; line-height: 1.6; }
+.receipt-slip { margin-top: 18px; padding: 14px; color: var(--soft); background: rgba(155,216,191,.06); border: 1px solid var(--line-bright); font-size: 10px; line-height: 1.6; }
 .receipt-slip b { color: var(--acid); letter-spacing: .1em; }
+/* ⚑ THE TRANSCRIPT WAS BEING CLIPPED, NOT SHOWN. The canonical replay is one
+   unbroken JSON line whose `content_session` and `content_root` are 64-hex, so it
+   measured 3184px inside a 687px panel with `overflow: visible` and no wrapping —
+   and the page does not scroll horizontally, so everything past the panel edge
+   was simply gone. This is the block that exists so a player can COPY the exact
+   bytes their run produced. `.verify-fold__transcript` has had the right
+   treatment all along; this one never got it. */
+.receipt-slip code { display: block; max-height: 210px; margin-top: 8px; padding: 8px; overflow: auto; background: rgba(0,0,0,.24); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
 .mission-sidebar { display: flex; flex-direction: column; gap: 14px; }
 .assignment-card, .crew-note, .authority-card { padding: 18px; }
 .assignment-card dl { margin: 15px 0 0; }
