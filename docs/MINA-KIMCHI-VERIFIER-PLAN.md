@@ -91,9 +91,14 @@ P=±Q, O), avoiding the exceptional-case handling naive Jacobian doubling needs.
   descriptor at a **flat** 3 048 columns (`PastaLadderThread.threaded_width_is_flat`), i.e. `7.8·10⁵` committed
   cells, not `~10⁷` gates in one row.
   ⚑ **THE WHOLE-VERIFIER FIGURE IS RE-DERIVED IN `MinaWrapVerifierAir` §5b AS NAMED THEOREMS**: one Wrap
-  verification, excluding the SRS-base leg, is **34 816 complete additions + 170 940 sound ALU rows = 205 756 rows
-  and 144 751 608 committed cells** — `2^17.65` rows, *four powers of two under the measured `lb = 2` ceiling of
-  `2^25`*, against `≈2.25·10⁸` constraint-instances rather than `≈10⁹`.
+  verification, excluding the SRS-base leg, is **34 816 complete additions + 244 200 sound ALU rows = 279 016 rows
+  and 161 308 368 committed cells** — `2^18.09` rows, *nearly seven powers of two under the measured `lb = 2` ceiling
+  of `2^25`*, against `≈2.25·10⁸` constraint-instances rather than `≈10⁹`.
+  ⚠ **CORRECTED 2026-08-08.** These read `170 940 / 205 756 / 144 751 608` and `2^17.65` until then: the census
+  priced a Poseidon round at 21 instructions while `MinaWrapVerifierSponge` had PROVED the emitted round is 30, and
+  the omitted nine additions per round are 42.9% of the transcript stage. The census is now welded to the emitted
+  permutation (`the_census_perm_is_the_emitted_permutation`), so the two cannot diverge again without a build error.
+  The conclusion did not move: rows were never the wall.
   ⚠ **The standing estimate was wrong about which resource binds, not only about size.** It assumed ~100
   constraints packed per row and therefore `10⁷` rows ≈ `2^23.3`, which is what made the verdict read as
   "unreachable". The deployed sound rows are 3 048 and 226 columns wide.

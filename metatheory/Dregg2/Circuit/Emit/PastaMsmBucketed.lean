@@ -130,6 +130,10 @@ elsewhere. §7.4.
 -/
 import Dregg2.Circuit.Emit.PastaMsmBound
 import Dregg2.Circuit.GateExpr
+-- ⚑ §6b re-prices `MinaWrapVerifierAir`'s excluded SRS leg. It used to do so against a COPY of
+-- that file's `VERIFIER_ROWS`, which went stale the day the census was corrected; the import makes
+-- it the same number.
+import Dregg2.Circuit.Emit.MinaWrapVerifierAir
 
 namespace Dregg2.Circuit.Emit.PastaMsmBucketed
 
@@ -1071,14 +1075,14 @@ theorem split_srs_cells_fit :
 /-! ## §6b — ⚑ THE "EXCLUDED LEG" RE-PRICED. It is not out of reach.
 
 `MinaWrapVerifierAir` §5 prices the SRS-base leg the wrap-verifier construction EXCLUDES:
-`SRS_BASE_ROWS = msmRows 32768 = 256 · 32,769 · 41 = 343,943,424` rows, **215×** the
-`VERIFIER_ROWS = 1,598,396` of everything it does include, and calls that "the arithmetic behind
+`SRS_BASE_ROWS = msmRows 32768 = 256 · 32,769 · 41 = 343,943,424` rows, **205×** the
+`VERIFIER_ROWS = 1,671,656` of everything it does include, and calls that "the arithmetic behind
 *defer the IPA leg*". That figure is a NAIVE bit-plane scan — 256 planes, one row per term per
 plane — priced at 41 rows per complete add.
 
 Re-derived here as the FUSED layout, in the SAME 41-rows-per-add units so the comparison is like
 for like: `fusedAdds 32768 256 12 = 811,250` complete adds, i.e. **33,261,250 rows — 10.3× less,
-and 20.8× the verifier rather than 215×.** Named rather than narrated, below.
+and 19.9× the verifier rather than 205×.** Named rather than narrated, below.
 
 ⚑ And in the units this cone ACTUALLY emits — `PastaMsmWindowed`, ONE row per complete add — the
 same leg is **811,250 rows, 38.7% of the `2^21` ceiling.** The leg the wrap-verifier construction
@@ -1086,15 +1090,22 @@ excludes as unreachable fits in one instance with 61% of the ceiling to spare.
 
 ⚠ What that does NOT do is make the excluded leg free: 811,250 rows at 612 columns is still
 `4.97 · 10^8` committed cells, and §7.1's warning applies to it verbatim. The claim here is
-narrow and it is the one that was wrong — **215× was a property of the SCAN, not of the
-relation.** -/
+narrow and it is the one that was wrong — **205× was a property of the SCAN, not of the
+relation.**
+
+⚠ Every ratio in this section moved on 2026-08-08 (`215× → 205×`, `20.8× → 19.9×`) because the
+denominator did: `MinaWrapVerifierAir`'s transcript stage was re-counted. It moved SILENTLY the
+first time because `WRAP_VERIFIER_ROWS` below was a hand-copied `1598396`; it is the imported `def`
+now, so the next such correction is a build error here. -/
 
 /-- The per-complete-add row price `MinaWrapVerifierAir.msmRows` uses. -/
 def WRAP_ROWS_PER_ADD : Nat := 41
 /-- The Wrap SRS width. -/
 def WRAP_SRS : Nat := 32768
-/-- `MinaWrapVerifierAir.VERIFIER_ROWS` — everything that construction DOES include. -/
-def WRAP_VERIFIER_ROWS : Nat := 1598396
+/-- `MinaWrapVerifierAir.VERIFIER_ROWS` — everything that construction DOES include. ⚑ THE def
+ITSELF, not a copy of its value: this read `1598396` until 2026-08-08 and silently outlived the
+census correction that moved it to `1671656`. -/
+def WRAP_VERIFIER_ROWS : Nat := MinaWrapVerifierAir.VERIFIER_ROWS
 
 /-- `MinaWrapVerifierAir.SRS_BASE_ROWS`, restated so the re-derivation is against the same number
 and not a remembered one. -/
@@ -1106,16 +1117,16 @@ def wrapSrsFusedRows : Nat := fusedAdds WRAP_SRS 256 12 * WRAP_ROWS_PER_ADD
 /-- The in-tree figure, reproduced. -/
 theorem wrap_srs_naive_is_the_in_tree_figure : wrapSrsNaiveRows = 343943424 := by decide
 
-/-- …and `215 × VERIFIER_ROWS < SRS_BASE_ROWS`, the claim it supports. -/
-theorem wrap_srs_naive_is_215x : 215 * WRAP_VERIFIER_ROWS < wrapSrsNaiveRows := by decide
+/-- …and `205 × VERIFIER_ROWS < SRS_BASE_ROWS`, the claim it supports. -/
+theorem wrap_srs_naive_is_205x : 205 * WRAP_VERIFIER_ROWS < wrapSrsNaiveRows := by decide
 
 /-- ⚑ **THE RE-PRICING.** Fused, the same leg is more than TEN times smaller. -/
 theorem wrap_srs_fused_beats_naive : 10 * wrapSrsFusedRows < wrapSrsNaiveRows := by decide
 
-/-- ⚑ **…and the `215×` becomes `21×`** — the ratio the deferral verdict was priced against moves
+/-- ⚑ **…and the `205×` becomes `20×`** — the ratio the deferral verdict was priced against moves
 by an order of magnitude. Both bounds stated, so it is bracketed rather than rounded. -/
-theorem wrap_srs_fused_is_about_21x :
-    20 * WRAP_VERIFIER_ROWS < wrapSrsFusedRows ∧ wrapSrsFusedRows < 21 * WRAP_VERIFIER_ROWS := by
+theorem wrap_srs_fused_is_about_20x :
+    19 * WRAP_VERIFIER_ROWS < wrapSrsFusedRows ∧ wrapSrsFusedRows < 20 * WRAP_VERIFIER_ROWS := by
   constructor <;> decide
 
 /-- ⚑ **AND AT ONE ROW PER COMPLETE ADD — the layout this cone emits — the excluded leg FITS**,
@@ -1624,9 +1635,9 @@ not `onCurveRowDesc` — one prefix step below where the on-curve gate enters).
 #assert_axioms split_srs_cells_fit
 #assert_axioms manifest_rows_fit
 #assert_axioms wrap_srs_naive_is_the_in_tree_figure
-#assert_axioms wrap_srs_naive_is_215x
+#assert_axioms wrap_srs_naive_is_205x
 #assert_axioms wrap_srs_fused_beats_naive
-#assert_axioms wrap_srs_fused_is_about_21x
+#assert_axioms wrap_srs_fused_is_about_20x
 #assert_axioms wrap_srs_fused_fits_one_instance
 #assert_axioms the_srs_manifest_really_pads
 #assert_axioms the_pad_row_is_distinct_from_every_generator_row

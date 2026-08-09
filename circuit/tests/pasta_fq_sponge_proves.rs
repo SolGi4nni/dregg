@@ -68,7 +68,8 @@ const PC_COL: usize = 436;
 const IMM_BASE: usize = 437;
 const NREG: usize = 6;
 
-/// `MinaWrapVerifierSponge.ROWS_PER_ROUND` — 21 multiplies + 9 additions.
+/// `MinaWrapVerifierAir.ROWS_PER_POSEIDON_ROUND` — 21 multiplies + 9 additions. Welded to the
+/// emitted list by `MinaWrapVerifierSponge.the_census_round_is_the_emitted_round`.
 const ROWS_PER_ROUND: usize = 30;
 /// `PlonkSpongeConstantsKimchi::PERM_ROUNDS_FULL`.
 const FULL_ROUNDS: usize = 55;
@@ -838,21 +839,24 @@ fn the_sponge_is_priced_per_instruction() {
     );
     println!("⚠ two-point fit at 2^5/2^11; FRI is O(n log n), so this slope is a FLOOR at 2^19.");
 
-    // ⚑ THE STAGE, RE-PRICED IN THE UNITS A ROUND ACTUALLY COSTS. The census
+    // ⚑ THE STAGE, IN THE UNITS A ROUND ACTUALLY COSTS. Until 2026-08-08 the census
     // (`MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM`) counted 21 multiplies per round and omitted
-    // the nine additions the MDS sums and the round constants need. `the_census_underprices_the_round`
-    // is the Lean `decide`; this is what it costs.
-    const CENSUS_PER_PERM: usize = 1155;
+    // the nine additions the MDS sums and the round constants need; it now derives from
+    // `MULS_PER_POSEIDON_ROUND + ADDS_PER_POSEIDON_ROUND` and is welded to the emitted permutation
+    // by `the_census_perm_is_the_emitted_permutation`, so the two numbers below agree BY PROOF and
+    // the multiply-only figure is kept only to price what the omission had cost.
+    const MULTIPLY_ONLY_PER_PERM: usize = 1155;
     let measured_per_perm = FULL_ROUNDS * ROWS_PER_ROUND;
     let stage = 148 * measured_per_perm;
     println!(
-        "\nA PERMUTATION: census {CENSUS_PER_PERM} rows, MEASURED {measured_per_perm} -- the census \
-         is low by {:.1}%, because it counted 21 multiplies and no additions.",
-        100.0 * (measured_per_perm as f64 / CENSUS_PER_PERM as f64 - 1.0)
+        "\nA PERMUTATION: multiply-only {MULTIPLY_ONLY_PER_PERM} rows, EMITTED {measured_per_perm} \
+         -- a multiply-only census is low by {:.1}%, which is what the stage census carried until \
+         2026-08-08.",
+        100.0 * (measured_per_perm as f64 / MULTIPLY_ONLY_PER_PERM as f64 - 1.0)
     );
     println!(
         "THE TRANSCRIPT STAGE (148 permutations): {stage} instructions, {:.1}% of the 610 080-\
-         instruction ROM cap (the census said 28.0%).",
+         instruction ROM cap (the multiply-only count implied 28.0%).",
         100.0 * stage as f64 / 610_080.0
     );
     println!(
@@ -863,8 +867,8 @@ fn the_sponge_is_priced_per_instruction() {
     );
     assert!(
         stage < 610_080,
-        "if the re-priced transcript stage ever stops fitting one ROM, \
-         `the_repriced_transcript_stage_still_fits` in Lean is stale"
+        "if the transcript stage ever stops fitting one ROM, \
+         `the_transcript_stage_fits_one_rom` in Lean is stale"
     );
     assert!(slope_us.is_finite() && slope_us > 0.0);
 }

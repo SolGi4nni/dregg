@@ -272,9 +272,11 @@ fn the_chain_leg_binds_one_rows_output_to_the_nexts_operand() {
 }
 
 /// The six stages of "everything except the SRS bases", with the row budgets
-/// `MinaWrapVerifierAir` derives from the atom (`verifier_rows_eq : VERIFIER_ROWS = 1598396`).
+/// `MinaWrapVerifierAir` derives from the atom (`verifier_rows_eq : VERIFIER_ROWS = 1671656`).
+/// ⚠ The transcript stage read `170_940` until 2026-08-08 — a Poseidon round is 30 emitted
+/// instructions, not the 21 multiplies the census counted.
 const STAGES: &[(&str, usize)] = &[
-    ("transcript  (148 Fq Poseidon perms)", 170_940),
+    ("transcript  (148 Fq Poseidon perms)", 244_200),
     ("public_comm (MSM over 40 bases)", 430_336),
     ("f_comm      (MSM over 1 base)", 20_992),
     ("ft_comm     (MSM over 9 bases)", 104_960),

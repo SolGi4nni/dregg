@@ -89,7 +89,8 @@ const THE_COLUMN_ORDER_IS_THE_LAYOUTS: () = {
 const _: () = THE_COLUMN_ORDER_IS_THE_LAYOUTS;
 const NREG: usize = 6;
 
-/// `MinaWrapVerifierSponge.ROWS_PER_ROUND` — 21 multiplies + 9 additions.
+/// `MinaWrapVerifierAir.ROWS_PER_POSEIDON_ROUND` — 21 multiplies + 9 additions. Welded to the
+/// emitted list by `MinaWrapVerifierSponge.the_census_round_is_the_emitted_round`.
 const ROWS_PER_ROUND: usize = 30;
 /// `PlonkSpongeConstantsKimchi::PERM_ROUNDS_FULL`.
 const FULL_ROUNDS: usize = 55;

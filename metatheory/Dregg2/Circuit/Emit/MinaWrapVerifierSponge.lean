@@ -61,10 +61,12 @@ third appears that neither covers:
 
   * **Not a Wrap verification.** This is one of six stages, it is the field stage, and the five MSM
     stages need curve arithmetic that is not programmed. `MinaWrapVerifierAir` §5 prices them.
-  * **Not 148 permutations.** One is emitted and proved. §8 prices the stage in the units this
-    file's round actually costs — and that price is **43% higher than the census said**, because the
-    census counted 21 multiplies per round and omitted the nine additions the MDS and the round
-    constants need (`the_census_underprices_the_round`).
+  * **Not 148 permutations.** One is emitted and proved. §8 WELDS `MinaWrapVerifierAir`'s stage
+    census to this file's emitted instruction lists — `the_census_round_is_the_emitted_round`,
+    `the_census_perm_is_the_emitted_permutation` — so the census's round IS the emitted round by
+    proof rather than by agreement. ⚠ It was **42.9% lower** until 2026-08-08, counting 21
+    multiplies per round and omitting the nine additions the MDS sums and the round constants need;
+    §8's header says what that cost and why a theorem recording the gap was not a fix.
   * **Not the Wrap sponge's TAPE.** `PastaPoseidonFq.fqPhase1` derives β, γ, α′, ζ′ from a real
     proof; nothing here connects this machine's registers to that tape.
 
@@ -576,31 +578,75 @@ theorem the_absorb_program_squeezes_the_kimchi_hash (st : RegFile)
   rw [hlane, ← the_absorb_program_computes_the_kimchi_sponge st h0 h1 h2 hx₀ hx₁,
     List.getD_cons_zero]
 
-/-! ## §8 — THE STAGE, RE-PRICED. -/
+/-! ## §8 — ⚑⚑ THE STAGE PRICE, WELDED TO THE EMITTED PROGRAM.
 
-/-- ⚑ **THE CENSUS UNDER-PRICED THE ROUND BY 43%.** `MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM` is
-`55 · (3·4 + 9)` = `55 · 21` — three S-boxes at four multiplies plus the MDS's nine multiplies. It
-counted no ADDITIONS, and a 3×3 matvec needs two sums per row and a round constant on top: **nine
-of them.** The real round is 30 instructions, so the emitted permutation is `1 650` rows, not
-`1 155`, and the 148-permutation transcript stage is `244 200`, not `170 940`. -/
-def ROWS_PER_ROUND : Nat := 30
-def ROWS_PER_PERM_MEASURED : Nat := PastaPoseidon.rounds * ROWS_PER_ROUND
-def STAGE_TRANSCRIPT_MEASURED : Nat := 148 * ROWS_PER_PERM_MEASURED
+This section used to hold a theorem named `the_census_underprices_the_round`, which proved
+`ROWS_PER_PERM_MEASURED = 1650 ∧ MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM = 1155` — **both
+numbers, as a conjunction, with nothing forcing them together.** It was true, it was
+`#assert_axioms`-clean, and for a day every downstream figure in `MinaWrapVerifierAir` went on
+being computed from the `1 155` it refutes. A theorem that RECORDS a disagreement does not repair
+it; it licenses it.
 
-theorem the_census_underprices_the_round :
-    ROWS_PER_PERM_MEASURED = 1650
-      ∧ MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM = 1155
-      ∧ STAGE_TRANSCRIPT_MEASURED = 244200
-      ∧ 7 * STAGE_TRANSCRIPT_MEASURED = 10 * MinaWrapVerifierAir.STAGE_TRANSCRIPT
-      ∧ 142 * MinaWrapVerifierAir.STAGE_TRANSCRIPT < 100 * STAGE_TRANSCRIPT_MEASURED
-      ∧ 100 * STAGE_TRANSCRIPT_MEASURED < 143 * MinaWrapVerifierAir.STAGE_TRANSCRIPT := by decide
+⚑ **SO THE SECOND `def` IS GONE AND WHAT IS LEFT IS A WELD.** `MinaWrapVerifierAir` now derives its
+round from `MULS_PER_POSEIDON_ROUND + ADDS_PER_POSEIDON_ROUND = 21 + 9`, and the theorems below
+prove that def EQUAL TO THIS FILE'S EMITTED INSTRUCTION LISTS — `(roundAt r).length` and
+`permInstrs.length`, whose values come from `roundInstrs_length`/`permInstrs_length` and therefore
+from the schedule the descriptor actually emits. There is one number now. If the emitted round ever
+changes length, or if the census is edited away from it, **this file fails to compile.** -/
 
-/-- ⚑ **AND THE RE-PRICED STAGE STILL FITS ONE ROM** — 40.0% of the 610 080-instruction cap against
-the census's 28.0%. So the correction moves the number and not the conclusion, which is the useful
-kind of correction to be able to state. -/
-theorem the_repriced_transcript_stage_still_fits :
-    STAGE_TRANSCRIPT_MEASURED ≤ MAX_ROM_CELLS / ROM_ARITY
-      ∧ 100 * STAGE_TRANSCRIPT_MEASURED < 41 * (MAX_ROM_CELLS / ROM_ARITY) := by decide
+/-- ⚑ **THE CENSUS'S ROUND IS THIS FILE'S EMITTED ROUND** — at every round index, so the weld is not
+about round zero. -/
+theorem the_census_round_is_the_emitted_round (r : Nat) :
+    MinaWrapVerifierAir.ROWS_PER_POSEIDON_ROUND = (roundAt r).length := by
+  have h : (roundAt r).length = 30 := roundInstrs_length _ _ _ _ _ _ _ _
+  rw [h]
+  decide
+
+/-- ⚑ **AND THE CENSUS'S OPCODE SPLIT IS THE EMITTED ROUND'S OPCODE SPLIT.** This is the clause that
+would have caught the original defect: the census carried `21` as its whole round, and the emitted
+list has 21 multiplies **and nine additions beside them**. -/
+theorem the_census_opcode_split_is_the_emitted_one (r : Nat) :
+    MinaWrapVerifierAir.MULS_PER_POSEIDON_ROUND
+        = ((roundAt r).filter (fun I => I.op == 1)).length
+      ∧ MinaWrapVerifierAir.ADDS_PER_POSEIDON_ROUND
+        = ((roundAt r).filter (fun I => I.op == 2)).length := by
+  obtain ⟨hm, ha⟩ := roundInstrs_opcode_split (allocAt r 0) (allocAt r 1) (allocAt r 2)
+    (allocAt r 3) (allocAt r 4) (allocAt r 5) mQ (rQ r)
+  exact ⟨hm.symm, ha.symm⟩
+
+/-- ⚑ **AND THE CENSUS'S PERMUTATION IS THE EMITTED PERMUTATION** — `1 650`, not the `1 155` the
+census carried until 2026-08-08. -/
+theorem the_census_perm_is_the_emitted_permutation :
+    MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM = permInstrs.length := by
+  rw [permInstrs_length]
+  decide
+
+/-- ⚑ **AND THE TRANSCRIPT STAGE IS 148 OF THEM.** The stage figure that feeds `VERIFIER_ROWS`,
+`WRAP_CELLS` and `WRAP_ROWS_SOUND` is now the emitted program's own length times a permutation
+count, with no literal in between. -/
+theorem the_transcript_stage_is_148_emitted_permutations :
+    MinaWrapVerifierAir.STAGE_TRANSCRIPT = 148 * permInstrs.length := by
+  rw [permInstrs_length]
+  decide
+
+/-- ⚑ **WHAT THE OLD CENSUS WOULD HAVE SAID, AS A FACT ABOUT THE EMITTED OBJECT** — a
+multiply-only round count is `21 · 55 = 1 155` and the emitted permutation is `1.428…×` that, so
+the figure was low by **42.9%**: not 43%, and not 42%. Stated against `permInstrs.length` rather
+than against a stale `def`, so it stays a fact after the `def` is fixed. -/
+theorem a_multiply_only_round_underprices_the_emitted_permutation :
+    PastaPoseidon.rounds * MinaWrapVerifierAir.MULS_PER_POSEIDON_ROUND = 1155
+      ∧ 1155 < permInstrs.length
+      ∧ 1428 * 1155 < 1000 * permInstrs.length
+      ∧ 1000 * permInstrs.length < 1429 * 1155 := by
+  rw [permInstrs_length]
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
+/-- ⚑ **AND THE STAGE STILL FITS ONE ROM** — 40.0% of the 610 080-instruction cap, against the
+28.0% the under-priced census implied. The re-count moved the number and not the conclusion, which
+is the useful kind of correction to be able to state. -/
+theorem the_transcript_stage_fits_one_rom :
+    MinaWrapVerifierAir.STAGE_TRANSCRIPT ≤ MAX_ROM_CELLS / ROM_ARITY
+      ∧ 100 * MinaWrapVerifierAir.STAGE_TRANSCRIPT < 41 * (MAX_ROM_CELLS / ROM_ARITY) := by decide
 
 /-! ## §9 — THE EMITTED DESCRIPTORS.
 
@@ -1044,8 +1090,12 @@ theorem the_absorb_pins_a_fresh_sponge :
 #assert_axioms absorbCore_length
 #assert_axioms the_absorb_program_computes_the_kimchi_sponge
 #assert_axioms the_absorb_program_squeezes_the_kimchi_hash
-#assert_axioms the_census_underprices_the_round
-#assert_axioms the_repriced_transcript_stage_still_fits
+#assert_axioms the_census_round_is_the_emitted_round
+#assert_axioms the_census_opcode_split_is_the_emitted_one
+#assert_axioms the_census_perm_is_the_emitted_permutation
+#assert_axioms the_transcript_stage_is_148_emitted_permutations
+#assert_axioms a_multiply_only_round_underprices_the_emitted_permutation
+#assert_axioms the_transcript_stage_fits_one_rom
 #assert_axioms roundProg_length
 #assert_axioms absorbProg_length
 #assert_axioms the_last_instruction_writes_nothing

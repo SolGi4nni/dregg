@@ -505,13 +505,39 @@ Pippenger the Rust verifier runs: the doublings are SHARED across all `n` bases,
 cost is `n + 1` and not `n` ladders of 256. -/
 def msmRows (n : Nat) : Nat := 256 * (n + 1) * ROWS_PER_COMPLETE_ADD
 
-/-- One Fq Poseidon permutation in ALU rows: 55 rounds × (3 S-boxes × 4 multiplies for `x^7`
-+ 9 constant-multiplies for the 3×3 MDS) = **1 155**. The `x^7` chain is `x²·x²·x²·x`, four
-multiplies; a constant-multiply is still a full ALU multiply row in this encoding, but its gate is
-degree 1 in the trace rather than degree 2. -/
-def ROWS_PER_POSEIDON_PERM : Nat := 55 * (3 * 4 + 9)
+/-- One Kimchi Fq Poseidon ROUND in ALU rows — **21 multiplies + 9 additions = 30**. Three S-boxes
+at four multiplies each for `x^7` (the chain is `x²·x²·x²·x`), the 3×3 MDS's nine
+constant-multiplies, and then the nine ADDITIONS the matvec's two sums per row and the three round
+constants need. A constant-multiply is still a full ALU multiply row in this encoding, but its gate
+is degree 1 in the trace rather than degree 2.
 
-theorem rows_per_poseidon_perm_eq : ROWS_PER_POSEIDON_PERM = 1155 := rfl
+⚠ **THIS WAS `3·4 + 9 = 21` UNTIL 2026-08-08 AND THE ADDITIONS WERE SIMPLY NOT COUNTED** — every
+price derived below it was 42.9% low, while `MinaWrapVerifierSponge` had *proved* the emitted round
+is 30 instructions and the tree carried both numbers side by side. The round is no longer a
+free-standing literal: `MinaWrapVerifierSponge.the_census_round_is_the_emitted_round` proves this
+`def` equal to `(roundAt r).length` of the EMITTED permutation, for every round, so the two cannot
+drift apart again without a build error. -/
+def MULS_PER_POSEIDON_ROUND : Nat := 3 * 4 + 9
+
+/-- The nine ADDITIONS of a round: two sums per MDS row (3 × 2 = 6) and one round constant per lane
+(3). These are the ones §5 did not count. `MinaWrapVerifierSponge.roundInstrs_opcode_split` is the
+same 21/9 split read off the emitted instruction list's opcodes. -/
+def ADDS_PER_POSEIDON_ROUND : Nat := 3 * 2 + 3
+
+def ROWS_PER_POSEIDON_ROUND : Nat := MULS_PER_POSEIDON_ROUND + ADDS_PER_POSEIDON_ROUND
+
+/-- Kimchi's Fq sponge is 55 FULL rounds — there is no partial-round schedule to discount. -/
+def POSEIDON_ROUNDS : Nat := 55
+
+/-- One Fq Poseidon permutation in ALU rows: **1 650**, welded to `permInstrs.length` downstream by
+`MinaWrapVerifierSponge.the_census_perm_is_the_emitted_permutation`. -/
+def ROWS_PER_POSEIDON_PERM : Nat := POSEIDON_ROUNDS * ROWS_PER_POSEIDON_ROUND
+
+theorem rows_per_poseidon_round_eq :
+    MULS_PER_POSEIDON_ROUND = 21 ∧ ADDS_PER_POSEIDON_ROUND = 9
+      ∧ ROWS_PER_POSEIDON_ROUND = 30 := ⟨rfl, rfl, rfl⟩
+
+theorem rows_per_poseidon_perm_eq : ROWS_PER_POSEIDON_PERM = 1650 := rfl
 
 /-- The six stages, in transcript order, as `(name, rows)`. -/
 def STAGE_TRANSCRIPT : Nat := 148 * ROWS_PER_POSEIDON_PERM
@@ -526,31 +552,37 @@ def VERIFIER_ROWS : Nat :=
   STAGE_TRANSCRIPT + STAGE_PUBLIC_COMM + STAGE_F_COMM + STAGE_FT_COMM
     + STAGE_XI_AGGREGATE + STAGE_OPENING
 
-/-- ⚑ **THE PRICE, REPRODUCED.** `1 598 396` rows — the re-pricing lane's `1.51 M` recomputed from
-the atom, and within **5.9%** of it. That agreement is what makes the number a measurement of the
-same object rather than two independent guesses. -/
-theorem verifier_rows_eq : VERIFIER_ROWS = 1598396 := by decide
+/-- ⚑ **THE PRICE.** `1 671 656` rows — the re-pricing lane's `1.51 M` recomputed from the atom,
+and **10.7% above** it. That the two land in the same order of magnitude from independent routes is
+what makes the number a measurement of one object; it is not tight agreement and is not claimed as
+any.
+
+⚠ This theorem read `1 598 396` and the docblock claimed "within 5.9%" until 2026-08-08, both
+inherited from the 21-instruction round. -/
+theorem verifier_rows_eq : VERIFIER_ROWS = 1671656 := by decide
 
 /-- ⚑ **AND THE STAGE IT IS DOMINATED BY IS THE ξ-AGGREGATE, NOT THE TRANSCRIPT.** 47 bases is the
-largest MSM in the verifier, and at `256 · 48` complete adds it is 31.5% of the whole. The transcript
-— the stage this campaign's earlier drafts treated as the hard part — is 10.7%. -/
+largest MSM in the verifier, and at `256 · 48` complete adds it is 30.1% of the whole. The transcript
+— the stage this campaign's earlier drafts treated as the hard part — is 14.6%. The gap narrowed
+when the round was re-counted (it was 31.5% against 10.7%); the ORDER did not change. -/
 theorem xi_aggregate_dominates :
-    STAGE_XI_AGGREGATE = 503808 ∧ STAGE_TRANSCRIPT = 170940
+    STAGE_XI_AGGREGATE = 503808 ∧ STAGE_TRANSCRIPT = 244200
       ∧ STAGE_TRANSCRIPT < STAGE_XI_AGGREGATE := by decide
 
 /-- The 32 768 SRS bases, priced in the SAME units — the leg this construction excludes. -/
 def SRS_BASE_ROWS : Nat := msmRows 32768
 
-/-- ⚑ **THE EXCLUDED LEG IS 215× THE INCLUDED ONE.** `343 943 424` rows against `1 598 396`. This
+/-- ⚑ **THE EXCLUDED LEG IS 205× THE INCLUDED ONE.** `343 943 424` rows against `1 671 656`. This
 is the arithmetic behind "defer the IPA leg", and it is REAL — what was wrong was never the size,
-only what the deferral was pointed at.
+only what the deferral was pointed at. (It read `215×` while the included side was priced at the
+21-instruction round; the excluded leg did not move.)
 
 ⚠ The first draft of this theorem asserted `344 084 480` and a `170×` ratio, and `decide` refuted
 it. The figure is `256 · 32 769 · 41`, and a hand-carried digit is exactly the kind of number this
 campaign has been wrong about forty-seven times; that is the argument for a `theorem` over a
 caption. -/
 theorem srs_leg_dwarfs_the_rest :
-    SRS_BASE_ROWS = 343943424 ∧ 215 * VERIFIER_ROWS < SRS_BASE_ROWS := by decide
+    SRS_BASE_ROWS = 343943424 ∧ 205 * VERIFIER_ROWS < SRS_BASE_ROWS := by decide
 
 /-! ## §5b — ⚑⚑ THE PRICE RE-DERIVED IN THE GEOMETRY THAT NOW EXISTS (2026-08-06)
 
@@ -564,14 +596,28 @@ measured, so the estimate can be replaced by their declared widths.
 ⚑ **THE STANDING FIGURE GOT THE SHAPE WRONG, NOT ONLY THE SIZE.** It assumed ~100 constraints
 packed per row and therefore 10⁷ rows — near a power-of-two ceiling, which is what made the verdict
 *"the construction is wrong"*. The deployed sound rows are **3 048** and **226** columns wide, so the
-same work is `2^17.65` rows: **32× fewer, and four powers of two under the measured `lb = 2`
+same work is `2^18.09` rows: **35× fewer, and nearly seven powers of two under the measured `lb = 2`
 ceiling of `2^25`.** The binding resource was never rows. It is committed CELLS.
 
 ⚠ **AND THE ATOM COUNT WAS CONFLATED.** §1b's *"≈1.06 M Pasta-field multiplications"* is neither
 this census's multiply count nor its op count: `RCB` is 12 multiplies and 29 add/subs, so 34 816
-complete additions are **417 792 multiplies and 1 009 664 add/subs**, plus the transcript's
-170 940. Pricing all 1 598 396 ops at a MULTIPLY's cost over-charges by ~1.34×; pricing them at 10³
-constraints each over-charges by ~4.4×.
+complete additions are **417 792 multiplies and 1 009 664 add/subs**, and the transcript stage adds
+**170 940 multiplies and 73 260 additions** — `588 732` multiplies inside `1 671 656` operations.
+Priced against the two emitted descriptors' own declared constraint counts (253 for the multiply,
+160 for the add/sub), charging every operation as a MULTIPLY over-charges by ~1.31×, and charging
+each at 10³ constraints over-charges by ~5.2×.
+
+⚠ This paragraph read `~1.34×` and `~4.4×` before 2026-08-08. Neither reproduces from the 253/160
+descriptor pair at EITHER census, so they were prose rather than derivation; the two above are
+computed from the counts named in the same sentence.
+
+⚑ **WHAT MOVED ON 2026-08-08, WHEN §5's ROUND WENT 21 → 30 INSTRUCTIONS**: cells
+`144 751 608 → 161 308 368`, rows `205 756 → 279 016`, witness `~579 MB → ~645 MB`, add/subs
+`1 009 664 → 1 082 924`. ⚑ **THE MULTIPLY COUNT DID NOT MOVE** — it was `588 732` before and after,
+because the census's `21` per round was the multiply count and was RIGHT; the nine additions per
+round were the entire error. The CONCLUSION — rows were never the wall, cells are — survives, which
+is the only reason a 35.6% error in the headline sat here for a day. It is welded now
+(`MinaWrapVerifierSponge` §8), not restated.
 
 ⚠ **WHAT THESE THEOREMS ARE.** Prices, exactly as §5's are — `atom cells × operations`, where the
 atom is an EMITTED descriptor's declared width. A number moving is a real signal; a number being
@@ -604,48 +650,67 @@ theorem the_adds_are_the_censuss_msm_rows :
 work at the threaded sound row's width plus the transcript at the ALU row's. -/
 def WRAP_CELLS : Nat := COMPLETE_ADDS * RCB_ROW_COLS + STAGE_TRANSCRIPT * ALU_ROW_COLS
 
-/-- ⚑ **1.45 × 10⁸ committed cells** — `106 119 168` of curve and `38 632 440` of sponge. At four
-bytes a felt that is ~579 MB of witness, which is the wall the estimate was reaching for and named
+/-- ⚑ **1.61 × 10⁸ committed cells** — `106 119 168` of curve and `55 189 200` of sponge. At four
+bytes a felt that is ~645 MB of witness, which is the wall the estimate was reaching for and named
 as rows instead. -/
 theorem wrap_cells_eq :
-    WRAP_CELLS = 144751608
+    WRAP_CELLS = 161308368
     ∧ COMPLETE_ADDS * RCB_ROW_COLS = 106119168
-    ∧ STAGE_TRANSCRIPT * ALU_ROW_COLS = 38632440 := by
+    ∧ STAGE_TRANSCRIPT * ALU_ROW_COLS = 55189200 := by
   refine ⟨by decide, by decide, by decide⟩
 
 /-- The total ROW count in the two sound geometries. -/
 def WRAP_ROWS_SOUND : Nat := COMPLETE_ADDS + STAGE_TRANSCRIPT
 
-/-- ⚑⚑ **THE ROW COUNT WAS NEVER THE WALL.** `205 756 < 2^18`, against the `lb = 2` ceiling of
-`2^25` — and against the standing estimate's own `10⁷ ≈ 2^23.3`, which is what made it read as
+/-- ⚑⚑ **THE ROW COUNT WAS NEVER THE WALL.** `279 016 < 2^19`, against the `lb = 2` ceiling of
+`2^25` — and 35× under the standing estimate's own `10⁷ ≈ 2^23.3`, which is what made it read as
 unreachable. The estimate was not 4× wrong about size and right about shape; it was wrong about
-which resource binds. -/
+which resource binds.
+
+⚠ The bound here was `< 2^18` and the margin `48×` while the transcript stage was priced at the
+21-instruction round. Both moved by exactly the sponge's re-count; the verdict did not. -/
 theorem the_row_count_was_never_the_wall :
-    WRAP_ROWS_SOUND = 205756
-    ∧ WRAP_ROWS_SOUND < 2 ^ 18
+    WRAP_ROWS_SOUND = 279016
+    ∧ WRAP_ROWS_SOUND < 2 ^ 19
     ∧ WRAP_ROWS_SOUND < 2 ^ 25
-    ∧ 48 * WRAP_ROWS_SOUND < 10000000 := by
+    ∧ 35 * WRAP_ROWS_SOUND < 10000000 := by
   refine ⟨by decide, by decide, by decide, by decide⟩
 
 /-- The multiply / add-sub split of the same census — the figure §1b's *"1.06 M multiplications"*
-conflated. `RCB` is 12 multiplies and 29 add/subs (`ROWS_PER_COMPLETE_ADD = 41`); every ALU row of
-the transcript stage is a multiply. -/
-def WRAP_MULS : Nat := COMPLETE_ADDS * 12 + STAGE_TRANSCRIPT
-def WRAP_ADDSUBS : Nat := COMPLETE_ADDS * 29
+conflated. `RCB` is 12 multiplies and 29 add/subs (`ROWS_PER_COMPLETE_ADD = 41`), and the transcript
+stage splits `21 / 9` per round.
+
+⚠ **THE OLD SPLIT SAID "every ALU row of the transcript stage is a multiply"** and charged all of
+`STAGE_TRANSCRIPT` to `WRAP_MULS`. That sentence is exactly what §5's re-count refuted: 9 of every
+30 transcript rows are additions. Carrying the old shape forward with the new total would have
+mis-stated 73 260 additions as multiplies — a re-derivation that reproduces the error it corrects.
+The split now comes off `MULS_PER_POSEIDON_ROUND`/`ADDS_PER_POSEIDON_ROUND`, so it moves with the
+round. -/
+def TRANSCRIPT_MULS : Nat := 148 * POSEIDON_ROUNDS * MULS_PER_POSEIDON_ROUND
+def TRANSCRIPT_ADDS : Nat := 148 * POSEIDON_ROUNDS * ADDS_PER_POSEIDON_ROUND
+def WRAP_MULS : Nat := COMPLETE_ADDS * 12 + TRANSCRIPT_MULS
+def WRAP_ADDSUBS : Nat := COMPLETE_ADDS * 29 + TRANSCRIPT_ADDS
+
+/-- The transcript split is a PARTITION of the transcript stage — no row is counted twice or lost. -/
+theorem the_transcript_split_is_the_stage :
+    TRANSCRIPT_MULS + TRANSCRIPT_ADDS = STAGE_TRANSCRIPT := by decide
 
 theorem the_atom_census_splits :
     WRAP_MULS = 588732
-    ∧ WRAP_ADDSUBS = 1009664
+    ∧ WRAP_ADDSUBS = 1082924
+    ∧ TRANSCRIPT_MULS = 170940
+    ∧ TRANSCRIPT_ADDS = 73260
     ∧ WRAP_MULS + WRAP_ADDSUBS = VERIFIER_ROWS := by
-  refine ⟨by decide, by decide, by decide⟩
+  refine ⟨by decide, by decide, by decide, by decide, by decide⟩
 
 /-- ⚑ **THE EXCLUDED SRS LEG, RE-PRICED IN THE SAME UNITS** — and it is worse in cells than in rows.
-`SRS_BASE_ROWS / 41` complete additions at `3 048` columns is `2.56 × 10¹⁰` cells, **176× the rest**,
-so §6's exclusion is not a rounding decision. -/
+`SRS_BASE_ROWS / 41` complete additions at `3 048` columns is `2.56 × 10¹⁰` cells, **158× the rest**,
+so §6's exclusion is not a rounding decision. (It read `176×` while the included side carried the
+21-instruction round; the excluded leg is pure curve work and did not move.) -/
 def SRS_BASE_CELLS : Nat := (SRS_BASE_ROWS / ROWS_PER_COMPLETE_ADD) * RCB_ROW_COLS
 
 theorem the_srs_leg_dwarfs_it_in_cells_too :
-    SRS_BASE_CELLS = 25569257472 ∧ 176 * WRAP_CELLS < SRS_BASE_CELLS := by
+    SRS_BASE_CELLS = 25569257472 ∧ 158 * WRAP_CELLS < SRS_BASE_CELLS := by
   refine ⟨by decide, by decide⟩
 
 /-! ## §6 — THE OPENING IS VACUOUS UNTIL THE SRS-BASE LEG IS DISCHARGED.
@@ -873,6 +938,11 @@ theorem aluChainRow1_canonical :
 #assert_axioms chain_forces_limb_equality
 #assert_axioms unchained_transition_relates_nothing
 #assert_axioms inter_row_wiring_is_transition_only
+-- ⚑ 2026-08-08: the round is 30 instructions, not 21. Welded to the emitted permutation in
+-- `MinaWrapVerifierSponge` §8 so the census and the program cannot disagree again.
+#assert_axioms rows_per_poseidon_round_eq
+#assert_axioms rows_per_poseidon_perm_eq
+#assert_axioms the_transcript_split_is_the_stage
 #assert_axioms verifier_rows_eq
 #assert_axioms xi_aggregate_dominates
 #assert_axioms srs_leg_dwarfs_the_rest

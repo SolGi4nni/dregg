@@ -61,7 +61,7 @@ a theorem or a measurement rather than a caveat:
 
   * **The ROM does not scale to the whole verifier.** `MAX_EXACT_PUBLIC_CELLS = 2^25`
     (`circuit/src/descriptor_ir2.rs:523`) against this ROM's arity `55` caps a program at `610 080`
-    instructions, and §7's census prices the verifier at `1 598 396`. `rom_cannot_hold_the_whole_verifier`
+    instructions, and §7's census prices the verifier at `1 671 656`. `rom_cannot_hold_the_whole_verifier`
     is that as a `decide`, not a worry. The whole verifier in one instance needs either a narrower
     instruction word or a ROM the IR cannot currently express (a root-committed table — the named
     gap `RowSemantics.committedRows`).
@@ -526,8 +526,8 @@ runs out of cells at 29% of its rows. -/
 theorem rom_cell_cap_binds_before_the_row_cap :
     MAX_ROM_CELLS / ROM_ARITY = 610080 ∧ MAX_ROM_CELLS / ROM_ARITY < MAX_ROM_ROWS := by decide
 
-/-- ⚑ **AND THE WHOLE VERIFIER DOES NOT FIT.** `MinaWrapVerifierAir.VERIFIER_ROWS = 1 598 396`
-instructions against a 610 080-instruction ROM: the program is **2.62×** the largest one instance
+/-- ⚑ **AND THE WHOLE VERIFIER DOES NOT FIT.** `MinaWrapVerifierAir.VERIFIER_ROWS = 1 671 656`
+instructions against a 610 080-instruction ROM: the program is **2.74×** the largest one instance
 can name. This is a STRUCTURAL finding about the deployed IR, not a budget: the whole Wrap verifier
 cannot be a single ROM-bound instance at this instruction width, and the ways out are a narrower
 instruction word (the immediate is 32 of the 55 cells), a segmented ROM across instances with a
@@ -537,7 +537,7 @@ theorem rom_cannot_hold_the_whole_verifier :
     MAX_ROM_CELLS / ROM_ARITY < MinaWrapVerifierAir.VERIFIER_ROWS := by decide
 
 /-- ⚑ **THE IMMEDIATE IS WHAT COSTS IT.** Drop the 32 immediate limbs and the instruction word is
-23 cells, which holds `1 458 888` instructions — still short of the verifier's `1 598 396`, by 8.7%.
+23 cells, which holds `1 458 888` instructions — still short of the verifier's `1 671 656`, by 12.7%.
 So even the narrow word does not close it, and that is worth knowing before anyone spends a week on
 the encoding: the answer is segmentation or a root-committed table, not a tighter word. -/
 theorem the_narrow_word_still_does_not_fit :
@@ -888,14 +888,18 @@ theorem every_stage_fits_one_rom_but_their_sum_does_not :
       ∧ MAX_ROM_CELLS / ROM_ARITY < MinaWrapVerifierAir.VERIFIER_ROWS := by decide
 
 /-- ⚑ **AND THE STAGE THIS FILE'S ATOM BUILDS IS THE ONE THAT FITS MOST COMFORTABLY.** The Fq
-transcript sponge is 148 permutations × 1 155 instructions = `170 940`, **28.0%** of one ROM — so
+transcript sponge is 148 permutations × 1 650 instructions = `244 200`, **40.0%** of one ROM — so
 the stage §7's S-box is the atom of is reachable as a single instance, and it is the natural next
 rung. What is NOT yet done is the register allocation for a full round (three S-boxes and the 3×3
 MDS over the `fq_kimchi` constants, which is why `NREG = 6`) and the `qLimb` instantiation the Wrap
-phase-2 sponge needs; this file's stage is `pLimb`. Named, not implied. -/
+phase-2 sponge needs; this file's stage is `pLimb`. Named, not implied.
+
+⚠ The second bound read `< 29 %` until 2026-08-08 and `decide` REFUTED it the moment the census's
+round went 21 → 30 instructions. That refusal is the whole point of stating a price as a theorem:
+this file's figure had no way of silently following the correction. -/
 theorem the_transcript_sponge_is_the_reachable_stage :
     MinaWrapVerifierAir.STAGE_TRANSCRIPT = 148 * MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM
-      ∧ 100 * MinaWrapVerifierAir.STAGE_TRANSCRIPT < 29 * (MAX_ROM_CELLS / ROM_ARITY) := by decide
+      ∧ 100 * MinaWrapVerifierAir.STAGE_TRANSCRIPT < 41 * (MAX_ROM_CELLS / ROM_ARITY) := by decide
 
 /-! ### §8b — THE SAME MACHINE AT A THOUSAND INSTRUCTIONS.
 
@@ -978,7 +982,8 @@ theorem longProg_rom_cells : 1024 * ROM_ARITY = 56320 ∧ 1024 * ROM_ARITY < MAX
 
 `MinaWrapVerifierAir` §6 proved the in-AIR IPA opening VACUOUS while `sg` is a free prover-chosen
 point (`opening_is_vacuous_when_sg_is_free`), because `sg = ⟨s, srs.g⟩` is an MSM over the 32 768
-SRS bases and that leg is 215× the rest of the verifier.
+SRS bases and that leg is 205× the rest of the verifier (`srs_leg_dwarfs_the_rest`; it read 215×
+while the included side carried the 21-instruction Poseidon round).
 
 ⚑ **THE DISCHARGE NOW EXISTS, NATIVELY**: `batch_dlog_accumulator_check` was wired and measured on
 7 real Mina block proofs — the honest batch discharged in 27.4 s, a forged `sg` refused in each of

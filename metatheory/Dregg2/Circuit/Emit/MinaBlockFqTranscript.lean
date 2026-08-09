@@ -440,22 +440,26 @@ theorem the_link_absorbs_exactly_one_element :
 
 /-! ## §5b — THE CENSUS CORRECTION, TO THE FIGURE.
 
-`MinaWrapVerifierSponge.the_census_underprices_the_round` bracketed the error at 42–43%; the
-docblocks then said "43%", which rounds the wrong way for a number that gets quoted. The exact
-split is stated here because this file is where the 46-permutation price is computed from it. -/
+⚑ **AS OF 2026-08-08 THE CENSUS *IS* THE CORRECTED FIGURE** — `MinaWrapVerifierAir` derives its
+round from `MULS_PER_POSEIDON_ROUND + ADDS_PER_POSEIDON_ROUND`, welded to the emitted permutation by
+`MinaWrapVerifierSponge.the_census_perm_is_the_emitted_permutation`. What remains to state here is
+the SPLIT, because this file is where the 46-permutation price is computed from it, and the exact
+magnitude of the error the census carried until then. -/
 
-/-- ⚑ **A PERMUTATION IS 1 650 OPS: 1 155 MULTIPLIES AND 495 ADDITIONS.** The census
-(`ROWS_PER_POSEIDON_PERM = 1155`) counted the multiplies and none of the additions — not "most" of
-them, ALL 495: the two sums each 3×3 MDS row needs and the round constant on top, 9 per round. The
-last two clauses bracket the ratio inside `(1.428, 1.429)`, i.e. the census is low by **42.9%**, not
-43% and not 42%. -/
+/-- ⚑ **A PERMUTATION IS 1 650 OPS: 1 155 MULTIPLIES AND 495 ADDITIONS.** The census counted the
+multiplies and none of the additions — not "most" of them, ALL 495: the two sums each 3×3 MDS row
+needs and the round constant on top, 9 per round. The last two clauses bracket
+`emitted / multiply-only` inside `(1.428, 1.429)`, i.e. the omission cost **42.9%**, not 43% and not
+42%. ⚠ The bracket is stated against the LITERAL 1 155 rather than against a `def`: the def it used
+to name has been repaired, and a bracket that reads both sides off the repaired def would be
+`x < x` — vacuous, and it would have compiled. -/
 theorem the_permutation_opcode_split_exactly :
-    PastaPoseidon.rounds * 21 = 1155
-    ∧ PastaPoseidon.rounds * 9 = 495
-    ∧ 1155 + 495 = ROWS_PER_PERM_MEASURED
-    ∧ ROWS_PER_PERM_MEASURED = 1650
-    ∧ 1428 * MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM < 1000 * ROWS_PER_PERM_MEASURED
-    ∧ 1000 * ROWS_PER_PERM_MEASURED < 1429 * MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM := by
+    PastaPoseidon.rounds * MinaWrapVerifierAir.MULS_PER_POSEIDON_ROUND = 1155
+    ∧ PastaPoseidon.rounds * MinaWrapVerifierAir.ADDS_PER_POSEIDON_ROUND = 495
+    ∧ 1155 + 495 = MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM
+    ∧ MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM = 1650
+    ∧ 1428 * 1155 < 1000 * MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM
+    ∧ 1000 * MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM < 1429 * 1155 := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **AND WHAT THIS BLOCK'S PHASE-2 SPONGE COSTS.** 91 elements at rate 2 is 45 arrival
@@ -467,8 +471,8 @@ def WRAP_TAPE2_PERMS : Nat := 46
 theorem the_block_tape_costs_46_permutations :
     WRAP_TAPE2.length = 91
     ∧ (WRAP_TAPE2.length - 1) / 2 + 1 = WRAP_TAPE2_PERMS
-    ∧ WRAP_TAPE2_PERMS * ROWS_PER_PERM_MEASURED = 75900
-    ∧ WRAP_TAPE2_PERMS * ROWS_PER_PERM_MEASURED < MAX_ROM_CELLS / ROM_ARITY := by
+    ∧ WRAP_TAPE2_PERMS * MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM = 75900
+    ∧ WRAP_TAPE2_PERMS * MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM < MAX_ROM_CELLS / ROM_ARITY := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ## §6 — RESIDUALS, NAMED.

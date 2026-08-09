@@ -23,7 +23,9 @@ Priced. **Two answers, and the first one is the load-bearing one.**
      belongs to.** `Body.to_input` on the real devnet block is **38 whole field elements + 819
      packed chunks (2 381 bits)**, packing to **49 field elements** (38 + 11), absorbed at rate 2 as
      **25 Kimchi permutations**. On the deployed machine a permutation is **1 650 instructions**
-     (`MinaWrapVerifierSponge.ROWS_PER_ROUND = 30`), so the sponge is **41 250 rows** and the
+     (`MinaWrapVerifierAir.ROWS_PER_POSEIDON_PERM`, welded to the emitted program by
+     `MinaWrapVerifierSponge.the_census_perm_is_the_emitted_permutation`), so the sponge is
+     **41 250 rows** and the
      packing's shift-and-add chain is **2 × 819 = 1 638**. `pack_to_fields_does_not_dominate`.
 
 ⚠ **THE 25 WAS 26 UNTIL 2026-08-07, AND THE `+1` WAS A DOUBLE-COUNTED SQUEEZE.** `PERMS_FOR_BODY`
@@ -151,7 +153,13 @@ theorem the_preimage_packs_to_49_field_elements :
 
 /-! ## §3 — THE PRICE, AGAINST THE ROW COUNT THE PASTA CONE ALREADY EMITS. -/
 
-open Dregg2.Circuit.Emit.MinaWrapVerifierSponge (ROWS_PER_ROUND ROWS_PER_PERM_MEASURED)
+-- ⚑ The price below is stated against `MinaWrapVerifierAir`'s stage census DIRECTLY. It used to
+-- read a `ROWS_PER_PERM_MEASURED` twin in `MinaWrapVerifierSponge`, which existed only because the
+-- census disagreed with the emitted program; that twin is deleted (2026-08-08) and the census is
+-- now welded to `permInstrs.length` by
+-- `MinaWrapVerifierSponge.the_census_perm_is_the_emitted_permutation`, so there is exactly one
+-- number here to price against.
+open Dregg2.Circuit.Emit.MinaWrapVerifierAir (ROWS_PER_POSEIDON_PERM)
 
 /-- ⚑ Absorbing `n` elements at rate 2 costs `⌈n/2⌉` permutations — **the closing squeeze IS the
 last block's permutation, not an extra one after it.** Corrected 2026-08-07 (it read `… + 1`); the
@@ -160,7 +168,7 @@ derivation lives in `Circuit.Emit.MinaStateBodyHashChain` and
 def PERMS_FOR_BODY : Nat := (49 + 1) / 2
 
 /-- The sponge half of a state-body hash, in emitted instructions. -/
-def SPONGE_ROWS : Nat := PERMS_FOR_BODY * ROWS_PER_PERM_MEASURED
+def SPONGE_ROWS : Nat := PERMS_FOR_BODY * ROWS_PER_POSEIDON_PERM
 
 /-- ⚑ `acc := acc · 2^n` (a multiply by a ROM immediate) then `acc := acc + x` — **two instructions
 per chunk on the machine that already exists.** No branch, by §1; no new gate shape. -/
@@ -171,7 +179,7 @@ feeds.** 25 permutations at 1 650 instructions is 41 250 rows; the packing is 1 
 two brackets rather than a rounded percentage, so the claim is checkable in the kernel. -/
 theorem pack_to_fields_does_not_dominate :
     PERMS_FOR_BODY = 25
-    ∧ ROWS_PER_PERM_MEASURED = 1650
+    ∧ ROWS_PER_POSEIDON_PERM = 1650
     ∧ SPONGE_ROWS = 41250
     ∧ PACK_ROWS = 1638
     ∧ 100 * PACK_ROWS < 4 * SPONGE_ROWS
@@ -185,8 +193,8 @@ that proves in minutes; it is the same size. ⚑ And it is now BUILT, at 25 link
 descriptor: `Circuit.Emit.MinaStateBodyHashChain`. -/
 theorem the_state_hash_is_the_size_of_the_phase1_chain :
     SPONGE_ROWS + PACK_ROWS = 42888
-    ∧ 27 * ROWS_PER_PERM_MEASURED = 44550
-    ∧ SPONGE_ROWS + PACK_ROWS < 27 * ROWS_PER_PERM_MEASURED := by
+    ∧ 27 * ROWS_PER_POSEIDON_PERM = 44550
+    ∧ SPONGE_ROWS + PACK_ROWS < 27 * ROWS_PER_POSEIDON_PERM := by
   refine ⟨?_, ?_, ?_⟩ <;> decide
 
 /-! ## §4 — AND IT IS NOT ON THE PHASE-1 PATH.

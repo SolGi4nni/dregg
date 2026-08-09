@@ -31,7 +31,7 @@
 //!
 //! ⚑ **WHAT THIS DOES NOT SHOW.** That the machine runs Kimchi's `verify`. It runs a 4-instruction
 //! program. The Lean side's `rom_cannot_hold_the_whole_verifier` is the `decide` that one
-//! exact-public ROM tops out at 610 080 instructions against the verifier's 1 598 396, so the whole
+//! exact-public ROM tops out at 610 080 instructions against the verifier's 1 671 656, so the whole
 //! verifier is not a single ROM-bound instance at this instruction width at all.
 //!
 //! Run: `cargo test -p dregg-circuit --release --test pasta_sbox_program_proves -- --nocapture`
@@ -518,9 +518,10 @@ fn the_machine_is_priced_per_instruction() {
     );
 
     // ⚑ THE CENSUS, RE-DENOMINATED IN THE MACHINE. `MinaWrapVerifierAir` prices the verifier at
-    // 1 598 396 ALU rows; on this machine an instruction is an ALU row plus the register file, so
-    // the row count is the same and only the per-row cost moves.
-    const VERIFIER_INSTRUCTIONS: usize = 1_598_396;
+    // 1 671 656 ALU rows; on this machine an instruction is an ALU row plus the register file, so
+    // the row count is the same and only the per-row cost moves. (It read 1 598 396 until
+    // 2026-08-08 — the census counted a Poseidon round at 21 instructions, the emitted round is 30.)
+    const VERIFIER_INSTRUCTIONS: usize = 1_671_656;
     println!(
         "\nthe Wrap verifier at {VERIFIER_INSTRUCTIONS} instructions:\n  trace {:.2} GB\n  \
          prove >= {:.1} min at this slope and the deployed lb=6 (a FLOOR, see above)",
