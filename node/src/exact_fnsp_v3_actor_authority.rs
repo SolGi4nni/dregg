@@ -167,9 +167,12 @@ pub(crate) fn capture_durable_exact_fnsp_v3_actor(
     })
 }
 
-/// Exact spends accept a checkpoint-only ledger only when the node can re-verify its root under a
-/// known committee.  A structural QC, a foreign federation row, or a classical finalization vote
-/// with no enrolled PQ twin is not silently promoted to authority here.
+/// Exact spends accept a checkpoint-only ledger only when the node can re-verify its root under
+/// the ONE committee entitled to have signed it — the version current at the anchor's
+/// blocklace block (`crate::state::anchor_committee_for_root`), never "any committee we have
+/// ever known" (a rotated-out member's keys must not authenticate a later anchor). A structural
+/// QC, a foreign federation row, an unresolvable committee version, or a classical finalization
+/// vote with no enrolled PQ twin is not silently promoted to authority here.
 fn checkpoint_anchor_is_authenticated(
     locked: &NodeStateInner,
     anchor: &StoredAttestedRoot,
@@ -182,26 +185,15 @@ fn checkpoint_anchor_is_authenticated(
         return false;
     }
 
-    for (index, committee) in locked.derived_committee_history.iter().enumerate().rev() {
-        if committee.is_empty() {
-            continue;
+    match crate::state::anchor_committee_for_root(locked, anchor) {
+        Ok((committee, pq_committee)) => {
+            !committee.is_empty()
+                && checkpoint_anchor_is_authenticated_for_committee(anchor, committee, pq_committee)
         }
-        let pq_committee = locked
-            .derived_committee_ml_dsa_history
-            .get(index)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if checkpoint_anchor_is_authenticated_for_committee(anchor, committee, pq_committee) {
-            return true;
-        }
+        // Fail closed: an anchor whose committee version cannot be resolved
+        // carries no authority.
+        Err(_) => false,
     }
-
-    !locked.known_federation_keys.is_empty()
-        && checkpoint_anchor_is_authenticated_for_committee(
-            anchor,
-            &locked.known_federation_keys,
-            &locked.known_federation_ml_dsa_keys,
-        )
 }
 
 fn checkpoint_anchor_is_authenticated_for_committee(

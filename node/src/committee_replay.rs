@@ -54,33 +54,87 @@ pub struct DerivedCommittee {
     pub threshold: usize,
     /// The constitution version (0 = genesis, +1 per applied amendment).
     pub version: u64,
-    /// Every committee the constitution passed through, genesis first. A
-    /// persisted attested root may be quorum-signed by ANY of these (whichever
-    /// was current when it was persisted), so the signed-anchor recovery check
-    /// accepts a quorum from any historical committee — all of them are
-    /// unforgeable to the offline-tamper adversary the anchor defends against
-    /// (it holds no committee keys of any epoch).
+    /// Every committee the constitution passed through, genesis first.
+    ///
+    /// ⚑ A persisted attested root is quorum-verified against exactly ONE of
+    /// these: the version that was current at the root's anchored block
+    /// ([`Self::version_at_block`]). It used to be "any historical committee",
+    /// justified as "unforgeable to an adversary holding no committee keys of
+    /// any epoch" — but a member ROTATED OUT (an evicted equivocator most of
+    /// all) holds exactly the keys of a former epoch, and a signature verified
+    /// against the wrong roster is not a verified signature. Version-specific
+    /// verification is what makes eviction mean anything on the restart path.
     pub history: Vec<Vec<[u8; 32]>>,
+    /// The ENROLLED ML-DSA-65 roster for each `history` entry, aligned
+    /// index-for-index with its participant set. Derived from the same sources
+    /// the live path trusts: the genesis-published roster for genesis members,
+    /// and the `MembershipAction::Join`'s carried `ml_dsa_pubkey` — the same
+    /// signed, committee-ratified block the live
+    /// `learn_committee_member_hybrid_key` learns from — for members admitted
+    /// on-chain. An entry is EMPTY (never partial) when any of its
+    /// participants has no derivable key; the hybrid restart re-verify then
+    /// REFUSES a root attributed to that version rather than downgrade to
+    /// ed25519-only.
+    pub ml_dsa_history: Vec<Vec<dregg_blocklace::pq::MlDsaPublicKey>>,
+    /// For every finalized actionable block the boot replay served: the
+    /// constitution version (index into `history`) that was CURRENT when it
+    /// was served — i.e. the committee whose quorum legitimately finalizes it.
+    /// Assigned by the same identity-absorbed walk that derives the committee
+    /// itself, so an amendment block carries the PRE-amendment version (the
+    /// committee that ratified it) and everything ordered after it carries the
+    /// successor. EMPTY on the no-membership fast path (one committee, no
+    /// ambiguity — every block is version 0).
+    pub version_at_block: HashMap<BlockId, u64>,
     /// How many amendments applied during replay (0 = genesis committee).
     pub amendments: usize,
 }
 
 impl DerivedCommittee {
-    fn genesis(cm: &ConstitutionManager) -> Self {
+    fn genesis(
+        cm: &ConstitutionManager,
+        pq_by_ed: &HashMap<[u8; 32], dregg_blocklace::pq::MlDsaPublicKey>,
+    ) -> Self {
         DerivedCommittee {
             participants: cm.participants().to_vec(),
             threshold: cm.threshold(),
             version: cm.version(),
             history: vec![cm.participants().to_vec()],
+            ml_dsa_history: vec![aligned_roster(cm.participants(), pq_by_ed)],
+            version_at_block: HashMap::new(),
             amendments: 0,
         }
     }
+}
+
+/// The enrolled ML-DSA roster for one committee snapshot, aligned
+/// index-for-index — or EMPTY when any participant's key is underivable
+/// (aligned-or-empty: a partial roster cannot pin every signer, and the hybrid
+/// re-verify treats a misaligned roster as a refusal, never a downgrade).
+fn aligned_roster(
+    participants: &[[u8; 32]],
+    pq_by_ed: &HashMap<[u8; 32], dregg_blocklace::pq::MlDsaPublicKey>,
+) -> Vec<dregg_blocklace::pq::MlDsaPublicKey> {
+    let mut roster = Vec::with_capacity(participants.len());
+    for p in participants {
+        match pq_by_ed.get(p) {
+            Some(k) => roster.push(k.clone()),
+            None => return Vec::new(),
+        }
+    }
+    roster
 }
 
 /// Fold ONE finalized membership block into the constitution — the pure twin of
 /// `blocklace_sync::execute_finalized_membership` (same calls, same order, no
 /// side effects). Returns `true` when this block's vote PASSED a proposal and
 /// the constitution was amended.
+///
+/// A step-bound REFUSAL (`Err` from `apply_if_passed`, the Lean-authored
+/// `ConfigBoundary.classifyStep` refusing by name) folds as NOT-installed —
+/// exactly what the live path did at the same committed position, so replay
+/// re-derives the same committee the running node had. The refusal is
+/// deterministic (a pure function of roster size and the step shape), so every
+/// node and every replay agrees on it.
 pub fn fold_membership_block(
     cm: &mut ConstitutionManager,
     block_id: BlockId,
@@ -103,7 +157,7 @@ pub fn fold_membership_block(
                 approve: true,
             };
             match cm.submit_vote(&vote, creator) {
-                Some(passed) => cm.apply_if_passed(&passed),
+                Some(passed) => cm.apply_if_passed(&passed).unwrap_or(false),
                 None => false,
             }
         }
@@ -120,7 +174,7 @@ pub fn fold_membership_block(
                 approve: true,
             };
             match cm.submit_vote(&vote, creator) {
-                Some(passed) => cm.apply_if_passed(&passed),
+                Some(passed) => cm.apply_if_passed(&passed).unwrap_or(false),
                 None => false,
             }
         }
@@ -130,7 +184,7 @@ pub fn fold_membership_block(
                 approve: true,
             };
             match cm.submit_vote(&vote, creator) {
-                Some(passed) => cm.apply_if_passed(&passed),
+                Some(passed) => cm.apply_if_passed(&passed).unwrap_or(false),
                 None => false,
             }
         }
@@ -157,10 +211,10 @@ pub fn fold_membership_block(
 /// (`blocklace_sync::solo_enrolled_creators`, the n=1 face of the verified rule's
 /// `BlocklaceFinality.enrolledId`); this arm still does not. Stated at its real resolution:
 ///
-///  * It is REACHABLE. Boot calls this over a lace restored by
-///    `finality.rs::from_checkpoint_trusted`, which re-admits every persisted block with no
-///    signature, roster or closure check — so an unenrolled creator's `MembershipVote` block IS
-///    walked here.
+///  * It is REACHABLE. Boot calls this over a lace restored by the AUTHENTICATING
+///    `finality.rs::from_checkpoint` (signature + closure + equivocation re-checked since
+///    2026-08-08), which still enforces NO enrollment/roster check — so an unenrolled creator's
+///    validly-signed `MembershipVote` block IS walked here.
 ///  * It is INERT, and that is a property of the constitution, not of this filter.
 ///    `constitution.rs::record_vote` opens with "Only current participants can vote" and returns
 ///    without recording when `!constitution.is_participant(&voter)`, and this walk passes
@@ -168,11 +222,11 @@ pub fn fold_membership_block(
 ///    block can register a `submit_proposal` id and can NEVER contribute an approval; a proposal
 ///    with no eligible approvals cannot pass `has_passed`, so no authority flows from it.
 ///  * It is NOT fixed here on purpose, and the reason is specific: the only creator key available
-///    to this function is the `ed25519 -> creator` map built FROM THE LACE ITSELF, and on the
-///    `from_checkpoint_trusted` path the lace is exactly the unauthenticated input. A filter keyed
-///    on attacker-supplied evidence is worse than the inert walk it would replace, and getting a
-///    sound one means giving this function committed state it does not currently take. Named as a
-///    follow-up, with its severity measured rather than assumed.
+///    to this function is the `ed25519 -> creator` map built FROM THE LACE ITSELF; the restore
+///    authenticates signatures but not ROSTER membership, so a filter keyed on lace-supplied
+///    evidence is worse than the inert walk it would replace, and getting a sound one means giving
+///    this function committed state it does not currently take. Named as a follow-up, with its
+///    severity measured rather than assumed.
 fn finalized_order(lace: &Blocklace, participants: &[[u8; 32]]) -> Vec<BlockId> {
     if participants.len() <= 1 {
         let mut v: Vec<(u64, [u8; 32], BlockId)> = lace
@@ -213,6 +267,12 @@ fn finalized_order(lace: &Blocklace, participants: &[[u8; 32]]) -> Vec<BlockId> 
 /// lace, starting from the genesis committee. See the module docs for the
 /// order/recompute discipline.
 ///
+/// `genesis_pq` is the genesis-published enrolled ML-DSA roster as
+/// `(ed25519, ml_dsa)` pairs; members admitted on-chain contribute the key
+/// their ratified `Join` block carries. Pass an empty slice when the genesis
+/// roster is unavailable/misaligned — every derived roster then comes out
+/// EMPTY and the hybrid restart re-verify refuses rather than downgrades.
+///
 /// Returns the summary AND the replayed `ConstitutionManager` itself: the
 /// manager carries the IN-FLIGHT proposal/vote state (a proposal that had
 /// gathered votes but had not passed at shutdown). The consensus boot must
@@ -221,23 +281,33 @@ fn finalized_order(lace: &Blocklace, participants: &[[u8; 32]]) -> Vec<BlockId> 
 /// its peers (which never restarted) can still pass it: a committee divergence.
 ///
 /// Fast path: a lace with no membership blocks returns the genesis committee
-/// without computing any order (the overwhelmingly common boot).
+/// without computing any order (the overwhelmingly common boot); its
+/// `version_at_block` is EMPTY (one committee — every block is version 0).
 pub fn derive_from_lace(
     lace: &Blocklace,
     genesis_committee: &[[u8; 32]],
+    genesis_pq: &[([u8; 32], dregg_blocklace::pq::MlDsaPublicKey)],
     timeout_waves: u64,
 ) -> (DerivedCommittee, ConstitutionManager) {
     let mut cm = ConstitutionManager::from_participants(genesis_committee.to_vec(), timeout_waves);
+
+    // ed25519 → enrolled ML-DSA key. Genesis entries are seeded first and are
+    // never rebound; a `Join` block's carried key binds FIRST-WINS thereafter
+    // (mirroring `learn_committee_member_hybrid_key`'s rebind refusal).
+    let mut pq_by_ed: HashMap<[u8; 32], dregg_blocklace::pq::MlDsaPublicKey> =
+        genesis_pq.iter().cloned().collect();
 
     let has_membership = lace
         .iter()
         .any(|(_, b)| matches!(b.payload, Payload::MembershipVote { .. }));
     if !has_membership {
-        let summary = DerivedCommittee::genesis(&cm);
+        let summary = DerivedCommittee::genesis(&cm, &pq_by_ed);
         return (summary, cm);
     }
 
     let mut history = vec![cm.participants().to_vec()];
+    let mut ml_dsa_history = vec![aligned_roster(cm.participants(), &pq_by_ed)];
+    let mut version_at_block: HashMap<BlockId, u64> = HashMap::new();
     let mut folded: HashSet<BlockId> = HashSet::new();
     let mut amendments = 0usize;
 
@@ -247,6 +317,13 @@ pub fn derive_from_lace(
         let mut amended_this_pass = false;
 
         for id in order {
+            // Stamp the version this block is SERVED under, first-wins: a
+            // block served before an amendment keeps its pre-amendment stamp
+            // across the post-amendment order recomputes (the same identity
+            // absorption the fold itself uses). The amendment block is stamped
+            // BEFORE its fold applies, so it carries the version of the
+            // committee that ratified it.
+            version_at_block.entry(id).or_insert_with(|| cm.version());
             if folded.contains(&id) {
                 continue;
             }
@@ -260,9 +337,21 @@ pub fn derive_from_lace(
             // the hybrid consensus id.
             let creator = block.ed25519;
             folded.insert(id);
+            if let MembershipAction::Join {
+                node_id,
+                ml_dsa_pubkey,
+            } = &action
+            {
+                // Learn the joiner's enrolled PQ key from the same signed block
+                // the live path learns it from. First binding wins; a later
+                // Join claiming a different key for the same identity does not
+                // rebind.
+                pq_by_ed.entry(*node_id).or_insert(ml_dsa_pubkey.clone());
+            }
             if fold_membership_block(&mut cm, id, creator, &action) {
                 amendments += 1;
                 history.push(cm.participants().to_vec());
+                ml_dsa_history.push(aligned_roster(cm.participants(), &pq_by_ed));
                 amended_this_pass = true;
                 // The participant set changed: the tau order (leader election)
                 // may shift for everything not yet folded. Recompute and
@@ -282,6 +371,8 @@ pub fn derive_from_lace(
         threshold: cm.threshold(),
         version: cm.version(),
         history,
+        ml_dsa_history,
+        version_at_block,
         amendments,
     };
     (summary, cm)
@@ -383,7 +474,16 @@ mod tests {
         let r7 = round(&mut lace, &signers, 6, &r6, &[]);
         let _ = round(&mut lace, &signers, 7, &r7, &[]);
 
-        let (derived, _cm) = derive_from_lace(&lace, &genesis, 1000);
+        // Genesis-published PQ roster for the three genesis members (distinct
+        // marker keys — roster derivation is structural here).
+        let marker = |b: u8| dregg_blocklace::pq::MlDsaPublicKey([b; dregg_blocklace::pq::PK_LEN]);
+        let genesis_pq = vec![
+            (pk(&a), marker(0xA1)),
+            (pk(&b), marker(0xB1)),
+            (pk(&c), marker(0xC1)),
+        ];
+
+        let (derived, _cm) = derive_from_lace(&lace, &genesis, &genesis_pq, 1000);
         assert_eq!(
             derived.participants.len(),
             4,
@@ -398,6 +498,37 @@ mod tests {
         assert_eq!(derived.history.len(), 2, "genesis + amended");
         assert_eq!(derived.history[0].len(), 3);
         assert_eq!(derived.history[1].len(), 4);
+
+        // The amendment (Join) block executed under the GENESIS committee —
+        // its quorum is version 0, never the committee it created.
+        assert_eq!(
+            derived.version_at_block.get(&join_block_id).copied(),
+            Some(0),
+            "the ratified Join block is served under the committee that ratified it"
+        );
+        // Every stamped version indexes into the history.
+        assert!(
+            derived
+                .version_at_block
+                .values()
+                .all(|v| (*v as usize) < derived.history.len()),
+            "version stamps must index into the history"
+        );
+        // ML-DSA roster history: aligned per version. Version 0 = the three
+        // genesis keys; version 1 adds D's key carried by the ratified Join
+        // block (the placeholder these tests publish).
+        assert_eq!(derived.ml_dsa_history.len(), 2, "one roster per committee");
+        assert_eq!(derived.ml_dsa_history[0].len(), 3);
+        assert_eq!(derived.ml_dsa_history[1].len(), 4);
+        let d_idx = derived.history[1]
+            .iter()
+            .position(|p| *p == pk(&d))
+            .expect("D in the amended committee");
+        assert_eq!(
+            derived.ml_dsa_history[1][d_idx],
+            pq_placeholder(),
+            "D's enrolled key is the one its ratified Join block carried"
+        );
     }
 
     /// Under-quorum: only B approves (2-of-3 votes incl. proposer < 3) — the
@@ -429,7 +560,7 @@ mod tests {
         let r5 = round(&mut lace, &signers, 4, &r4, &[]);
         let _ = round(&mut lace, &signers, 5, &r5, &[]);
 
-        let (derived, _cm) = derive_from_lace(&lace, &genesis, 1000);
+        let (derived, _cm) = derive_from_lace(&lace, &genesis, &[], 1000);
         assert_eq!(
             derived.participants.len(),
             3,
@@ -452,7 +583,7 @@ mod tests {
         let r1 = round(&mut lace, &signers, 0, &[], &[]);
         let _ = round(&mut lace, &signers, 1, &r1, &[]);
 
-        let (derived, _cm) = derive_from_lace(&lace, &genesis, 1000);
+        let (derived, _cm) = derive_from_lace(&lace, &genesis, &[], 1000);
         assert_eq!(derived.participants.len(), 3);
         assert_eq!(derived.version, 0);
         assert_eq!(derived.amendments, 0);
@@ -478,7 +609,7 @@ mod tests {
         });
         lace.add_block(Payload::Ack);
 
-        let (derived, _cm) = derive_from_lace(&lace, &genesis, 1000);
+        let (derived, _cm) = derive_from_lace(&lace, &genesis, &[], 1000);
         assert_eq!(
             derived.participants.len(),
             2,

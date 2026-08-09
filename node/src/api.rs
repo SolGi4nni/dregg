@@ -10117,18 +10117,24 @@ async fn post_propose_epoch_transition(
     };
 
     let mut proposals = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
     // Removals first, then additions (a rotation = remove old + add new).
+    // `Err` ⇒ the proposal was REFUSED (missing ML-DSA key on an add) or failed
+    // to durably land (F2 fail-closed) and was NOT created/broadcast. Each
+    // refusal carries its OWN diagnosis, the entry names it, and the response
+    // verdict is `success: false` — a refusal must never render as the
+    // expected verdict.
     for pk in &removes {
-        // `None` ⇒ the proposal failed to durably land (F2 fail-closed) and was
-        // NOT created/broadcast; surface that to the operator rather than a stale id.
         let proposal_block = match blocklace.propose_membership(&state, *pk, false).await {
-            Some(block_id) => hex_encode(&block_id.0),
-            None => {
+            Ok(block_id) => hex_encode(&block_id.0),
+            Err(reason) => {
                 tracing::warn!(
                     validator = %hex_encode(pk),
-                    "epoch-transition remove proposal failed to persist durably — not created"
+                    reason = %reason,
+                    "epoch-transition remove proposal NOT created"
                 );
-                "error: durable persist failed; proposal not created".to_string()
+                failures.push(format!("remove {}: {reason}", hex_encode(pk)));
+                format!("error: {reason}")
             }
         };
         proposals.push(EpochProposalEntry {
@@ -10139,13 +10145,15 @@ async fn post_propose_epoch_transition(
     }
     for pk in &adds {
         let proposal_block = match blocklace.propose_membership(&state, *pk, true).await {
-            Some(block_id) => hex_encode(&block_id.0),
-            None => {
+            Ok(block_id) => hex_encode(&block_id.0),
+            Err(reason) => {
                 tracing::warn!(
                     validator = %hex_encode(pk),
-                    "epoch-transition add proposal failed to persist durably — not created"
+                    reason = %reason,
+                    "epoch-transition add proposal NOT created"
                 );
-                "error: durable persist failed; proposal not created".to_string()
+                failures.push(format!("add {}: {reason}", hex_encode(pk)));
+                format!("error: {reason}")
             }
         };
         proposals.push(EpochProposalEntry {
@@ -10161,11 +10169,15 @@ async fn post_propose_epoch_transition(
     };
 
     Ok(Json(ProposeEpochTransitionResponse {
-        success: true,
+        success: failures.is_empty(),
         proposals,
         committee_size,
         threshold,
-        error: None,
+        error: if failures.is_empty() {
+            None
+        } else {
+            Some(failures.join("; "))
+        },
     }))
 }
 

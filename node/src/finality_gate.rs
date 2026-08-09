@@ -60,10 +60,11 @@
 //!     (`blocklace_sync.rs::apply_passed_proposal`). A removed validator's NEW blocks keep passing
 //!     the pinned ingest while it is absent from the `participants` slice this gate is handed —
 //!     the falsifier's exact configuration, reached by an ordinary governance action.
-//!   * **restart.** `blocklace/src/finality.rs::from_checkpoint_trusted`, reached from
-//!     `blocklace_sync.rs`'s boot `store.load_blocklace`, rebuilds the whole lace by raw
-//!     postcard-decode-and-insert: no signature check, no roster check, no causal-closure check.
-//!     Anything that ever landed comes back unverified.
+//!   * **restart.** `blocklace/src/finality.rs::from_checkpoint`, reached from
+//!     `blocklace_sync.rs`'s boot `store.load_blocklace`, re-authenticates every block on restore
+//!     (ed25519 signature + causal closure + equivocation re-derived, since 2026-08-08 — it was
+//!     the verbatim `from_checkpoint_trusted` before that) but still enforces NO roster check:
+//!     an unenrolled creator's validly-signed blocks come back.
 //!
 //! THE FIX is in the verified rule, in Lean, where the rule lives:
 //! `BlocklaceFinality.enrolledId` + `tauOrder`/`tauOrderFast`/`tauOrderFastImpl`, with
@@ -179,6 +180,14 @@ impl VerifiedFinality {
         }
     }
 
+    /// The bare `"w=<W>;P=<...>;B=<...>"` lace wire, for gates that PREFIX it with their own
+    /// fields (the ES round-advance gate `crate::round_advance_gate::advance_wire` prepends
+    /// `r=<round>;t=<bit>;`). ONE encoder for every consensus gate — a second encoder is how two
+    /// gates come to disagree about what the lace says.
+    pub(crate) fn lace_wire(lace: &Blocklace, participants: &[[u8; 32]]) -> String {
+        Self::build_wire(lace, participants).wire
+    }
+
     /// Run the VERIFIED Lean RAW TOTAL-ORDER rule (`dregg_tau_order`, the export proved
     /// order-faithfully equal to `BlocklaceFinality.tauOrder` by `tau_order_export_eq`) over the lace
     /// and return the finalized total order as node `BlockId`s, in the verified order. `None` when the
@@ -249,7 +258,8 @@ impl VerifiedFinality {
     /// participant is never interned and never admitted". BOTH clauses were false, and
     /// `tests::attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule` measured it:
     /// [`Self::build_wire`]'s `next_extra` DOES intern every creator it meets, and the verified
-    /// `BlocklaceFinality.tauOrder` had NO identity filter — `leaderCoverage` is the union of the
+    /// `BlocklaceFinality.tauOrder` had NO identity filter — `leaderCoverage` (a def since deleted
+    /// with the `d182d10fc` τ-CM rewrite) was the union of the
     /// causal pasts of the ratifying wave-end blocks, so an unenrolled creator's blocks were swept
     /// into the finalized order the moment one honest node acked them. On a 4-creator / 3-round
     /// lace with 3 enrolled, the verified rule finalized 12 of 12 coordinates, all three of the
@@ -303,7 +313,8 @@ mod tests {
     /// put a non-participant's blocks into the lace and let the FINALITY GATE be the thing under test.
     /// The live wire uses `receive_block_pinned` — which refuses an unenrolled creator, but see the
     /// falsifier's HONEST SCOPE below for the two production paths that reach the same lace state
-    /// (roster rotation-out, and `from_checkpoint_trusted` on restart) without that check applying.
+    /// (roster rotation-out, and the roster-blind `from_checkpoint` restore on restart) without
+    /// that check applying.
     fn cross_linked_lace(creators: &[SigningKey]) -> Blocklace {
         let mut lace = Blocklace::new(creators[0].clone(), 3);
         let mut round_prev: Vec<BlockId> = Vec::new();
@@ -344,8 +355,9 @@ mod tests {
     ///     constitution every poll. A removed validator's NEW blocks keep passing the pinned ingest
     ///     while it is absent from the `participants` this gate is handed — exactly the lace below,
     ///     produced by governance rather than by an attacker.
-    ///   * RESTART. `blocklace/src/finality.rs::from_checkpoint_trusted` rebuilds the lace from
-    ///     redb by raw postcard-decode-and-insert: no signature, no roster, no closure check.
+    ///   * RESTART. `blocklace/src/finality.rs::from_checkpoint` rebuilds the lace from redb —
+    ///     re-authenticated since 2026-08-08 (signature + closure + equivocation), but still with
+    ///     NO roster check: an unenrolled creator's validly-signed blocks come back.
     /// So this is not a spare tyre. `receive_block` (ed25519-only) is still the right ingest for the
     /// test — it puts the adversary in front of the rule under test rather than in front of a
     /// predecessor that, on these two paths, is not there.

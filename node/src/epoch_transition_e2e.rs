@@ -155,7 +155,7 @@ impl Node {
                 passed = true;
             }
         }
-        if passed && self.cm.apply_if_passed(&proposal_block) {
+        if passed && self.cm.apply_if_passed(&proposal_block).unwrap_or(false) {
             // THE LIVE COMMITTEE ADVANCE (mirrors blocklace_sync::apply_committee_change).
             let participants: Vec<[u8; 32]> = self.cm.current.participants.clone();
             let threshold = self.cm.threshold();

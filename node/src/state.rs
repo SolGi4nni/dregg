@@ -415,24 +415,37 @@ pub struct NodeStateInner {
     pub committee_epoch: u64,
     /// Committees derived from the persisted lace's finalized membership
     /// history at boot (`committee_replay::derive_from_lace`), genesis first.
-    /// Empty when the chain carries no amendments. The signed-anchor recovery
-    /// check accepts an attested-root quorum from ANY of these: a root
-    /// persisted after a live epoch transition is signed by the AMENDED
-    /// committee, and verifying it against the genesis key set alone would
-    /// fail-close an honest restart. Every entry is unforgeable to the
-    /// offline-tamper adversary the anchor defends against (it holds no
-    /// committee keys of any version).
+    /// Empty when the chain carries no amendments.
+    ///
+    /// ⚑ The signed-anchor recovery check verifies each attested-root quorum
+    /// against exactly ONE of these: the version that was current at the
+    /// root's anchored block ([`Self::derived_committee_version_at_block`]).
+    /// It used to accept ANY entry, justified as "every entry is unforgeable
+    /// to an adversary holding no committee keys" — but a member rotated OUT
+    /// (an evicted equivocator above all) holds exactly the keys of a former
+    /// version, and a quorum verified against the wrong roster is not a
+    /// verified quorum.
     pub derived_committee_history: Vec<Vec<dregg_types::PublicKey>>,
-    /// HYBRID-PQ twin of [`Self::derived_committee_history`]: element `i` is the
-    /// ENROLLED ML-DSA-65 roster aligned index-for-index with
-    /// `derived_committee_history[i]`. A committee derived purely from the
-    /// on-chain membership blocklace carries NO ML-DSA key material (amendment
-    /// blocks record only ed25519 keys), so its entry here is EMPTY — and the
-    /// restart hybrid re-verify (`verify_finalization_quorum`) then REFUSES a
-    /// root signed by that historical committee rather than downgrade to
-    /// ed25519-only (fail-closed; the documented bound). The CURRENT committee's
-    /// roster lives in [`Self::known_federation_ml_dsa_keys`], not here.
+    /// HYBRID-PQ twin of [`Self::derived_committee_history`]: element `i` is
+    /// the ENROLLED ML-DSA-65 roster aligned index-for-index with
+    /// `derived_committee_history[i]`. Derived at boot from the
+    /// genesis-published roster plus each ratified `Join` block's carried
+    /// `ml_dsa_pubkey` (the same signed source the live
+    /// `learn_committee_member_hybrid_key` trusts). An entry is EMPTY (never
+    /// partial) when any of its members' keys is underivable — the restart
+    /// hybrid re-verify (`verify_finalization_quorum`) then REFUSES a root
+    /// attributed to that version rather than downgrade to ed25519-only
+    /// (fail-closed; the documented bound).
     pub derived_committee_ml_dsa_history: Vec<Vec<dregg_federation::frost::MlDsaPublicKey>>,
+    /// For every finalized actionable block of the restored lace: the
+    /// committee VERSION (index into [`Self::derived_committee_history`]) that
+    /// was current when the boot replay served it — the committee whose quorum
+    /// legitimately finalizes that block. Keyed by the raw `BlockId` bytes.
+    /// Empty when the chain carries no amendments (single version, no
+    /// ambiguity). The recovery anchor resolves every attested root through
+    /// this map; a root whose anchored block cannot be resolved does NOT
+    /// verify (fail closed).
+    pub derived_committee_version_at_block: std::collections::HashMap<[u8; 32], u64>,
     /// Boot handoff: the REPLAYED `ConstitutionManager` from
     /// `committee_replay::derive_from_lace` (main sets it right after the
     /// derivation; `run_blocklace_sync` `take()`s it as the consensus
@@ -804,6 +817,79 @@ fn recovery_read_error_is_fatal(cursor: Result<u64, dregg_persist::StoreError>) 
         Ok(_) => true,
         Err(_) => true,
     }
+}
+
+/// Resolve the ONE committee entitled to have quorum-signed `root`: the
+/// committee version that was current at the root's anchored block, per the
+/// boot replay of the chain's own membership history
+/// (`committee_replay::derive_from_lace` →
+/// [`NodeStateInner::derived_committee_version_at_block`]).
+///
+/// This is the committee-specificity weld for the restart path: a quorum is a
+/// quorum OF the committee that was current when the root was finalized —
+/// "verifies against some committee we once knew" admits every rotated-out
+/// member's keys (an evicted equivocator's above all) as anchor authority
+/// forever. The same defect class as a missing `config_seq`.
+///
+/// * No amendments on this chain ⇒ one committee for its whole history: the
+///   configured one (`known_federation_keys` + its aligned ML-DSA roster).
+/// * Amended chain ⇒ the root must carry a `blocklace_block_id` that resolves
+///   through the version map; the derived history entry for that version is
+///   the ONLY committee consulted. `Err` (fail closed) when the root carries
+///   no anchor block or anchors a block the restored lace does not know — the
+///   caller must treat the root as unverifiable, and an unverifiable root
+///   that CLAIMS a quorum as forged.
+pub(crate) fn anchor_committee_for_root<'a>(
+    s: &'a NodeStateInner,
+    root: &dregg_persist::StoredAttestedRoot,
+) -> Result<
+    (
+        &'a [dregg_types::PublicKey],
+        &'a [dregg_federation::frost::MlDsaPublicKey],
+    ),
+    String,
+> {
+    if s.derived_committee_history.len() <= 1 {
+        // No amendments: the configured committee is the only committee this
+        // chain has ever had. (An empty configured committee is the caller's
+        // "no keys loaded" fail-safe, not an error here.)
+        return Ok((
+            s.known_federation_keys.as_slice(),
+            s.known_federation_ml_dsa_keys.as_slice(),
+        ));
+    }
+    let Some(block_id) = root.blocklace_block_id else {
+        return Err(format!(
+            "attested root at height {} carries no blocklace_block_id on an amended chain — the \
+             committee version that signed it cannot be resolved",
+            root.height
+        ));
+    };
+    let Some(version) = s.derived_committee_version_at_block.get(&block_id).copied() else {
+        return Err(format!(
+            "attested root at height {} anchors block {} which the restored lace does not know — \
+             no committee version can vouch for it",
+            root.height,
+            dregg_types::hex_encode(&block_id)
+        ));
+    };
+    let committee = s
+        .derived_committee_history
+        .get(version as usize)
+        .ok_or_else(|| {
+            format!(
+                "attested root at height {} resolves to committee version {version} but the \
+                 derived history has {} entries — inconsistent boot derivation",
+                root.height,
+                s.derived_committee_history.len()
+            )
+        })?;
+    let roster = s
+        .derived_committee_ml_dsa_history
+        .get(version as usize)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    Ok((committee.as_slice(), roster))
 }
 
 /// Boot torn-tail recovery, with the ONE case where a non-converging walk is
@@ -1352,6 +1438,7 @@ impl NodeState {
                 committee_epoch: 0,
                 derived_committee_history: Vec::new(),
                 derived_committee_ml_dsa_history: Vec::new(),
+                derived_committee_version_at_block: std::collections::HashMap::new(),
                 boot_constitution: None,
                 max_root_age_secs: 3600,
                 threshold_key_share: None,
@@ -1549,6 +1636,7 @@ impl NodeState {
                 committee_epoch: 0,
                 derived_committee_history: Vec::new(),
                 derived_committee_ml_dsa_history: Vec::new(),
+                derived_committee_version_at_block: std::collections::HashMap::new(),
                 boot_constitution: None,
                 max_root_age_secs: 3600,
                 threshold_key_share: None,
@@ -1768,6 +1856,20 @@ impl NodeState {
     /// forge — they hold no committee keys) and enforces a monotonic anti-rollback
     /// floor so a node refuses to boot on an older internally-consistent snapshot.
     ///
+    /// ⚑ COMMITTEE-SPECIFIC (2026-08-08): each attested root is verified against
+    /// exactly ONE committee — the version that was current at its anchored
+    /// block ([`anchor_committee_for_root`]) — never "any committee we have
+    /// ever known". The old any-candidate scan let a member rotated out at
+    /// version `v` (an evicted equivocator above all) quorum-sign a fabricated
+    /// root at any later height and anchor a restart with keys the chain had
+    /// already withdrawn. The same pass removed three unjustified skip doors:
+    /// a `threshold_qc` root (nothing in this codebase produces one — its
+    /// presence is a tamper/corruption claim and REFUSES), a foreign
+    /// `federation_id` on the latest root (a store from another federation
+    /// refuses to anchor this one — re-genesis instead of a silently
+    /// unanchored boot), and an unreadable attested-root row on a node with
+    /// finalized state (fail closed, mirroring the F3 recorded-root rule).
+    ///
     /// Returns `Err` (refuse to start) on: a same-epoch attested root whose committee
     /// quorum signature does NOT verify (a forged/unsigned finalization); a recovered
     /// head whose canonical root contradicts the committee-signed root at the attested
@@ -1780,82 +1882,66 @@ impl NodeState {
         s: &NodeStateInner,
         recovered_root: [u8; 32],
     ) -> Result<(), String> {
-        let committee = &s.known_federation_keys;
-        // Candidate committees for quorum verification: every constitution
-        // version derived from the chain's finalized membership history
-        // (newest first — the likeliest signer of the latest root), then the
-        // genesis/config committee. A live epoch transition keeps
-        // `federation_id` stable, so a root persisted after an amendment is
-        // quorum-signed by an AMENDED committee — verifying against the
-        // genesis keys alone would fail-close an honest restart. Accepting any
-        // historical committee keeps the anchor's guarantee: the offline
-        // store-tamper adversary holds no committee keys of ANY version.
-        // Each candidate committee is paired with its ENROLLED ML-DSA roster
-        // (aligned index-for-index): the hybrid restart re-verify pins each
-        // signer's PQ half to the enrolled key at its committee index. A
-        // historical committee derived purely from the on-chain membership
-        // blocklace has NO recorded ML-DSA roster (its twin entry is empty), so
-        // `verify_finalization_quorum` REFUSES a root signed by it — no silent
-        // ed25519-only downgrade. The CURRENT committee pairs with
-        // `known_federation_ml_dsa_keys`.
-        let empty_roster: Vec<dregg_federation::frost::MlDsaPublicKey> = Vec::new();
-        let mut quorum_candidates: Vec<(
-            &[dregg_types::PublicKey],
-            &[dregg_federation::frost::MlDsaPublicKey],
-        )> = s
-            .derived_committee_history
-            .iter()
-            .enumerate()
-            .rev()
-            .map(|(i, c)| {
-                let roster = s
-                    .derived_committee_ml_dsa_history
-                    .get(i)
-                    .map(|r| r.as_slice())
-                    .unwrap_or(empty_roster.as_slice());
-                (c.as_slice(), roster)
-            })
-            .collect();
-        quorum_candidates.push((
-            committee.as_slice(),
-            s.known_federation_ml_dsa_keys.as_slice(),
-        ));
-        quorum_candidates.retain(|(c, _)| !c.is_empty());
         let head_height = s.store.recovered_head_height().ok().flatten().unwrap_or(0);
 
         // The UNFORGEABLE floor: the height of the latest VALIDLY-SIGNED attested root.
         let mut signed_floor: u64 = 0;
         match s.store.latest_attested_root() {
             Ok(Some(signed)) => {
-                if quorum_candidates.is_empty() {
+                // Resolve the ONE committee entitled to have signed this root
+                // (the version current at its anchored block). `Err` means no
+                // committee can vouch for it — a root that nonetheless CLAIMS
+                // a quorum is treated as forged below.
+                let resolved = anchor_committee_for_root(s, &signed);
+                if signed.threshold_qc.is_some() {
+                    // ⚑ Nothing in this codebase produces a threshold-QC
+                    // attested root (`threshold_qc: Some` appears in no
+                    // production constructor). Its presence on the LATEST root
+                    // is a corruption/tamper claim whose acceptance used to
+                    // DISABLE the anchor for the whole boot — the exact
+                    // "unverifiable ⇒ unenforced" door an offline attacker
+                    // wants. Refuse.
+                    tracing::error!(
+                        height = signed.height,
+                        "the latest stored attested root claims a BLS threshold QC, which no \
+                         production path emits — STORE INTEGRITY EVENT (NODE-1), refusing to start"
+                    );
+                    return Err(format!(
+                        "recovery anchor failed: the latest stored attested root at height {} \
+                         claims a BLS threshold QC that this node cannot verify and no production \
+                         path produces — refusing to boot with the signed anchor disabled (NODE-1)",
+                        signed.height
+                    ));
+                } else if signed.federation_id.0 != s.federation_id {
+                    // ⚑ A store whose LATEST finalization belongs to another
+                    // federation is not this federation's store. Skipping the
+                    // anchor here (the old behavior) let one flipped, unsigned
+                    // byte disable NODE-1 for the whole boot. Refuse loudly:
+                    // the honest remedy is a re-genesis, not an unanchored boot.
+                    tracing::error!(
+                        height = signed.height,
+                        stored = %dregg_types::hex_encode(&signed.federation_id.0),
+                        ours = %dregg_types::hex_encode(&s.federation_id),
+                        "the latest stored attested root belongs to a DIFFERENT federation — \
+                         refusing to boot this store under this federation (NODE-1); re-genesis \
+                         the data dir if the federation really changed"
+                    );
+                    return Err(format!(
+                        "recovery anchor failed: the latest stored attested root at height {} was \
+                         finalized under a different federation id — this store does not belong \
+                         to this federation; re-genesis instead of booting unanchored (NODE-1)",
+                        signed.height
+                    ));
+                } else if matches!(&resolved, Ok((c, _)) if c.is_empty()) {
                     tracing::warn!(
                         height = signed.height,
                         "recovery signed-anchor SKIPPED: no committee keys loaded — cannot verify \
                          the attested-root quorum signature (NODE-1); using the best-effort \
                          high-water mark only"
                     );
-                } else if signed.threshold_qc.is_some() {
-                    // A BLS threshold-QC root: Ed25519 quorum verification does not apply
-                    // (BLS aggregate verify is a higher layer). Do not enforce the signed
-                    // anchor this boot rather than false-refuse a QC root.
-                    tracing::warn!(
-                        height = signed.height,
-                        "recovery signed-anchor: the latest attested root uses a BLS threshold QC \
-                         — Ed25519 quorum verification not applicable; signed anchor not enforced \
-                         this boot (NODE-1)"
-                    );
-                } else if signed.federation_id.0 != s.federation_id {
-                    // From a DIFFERENT committee/epoch (e.g. before a rotation): its signers
-                    // are not the current committee, so `verify_signatures` would
-                    // false-refuse. Skip the strict signature anchor for a foreign-epoch root.
-                    tracing::warn!(
-                        height = signed.height,
-                        "recovery signed-anchor: the latest attested root is from a different \
-                         federation epoch — signed anchor not enforced this boot (NODE-1)"
-                    );
-                } else if quorum_candidates.iter().any(|(c, pq)| {
-                    signed.verify_signatures(c) || signed.verify_finalization_quorum(c, pq)
-                }) {
+                } else if matches!(&resolved, Ok((c, pq)) if signed.verify_signatures(c)
+                    || signed.verify_finalization_quorum(c, pq))
+                {
                     // A genuine committee quorum over this root: EITHER the
                     // light-client attestation (`verify_signatures`, the local
                     // node's sig over the full preimage — solo / threshold-1) OR
@@ -1889,17 +1975,28 @@ impl NodeState {
                 {
                     // The root CLAIMS a quorum (enough signatures / a non-empty
                     // finalization quorum) but it does NOT verify against the
-                    // committee — a forged/tampered attestation. Refuse.
+                    // one committee entitled to have signed it — a forged or
+                    // wrong-committee attestation (including a quorum from a
+                    // committee version the chain had already rotated out, and
+                    // a root whose anchored block resolves to no known
+                    // version). Refuse.
+                    let why = match &resolved {
+                        Ok(_) => "does not verify against the committee current at its anchored \
+                                  block"
+                            .to_string(),
+                        Err(e) => format!("cannot be attributed to any committee version: {e}"),
+                    };
                     tracing::error!(
                         height = signed.height,
+                        why = %why,
                         "the latest stored attested root CLAIMS a committee quorum that does NOT \
                          verify — STORE INTEGRITY EVENT (NODE-1), refusing to start"
                     );
                     return Err(format!(
                         "recovery anchor failed: the latest stored attested root at height {} \
-                         claims a committee quorum that does not verify — refusing to trust a \
-                         forged finalization (NODE-1)",
-                        signed.height
+                         claims a committee quorum that {} — refusing to trust a forged \
+                         finalization (NODE-1)",
+                        signed.height, why
                     ));
                 } else {
                     // A TRAILING full-mode head: persisted synchronously with only
@@ -1918,9 +2015,8 @@ impl NodeState {
                     // integrity guarantee the lone signature provides is kept.
                     if head_height == signed.height
                         && recovered_root != signed.merkle_root
-                        && quorum_candidates
-                            .iter()
-                            .any(|(c, pq)| signed.has_any_valid_committee_signature(c, pq))
+                        && matches!(&resolved, Ok((c, pq))
+                            if signed.has_any_valid_committee_signature(c, pq))
                     {
                         tracing::error!(
                             height = signed.height,
@@ -1941,12 +2037,18 @@ impl NodeState {
                     let mut best: u64 = 0;
                     if let Ok(roots) = s.store.all_attested_roots() {
                         for r in &roots {
+                            // Each lower root is verified against the ONE
+                            // committee version current at ITS anchored block
+                            // (never any-candidate): the anchor a restart
+                            // falls back to must clear the same bar as the
+                            // head it replaces.
                             if r.height < signed.height
                                 && r.federation_id.0 == s.federation_id
                                 && r.threshold_qc.is_none()
-                                && quorum_candidates.iter().any(|(c, pq)| {
-                                    r.verify_signatures(c) || r.verify_finalization_quorum(c, pq)
-                                })
+                                && matches!(anchor_committee_for_root(s, r), Ok((c, pq))
+                                    if !c.is_empty()
+                                        && (r.verify_signatures(c)
+                                            || r.verify_finalization_quorum(c, pq)))
                                 && r.height > best
                             {
                                 best = r.height;
@@ -1968,7 +2070,24 @@ impl NodeState {
                 // high-water mark below still applies.
             }
             Err(e) => {
-                tracing::warn!(error = %e, "could not read latest attested root for recovery anchor");
+                // Same rule as the recorded-root read (finding F3): on a node
+                // WITH finalized state, an unreadable attested-root row is a
+                // corrupt strongest-gate and FAILS CLOSED — a read error must
+                // not silently disable the anchor. Only a genuinely fresh
+                // node (zero commit cursor) may continue.
+                if recovery_read_error_is_fatal(s.store.commit_cursor()) {
+                    tracing::error!(
+                        error = %e,
+                        "latest attested root is UNREADABLE at a non-zero commit cursor — \
+                         refusing to start with the signed anchor disabled (NODE-1)"
+                    );
+                    return Err(format!(
+                        "recovery anchor failed: the latest attested root is unreadable at a \
+                         non-zero commit cursor — refusing to boot with the signed anchor \
+                         silently disabled (NODE-1): {e}"
+                    ));
+                }
+                tracing::warn!(error = %e, "could not read latest attested root for recovery anchor (fresh node — continuing)");
             }
         }
 
@@ -4565,6 +4684,286 @@ mod crash_recovery_overlay_tests {
         assert!(
             err.contains("NODE-1") || err.contains("quorum signature"),
             "the refusal must name the signed-anchor failure; got: {err}"
+        );
+    }
+
+    /// Signing keys whose public halves are exactly `test_committee(n)`.
+    fn test_committee_keys(n: u8) -> Vec<dregg_types::SigningKey> {
+        (0..n)
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = i;
+                seed[31] = 0x5a;
+                dregg_types::SigningKey::from_bytes(&seed)
+            })
+            .collect()
+    }
+
+    /// The byte-identical public twin of `StoredAttestedRoot::signing_message`
+    /// (which is `pub(crate)` to dregg-persist), via `dregg_types::AttestedRoot`.
+    fn stored_root_signing_message(r: &dregg_persist::StoredAttestedRoot) -> Vec<u8> {
+        dregg_types::AttestedRoot {
+            merkle_root: r.merkle_root,
+            note_tree_root: r.note_tree_root,
+            nullifier_set_root: r.nullifier_set_root,
+            height: r.height,
+            timestamp: r.timestamp,
+            blocklace_block_id: r.blocklace_block_id,
+            finality_round: r.finality_round,
+            quorum_signatures: r.quorum_signatures.clone(),
+            threshold_qc: r.threshold_qc.clone(),
+            threshold: r.threshold,
+            federation_id: r.federation_id,
+            receipt_stream_root: r.receipt_stream_root,
+            hybrid_quorum: Vec::new(),
+        }
+        .signing_message()
+    }
+
+    /// ⚑ **NODE-1, WRONG-COMMITTEE POLE.** A GENUINE quorum — real signatures,
+    /// full threshold — from a committee version the chain had ROTATED OUT
+    /// before the anchored block must NOT anchor a restart. This is the
+    /// "restart accepts a quorum from any historical committee" defect: the
+    /// rotated-out members (an evicted equivocator above all) still hold their
+    /// old keys, so "verifies against some committee we once knew" is not a
+    /// verified quorum. The control half proves the same root DOES anchor when
+    /// the chain says that committee WAS current at that block — the refusal
+    /// is committee-specificity, not signature checking.
+    #[tokio::test]
+    async fn node1_wrong_committee_version_quorum_refuses() {
+        let seed = 0x5c;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(tmp.path(), seed, 7, 42, converged_root(seed, 42));
+
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the overlay");
+        // Committee A = version 0 (rotated out). Committee B = version 1
+        // (current at the anchored block). Disjoint key sets.
+        let sks_a: Vec<dregg_types::SigningKey> = (10u8..13)
+            .map(|i| dregg_types::SigningKey::from_bytes(&[i; 32]))
+            .collect();
+        let committee_a: Vec<dregg_types::PublicKey> =
+            sks_a.iter().map(|k| k.public_key()).collect();
+        let committee_b = test_committee(3);
+        let anchored_block = [0xB0; 32];
+        let fed_id;
+        {
+            let mut s = state.write().await;
+            s.set_federation_keys(committee_b.clone());
+            fed_id = s.federation_id;
+            s.derived_committee_history = vec![committee_a.clone(), committee_b.clone()];
+            s.derived_committee_ml_dsa_history = vec![Vec::new(), Vec::new()];
+            // The chain's own replay: at the anchored block, committee B
+            // (version 1) was current.
+            s.derived_committee_version_at_block =
+                std::iter::once((anchored_block, 1u64)).collect();
+        }
+
+        let mut root = dregg_persist::StoredAttestedRoot {
+            merkle_root: converged_root(seed, 42),
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height: 2,
+            timestamp: 0,
+            blocklace_block_id: Some(anchored_block),
+            finality_round: None,
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            threshold: 3,
+            federation_id: dregg_types::FederationId(fed_id),
+            receipt_stream_root: None,
+            finalization_quorum: Vec::new(),
+        };
+        let msg = stored_root_signing_message(&root);
+        root.quorum_signatures = sks_a
+            .iter()
+            .map(|k| (k.public_key(), dregg_types::sign(k, &msg)))
+            .collect();
+        // MUTATION ASSERTED LIVE: this is a GENUINE full quorum of committee A
+        // — the falsifier is real signatures from the wrong roster, not junk.
+        assert!(
+            root.verify_signatures(&committee_a),
+            "the wrong-committee quorum must be genuine under committee A for this \
+             test to falsify anything"
+        );
+        {
+            let s = state.read().await;
+            s.store
+                .store_attested_root(&root)
+                .expect("attacker/store writes the wrong-committee root");
+        }
+
+        let err = state.verify_recovery_convergence().await.err().expect(
+            "a quorum from a committee version that was NOT current at the anchored \
+                 block must be REFUSED (NODE-1 committee specificity)",
+        );
+        assert!(
+            err.contains("claims a committee quorum"),
+            "the refusal names the unverifiable quorum claim; got: {err}"
+        );
+
+        // CONTROL (honest pole): the SAME root anchors once the chain says
+        // committee A WAS current at that block (version 0).
+        {
+            let mut s = state.write().await;
+            s.derived_committee_version_at_block =
+                std::iter::once((anchored_block, 0u64)).collect();
+        }
+        state
+            .verify_recovery_convergence()
+            .await
+            .expect("the same quorum anchors when its committee version matches the chain");
+    }
+
+    /// ⚑ **NODE-1, TAMPERED-THRESHOLD POLE.** `StoredAttestedRoot.threshold`
+    /// is in NO signed preimage — an offline tamper can rewrite it. A root
+    /// whose stored threshold says `1` with ONE genuine committee signature
+    /// (of a 3-member committee) must NOT anchor: the committee's own
+    /// supermajority floors the bar regardless of what the row claims.
+    #[tokio::test]
+    async fn node1_tampered_threshold_cannot_lower_the_quorum_bar() {
+        let seed = 0x5d;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(tmp.path(), seed, 7, 42, converged_root(seed, 42));
+
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the overlay");
+        let committee = test_committee(3);
+        let sks = test_committee_keys(3);
+        let fed_id;
+        {
+            let mut s = state.write().await;
+            s.set_federation_keys(committee.clone());
+            fed_id = s.federation_id;
+        }
+        let mut root = dregg_persist::StoredAttestedRoot {
+            merkle_root: converged_root(seed, 42),
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height: 2,
+            timestamp: 0,
+            blocklace_block_id: None,
+            finality_round: None,
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            // The tamper: the unsigned threshold field lowered to 1.
+            threshold: 1,
+            federation_id: dregg_types::FederationId(fed_id),
+            receipt_stream_root: None,
+            finalization_quorum: Vec::new(),
+        };
+        let msg = stored_root_signing_message(&root);
+        let sig = dregg_types::sign(&sks[0], &msg);
+        // MUTATION ASSERTED LIVE: the lone signature is GENUINE (member 0 over
+        // this exact preimage) and satisfies the tampered threshold count.
+        assert!(
+            committee[0].verify(&msg, &sig),
+            "the lone signature is real"
+        );
+        root.quorum_signatures = vec![(committee[0], sig)];
+        assert!(
+            root.quorum_signatures.len() >= root.threshold,
+            "the tampered row claims quorum sufficiency"
+        );
+        {
+            let s = state.read().await;
+            s.store.store_attested_root(&root).expect("store the row");
+        }
+
+        let err = state.verify_recovery_convergence().await.err().expect(
+            "one genuine signature under a tampered threshold must NOT anchor a \
+             3-member committee (NODE-1)",
+        );
+        assert!(
+            err.contains("claims a committee quorum"),
+            "the refusal names the unverifiable quorum claim; got: {err}"
+        );
+    }
+
+    /// ⚑ **NODE-1, SKIP-DOOR POLES.** The two unsigned fields whose mere
+    /// presence used to DISABLE the anchor for the whole boot ("not enforced
+    /// this boot") now refuse: a claimed BLS threshold-QC (no production path
+    /// emits one) and a latest root from a different federation (this store is
+    /// not this federation's store — re-genesis, don't boot unanchored).
+    #[tokio::test]
+    async fn node1_qc_claim_and_foreign_federation_refuse_instead_of_skipping() {
+        let seed = 0x5e;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        seed_store_with_overlay(tmp.path(), seed, 7, 42, converged_root(seed, 42));
+
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construction reconstructs the overlay");
+        let committee = test_committee(3);
+        let fed_id;
+        {
+            let mut s = state.write().await;
+            s.set_federation_keys(committee.clone());
+            fed_id = s.federation_id;
+        }
+        let base = dregg_persist::StoredAttestedRoot {
+            merkle_root: converged_root(seed, 42),
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height: 2,
+            timestamp: 0,
+            blocklace_block_id: None,
+            finality_round: None,
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            threshold: 3,
+            federation_id: dregg_types::FederationId(fed_id),
+            receipt_stream_root: None,
+            finalization_quorum: Vec::new(),
+        };
+
+        // Pole 1: a threshold-QC claim (unsigned field, nothing produces it).
+        let qc = dregg_persist::StoredAttestedRoot {
+            threshold_qc: Some(dregg_types::ThresholdQC(vec![0xFF; 48])),
+            ..base.clone()
+        };
+        assert!(
+            qc.threshold_qc.is_some(),
+            "mutation live: the QC claim is present"
+        );
+        {
+            let s = state.read().await;
+            s.store.store_attested_root(&qc).expect("store the QC row");
+        }
+        let err = state
+            .verify_recovery_convergence()
+            .await
+            .err()
+            .expect("a claimed threshold-QC must refuse, not disable the anchor");
+        assert!(
+            err.contains("threshold QC"),
+            "the refusal names the QC claim; got: {err}"
+        );
+
+        // Pole 2: a foreign federation id on the latest root (higher height so
+        // it IS the latest).
+        let foreign = dregg_persist::StoredAttestedRoot {
+            height: 3,
+            federation_id: dregg_types::FederationId([0x99; 32]),
+            ..base
+        };
+        assert_ne!(
+            foreign.federation_id.0, fed_id,
+            "mutation live: the row belongs to another federation"
+        );
+        {
+            let s = state.read().await;
+            s.store
+                .store_attested_root(&foreign)
+                .expect("store the foreign row");
+        }
+        let err = state
+            .verify_recovery_convergence()
+            .await
+            .err()
+            .expect("a foreign-federation latest root must refuse, not skip the anchor");
+        assert!(
+            err.contains("different federation"),
+            "the refusal names the federation mismatch; got: {err}"
         );
     }
 

@@ -612,10 +612,27 @@ pub async fn propose_epoch_transition(
     let (status, resp_body) =
         http_post_localhost(port, "/epoch/propose-transition", token, &body).await?;
 
+    // The node reports refusals in-band: HTTP 200 with `success: false` and a
+    // per-proposal diagnosis (e.g. an add whose candidate has no published
+    // ML-DSA key, or an F2 durable-persist rollback). A refusal must exit
+    // non-zero — it used to print the success banner and exit 0.
+    let refusal = serde_json::from_str::<serde_json::Value>(&resp_body)
+        .ok()
+        .filter(|v| v.get("success").and_then(|s| s.as_bool()) == Some(false))
+        .map(|v| {
+            v.get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("node refused the proposal (no diagnosis provided)")
+                .to_string()
+        });
+
     if json_out {
         println!("{resp_body}");
         if !(200..300).contains(&status) {
             return Err(format!("node returned HTTP {status}"));
+        }
+        if let Some(reason) = refusal {
+            return Err(format!("node refused the epoch transition: {reason}"));
         }
         return Ok(());
     }
@@ -624,6 +641,13 @@ pub async fn propose_epoch_transition(
         return Err(format!(
             "node returned HTTP {status}: {resp_body}\n  \
              (a 401/403 means the node has a passphrase — pass --token <bearer>.)"
+        ));
+    }
+
+    if let Some(reason) = refusal {
+        return Err(format!(
+            "node REFUSED the epoch transition (nothing was proposed for the failing entries): \
+             {reason}"
         ));
     }
 

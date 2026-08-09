@@ -39,6 +39,7 @@ pub mod dkg_service;
 pub mod finality_gate;
 #[cfg(all(test, feature = "deos-host"))]
 mod mud_e2e;
+pub mod round_advance_gate;
 // THE PLAYABLE MUD CLIENT (`dregg-node mud-client`, `deos-host` feature): boots an
 // in-process node, hosts the GM (`mud_play_gm.js`), and drops you into a text-MUD REPL
 // that drives the living world with real verified turns over the node's HTTP wire.
@@ -945,8 +946,10 @@ pub enum Command {
     /// cannot verify a federation's blocks without its committee descriptor, so
     /// `join` refuses rather than trusting nobody. The node then catches up the
     /// DAG from the bootstrap and follows it. By default a non-member also
-    /// auto-proposes membership (`propose_join_if_needed`); `--follow-only`
-    /// suppresses that proposal so observation is not an admission request.
+    /// announces itself on the self-certifying join-request channel every 15s
+    /// until admitted (`run_join_requests_until_member` — a committee member
+    /// then authors the Join proposal under its own key); `--follow-only`
+    /// suppresses that announcement so observation is not an admission request.
     Join {
         /// Bootstrap peer to dial: `host:gossip_port` (e.g. 100.64.0.1:9420).
         /// One live peer is enough; gossip-of-peers fills in the rest.
@@ -2516,11 +2519,12 @@ async fn run_node(
     // Derive the committee from the persisted chain BEFORE the recovery anchor
     // runs (`committee_replay`): a live epoch transition amends the committee
     // ON-CHAIN without changing the `federation_id`, so (a) the signed-anchor
-    // check below must accept an attested-root quorum from any committee the
-    // constitution passed through, and (b) the consensus boot must seed the
-    // AMENDED constitution — not genesis — or a restart silently reverts the
-    // membership (the re-roll trap). A lace with no membership blocks makes
-    // this a cheap no-op.
+    // check below must verify each attested-root quorum against the committee
+    // version that was CURRENT at that root's anchored block (never "any
+    // committee we have ever known" — a rotated-out member still holds its old
+    // keys), and (b) the consensus boot must seed the AMENDED constitution —
+    // not genesis — or a restart silently reverts the membership (the re-roll
+    // trap). A lace with no membership blocks makes this a cheap no-op.
     {
         let mut s = node_state.write().await;
         let sk_bytes = s.cclerk.gossip_signing_key().to_bytes();
@@ -2531,12 +2535,32 @@ async fn run_node(
         } else {
             s.known_federation_keys.iter().map(|k| k.0).collect()
         };
+        // The genesis-published enrolled ML-DSA roster, as (ed25519, ml_dsa)
+        // pairs for the replay's PQ-roster derivation. Solo fallback derives
+        // our own PQ key from the same seed (as the consensus boot does). A
+        // misaligned genesis roster contributes NOTHING (empty), so every
+        // derived roster comes out empty and the hybrid re-verify refuses
+        // rather than downgrades.
+        let genesis_pq: Vec<([u8; 32], dregg_blocklace::pq::MlDsaPublicKey)> =
+            if s.known_federation_keys.is_empty() {
+                let (pq_pk, _) = dregg_federation::frost::MlDsaSigningKey::from_seed(&sk_bytes);
+                vec![(self_key, dregg_blocklace::pq::MlDsaPublicKey(pq_pk.0))]
+            } else if s.known_federation_ml_dsa_keys.len() == s.known_federation_keys.len() {
+                s.known_federation_keys
+                    .iter()
+                    .zip(&s.known_federation_ml_dsa_keys)
+                    .map(|(ed, pq)| (ed.0, dregg_blocklace::pq::MlDsaPublicKey(pq.0)))
+                    .collect()
+            } else {
+                Vec::new()
+            };
         let q = dregg_blocklace::supermajority_threshold(genesis_committee.len());
         match s.store.load_blocklace(sk, q) {
             Ok(Some((lace, _))) => {
                 let (derived, cm) = committee_replay::derive_from_lace(
                     &lace,
                     &genesis_committee,
+                    &genesis_pq,
                     blocklace_wave_timeout_ms,
                 );
                 if derived.amendments > 0 {
@@ -2553,23 +2577,50 @@ async fn run_node(
                         .iter()
                         .map(|c| c.iter().map(|k| dregg_types::PublicKey(*k)).collect())
                         .collect();
-                    // The on-chain membership blocklace records only ed25519 keys,
-                    // so a chain-derived historical committee has NO enrolled
-                    // ML-DSA roster: populate the aligned twin with an EMPTY roster
-                    // per entry. The restart hybrid re-verify then REFUSES a root
-                    // signed by such a committee (no silent ed25519-only downgrade,
-                    // per `verify_finalization_quorum`'s roster-alignment bound).
-                    s.derived_committee_ml_dsa_history =
-                        derived.history.iter().map(|_| Vec::new()).collect();
+                    // The aligned enrolled ML-DSA roster per committee version,
+                    // derived from the genesis-published roster plus each
+                    // ratified Join block's carried key (the same signed source
+                    // the live `learn_committee_member_hybrid_key` trusts). An
+                    // entry is EMPTY when any member's key is underivable — the
+                    // restart hybrid re-verify then REFUSES a root attributed
+                    // to that version (no silent ed25519-only downgrade, per
+                    // `verify_finalization_quorum`'s roster-alignment bound).
+                    s.derived_committee_ml_dsa_history = derived
+                        .ml_dsa_history
+                        .iter()
+                        .map(|roster| {
+                            roster
+                                .iter()
+                                .map(|k| dregg_federation::frost::MlDsaPublicKey(k.0))
+                                .collect()
+                        })
+                        .collect();
+                    // Which committee version was current at each finalized
+                    // block: the recovery anchor resolves every attested root
+                    // to its version through this map (a quorum verified
+                    // against any OTHER version is not a verified quorum).
+                    s.derived_committee_version_at_block = derived
+                        .version_at_block
+                        .iter()
+                        .map(|(id, v)| (id.0, *v))
+                        .collect();
                 }
                 s.boot_constitution = Some(cm);
             }
             Ok(None) => {}
             Err(e) => {
-                tracing::warn!(
+                // The loader now AUTHENTICATES (signature + closure +
+                // equivocation), so a failure here is either a torn write or
+                // store tampering — not a benign decode hiccup. The consensus
+                // boot's own load of the same store refuses to start on it;
+                // until then, log at error and fall back to the configured
+                // committee (the anchor below still runs against it).
+                tracing::error!(
                     error = %e,
-                    "could not load the persisted lace for boot committee derivation — \
-                     falling back to the configured (genesis) committee"
+                    "persisted lace REFUSED authentication during boot committee \
+                     derivation (possible store corruption/tamper) — falling back \
+                     to the configured (genesis) committee; the consensus boot \
+                     will refuse to start on the same store"
                 );
             }
         }
