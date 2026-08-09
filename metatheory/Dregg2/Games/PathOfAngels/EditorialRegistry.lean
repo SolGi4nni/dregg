@@ -929,7 +929,28 @@ theorem forged_beta_artifact_is_refused (policy : Policy) (store : DeploymentSto
     (state : RegistryState) (claim : UntrustedBetaClaim) :
     submitUntrustedBetaClaim policy store state claim = none := rfl
 
-/-! ## Executable editorial fixture -/
+/-! ## Executable editorial fixture
+
+⚑ **THE FIXTURE NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target. The fixture's
+STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition, because they
+must see the private editorial machinery (`fixturePolicy`, `fixtureStore`, `fixtureInitial`,
+the sealed capabilities). The EVALUATION — each `check_* = true`, pinned by `native_decide`
++ `#assert_compiled` — lives in `EditorialRegistryFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+fixture reds the guard library instead of the archive.
+
+Fail-closed convention: `fixtureStore`/`fixtureInitial` match on `fixtureOpened?` and fall
+back to the pre-genesis store/state — unreachable while `check_fixture_registry_opens`
+pins true, and an inert refusal magnet if a regression ever made genesis refuse.
+
+⚠ Named residue, two construction proofs: `fixture_provisionalA_exists` and
+`fixture_provisionalB_exists` stay `native_decide` HERE because `ProvisionalArtifact` has a
+private proof-carrying constructor with no in-module fallback inhabitant — `fixtureA` and
+`fixtureB` (which the whole fixture universe consumes) can only be obtained through
+`Option.get` over the successful judgment. Breaking either judgment therefore still reds
+this module (and the archive). Everything else moved. -/
 
 private def fixtureOriginCapability (config : Cartography.Config) (context : JudgeContext)
     (actions : List Cartography.Action) : ProvisionalOriginCapability config context actions :=
@@ -956,15 +977,24 @@ private def fixtureProvisionalB? : Option ProvisionalArtifact :=
     (fixtureOriginCapability Cartography.fixtureConfig Cartography.fixtureContext
       Cartography.presentOnlyActions)
 
-theorem fixture_provisionals_exist :
-    fixtureProvisionalA?.isSome = true ∧ fixtureProvisionalB?.isSome = true := by
+/-- Both provisionals judge successfully. (Pinned `= true` in `EditorialRegistryFixtures`;
+the construction proofs below are the named residue that already forces this.) -/
+def check_fixture_provisionals_exist : Bool :=
+  fixtureProvisionalA?.isSome && fixtureProvisionalB?.isSome
+
+/-- Named residue: `ProvisionalArtifact` has no in-module fallback inhabitant, so the
+`Option.get` constructions below need these proofs as data at elaboration. -/
+private theorem fixture_provisionalA_exists : fixtureProvisionalA?.isSome = true := by
+  native_decide
+
+private theorem fixture_provisionalB_exists : fixtureProvisionalB?.isSome = true := by
   native_decide
 
 private def fixtureA : ProvisionalArtifact :=
-  fixtureProvisionalA?.get (by native_decide)
+  fixtureProvisionalA?.get fixture_provisionalA_exists
 
 private def fixtureB : ProvisionalArtifact :=
-  fixtureProvisionalB?.get (by native_decide)
+  fixtureProvisionalB?.get fixture_provisionalB_exists
 
 private def fixtureIdentity : RegistryIdentity where
   registryId := Cartography.digestFilled 90
@@ -996,8 +1026,8 @@ private def fixturePolicy : Policy where
   authoredArtifact := Cartography.fixtureConfig.raw.revisionArtifact
   rootImplementation := fixtureRootImplementation
 
-theorem fixture_policy_valid : policyValidB fixturePolicy = true := by
-  native_decide
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_fixture_policy_valid : Bool := policyValidB fixturePolicy
 
 private def fixtureEmptyStore : DeploymentStore := ⟨0, []⟩
 
@@ -1025,14 +1055,19 @@ private def fixtureOpened? : Option (DeploymentStore × RegistryState) := do
   let proposal ← fixtureOpenProposal?
   some (commitOpenRegistry proposal (fixtureCasCommit proposal.casRequest))
 
-theorem fixture_registry_opens : fixtureOpened?.isSome = true := by
-  native_decide
+/-- Genesis + sealed CAS receipt opens the registry.
+(Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_fixture_registry_opens : Bool := fixtureOpened?.isSome
 
 private def fixtureStore : DeploymentStore :=
-  (fixtureOpened?.get fixture_registry_opens).1
+  match fixtureOpened? with
+  | some result => result.1
+  | none => fixtureEmptyStore  -- unreachable while `check_fixture_registry_opens` pins true
 
 private def fixtureInitial : RegistryState :=
-  (fixtureOpened?.get fixture_registry_opens).2
+  match fixtureOpened? with
+  | some result => result.2
+  | none => initialState fixturePolicy  -- unreachable while `check_fixture_registry_opens` pins true
 
 private def fixtureCuratorCapabilityFor (policy : Policy) (store : DeploymentStore)
     (state : RegistryState) (envelope : Envelope) :
@@ -1121,110 +1156,137 @@ private def afterRetraction? : Option (DeploymentStore × RegistryState) := do
   fixtureCommittedStep? fixturePolicy store superseded retractB
     (fixtureCuratorCapability store superseded retractB)
 
-theorem fixture_promotion_selects_exact_origin :
-    afterPromoteA?.map (fun result =>
-      let state := result.2
-      decide ((project state).selected = some fixtureA.view) &&
-      decide ((project state).history.length = 1) &&
-      decide ((project state).revision.val = 1) &&
-      decide ((project state).curatorCounter.val = 1)) = some true := by
-  native_decide
+private def promotionProbe : Option Bool :=
+  afterPromoteA?.map fun result =>
+    let state := result.2
+    decide ((project state).selected = some fixtureA.view) &&
+    decide ((project state).history.length = 1) &&
+    decide ((project state).revision.val = 1) &&
+    decide ((project state).curatorCounter.val = 1)
+
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_fixture_promotion_selects_exact_origin : Bool :=
+  decide (promotionProbe = some true)
+
+private def competingPromotionProbe : Option Bool :=
+  afterPromoteA?.map fun result =>
+    let storeAfter := result.1
+    (prepareStep fixturePolicy storeAfter fixtureInitial competingPromoteB
+      (fixtureCuratorCapability storeAfter fixtureInitial competingPromoteB)).isNone
 
 /-- Once one same-head command wins, a freshly authenticated competing command
-against the old state is refused by the moved canonical head. -/
-theorem competing_promotion_at_same_revision_is_refused :
-    afterPromoteA?.map (fun result =>
-      let storeAfter := result.1
-      (prepareStep fixturePolicy storeAfter fixtureInitial competingPromoteB
-        (fixtureCuratorCapability storeAfter fixtureInitial competingPromoteB)).isNone) = some true := by
-  native_decide
+against the old state is refused by the moved canonical head.
+(Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_competing_promotion_at_same_revision_is_refused : Bool :=
+  decide (competingPromotionProbe = some true)
 
 /-- Honest boundary witness: pure proposal evaluation is non-linear.  The same old
 snapshot can prepare two forks; only the external sealed CAS issuer may choose one
-and it must issue at most one `CanonicalCasCommit`. -/
-theorem same_old_snapshot_prepares_competing_forks :
-    (prepareStep fixturePolicy fixtureStore fixtureInitial promoteA
-      (fixtureCuratorCapability fixtureStore fixtureInitial promoteA)).isSome &&
-    (prepareStep fixturePolicy fixtureStore fixtureInitial competingPromoteB
-      (fixtureCuratorCapability fixtureStore fixtureInitial competingPromoteB)).isSome = true := by
-  native_decide
+and it must issue at most one `CanonicalCasCommit`.
+(Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_same_old_snapshot_prepares_competing_forks : Bool :=
+  (prepareStep fixturePolicy fixtureStore fixtureInitial promoteA
+    (fixtureCuratorCapability fixtureStore fixtureInitial promoteA)).isSome &&
+  (prepareStep fixturePolicy fixtureStore fixtureInitial competingPromoteB
+    (fixtureCuratorCapability fixtureStore fixtureInitial competingPromoteB)).isSome
 
-theorem repeated_genesis_is_refused :
-    (prepareOpenRegistry fixtureStore fixturePolicy
-      (fixtureGenesisCapability fixtureStore)).isNone = true := by
-  native_decide
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_repeated_genesis_is_refused : Bool :=
+  (prepareOpenRegistry fixtureStore fixturePolicy
+    (fixtureGenesisCapability fixtureStore)).isNone
 
-theorem arbitrary_successor_root_is_refused :
-    let hostile := { promoteA with nextActorRoot := Cartography.digestFilled 250 }
-    prepareStep fixturePolicy fixtureStore fixtureInitial hostile
-      (fixtureCuratorCapability fixtureStore fixtureInitial hostile) = none := by
-  native_decide
+private def arbitraryRootEnvelope : Envelope :=
+  { promoteA with nextActorRoot := Cartography.digestFilled 250 }
 
-theorem stale_supersession_is_refused :
-    let stale := { supersedeAWithB with expectedRevision := 0 }
-    afterPromoteA?.map (fun result =>
-      let store := result.1
-      let state := result.2
-      (prepareStep fixturePolicy store state stale
-        (fixtureCuratorCapability store state stale)).isNone) = some true := by
-  native_decide
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_arbitrary_successor_root_is_refused : Bool :=
+  (prepareStep fixturePolicy fixtureStore fixtureInitial arbitraryRootEnvelope
+    (fixtureCuratorCapability fixtureStore fixtureInitial arbitraryRootEnvelope)).isNone
 
-theorem exact_supersession_preserves_prior_history :
-    afterSupersede?.map (fun result =>
-      let state := result.2
-      decide ((project state).selected = some fixtureB.view) &&
-      decide (fixtureA.view ∈ (project state).retired) &&
-      decide ((project state).history.length = 2)) = some true := by
-  native_decide
+private def staleSupersession : Envelope :=
+  { supersedeAWithB with expectedRevision := 0 }
 
-theorem retraction_keeps_all_prior_history :
-    afterRetraction?.map (fun result =>
-      let state := result.2
-      decide ((project state).selected = none) &&
-      decide (fixtureA.view ∈ (project state).retired) &&
-      decide (fixtureB.view ∈ (project state).retired) &&
-      decide ((project state).history.length = 3)) = some true := by
-  native_decide
+private def staleSupersessionProbe : Option Bool :=
+  afterPromoteA?.map fun result =>
+    let store := result.1
+    let state := result.2
+    (prepareStep fixturePolicy store state staleSupersession
+      (fixtureCuratorCapability store state staleSupersession)).isNone
 
-theorem wrong_content_epoch_is_refused :
-    let hostile := { promoteA with contentEpoch := ⟨fixtureIdentity.contentEpoch.value + 1⟩ }
-    prepareStep fixturePolicy fixtureStore fixtureInitial hostile
-      (fixtureCuratorCapability fixtureStore fixtureInitial hostile) = none := by
-  native_decide
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_stale_supersession_is_refused : Bool :=
+  decide (staleSupersessionProbe = some true)
 
-theorem cross_content_envelope_replay_is_refused :
-    let hostile := { promoteA with contentRoot := Cartography.digestFilled 200 }
-    prepareStep fixturePolicy fixtureStore fixtureInitial hostile
-      (fixtureCuratorCapability fixtureStore fixtureInitial hostile) = none := by
-  native_decide
+private def supersessionProbe : Option Bool :=
+  afterSupersede?.map fun result =>
+    let state := result.2
+    decide ((project state).selected = some fixtureB.view) &&
+    decide (fixtureA.view ∈ (project state).retired) &&
+    decide ((project state).history.length = 2)
 
-private def fabricatedOrigin : ObservationProvenance :=
-  let authentic := Observation.provenance
-    (Cartography.roomObservation?.get (by native_decide))
-  { authentic with originKey := { authentic.originKey with counter := 999_999 } }
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_exact_supersession_preserves_prior_history : Bool :=
+  decide (supersessionProbe = some true)
 
-theorem alternate_catalogue_and_mission_are_refused :
-    originViewMatchesPolicyB fixturePolicy
-      { fixtureA.view with catalogue := Cartography.reorderedCatalogueConfig.raw.catalogueDigest } =
-        false ∧
-    originViewMatchesPolicyB fixturePolicy
-      { fixtureA.view with missionId := ⟨fixtureA.view.missionId.value + 1⟩ } = false := by
-  native_decide
+private def retractionProbe : Option Bool :=
+  afterRetraction?.map fun result =>
+    let state := result.2
+    decide ((project state).selected = none) &&
+    decide (fixtureA.view ∈ (project state).retired) &&
+    decide (fixtureB.view ∈ (project state).retired) &&
+    decide ((project state).history.length = 3)
+
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_retraction_keeps_all_prior_history : Bool :=
+  decide (retractionProbe = some true)
+
+private def wrongEpochEnvelope : Envelope :=
+  { promoteA with contentEpoch := ⟨fixtureIdentity.contentEpoch.value + 1⟩ }
+
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_wrong_content_epoch_is_refused : Bool :=
+  (prepareStep fixturePolicy fixtureStore fixtureInitial wrongEpochEnvelope
+    (fixtureCuratorCapability fixtureStore fixtureInitial wrongEpochEnvelope)).isNone
+
+private def crossContentEnvelope : Envelope :=
+  { promoteA with contentRoot := Cartography.digestFilled 200 }
+
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_cross_content_envelope_replay_is_refused : Bool :=
+  (prepareStep fixturePolicy fixtureStore fixtureInitial crossContentEnvelope
+    (fixtureCuratorCapability fixtureStore fixtureInitial crossContentEnvelope)).isNone
+
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_alternate_catalogue_and_mission_are_refused : Bool :=
+  !(originViewMatchesPolicyB fixturePolicy
+    { fixtureA.view with catalogue := Cartography.reorderedCatalogueConfig.raw.catalogueDigest })
+  && !(originViewMatchesPolicyB fixturePolicy
+    { fixtureA.view with missionId := ⟨fixtureA.view.missionId.value + 1⟩ })
 
 private def alternateCataloguePolicy : Policy :=
   { fixturePolicy with
     authoredCatalogue := Cartography.reorderedCatalogueConfig.raw.catalogueDigest }
 
-theorem canonical_head_refuses_alternate_catalogue_policy :
-    prepareStep alternateCataloguePolicy fixtureStore fixtureInitial promoteA
-      (fixtureCuratorCapabilityFor alternateCataloguePolicy fixtureStore fixtureInitial promoteA) =
-        none := by
-  native_decide
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_canonical_head_refuses_alternate_catalogue_policy : Bool :=
+  (prepareStep alternateCataloguePolicy fixtureStore fixtureInitial promoteA
+    (fixtureCuratorCapabilityFor alternateCataloguePolicy fixtureStore fixtureInitial
+      promoteA)).isNone
 
-theorem fabricated_unreachable_receipt_is_refused :
-    originViewMatchesPolicyB fixturePolicy
-      { fixtureA.view with provenance := [fabricatedOrigin] } = false := by
-  native_decide
+/-- The old `fabricatedOrigin` def reached through `roomObservation?.get (by native_decide)`;
+the probe folds that prerequisite into a fail-closed `map`, so a missing room observation
+answers `false` in the guard library instead of wedging this module. -/
+private def fabricatedOriginProbe : Option Bool :=
+  Cartography.roomObservation?.map fun room =>
+    let authentic := Observation.provenance room
+    let fabricated : ObservationProvenance :=
+      { authentic with originKey := { authentic.originKey with counter := 999_999 } }
+    !(originViewMatchesPolicyB fixturePolicy
+      { fixtureA.view with provenance := [fabricated] })
+
+/-- (Pinned `= true` in `EditorialRegistryFixtures`.) -/
+def check_fabricated_unreachable_receipt_is_refused : Bool :=
+  decide (fabricatedOriginProbe = some true)
 
 #assert_axioms ProvisionalArtifact.exact_judged_beta
 #assert_axioms judgeProvisional_success_exact
@@ -1249,21 +1311,9 @@ theorem fabricated_unreachable_receipt_is_refused :
 #assert_axioms poll_tally_cannot_promote
 #assert_axioms forged_beta_artifact_is_refused
 
-#assert_compiled fixture_provisionals_exist
-#assert_compiled fixture_policy_valid
-#assert_compiled fixture_registry_opens
-#assert_compiled fixture_promotion_selects_exact_origin
-#assert_compiled competing_promotion_at_same_revision_is_refused
-#assert_compiled same_old_snapshot_prepares_competing_forks
-#assert_compiled repeated_genesis_is_refused
-#assert_compiled arbitrary_successor_root_is_refused
-#assert_compiled stale_supersession_is_refused
-#assert_compiled exact_supersession_preserves_prior_history
-#assert_compiled retraction_keeps_all_prior_history
-#assert_compiled wrong_content_epoch_is_refused
-#assert_compiled cross_content_envelope_replay_is_refused
-#assert_compiled alternate_catalogue_and_mission_are_refused
-#assert_compiled canonical_head_refuses_alternate_catalogue_policy
-#assert_compiled fabricated_unreachable_receipt_is_refused
+-- The sixteen fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `EditorialRegistryFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixture
+-- header above. Named residue staying here: `fixture_provisionalA_exists`,
+-- `fixture_provisionalB_exists` (private construction proofs for `fixtureA`/`fixtureB`).
 
 end Dregg2.Games.PathOfAngels.EditorialRegistry

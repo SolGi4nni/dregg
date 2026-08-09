@@ -878,7 +878,28 @@ theorem inactive_traverse_refused (cfg : Config) (state : State)
     step cfg state (.traverse hotspot) = none := by
   simp [step, transition, traverseTransition, hinactive]
 
-/-! ## Executable accepted and hostile fixtures -/
+/-! ## Executable accepted and hostile fixtures
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured).  The STATEMENTS stay here, each as an
+evaluation-free `check_* : Bool` definition (a `def` body elaborates without running),
+beside the fixture pack, party and transcripts they replay.  The EVALUATION — each
+`check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`DeckExpeditionFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Fail-closed convention: where a check needs an accepted replay as a PREREQUISITE, it
+matches on the `Option` and answers `false` on the refusing arm — a broken prerequisite
+fails the pin in the guard library rather than wedging this module.
+
+⚠ Named residue, two construction proofs: `fixture_raw_config_valid` and
+`fixture_tight_raw_config_valid` stay `native_decide` HERE because `Config` carries its
+validity proof as data — constructing `fixtureConfig` / `fixtureTightConfig` at all
+requires the proof at elaboration.  Breaking `configValidB` on either fixture raw config
+therefore still reds this module (and the archive).  Everything else moved. -/
 
 def fixtureValidatedPack : ValidatedPack where
   pack := DeckGraph.fixturePack
@@ -965,6 +986,9 @@ def fixtureRawConfig : RawConfig where
   operationalSupplyBudget := 4
   baseContribution := fixtureBaseContribution
 
+/-- ⚠ NAMED RESIDUE.  `Config` carries its validity proof as data, so this must elaborate
+here for `fixtureConfig` to exist at all.  It is one of the two `native_decide`s left in
+this module; see the fixtures header. -/
 theorem fixture_raw_config_valid : configValidB fixtureRawConfig = true := by
   native_decide
 
@@ -988,8 +1012,9 @@ def fixtureParty : List OfficerId :=
 
 def fixtureInitial : State := initialState fixtureConfig fixturePlayer
 
-theorem fixture_initial_state_valid : validStateB fixtureConfig fixtureInitial = true := by
-  native_decide
+/-- The hand-built fixture initial state satisfies the complete state invariant.
+(Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_initial_state_valid : Bool := validStateB fixtureConfig fixtureInitial
 
 def fixtureActions : List Action :=
   [ .begin fixtureKey fixtureParty
@@ -1017,8 +1042,9 @@ def fixtureAcceptedB : Bool :=
       validStateB fixtureConfig state
   | _ => false
 
-theorem fixture_full_expedition_accepts : fixtureAcceptedB = true := by
-  native_decide
+/-- The complete authored transcript extracts, with the exact receipt.
+(Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_full_expedition_accepts : Bool := fixtureAcceptedB
 
 /-- An unfinished run can withdraw, but carried salvage returns to its exact
 authored deck room and produces no extraction receipt.  Charted rooms persist. -/
@@ -1040,8 +1066,8 @@ def fixtureWithdrawalRestoresB : Bool :=
       validStateB fixtureConfig state
   | _ => false
 
-theorem fixture_withdrawal_restores_custody : fixtureWithdrawalRestoresB = true := by
-  native_decide
+/-- (Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_withdrawal_restores_custody : Bool := fixtureWithdrawalRestoresB
 
 def fixtureSameKeyReplayRefusedB : Bool :=
   match replay fixtureConfig 2 fixtureInitial
@@ -1049,8 +1075,8 @@ def fixtureSameKeyReplayRefusedB : Bool :=
   | some (state, []) => decide (step fixtureConfig state (.begin fixtureKey fixtureParty) = none)
   | _ => false
 
-theorem fixture_same_key_replay_refused : fixtureSameKeyReplayRefusedB = true := by
-  native_decide
+/-- (Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_same_key_replay_refused : Bool := fixtureSameKeyReplayRefusedB
 
 def fixtureDailyExhaustionB : Bool :=
   match replay fixtureConfig 4 fixtureInitial
@@ -1060,8 +1086,8 @@ def fixtureDailyExhaustionB : Bool :=
       decide (step fixtureConfig state (.begin fixtureKeyThree fixtureParty) = none)
   | _ => false
 
-theorem fixture_daily_budget_is_hard : fixtureDailyExhaustionB = true := by
-  native_decide
+/-- (Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_daily_budget_is_hard : Bool := fixtureDailyExhaustionB
 
 def fixtureUnknownArtifact : ArtifactRef :=
   { fixtureArtifact with artifactId := ⟨999999⟩ }
@@ -1073,20 +1099,21 @@ def fixtureUndeclaredDiscoveryRefusedB : Bool :=
         (.survey fixtureUnknownArtifact fixturePathfinder.id) = none)
   | none => false
 
-theorem fixture_undeclared_discovery_refused :
-    fixtureUndeclaredDiscoveryRefusedB = true := by
-  native_decide
+/-- (Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_undeclared_discovery_refused : Bool := fixtureUndeclaredDiscoveryRefusedB
 
 def fixtureEarlyExtractionRefusedB : Bool :=
   match step fixtureConfig fixtureInitial (.begin fixtureKey fixtureParty) with
   | some begun => decide (step fixtureConfig begun.state .extract = none)
   | none => false
 
-theorem fixture_early_extraction_refused : fixtureEarlyExtractionRefusedB = true := by
-  native_decide
+/-- (Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_early_extraction_refused : Bool := fixtureEarlyExtractionRefusedB
 
 def fixtureTightRawConfig : RawConfig := { fixtureRawConfig with turnBudget := 1 }
 
+/-- ⚠ NAMED RESIDUE, the second one.  `fixtureTightConfig` cannot be built without it;
+see the fixtures header. -/
 theorem fixture_tight_raw_config_valid : configValidB fixtureTightRawConfig = true := by
   native_decide
 
@@ -1097,12 +1124,13 @@ def fixtureTightInitial : State := initialState fixtureTightConfig fixturePlayer
 def fixtureTightKey : ExpeditionKey :=
   { fixtureKey with pack := fixtureTightConfig.packKey }
 
-theorem fixture_turn_budget_refuses_second_run_action :
-    replay fixtureTightConfig 3 fixtureTightInitial
-      [ .begin fixtureTightKey fixtureParty
-      , .traverse DeckGraph.fixtureOneWay.id
-      , .confront fixtureHazard.id fixtureContainment.id ] = none := by
-  native_decide
+/-- A one-turn budget refuses the second in-run action.
+(Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_turn_budget_refuses_second_run_action : Bool :=
+  (replay fixtureTightConfig 3 fixtureTightInitial
+    [ .begin fixtureTightKey fixtureParty
+    , .traverse DeckGraph.fixtureOneWay.id
+    , .confront fixtureHazard.id fixtureContainment.id ]).isNone
 
 def fixtureTreatmentActions : List Action :=
   [ .begin fixtureKey fixtureParty
@@ -1119,8 +1147,8 @@ def fixtureTreatmentB : Bool :=
       | none => false
   | _ => false
 
-theorem fixture_declared_treatment_repairs_injury : fixtureTreatmentB = true := by
-  native_decide
+/-- (Pinned `= true` in `DeckExpeditionFixtures`.) -/
+def check_fixture_declared_treatment_repairs_injury : Bool := fixtureTreatmentB
 
 /-! Kernel/compiled axiom accounting. -/
 
@@ -1156,16 +1184,10 @@ theorem fixture_declared_treatment_repairs_injury : fixtureTreatmentB = true := 
 #assert_axioms exhausted_daily_budget_refuses_begin
 #assert_axioms inactive_traverse_refused
 
+-- The two named construction-proof residues stay here; every other pin
+-- (`#assert_compiled` + `native_decide`) lives in `DeckExpeditionFixtures.lean`, rooted in
+-- `PathOfAngelsGuards` — see the fixtures header.
 #assert_compiled fixture_raw_config_valid
-#assert_compiled fixture_initial_state_valid
-#assert_compiled fixture_full_expedition_accepts
-#assert_compiled fixture_withdrawal_restores_custody
-#assert_compiled fixture_same_key_replay_refused
-#assert_compiled fixture_daily_budget_is_hard
-#assert_compiled fixture_undeclared_discovery_refused
-#assert_compiled fixture_early_extraction_refused
 #assert_compiled fixture_tight_raw_config_valid
-#assert_compiled fixture_turn_budget_refuses_second_run_action
-#assert_compiled fixture_declared_treatment_repairs_injury
 
 end Dregg2.Games.PathOfAngels.DeckExpedition

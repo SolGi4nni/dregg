@@ -259,7 +259,17 @@ def nextEnvelope (spec : StreamSpec)
   }
   { statement, payload, eventDigest := digests.eventDigest statement }
 
-/-! ## Executable fixture and hostile paths -/
+/-! ## Executable fixture and hostile paths
+
+⚑ **THE FIXTURE NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target. The fixture's
+STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition; the
+EVALUATION — each `check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives
+in `FinalizedRunEventAggregateFixtures.lean`, rooted in the `PathOfAngelsGuards` library:
+a plain `lake build` still runs every pin, and a stale fixture reds the guard library
+instead of the archive. Fail-closed convention: the populated-projections probe matches on
+its `Option` prerequisites and answers `false` when any refuses. Named residue: none. -/
 
 private def digestByte (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -297,65 +307,71 @@ private def fixtureProjection? : Option Projection :=
   | .ok projection => some projection
   | .error _ => none
 
-theorem fixture_native_judge_event_populates_every_projection :
-    (do
-      let checked ← checkPayload? fixturePayload
-      let projection ← fixtureProjection?
-      let run := checked.settlement.judgedRun
-      some (
-        decide (projection.world? = some checked.settlement.successorWorld) &&
-        decide (FieldArchive.ArchiveEntry.ofJudged run ∈ projection.archive.entries) &&
-        decide (LockerEntry.ofJudged run ∈ projection.locker.entries) &&
-        decide (AttendantCreditNotice.ofJudged run ∈ projection.attendantNotices) &&
-        decide (EditorialInboxEntry.ofJudged run ∈ projection.editorialInbox) &&
-        decide (ArtifactRefWire.ofSemantic run.receipt.mission.artifact ∈
-          projection.canon.known) &&
-        decide (projection.lastFinalized = some fixtureCoordinate))) = some true := by
-  native_decide
+private def populatedProjectionsProbe : Option Bool := do
+  let checked ← checkPayload? fixturePayload
+  let projection ← fixtureProjection?
+  let run := checked.settlement.judgedRun
+  some (
+    decide (projection.world? = some checked.settlement.successorWorld) &&
+    decide (FieldArchive.ArchiveEntry.ofJudged run ∈ projection.archive.entries) &&
+    decide (LockerEntry.ofJudged run ∈ projection.locker.entries) &&
+    decide (AttendantCreditNotice.ofJudged run ∈ projection.attendantNotices) &&
+    decide (EditorialInboxEntry.ofJudged run ∈ projection.editorialInbox) &&
+    decide (ArtifactRefWire.ofSemantic run.receipt.mission.artifact ∈
+      projection.canon.known) &&
+    decide (projection.lastFinalized = some fixtureCoordinate))
+
+/-- (Pinned `= true` in `FinalizedRunEventAggregateFixtures`.) -/
+def check_fixture_native_judge_event_populates_every_projection : Bool :=
+  decide (populatedProjectionsProbe = some true)
 
 def wrongOutputPayload : Payload := { fixturePayload with judgeOutput := "{}" }
 
-theorem hostile_non_lean_output_refused : checkPayload? wrongOutputPayload = none := by
-  native_decide
+/-- (Pinned `= true` in `FinalizedRunEventAggregateFixtures`.) -/
+def check_hostile_non_lean_output_refused : Bool :=
+  (checkPayload? wrongOutputPayload).isNone
 
 def wrongSignerPayload : Payload := {
   fixturePayload with finalized := { fixtureCoordinate with signer := digestByte 250 } }
 
-theorem hostile_finalized_signer_substitution_refused :
-    checkPayload? wrongSignerPayload = none := by native_decide
+/-- (Pinned `= true` in `FinalizedRunEventAggregateFixtures`.) -/
+def check_hostile_finalized_signer_substitution_refused : Bool :=
+  (checkPayload? wrongSignerPayload).isNone
 
 def wrongEventIndexPayload : Payload := {
   fixturePayload with finalized := { fixtureCoordinate with eventIndex := 1 } }
 
 /-- The initial carrier contract is one reserved game command per finalized
 turn.  A future multi-event carrier must version this rule rather than silently
-reusing the v1 aggregate. -/
-theorem hostile_unversioned_second_carrier_event_refused :
-    checkPayload? wrongEventIndexPayload = none := by native_decide
+reusing the v1 aggregate. (Pinned `= true` in `FinalizedRunEventAggregateFixtures`.) -/
+def check_hostile_unversioned_second_carrier_event_refused : Bool :=
+  (checkPayload? wrongEventIndexPayload).isNone
 
-theorem hostile_wrong_stream_predecessor_refused :
-    let badStatement := {
-      fixtureEventOne.statement with predecessor := digestByte 99 }
-    let bad : EventEnvelope Payload := {
-      fixtureEventOne with
-      statement := badStatement
-      eventDigest := fixtureDigests.eventDigest badStatement
-    }
-    rebuild fixtureSpec fixtureDigests reduce (Projection.initial fixtureCanon) [bad] =
-      .error .wrongPredecessor := by
-  native_decide
+private def wrongPredecessorStatement : EventStatement :=
+  { fixtureEventOne.statement with predecessor := digestByte 99 }
 
-theorem hostile_wrong_payload_digest_refused :
-    let badStatement := {
-      fixtureEventOne.statement with payloadDigest := digestByte 77 }
-    let bad : EventEnvelope Payload := {
-      fixtureEventOne with
-      statement := badStatement
-      eventDigest := fixtureDigests.eventDigest badStatement
-    }
-    rebuild fixtureSpec fixtureDigests reduce (Projection.initial fixtureCanon) [bad] =
-      .error .wrongPayloadDigest := by
-  native_decide
+private def wrongPredecessorEnvelope : EventEnvelope Payload :=
+  { fixtureEventOne with
+    statement := wrongPredecessorStatement
+    eventDigest := fixtureDigests.eventDigest wrongPredecessorStatement }
+
+/-- (Pinned `= true` in `FinalizedRunEventAggregateFixtures`.) -/
+def check_hostile_wrong_stream_predecessor_refused : Bool :=
+  decide (rebuild fixtureSpec fixtureDigests reduce (Projection.initial fixtureCanon)
+    [wrongPredecessorEnvelope] = .error .wrongPredecessor)
+
+private def wrongPayloadDigestStatement : EventStatement :=
+  { fixtureEventOne.statement with payloadDigest := digestByte 77 }
+
+private def wrongPayloadDigestEnvelope : EventEnvelope Payload :=
+  { fixtureEventOne with
+    statement := wrongPayloadDigestStatement
+    eventDigest := fixtureDigests.eventDigest wrongPayloadDigestStatement }
+
+/-- (Pinned `= true` in `FinalizedRunEventAggregateFixtures`.) -/
+def check_hostile_wrong_payload_digest_refused : Bool :=
+  decide (rebuild fixtureSpec fixtureDigests reduce (Projection.initial fixtureCanon)
+    [wrongPayloadDigestEnvelope] = .error .wrongPayloadDigest)
 
 private def fixtureReplayEvent : EventEnvelope Payload :=
   nextEnvelope fixtureSpec fixtureDigests {
@@ -366,21 +382,18 @@ private def fixtureReplayEvent : EventEnvelope Payload :=
   } fixturePayload
 
 /-- A fresh stream sequence cannot launder an already consumed judged receipt:
-the projection reducer re-runs Canon's receipt-key/counter admission. -/
-theorem hostile_same_finalized_run_at_fresh_sequence_refused :
-    rebuild fixtureSpec fixtureDigests reduce
-      (Projection.initial fixtureCanon) [fixtureEventOne, fixtureReplayEvent] =
-        .error .reducerRejected := by
-  native_decide
+the projection reducer re-runs Canon's receipt-key/counter admission.
+(Pinned `= true` in `FinalizedRunEventAggregateFixtures`.) -/
+def check_hostile_same_finalized_run_at_fresh_sequence_refused : Bool :=
+  decide (rebuild fixtureSpec fixtureDigests reduce
+    (Projection.initial fixtureCanon) [fixtureEventOne, fixtureReplayEvent] =
+    .error .reducerRejected)
 
 #assert_axioms reduce_projects_one_exact_judged_run
 #assert_axioms reduce_world_is_native_judge_successor
-#assert_compiled fixture_native_judge_event_populates_every_projection
-#assert_compiled hostile_non_lean_output_refused
-#assert_compiled hostile_finalized_signer_substitution_refused
-#assert_compiled hostile_unversioned_second_carrier_event_refused
-#assert_compiled hostile_wrong_stream_predecessor_refused
-#assert_compiled hostile_wrong_payload_digest_refused
-#assert_compiled hostile_same_finalized_run_at_fresh_sequence_refused
+
+-- The seven fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `FinalizedRunEventAggregateFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- fixture header above.
 
 end Dregg2.Games.PathOfAngels.FinalizedRunEventAggregate

@@ -145,11 +145,13 @@ private def uniformDigest (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
   length_eq := by simp
 
-theorem the_manifest_hex_and_the_signing_hex_agree_on_every_byte_value :
-    (List.range 256).all (fun value =>
-      Emit.bytes32Hex (uniformDigest value) ==
-        CrewFieldMission.ProductionSigning.digestHex (uniformDigest value)) = true := by
-  native_decide
+/-- Agreement on all 256 byte values — the whole domain of the per-byte function the two
+spellings differ in, not a sample of digests. (Pinned `= true` in
+`CrewFieldMissionAdmissionFixtures`; see the campaign note at the Teeth header below.) -/
+def check_the_manifest_hex_and_the_signing_hex_agree_on_every_byte_value : Bool :=
+  (List.range 256).all (fun value =>
+    Emit.bytes32Hex (uniformDigest value) ==
+      CrewFieldMission.ProductionSigning.digestHex (uniformDigest value))
 
 /-! ## Stable finite codes
 
@@ -1164,10 +1166,8 @@ theorem decodeActivation_reencodes {bytes : String} {value : RawActivation}
     (accepted : decodeActivation bytes = some value) : activationJson value = bytes :=
   decodeActivationWithLimit_reencodes accepted
 
-/-- The refusal sentinel is total: the empty document is not an activation.  Stated so
-that the `""` an `@[export]` returns is never mistaken for a decodable input. -/
-theorem the_empty_document_is_not_an_activation : decodeActivation "" = none := by
-  native_decide
+-- `the_empty_document_is_not_an_activation` (the refusal sentinel is total: `""` is not
+-- a decodable input) is pinned verbatim in `CrewFieldMissionAdmissionFixtures`.
 
 #assert_axioms decodeActivationWithLimit_reencodes
 #assert_axioms decodeActivation_reencodes
@@ -1640,28 +1640,21 @@ def admittedMember? : Option WorldScopedCrewActivation := do
   let manifest ← admittedValidatedManifest?
   authorizeCrewActivationForWorld? admittedWorld manifest
 
-/-! ## Teeth -/
+/-! ## Teeth
 
-theorem the_admitted_activation_round_trips_through_the_codec :
-    decodeActivation (activationJson admittedRaw) = some admittedRaw := by
-  native_decide
+⚑ **THE TEETH NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured). The witnesses (`admittedRaw`, the hostile
+mutations, their manifests and worlds) stay here as evaluation-free `def`s; the sixteen
+pins — every statement below names only public values and moves VERBATIM, except the
+hex-agreement pin, which is stated over the private `uniformDigest` and therefore stays
+as `check_the_manifest_hex_and_the_signing_hex_agree_on_every_byte_value` above — live in
+`CrewFieldMissionAdmissionFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a
+plain `lake build` still runs every pin, and a stale fixture reds the guard library
+instead of the archive.
 
-theorem the_admitted_manifest_decodes_canonically :
-    admittedValidatedManifest?.isSome = true := by
-  native_decide
-
-/-- The production seal MINTS for this crew — the satisfiability pole.  Without this
-every refusal below would be vacuous. -/
-theorem the_admitted_activation_mints_a_production_seal :
-    (mintSeal? admittedRaw).isSome = true := by
-  native_decide
-
-/-- ⚑ The one that closes the hole: an activation the CURATOR published, located inside
-the active world's own content root, is admitted — and the seal it runs under was minted
-here, from those bytes. -/
-theorem the_activated_world_admits_its_own_crew_activation :
-    admittedMember?.isSome = true := by
-  native_decide
+⚠ Named residue: none.  Nothing in this module needs a fixture proof as data. -/
 
 /-! ### The refusal pole — the fixture seal, structurally
 
@@ -1708,24 +1701,6 @@ def fixtureSuitedMember? : Option WorldScopedCrewActivation := do
   let manifest ← ActivatedContent.decodeManifest fixtureSuitedManifest.toJson
   authorizeCrewActivationForWorld? fixtureSuitedWorld manifest
 
-/-- ⚑ THE MUTATION IS ASSERTED PRESENT BEFORE THE VERDICT.  Conjuncts 1–2: the document
-really is suited to the PUBLIC fixture seal — its signing suite IS
-`fixtureRunSeal.session`'s, and that differs from the production one, so the delta
-exists and is the one named.  Conjuncts 3–4: it is otherwise a valid authored
-activation in a world its manifest exactly matches.  Conjuncts 5–6: no seal mints, so
-no member exists.  Without the first four this would be a refusal that could have come
-from anywhere. -/
-theorem a_fixture_suited_activation_in_an_exactly_matching_world_mints_no_seal :
-    fixtureSuitedRaw.fieldSession.signingSuiteId
-      = CrewFieldMission.fixtureRunSeal.session.signingSuiteId ∧
-    fixtureSuitedRaw.fieldSession.signingSuiteId
-      ≠ CrewFieldMission.ProductionSigning.signingSuiteId ∧
-    activationValidB fixtureSuitedRaw = true ∧
-    fixtureSuitedManifest.matchesWorldB fixtureSuitedWorld = true ∧
-    mintSeal? fixtureSuitedRaw = none ∧
-    fixtureSuitedMember? = none := by
-  native_decide
-
 /-- The same document under the PRODUCTION suite ids but carrying the FIXTURE seal's
 briefing commitment: the mint refuses on the deck commitment alone, so "name the
 production suite" is not enough either — the commitment must check under the production
@@ -1734,14 +1709,6 @@ def wrongCommitmentRaw : RawActivation :=
   { admittedRaw with
     fieldSession := { admittedRawConfig.sessionDigest with
       briefingCommitment := CrewFieldMission.fixtureRunSeal.session.briefingCommitment } }
-
-theorem a_production_suited_activation_with_a_foreign_deck_commitment_mints_no_seal :
-    wrongCommitmentRaw.fieldSession.signingSuiteId
-      = CrewFieldMission.ProductionSigning.signingSuiteId ∧
-    wrongCommitmentRaw.fieldSession.briefingCommitment
-      ≠ admittedRaw.fieldSession.briefingCommitment ∧
-    mintSeal? wrongCommitmentRaw = none := by
-  native_decide
 
 /-- A different route table re-hashes the manifest and therefore no longer matches the
 activated world's content root: a player cannot swap the salvage rules and keep the
@@ -1766,13 +1733,6 @@ def forgedSalvageMember? : Option WorldScopedCrewActivation := do
   let manifest ← ActivatedContent.decodeManifest forgedSalvageManifest.toJson
   authorizeCrewActivationForWorld? admittedWorld manifest
 
-theorem a_free_salvage_table_rehashes_the_manifest_and_the_world_refuses_it :
-    (mintSeal? forgedSalvageRaw).isSome = true ∧
-    (ActivatedContent.decodeManifest forgedSalvageManifest.toJson).isSome = true ∧
-    forgedSalvageManifest.matchesWorldB admittedWorld = false ∧
-    forgedSalvageMember? = none := by
-  native_decide
-
 /-- The component name is exact.  ⚠ The world here is the one whose `contentRoot` IS
 the misnamed manifest's root, so `matchesWorldB` PASSES — first conjunct — and the
 refusal is isolated to the name lookup. -/
@@ -1790,13 +1750,6 @@ def misnamedMember? : Option WorldScopedCrewActivation := do
   let manifest ← ActivatedContent.decodeManifest misnamedManifest.toJson
   authorizeCrewActivationForWorld? misnamedWorld manifest
 
-theorem a_component_under_another_name_is_not_this_organs_activation :
-    misnamedManifest.matchesWorldB misnamedWorld = true ∧
-    ActivatedContent.componentByName? misnamedManifest.components ACTIVATION_COMPONENT
-      = none ∧
-    misnamedMember? = none := by
-  native_decide
-
 /-- A world that is structurally fine and names a different content session cannot
 consume this manifest, even though the manifest root is unchanged. -/
 def crossSessionWorld : WorldActivation.WorldIdentity :=
@@ -1805,10 +1758,6 @@ def crossSessionWorld : WorldActivation.WorldIdentity :=
 def crossSessionMember? : Option WorldScopedCrewActivation := do
   let manifest ← admittedValidatedManifest?
   authorizeCrewActivationForWorld? crossSessionWorld manifest
-
-theorem an_activation_cannot_be_carried_into_another_content_session :
-    crossSessionMember? = none := by
-  native_decide
 
 /-- The deck's own signed activation identity is pinned to the world.  ⚠ The world here
 is the one whose `contentRoot` IS the re-hashed manifest's root, so `matchesWorldB`
@@ -1839,14 +1788,6 @@ def foreignDeckLineageMember? : Option WorldScopedCrewActivation := do
   let manifest ← ActivatedContent.decodeManifest foreignDeckLineageManifest.toJson
   authorizeCrewActivationForWorld? foreignDeckLineageWorld manifest
 
-theorem a_deck_naming_another_activation_envelope_is_refused :
-    foreignDeckLineageManifest.matchesWorldB foreignDeckLineageWorld = true ∧
-    (mintSeal? foreignDeckLineageRaw).isSome = true ∧
-    foreignDeckLineageRaw.content.deck.activation.activationDigest
-      ≠ foreignDeckLineageWorld.activationDigest ∧
-    foreignDeckLineageMember? = none := by
-  native_decide
-
 /-! ### Codec-shape refusals, on the real decoder -/
 
 def truncatedActivationBytes : String :=
@@ -1861,41 +1802,8 @@ def oversizedSalvageBytes : String :=
       List.replicate (MAX_PART_RULES + 1)
         ⟨.maintenanceSpine, .returnNow, ⟨900⟩, 2⟩ }
 
-theorem a_truncated_activation_refuses :
-    decodeActivation truncatedActivationBytes = none := by
-  native_decide
-
-/-- ⚑ The DELETED `ReplayAuthority` cannot be spliced back in: `exactKeys` is exact in
-both directions, so an otherwise byte-canonical document carrying a caller-supplied
-verifier field refuses rather than being read with the field ignored. -/
-theorem an_activation_carrying_a_replay_authority_field_refuses :
-    decodeActivation spliceAppendedActivationBytes = none := by
-  native_decide
-
-theorem an_oversized_salvage_table_refuses :
-    decodeActivation oversizedSalvageBytes = none := by
-  native_decide
-
-/-- The step envelope's own refusal poles, on the exported function.  `""` in, `""`
-out; a canonical envelope naming a world with no manifest member, `""` out. -/
-theorem the_export_refuses_the_empty_request : stepWire "" = "" := by
-  native_decide
-
-#assert_compiled the_manifest_hex_and_the_signing_hex_agree_on_every_byte_value
-#assert_compiled the_empty_document_is_not_an_activation
-#assert_compiled the_admitted_activation_round_trips_through_the_codec
-#assert_compiled the_admitted_manifest_decodes_canonically
-#assert_compiled the_admitted_activation_mints_a_production_seal
-#assert_compiled the_activated_world_admits_its_own_crew_activation
-#assert_compiled a_fixture_suited_activation_in_an_exactly_matching_world_mints_no_seal
-#assert_compiled a_production_suited_activation_with_a_foreign_deck_commitment_mints_no_seal
-#assert_compiled a_free_salvage_table_rehashes_the_manifest_and_the_world_refuses_it
-#assert_compiled a_component_under_another_name_is_not_this_organs_activation
-#assert_compiled an_activation_cannot_be_carried_into_another_content_session
-#assert_compiled a_deck_naming_another_activation_envelope_is_refused
-#assert_compiled a_truncated_activation_refuses
-#assert_compiled an_activation_carrying_a_replay_authority_field_refuses
-#assert_compiled an_oversized_salvage_table_refuses
-#assert_compiled the_export_refuses_the_empty_request
+-- The sixteen pins (`#assert_compiled` + `native_decide`) live in
+-- `CrewFieldMissionAdmissionFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- Teeth header above.
 
 end Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission

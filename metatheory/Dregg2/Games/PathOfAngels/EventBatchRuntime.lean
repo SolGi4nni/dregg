@@ -837,7 +837,18 @@ theorem planInput_deterministic (input : InputWire) (left right : PreparedBatchW
   rw [hl] at hr
   exact Option.some.inj hr
 
-/-! ## Multi-stream fixture and hostile teeth -/
+/-! ## Multi-stream fixture and hostile teeth
+
+⚑ **THE TEETH NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target. The teeth's
+STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition beside the
+private fixture material; the EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `EventBatchRuntimeFixtures.lean`, rooted
+in the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a
+stale fixture reds the guard library instead of the archive. The `@[export]` FFI surface
+(`planFFI`, `initialHeadsDigestFFI`) is untouched. Fail-closed convention: plan-shape
+checks match on `planInput?` and answer `false` on `none`. Named residue: none. -/
 
 private def fixtureDigest (n : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨n % 256, Nat.mod_lt _ (by decide)⟩
@@ -949,131 +960,155 @@ private def fixtureInitialHeadsDigestInput : InitialHeadsDigestInputWire := {
   initialHeads := fixtureHeads
 }
 
-theorem fixture_canonical_decode_accepts :
-    decodeInput fixtureInput.toJson = some fixtureInput := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_fixture_canonical_decode_accepts : Bool :=
+  decide (decodeInput fixtureInput.toJson = some fixtureInput)
 
-theorem fixture_multi_stream_repeated_stream_plans :
-    (match planInput? fixtureInput with
-    | none => false
-    | some prepared =>
-        prepared.events.length == 3 &&
-        (headFor? prepared.successorHeads canonHead.stream).map HeadWire.sequence == some 2 &&
-        (headFor? prepared.successorHeads attendantHead.stream).map HeadWire.sequence == some 1) = true := by
-  native_decide
+/-- Fail-closed: a refused plan answers `false`.
+(Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_fixture_multi_stream_repeated_stream_plans : Bool :=
+  match planInput? fixtureInput with
+  | none => false
+  | some prepared =>
+      prepared.events.length == 3 &&
+      (headFor? prepared.successorHeads canonHead.stream).map HeadWire.sequence == some 2 &&
+      (headFor? prepared.successorHeads attendantHead.stream).map HeadWire.sequence == some 1
 
-theorem fixture_repeated_stream_uses_prior_successor_storage_digest :
-    (match planInput? fixtureInput with
-    | some prepared =>
-        (prepared.events[2]?).map PreparedEventWire.expectedPredecessorHeadDigest ==
-          some (fixtureDigest 50)
-    | none => false) = true := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_fixture_repeated_stream_uses_prior_successor_storage_digest : Bool :=
+  match planInput? fixtureInput with
+  | some prepared =>
+      (prepared.events[2]?).map PreparedEventWire.expectedPredecessorHeadDigest ==
+        some (fixtureDigest 50)
+  | none => false
 
-theorem fixture_ffi_emits_nonempty_canonical_plan :
-    planFFI fixtureInput.toJson != "" := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_fixture_ffi_emits_nonempty_canonical_plan : Bool :=
+  planFFI fixtureInput.toJson != ""
 
-theorem fixture_initial_heads_digest_export_is_exact :
-    initialHeadsDigestFFI fixtureInitialHeadsDigestInput.toJson =
-      (InitialHeadsDigestOutputWire.mk (initialHeadsDigest fixtureHeads)).toJson := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_fixture_initial_heads_digest_export_is_exact : Bool :=
+  decide (initialHeadsDigestFFI fixtureInitialHeadsDigestInput.toJson =
+    (InitialHeadsDigestOutputWire.mk (initialHeadsDigest fixtureHeads)).toJson)
 
-theorem hostile_initial_heads_digest_cross_world_refused :
-    let foreignWorld := { fixtureWorld with contentSession := fixtureDigest 99 }
-    let foreignStream := { canonHead.stream with world := foreignWorld }
-    let foreignHead := { canonHead with stream := foreignStream }
-    let input := { fixtureInitialHeadsDigestInput with initialHeads := [foreignHead, attendantHead] }
-    initialHeadsDigestFFI input.toJson = "" := by native_decide
+private def crossWorldHeadsInput : InitialHeadsDigestInputWire :=
+  let foreignWorld := { fixtureWorld with contentSession := fixtureDigest 99 }
+  let foreignStream := { canonHead.stream with world := foreignWorld }
+  let foreignHead := { canonHead with stream := foreignStream }
+  { fixtureInitialHeadsDigestInput with initialHeads := [foreignHead, attendantHead] }
 
-theorem hostile_initial_heads_digest_zero_world_refused :
-    let zeroWorld := { fixtureWorld with contentEpoch := 0 }
-    let coordinate := { fixtureCoordinate with world := zeroWorld }
-    let input := { fixtureInitialHeadsDigestInput with coordinate }
-    initialHeadsDigestFFI input.toJson = "" := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_initial_heads_digest_cross_world_refused : Bool :=
+  decide (initialHeadsDigestFFI crossWorldHeadsInput.toJson = "")
 
-theorem hostile_reorder_refused :
-    let hostile := { fixtureInput with events := [attendant, firstCanon, secondCanon] }
-    planInput? hostile = none := by native_decide
+private def zeroWorldHeadsInput : InitialHeadsDigestInputWire :=
+  let zeroWorld := { fixtureWorld with contentEpoch := 0 }
+  { fixtureInitialHeadsDigestInput with
+    coordinate := { fixtureCoordinate with world := zeroWorld } }
 
-theorem hostile_payload_mutation_refused :
-    let changed := { firstCanon with payload := fixtureBytes [99, 2, 3] }
-    let hostile := { fixtureInput with events := [changed, attendant, secondCanon] }
-    planInput? hostile = none := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_initial_heads_digest_zero_world_refused : Bool :=
+  decide (initialHeadsDigestFFI zeroWorldHeadsInput.toJson = "")
 
-theorem hostile_projection_mutation_refused :
-    let changed := { attendant with successorProjection := fixtureBytes [99, 13] }
-    let hostile := { fixtureInput with events := [firstCanon, changed, secondCanon] }
-    planInput? hostile = none := by native_decide
+private def reorderedInput : InputWire :=
+  { fixtureInput with events := [attendant, firstCanon, secondCanon] }
 
-theorem hostile_cross_world_refused :
-    let foreignWorld := { fixtureWorld with activationDigest := fixtureDigest 99 }
-    let foreignCoordinate := { fixtureCoordinate with world := foreignWorld }
-    planInput? { fixtureInput with coordinate := foreignCoordinate } = none := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_reorder_refused : Bool := (planInput? reorderedInput).isNone
 
-theorem hostile_cross_actor_refused :
-    let foreignCoordinate := { fixtureCoordinate with actorRoot := fixtureDigest 99 }
-    planInput? { fixtureInput with coordinate := foreignCoordinate } = none := by native_decide
+private def payloadMutationInput : InputWire :=
+  let changed := { firstCanon with payload := fixtureBytes [99, 2, 3] }
+  { fixtureInput with events := [changed, attendant, secondCanon] }
 
-theorem hostile_authority_actor_binding_refused :
-    let first := { fixtureBinding firstCanon 50 with actorRoot := fixtureDigest 99 }
-    let authority := { fixtureInput.authority with events :=
-      [first, fixtureBinding attendant 51, fixtureBinding secondCanon 52] }
-    planInput? { fixtureInput with authority } = none := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_payload_mutation_refused : Bool := (planInput? payloadMutationInput).isNone
 
-theorem hostile_noncanonical_trailing_byte_refused :
-    decodeInput (fixtureInput.toJson ++ " ") = none := by native_decide
+private def projectionMutationInput : InputWire :=
+  let changed := { attendant with successorProjection := fixtureBytes [99, 13] }
+  { fixtureInput with events := [firstCanon, changed, secondCanon] }
 
-theorem hostile_unknown_field_refused :
-    let bytes := (fixtureInput.toJson.dropEnd 1).toString ++ ",\"extra\":0}"
-    decodeInput bytes = none := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_projection_mutation_refused : Bool :=
+  (planInput? projectionMutationInput).isNone
 
-theorem hostile_empty_batch_refused :
-    let authority := { fixtureInput.authority with events := [] }
-    planInput? { fixtureInput with authority, events := [] } = none := by native_decide
+private def crossWorldInput : InputWire :=
+  let foreignWorld := { fixtureWorld with activationDigest := fixtureDigest 99 }
+  { fixtureInput with coordinate := { fixtureCoordinate with world := foreignWorld } }
 
-theorem hostile_event_count_refused :
-    let events := List.replicate (MAX_EVENTS + 1) firstCanon
-    let binding := fixtureBinding firstCanon 50
-    let authority := { fixtureInput.authority with
-      events := (List.replicate (MAX_EVENTS + 1) binding) }
-    planInput? { fixtureInput with authority, events } = none := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_cross_world_refused : Bool := (planInput? crossWorldInput).isNone
 
-theorem hostile_wire_size_refused :
-    decodeInputWithLimit 4 fixtureInput.toJson = none := by native_decide
+private def crossActorInput : InputWire :=
+  { fixtureInput with coordinate := { fixtureCoordinate with actorRoot := fixtureDigest 99 } }
 
-theorem hostile_u64_overflow_refused :
-    let world := { fixtureWorld with contentEpoch := 2 ^ 64 }
-    let coordinate := { fixtureCoordinate with world }
-    let authority := { fixtureInput.authority with coordinate }
-    planInput? { fixtureInput with coordinate, authority } = none := by native_decide
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_cross_actor_refused : Bool := (planInput? crossActorInput).isNone
 
-theorem hostile_sequence_overflow_refused :
-    let statement := { firstCanon.statement with sequence := 2 ^ 64 }
-    let event := { firstCanon with statement }
-    let hostile := { fixtureInput with events := [event, attendant, secondCanon] }
-    planInput? hostile = none := by native_decide
+private def forgedActorBindingInput : InputWire :=
+  let first := { fixtureBinding firstCanon 50 with actorRoot := fixtureDigest 99 }
+  { fixtureInput with authority := { fixtureInput.authority with events :=
+    [first, fixtureBinding attendant 51, fixtureBinding secondCanon 52] } }
+
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_authority_actor_binding_refused : Bool :=
+  (planInput? forgedActorBindingInput).isNone
+
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_noncanonical_trailing_byte_refused : Bool :=
+  (decodeInput (fixtureInput.toJson ++ " ")).isNone
+
+private def unknownFieldBytes : String :=
+  (fixtureInput.toJson.dropEnd 1).toString ++ ",\"extra\":0}"
+
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_unknown_field_refused : Bool := (decodeInput unknownFieldBytes).isNone
+
+private def emptyBatchInput : InputWire :=
+  { fixtureInput with
+    authority := { fixtureInput.authority with events := [] }
+    events := [] }
+
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_empty_batch_refused : Bool := (planInput? emptyBatchInput).isNone
+
+private def oversizedEventCountInput : InputWire :=
+  { fixtureInput with
+    authority := { fixtureInput.authority with
+      events := List.replicate (MAX_EVENTS + 1) (fixtureBinding firstCanon 50) }
+    events := List.replicate (MAX_EVENTS + 1) firstCanon }
+
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_event_count_refused : Bool := (planInput? oversizedEventCountInput).isNone
+
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_wire_size_refused : Bool :=
+  (decodeInputWithLimit 4 fixtureInput.toJson).isNone
+
+private def u64OverflowInput : InputWire :=
+  let coordinate := { fixtureCoordinate with
+    world := { fixtureWorld with contentEpoch := 2 ^ 64 } }
+  { fixtureInput with
+    coordinate
+    authority := { fixtureInput.authority with coordinate } }
+
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_u64_overflow_refused : Bool := (planInput? u64OverflowInput).isNone
+
+private def sequenceOverflowInput : InputWire :=
+  let event := { firstCanon with statement := { firstCanon.statement with sequence := 2 ^ 64 } }
+  { fixtureInput with events := [event, attendant, secondCanon] }
+
+/-- (Pinned `= true` in `EventBatchRuntimeFixtures`.) -/
+def check_hostile_sequence_overflow_refused : Bool :=
+  (planInput? sequenceOverflowInput).isNone
 
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeInput_reencodes
 #assert_axioms decodeInput_refuses_oversized
 #assert_axioms planInput_deterministic
-#assert_compiled fixture_canonical_decode_accepts
-#assert_compiled fixture_multi_stream_repeated_stream_plans
-#assert_compiled fixture_repeated_stream_uses_prior_successor_storage_digest
-#assert_compiled fixture_ffi_emits_nonempty_canonical_plan
-#assert_compiled fixture_initial_heads_digest_export_is_exact
-#assert_compiled hostile_initial_heads_digest_cross_world_refused
-#assert_compiled hostile_initial_heads_digest_zero_world_refused
-#assert_compiled hostile_reorder_refused
-#assert_compiled hostile_payload_mutation_refused
-#assert_compiled hostile_projection_mutation_refused
-#assert_compiled hostile_cross_world_refused
-#assert_compiled hostile_cross_actor_refused
-#assert_compiled hostile_authority_actor_binding_refused
-#assert_compiled hostile_noncanonical_trailing_byte_refused
-#assert_compiled hostile_unknown_field_refused
-#assert_compiled hostile_empty_batch_refused
-#assert_compiled hostile_event_count_refused
-#assert_compiled hostile_wire_size_refused
-#assert_compiled hostile_u64_overflow_refused
-#assert_compiled hostile_sequence_overflow_refused
+
+-- The twenty teeth pins (`#assert_compiled` + `native_decide`) live in
+-- `EventBatchRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the teeth header
+-- above.
 
 end Dregg2.Games.PathOfAngels.EventBatchRuntime

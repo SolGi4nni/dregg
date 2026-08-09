@@ -133,8 +133,20 @@ def drawUniformB : Bool :=
   (List.range 257).all fun bound =>
     bound == 0 || (fibreSizes bound).all (fun n => n == 256 / bound)
 
-theorem draw_is_uniform_on_every_bound : drawUniformB = true := by
-  native_decide
+/-! ⚑ **THE UNIFORMITY PIN NO LONGER EVALUATES IN THIS MODULE (2026-08-08).**  This module
+is in the `Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here
+made a game-fixture regression a hard failure of every Rust proving target.  The
+STATEMENT stays here as an evaluation-free `check_* : Bool` (a `def` body elaborates
+without running); the EVALUATION lives in `SeedDrawFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library, so a plain `lake build` still runs it.
+
+Named residue: NONE.  `drawUniformB` is a closed Bool over `List.range 257`, so nothing
+here needs a draw to elaborate. -/
+
+/-- Uniformity over the WHOLE domain a byte stream can serve: for every bound in
+`1..256`, every residue below it has exactly `256 / bound` accepted preimages.
+(Pinned `= true` in `SeedDrawFixtures`.) -/
+def check_draw_is_uniform_on_every_bound : Bool := drawUniformB
 
 /-- Three bytes whose values differ, to exhibit the contrast below. -/
 def probeBytes : List (Fin 256) := [1, 2, 0]
@@ -154,6 +166,8 @@ theorem consuming_draw_is_not_a_repeat :
 #assert_axioms drawBelow?_accepts_below_ceiling
 #assert_axioms rejected_is_exactly_the_incomplete_block
 #assert_axioms consuming_draw_is_not_a_repeat
-#assert_compiled draw_is_uniform_on_every_bound
+
+-- `draw_is_uniform_on_every_bound` (`native_decide` + `#assert_compiled`) lives in
+-- `SeedDrawFixtures.lean`, rooted in `PathOfAngelsGuards` — see the note above.
 
 end Dregg2.Games.PathOfAngels.SeedDraw

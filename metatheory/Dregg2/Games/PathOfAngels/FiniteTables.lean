@@ -183,15 +183,37 @@ which is what kills the memorised line.
 Every property below is now quantified over the whole family, which is strictly
 stronger than the pinned-board versions it replaces. -/
 
-theorem relayTable_closed : ∀ i : Fin 8, relayTableClosedB (RelayRepair.boardAt i) = true := by
-  native_decide
+/-! ⚑ **THE TABLE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module is
+in the `Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made
+every game-fixture regression a hard failure of every Rust proving target (the
+compilation-unit coupling the stale-fixture outage measured).  The STATEMENTS stay here,
+each as an evaluation-free `check_* : Bool` definition (a `def` body elaborates without
+running), beside the closure and refusal machinery they are about.  The EVALUATION — each
+`check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`FiniteTablesFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale table reds the guard library instead of the
+archive.
 
-theorem relayStates_nodup : ∀ i : Fin 8, relayStatesNodupB (RelayRepair.boardAt i) = true := by
-  native_decide
+⚠ The `∀ i : Fin 8` forms are now `(List.finRange 8).all` Bools, which quantify over the
+same eight boards — `List.finRange 8` is exactly the inhabitants of `Fin 8`.
 
-theorem relayRefusalReasons_complete :
-    ∀ i : Fin 8, relayRefusalReasonsCompleteB (RelayRepair.boardAt i) = true := by
-  native_decide
+Named residue: NONE.  Nothing in this module needs an evaluated table to elaborate; every
+declaration below is a closure, a projection or a Bool. -/
+
+/-- Every board's transition table is closed: no accepted successor leaves the board's own
+enumerated state closure. (Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_relayTable_closed : Bool :=
+  (List.finRange 8).all fun i => relayTableClosedB (RelayRepair.boardAt i)
+
+/-- Every board's state closure is duplicate-free.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_relayStates_nodup : Bool :=
+  (List.finRange 8).all fun i => relayStatesNodupB (RelayRepair.boardAt i)
+
+/-- Every board's rows refuse exactly when a declared reason fires.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_relayRefusalReasons_complete : Bool :=
+  (List.finRange 8).all fun i => relayRefusalReasonsCompleteB (RelayRepair.boardAt i)
 
 /-- ⚑ **REFUTED AND RESTATED.**  The claim carried here until 2026-08-05 was that
 every one of the five declared reasons is provoked on every one of the eight boards.
@@ -203,30 +225,31 @@ the emitted vocabulary is exercised by the emitted FAMILY (no reason is a badge 
 run can earn) and that no board invents a reason outside it
 (`relayRefusalReasons_declared`).  Which reasons a PARTICULAR board can provoke is a
 fact about that board's spare budget, and stating it per board is the strongest true
-form. -/
-theorem relayRefusalReasons_live_per_board :
-    ((List.finRange 8).map fun i => relayLiveRefusalReasons (RelayRepair.boardAt i)) =
-      [ ["solved", "turn-limit", "already-installed", "stranded"]
-      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
-      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
-      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
-      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
-      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
-      , ["solved", "turn-limit", "already-installed", "stranded"]
-      , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"] ] := by
-  native_decide
+form. (Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_relayRefusalReasons_live_per_board : Bool :=
+  decide (((List.finRange 8).map fun i => relayLiveRefusalReasons (RelayRepair.boardAt i)) =
+    [ ["solved", "turn-limit", "already-installed", "stranded"]
+    , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+    , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+    , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+    , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+    , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"]
+    , ["solved", "turn-limit", "already-installed", "stranded"]
+    , ["solved", "turn-limit", "already-installed", "no-spares", "stranded"] ])
 
-/-- No declared reason is dead across the whole emitted family. -/
-theorem relayRefusalReasons_family_live : relayRefusalReasonsFamilyLiveB = true := by
-  native_decide
+/-- No declared reason is dead across the whole emitted family.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_relayRefusalReasons_family_live : Bool := relayRefusalReasonsFamilyLiveB
 
-theorem relayRefusalReasons_declared :
-    ∀ i : Fin 8, relayRefusalReasonsDeclaredB (RelayRepair.boardAt i) = true := by
-  native_decide
+/-- No board invents a reason outside the declared vocabulary.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_relayRefusalReasons_declared : Bool :=
+  (List.finRange 8).all fun i => relayRefusalReasonsDeclaredB (RelayRepair.boardAt i)
 
-theorem relayStateIds_unique :
-    ∀ i : Fin 8, relayStateIdsUniqueB (RelayRepair.boardAt i) relayStateId = true := by
-  native_decide
+/-- Every board's emitted state ids are unique, so a client can key on them.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_relayStateIds_unique : Bool :=
+  (List.finRange 8).all fun i => relayStateIdsUniqueB (RelayRepair.boardAt i) relayStateId
 
 /-- Per-board closure sizes.  They are NOT all equal: the crate and the pricing
 change how much of the panel lattice is reachable, so a client cannot be told one
@@ -234,8 +257,10 @@ number.  Board 2 is 25, which is the value the deleted `relayStates_count` pinne
 def relayStateCounts : List Nat :=
   (List.finRange 8).map fun i => (relayStates (RelayRepair.boardAt i)).length
 
-theorem relayStateCounts_pinned : relayStateCounts = [26, 19, 25, 18, 18, 22, 26, 25] := by
-  native_decide
+/-- The eight per-board closure sizes, pinned as a vector.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_relayStateCounts_pinned : Bool :=
+  decide (relayStateCounts = [26, 19, 25, 18, 18, 22, 26, 25])
 
 /-- The emitted row count of a board is its state count times the five links; no
 separate pin is needed because `relayTransitions_length` proves it for every board. -/
@@ -250,14 +275,9 @@ theorem relayTransitions_count (i : Fin 8) :
 #assert_axioms relayTransitions_length
 #assert_axioms relayTransition_spec
 #assert_axioms relayTransitions_count
-#assert_compiled relayTable_closed
-#assert_compiled relayStates_nodup
-#assert_compiled relayRefusalReasons_complete
-#assert_compiled relayRefusalReasons_live_per_board
-#assert_compiled relayRefusalReasons_family_live
-#assert_compiled relayRefusalReasons_declared
-#assert_compiled relayStateIds_unique
-#assert_compiled relayStateCounts_pinned
+
+-- The eight relay pins (`#assert_compiled` + `native_decide`) live in
+-- `FiniteTablesFixtures.lean`, rooted in `PathOfAngelsGuards` — see the note above.
 
 /-! ## Salvage Lock -/
 
@@ -380,17 +400,16 @@ def salvagePairingRepresentatives : List (Fin SalvageLock.SEED_SPACE) :=
 
 /-- Every seed's own machine has the same size and the same hygiene.  Kept because
 it is what makes the size of a per-seed table uninformative; it is no longer what
-the wire carries. -/
-theorem salvage_machine_shape_is_seed_independent :
-    (salvagePairingRepresentatives.length == 15 &&
-      (salvagePairingRepresentatives.all (fun seed =>
-        (salvageStates seed).length == 164 &&
-        (salvageTransitions seed).length == 984 &&
-        salvageStatesNodupB seed &&
-        salvageTableClosedB seed &&
-        salvageStateIdsUniqueB seed salvageStateId &&
-        salvageRefusalReasonsCompleteB seed))) = true := by
-  native_decide
+the wire carries. (Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_salvage_machine_shape_is_seed_independent : Bool :=
+  salvagePairingRepresentatives.length == 15 &&
+    (salvagePairingRepresentatives.all (fun seed =>
+      (salvageStates seed).length == 164 &&
+      (salvageTransitions seed).length == 984 &&
+      salvageStatesNodupB seed &&
+      salvageTableClosedB seed &&
+      salvageStateIdsUniqueB seed salvageStateId &&
+      salvageRefusalReasonsCompleteB seed))
 
 /-! ### The PARAMETRIC machine — the rules without the board
 
@@ -411,7 +430,8 @@ which is what a memory game is supposed to cost.
 `salvage_parametric_table_is_the_kernel` is the refinement: for EVERY one of the
 ninety seeds and every row of the emitted closure, the parametric row instantiated
 at the true match bit IS `salvageStep`.  The table is the rules; the bit is the
-instance. -/
+instance.  (Its evaluation, like every other pin here, lives in
+`FiniteTablesFixtures.lean`.) -/
 
 /-- A row of the emitted parametric machine. -/
 inductive ParametricRow where
@@ -510,42 +530,45 @@ def salvageParametricRefinesB (seed : Fin SalvageLock.SEED_SPACE) : Bool :=
           (salvageMatchB seed state action) ==
         salvageStep seed state action
 
-theorem salvage_parametric_table_is_the_kernel :
-    ((List.finRange SalvageLock.SEED_SPACE).all salvageParametricRefinesB) = true := by
-  native_decide
+/-- ⚑ **The refinement, over every board.**  For all ninety seeds, the parametric row
+instantiated at that seed's match bit is exactly `salvageStep`.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_salvage_parametric_table_is_the_kernel : Bool :=
+  (List.finRange SalvageLock.SEED_SPACE).all salvageParametricRefinesB
 
 /-- The emitted closure is closed, duplicate-free and uniquely identified.  The
 counts are here because a client is told them and must be able to refuse a table
-of a different size; they are NOT a property of any board. -/
-theorem salvage_parametric_table_is_well_formed :
-    (salvageParametricClosedB && salvageParametricStatesNodupB &&
-      salvageParametricStateIdsUniqueB) = true := by
-  native_decide
+of a different size; they are NOT a property of any board.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_salvage_parametric_table_is_well_formed : Bool :=
+  salvageParametricClosedB && salvageParametricStatesNodupB &&
+    salvageParametricStateIdsUniqueB
 
-theorem salvageParametricStates_count : salvageParametricStates.length = 632 := by
-  native_decide
+/-- The emitted parametric closure has exactly 632 states.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_salvageParametricStates_count : Bool :=
+  decide (salvageParametricStates.length = 632)
 
-theorem salvageParametricTransitions_count : salvageParametricTransitions.length = 3792 := by
-  native_decide
+/-- The emitted parametric table has exactly 3792 rows.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_salvageParametricTransitions_count : Bool :=
+  decide (salvageParametricTransitions.length = 3792)
 
 /-- The parametric closure strictly contains every single board's reachable set:
 a client that fetched a 164-state table could ask which board has 164 reachable
-states, and this one cannot be asked that. -/
-theorem parametric_closure_covers_every_board :
-    ((List.finRange SalvageLock.SEED_SPACE).all fun seed =>
-      (salvageStates seed).all fun state => salvageParametricStates.contains state) = true := by
-  native_decide
+states, and this one cannot be asked that.
+(Pinned `= true` in `FiniteTablesFixtures`.) -/
+def check_parametric_closure_covers_every_board : Bool :=
+  (List.finRange SalvageLock.SEED_SPACE).all fun seed =>
+    (salvageStates seed).all fun state => salvageParametricStates.contains state
 
 #assert_axioms salvageActions_length
 #assert_axioms salvageActions_complete
 #assert_axioms salvageStep_eq_source
 #assert_axioms salvageTransitions_length
 #assert_axioms salvageTransition_spec
-#assert_compiled salvage_machine_shape_is_seed_independent
-#assert_compiled salvage_parametric_table_is_the_kernel
-#assert_compiled salvage_parametric_table_is_well_formed
-#assert_compiled salvageParametricStates_count
-#assert_compiled salvageParametricTransitions_count
-#assert_compiled parametric_closure_covers_every_board
+
+-- The six salvage pins (`#assert_compiled` + `native_decide`) live in
+-- `FiniteTablesFixtures.lean`, rooted in `PathOfAngelsGuards` — see the note above.
 
 end Dregg2.Games.PathOfAngels.FiniteTables

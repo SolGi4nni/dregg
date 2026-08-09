@@ -1331,7 +1331,29 @@ theorem decodeOutput_refuses_oversized (bytes : String)
     (oversized : WIRE_BYTE_LIMIT < bytes.length) : decodeOutput bytes = none := by
   simp [decodeOutput, decodeOutputWithLimit, Nat.not_le.mpr oversized]
 
-/-! ## Executable adversarial and end-to-end fixtures -/
+/-! ## Executable adversarial and end-to-end fixtures
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the seventeen `native_decide` pins
+below ran at elaboration, so any fixture regression here was a hard failure of every Rust
+proving target in the workspace (the compilation-unit coupling the stale-fixture outage
+measured). The fixtures' STATEMENTS stay here, each as an evaluation-free `check_* : Bool`
+definition (a `def` body elaborates without running), beside the private fixture policy, viewer,
+carrier and authority they exercise — which `GalleyMaintenanceDailyRuntimeBoundary`'s
+`adversarial_fixtures_are_private` requires stay private, and which stay private. The
+EVALUATION — each `check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`GalleyMaintenanceDailyRuntimeFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a
+plain `lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Fail-closed convention: a check whose judge call must SUCCEED before it can inspect the output
+matches on the `Option` and answers `false` on `none` — a broken prerequisite fails the pin in
+the guard library rather than wedging this module.
+
+Named residue: NONE — no construction here demands a proof as data.
+`fixture_sponsor_wire_refuses_valid_caller_json` stays below as a theorem because it is `rfl`
+(the sponsor wire is unconditionally the empty string), not an evaluation.
+-/
 
 private def fixtureDigest (n : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨n % 256, Nat.mod_lt _ (by decide)⟩
@@ -1477,75 +1499,108 @@ private def fixtureForgedSponsor : InputWire := {
   action := { kind := "holder-sponsor", token := fixtureDigest 99 }
 }
 
-theorem fixture_policy_valid : fixturePolicy.validB = true := by native_decide
+/-- The authored fixture policy passes the wire validity predicate.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_policy_valid : Bool := fixturePolicy.validB
 
-theorem fixture_input_roundtrip :
-    decodeInput fixtureViewInput.toJson = some fixtureViewInput := by native_decide
+/-- The canonical input wire decodes back to the exact value that encoded it.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_input_roundtrip : Bool :=
+  decide (decodeInput fixtureViewInput.toJson = some fixtureViewInput)
 
-theorem fixture_public_view_accepted :
-    (judgeBytesWithAuthority? fixtureViewInput.toJson 0 none).isSome = true := by native_decide
+/-- A public view is judged. (Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_public_view_accepted : Bool :=
+  (judgeBytesWithAuthority? fixtureViewInput.toJson 0 none).isSome
 
-theorem fixture_public_command_accepted :
-    (judgeBytesWithAuthority? fixturePublicCommand.toJson 0 none).isSome = true := by native_decide
+/-- A public play command is judged.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_public_command_accepted : Bool :=
+  (judgeBytesWithAuthority? fixturePublicCommand.toJson 0 none).isSome
 
-theorem fixture_public_output_redecodes :
-    (match judgeBytesWithAuthority? fixturePublicCommand.toJson 0 none with
-    | none => false
-    | some bytes => (decodeOutput bytes).isSome) = true := by native_decide
+/-- The judged output bytes re-decode as an `OutputWire`.  Fail-closed: a refused command
+answers `false`. (Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_public_output_redecodes : Bool :=
+  match judgeBytesWithAuthority? fixturePublicCommand.toJson 0 none with
+  | none => false
+  | some bytes => (decodeOutput bytes).isSome
 
-theorem fixture_replay_successor_accepted :
-    (judgeBytesWithAuthority? fixtureAfterView.toJson 0 none).isSome = true := by native_decide
+/-- Replaying the accepted event and claiming its projection is judged.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_replay_successor_accepted : Bool :=
+  (judgeBytesWithAuthority? fixtureAfterView.toJson 0 none).isSome
 
-theorem fixture_beta_sponsor_accepted_without_advantage :
-    (match judgeInput? fixtureSponsorCommand.toJson fixtureSponsorCommand 50 (some fixtureAuthority) with
-    | none => false
-    | some output =>
-        output.projection.powerRoot = fixturePolicy.powerRoot &&
-        output.projection.lootRoot = fixturePolicy.lootRoot &&
-        output.projection.canonRoot = fixturePolicy.canonRoot &&
-        output.projection.canonRevision = fixturePolicy.canonRevision &&
-        match output.receipt with
-        | none => false
-        | some receipt => receipt.powerDelta = 0 && receipt.lootDelta = 0 &&
-            receipt.canonRevisionDelta = 0 && receipt.localService ≤ MAX_LOCAL_SERVICE) = true := by
-  native_decide
+/-- A holder sponsorship under a real admitted authority moves NO advantage anchor and issues a
+receipt with zero power/loot/canon delta and bounded local service.  Fail-closed: a refused
+command, or an accepted one with no receipt, answers `false`.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_beta_sponsor_accepted_without_advantage : Bool :=
+  match judgeInput? fixtureSponsorCommand.toJson fixtureSponsorCommand 50 (some fixtureAuthority) with
+  | none => false
+  | some output =>
+      output.projection.powerRoot = fixturePolicy.powerRoot &&
+      output.projection.lootRoot = fixturePolicy.lootRoot &&
+      output.projection.canonRoot = fixturePolicy.canonRoot &&
+      output.projection.canonRevision = fixturePolicy.canonRevision &&
+      match output.receipt with
+      | none => false
+      | some receipt => receipt.powerDelta = 0 && receipt.lootDelta = 0 &&
+          receipt.canonRevisionDelta = 0 && receipt.localService ≤ MAX_LOCAL_SERVICE
 
-theorem fixture_beta_seal_roundtrip :
-    decodeBetaHolderSeal fixtureCarrier.toJson = some fixtureCarrier := by native_decide
+/-- The beta holder seal carrier round-trips through its canonical encoding.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_beta_seal_roundtrip : Bool :=
+  decide (decodeBetaHolderSeal fixtureCarrier.toJson = some fixtureCarrier)
 
 theorem fixture_sponsor_wire_refuses_valid_caller_json :
     runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson fixtureCarrier.toJson = "" := rfl
 
-theorem fixture_internal_sponsor_view_authors_token :
-    decide ((sponsorAction fixturePolicy fixtureState0 fixtureViewer fixtureAuthority) ∈
-      (viewOf fixturePolicy fixtureState0 fixtureViewer 50 (some fixtureAuthority)).availableActions) =
-        true := by
-  native_decide
+/-- The internally-authored sponsor action really is among the actions the view offers, so
+the token the command carries is not a fixture-only spelling.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_internal_sponsor_view_authors_token : Bool :=
+  decide ((sponsorAction fixturePolicy fixtureState0 fixtureViewer fixtureAuthority) ∈
+    (viewOf fixturePolicy fixtureState0 fixtureViewer 50 (some fixtureAuthority)).availableActions)
 
-theorem fixture_sponsor_wire_output_never_decodes :
-    decodeOutput (runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson fixtureCarrier.toJson) =
-      none := by native_decide
+/-- The disabled sponsor wire's output is not decodable as an `OutputWire` — it cannot be
+mistaken for a judged result. (Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_fixture_sponsor_wire_output_never_decodes : Bool :=
+  (decodeOutput (runAdmittedBetaSponsorWire fixtureSponsorCommand.toJson
+    fixtureCarrier.toJson)).isNone
 
-theorem hostile_wrong_version_refused :
-    judgeBytesWithAuthority? fixtureWrongVersion.toJson 0 none = none := by native_decide
+/-- A history event at the wrong stream version is refused.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_hostile_wrong_version_refused : Bool :=
+  (judgeBytesWithAuthority? fixtureWrongVersion.toJson 0 none).isNone
 
-theorem hostile_wrong_payload_digest_refused :
-    judgeBytesWithAuthority? fixtureWrongPayloadDigest.toJson 0 none = none := by native_decide
+/-- A history event whose payload digest does not bind its payload is refused.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_hostile_wrong_payload_digest_refused : Bool :=
+  (judgeBytesWithAuthority? fixtureWrongPayloadDigest.toJson 0 none).isNone
 
-theorem hostile_stale_projection_refused :
-    judgeBytesWithAuthority? fixtureStaleProjection.toJson 0 none = none := by native_decide
+/-- A claimed projection that is stale for the submitted history is refused.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_hostile_stale_projection_refused : Bool :=
+  (judgeBytesWithAuthority? fixtureStaleProjection.toJson 0 none).isNone
 
-theorem hostile_forged_sponsor_without_authority_refused :
-    judgeBytesWithAuthority? fixtureForgedSponsor.toJson 0 none = none := by native_decide
+/-- A holder-sponsor command with a forged token and no admitted authority is refused.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_hostile_forged_sponsor_without_authority_refused : Bool :=
+  (judgeBytesWithAuthority? fixtureForgedSponsor.toJson 0 none).isNone
 
-theorem hostile_trailing_byte_refused :
-    decodeInput (fixtureViewInput.toJson ++ " ") = none := by native_decide
+/-- Canonical bytes plus one trailing space are not canonical.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_hostile_trailing_byte_refused : Bool :=
+  (decodeInput (fixtureViewInput.toJson ++ " ")).isNone
 
-theorem hostile_unknown_field_refused :
-    decodeInput "{\"format\":\"POA-GALLEY-DAILY-IN-1\",\"unknown\":0}" = none := by native_decide
+/-- An unknown field is refused rather than ignored.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_hostile_unknown_field_refused : Bool :=
+  (decodeInput "{\"format\":\"POA-GALLEY-DAILY-IN-1\",\"unknown\":0}").isNone
 
-theorem hostile_tiny_byte_limit_refused :
-    decodeInputWithLimit 4 fixtureViewInput.toJson = none := by native_decide
+/-- The byte limit is enforced before parsing.
+(Pinned `= true` in `GalleyMaintenanceDailyRuntimeFixtures`.) -/
+def check_hostile_tiny_byte_limit_refused : Bool :=
+  (decodeInputWithLimit 4 fixtureViewInput.toJson).isNone
 
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeInput_reencodes
@@ -1563,21 +1618,8 @@ theorem hostile_tiny_byte_limit_refused :
 #assert_axioms sponsor_wire_is_unconditionally_disabled
 #assert_axioms decodeOutput_reencodes
 #assert_axioms decodeOutput_refuses_oversized
-#assert_compiled fixture_policy_valid
-#assert_compiled fixture_input_roundtrip
-#assert_compiled fixture_public_view_accepted
-#assert_compiled fixture_public_command_accepted
-#assert_compiled fixture_public_output_redecodes
-#assert_compiled fixture_replay_successor_accepted
-#assert_compiled fixture_beta_sponsor_accepted_without_advantage
-#assert_compiled fixture_beta_seal_roundtrip
 #assert_axioms fixture_sponsor_wire_refuses_valid_caller_json
-#assert_compiled fixture_internal_sponsor_view_authors_token
-#assert_compiled fixture_sponsor_wire_output_never_decodes
-#assert_compiled hostile_wrong_version_refused
-#assert_compiled hostile_wrong_payload_digest_refused
-#assert_compiled hostile_stale_projection_refused
-#assert_compiled hostile_forged_sponsor_without_authority_refused
-#assert_compiled hostile_trailing_byte_refused
-#assert_compiled hostile_unknown_field_refused
-#assert_compiled hostile_tiny_byte_limit_refused
+
+-- The seventeen fixture pins (`native_decide` + `#assert_compiled`) live in
+-- `GalleyMaintenanceDailyRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- fixture header above.

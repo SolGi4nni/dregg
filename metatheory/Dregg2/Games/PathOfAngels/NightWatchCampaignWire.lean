@@ -131,11 +131,11 @@ def allErrors : List NightWatchCampaign.Error :=
 theorem allErrors_is_exhaustive (error : NightWatchCampaign.Error) : error ∈ allErrors := by
   cases error <;> simp [allErrors]
 
-theorem error_names_are_pairwise_distinct : (allErrors.map errorName).Nodup := by
-  native_decide
+/-- The refusal labels distinguish every error the kernel can raise.
+(Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_error_names_are_pairwise_distinct : Bool := decide (allErrors.map errorName).Nodup
 
 #assert_axioms allErrors_is_exhaustive
-#assert_compiled error_names_are_pairwise_distinct
 
 /-! ## The player's submission -/
 
@@ -517,7 +517,35 @@ theorem decodeInputWithLimit_reencodes {limit : Nat} {bytes : String} {value : I
 
 The config, the manifest, the world and the node's draw are
 `NightWatchCampaignAdmission`'s: one fixture shape, shared, rather than a second one
-here that agrees today.  Everything below therefore runs the ACTUAL admission path. -/
+here that agrees today.  Everything below therefore runs the ACTUAL admission path.
+
+⚑ **THE TEETH NO LONGER BITE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and twenty `native_decide` pins ran at
+elaboration, so any fixture regression here was a hard failure of every Rust proving target in
+the workspace (the compilation-unit coupling the stale-fixture outage measured). Seventeen of
+them moved: their STATEMENTS stay here as evaluation-free `check_* : Bool` definitions (a `def`
+body elaborates without running), and the EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `NightWatchCampaignWireFixtures.lean`, rooted in
+the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale fixture
+reds the guard library instead of the archive.
+
+⚠ **Named residue, THREE construction proofs.** `NightWatchCampaign.Activation.mk` and
+`State.mk` are both `private`, so `admitActivation?`/`judge` are the ONLY producers and both
+return an `Option`/`Except`. There is therefore no `Activation` and no `State` this module can
+build as a fail-closed fallback, and `fixtureActivation`, `fixtureStateA` and `fixtureStateB`
+must take their witnesses as DATA at construction:
+
+  * `the_authenticated_path_reaches_an_activation` → `fixtureActivation`;
+  * `fixture_claim_with_nullifier_A_reaches_a_state` → `fixtureStateA` (⚠ consumed outside this
+    module, by `CanonicalCodecHealthWire`, so it keeps its exact name and type);
+  * `fixture_claim_with_nullifier_B_reaches_a_state` → `fixtureStateB`.
+
+Those three stay `native_decide` HERE, and breaking the admission path therefore still reds this
+module (and the archive). Everything else moved.
+
+⚠ `state_view_erases_the_consumed_nullifier_ledger` and its corollary
+`no_state_view_decoder_can_be_sound` moved to the fixtures module TOGETHER and VERBATIM —
+statements and names unchanged — because the corollary's only proof is the fixture pin. -/
 
 def fixtureActor : Digest32 := fixtureRunOwner
 
@@ -532,7 +560,11 @@ def fixtureActivation? : Option NightWatchCampaign.Activation := do
   NightWatchCampaign.admitActivation? member.config fixtureDraw
 
 /-- The whole authenticated path, end to end: canonical manifest → world-scoped config
-member → re-derived commitment and run seed → a judged activation. -/
+member → re-derived commitment and run seed → a judged activation.
+
+⚠ NAMED RESIDUE — this one CANNOT move to `NightWatchCampaignWireFixtures`: `Activation.mk`
+is `private`, so `fixtureActivation` below has to take this proof as DATA, and there is no
+`Activation` this module could use as a fail-closed fallback instead. -/
 theorem the_authenticated_path_reaches_an_activation :
     fixtureActivation?.isSome = true := by
   native_decide
@@ -547,10 +579,15 @@ def fixtureAfter? (nullifier : Digest32) : Option NightWatchCampaign.State :=
 def fixtureNullifierA : Digest32 := markDigest 200
 def fixtureNullifierB : Digest32 := markDigest 201
 
+/-- ⚠ NAMED RESIDUE — `State.mk` is `private`, so `fixtureStateA` takes this proof as DATA
+and no fail-closed fallback `State` exists.  `fixtureStateA` is consumed outside this module
+(`CanonicalCodecHealthWire`), so it cannot become an `Option` either. -/
 theorem fixture_claim_with_nullifier_A_reaches_a_state :
     (fixtureAfter? fixtureNullifierA).isSome = true := by
   native_decide
 
+/-- ⚠ NAMED RESIDUE — same reason as the `A` witness: `fixtureStateB` takes this proof as
+DATA through `Option.get`. -/
 theorem fixture_claim_with_nullifier_B_reaches_a_state :
     (fixtureAfter? fixtureNullifierB).isSome = true := by
   native_decide
@@ -579,6 +616,8 @@ def fixtureReplayInput : InputWire :=
       { sequence := 1, nullifier := fixtureNullifierA
         action := .chooseTask .bridge .plotDrift } }
 
+-- The three named-residue construction proofs above; the rest of the census moved to
+-- `NightWatchCampaignWireFixtures.lean`.
 #assert_compiled the_authenticated_path_reaches_an_activation
 #assert_compiled fixture_claim_with_nullifier_A_reaches_a_state
 #assert_compiled fixture_claim_with_nullifier_B_reaches_a_state
@@ -588,17 +627,14 @@ def fixtureReplayInput : InputWire :=
 Every one of these bites on the ACTUAL exported path (`decodeCommand`, `decodeInput`,
 `judgeJson`), not on a scratch model of it. -/
 
-theorem fixture_command_round_trips_through_the_wire :
-    decodeCommand (commandJson (fixtureClaim fixtureNullifierA)) =
-      some (fixtureClaim fixtureNullifierA) := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_fixture_command_round_trips_through_the_wire : Bool :=
+  decide (decodeCommand (commandJson (fixtureClaim fixtureNullifierA)) =
+    some (fixtureClaim fixtureNullifierA))
 
-theorem fixture_input_round_trips_through_the_wire :
-    decodeInput (inputJson fixtureInput) = some fixtureInput := by
-  native_decide
-
-#assert_compiled fixture_command_round_trips_through_the_wire
-#assert_compiled fixture_input_round_trips_through_the_wire
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_fixture_input_round_trips_through_the_wire : Bool :=
+  decide (decodeInput (inputJson fixtureInput) = some fixtureInput)
 
 def unknownActionKindBytes : String :=
   "{\"format\":" ++ jsonString COMMAND_FORMAT ++ ",\"sequence\":0,\"nullifier\":" ++
@@ -618,50 +654,41 @@ def uppercaseDigestBytes : String :=
   jsonString (String.ofList (List.replicate 62 '0') ++ "C8") ++
   ",\"action\":{\"kind\":\"resolve\"}}"
 
-theorem command_with_unknown_action_kind_refuses :
-    decodeCommand unknownActionKindBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_command_with_unknown_action_kind_refuses : Bool :=
+  (decodeCommand unknownActionKindBytes).isNone
 
-theorem command_with_unknown_field_refuses : decodeCommand unknownFieldBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_command_with_unknown_field_refuses : Bool := (decodeCommand unknownFieldBytes).isNone
 
-theorem command_with_reordered_keys_refuses : decodeCommand reorderedKeyBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_command_with_reordered_keys_refuses : Bool := (decodeCommand reorderedKeyBytes).isNone
 
-theorem command_with_uppercase_digest_refuses : decodeCommand uppercaseDigestBytes = none := by
-  native_decide
-
-#assert_compiled command_with_unknown_action_kind_refuses
-#assert_compiled command_with_unknown_field_refuses
-#assert_compiled command_with_reordered_keys_refuses
-#assert_compiled command_with_uppercase_digest_refuses
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_command_with_uppercase_digest_refuses : Bool :=
+  (decodeCommand uppercaseDigestBytes).isNone
 
 /-! ## End to end, over the exported bytes -/
 
-theorem judge_publishes_the_accepted_state_view :
-    judgeJson (inputJson fixtureInput) =
-      some (outputJson (.accepted (StateViewWire.ofState fixtureStateA))) := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_judge_publishes_the_accepted_state_view : Bool :=
+  decide (judgeJson (inputJson fixtureInput) =
+    some (outputJson (.accepted (StateViewWire.ofState fixtureStateA))))
 
-theorem judge_publishes_the_wrong_sequence_refusal :
-    judgeJson (inputJson fixtureWrongSequenceInput) =
-      some (outputJson (.refused .wrongSequence)) := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_judge_publishes_the_wrong_sequence_refusal : Bool :=
+  decide (judgeJson (inputJson fixtureWrongSequenceInput) =
+    some (outputJson (.refused .wrongSequence)))
 
 /-- The history really is replayed: the nullifier spent by the logged command is
-already in `consumedActions` when the next command arrives. -/
-theorem judge_replays_the_history_and_refuses_a_spent_nullifier :
-    judgeJson (inputJson fixtureReplayInput) =
-      some (outputJson (.refused .replayedAction)) := by
-  native_decide
+already in `consumedActions` when the next command arrives.
+(Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_judge_replays_the_history_and_refuses_a_spent_nullifier : Bool :=
+  decide (judgeJson (inputJson fixtureReplayInput) =
+    some (outputJson (.refused .replayedAction)))
 
-theorem judgeFFI_returns_empty_on_undecodable_bytes : judgeFFI "{}" = "" := by
-  native_decide
-
-#assert_compiled judge_publishes_the_accepted_state_view
-#assert_compiled judge_publishes_the_wrong_sequence_refusal
-#assert_compiled judge_replays_the_history_and_refuses_a_spent_nullifier
-#assert_compiled judgeFFI_returns_empty_on_undecodable_bytes
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_judgeFFI_returns_empty_on_undecodable_bytes : Bool := judgeFFI "{}" == ""
 
 /-! ## ⚑ The two authority holes, refuted on the exported path
 
@@ -676,20 +703,20 @@ bytes in `InputWire.config` would have been judged. -/
 def forgedRulesInput : InputWire :=
   { fixtureInput with manifest := forgedManifest.toJson }
 
-theorem a_fraudulent_rulebook_is_no_longer_judged :
-    (NightWatchCampaign.activate? forgedRaw).isSome = true ∧
-    forgedRaw.rules.map NightWatchCampaign.TaskRule.riskThreshold = [0] ∧
-    judgeJson (inputJson forgedRulesInput) = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_a_fraudulent_rulebook_is_no_longer_judged : Bool :=
+  (NightWatchCampaign.activate? forgedRaw).isSome &&
+  decide (forgedRaw.rules.map NightWatchCampaign.TaskRule.riskThreshold = [0]) &&
+  (judgeJson (inputJson forgedRulesInput)).isNone
 
 /-- The player's own world, freshly activated around the forged manifest, does not
 help either — unless persistence audited that world, and this module is handed the one
 it audited.  What IS proved here is the narrower fact: the manifest and the world must
 agree, so a forged manifest needs a forged ACTIVATION, which lives behind
-`WorldActivation`'s signature seam. -/
-theorem a_forged_manifest_needs_a_forged_world :
-    forgedManifest.matchesWorldB fixtureWorld = false := by
-  native_decide
+`WorldActivation`'s signature seam.
+(Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_a_forged_manifest_needs_a_forged_world : Bool :=
+  !(forgedManifest.matchesWorldB fixtureWorld)
 
 /-- ⚑ The hazard hole.  A caller who knows everything the descriptor publishes — the
 slot, the commitment, the mission context, the player — and holds the WRONG secret
@@ -707,21 +734,21 @@ def forgedDraw : NightWatchCampaign.RawActivation :=
 
 def forgedSecretInput : InputWire := { fixtureInput with activation := forgedDraw }
 
-theorem a_run_drawn_under_the_wrong_secret_is_not_judged :
-    forgedDraw.slotCommitment = fixtureDraw.slotCommitment ∧
-    forgedDraw.runSeed ≠ fixtureDraw.runSeed ∧
-    judgeJson (inputJson forgedSecretInput) = none ∧
-    (judgeJson (inputJson fixtureInput)).isSome = true := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_a_run_drawn_under_the_wrong_secret_is_not_judged : Bool :=
+  decide (forgedDraw.slotCommitment = fixtureDraw.slotCommitment) &&
+  decide (forgedDraw.runSeed ≠ fixtureDraw.runSeed) &&
+  (judgeJson (inputJson forgedSecretInput)).isNone &&
+  (judgeJson (inputJson fixtureInput)).isSome
 
 /-- And the caller cannot escape by naming a different slot: the config publishes the
 slot its commitment belongs to. -/
 def wrongSlotDraw : NightWatchCampaign.RawActivation :=
   { fixtureDraw with slot := ⟨8⟩ }
 
-theorem a_run_claiming_another_slot_is_not_judged :
-    judgeJson (inputJson { fixtureInput with activation := wrongSlotDraw }) = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_a_run_claiming_another_slot_is_not_judged : Bool :=
+  (judgeJson (inputJson { fixtureInput with activation := wrongSlotDraw })).isNone
 
 /-- A run whose owner is not a seated officer is refused, so a node cannot draw a
 schedule against an arbitrary key of its choosing. -/
@@ -732,16 +759,10 @@ def unseatedDraw : NightWatchCampaign.RawActivation :=
       { secret := fixtureSecret, slot := fixtureSlot, playerKey := markDigest 99 }
       fixtureMissionContext }
 
-theorem a_run_owned_by_an_unseated_key_is_not_judged :
-    NightWatchCampaign.rosterHolds fixtureRaw (markDigest 99) = false ∧
-    judgeJson (inputJson { fixtureInput with activation := unseatedDraw }) = none := by
-  native_decide
-
-#assert_compiled a_fraudulent_rulebook_is_no_longer_judged
-#assert_compiled a_forged_manifest_needs_a_forged_world
-#assert_compiled a_run_drawn_under_the_wrong_secret_is_not_judged
-#assert_compiled a_run_claiming_another_slot_is_not_judged
-#assert_compiled a_run_owned_by_an_unseated_key_is_not_judged
+/-- (Pinned `= true` in `NightWatchCampaignWireFixtures`.) -/
+def check_a_run_owned_by_an_unseated_key_is_not_judged : Bool :=
+  !(NightWatchCampaign.rosterHolds fixtureRaw (markDigest 99)) &&
+  (judgeJson (inputJson { fixtureInput with activation := unseatedDraw })).isNone
 
 /-! ## ⚑ The view carries no authority
 
@@ -750,22 +771,16 @@ Two states reached by the same command with different nullifiers are DISTINCT �
 and the corollary is unconditional: no decoder from the published view back to a
 `State` can be sound.  This is why there is no `parseStateView`, and it is refutable —
 put the nullifier set in the view and the first conjunct stays true while the second
-goes red. -/
+goes red.
 
-theorem state_view_erases_the_consumed_nullifier_ledger :
-    fixtureStateA ≠ fixtureStateB ∧
-      StateViewWire.ofState fixtureStateA = StateViewWire.ofState fixtureStateB := by
-  native_decide
+⚠ Both `state_view_erases_the_consumed_nullifier_ledger` and its corollary
+`no_state_view_decoder_can_be_sound` live in `NightWatchCampaignWireFixtures.lean`, VERBATIM —
+same names, same statements, same namespace, so the fully-qualified names are unchanged. The
+corollary went with the pin because its ONLY proof is that pin; leaving it here would have kept
+a `native_decide` in the archive's build for no gain. -/
 
-theorem no_state_view_decoder_can_be_sound
-    (decode : StateViewWire → Option NightWatchCampaign.State)
-    (sound : ∀ state : NightWatchCampaign.State,
-      decode (StateViewWire.ofState state) = some state) : False := by
-  obtain ⟨distinct, sameView⟩ := state_view_erases_the_consumed_nullifier_ledger
-  refine distinct (Option.some.inj ?_)
-  rw [← sound fixtureStateA, ← sound fixtureStateB, sameView]
-
-#assert_compiled state_view_erases_the_consumed_nullifier_ledger
-#assert_compiled no_state_view_decoder_can_be_sound
+-- The seventeen moved pins (`native_decide` + `#assert_compiled`) live in
+-- `NightWatchCampaignWireFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixture
+-- header above.  The only `#assert_compiled` left here is the three-proof named residue.
 
 end Dregg2.Games.PathOfAngels.NightWatchCampaignWire

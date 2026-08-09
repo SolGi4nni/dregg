@@ -221,7 +221,17 @@ theorem applyBatch_deterministic (boundary : DigestBoundary)
   rw [hl] at hr
   exact Except.ok.inj hr
 
-/-! ## Executable cross-aggregate and hostile fixtures -/
+/-! ## Executable cross-aggregate and hostile fixtures
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target. The fixtures'
+STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition beside the
+private fixture material; the EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `EventBatchFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+fixture reds the guard library instead of the archive. The hostile checks pin the EXACT
+refusal error, which refutes acceptance by construction. Named residue: none. -/
 
 private def digestByte (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -284,124 +294,137 @@ private def fixtureEnvelope : Envelope where
   statement := fixtureStatement
   batchDigest := fixtureBoundary.batchDigest fixtureStatement
 
-theorem fixture_cross_aggregate_batch_accepts :
-    (applyBatch fixtureBoundary [canonHead, attendantHead] fixtureEnvelope).isOk = true := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_fixture_cross_aggregate_batch_accepts : Bool :=
+  (applyBatch fixtureBoundary [canonHead, attendantHead] fixtureEnvelope).isOk
 
-theorem fixture_repeated_stream_is_explicitly_chained :
-    (applyBatch fixtureBoundary [canonHead, attendantHead] fixtureEnvelope).map
-      (fun applied =>
-        (headFor? applied.successorHeads canonHead.stream).map StreamHead.sequence) =
-      .ok (some 2) := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_fixture_repeated_stream_is_explicitly_chained : Bool :=
+  decide ((applyBatch fixtureBoundary [canonHead, attendantHead] fixtureEnvelope).map
+    (fun applied =>
+      (headFor? applied.successorHeads canonHead.stream).map StreamHead.sequence) =
+    .ok (some 2))
 
 private def fixtureSuccessorHeads : List StreamHead :=
   [ { stream := canonHead.stream, sequence := 2, head := secondCanon.eventDigest }
   , { stream := attendantHead.stream, sequence := 1, head := attendant.eventDigest } ]
 
-theorem fixture_cross_aggregate_successors_are_exact :
-    applyBatch fixtureBoundary [canonHead, attendantHead] fixtureEnvelope =
-      .ok {
-        coordinate := fixtureCoordinate
-        batchDigest := fixtureEnvelope.batchDigest
-        events := fixtureStatement.events
-        successorHeads := fixtureSuccessorHeads
-      } := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_fixture_cross_aggregate_successors_are_exact : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, attendantHead] fixtureEnvelope =
+    .ok {
+      coordinate := fixtureCoordinate
+      batchDigest := fixtureEnvelope.batchDigest
+      events := fixtureStatement.events
+      successorHeads := fixtureSuccessorHeads
+    })
 
-theorem hostile_semantic_reapplication_refused :
-    applyBatch fixtureBoundary fixtureSuccessorHeads fixtureEnvelope =
-      .error .wrongSequence := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_semantic_reapplication_refused : Bool :=
+  decide (applyBatch fixtureBoundary fixtureSuccessorHeads fixtureEnvelope =
+    .error .wrongSequence)
 
-theorem hostile_event_gap_refused :
-    let bad := { secondCanon with statement := { secondCanon.statement with sequence := 3 } }
-    let statement := { fixtureStatement with events := [firstCanon, attendant, bad] }
-    applyBatch fixtureBoundary [canonHead, attendantHead]
-      { statement, batchDigest := fixtureBoundary.batchDigest statement } =
-        .error .wrongSequence := by
-  native_decide
+private def gapEvent : IndexedEvent :=
+  { secondCanon with statement := { secondCanon.statement with sequence := 3 } }
 
-theorem hostile_cross_stream_predecessor_refused :
-    let bad := { attendant with statement :=
-      { attendant.statement with predecessor := firstCanon.eventDigest } }
-    let statement := { fixtureStatement with events := [firstCanon, bad] }
-    applyBatch fixtureBoundary [canonHead, attendantHead]
-      { statement, batchDigest := fixtureBoundary.batchDigest statement } =
-        .error .wrongPredecessor := by
-  native_decide
+private def gapStatement : Statement :=
+  { fixtureStatement with events := [firstCanon, attendant, gapEvent] }
 
-theorem hostile_index_reorder_refused :
-    let statement := { fixtureStatement with events := [attendant, firstCanon] }
-    applyBatch fixtureBoundary [canonHead, attendantHead]
-      { statement, batchDigest := fixtureBoundary.batchDigest statement } =
-        .error .wrongEventIndex := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_event_gap_refused : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, attendantHead]
+    { statement := gapStatement, batchDigest := fixtureBoundary.batchDigest gapStatement } =
+    .error .wrongSequence)
 
-theorem hostile_batch_digest_refused :
-    applyBatch fixtureBoundary [canonHead, attendantHead]
-      { fixtureEnvelope with batchDigest := digestByte 255 } = .error .wrongBatchDigest := by
-  native_decide
+private def crossPredecessorEvent : IndexedEvent :=
+  { attendant with statement :=
+    { attendant.statement with predecessor := firstCanon.eventDigest } }
 
-theorem hostile_duplicate_initial_stream_refused :
-    applyBatch fixtureBoundary [canonHead, canonHead, attendantHead] fixtureEnvelope =
-      .error .duplicateInitialStream := by
-  native_decide
+private def crossPredecessorStatement : Statement :=
+  { fixtureStatement with events := [firstCanon, crossPredecessorEvent] }
 
-theorem hostile_foreign_federation_refused :
-    let foreignAggregate := { firstCanon.statement.aggregate with namespaceId := digestByte 99 }
-    let badStatement := { firstCanon.statement with aggregate := foreignAggregate }
-    let bad : IndexedEvent :=
-      ⟨firstCanon.eventIndex, badStatement, fixtureBoundary.eventDigest badStatement⟩
-    let statement := { fixtureStatement with events := [bad] }
-    applyBatch fixtureBoundary [canonHead, attendantHead]
-      { statement, batchDigest := fixtureBoundary.batchDigest statement } =
-        .error .wrongFederationNamespace := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_cross_stream_predecessor_refused : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, attendantHead]
+    { statement := crossPredecessorStatement
+      batchDigest := fixtureBoundary.batchDigest crossPredecessorStatement } =
+    .error .wrongPredecessor)
 
-theorem world_scoped_streams_separate_activation_session_and_epoch :
-    let activation := { fixtureWorld with activationDigest := digestByte 90 }
-    let session := { fixtureWorld with contentSession := digestByte 91 }
-    let epoch := { fixtureWorld with contentEpoch := ⟨6⟩ }
-    (streamOfStatement activation firstCanon.statement != canonHead.stream) &&
-      (streamOfStatement session firstCanon.statement != canonHead.stream) &&
-      (streamOfStatement epoch firstCanon.statement != canonHead.stream) = true := by
-  native_decide
+private def reorderedStatement : Statement :=
+  { fixtureStatement with events := [attendant, firstCanon] }
 
-theorem hostile_reused_stream_after_world_rollback_refused :
-    let rollbackWorld := { fixtureWorld with
-      activationDigest := digestByte 90
-      contentSession := digestByte 91
-      contentEpoch := ⟨4⟩ }
-    let rollbackCoordinate := { fixtureCoordinate with world := rollbackWorld }
-    let statement := { fixtureStatement with coordinate := rollbackCoordinate }
-    applyBatch fixtureBoundary [canonHead, attendantHead]
-      { statement, batchDigest := fixtureBoundary.batchDigest statement } =
-        .error .invalidInitialHead := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_index_reorder_refused : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, attendantHead]
+    { statement := reorderedStatement
+      batchDigest := fixtureBoundary.batchDigest reorderedStatement } =
+    .error .wrongEventIndex)
 
-theorem hostile_zero_world_identity_refused :
-    let zeroWorld := { fixtureWorld with contentSession := zeroDigest }
-    let coordinate := { fixtureCoordinate with world := zeroWorld }
-    let statement := { fixtureStatement with coordinate }
-    applyBatch fixtureBoundary [canonHead, attendantHead]
-      { statement, batchDigest := fixtureBoundary.batchDigest statement } =
-        .error .invalidCoordinateIdentity := by
-  native_decide
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_batch_digest_refused : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, attendantHead]
+    { fixtureEnvelope with batchDigest := digestByte 255 } = .error .wrongBatchDigest)
+
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_duplicate_initial_stream_refused : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, canonHead, attendantHead] fixtureEnvelope =
+    .error .duplicateInitialStream)
+
+private def foreignFederationStatement : Statement :=
+  let foreignAggregate := { firstCanon.statement.aggregate with namespaceId := digestByte 99 }
+  let badStatement := { firstCanon.statement with aggregate := foreignAggregate }
+  let bad : IndexedEvent :=
+    ⟨firstCanon.eventIndex, badStatement, fixtureBoundary.eventDigest badStatement⟩
+  { fixtureStatement with events := [bad] }
+
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_foreign_federation_refused : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, attendantHead]
+    { statement := foreignFederationStatement
+      batchDigest := fixtureBoundary.batchDigest foreignFederationStatement } =
+    .error .wrongFederationNamespace)
+
+private def activationWorld : WorldIdentity :=
+  { fixtureWorld with activationDigest := digestByte 90 }
+private def sessionWorld : WorldIdentity :=
+  { fixtureWorld with contentSession := digestByte 91 }
+private def epochWorld : WorldIdentity :=
+  { fixtureWorld with contentEpoch := ⟨6⟩ }
+
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_world_scoped_streams_separate_activation_session_and_epoch : Bool :=
+  (streamOfStatement activationWorld firstCanon.statement != canonHead.stream) &&
+    (streamOfStatement sessionWorld firstCanon.statement != canonHead.stream) &&
+    (streamOfStatement epochWorld firstCanon.statement != canonHead.stream)
+
+private def rollbackStatement : Statement :=
+  let rollbackWorld := { fixtureWorld with
+    activationDigest := digestByte 90
+    contentSession := digestByte 91
+    contentEpoch := ⟨4⟩ }
+  { fixtureStatement with coordinate := { fixtureCoordinate with world := rollbackWorld } }
+
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_reused_stream_after_world_rollback_refused : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, attendantHead]
+    { statement := rollbackStatement
+      batchDigest := fixtureBoundary.batchDigest rollbackStatement } =
+    .error .invalidInitialHead)
+
+private def zeroWorldStatement : Statement :=
+  let zeroWorld := { fixtureWorld with contentSession := zeroDigest }
+  { fixtureStatement with coordinate := { fixtureCoordinate with world := zeroWorld } }
+
+/-- (Pinned `= true` in `EventBatchFixtures`.) -/
+def check_hostile_zero_world_identity_refused : Bool :=
+  decide (applyBatch fixtureBoundary [canonHead, attendantHead]
+    { statement := zeroWorldStatement
+      batchDigest := fixtureBoundary.batchDigest zeroWorldStatement } =
+    .error .invalidCoordinateIdentity)
 
 #assert_axioms applyBatch_deterministic
-#assert_compiled fixture_cross_aggregate_batch_accepts
-#assert_compiled fixture_repeated_stream_is_explicitly_chained
-#assert_compiled fixture_cross_aggregate_successors_are_exact
-#assert_compiled hostile_semantic_reapplication_refused
-#assert_compiled hostile_event_gap_refused
-#assert_compiled hostile_cross_stream_predecessor_refused
-#assert_compiled hostile_index_reorder_refused
-#assert_compiled hostile_batch_digest_refused
-#assert_compiled hostile_duplicate_initial_stream_refused
-#assert_compiled hostile_foreign_federation_refused
-#assert_compiled world_scoped_streams_separate_activation_session_and_epoch
-#assert_compiled hostile_reused_stream_after_world_rollback_refused
-#assert_compiled hostile_zero_world_identity_refused
+
+-- The thirteen fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `EventBatchFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixtures header above.
 
 end Dregg2.Games.PathOfAngels.EventBatch

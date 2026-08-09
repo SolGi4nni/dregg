@@ -728,7 +728,25 @@ theorem allowed_custody_destination_is_not_market (relic : RelicSpec)
     destination ≠ .market := by
   cases destination <;> simp_all [custodyDestinationAllowedB]
 
-/-! ## Spoiler-free executable specimen and named hostile examples -/
+/-! ## Spoiler-free executable specimen and named hostile examples
+
+⚑ **THE SPECIMEN NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the eight `native_decide` pins
+below ran at elaboration, so any specimen regression here was a hard failure of every Rust
+proving target in the workspace (the compilation-unit coupling the stale-fixture outage
+measured). The pins' STATEMENTS stay here, each as an evaluation-free `check_* : Bool`
+definition (a `def` body elaborates without running), beside the specimen and the named hostile
+packs they read. The EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `ContentContractFixtures.lean`, rooted in the `PathOfAngelsGuards`
+library: a plain `lake build` still runs every pin, and a stale specimen reds the guard library
+instead of the archive.
+
+⚠ The hostile pins keep their EXACT error-code lists (`[2]`, `[3, 4]`, `[4]`, …) rather than
+collapsing to "refuses": a pack that refuses for a DIFFERENT reason still fails the pin, which
+is the whole point of naming the codes.
+
+Named residue: NONE — every pack here is a plain `def`, so no proof is demanded as data at
+construction and all eight pins moved. -/
 
 def fixtureRoutes : List RouteSpec :=
   [ { id := ⟨0⟩, encounters := [⟨10⟩, ⟨11⟩], path := DeckGraph.fixturePath }
@@ -848,8 +866,9 @@ def fixtureContent : RawContent :=
     contributionBudget := fixtureBudget
     canon := fixtureCanon }
 
-theorem fixture_content_is_valid : contentValidB fixtureContent = true := by
-  native_decide
+/-- The spoiler-free specimen validates.
+(Pinned `= true` in `ContentContractFixtures`.) -/
+def check_fixture_content_is_valid : Bool := contentValidB fixtureContent
 
 def hostileRoleRelabel : RawContent :=
   { fixtureContent with officers :=
@@ -858,14 +877,16 @@ def hostileRoleRelabel : RawContent :=
       , { officer := ⟨2⟩, credential := ⟨102⟩, role := .containment }
       , { officer := ⟨3⟩, credential := ⟨103⟩, role := .quartermaster } ] }
 
-theorem hostile_role_relabel_refused :
-    (validateWire hostileRoleRelabel).errorCodes = [2] := by native_decide
+/-- (Pinned `= true` in `ContentContractFixtures`.) -/
+def check_hostile_role_relabel_refused : Bool :=
+  decide ((validateWire hostileRoleRelabel).errorCodes = [2])
 
 def hostileUnreachableExtraction : RawContent :=
   { fixtureContent with deck := DeckGraph.boundedSearchFailurePack }
 
-theorem hostile_unreachable_extraction_refused :
-    (validateWire hostileUnreachableExtraction).errorCodes = [3, 4] := by native_decide
+/-- (Pinned `= true` in `ContentContractFixtures`.) -/
+def check_hostile_unreachable_extraction_refused : Bool :=
+  decide ((validateWire hostileUnreachableExtraction).errorCodes = [3, 4])
 
 def hostileAsymmetricEncounter : RawContent :=
   { fixtureContent with routes :=
@@ -873,8 +894,9 @@ def hostileAsymmetricEncounter : RawContent :=
       , { id := ⟨1⟩, encounters := [⟨10⟩, ⟨12⟩], path := DeckGraph.fixturePath }
       , { id := ⟨2⟩, encounters := [⟨10⟩, ⟨13⟩], path := DeckGraph.fixturePath } ] }
 
-theorem hostile_route_encounter_asymmetry_refused :
-    (validateWire hostileAsymmetricEncounter).errorCodes = [4] := by native_decide
+/-- (Pinned `= true` in `ContentContractFixtures`.) -/
+def check_hostile_route_encounter_asymmetry_refused : Bool :=
+  decide ((validateWire hostileAsymmetricEncounter).errorCodes = [4])
 
 def hostileUnwinnableOutcome : RawContent :=
   { fixtureContent with outcomes :=
@@ -883,8 +905,9 @@ def hostileUnwinnableOutcome : RawContent :=
         contribution := fixtureContribution 10 [], recovery := ⟨40⟩ } ::
       fixtureOutcomes.drop 1 }
 
-theorem hostile_unwinnable_budget_refused :
-    (validateWire hostileUnwinnableOutcome).errorCodes = [5] := by native_decide
+/-- (Pinned `= true` in `ContentContractFixtures`.) -/
+def check_hostile_unwinnable_budget_refused : Bool :=
+  decide ((validateWire hostileUnwinnableOutcome).errorCodes = [5])
 
 def hostileAutomaticRecovery : RawContent :=
   { fixtureContent with recoveries :=
@@ -894,8 +917,9 @@ def hostileAutomaticRecovery : RawContent :=
           duration := .untilCuratorSuccessor,
           implementation := .automaticWorldMutation, globalMeterDebit := 1 } ] }
 
-theorem hostile_automatic_recovery_refused :
-    (validateWire hostileAutomaticRecovery).errorCodes = [6] := by native_decide
+/-- (Pinned `= true` in `ContentContractFixtures`.) -/
+def check_hostile_automatic_recovery_refused : Bool :=
+  decide ((validateWire hostileAutomaticRecovery).errorCodes = [6])
 
 def hostileMarketRelic : RawContent :=
   { fixtureContent with relics :=
@@ -906,15 +930,17 @@ def hostileMarketRelic : RawContent :=
       , { id := ⟨32⟩, sourceEncounter := ⟨13⟩, portable := false,
           marketEligible := false, alphaInterpretation := none } ] }
 
-theorem hostile_market_relic_refused :
-    (validateWire hostileMarketRelic).errorCodes = [7] := by native_decide
+/-- (Pinned `= true` in `ContentContractFixtures`.) -/
+def check_hostile_market_relic_refused : Bool :=
+  decide ((validateWire hostileMarketRelic).errorCodes = [7])
 
 def hostileSelfPromotion : RawContent :=
   { fixtureContent with promotionHooks :=
       [{ candidate := .place ⟨50⟩, alphaValue := some ⟨99⟩ }] }
 
-theorem hostile_direct_alpha_promotion_refused :
-    (validateWire hostileSelfPromotion).errorCodes = [8] := by native_decide
+/-- (Pinned `= true` in `ContentContractFixtures`.) -/
+def check_hostile_direct_alpha_promotion_refused : Bool :=
+  decide ((validateWire hostileSelfPromotion).errorCodes = [8])
 
 #assert_axioms contentValidB_sound
 #assert_axioms contentValidB_complete
@@ -933,13 +959,7 @@ theorem hostile_direct_alpha_promotion_refused :
 #assert_axioms validation_implies_encounter_route_reverse
 #assert_axioms validation_implies_recovery_is_beta_local
 #assert_axioms allowed_custody_destination_is_not_market
-#assert_compiled fixture_content_is_valid
-#assert_compiled hostile_role_relabel_refused
-#assert_compiled hostile_unreachable_extraction_refused
-#assert_compiled hostile_route_encounter_asymmetry_refused
-#assert_compiled hostile_unwinnable_budget_refused
-#assert_compiled hostile_automatic_recovery_refused
-#assert_compiled hostile_market_relic_refused
-#assert_compiled hostile_direct_alpha_promotion_refused
+-- The eight specimen pins (`native_decide` + `#assert_compiled`) live in
+-- `ContentContractFixtures.lean`, rooted in `PathOfAngelsGuards` — see the specimen header.
 
 end Dregg2.Games.PathOfAngels.ContentContract

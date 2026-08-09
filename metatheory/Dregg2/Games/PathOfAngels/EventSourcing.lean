@@ -282,7 +282,20 @@ theorem snapshot_cache_equivalence {State Payload : Type} (spec : StreamSpec)
       unfold resumeSnapshot
       simp [valid.1, valid.2]
 
-/-! ## Executable adversarial teeth -/
+/-! ## Executable adversarial teeth
+
+⚑ **THE TEETH NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target. The teeth's STATEMENTS
+stay here, each as an evaluation-free `check_* : Bool` definition (a `def` body elaborates
+without running); the EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `EventSourcingFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale fixture
+reds the guard library instead of the archive.
+
+The hostile checks pin the EXACT refusal error, which is strictly stronger than the old
+`fail_if_success`-guarded "not accepted" harness — an equality with `.error e` refutes
+acceptance by construction. Named residue: none; every evaluation moved. -/
 
 private def digestByte (n : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨n % 256, Nat.mod_lt _ (by omega)⟩
@@ -318,91 +331,71 @@ private def fixtureEvent (sequence : Nat) (predecessor : Digest32) (payload : Na
 private def eventOne : EventEnvelope Nat := fixtureEvent 1 fixtureSpec.genesisHead 7
 private def eventTwo : EventEnvelope Nat := fixtureEvent 2 eventOne.eventDigest 11
 
-theorem fixture_dense_rebuild :
-    rebuildProjection fixtureSpec fixtureDigests fixtureReducer 0 [eventOne, eventTwo] = .ok 18 := by
-  native_decide
+/-- The dense two-event stream rebuilds to exactly 0 + 7 + 11.
+(Pinned `= true` in `EventSourcingFixtures`.) -/
+def check_fixture_dense_rebuild : Bool :=
+  decide (rebuildProjection fixtureSpec fixtureDigests fixtureReducer 0 [eventOne, eventTwo] =
+    .ok 18)
 
-theorem hostile_gap_refused :
-    rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventTwo] =
-      .error (.wrongSequence 1 2) := by
-  fail_if_success
-    (have _accepted : ∃ result,
-      rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventTwo] = .ok result := by
-        native_decide)
-  native_decide
+/-- A stream that skips sequence 1 is refused with the exact gap error — the
+exact-error equality refutes acceptance by construction.
+(Pinned `= true` in `EventSourcingFixtures`.) -/
+def check_hostile_gap_refused : Bool :=
+  decide (rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventTwo] =
+    .error (.wrongSequence 1 2))
 
-theorem hostile_reorder_refused :
-    rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventTwo, eventOne] =
-      .error (.wrongSequence 1 2) := by
-  fail_if_success
-    (have _accepted : ∃ result,
-      rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventTwo, eventOne] = .ok result := by
-        native_decide)
-  native_decide
+/-- Reordered events are refused at the first out-of-sequence statement.
+(Pinned `= true` in `EventSourcingFixtures`.) -/
+def check_hostile_reorder_refused : Bool :=
+  decide (rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventTwo, eventOne] =
+    .error (.wrongSequence 1 2))
 
-theorem hostile_wrong_aggregate_refused :
-    let bad := { eventOne with statement := { eventOne.statement with aggregate := wrongAggregate } }
-    rebuild fixtureSpec fixtureDigests fixtureReducer 0 [bad] = .error .wrongAggregate := by
-  fail_if_success
-    (have _accepted : ∃ result,
-      let bad := { eventOne with statement := { eventOne.statement with aggregate := wrongAggregate } }
-      rebuild fixtureSpec fixtureDigests fixtureReducer 0 [bad] = .ok result := by native_decide)
-  native_decide
+private def wrongAggregateEvent : EventEnvelope Nat :=
+  { eventOne with statement := { eventOne.statement with aggregate := wrongAggregate } }
 
-theorem hostile_wrong_version_refused :
-    let bad := { eventOne with statement := { eventOne.statement with version := ⟨4⟩ } }
-    rebuild fixtureSpec fixtureDigests fixtureReducer 0 [bad] = .error .wrongVersion := by
-  fail_if_success
-    (have _accepted : ∃ result,
-      let bad := { eventOne with statement := { eventOne.statement with version := ⟨4⟩ } }
-      rebuild fixtureSpec fixtureDigests fixtureReducer 0 [bad] = .ok result := by native_decide)
-  native_decide
+/-- An event carrying a foreign aggregate id is refused.
+(Pinned `= true` in `EventSourcingFixtures`.) -/
+def check_hostile_wrong_aggregate_refused : Bool :=
+  decide (rebuild fixtureSpec fixtureDigests fixtureReducer 0 [wrongAggregateEvent] =
+    .error .wrongAggregate)
 
-theorem hostile_wrong_predecessor_refused :
-    let bad := { eventTwo with statement := { eventTwo.statement with predecessor := digestByte 99 } }
-    rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventOne, bad] =
-      .error .wrongPredecessor := by
-  fail_if_success
-    (have _accepted : ∃ result,
-      let bad := { eventTwo with statement := {
-        eventTwo.statement with predecessor := digestByte 99 } }
-      rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventOne, bad] = .ok result := by
-        native_decide)
-  native_decide
+private def wrongVersionEvent : EventEnvelope Nat :=
+  { eventOne with statement := { eventOne.statement with version := ⟨4⟩ } }
 
-theorem hostile_wrong_aggregate_snapshot_empty_suffix_refused :
-    let forged : Snapshot Nat := {
-      cursor := { fixtureSpec.genesisCursor with aggregate := wrongAggregate }
-      projection := 777
-    }
-    resumeSnapshot fixtureSpec fixtureDigests fixtureReducer forged [] =
-      .error .snapshotAggregate := by
-  fail_if_success
-    (have _accepted : ∃ result,
-      let forged : Snapshot Nat := {
-        cursor := { fixtureSpec.genesisCursor with aggregate := wrongAggregate }
-        projection := 777
-      }
-      resumeSnapshot fixtureSpec fixtureDigests fixtureReducer forged [] = .ok result := by
-        native_decide)
-  native_decide
+/-- An event carrying a foreign schema version is refused.
+(Pinned `= true` in `EventSourcingFixtures`.) -/
+def check_hostile_wrong_version_refused : Bool :=
+  decide (rebuild fixtureSpec fixtureDigests fixtureReducer 0 [wrongVersionEvent] =
+    .error .wrongVersion)
 
-theorem hostile_wrong_version_snapshot_empty_suffix_refused :
-    let forged : Snapshot Nat := {
-      cursor := { fixtureSpec.genesisCursor with version := ⟨4⟩ }
-      projection := 777
-    }
-    resumeSnapshot fixtureSpec fixtureDigests fixtureReducer forged [] =
-      .error .snapshotVersion := by
-  fail_if_success
-    (have _accepted : ∃ result,
-      let forged : Snapshot Nat := {
-        cursor := { fixtureSpec.genesisCursor with version := ⟨4⟩ }
-        projection := 777
-      }
-      resumeSnapshot fixtureSpec fixtureDigests fixtureReducer forged [] = .ok result := by
-        native_decide)
-  native_decide
+private def wrongPredecessorEvent : EventEnvelope Nat :=
+  { eventTwo with statement := { eventTwo.statement with predecessor := digestByte 99 } }
+
+/-- A successor naming the wrong predecessor head is refused.
+(Pinned `= true` in `EventSourcingFixtures`.) -/
+def check_hostile_wrong_predecessor_refused : Bool :=
+  decide (rebuild fixtureSpec fixtureDigests fixtureReducer 0 [eventOne, wrongPredecessorEvent] =
+    .error .wrongPredecessor)
+
+private def forgedAggregateSnapshot : Snapshot Nat where
+  cursor := { fixtureSpec.genesisCursor with aggregate := wrongAggregate }
+  projection := 777
+
+/-- A snapshot forged for a foreign aggregate is refused even with an empty suffix.
+(Pinned `= true` in `EventSourcingFixtures`.) -/
+def check_hostile_wrong_aggregate_snapshot_empty_suffix_refused : Bool :=
+  decide (resumeSnapshot fixtureSpec fixtureDigests fixtureReducer forgedAggregateSnapshot [] =
+    .error .snapshotAggregate)
+
+private def forgedVersionSnapshot : Snapshot Nat where
+  cursor := { fixtureSpec.genesisCursor with version := ⟨4⟩ }
+  projection := 777
+
+/-- A snapshot forged for a foreign schema version is refused even with an empty suffix.
+(Pinned `= true` in `EventSourcingFixtures`.) -/
+def check_hostile_wrong_version_snapshot_empty_suffix_refused : Bool :=
+  decide (resumeSnapshot fixtureSpec fixtureDigests fixtureReducer forgedVersionSnapshot [] =
+    .error .snapshotVersion)
 
 theorem fixture_snapshot_is_cache_equivalent :
     (do
@@ -418,13 +411,8 @@ theorem fixture_snapshot_is_cache_equivalent :
 #assert_axioms replay_success_cursor
 #assert_axioms snapshot_cache_equivalence
 #assert_axioms fixture_snapshot_is_cache_equivalent
-#assert_compiled fixture_dense_rebuild
-#assert_compiled hostile_gap_refused
-#assert_compiled hostile_reorder_refused
-#assert_compiled hostile_wrong_aggregate_refused
-#assert_compiled hostile_wrong_version_refused
-#assert_compiled hostile_wrong_predecessor_refused
-#assert_compiled hostile_wrong_aggregate_snapshot_empty_suffix_refused
-#assert_compiled hostile_wrong_version_snapshot_empty_suffix_refused
+
+-- The eight adversarial pins (`#assert_compiled` + `native_decide`) live in
+-- `EventSourcingFixtures.lean`, rooted in `PathOfAngelsGuards` — see the teeth header above.
 
 end Dregg2.Games.PathOfAngels.EventSourcing

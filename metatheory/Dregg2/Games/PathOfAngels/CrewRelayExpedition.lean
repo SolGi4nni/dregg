@@ -116,7 +116,18 @@ theorem command_code_injective (left right : Command) (code : left.code = right.
 /-! ## Fixture roster
 
 Four seats with distinct player keys, credentials and counter origins.  Used by
-`CrewFieldMission` and by `CrewFieldMissionRuntime`'s activation fixtures. -/
+`CrewFieldMission` and by `CrewFieldMissionRuntime`'s activation fixtures.
+
+⚑ **THE ROSTER PIN NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made a game-fixture
+regression a hard failure of every Rust proving target (the compilation-unit coupling the
+stale-fixture outage measured). The STATEMENT stays here as an evaluation-free `check_* : Bool`
+definition (a `def` body elaborates without running); the EVALUATION — `= true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `CrewRelayExpeditionFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs the pin, and a stale fixture reds the
+guard library instead of the archive.
+
+⚠ Named residue: none.  Nothing in this module needs a fixture proof as data. -/
 
 def digestFilled (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -129,15 +140,18 @@ def fixtureSeat3 : Seat := ⟨⟨3⟩, digestFilled 13, ⟨13⟩, .quartermaster
 
 def fixtureRoster : List Seat := [fixtureSeat0, fixtureSeat1, fixtureSeat2, fixtureSeat3]
 
-theorem fixture_roster_seats_are_distinct_in_every_authorizing_field :
-    (fixtureRoster.map Seat.id).Nodup ∧
-    (fixtureRoster.map Seat.playerKey).Nodup ∧
-    (fixtureRoster.map Seat.credential).Nodup ∧
-    (fixtureRoster.map Seat.role).Nodup := by
-  native_decide
+/-- The four fixture seats are distinct in every field that authorizes anything.
+(Pinned `= true` in `CrewRelayExpeditionFixtures`.) -/
+def check_fixture_roster_seats_are_distinct_in_every_authorizing_field : Bool :=
+  decide (fixtureRoster.map Seat.id).Nodup &&
+  decide (fixtureRoster.map Seat.playerKey).Nodup &&
+  decide (fixtureRoster.map Seat.credential).Nodup &&
+  decide (fixtureRoster.map Seat.role).Nodup
 
 #assert_axioms command_is_determined_by_role_and_strategy
 #assert_axioms command_code_injective
-#assert_compiled fixture_roster_seats_are_distinct_in_every_authorizing_field
+
+-- The roster pin (`#assert_compiled` + `native_decide`) lives in
+-- `CrewRelayExpeditionFixtures.lean`, rooted in `PathOfAngelsGuards` — see the header above.
 
 end Dregg2.Games.PathOfAngels.CrewRelayExpedition

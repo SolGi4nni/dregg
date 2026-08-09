@@ -344,27 +344,39 @@ def verifySignalTransition (inputBytes outputBytes : String) : Option SemanticOu
     decodeSignalOutputSemantic outputBytes
   else none
 
-/-! ## Genuine inhabitation and fail-closed boundary examples -/
+/-! ## Genuine inhabitation and fail-closed boundary examples
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the seventeen `native_decide`
+pins below ran at elaboration, so a stale Signal-judge fixture was a hard failure of every
+Rust proving target in the workspace (the compilation-unit coupling the stale-fixture
+outage measured). The fixtures' STATEMENTS stay here, each as an evaluation-free
+`check_* : Bool` definition (a `def` body elaborates without running), beside the hostile
+inputs they exercise. The EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `NetworkJudgeFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+fixture reds the guard library instead of the archive.
+
+Named residue: NONE — no construction here demands a proof as data. -/
 
 /-- This is the actual emitted Signal puzzle, not an independently assembled
 receipt-shaped value.  It traverses strict input decode, semantic reconstruction,
 the abstract `JudgedRun` constructor boundary, Canon's world chain, and strict
-successor encoding. -/
-theorem fixture_processSignalWire_success :
-    processSignalWire fixtureInputBytes = some fixtureOutputBytes := by
-  native_decide
+successor encoding. (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_processSignalWire_success : Bool :=
+  decide (processSignalWire fixtureInputBytes = some fixtureOutputBytes)
 
-theorem fixture_signalJudgeFFI_success :
-    signalJudgeFFI fixtureInputBytes = fixtureOutputBytes := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_signalJudgeFFI_success : Bool :=
+  decide (signalJudgeFFI fixtureInputBytes = fixtureOutputBytes)
 
-theorem fixture_signalJudgeFFI_malformed_refused :
-    signalJudgeFFI (fixtureInputBytes ++ "\n") = "" := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_signalJudgeFFI_malformed_refused : Bool :=
+  decide (signalJudgeFFI (fixtureInputBytes ++ "\n") = "")
 
-theorem fixture_verifySignalTransition_success :
-    (verifySignalTransition fixtureInputBytes fixtureOutputBytes).isSome = true := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_verifySignalTransition_success : Bool :=
+  (verifySignalTransition fixtureInputBytes fixtureOutputBytes).isSome
 
 def incompleteCanonOutputWire : SignalOutputWire := {
   fixtureOutputWire with
@@ -376,19 +388,19 @@ def incompleteCanonOutputWire : SignalOutputWire := {
 }
 
 /-- A well-shaped standalone output is not enough: exact transition verification
-rejects the same world paired with a Canon state that omitted settlement effects. -/
-theorem fixture_incomplete_canon_output_refused :
-    verifySignalTransition fixtureInputBytes incompleteCanonOutputWire.toJson = none := by
-  native_decide
+rejects the same world paired with a Canon state that omitted settlement effects.
+(Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_incomplete_canon_output_refused : Bool :=
+  (verifySignalTransition fixtureInputBytes incompleteCanonOutputWire.toJson).isNone
 
 def wrongPlayerInputWire : SignalInputWire := {
   fixtureInputWire with
   request := { fixtureInputWire.request with playerKey := fixtureActorRoot }
 }
 
-theorem fixture_wrong_player_refused :
-    processSignalWire wrongPlayerInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_wrong_player_refused : Bool :=
+  (processSignalWire wrongPlayerInputWire.toJson).isNone
 
 def wrongConfigInputWire : SignalInputWire := {
   fixtureInputWire with
@@ -396,9 +408,9 @@ def wrongConfigInputWire : SignalInputWire := {
     reward := { fixtureInputWire.config.reward with score := 499 } }
 }
 
-theorem fixture_wrong_config_refused :
-    processSignalWire wrongConfigInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_wrong_config_refused : Bool :=
+  (processSignalWire wrongConfigInputWire.toJson).isNone
 
 def wrongCurrentCounterInputWire : SignalInputWire := {
   fixtureInputWire with
@@ -406,18 +418,18 @@ def wrongCurrentCounterInputWire : SignalInputWire := {
   request := { fixtureInputWire.request with previousPlayerCounter := 1 }
 }
 
-theorem fixture_wrong_current_counter_refused :
-    processSignalWire wrongCurrentCounterInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_wrong_current_counter_refused : Bool :=
+  (processSignalWire wrongCurrentCounterInputWire.toJson).isNone
 
 def staleCounterInputWire : SignalInputWire := {
   fixtureInputWire with
   request := { fixtureInputWire.request with previousPlayerCounter := 1 }
 }
 
-theorem fixture_stale_counter_refused :
-    processSignalWire staleCounterInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_stale_counter_refused : Bool :=
+  (processSignalWire staleCounterInputWire.toJson).isNone
 
 def wrongActionInputWire : SignalInputWire := {
   fixtureInputWire with
@@ -425,9 +437,9 @@ def wrongActionInputWire : SignalInputWire := {
     actions := [{ low := 0, mid := 0, high := 0 }] }
 }
 
-theorem fixture_wrong_action_refused :
-    processSignalWire wrongActionInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_wrong_action_refused : Bool :=
+  (processSignalWire wrongActionInputWire.toJson).isNone
 
 def multipleActionsInputWire : SignalInputWire := {
   fixtureInputWire with
@@ -435,18 +447,18 @@ def multipleActionsInputWire : SignalInputWire := {
     actions := [CodeWire.ofSemantic fixtureConfig.target, CodeWire.ofSemantic fixtureConfig.target] }
 }
 
-theorem fixture_multiple_actions_refused :
-    processSignalWire multipleActionsInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_multiple_actions_refused : Bool :=
+  (processSignalWire multipleActionsInputWire.toJson).isNone
 
 def staleRevisionInputWire : SignalInputWire := {
   fixtureInputWire with
   request := { fixtureInputWire.request with expectedCanonRevision := 1 }
 }
 
-theorem fixture_stale_revision_refused :
-    processSignalWire staleRevisionInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_stale_revision_refused : Bool :=
+  (processSignalWire staleRevisionInputWire.toJson).isNone
 
 /-- Replaying the original counter-zero request against the genuine successor
 state fails because Canon now records counter one (and the original receipt key). -/
@@ -459,9 +471,9 @@ def replayAgainstSuccessorInputWire : SignalInputWire := {
     expectedCanonRevision := 1 }
 }
 
-theorem fixture_replay_against_successor_refused :
-    processSignalWire replayAgainstSuccessorInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_replay_against_successor_refused : Bool :=
+  (processSignalWire replayAgainstSuccessorInputWire.toJson).isNone
 
 /-! ### The hidden-instance teeth
 
@@ -479,9 +491,9 @@ def swappedSlotSecretInputWire : SignalInputWire := {
   slotState := { fixtureInputWire.slotState with secret := fixtureActorRoot }
 }
 
-theorem fixture_swapped_slot_secret_refused :
-    processSignalWire swappedSlotSecretInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_swapped_slot_secret_refused : Bool :=
+  (processSignalWire swappedSlotSecretInputWire.toJson).isNone
 
 /-- A client claiming a commitment the node did not publish for this slot. -/
 def wrongSlotCommitmentInputWire : SignalInputWire := {
@@ -489,9 +501,9 @@ def wrongSlotCommitmentInputWire : SignalInputWire := {
   request := { fixtureInputWire.request with slotCommitment := fixtureActorRoot }
 }
 
-theorem fixture_wrong_slot_commitment_refused :
-    processSignalWire wrongSlotCommitmentInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_wrong_slot_commitment_refused : Bool :=
+  (processSignalWire wrongSlotCommitmentInputWire.toJson).isNone
 
 /-- A client claiming a different slot from the one the node opened. -/
 def wrongSlotInputWire : SignalInputWire := {
@@ -499,9 +511,9 @@ def wrongSlotInputWire : SignalInputWire := {
   request := { fixtureInputWire.request with slot := fixtureInputWire.request.slot + 1 }
 }
 
-theorem fixture_wrong_claimed_slot_refused :
-    processSignalWire wrongSlotInputWire.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_wrong_claimed_slot_refused : Bool :=
+  (processSignalWire wrongSlotInputWire.toJson).isNone
 
 /-- ⚑ **The seed nobody gets to choose.**  This input is internally CONSISTENT — the
 config is exactly what `Emit.signalConfig` renders for `Emit.UNBOUND_RUN_SEED`, its target
@@ -520,14 +532,9 @@ def unboundSeedInputWire : SignalInputWire := {
     actions := [CodeWire.ofSemantic unboundSeedConfig.target] }
 }
 
-theorem fixture_unbound_run_seed_refused :
-    processSignalWire unboundSeedInputWire.toJson = none := by
-  native_decide
-
-#assert_compiled fixture_swapped_slot_secret_refused
-#assert_compiled fixture_wrong_slot_commitment_refused
-#assert_compiled fixture_wrong_claimed_slot_refused
-#assert_compiled fixture_unbound_run_seed_refused
+/-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
+def check_fixture_unbound_run_seed_refused : Bool :=
+  (processSignalWire unboundSeedInputWire.toJson).isNone
 
 #assert_axioms Settlement.receipt_applied
 #assert_axioms Settlement.canon_records_receipt
@@ -541,18 +548,9 @@ theorem fixture_unbound_run_seed_refused :
 #assert_axioms processSignalWire_output_is_lean_encoded
 #assert_axioms processSignalWire_output_decodes
 #assert_axioms signalJudgeFFI_success_iff
-#assert_compiled fixture_processSignalWire_success
-#assert_compiled fixture_signalJudgeFFI_success
-#assert_compiled fixture_signalJudgeFFI_malformed_refused
-#assert_compiled fixture_verifySignalTransition_success
-#assert_compiled fixture_incomplete_canon_output_refused
-#assert_compiled fixture_wrong_player_refused
-#assert_compiled fixture_wrong_config_refused
-#assert_compiled fixture_wrong_current_counter_refused
-#assert_compiled fixture_stale_counter_refused
-#assert_compiled fixture_wrong_action_refused
-#assert_compiled fixture_multiple_actions_refused
-#assert_compiled fixture_stale_revision_refused
-#assert_compiled fixture_replay_against_successor_refused
+
+-- The seventeen fixture pins (`native_decide` + `#assert_compiled`) live in
+-- `NetworkJudgeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixtures
+-- header above.
 
 end Dregg2.Games.PathOfAngels.NetworkJudge

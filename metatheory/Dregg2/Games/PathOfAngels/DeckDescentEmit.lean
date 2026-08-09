@@ -542,77 +542,72 @@ def duplicatedBoardDescriptor : String :=
     (descentPracticeBoards.set 3
       { mouth := .sound, west := .sound, east := .flooded })
 
-/-! ## The pins -/
+/-! ## The pins
 
-theorem descentDescriptor_exact_schema :
-    validateDescentDescriptor deckDescentDescriptorJson = .ok () := by
-  native_decide
+⚑ **THE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured). Each pin's STATEMENT stays here, as an
+evaluation-free `check_* : Bool` definition over the live validators and falsifiers (a
+`def` body elaborates without running). The EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `DeckDescentEmitFixtures.lean`, rooted in
+the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+descriptor reds the guard library instead of the archive.
 
-theorem descentDescriptor_table_is_the_kernel :
-    descentTableRefinesKernel deckDescentDescriptorJson = .ok () := by
-  native_decide
+Named residue: NONE — every pin moved. -/
 
-theorem descentDescriptor_views_are_the_kernel :
-    descentViewsRefineKernel deckDescentDescriptorJson = .ok () := by
-  native_decide
+/-- (Pinned `= true` in `DeckDescentEmitFixtures`.) -/
+def check_descentDescriptor_exact_schema : Bool :=
+  decide (validateDescentDescriptor deckDescentDescriptorJson = .ok ())
+
+/-- (Pinned `= true` in `DeckDescentEmitFixtures`.) -/
+def check_descentDescriptor_table_is_the_kernel : Bool :=
+  decide (descentTableRefinesKernel deckDescentDescriptorJson = .ok ())
+
+/-- (Pinned `= true` in `DeckDescentEmitFixtures`.) -/
+def check_descentDescriptor_views_are_the_kernel : Bool :=
+  decide (descentViewsRefineKernel deckDescentDescriptorJson = .ok ())
 
 /-- ⚠ The mutation happened, and it is caught.  The first conjunct is the guard
 against a falsifier that stopped falsifying: without it, a `flattenedResolveRows`
-that found no resolve row would emit the honest bytes and this theorem would
-report a working adversary while testing nothing. -/
-theorem flattened_resolve_is_caught :
-    flattenedResolveDescriptor ≠ deckDescentDescriptorJson ∧
-    descentTableRefinesKernel flattenedResolveDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_⟩
-  · native_decide
-  · native_decide
+that found no resolve row would emit the honest bytes and this check would
+report a working adversary while testing nothing.
+(Pinned `= true` in `DeckDescentEmitFixtures`.) -/
+def check_flattened_resolve_is_caught : Bool :=
+  decide (flattenedResolveDescriptor ≠ deckDescentDescriptorJson) &&
+  decide (descentTableRefinesKernel flattenedResolveDescriptor ≠ .ok ())
 
-theorem truncated_table_is_caught :
-    truncatedDescriptor ≠ deckDescentDescriptorJson ∧
-    validateDescentDescriptor truncatedDescriptor ≠ .ok () ∧
-    descentTableRefinesKernel truncatedDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
+/-- (Pinned `= true` in `DeckDescentEmitFixtures`.) -/
+def check_truncated_table_is_caught : Bool :=
+  decide (truncatedDescriptor ≠ deckDescentDescriptorJson) &&
+  decide (validateDescentDescriptor truncatedDescriptor ≠ .ok ()) &&
+  decide (descentTableRefinesKernel truncatedDescriptor ≠ .ok ())
 
-theorem descentDescriptor_practice_is_the_kernel :
-    descentPracticeRefinesKernel deckDescentDescriptorJson = .ok () := by
-  native_decide
+/-- (Pinned `= true` in `DeckDescentEmitFixtures`.) -/
+def check_descentDescriptor_practice_is_the_kernel : Bool :=
+  decide (descentPracticeRefinesKernel deckDescentDescriptorJson = .ok ())
 
 /-- ⚠ A family short one board, caught twice — once by the declared space and
-once against the kernel's own table. -/
-theorem a_missing_board_is_caught :
-    sevenBoardDescriptor ≠ deckDescentDescriptorJson ∧
-    validateDescentDescriptor sevenBoardDescriptor ≠ .ok () ∧
-    descentPracticeRefinesKernel sevenBoardDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
+once against the kernel's own table.
+(Pinned `= true` in `DeckDescentEmitFixtures`.) -/
+def check_a_missing_board_is_caught : Bool :=
+  decide (sevenBoardDescriptor ≠ deckDescentDescriptorJson) &&
+  decide (validateDescentDescriptor sevenBoardDescriptor ≠ .ok ()) &&
+  decide (descentPracticeRefinesKernel sevenBoardDescriptor ≠ .ok ())
 
 /-- ⚠ The one a count cannot see.  Eight rows, so `instance_space` agrees and the
 schema check passes; the family is still wrong, and only a comparison against the
-kernel's boards catches it. -/
-theorem a_duplicated_board_is_caught :
-    duplicatedBoardDescriptor ≠ deckDescentDescriptorJson ∧
-    validateDescentDescriptor duplicatedBoardDescriptor = .ok () ∧
-    descentPracticeRefinesKernel duplicatedBoardDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
+kernel's boards catches it. (Pinned `= true` in `DeckDescentEmitFixtures`.) -/
+def check_a_duplicated_board_is_caught : Bool :=
+  decide (duplicatedBoardDescriptor ≠ deckDescentDescriptorJson) &&
+  decide (validateDescentDescriptor duplicatedBoardDescriptor = .ok ()) &&
+  decide (descentPracticeRefinesKernel duplicatedBoardDescriptor ≠ .ok ())
 
 #assert_axioms line_determines_target
 
-#assert_compiled descentDescriptor_exact_schema
-#assert_compiled descentDescriptor_table_is_the_kernel
-#assert_compiled descentDescriptor_views_are_the_kernel
-#assert_compiled flattened_resolve_is_caught
-#assert_compiled truncated_table_is_caught
-#assert_compiled descentDescriptor_practice_is_the_kernel
-#assert_compiled a_missing_board_is_caught
-#assert_compiled a_duplicated_board_is_caught
+-- The eight descriptor pins (`#assert_compiled` + `native_decide`) live in
+-- `DeckDescentEmitFixtures.lean`, rooted in `PathOfAngelsGuards` — see the pins
+-- header above.
 
 /-! ## Handover — what `Emit.lean` and `EmitMain.lean` must splice
 

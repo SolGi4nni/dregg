@@ -93,16 +93,32 @@ artifacts never use it; their id is supplied only by verified PoA genesis. -/
 abbrev TEST_FEDERATION_ID_HEX : String :=
   "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
 
-theorem parseBytes32Hex_test_federation_vector :
-    (parseBytes32Hex? TEST_FEDERATION_ID_HEX).isSome = true := by
-  native_decide
+/-! ⚑ **THE EMITTER'S PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module
+is in the `Dregg2.FFI` closure — the crypto archive's build — and every `native_decide`
+here (renders the whole bundle, parses it back, replays the black-box kernel over 3000
+cells, draws eight Poseidon2 demonstration seeds per game) made a game-fixture regression a
+hard failure of every Rust proving target.  The STATEMENTS stay here, each as an
+evaluation-free `check_* : Bool` definition (a `def` body elaborates without running),
+beside the render and validate functions they are about — the render defs themselves are
+untouched.  The EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `EmitFixtures.lean`, rooted in the `PathOfAngelsGuards`
+library: a plain `lake build` still runs every pin, so a descriptor that stops matching its
+own validator still reds, in the guard library instead of the archive.
 
-theorem parseBytes32Hex_refuses_display_label :
-    parseBytes32Hex? "POA-FED-1" = none := by
-  native_decide
+⚠ Named residue, ONE proof: `signalRulesTable_cells_decode_to_the_kernel_bit` stays
+`native_decide` HERE because it is the PREMISE of two general theorems that belong in this
+module — `signalRulesCell_decodes_to_the_kernel_bit` and the marquee
+`signalRulesCell_matches_step`.  Moving the evaluation would have moved those two general
+statements out of the emitter with it.  Everything else moved. -/
 
-#assert_compiled parseBytes32Hex_test_federation_vector
-#assert_compiled parseBytes32Hex_refuses_display_label
+/-- The explicit non-deployment federation vector parses.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_parseBytes32Hex_test_federation_vector : Bool :=
+  (parseBytes32Hex? TEST_FEDERATION_ID_HEX).isSome
+
+/-- A display label is not a federation id. (Pinned `= true` in `EmitFixtures`.) -/
+def check_parseBytes32Hex_refuses_display_label : Bool :=
+  (parseBytes32Hex? "POA-FED-1").isNone
 
 private def byteHex (b : Fin 256) : String :=
   String.ofList [lowerHexDigit (b.val / 16), lowerHexDigit (b.val % 16)]
@@ -131,14 +147,11 @@ private def uint64HexAux : Nat → UInt64 → List Char → List Char
 def fnv1a64Hex (s : String) : String :=
   String.ofList (uint64HexAux 16 (fnv1a64 s) [])
 
-theorem fnv1a64_empty_vector : fnv1a64Hex "" = "cbf29ce484222325" := by
-  native_decide
+/-- The published FNV-1a 64 empty-string vector. (Pinned `= true` in `EmitFixtures`.) -/
+def check_fnv1a64_empty_vector : Bool := decide (fnv1a64Hex "" = "cbf29ce484222325")
 
-theorem fnv1a64_a_vector : fnv1a64Hex "a" = "af63dc4c8601ec8c" := by
-  native_decide
-
-#assert_compiled fnv1a64_empty_vector
-#assert_compiled fnv1a64_a_vector
+/-- The published FNV-1a 64 `"a"` vector. (Pinned `= true` in `EmitFixtures`.) -/
+def check_fnv1a64_a_vector : Bool := decide (fnv1a64Hex "a" = "af63dc4c8601ec8c")
 
 /-! ## POAG1 manifest and strict parser -/
 
@@ -265,25 +278,23 @@ private def artifactRefTestVector : ArtifactRef :=
     contentDigest := artifactRefTestDigest }
 
 /-- Exact bytes make a repeated `source_digest` (or any fifth field) observable,
-even though ordinary JSON object parsers conventionally collapse duplicate keys. -/
-theorem artifactRefJson_exact_four_key_vector :
-    artifactRefJson artifactRefTestVector =
-      "{\"mission_id\":7,\"artifact_id\":11,\"source_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"content_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"}" := by
-  native_decide
+even though ordinary JSON object parsers conventionally collapse duplicate keys.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_artifactRefJson_exact_four_key_vector : Bool :=
+  decide (artifactRefJson artifactRefTestVector =
+    "{\"mission_id\":7,\"artifact_id\":11,\"source_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"content_digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"}")
 
-theorem artifactRefJson_parses_as_exact_four_key_projection :
-    parseArtifactRefProjection (artifactRefJson artifactRefTestVector) = .ok {
-      missionId := 7
-      artifactId := 11
-      sourceDigest :=
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-      contentDigest :=
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    } := by
-  native_decide
-
-#assert_compiled artifactRefJson_exact_four_key_vector
-#assert_compiled artifactRefJson_parses_as_exact_four_key_projection
+/-- The emitted bytes parse back as the exact four-key projection.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_artifactRefJson_parses_as_exact_four_key_projection : Bool :=
+  decide (parseArtifactRefProjection (artifactRefJson artifactRefTestVector) = .ok {
+    missionId := 7
+    artifactId := 11
+    sourceDigest :=
+      "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    contentDigest :=
+      "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  })
 
 def contributionBudgetJson (b : ContributionBudget) : String :=
   "{\"intel\":" ++ toString b.intel.val ++
@@ -358,11 +369,11 @@ def signalAllCodes : List SignalTriangulation.Code :=
     (List.finRange 6).flatMap fun mid =>
       (List.finRange 6).map fun high => { low, mid, high }
 
-theorem signalAllCodes_length : signalAllCodes.length = 216 := by
-  native_decide
+/-- The emitted code list is the complete 6x6x6 space. (Pinned `= true` in `EmitFixtures`.) -/
+def check_signalAllCodes_length : Bool := decide (signalAllCodes.length = 216)
 
-theorem signalAllCodes_nodup : signalAllCodes.Nodup := by
-  native_decide
+/-- No code is emitted twice. (Pinned `= true` in `EmitFixtures`.) -/
+def check_signalAllCodes_nodup : Bool := decide signalAllCodes.Nodup
 
 theorem signalAllCodes_complete (code : SignalTriangulation.Code) :
     code ∈ signalAllCodes := by
@@ -428,29 +439,28 @@ def signalRulesCell (target guess : SignalTriangulation.Code) : Option Char :=
   | some r, some c => (signalRulesTable[r]?).bind fun row => row.toList[c]?
   | _, _ => none
 
-theorem signalClassPairs_length : signalClassPairs.length = 9 := by
-  native_decide
+/-- Nine realizable feedback classes. (Pinned `= true` in `EmitFixtures`.) -/
+def check_signalClassPairs_length : Bool := decide (signalClassPairs.length = 9)
 
 /-- No cell of the emitted table is `?`: the nine classes name every feedback the
-rules can produce over the complete 216-by-216 domain. -/
-theorem signalClassPairs_complete :
-    (signalAllCodes.all fun t => signalAllCodes.all fun g =>
-      signalClassPairs.contains
-        ((SignalTriangulation.feedback t g).exact,
-         (SignalTriangulation.feedback t g).present)) = true := by
-  native_decide
+rules can produce over the complete 216-by-216 domain.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_signalClassPairs_complete : Bool :=
+  signalAllCodes.all fun t => signalAllCodes.all fun g =>
+    signalClassPairs.contains
+      ((SignalTriangulation.feedback t g).exact,
+       (SignalTriangulation.feedback t g).present)
 
 theorem signalRulesTable_length : signalRulesTable.length = 216 := by
   simp [signalRulesTable, signalAllCodes]
 
 /-- ⚑ Every row of the emitted table solves at exactly one column, and that column
 is the row's own index.  The table therefore names no instance: it is the whole
-function, and no field of it distinguishes the live row. -/
-theorem signal_every_row_solves_at_exactly_its_own_index :
-    (signalAllCodes.all fun t =>
-      (signalAllCodes.filter fun g => (SignalTriangulation.feedback t g).exact == 3).length == 1)
-      = true := by
-  native_decide
+function, and no field of it distinguishes the live row.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_signal_every_row_solves_at_exactly_its_own_index : Bool :=
+  signalAllCodes.all fun t =>
+    (signalAllCodes.filter fun g => (SignalTriangulation.feedback t g).exact == 3).length == 1
 
 /-- The kernel fact underneath the table.  ⚠ RENAMED 2026-08-05: this carried the name
 `signalClass_matches_step` and a docstring claiming the emitted cell agrees with the
@@ -468,7 +478,12 @@ theorem step_solved_is_exact_three (cfg : SignalTriangulation.Config)
 /-- Over the WHOLE 216-by-216 domain, the cell the emitted table carries — read the way
 a client reads it, and decoded through the emitted alphabet — is exactly the kernel's
 own `solved` bit.  Finite and total, so it is `native_decide`; the ∀-form below carries
-it off the list. -/
+it off the list.
+
+⚠ NAMED RESIDUE, the only `native_decide` left in this module.  It is the PREMISE of
+`signalRulesCell_decodes_to_the_kernel_bit` and of the marquee
+`signalRulesCell_matches_step`, both general theorems that belong in the emitter; moving
+the evaluation to `EmitFixtures` would have moved those two statements out with it. -/
 theorem signalRulesTable_cells_decode_to_the_kernel_bit :
     (signalAllCodes.all fun t => signalAllCodes.all fun g =>
       (signalRulesCell t g).bind signalClassSolved? ==
@@ -498,17 +513,14 @@ theorem signalRulesCell_matches_step (cfg : SignalTriangulation.Config)
   rw [signalRulesCell_decodes_to_the_kernel_bit]
   exact step_solved_is_exact_three cfg s guess hopen
 
-#assert_compiled signalAllCodes_length
-#assert_compiled signalAllCodes_nodup
 #assert_axioms signalAllCodes_complete
 #assert_axioms signalRulesTable_length
 #assert_axioms step_solved_is_exact_three
+-- The named residue and its two general consequences; every other pin lives in
+-- `EmitFixtures.lean`, rooted in `PathOfAngelsGuards` — see the header note above.
 #assert_compiled signalRulesTable_cells_decode_to_the_kernel_bit
 #assert_compiled signalRulesCell_decodes_to_the_kernel_bit
 #assert_compiled signalRulesCell_matches_step
-#assert_compiled signalClassPairs_length
-#assert_compiled signalClassPairs_complete
-#assert_compiled signal_every_row_solves_at_exactly_its_own_index
 
 private def signalCodeJson (c : SignalTriangulation.Code) : String :=
   "[" ++ toString c.low.val ++ "," ++ toString c.mid.val ++ "," ++
@@ -1052,33 +1064,32 @@ def validateSignalDescriptor (bytes : String) : Except String Unit := do
     if !text.toList.all (fun c => allowed.contains c) then
       throw "POAG1 signal rules table names a class outside the declared alphabet"
 
-theorem relayDescriptor_exact_schema : validateRelayDescriptor relayDescriptorJson = .ok () := by
-  native_decide
+/-- The rendered relay descriptor satisfies its own strict schema.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_relayDescriptor_exact_schema : Bool :=
+  decide (validateRelayDescriptor relayDescriptorJson = .ok ())
 
-theorem blackBoxDescriptor_exact_schema :
-    validateBlackBoxDescriptor blackBoxDescriptorJson = .ok () := by
-  native_decide
+/-- (Pinned `= true` in `EmitFixtures`.) -/
+def check_blackBoxDescriptor_exact_schema : Bool :=
+  decide (validateBlackBoxDescriptor blackBoxDescriptorJson = .ok ())
 
-theorem blackBox_table_is_the_kernel : blackBoxTableRefinesKernel = .ok () := by
-  native_decide
+/-- ⚑ All 3000 cells of the RENDERED oracle agree with `BlackBoxReconstruction.hitB`.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_blackBox_table_is_the_kernel : Bool :=
+  decide (blackBoxTableRefinesKernel = .ok ())
 
-theorem blackBox_witnesses_are_the_kernel : blackBoxWitnessesRefineKernel = .ok () := by
-  native_decide
+/-- ⚑ Every rendered refusal witness replays to the reason the kernel reports.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_blackBox_witnesses_are_the_kernel : Bool :=
+  decide (blackBoxWitnessesRefineKernel = .ok ())
 
-theorem salvageDescriptor_exact_schema :
-    validateSalvageDescriptor salvageDescriptorJson = .ok () := by
-  native_decide
+/-- (Pinned `= true` in `EmitFixtures`.) -/
+def check_salvageDescriptor_exact_schema : Bool :=
+  decide (validateSalvageDescriptor salvageDescriptorJson = .ok ())
 
-theorem signalDescriptor_exact_schema :
-    validateSignalDescriptor signalDescriptorJson = .ok () := by
-  native_decide
-
-#assert_compiled relayDescriptor_exact_schema
-#assert_compiled salvageDescriptor_exact_schema
-#assert_compiled blackBoxDescriptor_exact_schema
-#assert_compiled blackBox_table_is_the_kernel
-#assert_compiled blackBox_witnesses_are_the_kernel
-#assert_compiled signalDescriptor_exact_schema
+/-- (Pinned `= true` in `EmitFixtures`.) -/
+def check_signalDescriptor_exact_schema : Bool :=
+  decide (validateSignalDescriptor signalDescriptorJson = .ok ())
 
 def signalBudget : ContributionBudget :=
   { intel := ⟨25, by decide⟩
@@ -1273,27 +1284,25 @@ def signalTemplateConfig
 held fixed here — the same template mission, the same federation, the same content
 session, the same slot, the same player — and two slot secrets still draw two
 different targets.  This is the statement `signalTarget_literal` could not make,
-because there the published seed WAS the answer. -/
-theorem signalDescriptor_does_not_determine_the_target :
+because there the published seed WAS the answer. (Pinned `= true` in `EmitFixtures`.) -/
+def check_signalDescriptor_does_not_determine_the_target : Bool :=
+  decide (SignalTriangulation.targetFromSeed?
+      (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+        (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 1) ≠
     SignalTriangulation.targetFromSeed?
-        (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
-          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 1) ≠
-      SignalTriangulation.targetFromSeed?
-        (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
-          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 2) := by
-  native_decide
+      (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+        (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 2))
 
 /-- ⚠ And both of those seeds DRAW.  Without this, the inequality above would be
 satisfiable by two refusals, and a draw that refused every live seed would read as
-"the artifact does not determine the code". -/
-theorem signalDescriptor_demo_seeds_both_draw :
-    (SignalTriangulation.targetFromSeed?
-        (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
-          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 1)).isSome ∧
-    (SignalTriangulation.targetFromSeed?
-        (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
-          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 2)).isSome := by
-  native_decide
+"the artifact does not determine the code". (Pinned `= true` in `EmitFixtures`.) -/
+def check_signalDescriptor_demo_seeds_both_draw : Bool :=
+  (SignalTriangulation.targetFromSeed?
+      (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+        (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 1)).isSome &&
+  (SignalTriangulation.targetFromSeed?
+      (demoLiveSeed (signalMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+        (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) 2)).isSome
 
 #assert_axioms signalMission_context_ignores_the_run_seed
 #assert_axioms signalReward_accepted
@@ -1301,8 +1310,6 @@ theorem signalDescriptor_demo_seeds_both_draw :
 #assert_axioms signalConfig?_target_is_the_draw
 #assert_axioms signalConfig?_refuses_a_refused_seed
 #assert_axioms unbound_target_is_the_unbound_draw
-#assert_compiled signalDescriptor_does_not_determine_the_target
-#assert_compiled signalDescriptor_demo_seeds_both_draw
 
 def signalPreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
@@ -1388,17 +1395,16 @@ theorem relayConfig_board_is_the_live_draw (runSeed : Digest32)
 
 /-- ⚑ **The artifact does not determine the board.**  Eight demonstration secrets
 against the same published template draw more than one board, so the emitted
-family of eight is not a family of one wearing eight hats. -/
-theorem relayDescriptor_does_not_determine_the_board :
-    (((List.range 8).map fun tag =>
-      (RelayRepair.boardFromRunSeed
-        (demoLiveSeed (relayMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
-          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)).val).eraseDups.length
-      != 1) = true := by
-  native_decide
+family of eight is not a family of one wearing eight hats.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_relayDescriptor_does_not_determine_the_board : Bool :=
+  ((List.range 8).map fun tag =>
+    (RelayRepair.boardFromRunSeed
+      (demoLiveSeed (relayMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+        (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)).val).eraseDups.length
+    != 1
 
 #assert_axioms relayConfig_board_is_the_live_draw
-#assert_compiled relayDescriptor_does_not_determine_the_board
 
 def relayPreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
@@ -1500,11 +1506,10 @@ resolve to are at least two distinct ones.
 
 (The relay twin `relayDescriptor_does_not_determine_the_board` was checked for the same
 defect and does not have it: `RelayRepair.boardFromRunSeed` is total, so its list is
-`List Nat` with no `none` to launder.) -/
-theorem salvageDescriptor_does_not_determine_the_board :
-    ((List.range 8).all fun tag => (demoSalvageBoard? tag).isSome) = true ∧
-      2 ≤ ((List.range 8).filterMap demoSalvageBoard?).eraseDups.length := by
-  native_decide
+`List Nat` with no `none` to launder.) (Pinned `= true` in `EmitFixtures`.) -/
+def check_salvageDescriptor_does_not_determine_the_board : Bool :=
+  ((List.range 8).all fun tag => (demoSalvageBoard? tag).isSome) &&
+    decide (2 ≤ ((List.range 8).filterMap demoSalvageBoard?).eraseDups.length)
 
 def salvagePreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
@@ -1517,7 +1522,6 @@ def salvagePreview (runSeed : Digest32)
 #assert_axioms relayReward_accepted
 #assert_axioms salvageReward_within
 #assert_axioms salvageReward_accepted
-#assert_compiled salvageDescriptor_does_not_determine_the_board
 
 /-! ## Black Box Reconstruction — the fourth mission
 
@@ -1618,11 +1622,11 @@ that it still does not tell you the instance has to be made carefully.
 
 Stated in the shape `salvageDescriptor_does_not_determine_the_board` was repaired
 into, so a `none` cannot launder a missing difference: every one of the eight
-demonstration secrets RESOLVES to an order, AND at least two of those orders differ. -/
-theorem blackBoxDescriptor_does_not_determine_the_order :
-    ((List.range 8).all fun tag => (demoBlackBoxOrder? tag).isSome) = true ∧
-      2 ≤ ((List.range 8).filterMap demoBlackBoxOrder?).eraseDups.length := by
-  native_decide
+demonstration secrets RESOLVES to an order, AND at least two of those orders differ.
+(Pinned `= true` in `EmitFixtures`.) -/
+def check_blackBoxDescriptor_does_not_determine_the_order : Bool :=
+  ((List.range 8).all fun tag => (demoBlackBoxOrder? tag).isSome) &&
+    decide (2 ≤ ((List.range 8).filterMap demoBlackBoxOrder?).eraseDups.length)
 
 def blackBoxPreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
@@ -1633,7 +1637,6 @@ def blackBoxPreview (runSeed : Digest32)
 
 #assert_axioms blackBoxReward_within
 #assert_axioms blackBoxReward_accepted
-#assert_compiled blackBoxDescriptor_does_not_determine_the_order
 
 /-! ## Deck Descent — the fifth mission
 
@@ -1752,9 +1755,8 @@ private def demoDescentBoard (tag : Nat) : DeckDescent.Board :=
 salvage shape — at least two DISTINCT boards, not merely "the deduped list is not
 a singleton" — although `boardFromRunSeed` is total, so there is no `none` to
 launder a missing difference in the first place. -/
-theorem descentDescriptor_does_not_determine_the_board :
-    2 ≤ (((List.range 8).map demoDescentBoard).eraseDups).length := by
-  native_decide
+def check_descentDescriptor_does_not_determine_the_board : Bool :=
+  decide (2 ≤ (((List.range 8).map demoDescentBoard).eraseDups).length)
 
 def descentPreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
@@ -1766,7 +1768,6 @@ def descentPreview (runSeed : Digest32)
 #assert_axioms descentReward_within
 #assert_axioms descentReward_accepted
 #assert_axioms descentConfig_board_is_the_live_draw
-#assert_compiled descentDescriptor_does_not_determine_the_board
 
 /-! ## Artificer Logic — the sixth mission
 
@@ -1868,11 +1869,10 @@ you the INSTANCE has to be made carefully.
 Stated in the shape `salvageDescriptor_does_not_determine_the_board` was repaired
 into, so a `none` cannot launder a missing difference: every one of the eight
 demonstration secrets RESOLVES to a rule, AND at least two of those rules are
-separated by a legal experiment. -/
-theorem artificerDescriptor_does_not_determine_the_rule :
-    ((List.range 8).all fun tag => (demoArtificerSignature? tag).isSome) = true ∧
-      2 ≤ ((List.range 8).filterMap demoArtificerSignature?).eraseDups.length := by
-  native_decide
+separated by a legal experiment. (Pinned `= true` in `EmitFixtures`.) -/
+def check_artificerDescriptor_does_not_determine_the_rule : Bool :=
+  ((List.range 8).all fun tag => (demoArtificerSignature? tag).isSome) &&
+    decide (2 ≤ ((List.range 8).filterMap demoArtificerSignature?).eraseDups.length)
 
 def artificerPreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
@@ -1884,7 +1884,6 @@ def artificerPreview (runSeed : Digest32)
 
 #assert_axioms artificerReward_within
 #assert_axioms artificerReward_accepted
-#assert_compiled artificerDescriptor_does_not_determine_the_rule
 
 /-! ## Vent Crawl — the seventh mission
 
@@ -1980,11 +1979,10 @@ Vent Crawl's descriptor publishes ALL FOUR yield ladders in full — it has to, 
 client could not render the range a rung might pay — so the artifact names the
 hypothesis space exactly and names the instance not at all.  Stated in the repaired
 salvage shape: every demonstration secret RESOLVES to a vein, AND at least two of
-those veins differ. -/
-theorem ventDescriptor_does_not_determine_the_vein :
-    ((List.range 8).all fun tag => (demoVeinTag? tag).isSome) = true ∧
-      2 ≤ ((List.range 8).filterMap demoVeinTag?).eraseDups.length := by
-  native_decide
+those veins differ. (Pinned `= true` in `EmitFixtures`.) -/
+def check_ventDescriptor_does_not_determine_the_vein : Bool :=
+  ((List.range 8).all fun tag => (demoVeinTag? tag).isSome) &&
+    decide (2 ≤ ((List.range 8).filterMap demoVeinTag?).eraseDups.length)
 
 def ventPreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
@@ -1995,7 +1993,6 @@ def ventPreview (runSeed : Digest32)
 
 #assert_axioms ventReward_within
 #assert_axioms ventReward_accepted
-#assert_compiled ventDescriptor_does_not_determine_the_vein
 
 /-- ⚠ Every field here is a game whose descriptor is measured by the driver and
 pinned in the manifest.  `blackBox` was added 2026-08-06, `deckDescent`
@@ -2519,14 +2516,12 @@ def schemaContentRootPaths : Except String (List String) := do
 
 /-- ⚑ The gate: the schema's declared content-root path set IS the artifact list's
 game path set.  Two independent renderings, one statement.  A game enrolled in one
-and not the other is a build failure. -/
-theorem schemaJson_declares_exactly_the_canonical_game_paths :
-    schemaContentRootPaths = .ok POAG1_GAME_PATHS := by
-  native_decide
+and not the other is a build failure. (Pinned `= true` in `EmitFixtures`.) -/
+def check_schemaJson_declares_exactly_the_canonical_game_paths : Bool :=
+  decide (schemaContentRootPaths = .ok POAG1_GAME_PATHS)
 
 #assert_axioms POAG1_GAME_PATHS_strictly_ascending
 #assert_axioms canonicalArtifacts_carry_the_canonical_game_paths
-#assert_compiled schemaJson_declares_exactly_the_canonical_game_paths
 
 def manifestFor (sourceDigestString : String)
     (federationId sourceDigest contentRoot : Digest32) (digests : GameContentDigests)

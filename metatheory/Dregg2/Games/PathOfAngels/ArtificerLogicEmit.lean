@@ -3,9 +3,10 @@
 
 Substrate note: this module renders bytes.  It authors no game semantics.  Every
 verdict, successor, refusal reason and rule signature below is read out of
-`Dregg2.Games.PathOfAngels.ArtificerLogic`, and the pins at the bottom parse the
-RENDERED bytes back and compare all 28,728 rows against `rowFor`.  There is no
-second model of the mechanism in this repository.
+`Dregg2.Games.PathOfAngels.ArtificerLogic`, and the pins — stated at the bottom as
+evaluation-free `check_*` definitions and RUN in `ArtificerLogicEmitFixtures.lean` —
+parse the RENDERED bytes back and compare all 28,728 rows against `rowFor`.  There is
+no second model of the mechanism in this repository.
 
 ## Why this is not `Emit.lean`
 
@@ -487,68 +488,66 @@ def flattenedResolveDescriptor : String :=
 /-- One row short.  Catches a table that is no longer total. -/
 def truncatedDescriptor : String := descriptorFrom engagesOn logicStates logicRows.tail
 
-/-! ## The pins -/
+/-! ## The pins
 
-theorem logicDescriptor_exact_schema :
-    validateLogicDescriptor artificerLogicDescriptorJson = .ok () := by
-  native_decide
+⚑ **THE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured). Each pin's STATEMENT stays here, as an
+evaluation-free `check_* : Bool` definition over the live validators and falsifiers (a
+`def` body elaborates without running). The EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `ArtificerLogicEmitFixtures.lean`, rooted
+in the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+descriptor reds the guard library instead of the archive.
 
-theorem logicDescriptor_manual_is_the_kernel :
-    logicManualRefinesKernel artificerLogicDescriptorJson = .ok () := by
-  native_decide
+Named residue: NONE — every pin moved. -/
+
+/-- (Pinned `= true` in `ArtificerLogicEmitFixtures`.) -/
+def check_logicDescriptor_exact_schema : Bool :=
+  decide (validateLogicDescriptor artificerLogicDescriptorJson = .ok ())
+
+/-- (Pinned `= true` in `ArtificerLogicEmitFixtures`.) -/
+def check_logicDescriptor_manual_is_the_kernel : Bool :=
+  decide (logicManualRefinesKernel artificerLogicDescriptorJson = .ok ())
 
 /-- ⚑ **The published lattice has no unwinnable pair**, checked against the bytes
-a client downloads and not against the kernel's own definitions. -/
-theorem logicDescriptor_manual_is_distinguishing :
-    logicManualIsDistinguishing artificerLogicDescriptorJson = .ok () := by
-  native_decide
+a client downloads and not against the kernel's own definitions.
+(Pinned `= true` in `ArtificerLogicEmitFixtures`.) -/
+def check_logicDescriptor_manual_is_distinguishing : Bool :=
+  decide (logicManualIsDistinguishing artificerLogicDescriptorJson = .ok ())
 
-theorem logicDescriptor_table_is_the_kernel :
-    logicTableRefinesKernel artificerLogicDescriptorJson = .ok () := by
-  native_decide
+/-- (Pinned `= true` in `ArtificerLogicEmitFixtures`.) -/
+def check_logicDescriptor_table_is_the_kernel : Bool :=
+  decide (logicTableRefinesKernel artificerLogicDescriptorJson = .ok ())
 
-theorem logicDescriptor_views_are_the_kernel :
-    logicViewsRefineKernel artificerLogicDescriptorJson = .ok () := by
-  native_decide
+/-- (Pinned `= true` in `ArtificerLogicEmitFixtures`.) -/
+def check_logicDescriptor_views_are_the_kernel : Bool :=
+  decide (logicViewsRefineKernel artificerLogicDescriptorJson = .ok ())
 
 /-- ⚠ **The synonym is caught, and ONLY by the manual check.**  The three
 conjuncts are the whole argument: the mutation happened; the distinguishability
 check refuses it; and the TABLE check still passes, which is why a row-by-row
 differential is not sufficient for an induction game and this module carries a
-second, manual-shaped one. -/
-theorem synonym_manual_is_caught :
-    synonymManualDescriptor ≠ artificerLogicDescriptorJson ∧
-    logicManualIsDistinguishing synonymManualDescriptor ≠ .ok () ∧
-    logicTableRefinesKernel synonymManualDescriptor = .ok () := by
-  refine ⟨?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
+second, manual-shaped one. (Pinned `= true` in `ArtificerLogicEmitFixtures`.) -/
+def check_synonym_manual_is_caught : Bool :=
+  decide (synonymManualDescriptor ≠ artificerLogicDescriptorJson) &&
+  decide (logicManualIsDistinguishing synonymManualDescriptor ≠ .ok ()) &&
+  decide (logicTableRefinesKernel synonymManualDescriptor = .ok ())
 
-theorem flattened_resolve_is_caught :
-    flattenedResolveDescriptor ≠ artificerLogicDescriptorJson ∧
-    logicTableRefinesKernel flattenedResolveDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_⟩
-  · native_decide
-  · native_decide
+/-- (Pinned `= true` in `ArtificerLogicEmitFixtures`.) -/
+def check_flattened_resolve_is_caught : Bool :=
+  decide (flattenedResolveDescriptor ≠ artificerLogicDescriptorJson) &&
+  decide (logicTableRefinesKernel flattenedResolveDescriptor ≠ .ok ())
 
-theorem truncated_table_is_caught :
-    truncatedDescriptor ≠ artificerLogicDescriptorJson ∧
-    validateLogicDescriptor truncatedDescriptor ≠ .ok () ∧
-    logicTableRefinesKernel truncatedDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
+/-- (Pinned `= true` in `ArtificerLogicEmitFixtures`.) -/
+def check_truncated_table_is_caught : Bool :=
+  decide (truncatedDescriptor ≠ artificerLogicDescriptorJson) &&
+  decide (validateLogicDescriptor truncatedDescriptor ≠ .ok ()) &&
+  decide (logicTableRefinesKernel truncatedDescriptor ≠ .ok ())
 
-#assert_compiled logicDescriptor_exact_schema
-#assert_compiled logicDescriptor_manual_is_the_kernel
-#assert_compiled logicDescriptor_manual_is_distinguishing
-#assert_compiled logicDescriptor_table_is_the_kernel
-#assert_compiled logicDescriptor_views_are_the_kernel
-#assert_compiled synonym_manual_is_caught
-#assert_compiled flattened_resolve_is_caught
-#assert_compiled truncated_table_is_caught
+-- The eight descriptor pins (`#assert_compiled` + `native_decide`) live in
+-- `ArtificerLogicEmitFixtures.lean`, rooted in `PathOfAngelsGuards` — see the pins
+-- header above.
 
 /-! ## Handover — what other lanes must splice
 

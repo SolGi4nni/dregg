@@ -787,7 +787,18 @@ theorem production_snapshot_recovery_exact {oracle : IdentityOracle}
     (reduceWireReceipt boundary template verifier)
     (initialProjection genesis) leading suffix
 
-/-! ## Closed executable cross-companion hostile replay suite -/
+/-! ## Closed executable cross-companion hostile replay suite
+
+⚑ **THE SUITE NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target. The suite's
+STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition beside the
+private mock fixtures; the EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `AttendantContinuityAggregateFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+fixture reds the guard library instead of the archive. The hostile checks pin the EXACT
+refusal error, which refutes acceptance by construction; the snapshot probes were already
+fail-closed Bools. Named residue: none — every evaluation moved. -/
 
 private def digestByte (n : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨n % 256, Nat.mod_lt _ (by omega)⟩
@@ -960,23 +971,25 @@ private def mockSummary (state : Projection Nat Nat Nat) : MockSummary where
 private def mockRebuild (events : List (EventSourcing.EventEnvelope MockReceipt)) :=
   EventSourcing.rebuild mockSpec mockDigests (reduceReceipt mockModel) mockInitial events
 
-theorem dense_cross_companion_recovery :
-    (mockRebuild [eventOne, eventTwo, eventThree]).map
-      (fun state => mockSummary state.projection) = .ok {
-        attendantTen := some 2
-        attendantEleven := some 51
-        liveLedger := 3
-        receiptCount := 3
-        careCount := 2
-        maintenanceCount := 1
-        equipmentSeen := 1
-        capabilitiesSeen := 1
-        settledCredits := 2
-        receipts := 3
-        lastSubject := some 11
-        casRevision := 3
-        casNullifiers := 3
-      } := by native_decide
+private def denseRecoveryExpected : MockSummary where
+  attendantTen := some 2
+  attendantEleven := some 51
+  liveLedger := 3
+  receiptCount := 3
+  careCount := 2
+  maintenanceCount := 1
+  equipmentSeen := 1
+  capabilitiesSeen := 1
+  settledCredits := 2
+  receipts := 3
+  lastSubject := some 11
+  casRevision := 3
+  casNullifiers := 3
+
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_dense_cross_companion_recovery : Bool :=
+  decide ((mockRebuild [eventOne, eventTwo, eventThree]).map
+    (fun state => mockSummary state.projection) = .ok denseRecoveryExpected)
 
 private def forgedTransplantReceipt : MockReceipt :=
   { maintenanceReceipt with tag := 4, view := {
@@ -1067,85 +1080,92 @@ private def sameHeadCas : CasTransitionIdentity where
 
 private def sameHeadAfter := mockCasAfter mockCas2 sameHeadCas
 
-theorem hostile_gap_refused :
-    mockRebuild [eventTwo] = .error (.wrongSequence 1 2) := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_gap_refused : Bool :=
+  decide (mockRebuild [eventTwo] = .error (.wrongSequence 1 2))
 
-theorem hostile_wrong_predecessor_refused :
-    let bad := { eventTwo with statement := {
-      eventTwo.statement with predecessor := digestByte 200 } }
-    mockRebuild [eventOne, bad] = .error .wrongPredecessor := by
-  native_decide
+private def wrongPredecessorEnvelope : EventSourcing.EventEnvelope MockReceipt :=
+  { eventTwo with statement := {
+    eventTwo.statement with predecessor := digestByte 200 } }
 
-theorem hostile_payload_substitution_refused :
-    let bad := { eventThree with payload := forgedTransplantReceipt }
-    mockRebuild [eventOne, eventTwo, bad] = .error .wrongPayloadDigest := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_wrong_predecessor_refused : Bool :=
+  decide (mockRebuild [eventOne, wrongPredecessorEnvelope] = .error .wrongPredecessor)
 
-theorem hostile_cross_companion_prestate_transplant_refused :
-    let bad := mockEnvelope 3 eventTwo.eventDigest forgedTransplantReceipt
-    mockRebuild [eventOne, eventTwo, bad] = .error .reducerRejected := by
-  native_decide
+private def payloadSubstitutionEnvelope : EventSourcing.EventEnvelope MockReceipt :=
+  { eventThree with payload := forgedTransplantReceipt }
 
-theorem hostile_stale_owner_ledger_refused :
-    let bad := mockEnvelope 3 eventTwo.eventDigest staleLedgerReceipt
-    mockRebuild [eventOne, eventTwo, bad] = .error .reducerRejected := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_payload_substitution_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo, payloadSubstitutionEnvelope] =
+    .error .wrongPayloadDigest)
 
-theorem hostile_duplicate_receipt_refused :
-    let bad := mockEnvelope 3 eventTwo.eventDigest duplicateReceipt
-    mockRebuild [eventOne, eventTwo, bad] = .error .reducerRejected := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_cross_companion_prestate_transplant_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo,
+    mockEnvelope 3 eventTwo.eventDigest forgedTransplantReceipt] = .error .reducerRejected)
 
-theorem hostile_duplicate_settled_credit_refused :
-    let bad := mockEnvelope 3 eventTwo.eventDigest duplicateCreditReceipt
-    mockRebuild [eventOne, eventTwo, bad] = .error .reducerRejected := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_stale_owner_ledger_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo,
+    mockEnvelope 3 eventTwo.eventDigest staleLedgerReceipt] = .error .reducerRejected)
 
-theorem hostile_unknown_companion_refused :
-    let bad := mockEnvelope 3 eventTwo.eventDigest unknownCompanionReceipt
-    mockRebuild [eventOne, eventTwo, bad] = .error .reducerRejected := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_duplicate_receipt_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo,
+    mockEnvelope 3 eventTwo.eventDigest duplicateReceipt] = .error .reducerRejected)
 
-theorem hostile_skipped_local_sequence_refused :
-    let bad := mockEnvelope 3 eventTwo.eventDigest skippedLocalSequenceReceipt
-    mockRebuild [eventOne, eventTwo, bad] = .error .reducerRejected := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_duplicate_settled_credit_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo,
+    mockEnvelope 3 eventTwo.eventDigest duplicateCreditReceipt] = .error .reducerRejected)
 
-theorem production_boundary_reused_nullifier_refused :
-    casTransitionWireValid mockCas2 reusedNullifierCas reusedNullifierAfter = false := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_unknown_companion_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo,
+    mockEnvelope 3 eventTwo.eventDigest unknownCompanionReceipt] = .error .reducerRejected)
 
-theorem production_boundary_same_head_successor_refused :
-    casTransitionWireValid mockCas2 sameHeadCas sameHeadAfter = false := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_skipped_local_sequence_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo,
+    mockEnvelope 3 eventTwo.eventDigest skippedLocalSequenceReceipt] = .error .reducerRejected)
 
-theorem hostile_reused_global_nullifier_refused :
-    let bad := mockEnvelope 3 eventTwo.eventDigest reusedNullifierReceipt
-    mockRebuild [eventOne, eventTwo, bad] = .error .reducerRejected := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_production_boundary_reused_nullifier_refused : Bool :=
+  !(casTransitionWireValid mockCas2 reusedNullifierCas reusedNullifierAfter)
 
-theorem hostile_canonical_state_mismatch_refused :
-    let bad := mockEnvelope 3 eventTwo.eventDigest mismatchedBeforeCasReceipt
-    mockRebuild [eventOne, eventTwo, bad] = .error .reducerRejected := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_production_boundary_same_head_successor_refused : Bool :=
+  !(casTransitionWireValid mockCas2 sameHeadCas sameHeadAfter)
 
-theorem hostile_duplicate_row_table_refused :
-    let corrupt : Projection Nat Nat Nat :=
-      Projection.initial [(10, 0), (10, 7), (11, 50)] 0 mockCas0
-    EventSourcing.rebuild mockSpec mockDigests (reduceReceipt mockModel) corrupt [eventOne] =
-      .error .reducerRejected := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_reused_global_nullifier_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo,
+    mockEnvelope 3 eventTwo.eventDigest reusedNullifierReceipt] = .error .reducerRejected)
 
-theorem certified_snapshot_recovery_matches_genesis_replay :
-    (do
-      let snapshot ← certifySnapshot mockSpec mockDigests (reduceReceipt mockModel)
-        mockInitial [eventOne, eventTwo]
-      resumeCertified mockSpec mockDigests (reduceReceipt mockModel)
-        mockInitial snapshot [eventThree]) =
-      mockRebuild [eventOne, eventTwo, eventThree] := by
-  unfold certifySnapshot
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_canonical_state_mismatch_refused : Bool :=
+  decide (mockRebuild [eventOne, eventTwo,
+    mockEnvelope 3 eventTwo.eventDigest mismatchedBeforeCasReceipt] = .error .reducerRejected)
+
+private def duplicateRowTable : Projection Nat Nat Nat :=
+  Projection.initial [(10, 0), (10, 7), (11, 50)] 0 mockCas0
+
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_duplicate_row_table_refused : Bool :=
+  decide (EventSourcing.rebuild mockSpec mockDigests (reduceReceipt mockModel)
+    duplicateRowTable [eventOne] = .error .reducerRejected)
+
+private def certifiedRecoveryProbe :
+    Except EventSourcing.Error (EventSourcing.ReplayState (Projection Nat Nat Nat)) := do
+  let snapshot ← certifySnapshot mockSpec mockDigests (reduceReceipt mockModel)
+    mockInitial [eventOne, eventTwo]
+  resumeCertified mockSpec mockDigests (reduceReceipt mockModel)
+    mockInitial snapshot [eventThree]
+
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_certified_snapshot_recovery_matches_genesis_replay : Bool :=
+  decide (certifiedRecoveryProbe = mockRebuild [eventOne, eventTwo, eventThree])
 
 private def oldSnapshotClaimingLongerPrefixIsRejected : Bool :=
   match EventSourcing.snapshotPrefix mockSpec mockDigests (reduceReceipt mockModel)
@@ -1157,9 +1177,9 @@ private def oldSnapshotClaimingLongerPrefixIsRejected : Bool :=
       | .error .reducerRejected => true
       | _ => false
 
-theorem hostile_old_snapshot_empty_suffix_refused :
-    oldSnapshotClaimingLongerPrefixIsRejected = true := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_old_snapshot_empty_suffix_refused : Bool :=
+  oldSnapshotClaimingLongerPrefixIsRejected
 
 private def resetSpendSnapshotIsRejected : Bool :=
   match EventSourcing.snapshotPrefix mockSpec mockDigests (reduceReceipt mockModel)
@@ -1174,9 +1194,9 @@ private def resetSpendSnapshotIsRejected : Bool :=
       | .error .reducerRejected => true
       | _ => false
 
-theorem hostile_reset_spend_and_receipt_sets_snapshot_refused :
-    resetSpendSnapshotIsRejected = true := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_reset_spend_and_receipt_sets_snapshot_refused : Bool :=
+  resetSpendSnapshotIsRejected
 
 private def resetCanonicalCasSnapshotIsRejected : Bool :=
   match EventSourcing.snapshotPrefix mockSpec mockDigests (reduceReceipt mockModel)
@@ -1190,9 +1210,9 @@ private def resetCanonicalCasSnapshotIsRejected : Bool :=
       | .error .reducerRejected => true
       | _ => false
 
-theorem hostile_reset_canonical_cas_snapshot_refused :
-    resetCanonicalCasSnapshotIsRejected = true := by
-  native_decide
+/-- (Pinned `= true` in `AttendantContinuityAggregateFixtures`.) -/
+def check_hostile_reset_canonical_cas_snapshot_refused : Bool :=
+  resetCanonicalCasSnapshotIsRejected
 
 #assert_axioms lookupRow_replaceRow_self
 #assert_axioms rowKeys_replaceRow
@@ -1212,24 +1232,9 @@ theorem hostile_reset_canonical_cas_snapshot_refused :
 #assert_axioms production_receipt_preserves_companion_identity
 #assert_axioms production_snapshot_recovery_exact
 #assert_axioms certify_then_resume_cache_equivalence
-#assert_compiled certified_snapshot_recovery_matches_genesis_replay
-#assert_compiled dense_cross_companion_recovery
-#assert_compiled hostile_gap_refused
-#assert_compiled hostile_wrong_predecessor_refused
-#assert_compiled hostile_payload_substitution_refused
-#assert_compiled hostile_cross_companion_prestate_transplant_refused
-#assert_compiled hostile_stale_owner_ledger_refused
-#assert_compiled hostile_duplicate_receipt_refused
-#assert_compiled hostile_duplicate_settled_credit_refused
-#assert_compiled hostile_unknown_companion_refused
-#assert_compiled hostile_skipped_local_sequence_refused
-#assert_compiled production_boundary_reused_nullifier_refused
-#assert_compiled production_boundary_same_head_successor_refused
-#assert_compiled hostile_reused_global_nullifier_refused
-#assert_compiled hostile_canonical_state_mismatch_refused
-#assert_compiled hostile_duplicate_row_table_refused
-#assert_compiled hostile_old_snapshot_empty_suffix_refused
-#assert_compiled hostile_reset_spend_and_receipt_sets_snapshot_refused
-#assert_compiled hostile_reset_canonical_cas_snapshot_refused
+
+-- The nineteen suite pins (`#assert_compiled` + `native_decide`) live in
+-- `AttendantContinuityAggregateFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- suite header above.
 
 end Dregg2.Games.PathOfAngels.AttendantContinuityAggregate

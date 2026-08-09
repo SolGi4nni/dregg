@@ -100,6 +100,24 @@ def raw : RawConfig where
     , { period := ⟨35⟩, value := digest 211 }
     ]
 
+/-! ⚑ **THE ROTATION PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in
+the `Dregg2.FFI` closure — the crypto archive's build root — and its `native_decide` pins ran at
+elaboration, so any rotation regression was a hard failure of every Rust proving target in the
+workspace (the compilation-unit coupling the stale-fixture outage measured). Two pins' STATEMENTS
+stay here as evaluation-free `check_* : Bool` definitions (a `def` body elaborates without
+running); the EVALUATION — each `check_* = true`, pinned by `native_decide` + `#assert_compiled`
+— lives in `SalvageCrateExamplesFixtures.lean`, rooted in the `PathOfAngelsGuards` library.
+
+⚠ **Named residue, ONE construction proof.** `authored_rotation_config_valid` stays
+`native_decide` HERE because `SalvageCrate.Config` carries its validity proof as DATA
+(`config := ⟨raw, authored_rotation_config_valid⟩`), so building the authored rotation config
+at all requires the proof at elaboration — and `config` is consumed outside this module
+(`StationCrateOpen`, `StationDailyRuntime`), so it cannot become an `Option` either. Breaking
+`configValidB` on the authored raw config therefore still reds this module (and the archive).
+`generated_rotation_is_deterministic` also stays: it is `rfl`, not an evaluation, but its
+statement names `config`, so its census line is `#assert_compiled`, not `#assert_axioms`. -/
+
+/-- ⚠ NAMED RESIDUE — required as DATA by `config` below. -/
 theorem authored_rotation_config_valid : configValidB raw = true := by
   native_decide
 
@@ -111,13 +129,13 @@ def officer : Digest32 := digest 40
 open: each `entry` is rederived by the cap-gated judge. -/
 def officerRotation : List RotationEntry := generatedRotation config officer
 
-theorem generated_rotation_has_every_authored_period :
-    officerRotation.map RotationEntry.period = [⟨31⟩, ⟨32⟩, ⟨35⟩] := by
-  native_decide
+/-- (Pinned `= true` in `SalvageCrateExamplesFixtures`.) -/
+def check_generated_rotation_has_every_authored_period : Bool :=
+  decide (officerRotation.map RotationEntry.period = [⟨31⟩, ⟨32⟩, ⟨35⟩])
 
-theorem generated_rotation_has_no_draw_exhaustion :
-    officerRotation.all (fun day => day.entry.isSome) = true := by
-  native_decide
+/-- (Pinned `= true` in `SalvageCrateExamplesFixtures`.) -/
+def check_generated_rotation_has_no_draw_exhaustion : Bool :=
+  officerRotation.all (fun day => day.entry.isSome)
 
 theorem generated_rotation_is_deterministic :
     generatedRotation config officer = officerRotation := rfl
@@ -148,9 +166,10 @@ theorem finality_capability_constructor_is_private : True := by
   fail_if_success (have _constructor := @FinalityCapability.mk)
   trivial
 
+-- Named residue: the construction proof, and the `rfl` theorem whose statement names `config`
+-- (so its axiom record is compiled-trust, not kernel).  The two rotation pins moved to
+-- `SalvageCrateExamplesFixtures.lean`, rooted in `PathOfAngelsGuards`.
 #assert_compiled authored_rotation_config_valid
-#assert_compiled generated_rotation_has_every_authored_period
-#assert_compiled generated_rotation_has_no_draw_exhaustion
 #assert_compiled generated_rotation_is_deterministic
 #assert_axioms persistent_state_constructor_is_private
 #assert_axioms successful_result_constructor_is_private

@@ -2572,13 +2572,25 @@ theorem resolveMoves_cell_identical (hfrm : ma.frm = mb.frm) (hto : ma.to = mb.t
 
 end PairCollapse
 
-/-! ## §10  ⚑ CONFORMANCE TEST BLOCK
+/-! ## §10  ⚑ CONFORMANCE TEST BLOCK — statements HERE, evaluation in `AutomataflRulesFixtures`
 
-One live `#guard` per rules clause, keyed to the audit's divergence table
+One named pin per rules clause, keyed to the audit's divergence table
 (`docs/reference/AUTOMATAFL-RULES-CONFORMANCE-AUDIT.md` §A). Every witness the audit's probe
-`AUTOMATAFL-RULES-CONFORMANCE-PROBE.lean` used to EXHIBIT a divergence appears here behaving
+`AUTOMATAFL-RULES-CONFORMANCE-PROBE.lean` used to EXHIBIT a divergence appears behaving
 per the rules — D1, D2, D3, D4a, D4b, D5, D6 — so each fixed divergence has a falsifier that
-would go red if the fix regressed. -/
+would go red if the fix regressed.
+
+⚑ **THE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and the 110 `#guard`s that used to run at
+elaboration here made every game-fixture regression a hard failure of every Rust proving
+target (the compilation-unit coupling the stale-fixture outage measured). The witness boards
+and moves STAY here (a `def` body elaborates without running); the EVALUATION — each fact as a
+NAMED theorem per GUARD-DISCIPLINE, pinned by `native_decide` + `#assert_compiled` — lives in
+`AutomataflRulesFixtures.lean`, rooted in the central guard library: a plain `lake build`
+still runs every pin, and a stale fixture reds the guard library instead of the archive.
+Facts that mention the private helpers (`mv`, `cfgCol`/`cfgRow`/`cfgFrz`, `noGoals`) stay
+expressible through the public evaluation-free `check_* : Bool` definitions below, each
+pinned `= true` in the Fixtures module. -/
 
 section Conformance
 
@@ -2597,20 +2609,8 @@ def autoBoard : Board := mkBoard 3 [(⟨0, 2⟩, .attractor)] ⟨2, 2⟩
 def intoAuto : Move := mv 0 ⟨0, 2⟩ ⟨2, 2⟩
 def outOfAuto : Move := mv 0 ⟨2, 2⟩ ⟨0, 2⟩
 
--- naming the automaton square as a DESTINATION is legal to propose …
-#guard moveLegalB autoBoard [] intoAuto = true
--- … and simply FAILS to execute: the square is occupied, so the move is blocked …
-#guard blockedB autoBoard [intoAuto] intoAuto = true
--- … and the mover is replaced at its origin.
-#guard (resolveMoves autoBoard [intoAuto]).cellAt ⟨0, 2⟩ = Particle.attractor
-#guard (resolveMoves autoBoard [intoAuto]).cellAt ⟨2, 2⟩ = Particle.automaton
--- naming it as a SOURCE is illegal (model.py `POS_CANT_MOVE_THAT`).
-#guard moveLegalB autoBoard [] outOfAuto = false
-
-/-! ### 1.5 — a marked coordinate is illegal as source AND destination, for everyone -/
-
-#guard moveLegalB autoBoard [⟨0, 2⟩] intoAuto = false            -- marked source
-#guard moveLegalB autoBoard [⟨2, 2⟩] intoAuto = false            -- marked destination
+-- Pinned in `AutomataflRulesFixtures`: destination-legal, blocked, replaced at origin,
+-- source-illegal (model.py `POS_CANT_MOVE_THAT`), and 1.5's marked-coordinate refusals.
 
 /-! ### 3.2 (audit D1, CRIT) — the destination is ON the path: a non-moving piece there
 BLOCKS, and the mover is replaced at its origin. The old spec DELETED the occupant, with one
@@ -2619,13 +2619,8 @@ move on a 3x3 board. -/
 def d1Board : Board := mkBoard 3 [(⟨0, 0⟩, .attractor), (⟨0, 2⟩, .repulsor)] ⟨2, 2⟩
 def d1Move : Move := mv 0 ⟨0, 0⟩ ⟨0, 2⟩
 
-#guard moveLegalB d1Board [] d1Move = true
-#guard blockedB d1Board [d1Move] d1Move = true                   -- WAS false (exclusive path)
-#guard (resolveMoves d1Board [d1Move]).cellAt ⟨0, 0⟩ = Particle.attractor
-#guard (resolveMoves d1Board [d1Move]).cellAt ⟨0, 2⟩ = Particle.repulsor
--- the repulsor is still SOMEWHERE on the board (the old spec's scan found none)
-#guard ((List.range 3).any (fun x => (List.range 3).any (fun y =>
-          (resolveMoves d1Board [d1Move]).cellAt ⟨x, y⟩ == Particle.repulsor))) = true
+-- Pinned in `AutomataflRulesFixtures`: legal, blocked (WAS false — exclusive path), both
+-- pieces in place after resolution, and the repulsor still SOMEWHERE on the board.
 
 /-! ### 3.3 — chains continue through vacated / vacuum squares -/
 
@@ -2633,19 +2628,12 @@ def chainBoard : Board := mkBoard 5 [(⟨0, 0⟩, .attractor)] ⟨4, 4⟩
 def ch1 : Move := mv 0 ⟨0, 0⟩ ⟨0, 1⟩
 def ch2 : Move := mv 1 ⟨0, 1⟩ ⟨0, 2⟩   -- source is VACUUM
 
-#guard (resolveMoves chainBoard [ch1, ch2]).cellAt ⟨0, 2⟩ = Particle.attractor
-#guard (resolveMoves chainBoard [ch1, ch2]).cellAt ⟨0, 0⟩ = Particle.vacuum
-
 /-! ### 3.4 — the ERRATUM / caterpillar: a piece landing on another move's source
-participates in that move too, one edge each -/
+participates in that move too, one edge each. (Both pinned in `AutomataflRulesFixtures`.) -/
 
 def catBoard : Board := mkBoard 5 [(⟨0, 0⟩, .attractor), (⟨0, 1⟩, .repulsor)] ⟨4, 4⟩
 def cat1 : Move := mv 0 ⟨0, 0⟩ ⟨0, 1⟩
 def cat2 : Move := mv 1 ⟨0, 1⟩ ⟨0, 2⟩
-
-#guard (resolveMoves catBoard [cat1, cat2]).cellAt ⟨0, 0⟩ = Particle.vacuum
-#guard (resolveMoves catBoard [cat1, cat2]).cellAt ⟨0, 1⟩ = Particle.attractor
-#guard (resolveMoves catBoard [cat1, cat2]).cellAt ⟨0, 2⟩ = Particle.repulsor
 
 /-! ### 3.6 + the author's rule — a move whose destination does NOT empty simply FAILS TO
 EXECUTE ("it doesn't generate a conflict and shouldn't"), and the failure propagates back down
@@ -2656,53 +2644,34 @@ def stuckBoard : Board :=
 def st1 : Move := mv 0 ⟨0, 0⟩ ⟨0, 1⟩
 def st2 : Move := mv 1 ⟨0, 1⟩ ⟨0, 2⟩       -- (0,2) holds a NON-MOVING piece
 
-#guard blockedB stuckBoard [st1, st2] st2 = true      -- the leader is blocked …
-#guard blockedB stuckBoard [st1, st2] st1 = false     -- … but the follower's own path is clear
-#guard clashCoords stuckBoard [st1, st2] = ([] : List Coord)   -- NOT a conflict
-#guard unresolved stuckBoard [st1, st2] = ([] : List Coord)    -- and not a merge either
-#guard movers stuckBoard [st1, st2] = ([] : List Coord)        -- nothing moves
-#guard (resolveMoves stuckBoard [st1, st2]).cellAt ⟨0, 0⟩ = Particle.attractor
-#guard (resolveMoves stuckBoard [st1, st2]).cellAt ⟨0, 1⟩ = Particle.repulsor
-#guard (resolveMoves stuckBoard [st1, st2]).cellAt ⟨0, 2⟩ = Particle.attractor
-
--- the guard is not swallowing the ordinary cases: real resolutions ARE resolvable
-#guard resolvableB catBoard [cat1, cat2] = true
-#guard resolvableB chainBoard [ch1, ch2] = true
+-- Pinned in `AutomataflRulesFixtures`: leader blocked, follower clear, no clash, no merge,
+-- no movers, all three pieces in place — and the ordinary rounds still resolvable.
 
 /-! ### 3.5a (audit D2) — a 2-cycle with pieces on BOTH squares STAYS PUT.
-The old spec SWAPPED them. -/
+The old spec SWAPPED them. (Pinned in `AutomataflRulesFixtures`.) -/
 
 def d2Board : Board := mkBoard 3 [(⟨0, 0⟩, .attractor), (⟨0, 2⟩, .repulsor)] ⟨2, 2⟩
 def d2A : Move := mv 0 ⟨0, 0⟩ ⟨0, 2⟩
 def d2B : Move := mv 1 ⟨0, 2⟩ ⟨0, 0⟩
 
-#guard clashCoords d2Board [d2A, d2B] = ([] : List Coord)         -- not a conflict
-#guard twoCyc (edgeMap d2Board [d2A, d2B]) ⟨0, 0⟩ = true
-#guard (resolveMoves d2Board [d2A, d2B]).cellAt ⟨0, 0⟩ = Particle.attractor   -- WAS repulsor
-#guard (resolveMoves d2Board [d2A, d2B]).cellAt ⟨0, 2⟩ = Particle.repulsor    -- WAS attractor
-
 /-! ### 3.5b (audit D3) — the README's own named case: *"a move from an empty square directly
-back to some source square — the piece simply doesn't move"*. The old spec moved it. -/
+back to some source square — the piece simply doesn't move"*. The old spec moved it.
+(Pinned in `AutomataflRulesFixtures`.) -/
 
 def d3Board : Board := mkBoard 3 [(⟨0, 0⟩, .attractor)] ⟨2, 2⟩
 def d3A : Move := mv 0 ⟨0, 0⟩ ⟨0, 2⟩
 def d3B : Move := mv 1 ⟨0, 2⟩ ⟨0, 0⟩      -- source is VACUUM
 
-#guard (resolveMoves d3Board [d3A, d3B]).cellAt ⟨0, 0⟩ = Particle.attractor   -- WAS vacuum
-#guard (resolveMoves d3Board [d3A, d3B]).cellAt ⟨0, 2⟩ = Particle.vacuum      -- WAS attractor
-
-/-! ### 3.5c (audit D6) — an EMPTY cycle cannot pull a piece in; the move is nullified -/
+/-! ### 3.5c (audit D6) — an EMPTY cycle cannot pull a piece in; the move is nullified.
+(Pinned in `AutomataflRulesFixtures`.) -/
 
 def d6Board : Board := mkBoard 5 [(⟨0, 0⟩, .attractor)] ⟨4, 4⟩
 def e1 : Move := mv 0 ⟨0, 0⟩ ⟨0, 1⟩
 def e2 : Move := mv 1 ⟨0, 1⟩ ⟨0, 2⟩
 def e3 : Move := mv 2 ⟨0, 2⟩ ⟨0, 1⟩
 
-#guard stopWalk (edgeMap d6Board [e1, e2, e3]) (carAt d6Board) 4 ⟨0, 0⟩ = none
-#guard (resolveMoves d6Board [e1, e2, e3]).cellAt ⟨0, 0⟩ = Particle.attractor  -- WAS vacuum
-#guard (resolveMoves d6Board [e1, e2, e3]).cellAt ⟨0, 2⟩ = Particle.vacuum     -- WAS attractor
-
-/-! ### 3.5d — a >2-cycle with every square carrying ROTATES one position (KEPT) -/
+/-! ### 3.5d — a >2-cycle with every square carrying ROTATES one position (KEPT).
+(Pinned in `AutomataflRulesFixtures`.) -/
 
 def rotBoard : Board :=
   mkBoard 5 [(⟨0, 0⟩, .attractor), (⟨2, 0⟩, .repulsor),
@@ -2712,33 +2681,24 @@ def r2 : Move := mv 1 ⟨2, 0⟩ ⟨2, 2⟩
 def r3 : Move := mv 2 ⟨2, 2⟩ ⟨0, 2⟩
 def r4 : Move := mv 3 ⟨0, 2⟩ ⟨0, 0⟩
 
-#guard (resolveMoves rotBoard [r1, r2, r3, r4]).cellAt ⟨2, 0⟩ = Particle.attractor
-#guard (resolveMoves rotBoard [r1, r2, r3, r4]).cellAt ⟨2, 2⟩ = Particle.repulsor
-#guard (resolveMoves rotBoard [r1, r2, r3, r4]).cellAt ⟨0, 2⟩ = Particle.attractor
-#guard (resolveMoves rotBoard [r1, r2, r3, r4]).cellAt ⟨0, 0⟩ = Particle.repulsor
-#guard resolvableB rotBoard [r1, r2, r3, r4] = true
-
-/-! ### 2.1 / 2.2 / 2.3 — fork, collide, and the identical-move EXCEPTION (KEPT) -/
+/-! ### 2.1 / 2.2 / 2.3 — fork, collide, and the identical-move EXCEPTION (KEPT).
+(Pinned in `AutomataflRulesFixtures`; the collide witness needs the private `mv`, so it is a
+`check_*` below.) -/
 
 def forkBoard : Board := mkBoard 5 [(⟨0, 0⟩, .attractor)] ⟨4, 4⟩
 def fkA : Move := mv 0 ⟨0, 0⟩ ⟨0, 3⟩
 def fkB : Move := mv 1 ⟨0, 0⟩ ⟨3, 0⟩
 def fkSame : Move := mv 1 ⟨0, 0⟩ ⟨0, 3⟩   -- IDENTICAL to fkA
 
-#guard forkAt [fkA, fkB] ⟨0, 0⟩ = true                            -- 2.1
-#guard clashCoords forkBoard [fkA, fkB] = [(⟨0, 0⟩ : Coord)]
--- 2.3: two players naming the SAME move is not a conflict, and it resolves as one move
-#guard forkAt [fkA, fkSame] ⟨0, 0⟩ = false
-#guard clashCoords forkBoard [fkA, fkSame] = ([] : List Coord)
-#guard movers forkBoard [fkA, fkSame] = [(⟨0, 0⟩ : Coord)]
-#guard (resolveMoves forkBoard [fkA, fkSame]).cellAt ⟨0, 3⟩ = Particle.attractor
-#guard (resolveMoves forkBoard [fkA, fkSame]).cellAt ⟨0, 0⟩ = Particle.vacuum
-
 def collBoard : Board :=
   mkBoard 5 [(⟨0, 0⟩, .attractor), (⟨4, 0⟩, .attractor), (⟨2, 0⟩, .repulsor)] ⟨4, 4⟩
-#guard collideAt collBoard
+
+/-- 2.2: ≥2 moves into `(2,0)` from distinct NON-VACUUM sources collide.
+(Pinned `= true` in `AutomataflRulesFixtures`.) -/
+def check_collide_detected_at_shared_destination : Bool :=
+  collideAt collBoard
     [mv 0 ⟨0, 0⟩ ⟨2, 0⟩,
-     mv 1 ⟨4, 0⟩ ⟨2, 0⟩] ⟨2, 0⟩ = true     -- 2.2
+     mv 1 ⟨4, 0⟩ ⟨2, 0⟩] ⟨2, 0⟩
 
 /-! ### 2.4a–d (audit D4a / D4b) — RE-ENTRY, LOCKING, the marked coordinate, and RECURSION.
 
@@ -2751,15 +2711,25 @@ def d4A : Move := mv 0 ⟨0, 0⟩ ⟨2, 0⟩
 def d4B : Move := mv 1 ⟨4, 0⟩ ⟨2, 0⟩
 def d4C : Move := mv 2 ⟨2, 0⟩ ⟨2, 4⟩
 
-#guard (roundStep cfgCol noGoals (openRound collBoard [0, 1, 2]) [d4A, d4B, d4C]).isAgain
-        = true
-#guard (roundStep cfgCol noGoals (openRound collBoard [0, 1, 2]) [d4A, d4B, d4C]).marks
-        = [(⟨2, 0⟩ : Coord)]
--- the third move is INVALIDATED (it was `conflictResolve = [d4C]` and it EXECUTED)
-#guard (roundStep cfgCol noGoals (openRound collBoard [0, 1, 2]) [d4A, d4B, d4C]).locked
-        = ([] : List Move)
-#guard (roundStep cfgCol noGoals (openRound collBoard [0, 1, 2]) [d4A, d4B, d4C]).waiting
-        = [0, 1, 2]
+/-- D4a: the round demands re-entry. (Pinned `= true` in `AutomataflRulesFixtures`.) -/
+def check_d4a_round_demands_reentry : Bool :=
+  (roundStep cfgCol noGoals (openRound collBoard [0, 1, 2]) [d4A, d4B, d4C]).isAgain
+
+/-- D4a: the contested destination is MARKED. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_d4a_marks_the_contested_destination : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound collBoard [0, 1, 2]) [d4A, d4B, d4C]).marks
+    = [(⟨2, 0⟩ : Coord)])
+
+/-- D4a: the third move is INVALIDATED (it was `conflictResolve = [d4C]` and it EXECUTED).
+(Pinned in `AutomataflRulesFixtures`.) -/
+def check_d4a_invalidates_every_touching_move : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound collBoard [0, 1, 2]) [d4A, d4B, d4C]).locked
+    = ([] : List Move))
+
+/-- D4a: all three seats re-enter. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_d4a_all_three_seats_reenter : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound collBoard [0, 1, 2]) [d4A, d4B, d4C]).waiting
+    = [0, 1, 2])
 
 -- D4b: fork conflict at (0,0); a third move TARGETS (0,0).
 def d5Board : Board := mkBoard 5 [(⟨0, 0⟩, .attractor), (⟨0, 4⟩, .repulsor)] ⟨4, 4⟩
@@ -2767,35 +2737,60 @@ def d5A : Move := mv 0 ⟨0, 0⟩ ⟨0, 2⟩
 def d5B : Move := mv 1 ⟨0, 0⟩ ⟨2, 0⟩
 def d5C : Move := mv 2 ⟨0, 4⟩ ⟨0, 0⟩
 
-#guard (roundStep cfgCol noGoals (openRound d5Board [0, 1, 2]) [d5A, d5B, d5C]).marks
-        = [(⟨0, 0⟩ : Coord)]
-#guard (roundStep cfgCol noGoals (openRound d5Board [0, 1, 2]) [d5A, d5B, d5C]).locked
-        = ([] : List Move)
-#guard (roundStep cfgCol noGoals (openRound d5Board [0, 1, 2]) [d5A, d5B, d5C]).waiting
-        = [0, 1, 2]
+/-- D4b: the forked source is MARKED. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_d4b_marks_the_forked_source : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound d5Board [0, 1, 2]) [d5A, d5B, d5C]).marks
+    = [(⟨0, 0⟩ : Coord)])
+
+/-- D4b: the third move (merely TARGETING the conflicted coordinate) is invalidated too.
+(Pinned in `AutomataflRulesFixtures`.) -/
+def check_d4b_invalidates_every_touching_move : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound d5Board [0, 1, 2]) [d5A, d5B, d5C]).locked
+    = ([] : List Move))
+
+/-- D4b: all three seats re-enter. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_d4b_all_three_seats_reenter : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound d5Board [0, 1, 2]) [d5A, d5B, d5C]).waiting
+    = [0, 1, 2])
 
 -- LOCKING: a player not involved in the conflict has their move STAND, and does not re-enter.
 def lockBoard : Board :=
   mkBoard 5 [(⟨0, 0⟩, .attractor), (⟨4, 0⟩, .attractor), (⟨0, 4⟩, .repulsor)] ⟨4, 4⟩
 def lkC : Move := mv 2 ⟨4, 0⟩ ⟨4, 2⟩
 
-#guard (roundStep cfgCol noGoals (openRound lockBoard [0, 1, 2]) [d5A, d5B, lkC]).locked
-        = [lkC]
-#guard (roundStep cfgCol noGoals (openRound lockBoard [0, 1, 2]) [d5A, d5B, lkC]).waiting
-        = [0, 1]
+/-- LOCKING: the uninvolved seat's move STANDS. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_uninvolved_move_is_locked : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound lockBoard [0, 1, 2]) [d5A, d5B, lkC]).locked
+    = [lkC])
+
+/-- LOCKING: only the conflicted seats re-enter. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_only_conflicted_seats_reenter : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound lockBoard [0, 1, 2]) [d5A, d5B, lkC]).waiting
+    = [0, 1])
 
 -- RECURSION (2.4d): a marked square is illegal next round, and a clean second round RESOLVES.
 def reenter : Move := mv 0 ⟨0, 4⟩ ⟨0, 2⟩
 def stillMarked : Move := mv 1 ⟨0, 0⟩ ⟨3, 0⟩  -- source still marked
 
-#guard ((runTurn cfgCol noGoals (openRound d5Board [0, 1, 2])
-          [[d5A, d5B, d5C], [reenter, stillMarked]]).map
-          (fun r => r.1.cellAt ⟨0, 2⟩)) = some Particle.repulsor
-#guard ((runTurn cfgCol noGoals (openRound d5Board [0, 1, 2])
-          [[d5A, d5B, d5C], [reenter, stillMarked]]).map
-          (fun r => r.1.cellAt ⟨0, 0⟩)) = some Particle.attractor
--- one round is not enough: the turn is still awaiting re-entry
-#guard (runTurn cfgCol noGoals (openRound d5Board [0, 1, 2]) [[d5A, d5B, d5C]]).isSome = false
+/-- 2.4d: the clean second round RESOLVES, moving the re-entered piece.
+(Pinned in `AutomataflRulesFixtures`.) -/
+def check_second_round_resolves_the_reentered_move : Bool :=
+  decide (((runTurn cfgCol noGoals (openRound d5Board [0, 1, 2])
+      [[d5A, d5B, d5C], [reenter, stillMarked]]).map
+      (fun r => r.1.cellAt ⟨0, 2⟩)) = some Particle.repulsor)
+
+/-- 2.4d: the still-marked source's move FAILS next round — its piece stays.
+(Pinned in `AutomataflRulesFixtures`.) -/
+def check_marked_source_move_fails_next_round : Bool :=
+  decide (((runTurn cfgCol noGoals (openRound d5Board [0, 1, 2])
+      [[d5A, d5B, d5C], [reenter, stillMarked]]).map
+      (fun r => r.1.cellAt ⟨0, 0⟩)) = some Particle.attractor)
+
+/-- 2.4d: one round is NOT enough — the turn is still awaiting re-entry.
+(Pinned in `AutomataflRulesFixtures`.) -/
+def check_one_round_is_not_enough : Bool :=
+  decide ((runTurn cfgCol noGoals (openRound d5Board [0, 1, 2]) [[d5A, d5B, d5C]]).isSome
+    = false)
 
 /-! ### 3.7 (audit D5, CRIT) — a vacuum CONFLUENCE is now a CONFLICT.
 
@@ -2810,102 +2805,97 @@ def m2 : Move := mv 1 ⟨1, 0⟩ ⟨2, 0⟩   -- vacuum source
 def m3 : Move := mv 2 ⟨4, 0⟩ ⟨3, 0⟩
 def m4 : Move := mv 3 ⟨3, 0⟩ ⟨2, 0⟩   -- vacuum source
 
-#guard clashCoords mgBoard [m1, m2, m3, m4] = ([] : List Coord)   -- fork/collide silent …
-#guard unresolved mgBoard [m1, m2, m3, m4] = [(⟨2, 0⟩ : Coord)]   -- … the merge clause fires
-#guard resolvableB mgBoard [m1, m2, m3, m4] = false
-#guard (roundStep cfgCol noGoals (openRound mgBoard [0, 1, 2, 3]) [m1, m2, m3, m4]).marks
-        = [(⟨2, 0⟩ : Coord)]
-#guard (roundStep cfgCol noGoals (openRound mgBoard [0, 1, 2, 3]) [m1, m2, m3, m4]).locked
-        = [m1, m3]
-#guard (roundStep cfgCol noGoals (openRound mgBoard [0, 1, 2, 3]) [m1, m2, m3, m4]).waiting
-        = [1, 3]
--- and no piece is destroyed, under EITHER order (the audit's permutation)
-#guard (resolveMoves mgBoard [m1, m2, m3, m4]).cellAt ⟨0, 0⟩ = Particle.attractor
-#guard (resolveMoves mgBoard [m1, m2, m3, m4]).cellAt ⟨4, 0⟩ = Particle.repulsor
-#guard ((List.range 5).any (fun x => (List.range 5).any (fun y =>
-          (resolveMoves mgBoard [m3, m4, m1, m2]).cellAt ⟨x, y⟩ == Particle.repulsor))) = true
-#guard ((List.range 5).all (fun x => (List.range 5).all (fun y =>
-          (resolveMoves mgBoard [m1, m2, m3, m4]).cellAt ⟨x, y⟩
-            == (resolveMoves mgBoard [m3, m4, m1, m2]).cellAt ⟨x, y⟩))) = true
+-- Pinned in `AutomataflRulesFixtures`: fork/collide silent, the merge clause fires at (2,0),
+-- the round is not resolvable, no piece destroyed under EITHER order. The three `roundStep`
+-- facts need the private configs, so they are `check_*`s:
+
+/-- 3.7: the confluence is MARKED. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_merge_marks_the_confluence : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound mgBoard [0, 1, 2, 3]) [m1, m2, m3, m4]).marks
+    = [(⟨2, 0⟩ : Coord)])
+
+/-- 3.7: the two moves not touching the confluence are LOCKED.
+(Pinned in `AutomataflRulesFixtures`.) -/
+def check_merge_locks_the_uninvolved_moves : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound mgBoard [0, 1, 2, 3]) [m1, m2, m3, m4]).locked
+    = [m1, m3])
+
+/-- 3.7: exactly the two confluence seats re-enter. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_merge_reenters_the_involved_seats : Bool :=
+  decide ((roundStep cfgCol noGoals (openRound mgBoard [0, 1, 2, 3]) [m1, m2, m3, m4]).waiting
+    = [1, 3])
 
 /-! ### 4.x — the automaton, unchanged; 4.5 — the tie-break is SELECTABLE (ruling B) -/
 
 def tieBoard : Board := mkBoard 5 [(⟨2, 4⟩, .attractor), (⟨4, 2⟩, .attractor)] ⟨2, 2⟩
 
-#guard decisionCmp
-        (evaluateAxis (tieBoard.raycast ⟨2, 2⟩ .xp) (tieBoard.raycast ⟨2, 2⟩ .xn))
-        (evaluateAxis (tieBoard.raycast ⟨2, 2⟩ .yp) (tieBoard.raycast ⟨2, 2⟩ .yn)) = Ordering.eq
-#guard (automatonStepCfg cfgCol tieBoard).automaton = (⟨2, 3⟩ : Coord)   -- column: along Y
-#guard (automatonStepCfg cfgRow tieBoard).automaton = (⟨3, 2⟩ : Coord)   -- row: along X
-#guard (automatonStepCfg cfgFrz tieBoard).automaton = (⟨2, 2⟩ : Coord)   -- freeze: no move
+-- The axes-compare-equal fact is public and pinned directly in `AutomataflRulesFixtures`;
+-- the stepped positions need the private configs, so they are `check_*`s:
+
+/-- 4.5: `column` breaks the equal-priority tie along Y. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_column_tiebreak_steps_along_y : Bool :=
+  decide ((automatonStepCfg cfgCol tieBoard).automaton = (⟨2, 3⟩ : Coord))
+
+/-- 4.5: `row` breaks it along X. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_row_tiebreak_steps_along_x : Bool :=
+  decide ((automatonStepCfg cfgRow tieBoard).automaton = (⟨3, 2⟩ : Coord))
+
+/-- 4.5: `freeze` does not move. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_freeze_tiebreak_stays_put : Bool :=
+  decide ((automatonStepCfg cfgFrz tieBoard).automaton = (⟨2, 2⟩ : Coord))
 
 -- the priority cascade itself (unchanged from `Automatafl.lean`)
 def demoBoard : Board := mkBoard 5 [(⟨2, 4⟩, .attractor)] ⟨2, 2⟩
 def repBoard : Board := mkBoard 5 [(⟨2, 1⟩, .repulsor)] ⟨2, 2⟩
-#guard (automatonStepCfg cfgCol demoBoard).automaton = (⟨2, 3⟩ : Coord)  -- toward attractor
-#guard (automatonStepCfg cfgCol repBoard).automaton = (⟨2, 3⟩ : Coord)   -- flee repulsor
--- the default config IS the old automaton (the Leg-A bridge, witnessed)
-#guard (automatonStepCfg cfgCol demoBoard).automaton = (automatonStep demoBoard).automaton
-#guard (automatonStepCfg cfgCol tieBoard).automaton = (automatonStep tieBoard).automaton
 
-/-! ### 5.1 / 5.2 — SETUP: two corners in the same row each / one corner each -/
+/-- 4.x: one step toward the attractor. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_demo_step_toward_attractor : Bool :=
+  decide ((automatonStepCfg cfgCol demoBoard).automaton = (⟨2, 3⟩ : Coord))
 
-#guard (stockGoals2 11).WellFormed2 11 = true
-#guard (stockGoals4 11).WellFormed4 11 = true
--- the DEPLOYED assignment, corner for corner: `reference.rs::GOAL_CORNERS_2P` at n = 11
-#guard stockGoals2 11 = GoalAssignment.mk [(⟨0, 0⟩, 0), (⟨10, 0⟩, 0), (⟨0, 10⟩, 1), (⟨10, 10⟩, 1)]
--- ... and its seat list is EXACTLY the two seats (`stockGoals2_seats`, here at the deployed size)
-#guard (stockGoals2 11).seats = [0, 1]
--- `model.py::DEFAULT_GOALS[2]` repeats (10,0) and gives seat 1 a COLUMN — it is NOT well-formed
-#guard (GoalAssignment.mk [(⟨0, 0⟩, 0), (⟨10, 0⟩, 0), (⟨10, 0⟩, 1), (⟨10, 10⟩, 1)]).WellFormed2 11
-        = false
--- two corners in a COLUMN is not a legal two-player setup either
-#guard (GoalAssignment.mk [(⟨0, 0⟩, 0), (⟨0, 10⟩, 0), (⟨10, 0⟩, 1), (⟨10, 10⟩, 1)]).WellFormed2 11
-        = false
+/-- 4.x: flee the repulsor. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_rep_step_flees_repulsor : Bool :=
+  decide ((automatonStepCfg cfgCol repBoard).automaton = (⟨2, 3⟩ : Coord))
+
+/-- The default config IS the old automaton (the Leg-A bridge, witnessed on `demoBoard`).
+(Pinned in `AutomataflRulesFixtures`.) -/
+def check_default_config_is_old_automaton_demo : Bool :=
+  decide ((automatonStepCfg cfgCol demoBoard).automaton = (automatonStep demoBoard).automaton)
+
+/-- The Leg-A bridge witnessed on the tie board too. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_default_config_is_old_automaton_tie : Bool :=
+  decide ((automatonStepCfg cfgCol tieBoard).automaton = (automatonStep tieBoard).automaton)
+
+/-! ### 5.1 / 5.2 — SETUP: two corners in the same row each / one corner each.
+(All six pinned in `AutomataflRulesFixtures` — well-formedness both polarities, the deployed
+corner-for-corner assignment, and the seat list at the deployed size.) -/
 
 /-! ### 5.4 — the win fires on the automaton MOVING INTO a corner, not sitting on one.
 
-`Automatafl.lean`'s own witness read `#guard winner demoBoard [(⟨2,2⟩, 7)] = some 7` — a win
-on a board where the automaton had not moved at all. It FLIPS. -/
+`Automatafl.lean`'s own witness read `winner demoBoard [(⟨2,2⟩, 7)] = some 7` — a win
+on a board where the automaton had not moved at all. It FLIPS. The no-move refusal is public
+and pinned directly; the two entry facts step through the private `cfgCol`: -/
 
-#guard winOnEntry demoBoard demoBoard ⟨[(⟨2, 2⟩, 7)]⟩ = none                    -- WAS some 7
-#guard winOnEntry demoBoard (automatonStepCfg cfgCol demoBoard) ⟨[(⟨2, 3⟩, 3)]⟩ = some 3
-#guard winOnEntry demoBoard (automatonStepCfg cfgCol demoBoard) ⟨[(⟨2, 2⟩, 3)]⟩ = none
+/-- 5.4: the win fires on ENTRY of the goal square. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_win_fires_on_entry : Bool :=
+  decide (winOnEntry demoBoard (automatonStepCfg cfgCol demoBoard) ⟨[(⟨2, 3⟩, 3)]⟩ = some 3)
 
-/-! ### The stock 11x11 opening — orientation pinned by raycast -/
+/-- 5.4: no win on the VACATED square. (Pinned in `AutomataflRulesFixtures`.) -/
+def check_no_win_on_vacated_square : Bool :=
+  decide (winOnEntry demoBoard (automatonStepCfg cfgCol demoBoard) ⟨[(⟨2, 2⟩, 3)]⟩ = none)
 
-#guard stockTwoPlayer.cellAt ⟨5, 5⟩ = Particle.automaton
-#guard stockTwoPlayer.cellAt ⟨0, 0⟩ = Particle.repulsor       -- corners are occupied
-#guard stockTwoPlayer.cellAt ⟨3, 1⟩ = Particle.attractor      -- pins [y][x] vs [x][y]
-#guard stockTwoPlayer.cellAt ⟨1, 3⟩ = Particle.vacuum         -- the transpose is NOT the board
-#guard (stockTwoPlayer.raycast ⟨5, 5⟩ .xp).what = Particle.repulsor
-#guard (stockTwoPlayer.raycast ⟨5, 5⟩ .xp).dist = 4
-#guard (stockTwoPlayer.raycast ⟨5, 5⟩ .yp).dist = 4
--- the opening is symmetric: all four rays are equidistant repulsors, so nothing moves
-#guard (automatonStepCfg cfgCol stockTwoPlayer).automaton = (⟨5, 5⟩ : Coord)
+/-! ### The stock 11x11 opening — orientation pinned by raycast.
+(Cell and raycast pins are public and live in `AutomataflRulesFixtures`; the symmetric-freeze
+fact steps through the private `cfgCol`.) -/
 
-/-! ### §10.10 — the m = 2 collapse closed forms at the audit witnesses (non-vacuity) -/
+/-- The opening is symmetric: all four rays are equidistant repulsors, so nothing moves.
+(Pinned in `AutomataflRulesFixtures`.) -/
+def check_stock_opening_freezes_the_automaton : Bool :=
+  decide ((automatonStepCfg cfgCol stockTwoPlayer).automaton = (⟨5, 5⟩ : Coord))
 
--- ===== NON-VACUITY: the closed forms at the audit witnesses (direct computation) =====
--- caterpillar (§3.4): follower rides onto the vacated leader source; leader to its own dest
-#guard landMap catBoard [cat1, cat2] ⟨0, 0⟩ = (⟨0, 1⟩ : Coord)
-#guard landMap catBoard [cat1, cat2] ⟨0, 1⟩ = (⟨0, 2⟩ : Coord)
-#guard movers catBoard [cat1, cat2] = [(⟨0, 0⟩ : Coord), ⟨0, 1⟩]
-#guard resolvableB catBoard [cat1, cat2] = true
--- flowthrough (§3.3): the piece flows through the vacuum waypoint all the way to db
-#guard landMap chainBoard [ch1, ch2] ⟨0, 0⟩ = (⟨0, 2⟩ : Coord)
-#guard resolvableB chainBoard [ch1, ch2] = true
--- occluded-stayer (§3.6, D-style): leader blocked ⇒ both stay, still resolvable (no lost piece)
-#guard landMap stuckBoard [st1, st2] ⟨0, 0⟩ = (⟨0, 0⟩ : Coord)
-#guard landMap stuckBoard [st1, st2] ⟨0, 1⟩ = (⟨0, 1⟩ : Coord)
-#guard movers stuckBoard [st1, st2] = ([] : List Coord)
-#guard resolvableB stuckBoard [st1, st2] = true
--- 2-cycle (§3.5a): both stay
-#guard landMap d2Board [d2A, d2B] ⟨0, 0⟩ = (⟨0, 0⟩ : Coord)
-#guard landMap d2Board [d2A, d2B] ⟨0, 2⟩ = (⟨0, 2⟩ : Coord)
-#guard resolvableB d2Board [d2A, d2B] = true
--- independent (§1.4): unblocked mover lands at its own destination
-#guard landMap d1Board [d1Move] ⟨0, 0⟩ = (⟨0, 0⟩ : Coord)   -- blocked (dest occupied) ⇒ stays
+/-! ### §10.10 — the m = 2 collapse closed forms at the audit witnesses (non-vacuity).
+(The direct-computation pins — `landMap`/`movers`/`resolvableB` at the caterpillar,
+flowthrough, occluded-stayer, 2-cycle and blocked-independent witnesses — are all public and
+live in `AutomataflRulesFixtures`.) -/
 
 -- the closed-form THEOREMS fire at the witnesses (hypotheses satisfiable ⇒ non-vacuous)
 example : landMap catBoard [cat1, cat2] cat1.frm = cat1.to :=

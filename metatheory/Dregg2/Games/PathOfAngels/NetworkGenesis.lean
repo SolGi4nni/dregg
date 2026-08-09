@@ -364,7 +364,21 @@ preimages, not read back out of `sha256Wire?` or out of Rust:
 digest, source/signal digests, curator key, epoch counter) is still content epoch 1
 counter 2 and the PRE-re-emit POAG1 manifest.  It was deliberately NOT moved in this
 pass: POAG1 was being re-emitted and counter 7 signed at the same time, and pinning a
-value mid-signature would have been a guess.  It needs its own pass. -/
+value mid-signature would have been a guess.  It needs its own pass.
+
+⚑ **THE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the thirty-five
+`native_decide` pins below (the byte pins here plus the hostile ceremony fixtures) ran at
+elaboration, so a stale genesis fixture was a hard failure of every Rust proving target in
+the workspace (the compilation-unit coupling the stale-fixture outage measured — and this
+module's deployment constants are exactly the kind that go stale on a re-genesis).  The
+pins' STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition (a
+`def` body elaborates without running).  The EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `NetworkGenesisFixtures.lean`, rooted in
+the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+fixture reds the guard library instead of the archive.
+
+Named residue: NONE — no construction here demands a proof as data. -/
 
 private def digestOrZero (hex : String) : Digest32 :=
   (Emit.parseBytes32Hex? hex).getD zeroDigest
@@ -468,57 +482,60 @@ def fixtureConfigJson : String := fixtureInput.config.toJson
 def fixtureCanonJson : String :=
   (CanonStateWire.ofSemantic (expectedCanon fixtureInput)).toJson
 
-theorem fixture_deployment_id_rederived :
-    sha256Wire? (deploymentIdPreimage fixtureInput) = some fixtureDeploymentId := by
-  native_decide
+/-- `sha256(DEPLOYMENT_DOMAIN ‖ 0 ‖ fed ‖ 0 ‖ genesis)` reproduces the id the live
+manifest carries — Lean and the JS that wrote the manifest agree without either being
+told the answer. (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_deployment_id_rederived : Bool :=
+  decide (sha256Wire? (deploymentIdPreimage fixtureInput) = some fixtureDeploymentId)
 
-theorem fixture_input_roundtrip : decodeGenesisInput fixtureInputBytes = some fixtureInput := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_input_roundtrip : Bool :=
+  decide (decodeGenesisInput fixtureInputBytes = some fixtureInput)
 
-theorem fixture_checks_accept : genesisChecks fixtureInput = true := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_checks_accept : Bool := genesisChecks fixtureInput
 
 /-- These two SHA-256 values were independently computed over the printed exact
 UTF-8 strings (Node `crypto.createHash("sha256")`) before being pinned here.
-They are not derived from `sha256Wire?` or from the expected-output definition. -/
-theorem fixture_config_sha256_external_pin :
-    sha256Wire? fixtureConfigJson = some fixtureConfigSha256 := by
-  native_decide
+They are not derived from `sha256Wire?` or from the expected-output definition.
+(Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_config_sha256_external_pin : Bool :=
+  decide (sha256Wire? fixtureConfigJson = some fixtureConfigSha256)
 
-theorem fixture_canon_sha256_external_pin :
-    sha256Wire? fixtureCanonJson = some fixtureCanonSha256 := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_canon_sha256_external_pin : Bool :=
+  decide (sha256Wire? fixtureCanonJson = some fixtureCanonSha256)
 
-theorem fixture_authorizes : (authorizeGenesis fixtureInput).isSome = true := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_authorizes : Bool := (authorizeGenesis fixtureInput).isSome
 
-theorem fixture_authorized_hashes :
-    (authorizeGenesis fixtureInput).map
-      (fun genesis => (genesis.output.configSha256, genesis.output.canonSha256)) =
-      some (fixtureConfigSha256, fixtureCanonSha256) := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_authorized_hashes : Bool :=
+  decide ((authorizeGenesis fixtureInput).map
+    (fun genesis => (genesis.output.configSha256, genesis.output.canonSha256)) =
+    some (fixtureConfigSha256, fixtureCanonSha256))
 
-theorem fixture_processes : (processNetworkGenesisWire fixtureInputBytes).isSome = true := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_processes : Bool := (processNetworkGenesisWire fixtureInputBytes).isSome
 
-theorem fixture_ffi_nonempty : networkGenesisFFI fixtureInputBytes ≠ "" := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_ffi_nonempty : Bool := decide (networkGenesisFFI fixtureInputBytes ≠ "")
 
 def fixtureOutputBytes : String := networkGenesisFFI fixtureInputBytes
 
-theorem fixture_output_is_semantically_validated :
-    (decodeValidatedGenesisOutput fixtureInputBytes fixtureOutputBytes).isSome = true := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_output_is_semantically_validated : Bool :=
+  (decodeValidatedGenesisOutput fixtureInputBytes fixtureOutputBytes).isSome
 
 def fixtureTamperedOutputHash : String :=
   fixtureOutputBytes.replace FIXTURE_CONFIG_SHA256 FIXTURE_DEPLOYMENT_ID
 
 /-- Canonical syntax is deliberately not authority: a correctly shaped output
-with a substituted config hash parses, then fails exact authorized re-emission. -/
-theorem fixture_tampered_output_is_syntax_only :
-    (decodeGenesisOutputSyntax fixtureTamperedOutputHash).isSome = true ∧
-      decodeValidatedGenesisOutput fixtureInputBytes fixtureTamperedOutputHash = none := by
-  native_decide
+with a substituted config hash parses, then fails exact authorized re-emission.
+(Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_fixture_tampered_output_is_syntax_only : Bool :=
+  (decodeGenesisOutputSyntax fixtureTamperedOutputHash).isSome &&
+    (decodeValidatedGenesisOutput fixtureInputBytes fixtureTamperedOutputHash).isNone
 
 /-! ## Hostile ceremony fixtures -/
 
@@ -630,83 +647,106 @@ def duplicateCounterInput : GenesisInputWire := {
     fixtureInput.initial with playerCounters := [fixtureCounterRow, fixtureCounterRow] }
 }
 
-theorem caller_chosen_reward_refused :
-    processNetworkGenesisWire wrongRewardInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_caller_chosen_reward_refused : Bool :=
+  (processNetworkGenesisWire wrongRewardInput.toJson).isNone
 
-theorem inconsistent_content_session_refused :
-    processNetworkGenesisWire wrongSessionInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_inconsistent_content_session_refused : Bool :=
+  (processNetworkGenesisWire wrongSessionInput.toJson).isNone
 
-theorem inconsistent_federation_refused :
-    processNetworkGenesisWire wrongFederationInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_inconsistent_federation_refused : Bool :=
+  (processNetworkGenesisWire wrongFederationInput.toJson).isNone
 
-theorem substituted_deployment_id_refused :
-    processNetworkGenesisWire wrongDeploymentIdInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_substituted_deployment_id_refused : Bool :=
+  (processNetworkGenesisWire wrongDeploymentIdInput.toJson).isNone
 
-theorem substituted_deployment_digest_refused :
-    processNetworkGenesisWire wrongDeploymentDigestInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_substituted_deployment_digest_refused : Bool :=
+  (processNetworkGenesisWire wrongDeploymentDigestInput.toJson).isNone
 
-theorem substituted_deployment_manifest_refused :
-    processNetworkGenesisWire wrongDeploymentManifestInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_substituted_deployment_manifest_refused : Bool :=
+  (processNetworkGenesisWire wrongDeploymentManifestInput.toJson).isNone
 
-theorem substituted_deployment_policy_refused :
-    processNetworkGenesisWire wrongDeploymentPolicyInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_substituted_deployment_policy_refused : Bool :=
+  (processNetworkGenesisWire wrongDeploymentPolicyInput.toJson).isNone
 
-theorem substituted_genesis_sha_refused :
-    processNetworkGenesisWire wrongGenesisShaInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_substituted_genesis_sha_refused : Bool :=
+  (processNetworkGenesisWire wrongGenesisShaInput.toJson).isNone
 
-theorem inconsistent_epoch_refused :
-    processNetworkGenesisWire wrongEpochInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_inconsistent_epoch_refused : Bool :=
+  (processNetworkGenesisWire wrongEpochInput.toJson).isNone
 
-theorem inconsistent_content_root_refused :
-    processNetworkGenesisWire wrongContentRootInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_inconsistent_content_root_refused : Bool :=
+  (processNetworkGenesisWire wrongContentRootInput.toJson).isNone
 
-theorem inconsistent_activation_refused :
-    processNetworkGenesisWire wrongActivationInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_inconsistent_activation_refused : Bool :=
+  (processNetworkGenesisWire wrongActivationInput.toJson).isNone
 
-theorem zero_activation_counter_refused :
-    processNetworkGenesisWire zeroActivationCounterInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_zero_activation_counter_refused : Bool :=
+  (processNetworkGenesisWire zeroActivationCounterInput.toJson).isNone
 
-theorem terminal_activation_counter_refused :
-    processNetworkGenesisWire terminalActivationCounterInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_terminal_activation_counter_refused : Bool :=
+  (processNetworkGenesisWire terminalActivationCounterInput.toJson).isNone
 
-theorem nonzero_genesis_world_refused :
-    processNetworkGenesisWire nonzeroWorldInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_nonzero_genesis_world_refused : Bool :=
+  (processNetworkGenesisWire nonzeroWorldInput.toJson).isNone
 
-theorem nonzero_genesis_sequence_refused :
-    processNetworkGenesisWire nonzeroSequenceInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_nonzero_genesis_sequence_refused : Bool :=
+  (processNetworkGenesisWire nonzeroSequenceInput.toJson).isNone
 
-theorem nonzero_genesis_revision_refused :
-    processNetworkGenesisWire nonzeroRevisionInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_nonzero_genesis_revision_refused : Bool :=
+  (processNetworkGenesisWire nonzeroRevisionInput.toJson).isNone
 
-theorem nonzero_genesis_curator_counter_refused :
-    processNetworkGenesisWire nonzeroCuratorCounterInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_nonzero_genesis_curator_counter_refused : Bool :=
+  (processNetworkGenesisWire nonzeroCuratorCounterInput.toJson).isNone
 
-theorem nonzero_genesis_transition_refused :
-    processNetworkGenesisWire nonzeroTransitionInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_nonzero_genesis_transition_refused : Bool :=
+  (processNetworkGenesisWire nonzeroTransitionInput.toJson).isNone
 
-theorem nonzero_genesis_last_digest_refused :
-    processNetworkGenesisWire nonzeroLastDigestInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_nonzero_genesis_last_digest_refused : Bool :=
+  (processNetworkGenesisWire nonzeroLastDigestInput.toJson).isNone
 
-theorem nonempty_player_counter_refused :
-    processNetworkGenesisWire nonemptyCounterInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_nonempty_player_counter_refused : Bool :=
+  (processNetworkGenesisWire nonemptyCounterInput.toJson).isNone
 
-theorem duplicate_player_counter_refused_by_syntax :
-    decodeGenesisInput duplicateCounterInput.toJson = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_duplicate_player_counter_refused_by_syntax : Bool :=
+  (decodeGenesisInput duplicateCounterInput.toJson).isNone
 
-theorem trailing_bytes_refused :
-    processNetworkGenesisWire (fixtureInputBytes ++ "\n") = none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_trailing_bytes_refused : Bool :=
+  (processNetworkGenesisWire (fixtureInputBytes ++ "\n")).isNone
 
-theorem uppercase_digest_refused :
-    processNetworkGenesisWire
-      (fixtureInputBytes.replace FIXTURE_FEDERATION_ID (String.toUpper FIXTURE_FEDERATION_ID)) =
-      none := by native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_uppercase_digest_refused : Bool :=
+  (processNetworkGenesisWire
+    (fixtureInputBytes.replace FIXTURE_FEDERATION_ID
+      (String.toUpper FIXTURE_FEDERATION_ID))).isNone
 
-theorem unknown_top_level_field_refused :
-    processNetworkGenesisWire
-      (fixtureInputBytes.replace
-        ("{\"format\":\"" ++ NetworkGenesisWire.INPUT_FORMAT ++ "\"")
-        ("{\"format\":\"" ++ NetworkGenesisWire.INPUT_FORMAT ++ "\",\"unknown\":0")) = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkGenesisFixtures`.) -/
+def check_unknown_top_level_field_refused : Bool :=
+  (processNetworkGenesisWire
+    (fixtureInputBytes.replace
+      ("{\"format\":\"" ++ NetworkGenesisWire.INPUT_FORMAT ++ "\"")
+      ("{\"format\":\"" ++ NetworkGenesisWire.INPUT_FORMAT ++ "\",\"unknown\":0"))).isNone
 
 #assert_axioms genesisChecks_requires_exact_config
 #assert_axioms genesisChecks_requires_empty_state
@@ -715,40 +755,8 @@ theorem unknown_top_level_field_refused :
 #assert_axioms AuthorizedGenesis.canon_is_empty
 #assert_axioms AuthorizedGenesis.persisted_coordinates_are_lean_bytes
 
-#assert_compiled fixture_deployment_id_rederived
-#assert_compiled fixture_input_roundtrip
-#assert_compiled fixture_checks_accept
-#assert_compiled fixture_config_sha256_external_pin
-#assert_compiled fixture_canon_sha256_external_pin
-#assert_compiled fixture_authorizes
-#assert_compiled fixture_authorized_hashes
-#assert_compiled fixture_processes
-#assert_compiled fixture_ffi_nonempty
-#assert_compiled fixture_output_is_semantically_validated
-#assert_compiled fixture_tampered_output_is_syntax_only
-#assert_compiled caller_chosen_reward_refused
-#assert_compiled inconsistent_content_session_refused
-#assert_compiled inconsistent_federation_refused
-#assert_compiled substituted_deployment_id_refused
-#assert_compiled substituted_deployment_digest_refused
-#assert_compiled substituted_deployment_manifest_refused
-#assert_compiled substituted_deployment_policy_refused
-#assert_compiled substituted_genesis_sha_refused
-#assert_compiled inconsistent_epoch_refused
-#assert_compiled inconsistent_content_root_refused
-#assert_compiled inconsistent_activation_refused
-#assert_compiled zero_activation_counter_refused
-#assert_compiled terminal_activation_counter_refused
-#assert_compiled nonzero_genesis_world_refused
-#assert_compiled nonzero_genesis_sequence_refused
-#assert_compiled nonzero_genesis_revision_refused
-#assert_compiled nonzero_genesis_curator_counter_refused
-#assert_compiled nonzero_genesis_transition_refused
-#assert_compiled nonzero_genesis_last_digest_refused
-#assert_compiled nonempty_player_counter_refused
-#assert_compiled duplicate_player_counter_refused_by_syntax
-#assert_compiled trailing_bytes_refused
-#assert_compiled uppercase_digest_refused
-#assert_compiled unknown_top_level_field_refused
+-- The thirty-five fixture pins (`native_decide` + `#assert_compiled`) live in
+-- `NetworkGenesisFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixture
+-- header above.
 
 end Dregg2.Games.PathOfAngels.NetworkGenesis

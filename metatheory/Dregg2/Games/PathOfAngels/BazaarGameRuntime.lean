@@ -921,6 +921,30 @@ The fixture constructs `StateKey` directly; it does not fabricate a registry,
 authority, crown, envelope, or durable-load admission.  It exists so native
 tests can enter the actual dependent `performCas` extern and prove that only a
 successful exact CAS produces `some`.
+
+⚑ **SIX OF THE NINE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in
+the `Dregg2.FFI` closure — the crypto archive's build root — and its `native_decide` pins ran at
+elaboration, so any fixture regression here was a hard failure of every Rust proving target in
+the workspace (the compilation-unit coupling the stale-fixture outage measured). Six pins'
+STATEMENTS stay here as evaluation-free `check_* : Bool` definitions (a `def` body elaborates
+without running); the EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `BazaarGameRuntimeFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale fixture
+reds the guard library instead of the archive.
+
+⚠ **Named residue, THREE construction proofs — they CANNOT move**, because each is required as
+DATA at construction:
+
+  * `fixtureIdentity.parties_distinct` — `StableMarketIdentity` carries the seller≠buyer proof
+    as a field, so the fixture identity cannot be built without it;
+  * `fixture_replay_genesis_accepts` → `fixtureReplayGenesisApplied`, and
+  * `fixture_replay_advance_accepts` → `fixtureReplayAdvanceApplied`, both through
+    `replayValueOfAccepted`.  `ReplayMachine.mk` is `private` with three proof fields, so there
+    is NO `ReplayApplied` this module can build as a fail-closed fallback — and both values feed
+    the `@[export] dregg_poa_bazaar_runtime_fixture` entry point, which stays exactly as it is.
+
+Breaking the replay path therefore still reds this module (and the archive).  Everything the
+codec pins cover moved.
 -/
 
 private def repeatedDigest (value : Nat) : Digest32 where
@@ -971,6 +995,9 @@ private def fixtureIdentity : StableMarketIdentity where
   contentEpoch := ⟨1⟩
   seller := fixtureSeller
   buyer := fixtureBuyer
+  -- ⚠ NAMED RESIDUE: a construction proof, demanded as a FIELD of `StableMarketIdentity`.
+  -- It cannot move to `BazaarGameRuntimeFixtures` — the fixture identity does not exist
+  -- without it.
   parties_distinct := by native_decide
   baseAsset := .relic fixtureRelic
   quoteAsset := .intel
@@ -1050,6 +1077,10 @@ private def replayRefusalB (expected : ReplayRefusal) :
 def fixtureReplayGenesisResult := replayCommand fixtureReplayContext none
   (.initialize fixtureReplayGenesis)
 
+/-- ⚠ NAMED RESIDUE — this one CANNOT move to `BazaarGameRuntimeFixtures`:
+`fixtureReplayGenesisApplied` below takes it as DATA through `replayValueOfAccepted`, and
+`ReplayMachine.mk` is `private` with three proof fields, so there is no `ReplayApplied` this
+module could use as a fail-closed fallback instead. -/
 theorem fixture_replay_genesis_accepts :
     replayAcceptedB fixtureReplayGenesisResult = true := by
   native_decide
@@ -1060,6 +1091,8 @@ def fixtureReplayGenesisApplied : ReplayApplied :=
 def fixtureReplayAdvanceResult := replayCommand fixtureReplayContext
   (some fixtureReplayGenesisApplied.machine) .advanceClock
 
+/-- ⚠ NAMED RESIDUE — same reason as the genesis witness: `fixtureReplayAdvanceApplied` takes
+it as DATA and no fail-closed `ReplayApplied` exists. -/
 theorem fixture_replay_advance_accepts :
     replayAcceptedB fixtureReplayAdvanceResult = true := by
   native_decide
@@ -1067,43 +1100,39 @@ theorem fixture_replay_advance_accepts :
 def fixtureReplayAdvanceApplied : ReplayApplied :=
   replayValueOfAccepted fixtureReplayAdvanceResult fixture_replay_advance_accepts
 
-theorem fixture_replay_event_codec_is_canonical :
-    decodeReplayCommandEvent
-      (replayCommandEventToCanonicalJson fixtureReplayContext
-        (.initialize fixtureReplayGenesis)) =
-      some (fixtureReplayContext, .initialize fixtureReplayGenesis) := by
-  native_decide
+/-- (Pinned `= true` in `BazaarGameRuntimeFixtures`.) -/
+def check_fixture_replay_event_codec_is_canonical : Bool :=
+  decide (decodeReplayCommandEvent
+    (replayCommandEventToCanonicalJson fixtureReplayContext
+      (.initialize fixtureReplayGenesis)) =
+    some (fixtureReplayContext, .initialize fixtureReplayGenesis))
 
-theorem fixture_cross_deployment_event_refuses :
-    replayRefusalB .deploymentMismatch
-      (replayCommand ⟨repeatedDigest 99, repeatedDigest 23⟩ none
-        (.initialize fixtureReplayGenesis)) = true := by
-  native_decide
+/-- (Pinned `= true` in `BazaarGameRuntimeFixtures`.) -/
+def check_fixture_cross_deployment_event_refuses : Bool :=
+  replayRefusalB .deploymentMismatch
+    (replayCommand ⟨repeatedDigest 99, repeatedDigest 23⟩ none
+      (.initialize fixtureReplayGenesis))
 
-theorem fixture_state_codec_is_canonical : stateKeyCodecValidB fixtureState2 = true := by
-  native_decide
+/-- (Pinned `= true` in `BazaarGameRuntimeFixtures`.) -/
+def check_fixture_state_codec_is_canonical : Bool := stateKeyCodecValidB fixtureState2
 
-theorem fixture_request_codec_is_canonical :
-    runtimeCasRequestCodecValidB fixtureSuccessorRequest = true := by
-  native_decide
+/-- (Pinned `= true` in `BazaarGameRuntimeFixtures`.) -/
+def check_fixture_request_codec_is_canonical : Bool :=
+  runtimeCasRequestCodecValidB fixtureSuccessorRequest
 
-theorem fixture_state_trailing_byte_refuses :
-    decodeStateKey (stateKeyToCanonicalJson fixtureState2 ++ " ") = none := by
-  native_decide
+/-- (Pinned `= true` in `BazaarGameRuntimeFixtures`.) -/
+def check_fixture_state_trailing_byte_refuses : Bool :=
+  (decodeStateKey (stateKeyToCanonicalJson fixtureState2 ++ " ")).isNone
 
-theorem fixture_request_substitution_changes_wire :
-    runtimeCasRequestToCanonicalJson fixtureSuccessorRequest ≠
-      runtimeCasRequestToCanonicalJson fixtureStaleRequest := by
-  native_decide
+/-- (Pinned `= true` in `BazaarGameRuntimeFixtures`.) -/
+def check_fixture_request_substitution_changes_wire : Bool :=
+  runtimeCasRequestToCanonicalJson fixtureSuccessorRequest !=
+    runtimeCasRequestToCanonicalJson fixtureStaleRequest
 
-#assert_compiled fixture_state_codec_is_canonical
-#assert_compiled fixture_request_codec_is_canonical
-#assert_compiled fixture_state_trailing_byte_refuses
-#assert_compiled fixture_request_substitution_changes_wire
+-- The two named-residue construction proofs; the six codec pins moved to
+-- `BazaarGameRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixture header.
 #assert_compiled fixture_replay_genesis_accepts
 #assert_compiled fixture_replay_advance_accepts
-#assert_compiled fixture_replay_event_codec_is_canonical
-#assert_compiled fixture_cross_deployment_event_refuses
 
 @[export dregg_poa_bazaar_runtime_fixture]
 def fixtureFFI (command : String) : IO String := do

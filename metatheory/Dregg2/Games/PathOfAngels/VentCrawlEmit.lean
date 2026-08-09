@@ -496,89 +496,80 @@ here so the check that catches it cannot quietly stop catching it. -/
 def unpricedMapDescriptor : String :=
   descriptorFrom ventStates ventRows VentCrawl.mapBanked VentCrawl.mapBanked
 
-/-! ## The pins -/
+/-! ## The pins
 
-theorem ventCrawlDescriptor_exact_schema :
-    validateVentCrawlDescriptor ventCrawlDescriptorJson = .ok () := by
-  native_decide
+⚑ **THE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured). Each pin's STATEMENT stays here, as an
+evaluation-free `check_* : Bool` definition over the live validators and falsifiers (a
+`def` body elaborates without running). The EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `VentCrawlEmitFixtures.lean`, rooted in
+the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+descriptor reds the guard library instead of the archive.
 
-theorem ventCrawlDescriptor_table_is_the_kernel :
-    ventCrawlTableRefinesKernel ventCrawlDescriptorJson = .ok () := by
-  native_decide
+Named residue: NONE — every pin moved. -/
 
-theorem ventCrawlDescriptor_views_are_the_kernel :
-    ventCrawlViewsRefineKernel ventCrawlDescriptorJson = .ok () := by
-  native_decide
+/-- (Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_ventCrawlDescriptor_exact_schema : Bool :=
+  decide (validateVentCrawlDescriptor ventCrawlDescriptorJson = .ok ())
 
-theorem ventCrawlDescriptor_payout_is_the_kernel :
-    ventCrawlPayoutRefinesKernel ventCrawlDescriptorJson = .ok () := by
-  native_decide
+/-- (Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_ventCrawlDescriptor_table_is_the_kernel : Bool :=
+  decide (ventCrawlTableRefinesKernel ventCrawlDescriptorJson = .ok ())
+
+/-- (Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_ventCrawlDescriptor_views_are_the_kernel : Bool :=
+  decide (ventCrawlViewsRefineKernel ventCrawlDescriptorJson = .ok ())
+
+/-- (Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_ventCrawlDescriptor_payout_is_the_kernel : Bool :=
+  decide (ventCrawlPayoutRefinesKernel ventCrawlDescriptorJson = .ok ())
 
 /-- ⚠ **The unpriced consolation is caught, and every other check passes it.**
 The three conjuncts in the middle are the point: the mutation is schema-legal and
 its table and views are byte-identical to the honest ones, so nothing but the
 payout check can see it.  A wire that carried it would hand the design gate a
-posture with no tradeoff and hand a player a crawl with no downside. -/
-theorem unpriced_map_is_caught :
-    unpricedMapDescriptor ≠ ventCrawlDescriptorJson ∧
-    validateVentCrawlDescriptor unpricedMapDescriptor = .ok () ∧
-    ventCrawlTableRefinesKernel unpricedMapDescriptor = .ok () ∧
-    ventCrawlViewsRefineKernel unpricedMapDescriptor = .ok () ∧
-    ventCrawlPayoutRefinesKernel unpricedMapDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_, ?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
-  · native_decide
-  · native_decide
+posture with no tradeoff and hand a player a crawl with no downside.
+(Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_unpriced_map_is_caught : Bool :=
+  decide (unpricedMapDescriptor ≠ ventCrawlDescriptorJson) &&
+  decide (validateVentCrawlDescriptor unpricedMapDescriptor = .ok ()) &&
+  decide (ventCrawlTableRefinesKernel unpricedMapDescriptor = .ok ()) &&
+  decide (ventCrawlViewsRefineKernel unpricedMapDescriptor = .ok ()) &&
+  decide (ventCrawlPayoutRefinesKernel unpricedMapDescriptor ≠ .ok ())
 
 /-- ⚠ The mutation happened, and it is caught.  The first conjunct is the guard
 against a falsifier that stopped falsifying: without it, a `flattenedWagerRows`
-that found no wager would emit the honest bytes and this theorem would report a
-working adversary while testing nothing. -/
-theorem flattened_wager_is_caught :
-    flattenedWagerDescriptor ≠ ventCrawlDescriptorJson ∧
-    ventCrawlTableRefinesKernel flattenedWagerDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_⟩
-  · native_decide
-  · native_decide
+that found no wager would emit the honest bytes and this check would report a
+working adversary while testing nothing.
+(Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_flattened_wager_is_caught : Bool :=
+  decide (flattenedWagerDescriptor ≠ ventCrawlDescriptorJson) &&
+  decide (ventCrawlTableRefinesKernel flattenedWagerDescriptor ≠ .ok ())
 
 /-- ⚠ **The published odds are checked, not decorative.**  Softening one
-numerator by one changes no successor and no verdict, and it is still caught. -/
-theorem softened_odds_are_caught :
-    softenedOddsDescriptor ≠ ventCrawlDescriptorJson ∧
-    validateVentCrawlDescriptor softenedOddsDescriptor = .ok () ∧
-    ventCrawlTableRefinesKernel softenedOddsDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
+numerator by one changes no successor and no verdict, and it is still caught.
+(Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_softened_odds_are_caught : Bool :=
+  decide (softenedOddsDescriptor ≠ ventCrawlDescriptorJson) &&
+  decide (validateVentCrawlDescriptor softenedOddsDescriptor = .ok ()) &&
+  decide (ventCrawlTableRefinesKernel softenedOddsDescriptor ≠ .ok ())
 
-theorem pruned_haul_is_caught :
-    prunedHaulDescriptor ≠ ventCrawlDescriptorJson ∧
-    ventCrawlTableRefinesKernel prunedHaulDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_⟩
-  · native_decide
-  · native_decide
+/-- (Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_pruned_haul_is_caught : Bool :=
+  decide (prunedHaulDescriptor ≠ ventCrawlDescriptorJson) &&
+  decide (ventCrawlTableRefinesKernel prunedHaulDescriptor ≠ .ok ())
 
-theorem truncated_table_is_caught :
-    truncatedDescriptor ≠ ventCrawlDescriptorJson ∧
-    validateVentCrawlDescriptor truncatedDescriptor ≠ .ok () ∧
-    ventCrawlTableRefinesKernel truncatedDescriptor ≠ .ok () := by
-  refine ⟨?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
+/-- (Pinned `= true` in `VentCrawlEmitFixtures`.) -/
+def check_truncated_table_is_caught : Bool :=
+  decide (truncatedDescriptor ≠ ventCrawlDescriptorJson) &&
+  decide (validateVentCrawlDescriptor truncatedDescriptor ≠ .ok ()) &&
+  decide (ventCrawlTableRefinesKernel truncatedDescriptor ≠ .ok ())
 
-#assert_compiled ventCrawlDescriptor_exact_schema
-#assert_compiled ventCrawlDescriptor_table_is_the_kernel
-#assert_compiled ventCrawlDescriptor_views_are_the_kernel
-#assert_compiled ventCrawlDescriptor_payout_is_the_kernel
-#assert_compiled flattened_wager_is_caught
-#assert_compiled softened_odds_are_caught
-#assert_compiled pruned_haul_is_caught
-#assert_compiled truncated_table_is_caught
-#assert_compiled unpriced_map_is_caught
+-- The nine descriptor pins (`#assert_compiled` + `native_decide`) live in
+-- `VentCrawlEmitFixtures.lean`, rooted in `PathOfAngelsGuards` — see the pins
+-- header above.
 
 /-! ## Handover — what has to be spliced, and by whom
 

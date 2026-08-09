@@ -251,10 +251,10 @@ theorem every_pair_is_separated :
       = true := by
   decide
 
-/-- The same fact as a count: sixteen rules, sixteen distinct signatures. -/
-theorem manual_signatures_are_distinct :
-    (manual.map signature).eraseDups.length = manual.length := by
-  native_decide
+/-- The same fact as a count: sixteen rules, sixteen distinct signatures.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_manual_signatures_are_distinct : Bool :=
+  decide ((manual.map signature).eraseDups.length = manual.length)
 
 /-- Separation, read back out of the decidable check for two rules of the manual. -/
 theorem separated_of_mem (r r' : Rule) (hr : r ∈ manual) (hr' : r' ∈ manual)
@@ -303,12 +303,10 @@ mutation silently became a no-op has stopped falsifying twice in this
 repository. -/
 def repeatedManual : List Rule := Rule.uniform Metal.brass :: manual
 
-theorem repeated_manual_is_caught :
-    repeatedManual ≠ manual ∧
-    (repeatedManual.map signature).eraseDups.length ≠ repeatedManual.length := by
-  refine ⟨?_, ?_⟩
-  · native_decide
-  · native_decide
+/-- (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_repeated_manual_is_caught : Bool :=
+  decide (repeatedManual ≠ manual) &&
+  decide ((repeatedManual.map signature).eraseDups.length ≠ repeatedManual.length)
 
 /-! ## The instance — which rule the mechanism obeys
 
@@ -844,8 +842,20 @@ theorem replay_identified_is_the_singleton (hidden : Rule) (acts : List Action) 
 
 /-! ## The design properties, measured over the actual transition
 
-Everything below is `native_decide` over `stepR`/`certainWithin` — the same
-functions the emitter tabulates and the judge runs. -/
+⚑ **THE MEASUREMENTS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in
+the `Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made
+every game-fixture regression a hard failure of every Rust proving target (the
+compilation-unit coupling the stale-fixture outage measured). Each measured design
+property — here and in the rendering/shape sections below — stays as an evaluation-free
+`check_* : Bool` definition over `stepR`/`certainWithin`/`rowFor`, the same functions the
+emitter tabulates and the judge runs (a `def` body elaborates without running). The
+EVALUATION — each `check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives
+in `ArtificerLogicFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Named residue: NONE. No construction in this module consumes a `native_decide` proof as
+data, so every pin moved. -/
 
 /-- ⚑ Can this candidate set still be cut down to ONE, within `fuel` charges, on
 the WORST answer the mechanism could give?  A minimax: both branches of every cut
@@ -866,15 +876,15 @@ def certifiableB (s : State) : Bool :=
   decide (s.verdict = Verdict.probing) && certainWithin (chargesLeft s) s.candidates
 
 /-- ⚑ **Four charges are enough.**  From the full manual, on the worst answers the
-mechanism can give, four cuts always reach a single rule. -/
-theorem four_charges_are_enough : certainWithin PROBE_BUDGET manual = true := by
-  native_decide
+mechanism can give, four cuts always reach a single rule.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_four_charges_are_enough : Bool := certainWithin PROBE_BUDGET manual
 
 /-- ⚑ **And three are not.**  Sixteen rules over binary charges cannot be
 separated in three cuts — the budget is the information floor and the slack is
-ZERO.  These two theorems together are the whole sizing argument. -/
-theorem three_charges_are_not : certainWithin (PROBE_BUDGET - 1) manual = false := by
-  native_decide
+ZERO.  These two checks together are the whole sizing argument.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_three_charges_are_not : Bool := !(certainWithin (PROBE_BUDGET - 1) manual)
 
 /-! ### The opening, measured
 
@@ -898,13 +908,12 @@ spending anything they can see.
 
 The third conjunct is what makes this a statement and not a coincidence: every
 charge that keeps the budget IS an even cut, so evenness is necessary and not
-sufficient — exactly the lesson the opening is for. -/
-theorem an_even_split_is_not_a_good_one :
-    (allCharges.filter (fun c => decide (turningCount c = 8))).length = 4 ∧
-    (allCharges.filter keepsTheBudget).length = 3 ∧
-    (allCharges.all (fun c => !keepsTheBudget c || decide (turningCount c = 8)))
-      = true := by
-  native_decide
+sufficient — exactly the lesson the opening is for.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_an_even_split_is_not_a_good_one : Bool :=
+  decide ((allCharges.filter (fun c => decide (turningCount c = 8))).length = 4) &&
+  decide ((allCharges.filter keepsTheBudget).length = 3) &&
+  allCharges.all (fun c => !keepsTheBudget c || decide (turningCount c = 8))
 
 /-! ## The parametric table — the rules without the instance
 
@@ -1105,42 +1114,43 @@ def parametricRowCount : Nat := parametricStates.length * allActions.length
 
 /-- ⚑ **The layers are the clock.**  Every state in layer `n` has spent exactly
 `n`, which is why the layered enumeration is complete and why the concatenation
-above needs no cross-layer deduplication. -/
-theorem parametric_layers_are_the_clock :
-    (List.range (ACTION_LIMIT + 1)).all (fun n =>
-      (parametricLayer n).all (fun s => decide (s.spent = n))) = true := by
-  native_decide
+above needs no cross-layer deduplication.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_parametric_layers_are_the_clock : Bool :=
+  (List.range (ACTION_LIMIT + 1)).all (fun n =>
+    (parametricLayer n).all (fun s => decide (s.spent = n)))
 
 /-- ⚑ **The table is closed.**  Every successor any row names is a state the
-descriptor declares, so a client can never be handed an id it does not have. -/
-theorem parametric_closure_is_closed :
-    parametricStates.all (fun s =>
-      allActions.all (fun a =>
-        (rowSuccessors s a).all (fun n => parametricStates.contains n))) = true := by
-  native_decide
+descriptor declares, so a client can never be handed an id it does not have.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_parametric_closure_is_closed : Bool :=
+  parametricStates.all (fun s =>
+    allActions.all (fun a =>
+      (rowSuccessors s a).all (fun n => parametricStates.contains n)))
 
-theorem parametric_states_nodup : parametricStates.eraseDups = parametricStates := by
-  native_decide
+/-- (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_parametric_states_nodup : Bool :=
+  decide (parametricStates.eraseDups = parametricStates)
 
-theorem initial_state_is_declared : parametricStates.contains initialState = true := by
-  native_decide
+/-- (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_initial_state_is_declared : Bool := parametricStates.contains initialState
 
 /-- ⚑ **No declared state is empty.**  A candidate set can never be narrowed to
 nothing, because the hidden rule always survives — so the state a mistaken
 naming would produce from a SINGLE candidate is never named by any row.  This is
-`truth_survives`, visible in the enumeration. -/
-theorem no_declared_state_is_empty :
-    parametricStates.all (fun s => decide (0 < s.candidates.length)) = true := by
-  native_decide
+`truth_survives`, visible in the enumeration.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_no_declared_state_is_empty : Bool :=
+  parametricStates.all (fun s => decide (0 < s.candidates.length))
 
 /-- ⚑ **Resolve rows name two different states**, so the gate's "the oracle bit is
-not consulted and the row should be an accept" refusal cannot fire. -/
-theorem resolve_rows_name_two_states :
-    parametricStates.all (fun s => allActions.all (fun a =>
-      match rowFor s a with
-      | .resolve m f => decide (m ≠ f)
-      | _ => true)) = true := by
-  native_decide
+not consulted and the row should be an accept" refusal cannot fire.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_resolve_rows_name_two_states : Bool :=
+  parametricStates.all (fun s => allActions.all (fun a =>
+    match rowFor s a with
+    | .resolve m f => decide (m ≠ f)
+    | _ => true))
 
 /-- ⚑ **The table really consults the instance.** -/
 def resolveRowCount : Nat :=
@@ -1148,19 +1158,19 @@ def resolveRowCount : Nat :=
     allActions.filter (fun a =>
       match rowFor s a with | .resolve _ _ => true | _ => false))).length
 
-theorem the_table_consults_the_instance : 0 < resolveRowCount := by
-  native_decide
+/-- (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_the_table_consults_the_instance : Bool := decide (0 < resolveRowCount)
 
 /-- ⚑ **Every open probe resolves.**  A charge that cannot split is refused, so
 there is no accepted probe whose row names one successor: every experiment a
 player is allowed to run is one whose answer they do not already hold.  This is
-requirement "which charge, not whether", as a property of the emitted table. -/
-theorem every_open_probe_resolves :
-    parametricStates.all (fun s => allCharges.all (fun c =>
-      match rowFor s (.probe c) with
-      | .advance _ => false
-      | _ => true)) = true := by
-  native_decide
+requirement "which charge, not whether", as a property of the emitted table.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_every_open_probe_resolves : Bool :=
+  parametricStates.all (fun s => allCharges.all (fun c =>
+    match rowFor s (.probe c) with
+    | .advance _ => false
+    | _ => true))
 
 /-- The refusal reasons the emitted table actually carries. -/
 def emittedReasons : List String :=
@@ -1171,11 +1181,11 @@ def emittedReasons : List String :=
 /-- ⚑ **Every declared refusal reason is reachable, and no other is emitted.**  A
 reason a client can render but the kernel can never produce is a lie in the UI;
 a reason the kernel produces but the vocabulary does not name is a string the
-client cannot translate. -/
-theorem every_declared_reason_is_reachable :
-    (refusalVocabulary.all (fun r => emittedReasons.contains r) &&
-     emittedReasons.all (fun r => refusalVocabulary.contains r)) = true := by
-  native_decide
+client cannot translate.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_every_declared_reason_is_reachable : Bool :=
+  refusalVocabulary.all (fun r => emittedReasons.contains r) &&
+  emittedReasons.all (fun r => refusalVocabulary.contains r)
 
 /-! ### Reachable design measurements -/
 
@@ -1208,15 +1218,12 @@ def identifies (hidden : Rule) : Bool :=
 draw is a dead mission — for all sixteen hidden rules the never-waste-a-cut line
 names the rule, and it takes all five actions to do it.  Same shape as
 `DeckDescent.every_board_can_be_banked`, and the same argument: a family with an
-unwinnable member is a family with a coin flip in it. -/
-theorem every_rule_is_identifiable :
-    manual.all identifies = true ∧
-    manual.all (fun r =>
-      decide ((perfectLine r ACTION_LIMIT initialState).length = ACTION_LIMIT))
-      = true := by
-  refine ⟨?_, ?_⟩
-  · native_decide
-  · native_decide
+unwinnable member is a family with a coin flip in it.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_every_rule_is_identifiable : Bool :=
+  manual.all identifies &&
+  manual.all (fun r =>
+    decide ((perfectLine r ACTION_LIMIT initialState).length = ACTION_LIMIT))
 
 /-- States from which the run must name a rule with more than one candidate still
 standing: out of charges, and holding a wager. -/
@@ -1229,8 +1236,8 @@ def wagerStates : Nat :=
 /-- ⚑ **The run can be lost.**  A player who spends a cut badly reaches a state
 with charges gone and more than one rule standing; from there naming is a wager
 and the run can end mistaken.  A design in which this count is zero is one where
-the budget never binds. -/
-theorem the_run_can_be_lost : 0 < wagerStates := by native_decide
+the budget never binds. (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_the_run_can_be_lost : Bool := decide (0 < wagerStates)
 
 /-- Reachable states from which certainty is still available. -/
 def certifiableCount : Nat := (parametricStates.filter certifiableB).length
@@ -1243,11 +1250,9 @@ def luckOnlyCount : Nat :=
 /-- ⚑ **Both sides of the skill/luck line are reachable.**  There are live states
 that can still be brought to certainty and live states that cannot, so
 `certifiable` is a field that says something — a flag that is constant is a flag
-that is decoration. -/
-theorem the_skill_line_is_real : 0 < certifiableCount ∧ 0 < luckOnlyCount := by
-  refine ⟨?_, ?_⟩
-  · native_decide
-  · native_decide
+that is decoration. (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_the_skill_line_is_real : Bool :=
+  decide (0 < certifiableCount) && decide (0 < luckOnlyCount)
 
 /-! ## Rendering names
 
@@ -1312,15 +1317,16 @@ def Action.label : Action → String
   | .probe c => "Feed the mechanism " ++ c.tag
   | .declare r => "Name it: " ++ r.label
 
-theorem rule_tags_are_distinct :
-    (manual.map Rule.tag).eraseDups.length = manual.length := by native_decide
+/-- (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_rule_tags_are_distinct : Bool :=
+  decide ((manual.map Rule.tag).eraseDups.length = manual.length)
 
 theorem charge_tags_are_distinct :
     (allCharges.map Charge.tag).eraseDups.length = allCharges.length := by decide
 
-theorem action_tags_are_distinct :
-    (allActions.map Action.tag).eraseDups.length = allActions.length := by
-  native_decide
+/-- (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_action_tags_are_distinct : Bool :=
+  decide ((allActions.map Action.tag).eraseDups.length = allActions.length)
 
 /-- The surviving candidates as a sixteen-character mask in manual order.  A
 state has ONE representation because `candidates` is always a `List.filter` of
@@ -1332,10 +1338,10 @@ def stateId (s : State) : String :=
   "al:" ++ candidateMask s ++ ":" ++ toString s.spent ++ ":" ++ s.verdict.tag
 
 /-- ⚑ **Ids separate states.**  Two declared states never share an id, so the
-transition table's string references are unambiguous. -/
-theorem state_ids_are_distinct :
-    (parametricStates.map stateId).eraseDups.length = parametricStates.length := by
-  native_decide
+transition table's string references are unambiguous.
+(Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_state_ids_are_distinct : Bool :=
+  decide ((parametricStates.map stateId).eraseDups.length = parametricStates.length)
 
 /-- What a client may render as "the run is over and it was right". -/
 def solvedB (s : State) : Bool := decide (s.verdict = Verdict.identified)
@@ -1351,10 +1357,10 @@ Stated so the descriptor's size is a number a reader has before they open the
 file, and so a change to the manual or the budget shows up as a broken pin rather
 than a quietly larger download. -/
 
-theorem parametric_shape_is_measured :
-    parametricStates.length = 1197 ∧ allActions.length = 24 ∧
-      parametricRowCount = 28728 := by
-  refine ⟨by native_decide, by decide, by native_decide⟩
+/-- (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_parametric_shape_is_measured : Bool :=
+  decide (parametricStates.length = 1197) && decide (allActions.length = 24) &&
+  decide (parametricRowCount = 28728)
 
 /-! ## Config, judge and receipt
 
@@ -1453,9 +1459,9 @@ def actionCode : Action → Nat
   | .probe c => chargeIndex c
   | .declare r => 8 + ruleIndex r
 
-theorem action_codes_are_distinct :
-    (allActions.map actionCode).eraseDups.length = allActions.length := by
-  native_decide
+/-- (Pinned `= true` in `ArtificerLogicFixtures`.) -/
+def check_action_codes_are_distinct : Bool :=
+  decide ((allActions.map actionCode).eraseDups.length = allActions.length)
 
 def actionAt (actions : List Action) (i : Nat) : Nat :=
   match actions[i]? with
@@ -1645,27 +1651,8 @@ theorem judged_run_within_budget (cfg : Config) (before : WorldState)
 #assert_axioms judged_run_named_the_drawn_rule
 #assert_axioms judged_run_within_budget
 
-#assert_compiled manual_signatures_are_distinct
-#assert_compiled repeated_manual_is_caught
-#assert_compiled four_charges_are_enough
-#assert_compiled three_charges_are_not
-#assert_compiled an_even_split_is_not_a_good_one
-#assert_compiled parametric_layers_are_the_clock
-#assert_compiled parametric_closure_is_closed
-#assert_compiled parametric_states_nodup
-#assert_compiled initial_state_is_declared
-#assert_compiled no_declared_state_is_empty
-#assert_compiled resolve_rows_name_two_states
-#assert_compiled the_table_consults_the_instance
-#assert_compiled every_open_probe_resolves
-#assert_compiled every_declared_reason_is_reachable
-#assert_compiled every_rule_is_identifiable
-#assert_compiled the_run_can_be_lost
-#assert_compiled the_skill_line_is_real
-#assert_compiled rule_tags_are_distinct
-#assert_compiled action_tags_are_distinct
-#assert_compiled state_ids_are_distinct
-#assert_compiled parametric_shape_is_measured
-#assert_compiled action_codes_are_distinct
+-- The twenty-two measured-design pins (`#assert_compiled` + `native_decide`) live in
+-- `ArtificerLogicFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- design-properties header above.
 
 end Dregg2.Games.PathOfAngels.ArtificerLogic

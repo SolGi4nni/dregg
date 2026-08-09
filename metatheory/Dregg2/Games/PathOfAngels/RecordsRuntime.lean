@@ -744,7 +744,25 @@ def recordsProjectFFI (bytes : String) : String := (projectBytes? bytes).getD ""
 /-! ## Executable fixture and hostile paths
 
 The fixture is the one the Signal judge and the finalized-run aggregate already
-use, so a change to the judged transition moves these theorems too. -/
+use, so a change to the judged transition moves these checks too.
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the seventeen `native_decide`
+pins below ran at elaboration (each accepted row costing two native judge invocations), so
+a stale Records fixture was a hard failure of every Rust proving target in the workspace
+(the compilation-unit coupling the stale-fixture outage measured). The fixtures'
+STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition (a `def`
+body elaborates without running), beside the private fixture rows and views they must
+see. The EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `RecordsRuntimeFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+fixture reds the guard library instead of the archive.
+
+Fail-closed convention: a check that reads fields off a projected VIEW matches on the
+`Option` and answers `false` on `none` — a broken projection fails the pin in the guard
+library rather than wedging this module.
+
+Named residue: NONE — no construction here demands a proof as data. -/
 
 private def digestByte (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -793,17 +811,20 @@ private def genesisOnlyView? : Option ViewWire := project? (fixtureRequest []).t
 
 private def oneRunView? : Option ViewWire := project? (fixtureRequest [fixtureRow]).toJson
 
-theorem fixture_request_round_trips :
-    decodeRequest (fixtureRequest [fixtureRow]).toJson = some (fixtureRequest [fixtureRow]) := by
-  native_decide
+/-- (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_fixture_request_round_trips : Bool :=
+  decide (decodeRequest (fixtureRequest [fixtureRow]).toJson =
+    some (fixtureRequest [fixtureRow]))
 
 /-- The point of the surface: with no finalized run at all, the view still
 carries the exact world identity, world meters, Canon revision and playable
 mission a run would land in — and says, in one word, that it is waiting for its
 first run.  Height zero is not an empty page, and it is not a page pretending to
-be full either. -/
-theorem fixture_genesis_only_view_is_a_real_world :
-    (genesisOnlyView?.map fun view =>
+be full either.  Matches on the projected view; `none` answers `false`
+(fail-closed). (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_fixture_genesis_only_view_is_a_real_world : Bool :=
+  match genesisOnlyView? with
+  | some view =>
       decide (view.federationId = fixtureCarrier.federationId) &&
       decide (view.contentSession = fixtureCanon.contentSession) &&
       decide (view.curatorKey = fixtureCanon.curatorKey) &&
@@ -814,14 +835,17 @@ theorem fixture_genesis_only_view_is_a_real_world :
       decide (view.canonRevision = 0) &&
       decide (view.runs = []) &&
       decide (view.archiveEntries = 0) &&
-      decide (view.consumedRuns = 0)) = some true := by
-  native_decide
+      decide (view.consumedRuns = 0)
+  | none => false
 
 /-- And one finalized run lands in every projection at once, with the artifact
 carrying a Canon-derived beta status recomputed at read time.  The record's rung
-is `finalized` and it carries the chain coordinate the host committed to. -/
-theorem fixture_one_finalized_run_lands_in_every_projection :
-    (oneRunView?.map fun view =>
+is `finalized` and it carries the chain coordinate the host committed to.
+Matches on the projected view; `none` answers `false` (fail-closed).
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_fixture_one_finalized_run_lands_in_every_projection : Bool :=
+  match oneRunView? with
+  | some view =>
       decide (view.stage = WorldStage.active) &&
       decide (view.runs.map RunWire.status = [RunStatus.finalized]) &&
       decide (view.runs.map RunWire.coordinate =
@@ -838,8 +862,8 @@ theorem fixture_one_finalized_run_lands_in_every_projection :
       decide (view.editorialInbox = 1) &&
       decide (view.canonRevision = 1) &&
       decide (view.consumedRuns = 1) &&
-      decide (view.world.sequence = 1)) = some true := by
-  native_decide
+      decide (view.world.sequence = 1)
+  | none => false
 
 /-! ### The two published leaks, and their absence
 
@@ -850,101 +874,102 @@ looked for. -/
 
 /-- The live seed of this fixture's run is a genuine 64-character spelling and is
 NOT the all-zero template sentinel.  Without this, the absence below would be
-satisfiable by the needle simply being something the document never had. -/
-theorem fixture_live_seed_is_a_real_needle :
-    (Emit.bytes32Hex fixtureRunSeed).length = 64 ∧
-      fixtureRunSeed ≠ Emit.UNBOUND_RUN_SEED := by
-  native_decide
+satisfiable by the needle simply being something the document never had.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_fixture_live_seed_is_a_real_needle : Bool :=
+  decide ((Emit.bytes32Hex fixtureRunSeed).length = 64) &&
+    decide (fixtureRunSeed ≠ Emit.UNBOUND_RUN_SEED)
 
 /-- ⚑ **`transcriptDigest` is not a digest.**  Bytes 1..3 of the fixture's
 "digest" are exactly the three submitted bands, and the submitted code of a
 solved run is the target.  This is the reviewer's second defect, stated as a
-theorem about the actual encoding rather than asserted in prose — and it is why
-no transcript-derived field exists on this surface. -/
-theorem fixture_transcript_is_plaintext_of_the_submitted_code :
-    (fixtureTranscript.bytes.getD 1 0).val = fixtureConfig.target.low.val ∧
-      (fixtureTranscript.bytes.getD 2 0).val = fixtureConfig.target.mid.val ∧
-      (fixtureTranscript.bytes.getD 3 0).val = fixtureConfig.target.high.val ∧
-      some fixtureConfig.target = SignalTriangulation.targetFromSeed? fixtureRunSeed := by
-  native_decide
+check about the actual encoding rather than asserted in prose — and it is why
+no transcript-derived field exists on this surface.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_fixture_transcript_is_plaintext_of_the_submitted_code : Bool :=
+  decide ((fixtureTranscript.bytes.getD 1 0).val = fixtureConfig.target.low.val) &&
+    decide ((fixtureTranscript.bytes.getD 2 0).val = fixtureConfig.target.mid.val) &&
+    decide ((fixtureTranscript.bytes.getD 3 0).val = fixtureConfig.target.high.val) &&
+    decide (some fixtureConfig.target = SignalTriangulation.targetFromSeed? fixtureRunSeed)
 
 /-- ⚑ The emitted document does not contain the live run seed anywhere — not in
 the mission, not in a record, not in any field.  `targetFromSeed?` of that seed is
-the answer, so this is the load-bearing absence. -/
-theorem view_never_publishes_the_live_run_seed :
-    (oneRunView?.map fun view =>
-      decide ((view.toJson.splitOn (Emit.bytes32Hex fixtureRunSeed)).length = 1)) =
-        some true := by
-  native_decide
+the answer, so this is the load-bearing absence.  Matches on the projected view;
+`none` answers `false` (fail-closed). (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_view_never_publishes_the_live_run_seed : Bool :=
+  match oneRunView? with
+  | some view =>
+      decide ((view.toJson.splitOn (Emit.bytes32Hex fixtureRunSeed)).length = 1)
+  | none => false
 
-/-- And it does not contain the plaintext transcript either. -/
-theorem view_never_publishes_the_transcript :
-    (oneRunView?.map fun view =>
-      decide ((view.toJson.splitOn (Emit.bytes32Hex fixtureTranscript)).length = 1)) =
-        some true := by
-  native_decide
+/-- And it does not contain the plaintext transcript either.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_view_never_publishes_the_transcript : Bool :=
+  match oneRunView? with
+  | some view =>
+      decide ((view.toJson.splitOn (Emit.bytes32Hex fixtureTranscript)).length = 1)
+  | none => false
 
 /-- ⚑ **The previous fixture, kept as the falsifier.**  Handing this surface the
 LIVE config — the one whose mission carries the derived seed, which is what the
-old fixture did — is refused outright rather than rendered. -/
-theorem hostile_live_run_seed_config_refused :
-    project? { fixtureRequest [fixtureRow] with
-      config := ⟨(SignalConfigWire.ofSemantic fixtureConfig).toJson⟩ }.toJson = none := by
-  native_decide
+old fixture did — is refused outright rather than rendered.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_live_run_seed_config_refused : Bool :=
+  (project? { fixtureRequest [fixtureRow] with
+    config := ⟨(SignalConfigWire.ofSemantic fixtureConfig).toJson⟩ }.toJson).isNone
 
 /-- ⚠ The falsifier above really does substitute something: the live config's
 bytes differ from the template's, and they differ in the run seed specifically.
-Without this the refusal could be refusing an unchanged input. -/
-theorem hostile_live_config_is_a_real_substitution :
-    (SignalConfigWire.ofSemantic fixtureConfig).toJson ≠ fixtureConfigWire.toJson ∧
-      (SignalConfigWire.ofSemantic fixtureConfig).mission.runSeed ≠
-        fixtureConfigWire.mission.runSeed := by
-  native_decide
+Without this the refusal could be refusing an unchanged input.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_live_config_is_a_real_substitution : Bool :=
+  decide ((SignalConfigWire.ofSemantic fixtureConfig).toJson ≠ fixtureConfigWire.toJson) &&
+    decide ((SignalConfigWire.ofSemantic fixtureConfig).mission.runSeed ≠
+      fixtureConfigWire.mission.runSeed)
 
-theorem hostile_substituted_signer_refused :
-    project? (fixtureRequest [{ fixtureRow with signer := digestByte 250 }]).toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_substituted_signer_refused : Bool :=
+  (project? (fixtureRequest [{ fixtureRow with signer := digestByte 250 }]).toJson).isNone
 
-theorem hostile_substituted_actor_root_refused :
-    project? (fixtureRequest [{ fixtureRow with actorRoot := digestByte 251 }]).toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_substituted_actor_root_refused : Bool :=
+  (project? (fixtureRequest [{ fixtureRow with actorRoot := digestByte 251 }]).toJson).isNone
 
 /-- A row cannot start from a Canon the projection has not reached: the fold
-rebuilds the chain rather than trusting a stored successor. -/
-theorem hostile_row_against_a_foreign_genesis_refused :
-    project? { fixtureRequest [fixtureRow] with
-      genesisCanon := ⟨fixtureSuccessorCanonWire.toJson⟩ }.toJson = none := by
-  native_decide
+rebuilds the chain rather than trusting a stored successor.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_row_against_a_foreign_genesis_refused : Bool :=
+  (project? { fixtureRequest [fixtureRow] with
+    genesisCanon := ⟨fixtureSuccessorCanonWire.toJson⟩ }.toJson).isNone
 
 /-- The same finalized run cannot land twice: Canon's consumed-receipt admission
-is re-run inside the fold. -/
-theorem hostile_replayed_row_refused :
-    project? (fixtureRequest
-      [fixtureRow, { fixtureRow with commitOrdinal := 8 }]).toJson = none := by
-  native_decide
+is re-run inside the fold. (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_replayed_row_refused : Bool :=
+  (project? (fixtureRequest
+    [fixtureRow, { fixtureRow with commitOrdinal := 8 }]).toJson).isNone
 
-/-- Rows must arrive in strict commit order; a reordered history refuses. -/
-theorem hostile_out_of_order_rows_refused :
-    project? (fixtureRequest
-      [{ fixtureRow with commitOrdinal := 8 }, fixtureRow]).toJson = none := by
-  native_decide
+/-- Rows must arrive in strict commit order; a reordered history refuses.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_out_of_order_rows_refused : Bool :=
+  (project? (fixtureRequest
+    [{ fixtureRow with commitOrdinal := 8 }, fixtureRow]).toJson).isNone
 
-/-- A foreign authority cannot read this world's records under its own id. -/
-theorem hostile_foreign_authority_refused :
-    project? { fixtureRequest [] with federationId := digestByte 252 }.toJson = none := by
-  native_decide
+/-- A foreign authority cannot read this world's records under its own id.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_foreign_authority_refused : Bool :=
+  (project? { fixtureRequest [] with federationId := digestByte 252 }.toJson).isNone
 
-/-- A mission bound to another world cannot be published beside this Canon. -/
-theorem hostile_mission_from_another_world_refused :
-    project? { fixtureRequest [] with
-      config := ⟨{ fixtureConfigWire with
-        mission := { fixtureConfigWire.mission with
-          contentRoot := digestByte 253 } }.toJson⟩ }.toJson = none := by
-  native_decide
+/-- A mission bound to another world cannot be published beside this Canon.
+(Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_hostile_mission_from_another_world_refused : Bool :=
+  (project? { fixtureRequest [] with
+    config := ⟨{ fixtureConfigWire with
+      mission := { fixtureConfigWire.mission with
+        contentRoot := digestByte 253 } }.toJson⟩ }.toJson).isNone
 
-theorem fixture_export_refuses_malformed :
-    recordsProjectFFI ((fixtureRequest []).toJson ++ "\n") = "" := by
-  native_decide
+/-- (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
+def check_fixture_export_refuses_malformed : Bool :=
+  decide (recordsProjectFFI ((fixtureRequest []).toJson ++ "\n") = "")
 
 #assert_axioms decodeRequest_reencodes
 #assert_axioms decodeRequest_refuses_oversized
@@ -959,22 +984,8 @@ theorem fixture_export_refuses_malformed :
 #assert_axioms runWireOf_origin_is_the_receipt_key
 #assert_axioms step_appends_exactly_one_checked_run
 
-#assert_compiled fixture_request_round_trips
-#assert_compiled fixture_genesis_only_view_is_a_real_world
-#assert_compiled fixture_one_finalized_run_lands_in_every_projection
-#assert_compiled fixture_live_seed_is_a_real_needle
-#assert_compiled fixture_transcript_is_plaintext_of_the_submitted_code
-#assert_compiled view_never_publishes_the_live_run_seed
-#assert_compiled view_never_publishes_the_transcript
-#assert_compiled hostile_live_run_seed_config_refused
-#assert_compiled hostile_live_config_is_a_real_substitution
-#assert_compiled hostile_substituted_signer_refused
-#assert_compiled hostile_substituted_actor_root_refused
-#assert_compiled hostile_row_against_a_foreign_genesis_refused
-#assert_compiled hostile_replayed_row_refused
-#assert_compiled hostile_out_of_order_rows_refused
-#assert_compiled hostile_foreign_authority_refused
-#assert_compiled hostile_mission_from_another_world_refused
-#assert_compiled fixture_export_refuses_malformed
+-- The seventeen fixture pins (`native_decide` + `#assert_compiled`) live in
+-- `RecordsRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixtures
+-- header above.
 
 end Dregg2.Games.PathOfAngels.RecordsRuntime

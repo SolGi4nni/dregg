@@ -891,7 +891,31 @@ theorem migration_preserves_power (target : Config) (before : State)
     result.state.powerView = before.powerView :=
   result.powerPreserved
 
-/-! ## Executable hostile checks -/
+/-! ## Executable hostile checks
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target.  The fixture facts
+below are now evaluation-free `check_* : Bool` definitions (a `def` body elaborates without
+running), kept here because they must see the private sealed-receipt fixtures; the
+EVALUATION — each `check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives
+in `ShipLifeProgressionFixtures.lean`, rooted in the `PathOfAngelsGuards` library.  A plain
+`lake build` still runs every pin; `lake build Dregg2.FFI` never does.
+
+Fail-closed convention: `Shipworks.Settlement` has a private constructor and
+`MigrationResult`/`ReplayState` carry accepted-transition data, so the old
+`.get (by native_decide)` prerequisites are now `Option`-valued (`fixtureSettlement?`,
+`fixtureAfterShipworks?`, …).  A check that needs one matches on it and answers `false` on
+`none`; the reachable-state defs (`fixtureAfterShipworks`, `fixtureAfterGear`,
+`fixtureAfterHolder`) fall back to `initialState fixtureConfig`, which every consuming
+check reads as `false` — a broken prerequisite reds the guard library, never this module.
+
+⚠ Named residue, one construction cluster (three `native_decide`): `fixtureFailureState`
+and the `replayExact`/`failedExact` proof fields of `fixtureFailureReceipt` stay
+`native_decide` HERE because `ShipworksFailureReceiptInterface` carries an actual failed
+replay as PROOF DATA — constructing the receipt at all requires those proofs at
+elaboration.  Breaking the Shipworks replay on that plan therefore still reds this module
+(and the archive).  Everything else moved. -/
 
 private def digestFilled (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -929,16 +953,22 @@ private def fixtureRaw : RawConfig where
 
 private def fixtureConfig : Config := ⟨fixtureRaw⟩
 
-private def fixtureSettlement : Shipworks.Settlement :=
-  (Shipworks.settle Shipworks.CareRecord.empty
-    (Shipworks.powerSubmission 20000)).get (by native_decide)
+/-- `Shipworks.Settlement` has a private constructor, so there is no fallback value to
+serve from a `match` — the dependent fixtures below are `Option`-valued instead, and every
+check that consumes them answers `false` on `none` (fail-closed). -/
+private def fixtureSettlement? : Option Shipworks.Settlement :=
+  Shipworks.settle Shipworks.CareRecord.empty (Shipworks.powerSubmission 20000)
 
-private def fixtureShipworksReceipt : ShipworksSettlementReceiptInterface where
-  receiptId := ⟨digestFilled 20⟩
-  sourceBatchDigest := digestFilled 21
-  owner := fixtureOwner
-  settlement := fixtureSettlement
+private def fixtureShipworksReceipt? : Option ShipworksSettlementReceiptInterface :=
+  fixtureSettlement?.map fun settlement =>
+    { receiptId := ⟨digestFilled 20⟩
+      sourceBatchDigest := digestFilled 21
+      owner := fixtureOwner
+      settlement }
 
+/-- ⚠ Named residue: this `.get (by native_decide)` and the two proof fields of
+`fixtureFailureReceipt` below stay in this module — the receipt interface carries the
+failed replay as proof data, so they must elaborate where the receipt is built. -/
 private def fixtureFailureState : Shipworks.State :=
   (Shipworks.replay Shipworks.powerDispatch Shipworks.carefulPowerLoadout
     [.advance, .advance, .advance, .advance, .advance]).get (by native_decide)
@@ -987,75 +1017,104 @@ private def fixtureHolderReceipt : HolderCosmeticReceiptInterface where
   eligibilityNullifier := digestFilled 32
   affordance := .cosmetic ⟨1⟩
 
+private def fixtureAfterShipworks? : Option State := do
+  let receipt ← fixtureShipworksReceipt?
+  reduce fixtureConfig (initialState fixtureConfig) (.shipworks receipt)
+
+/-- Fallback unreachable while `actual_shipworks_settlement_drives_daily_projection` pins
+true in `ShipLifeProgressionFixtures` — and if the settle or the fold ever refused, every
+check reading this state would see the installed ship and answer `false`. -/
 private def fixtureAfterShipworks : State :=
-  (reduce fixtureConfig (initialState fixtureConfig)
-    (.shipworks fixtureShipworksReceipt)).get (by native_decide)
+  match fixtureAfterShipworks? with
+  | some state => state
+  | none => initialState fixtureConfig
+
+private def fixtureAfterGear? : Option State :=
+  reduce fixtureConfig fixtureAfterShipworks (.craftGear fixtureGearReceipt)
 
 private def fixtureAfterGear : State :=
-  (reduce fixtureConfig fixtureAfterShipworks
-    (.craftGear fixtureGearReceipt)).get (by native_decide)
+  match fixtureAfterGear? with
+  | some state => state
+  | none => initialState fixtureConfig
+
+private def fixtureAfterHolder? : Option State :=
+  reduce fixtureConfig fixtureAfterGear (.holderFlair fixtureHolderReceipt)
 
 private def fixtureAfterHolder : State :=
-  (reduce fixtureConfig fixtureAfterGear
-    (.holderFlair fixtureHolderReceipt)).get (by native_decide)
+  match fixtureAfterHolder? with
+  | some state => state
+  | none => initialState fixtureConfig
 
-theorem cadence_earns_and_spends_one_forgiveness :
-    let one := advanceCadence 2 .empty ⟨10⟩
-    let two := advanceCadence 2 one ⟨11⟩
-    let forgiven := advanceCadence 2 two ⟨13⟩
-    let reset := advanceCadence 2 forgiven ⟨17⟩
-    (one.current, two.current, two.grace, forgiven.current, forgiven.grace,
-      reset.current) = (1, 2, 1, 3, 0, 1) := by
-  native_decide
+private def cadenceOne : DailyCadence := advanceCadence 2 .empty ⟨10⟩
+private def cadenceTwo : DailyCadence := advanceCadence 2 cadenceOne ⟨11⟩
+private def cadenceForgiven : DailyCadence := advanceCadence 2 cadenceTwo ⟨13⟩
+private def cadenceReset : DailyCadence := advanceCadence 2 cadenceForgiven ⟨17⟩
 
-theorem actual_shipworks_settlement_drives_daily_projection :
-    fixtureAfterShipworks.career.maintenanceSuccesses = 1 ∧
-      fixtureAfterShipworks.cadence.current = 1 ∧
-      UnlockHintId.mk 1 ∈ fixtureAfterShipworks.unlockHints := by
-  native_decide
+/-- (Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_cadence_earns_and_spends_one_forgiveness : Bool :=
+  decide ((cadenceOne.current, cadenceTwo.current, cadenceTwo.grace,
+    cadenceForgiven.current, cadenceForgiven.grace, cadenceReset.current) =
+    (1, 2, 1, 3, 0, 1))
 
-theorem hostile_same_shipworks_receipt_is_idempotently_refused :
-    reduce fixtureConfig fixtureAfterShipworks
-      (.shipworks fixtureShipworksReceipt) = none := by
-  native_decide
+/-- (Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_actual_shipworks_settlement_drives_daily_projection : Bool :=
+  decide (fixtureAfterShipworks.career.maintenanceSuccesses = 1 ∧
+    fixtureAfterShipworks.cadence.current = 1 ∧
+    UnlockHintId.mk 1 ∈ fixtureAfterShipworks.unlockHints)
 
-private def fixtureAfterFailure : State :=
-  (reduce fixtureConfig (initialState fixtureConfig)
-    (.shipworksFailure fixtureFailureReceipt)).get (by native_decide)
+/-- Matches on the ACCEPTED first settlement fold; `none` answers `false` (fail-closed),
+so this can never be satisfied by the first fold refusing.
+(Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_hostile_same_shipworks_receipt_is_idempotently_refused : Bool :=
+  match fixtureShipworksReceipt?, fixtureAfterShipworks? with
+  | some receipt, some after =>
+      (reduce fixtureConfig after (.shipworks receipt)).isNone
+  | _, _ => false
 
-theorem actual_failed_replay_is_meaningful_but_nonterminal :
-    fixtureAfterFailure.career.meaningfulFailures = 1 ∧
-      fixtureAfterFailure.companion = none ∧
-      fixtureAfterFailure.gear = DerivedGearView.empty ∧
-      fixtureAfterFailure.health = DerivedHealthView.empty ∧
-      fixtureAfterFailure.gallery = (∅ : Finset GalleryItemId) ∧
-      fixtureAfterFailure.cadence = DailyCadence.empty := by
-  native_decide
+private def fixtureAfterFailure? : Option State :=
+  reduce fixtureConfig (initialState fixtureConfig)
+    (.shipworksFailure fixtureFailureReceipt)
 
-theorem craft_projection_conserves_and_never_mints :
-    fixtureGearReceipt.before.total = fixtureGearReceipt.after.total ∧
-      fixtureAfterGear.gear = fixtureGearView := by
-  native_decide
+/-- Matches on the accepted failure fold; `none` answers `false` (fail-closed).
+(Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_actual_failed_replay_is_meaningful_but_nonterminal : Bool :=
+  match fixtureAfterFailure? with
+  | some after =>
+      decide (after.career.meaningfulFailures = 1 ∧
+        after.companion = none ∧
+        after.gear = DerivedGearView.empty ∧
+        after.health = DerivedHealthView.empty ∧
+        after.gallery = (∅ : Finset GalleryItemId) ∧
+        after.cadence = DailyCadence.empty)
+  | none => false
 
-theorem hostile_unknown_gear_is_refused :
-    let unknownView : DerivedGearView :=
-      ⟨[⟨999⟩], [⟨⟨999⟩, 100, by decide⟩], by decide, by decide⟩
-    let receipt : DreggnetCraftGearReceiptInterface :=
-      ⟨⟨digestFilled 101⟩, digestFilled 102, fixtureOwner, .equip ⟨999⟩,
-        ⟨1, 0, 0⟩, ⟨0, 1, 0⟩, by decide, by decide, by decide, unknownView⟩
-    reduce fixtureConfig (initialState fixtureConfig) (.craftGear receipt) = none := by
-  native_decide
+/-- (Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_craft_projection_conserves_and_never_mints : Bool :=
+  decide (fixtureGearReceipt.before.total = fixtureGearReceipt.after.total ∧
+    fixtureAfterGear.gear = fixtureGearView)
 
-theorem holder_cosmetic_changes_style_and_exactly_no_power :
-    fixtureAfterHolder.cosmetics = [CosmeticId.mk 1].toFinset ∧
-      fixtureAfterHolder.powerView = fixtureAfterGear.powerView := by
-  native_decide
+private def unknownGearView : DerivedGearView :=
+  ⟨[⟨999⟩], [⟨⟨999⟩, 100, by decide⟩], by decide, by decide⟩
 
-theorem gallery_projection_is_balance_neutral_and_authored :
-    (reduce fixtureConfig (initialState fixtureConfig)
+private def unknownGearReceipt : DreggnetCraftGearReceiptInterface :=
+  ⟨⟨digestFilled 101⟩, digestFilled 102, fixtureOwner, .equip ⟨999⟩,
+    ⟨1, 0, 0⟩, ⟨0, 1, 0⟩, by decide, by decide, by decide, unknownGearView⟩
+
+/-- (Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_hostile_unknown_gear_is_refused : Bool :=
+  (reduce fixtureConfig (initialState fixtureConfig) (.craftGear unknownGearReceipt)).isNone
+
+/-- (Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_holder_cosmetic_changes_style_and_exactly_no_power : Bool :=
+  decide (fixtureAfterHolder.cosmetics = [CosmeticId.mk 1].toFinset ∧
+    fixtureAfterHolder.powerView = fixtureAfterGear.powerView)
+
+/-- (Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_gallery_projection_is_balance_neutral_and_authored : Bool :=
+  decide ((reduce fixtureConfig (initialState fixtureConfig)
       (.gallery fixtureGalleryReceipt)).map State.gallery =
-      some [GalleryItemId.mk 1].toFinset ∧ fixtureGalleryReceipt.balanceDelta = 0 := by
-  native_decide
+    some [GalleryItemId.mk 1].toFinset) &&
+  decide (fixtureGalleryReceipt.balanceDelta = 0)
 
 private def fixtureTargetIdentity : ProgressionIdentity :=
   { federationId := fixtureIdentity.federationId
@@ -1080,18 +1139,21 @@ private def fixtureMigrationReceipt : SeasonMigrationReceiptInterface where
   sameOwner := rfl
   seasonAdvances := by decide
 
-private def fixtureMigrationResult : MigrationResult fixtureAfterHolder :=
-  (migrate fixtureTargetConfig fixtureAfterHolder fixtureMigrationReceipt).get
-    (by native_decide)
+private def fixtureMigrationResult? : Option (MigrationResult fixtureAfterHolder) :=
+  migrate fixtureTargetConfig fixtureAfterHolder fixtureMigrationReceipt
 
-theorem season_migration_preserves_power_and_replay_nullifiers :
-    fixtureMigrationResult.state.powerView = fixtureAfterHolder.powerView ∧
-      fixtureMigrationResult.state.seenShipworks = fixtureAfterHolder.seenShipworks ∧
-      fixtureMigrationResult.state.seenGear = fixtureAfterHolder.seenGear ∧
-      fixtureMigrationResult.state.seenHolder = fixtureAfterHolder.seenHolder ∧
-      fixtureMigrationResult.state.identity = fixtureTargetIdentity ∧
-      fixtureMigrationResult.state.eventCount = 0 := by
-  native_decide
+/-- Matches on the accepted migration; `none` answers `false` (fail-closed).
+(Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_season_migration_preserves_power_and_replay_nullifiers : Bool :=
+  match fixtureMigrationResult? with
+  | some result =>
+      decide (result.state.powerView = fixtureAfterHolder.powerView ∧
+        result.state.seenShipworks = fixtureAfterHolder.seenShipworks ∧
+        result.state.seenGear = fixtureAfterHolder.seenGear ∧
+        result.state.seenHolder = fixtureAfterHolder.seenHolder ∧
+        result.state.identity = fixtureTargetIdentity ∧
+        result.state.eventCount = 0)
+  | none => false
 
 /-! The following fixture exercises exact event replay and the real EventBatch
 planner.  It hashes small integers only to make the compiled semantic tooth
@@ -1103,25 +1165,29 @@ private def fixtureBoundary : Boundary where
   payloadDigest receipt := receipt.sourceBatchDigest
   eventDigest statement := digestFilled (60 + statement.sequence)
 
-private def fixtureShipworksEnvelope : Envelope :=
-  let spec := streamSpec fixtureBoundary fixtureConfig
-  let statement : EventStatement := {
-    aggregate := spec.aggregate
-    version := spec.version
-    sequence := 1
-    predecessor := spec.genesisHead
-    payloadDigest := fixtureBoundary.payloadDigest (.shipworks fixtureShipworksReceipt) }
-  ⟨statement, .shipworks fixtureShipworksReceipt,
-    fixtureBoundary.eventDigest statement⟩
+private def fixtureShipworksEnvelope? : Option Envelope :=
+  fixtureShipworksReceipt?.map fun receipt =>
+    let spec := streamSpec fixtureBoundary fixtureConfig
+    let statement : EventStatement := {
+      aggregate := spec.aggregate
+      version := spec.version
+      sequence := 1
+      predecessor := spec.genesisHead
+      payloadDigest := fixtureBoundary.payloadDigest (.shipworks receipt) }
+    ⟨statement, .shipworks receipt, fixtureBoundary.eventDigest statement⟩
 
-private def fixtureReplayed : EventSourcing.ReplayState State :=
-  (rebuild fixtureBoundary fixtureConfig [fixtureShipworksEnvelope]).toOption.get
-    (by native_decide)
+private def fixtureReplayed? : Option (EventSourcing.ReplayState State) := do
+  let envelope ← fixtureShipworksEnvelope?
+  (rebuild fixtureBoundary fixtureConfig [envelope]).toOption
 
-theorem event_stream_replays_exactly_one_daily_receipt :
-    fixtureReplayed.cursor.sequence = 1 ∧
-      fixtureReplayed.projection = fixtureAfterShipworks := by
-  native_decide
+/-- Matches on the accepted replay; `none` answers `false` (fail-closed).
+(Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_event_stream_replays_exactly_one_daily_receipt : Bool :=
+  match fixtureReplayed? with
+  | some replayed =>
+      decide (replayed.cursor.sequence = 1 ∧
+        replayed.projection = fixtureAfterShipworks)
+  | none => false
 
 private def fixtureSpecialistStream : EventBatch.StreamId where
   world := {
@@ -1159,9 +1225,9 @@ private def fixtureBatchApplied? : Option EventBatch.AppliedBatch := do
   (EventBatch.applyBatch fixtureFanoutBoundary.digests
     [fixtureSpecialistHead] envelope).toOption
 
-theorem event_batch_accepts_complete_derived_fanout :
-    fixtureBatchApplied?.isSome = true := by
-  native_decide
+/-- (Pinned `= true` in `ShipLifeProgressionFixtures`.) -/
+def check_event_batch_accepts_complete_derived_fanout : Bool :=
+  fixtureBatchApplied?.isSome
 
 #assert_axioms reduce_deterministic
 #assert_axioms craft_receipt_conserves_resources
@@ -1175,16 +1241,8 @@ theorem event_batch_accepts_complete_derived_fanout :
 #assert_axioms rebuild_deterministic
 #assert_axioms migration_preserves_power
 #assert_axioms canon_relics_are_non_market
-#assert_compiled cadence_earns_and_spends_one_forgiveness
-#assert_compiled actual_shipworks_settlement_drives_daily_projection
-#assert_compiled hostile_same_shipworks_receipt_is_idempotently_refused
-#assert_compiled actual_failed_replay_is_meaningful_but_nonterminal
-#assert_compiled craft_projection_conserves_and_never_mints
-#assert_compiled hostile_unknown_gear_is_refused
-#assert_compiled holder_cosmetic_changes_style_and_exactly_no_power
-#assert_compiled gallery_projection_is_balance_neutral_and_authored
-#assert_compiled season_migration_preserves_power_and_replay_nullifiers
-#assert_compiled event_stream_replays_exactly_one_daily_receipt
-#assert_compiled event_batch_accepts_complete_derived_fanout
+
+-- The eleven fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `ShipLifeProgressionFixtures.lean`, rooted in `PathOfAngelsGuards` — see the header above.
 
 end Dregg2.Games.PathOfAngels.ShipLifeProgression

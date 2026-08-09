@@ -1157,7 +1157,46 @@ theorem completed_featured_artifact_is_beta_candidate {config : Config}
     record.featuredBeta ∈ record.outcome.betaCandidates :=
   record.featuredDeclared
 
-/-! ## Executable cooperative fixture -/
+/-! ## Executable cooperative fixture — the private hostility laboratory
+
+⚑ **THE LAB NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and its sixty-three `native_decide`
+pins ran at elaboration, so every game-fixture regression was a hard failure of every Rust
+proving target in the workspace (the compilation-unit coupling the stale-fixture outage
+measured). The lab's STATEMENTS stay here, because they must see the private fixture world
+(`fixtureConfig`, `drive`, `completionFor?`, `katConfig`, the KAT envelopes) that makes the
+capabilities unforgeable in the first place; a `def` body elaborates without running. The
+EVALUATION — each pin `= true`, by `native_decide` + `#assert_compiled` — lives in
+`CrewFieldMissionFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of the
+archive.
+
+Two shapes of statement, both evaluation-free here:
+
+* where the pin's statement was **already** a named public `Bool` definition
+  (`sealAdmitsKernelProducedRecordB`, `completedBudgetAccountingB`, `exactReplayB`, …) that
+  definition is unchanged and the fixture module pins it under its original theorem name;
+* otherwise the statement becomes a public `check_<original_theorem_name> : Bool` here —
+  `.isSome`/`.isNone` for `Option` shapes, `!x` for a `= false`, `&&` for a conjunction,
+  `decide (…)` for an equality or `≠` (the `Decidable` instances all existed already; that is
+  what `native_decide` was deciding).
+
+Every theorem keeps the fully-qualified name the in-module census used, so nothing downstream
+moves.
+
+⚠ **Named residue, five construction proofs** that CANNOT move, because the value they prove
+about is required as DATA at elaboration:
+`fixturePolicy.catalogue_bounded` and `wrongArtifactPolicy.catalogue_bounded`
+(`ActivityOutcome.Policy` carries its bound as a field), and `fixture_config_valid`,
+`fixture_rekeyed_config_valid`, `kat_config_valid` (`Config` carries
+`rawConfigValidB raw briefings briefingDigest = true` as a field, so building the fixture,
+rekeyed and KAT configs at all requires the proof here). Breaking `rawConfigValidB` on any of
+those three raw configs therefore still reds this module — and the archive. Everything else
+moved.
+
+`fixture_run_seal_carries_the_fixture_session` also stays: it is `rfl`, but its statement names
+`fixtureRunSeal`, whose construction carries `fixture_config_valid`'s `native_decide`, so its
+census line is `#assert_compiled` rather than `#assert_axioms`. -/
 
 def digestFilled (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -1426,26 +1465,33 @@ theorem fixture_config_valid :
     rawConfigValidB fixtureRawConfig fixtureBriefings fixtureBriefingDigest = true := by
   native_decide
 
-theorem fixture_ordered_briefing_deck_is_commitment_bound :
-    fixtureRawConfig.briefingCommitment = fixtureBriefingDigest.digest
-      (briefingDeckPreimage fixtureRawConfig fixtureBriefings) := by
-  native_decide
+/-- The authored fixture commitment IS the digest of the authored ordered deck.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_fixture_ordered_briefing_deck_is_commitment_bound : Bool :=
+  decide (fixtureRawConfig.briefingCommitment = fixtureBriefingDigest.digest
+    (briefingDeckPreimage fixtureRawConfig fixtureBriefings))
 
-theorem hostile_unwinnable_terminal_costs_are_individually_within_budget :
-    globallyUnwinnableRouteOutcomes.all (fun spec =>
-      decide (0 < spec.operationalCost ∧
-        spec.operationalCost ≤ globallyUnwinnableRawConfig.operationalBudget)) = true := by
-  native_decide
+/-- Every terminal cost in the unwinnable table is individually affordable — the
+premise that makes the refusal below a statement about GLOBAL reachability rather
+than about one oversized row. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_unwinnable_terminal_costs_are_individually_within_budget : Bool :=
+  globallyUnwinnableRouteOutcomes.all fun spec =>
+    decide (0 < spec.operationalCost ∧
+      spec.operationalCost ≤ globallyUnwinnableRawConfig.operationalBudget)
 
-theorem hostile_unwinnable_config_has_no_affordable_safe_terminal :
-    authoredSafeTerminalReachabilityFloorB globallyUnwinnableRawConfig = false := by
-  native_decide
+/-- No safe terminal survives the three mandatory survey handoffs.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_unwinnable_config_has_no_affordable_safe_terminal : Bool :=
+  !(authoredSafeTerminalReachabilityFloorB globallyUnwinnableRawConfig)
 
-theorem hostile_globally_unwinnable_config_refused_at_activation :
-    rawConfigValidB globallyUnwinnableRawConfig fixtureBriefings
-      fixtureBriefingDigest = false := by
-  native_decide
+/-- …and activation therefore refuses the whole config.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_globally_unwinnable_config_refused_at_activation : Bool :=
+  !(rawConfigValidB globallyUnwinnableRawConfig fixtureBriefings fixtureBriefingDigest)
 
+/-- Mutating any of the four mission-identity fields away from the policy mission
+breaks activation. (Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem
+name `raw_identity_fields_must_exactly_match_policy_mission`.) -/
 def missionIdentityMutationsRefusedB : Bool :=
   let mutations : List RawConfig :=
     [ { fixtureRawConfigBase with federationId := digestFilled 241 }
@@ -1456,25 +1502,24 @@ def missionIdentityMutationsRefusedB : Bool :=
     !(rawConfigValidB (withFixtureBriefingCommitment raw) fixtureBriefings
       fixtureBriefingDigest)
 
-theorem raw_identity_fields_must_exactly_match_policy_mission :
-    missionIdentityMutationsRefusedB = true := by
-  native_decide
-
 def wrongMissionArtifactRawConfig : RawConfig :=
   withFixtureBriefingCommitment {
     fixtureRawConfigBase with
     policy := wrongArtifactPolicy
     routeOutcomes := wrongArtifactRouteOutcomes }
 
-theorem wrong_mission_artifact_is_otherwise_declared_and_outcome_valid :
-    (ActivityOutcome.validate wrongArtifactPolicy wrongMissionOutcome).isSome = true ∧
-      wrongMissionArtifact ∈ wrongMissionOutcome.betaCandidates := by
-  native_decide
+/-- The honest control for the refusal below: the wrong-mission artifact is
+otherwise a perfectly declared beta candidate of a perfectly valid outcome, so the
+refusal is about the MISSION field and nothing else.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_wrong_mission_artifact_is_otherwise_declared_and_outcome_valid : Bool :=
+  (ActivityOutcome.validate wrongArtifactPolicy wrongMissionOutcome).isSome &&
+  decide (wrongMissionArtifact ∈ wrongMissionOutcome.betaCandidates)
 
-theorem artifact_mission_must_exactly_match_activated_mission :
-    rawConfigValidB wrongMissionArtifactRawConfig fixtureBriefings
-      fixtureBriefingDigest = false := by
-  native_decide
+/-- An artifact from another mission is refused at activation.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_artifact_mission_must_exactly_match_activated_mission : Bool :=
+  !(rawConfigValidB wrongMissionArtifactRawConfig fixtureBriefings fixtureBriefingDigest)
 
 def substitutedFixtureBriefings : List BriefingAssignment :=
   [ ⟨⟨0⟩, .pathfinder .sealedNave⟩
@@ -1482,10 +1527,10 @@ def substitutedFixtureBriefings : List BriefingAssignment :=
   , ⟨⟨2⟩, .containment .signalGallery⟩
   , ⟨⟨3⟩, .quartermaster .stable⟩ ]
 
-theorem hostile_same_role_briefing_substitution_breaks_activation_commitment :
-    rawConfigValidB fixtureRawConfig substitutedFixtureBriefings
-      fixtureBriefingDigest = false := by
-  native_decide
+/-- Substituting one same-role briefing breaks the activation commitment.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_same_role_briefing_substitution_breaks_activation_commitment : Bool :=
+  !(rawConfigValidB fixtureRawConfig substitutedFixtureBriefings fixtureBriefingDigest)
 
 private def fixtureConfig : Config where
   raw := fixtureRawConfig
@@ -1601,25 +1646,24 @@ theorem fixture_rekeyed_config_valid :
 
 /-- The substitution moved the wallet keys and nothing else about who the crew
 is.  Asserted here, next to the world it describes, so the world cannot quietly
-become a copy of the authored one. -/
-theorem fixture_rekeyed_roster_substitutes_only_the_player_keys :
-    fixtureRekeyedRoster.map Seat.playerKey ≠ fixtureRoster.map Seat.playerKey ∧
-    fixtureRekeyedRoster.map Seat.id = fixtureRoster.map Seat.id ∧
-    fixtureRekeyedRoster.map Seat.role = fixtureRoster.map Seat.role ∧
-    fixtureRekeyedRoster.map Seat.credential = fixtureRoster.map Seat.credential ∧
-    fixtureRekeyedRoster.map Seat.initialCounter = fixtureRoster.map Seat.initialCounter := by
-  native_decide
+become a copy of the authored one. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_fixture_rekeyed_roster_substitutes_only_the_player_keys : Bool :=
+  decide (fixtureRekeyedRoster.map Seat.playerKey ≠ fixtureRoster.map Seat.playerKey) &&
+  decide (fixtureRekeyedRoster.map Seat.id = fixtureRoster.map Seat.id) &&
+  decide (fixtureRekeyedRoster.map Seat.role = fixtureRoster.map Seat.role) &&
+  decide (fixtureRekeyedRoster.map Seat.credential = fixtureRoster.map Seat.credential) &&
+  decide (fixtureRekeyedRoster.map Seat.initialCounter =
+    fixtureRoster.map Seat.initialCounter)
 
 /-- ⚑ The fixture briefing commitment does NOT separate these two crews: the
 substituted roster carrying the authored commitment is still a valid config.
-Recorded as a theorem because it is the reason the seal has to be what refuses,
+Recorded as a pin because it is the reason the seal has to be what refuses,
 and because the opposite was asserted here first and was false.  This is a fact
 about the eight-bit fixture digest, not about the design: a deployment digest
-would separate them. -/
-theorem the_fixture_briefing_commitment_does_not_separate_the_two_crews :
-    rawConfigValidB { fixtureRawConfig with roster := fixtureRekeyedRoster }
-      fixtureBriefings fixtureBriefingDigest = true := by
-  native_decide
+would separate them. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_the_fixture_briefing_commitment_does_not_separate_the_two_crews : Bool :=
+  rawConfigValidB { fixtureRawConfig with roster := fixtureRekeyedRoster }
+    fixtureBriefings fixtureBriefingDigest
 
 private def fixtureRekeyedConfig : Config where
   raw := fixtureRekeyedRawConfig
@@ -1637,9 +1681,10 @@ private def fixtureRekeyedAdmission : CanonicalRunAdmission fixtureRekeyedConfig
 def fixtureRekeyedRunSeal : RunSeal := ⟨fixtureRekeyedConfig, fixtureRekeyedAdmission⟩
 
 /-- The two seals are for different sessions.  Without this the runtime's
-cross-crew refusals could be comparing a world with itself. -/
-theorem the_two_fixture_seals_carry_different_sessions :
-    fixtureRekeyedRunSeal.session ≠ fixtureRunSeal.session := by native_decide
+cross-crew refusals could be comparing a world with itself.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_the_two_fixture_seals_carry_different_sessions : Bool :=
+  decide (fixtureRekeyedRunSeal.session ≠ fixtureRunSeal.session)
 
 /-- The traces the kernel actually signed, exported as data rather than as a
 signing oracle.  `CrewFieldMissionRuntime` builds its wire transcripts from
@@ -1651,9 +1696,12 @@ def fixtureSafeMaintenanceTranscript : List HandoffTrace :=
 def fixtureDeepTranscript : List HandoffTrace :=
   ((completionFor? deepPlan).map CombinedFieldRecord.transcript).getD []
 
-theorem exported_fixture_transcripts_are_four_signed_handoffs_each :
-    fixtureSafeMaintenanceTranscript.length = CREW_SIZE ∧
-      fixtureDeepTranscript.length = CREW_SIZE := by native_decide
+/-- Both exported transcripts are a full crew of signed handoffs — and therefore
+neither `getD []` fallback above fired.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_exported_fixture_transcripts_are_four_signed_handoffs_each : Bool :=
+  decide (fixtureSafeMaintenanceTranscript.length = CREW_SIZE) &&
+  decide (fixtureDeepTranscript.length = CREW_SIZE)
 
 /-! ### The step surface, over a real signed transcript
 
@@ -1679,6 +1727,10 @@ private def fixtureHandoffSignatureFor (seat : Seat) (preimage : HandoffSigningP
   { bytes := fixtureExpectedSignature 2 seat.playerKey seat.credential
       (fixtureMessageDigest.handoffMessageDigest preimage) }
 
+/-- The prefix gap, stated: four proper prefixes at which the kernel has a state
+and `replay?` has nothing to say, and one completed run where they agree.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`the_step_surface_answers_at_every_prefix_replay_refuses`.) -/
 def stepAnswersEveryPrefixWhileReplayIsSilentB : Bool :=
   let transcript := fixtureDeepTranscript
   let views := (List.range (CREW_SIZE + 1)).map fun k =>
@@ -1696,11 +1748,6 @@ def stepAnswersEveryPrefixWhileReplayIsSilentB : Bool :=
         decide (view.phase = if k = CREW_SIZE then MissionPhase.extracted else .active) &&
         decide ((fixtureRunSeal.replay? (transcript.take k)).isSome =
           decide (k = CREW_SIZE)))
-
-/-- The prefix gap, stated: four proper prefixes at which the kernel has a state
-and `replay?` has nothing to say, and one completed run where they agree. -/
-theorem the_step_surface_answers_at_every_prefix_replay_refuses :
-    stepAnswersEveryPrefixWhileReplayIsSilentB = true := by native_decide
 
 /-- One handoff, produced through nothing but the public surface: ask the seal
 what this seat must sign, sign exactly those bytes, and emit the trace.  No
@@ -1723,6 +1770,12 @@ private def stepDrive : List HandoffTrace → List Decision → Option (List Han
         signature := fixtureHandoffSignatureFor seat preimage }
       stepDrive (transcript ++ [trace]) rest
 
+/-- ⚑ ONE SEAT'S SIGNED HANDOFF IS COMPLETABLE — four times over.  Driven from
+the empty transcript through `step?` and `nextSigningPreimage?` alone, a client
+that never reimplements the transition reconstructs the kernel's own signed
+transcript byte for byte, and the seal admits the run it built.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`a_crew_plays_a_whole_run_one_signed_handoff_at_a_time`.) -/
 def stepSurfaceDrivesAWholeSignedRunB : Bool :=
   match stepDrive [] (deepPlan.map Prod.snd) with
   | none => false
@@ -1733,13 +1786,12 @@ def stepSurfaceDrivesAWholeSignedRunB : Bool :=
       | none => false
       | some view => decide (view.completion = fixtureRunSeal.replay? transcript)
 
-/-- ⚑ ONE SEAT'S SIGNED HANDOFF IS COMPLETABLE — four times over.  Driven from
-the empty transcript through `step?` and `nextSigningPreimage?` alone, a client
-that never reimplements the transition reconstructs the kernel's own signed
-transcript byte for byte, and the seal admits the run it built. -/
-theorem a_crew_plays_a_whole_run_one_signed_handoff_at_a_time :
-    stepSurfaceDrivesAWholeSignedRunB = true := by native_decide
-
+/-- The mutation is asserted present (`other ≠ turn`) and the honest control is
+in the same statement: seat 0's own admission envelope opens seat 0's briefing,
+seat 1's does not.  Without the second conjunct's control this would pass for a
+surface that refused everyone.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`the_step_surface_opens_a_briefing_only_to_its_own_seat`.) -/
 def stepSurfaceRefusesAnotherSeatsAdmissionB : Bool :=
   let decision : Decision := .specialist .signalGallery .markSalvageRoute
   match fixtureRunSeal.step? [] with
@@ -1752,30 +1804,25 @@ def stepSurfaceRefusesAnotherSeatsAdmissionB : Bool :=
         (fixtureRunSeal.nextSigningPreimage? [] (fixtureSeatSignature turn) decision).isSome
     | _, _ => false
 
-/-- The mutation is asserted present (`other ≠ turn`) and the honest control is
-in the same statement: seat 0's own admission envelope opens seat 0's briefing,
-seat 1's does not.  Without the second conjunct's control this would pass for a
-surface that refused everyone. -/
-theorem the_step_surface_opens_a_briefing_only_to_its_own_seat :
-    stepSurfaceRefusesAnotherSeatsAdmissionB = true := by native_decide
-
 /-! The seal must be satisfiable *and* refutable.  A predicate that accepted
 everything would weld the runtime to nothing at all, so each acceptance below is
 paired with a refusal built by mutating the record the kernel just produced. -/
 
+/-- The seal admits the record the kernel itself produced.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`run_seal_admits_the_record_the_kernel_produced`.) -/
 def sealAdmitsKernelProducedRecordB : Bool :=
   match completionFor? deepPlan with
   | none => false
   | some record => fixtureRunSeal.admits record.toRaw
 
-theorem run_seal_admits_the_record_the_kernel_produced :
-    sealAdmitsKernelProducedRecordB = true := by native_decide
-
 /-- ⚑ The fabrication check, and the reason `RunSeal` exists.  A caller that
 asserts a terminal state — the exact defect `CrewFieldMissionRuntime.deriveRecord?`
 had — is refused, because `admits` reaches that state by running `execute` rather
 than by reading the claim.  The mutated root is built from the live record and
-asserted different before the verdict is read. -/
+asserted different before the verdict is read.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`run_seal_refuses_a_terminal_state_the_kernel_did_not_reach`.) -/
 def sealRefusesAssertedTerminalRootB : Bool :=
   match completionFor? deepPlan with
   | none => false
@@ -1788,12 +1835,11 @@ def sealRefusesAssertedTerminalRootB : Bool :=
       decide (asserted ≠ raw.finalRoot) &&
       !fixtureRunSeal.admits { raw with finalRoot := asserted }
 
-theorem run_seal_refuses_a_terminal_state_the_kernel_did_not_reach :
-    sealRefusesAssertedTerminalRootB = true := by native_decide
-
 /-- The signature leg: one forged handoff signature and the seal refuses.  The
 forgery is constructed from the live trace and asserted to differ from it, so
-this cannot quietly become a comparison of a value with itself. -/
+this cannot quietly become a comparison of a value with itself.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`run_seal_refuses_a_forged_handoff_signature`.) -/
 def sealRefusesForgedHandoffSignatureB : Bool :=
   match completionFor? deepPlan with
   | none => false
@@ -1806,23 +1852,29 @@ def sealRefusesForgedHandoffSignatureB : Bool :=
           decide (forged.signature ≠ trace.signature) &&
           !fixtureRunSeal.admits { record.toRaw with transcript := forged :: rest }
 
-theorem run_seal_refuses_a_forged_handoff_signature :
-    sealRefusesForgedHandoffSignatureB = true := by native_decide
-
 /-- A seal issued for this session says so.  The runtime pins this against the
 session its activation was authenticated for. -/
 theorem fixture_run_seal_carries_the_fixture_session :
     fixtureRunSeal.session = fixtureRawConfig.sessionDigest := rfl
 
-theorem safe_extraction_accepts_two_matching_signed_recommendations :
-    (completionFor? safePlan).isSome = true := by native_decide
+/-- Safe extraction accepts two matching signed route recommendations.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_safe_extraction_accepts_two_matching_signed_recommendations : Bool :=
+  (completionFor? safePlan).isSome
 
-theorem alternative_safe_route_is_reachable :
-    (completionFor? safeMaintenancePlan).isSome = true := by native_decide
+/-- A second authored safe route is reachable, so the safe terminal is not one
+hard-coded branch. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_alternative_safe_route_is_reachable : Bool :=
+  (completionFor? safeMaintenancePlan).isSome
 
-theorem deep_recovery_requires_and_accepts_full_crew_consensus :
-    (completionFor? deepPlan).isSome = true := by native_decide
+/-- Deep recovery accepts full-crew consensus.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_deep_recovery_requires_and_accepts_full_crew_consensus : Bool :=
+  (completionFor? deepPlan).isSome
 
+/-- Route and extraction choices produce materially distinct records.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`route_and_extraction_choices_produce_materially_distinct_records`.) -/
 def completedPlansDifferB : Bool :=
   match completionFor? safePlan, completionFor? deepPlan with
   | some safe, some deep =>
@@ -1833,9 +1885,9 @@ def completedPlansDifferB : Bool :=
       decide (deep.featuredBeta ∈ deep.outcome.betaCandidates)
   | _, _ => false
 
-theorem route_and_extraction_choices_produce_materially_distinct_records :
-    completedPlansDifferB = true := by native_decide
-
+/-- Specialist steps and the final route are both charged exactly, and the
+remaining budget closes the sum. (Pinned `= true` in `CrewFieldMissionFixtures`,
+under the theorem name `specialist_steps_and_final_route_are_both_charged_exactly`.) -/
 def completedBudgetAccountingB : Bool :=
   match completionFor? safePlan, completionFor? deepPlan with
   | some safe, some deep =>
@@ -1853,10 +1905,10 @@ def completedBudgetAccountingB : Bool :=
           fixtureRawConfig.operationalBudget)
   | _, _ => false
 
-theorem specialist_steps_and_final_route_are_both_charged_exactly :
-    completedBudgetAccountingB = true := by
-  native_decide
-
+/-- Route is a material choice even with extraction held fixed: it changes
+cost, bounded reward, and the exact beta candidate.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`route_changes_cost_reward_and_artifact_at_fixed_extraction`.) -/
 def fixedExtractionRouteVariationB : Bool :=
   match completionFor? safePlan, completionFor? safeMaintenancePlan with
   | some signal, some maintenance =>
@@ -1871,22 +1923,20 @@ def fixedExtractionRouteVariationB : Bool :=
       decide (signal.featuredBeta ≠ maintenance.featuredBeta)
   | _, _ => false
 
-/-- Route is a material choice even with extraction held fixed: it changes
-cost, bounded reward, and the exact beta candidate. -/
-theorem route_changes_cost_reward_and_artifact_at_fixed_extraction :
-    fixedExtractionRouteVariationB = true := by native_decide
-
 /-! Outcome-table well-formedness is not a claim that every authored branch is
 reachable from this particular briefing deck and cooperation policy. -/
+/-- All six authored route/extraction outcomes are bounded and declared.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`all_six_authored_route_extraction_outcomes_are_bounded_and_declared`.) -/
 def allAuthoredOutcomesWellFormedB : Bool :=
   fixtureRouteOutcomes.all fun spec =>
     (ActivityOutcome.validate fixturePolicy spec.outcome).isSome &&
     decide (spec.featuredArtifact ∈ spec.outcome.betaCandidates) &&
     decide (0 < spec.operationalCost)
 
-theorem all_six_authored_route_extraction_outcomes_are_bounded_and_declared :
-    allAuthoredOutcomesWellFormedB = true := by native_decide
-
+/-- The combined field record replays every signed handoff exactly.
+(Pinned at `deepPlan` in `CrewFieldMissionFixtures`, under the theorem name
+`combined_field_record_replays_every_signed_handoff_exactly`.) -/
 def exactReplayB (plan : List (SeatId × Decision)) : Bool :=
   match completionFor? plan with
   | none => false
@@ -1897,16 +1947,13 @@ def exactReplayB (plan : List (SeatId × Decision)) : Bool :=
         | none => false
         | some replayed => decide (replayed.toRaw = record.toRaw)
 
-theorem combined_field_record_replays_every_signed_handoff_exactly :
-    exactReplayB deepPlan = true := by native_decide
-
+/-- An unchecked record projection readmits after exact signed replay.
+(Pinned at `deepPlan` in `CrewFieldMissionFixtures`, under the theorem name
+`unchecked_record_projection_readmits_after_exact_replay`.) -/
 def readmitB (plan : List (SeatId × Decision)) : Bool :=
   match completionFor? plan with
   | none => false
   | some record => (admitCombinedFieldRecord? fixtureAdmission record.toRaw).isSome
-
-theorem unchecked_record_projection_readmits_after_exact_replay :
-    readmitB deepPlan = true := by native_decide
 
 def overBudgetSafePrefix : List (SeatId × Decision) :=
   [ (⟨0⟩, .specialist .sealedNave .chartPressureRoute)
@@ -1923,9 +1970,11 @@ def overBudgetSafeFinalResult : Option Refusal := do
   | .error refusal => some refusal
   | .ok _ => none
 
-theorem recommendation_valid_but_over_budget_route_is_refused_at_live_budget_boundary :
-    overBudgetSafeFinalResult = some .insufficientOperationalBudget := by
-  native_decide
+/-- A recommendation-valid but over-budget route is refused at the LIVE budget
+boundary, not at authoring time.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_recommendation_valid_but_over_budget_route_is_refused_at_live_budget_boundary : Bool :=
+  decide (overBudgetSafeFinalResult = some Refusal.insufficientOperationalBudget)
 
 def mixedStrategyPlan : List (SeatId × Decision) :=
   [ (⟨0⟩, .specialist .signalGallery .markSalvageRoute)
@@ -1933,8 +1982,10 @@ def mixedStrategyPlan : List (SeatId × Decision) :=
   , (⟨2⟩, .specialist .signalGallery .quietAnomaly)
   , (⟨3⟩, .finalize .signalGallery .returnNow .bankSupplies) ]
 
-theorem hostile_mixed_crew_strategy_refused :
-    drive (start fixtureAdmission) mixedStrategyPlan = none := by native_decide
+/-- A crew that mixes survey and salvage commands cannot complete a run.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_mixed_crew_strategy_refused : Bool :=
+  (drive (start fixtureAdmission) mixedStrategyPlan).isNone
 
 def splitDeepPlan : List (SeatId × Decision) :=
   [ (⟨0⟩, .specialist .signalGallery .markSalvageRoute)
@@ -1942,8 +1993,10 @@ def splitDeepPlan : List (SeatId × Decision) :=
   , (⟨2⟩, .specialist .signalGallery .screenRecovery)
   , (⟨3⟩, .finalize .signalGallery .descendFurther .secureCache) ]
 
-theorem hostile_deep_recovery_without_unanimity_refused :
-    drive (start fixtureAdmission) splitDeepPlan = none := by native_decide
+/-- Deep recovery without unanimity cannot complete a run.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_deep_recovery_without_unanimity_refused : Bool :=
+  (drive (start fixtureAdmission) splitDeepPlan).isNone
 
 private def firstState : State := start fixtureAdmission
 
@@ -1957,8 +2010,10 @@ def substitutedObservationResult : Option Refusal := do
   | .error refusal => some refusal
   | .ok _ => none
 
-theorem hostile_private_observation_substitution_refused :
-    substitutedObservationResult = some .observationMismatch := by native_decide
+/-- Substituting the private observation in a signed body is refused as an
+observation mismatch. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_private_observation_substitution_refused : Bool :=
+  decide (substitutedObservationResult = some Refusal.observationMismatch)
 
 def staleRootResult : Option Refusal := do
   let handoff ← firstHandoff?
@@ -1970,8 +2025,10 @@ def staleRootResult : Option Refusal := do
   | .error refusal => some refusal
   | .ok _ => none
 
-theorem hostile_stale_predecessor_root_refused :
-    staleRootResult = some .staleRoot := by native_decide
+/-- A body addressed at a stale predecessor root is refused.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_stale_predecessor_root_refused : Bool :=
+  decide (staleRootResult = some Refusal.staleRoot)
 
 def substitutedSignatureResult : Option Refusal := do
   let handoff ← firstHandoff?
@@ -1981,8 +2038,10 @@ def substitutedSignatureResult : Option Refusal := do
   | .error refusal => some refusal
   | .ok _ => none
 
-theorem hostile_handoff_signature_substitution_refused :
-    substitutedSignatureResult = some .signatureRefused := by native_decide
+/-- A substituted handoff signature is refused.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_handoff_signature_substitution_refused : Bool :=
+  decide (substitutedSignatureResult = some Refusal.signatureRefused)
 
 def unsignedDecisionSubstitutionResult : Option Refusal := do
   let handoff ← firstHandoff?
@@ -1992,8 +2051,10 @@ def unsignedDecisionSubstitutionResult : Option Refusal := do
   | .error refusal => some refusal
   | .ok _ => none
 
-theorem hostile_full_field_decision_substitution_refused_by_signature :
-    unsignedDecisionSubstitutionResult = some .signatureRefused := by native_decide
+/-- Substituting the decision the seat signed is caught by the signature.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_full_field_decision_substitution_refused_by_signature : Bool :=
+  decide (unsignedDecisionSubstitutionResult = some Refusal.signatureRefused)
 
 def otherSeatSignatureResult : Option Refusal := do
   let handoff ← firstHandoff?
@@ -2007,8 +2068,10 @@ def otherSeatSignatureResult : Option Refusal := do
   | .error refusal => some refusal
   | .ok _ => none
 
-theorem hostile_signature_issued_for_other_seat_refused :
-    otherSeatSignatureResult = some .signatureRefused := by native_decide
+/-- A signature issued for another seat is refused.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_signature_issued_for_other_seat_refused : Bool :=
+  decide (otherSeatSignatureResult = some Refusal.signatureRefused)
 
 def wrongSigningSuiteResult : Option Refusal := do
   let handoff ← firstHandoff?
@@ -2022,8 +2085,10 @@ def wrongSigningSuiteResult : Option Refusal := do
   | .error refusal => some refusal
   | .ok _ => none
 
-theorem hostile_signing_suite_substitution_refused :
-    wrongSigningSuiteResult = some .signatureRefused := by native_decide
+/-- A signature over a different signing-suite preimage is refused.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_signing_suite_substitution_refused : Bool :=
+  decide (wrongSigningSuiteResult = some Refusal.signatureRefused)
 
 private def digestDoubledAsSignatureBytes (digest : Digest32) : SignatureBytes where
   bytes := digest.bytes ++ digest.bytes ++
@@ -2044,10 +2109,14 @@ def forgedMessageDigestAsSignatureResult : Option Refusal := do
   | .error refusal => some refusal
   | .ok _ => none
 
-theorem hostile_public_message_digest_submitted_as_signature_refused :
-    forgedMessageDigestAsSignatureResult = some .signatureRefused := by
-  native_decide
+/-- The public message digest, repeated to envelope length, is not a signature.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_hostile_public_message_digest_submitted_as_signature_refused : Bool :=
+  decide (forgedMessageDigestAsSignatureResult = some Refusal.signatureRefused)
 
+/-- Substituting the route in a combined record breaks readmission.
+(Pinned `= false` in `CrewFieldMissionFixtures`, under the theorem name
+`hostile_combined_record_route_substitution_refused`.) -/
 def tamperedRecordReadmitsB : Bool :=
   match completionFor? deepPlan with
   | none => false
@@ -2055,14 +2124,14 @@ def tamperedRecordReadmitsB : Bool :=
       let raw := { record.toRaw with route := .sealedNave }
       (admitCombinedFieldRecord? fixtureAdmission raw).isSome
 
-theorem hostile_combined_record_route_substitution_refused :
-    tamperedRecordReadmitsB = false := by native_decide
-
 private def tamperFirstTrace : List HandoffTrace → List HandoffTrace
   | [] => []
   | trace :: traces =>
       { trace with decision := .specialist .maintenanceSpine .markSalvageRoute } :: traces
 
+/-- Eleven mutations of the kernel-produced record, every one refused at
+readmission. (Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem
+name `hostile_expanded_record_mutation_matrix_refused`.) -/
 def expandedRecordMutationsRefusedB : Bool :=
   match completionFor? deepPlan with
   | none => false
@@ -2088,9 +2157,6 @@ def expandedRecordMutationsRefusedB : Bool :=
       mutations.all fun mutated =>
         !(admitCombinedFieldRecord? fixtureAdmission mutated).isSome
 
-theorem hostile_expanded_record_mutation_matrix_refused :
-    expandedRecordMutationsRefusedB = true := by native_decide
-
 #assert_axioms execute_deterministic
 #assert_axioms handoff_signing_preimage_injective
 #assert_axioms seat_signing_preimage_injective
@@ -2098,48 +2164,18 @@ theorem hostile_expanded_record_mutation_matrix_refused :
 #assert_axioms RunSeal.admitted_record_carries_the_sealed_session
 #assert_axioms RunSeal.step_completion_is_the_replayed_record
 #assert_axioms step_view_next_body_is_the_kernel_expected_body
-#assert_compiled fixture_rekeyed_config_valid
-#assert_compiled fixture_rekeyed_roster_substitutes_only_the_player_keys
-#assert_compiled the_fixture_briefing_commitment_does_not_separate_the_two_crews
-#assert_compiled the_two_fixture_seals_carry_different_sessions
-#assert_compiled exported_fixture_transcripts_are_four_signed_handoffs_each
-#assert_compiled the_step_surface_answers_at_every_prefix_replay_refuses
-#assert_compiled a_crew_plays_a_whole_run_one_signed_handoff_at_a_time
-#assert_compiled the_step_surface_opens_a_briefing_only_to_its_own_seat
-#assert_compiled run_seal_admits_the_record_the_kernel_produced
-#assert_compiled run_seal_refuses_a_terminal_state_the_kernel_did_not_reach
-#assert_compiled run_seal_refuses_a_forged_handoff_signature
+-- `rfl`, but its statement names `fixtureRunSeal`, whose construction carries the
+-- `fixture_config_valid` `native_decide` — so the axiom record is compiled-trust, not kernel.
 #assert_compiled fixture_run_seal_carries_the_fixture_session
+-- The two construction proofs of this namespace that could not move: `Config` carries
+-- `rawConfigValidB raw briefings briefingDigest = true` as a field, so these must
+-- elaborate HERE, where the fixture and rekeyed worlds are built.
 #assert_compiled fixture_config_valid
-#assert_compiled fixture_ordered_briefing_deck_is_commitment_bound
-#assert_compiled hostile_unwinnable_terminal_costs_are_individually_within_budget
-#assert_compiled hostile_unwinnable_config_has_no_affordable_safe_terminal
-#assert_compiled hostile_globally_unwinnable_config_refused_at_activation
-#assert_compiled raw_identity_fields_must_exactly_match_policy_mission
-#assert_compiled wrong_mission_artifact_is_otherwise_declared_and_outcome_valid
-#assert_compiled artifact_mission_must_exactly_match_activated_mission
-#assert_compiled hostile_same_role_briefing_substitution_breaks_activation_commitment
-#assert_compiled safe_extraction_accepts_two_matching_signed_recommendations
-#assert_compiled alternative_safe_route_is_reachable
-#assert_compiled deep_recovery_requires_and_accepts_full_crew_consensus
-#assert_compiled route_and_extraction_choices_produce_materially_distinct_records
-#assert_compiled specialist_steps_and_final_route_are_both_charged_exactly
-#assert_compiled route_changes_cost_reward_and_artifact_at_fixed_extraction
-#assert_compiled all_six_authored_route_extraction_outcomes_are_bounded_and_declared
-#assert_compiled combined_field_record_replays_every_signed_handoff_exactly
-#assert_compiled unchecked_record_projection_readmits_after_exact_replay
-#assert_compiled recommendation_valid_but_over_budget_route_is_refused_at_live_budget_boundary
-#assert_compiled hostile_mixed_crew_strategy_refused
-#assert_compiled hostile_deep_recovery_without_unanimity_refused
-#assert_compiled hostile_private_observation_substitution_refused
-#assert_compiled hostile_stale_predecessor_root_refused
-#assert_compiled hostile_handoff_signature_substitution_refused
-#assert_compiled hostile_full_field_decision_substitution_refused_by_signature
-#assert_compiled hostile_signature_issued_for_other_seat_refused
-#assert_compiled hostile_signing_suite_substitution_refused
-#assert_compiled hostile_public_message_digest_submitted_as_signature_refused
-#assert_compiled hostile_combined_record_route_substitution_refused
-#assert_compiled hostile_expanded_record_mutation_matrix_refused
+#assert_compiled fixture_rekeyed_config_valid
+
+-- The thirty-nine lab pins of this namespace (`#assert_compiled` + `native_decide`) live in
+-- `CrewFieldMissionFixtures.lean`, rooted in `PathOfAngelsGuards` — see the lab header above.
+-- The five construction proofs that could not move are named there and in that header.
 
 /-! ## ⚑ The production ML-DSA-65 signing suite — 2026-08-07
 
@@ -2443,13 +2479,18 @@ private def codesInjectiveOnB {α : Type} [DecidableEq α]
   values.all fun left => values.all fun right =>
     decide (code left = code right → left = right)
 
-theorem observation_codes_are_injective :
-    codesInjectiveOnB PrivateObservation.code allObservations = true ∧
-      allObservations.length = 11 := by native_decide
+/-- `PrivateObservation.code` is injective over the COMPLETE finite observation
+space, whose size is asserted in the same statement so the enumeration cannot
+silently shrink. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_observation_codes_are_injective : Bool :=
+  codesInjectiveOnB PrivateObservation.code allObservations &&
+  decide (allObservations.length = 11)
 
-theorem decision_codes_are_injective :
-    codesInjectiveOnB Decision.code allDecisions = true ∧
-      allDecisions.length = 72 := by native_decide
+/-- `Decision.code` is injective over the COMPLETE finite decision space, size
+asserted in the same statement. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_decision_codes_are_injective : Bool :=
+  codesInjectiveOnB Decision.code allDecisions &&
+  decide (allDecisions.length = 72)
 
 /-! ### SHAKE-256 digest and the suite identities -/
 
@@ -2470,10 +2511,10 @@ def shakeDigest32 (input : List UInt8) : Digest32 :=
   (shakeDigest32? input).getD (digestFilled 0)
 
 /-- Two labeled INSTANCES (not a general proof) that the shake output length is
-exactly 32 — one empty input, one multi-block input. -/
-theorem shake_digest_lengths_hold_on_instances :
-    (shakeDigest32? []).isSome = true ∧
-      (shakeDigest32? (List.replicate 500 7)).isSome = true := by native_decide
+exactly 32 — one empty input, one multi-block input.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_shake_digest_lengths_hold_on_instances : Bool :=
+  (shakeDigest32? []).isSome && (shakeDigest32? (List.replicate 500 7)).isSome
 
 private def labelDigest (label : String) : Digest32 :=
   shakeDigest32 label.toUTF8.toList
@@ -2484,13 +2525,15 @@ def signingSuiteId : Digest32 := labelDigest "POA-CREW-SIGNING-MLDSA65-1"
 
 /-- Distinct from each other AND from the fixture suite ids.  This is also the
 tooth that proves the `labelDigest` fallback arm never fired (a fired fallback
-would collapse two of these to the same constant). -/
-theorem production_suite_ids_are_distinct_and_not_the_fixture_ids :
-    briefingSuiteId ≠ messageSuiteId ∧ briefingSuiteId ≠ signingSuiteId ∧
-    messageSuiteId ≠ signingSuiteId ∧
-    briefingSuiteId ≠ fixtureBriefingDigest.id ∧
-    messageSuiteId ≠ fixtureMessageDigestSuiteId ∧
-    signingSuiteId ≠ fixtureSignatureSuiteId := by native_decide
+would collapse two of these to the same constant).
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_production_suite_ids_are_distinct_and_not_the_fixture_ids : Bool :=
+  decide (briefingSuiteId ≠ messageSuiteId) &&
+  decide (briefingSuiteId ≠ signingSuiteId) &&
+  decide (messageSuiteId ≠ signingSuiteId) &&
+  decide (briefingSuiteId ≠ fixtureBriefingDigest.id) &&
+  decide (messageSuiteId ≠ fixtureMessageDigestSuiteId) &&
+  decide (signingSuiteId ≠ fixtureSignatureSuiteId)
 
 def briefingDeckJson (preimage : BriefingDeckPreimage) : String :=
   "{\"format\":\"POA-CREW-BRIEFING-DECK-1\"" ++
@@ -2587,13 +2630,16 @@ private def katWrongPublicKeyBytes : List UInt8 :=
 def katPlayerKey : Digest32 :=
   (shakeDigest32? katSeat0PublicKeyBytes).getD (digestFilled 7)
 
-theorem kat_player_key_is_the_seat0_public_key_digest :
-    shakeDigest32? katSeat0PublicKeyBytes = some katPlayerKey := by native_decide
+/-- Seat 0's player key IS the SHAKE-256 digest of the real ML-DSA-65 public key —
+and therefore `katPlayerKey`'s `getD` fallback never fired.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_player_key_is_the_seat0_public_key_digest : Bool :=
+  decide (shakeDigest32? katSeat0PublicKeyBytes = some katPlayerKey)
 
 /-- The wrong keypair's digest is NOT seat 0's player key — the premise of the
-wrong-key refutation below. -/
-theorem kat_wrong_public_key_digest_is_not_the_seat_key :
-    shakeDigest32? katWrongPublicKeyBytes ≠ some katPlayerKey := by native_decide
+wrong-key refutation below. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_wrong_public_key_digest_is_not_the_seat_key : Bool :=
+  decide (shakeDigest32? katWrongPublicKeyBytes ≠ some katPlayerKey)
 
 private def katSeat0 : Seat := { fixtureSeat0 with playerKey := katPlayerKey }
 
@@ -2648,15 +2694,17 @@ def katHandoffMessage : List UInt8 :=
 
 /-! ### Producer teeth (signature-independent) -/
 
-theorem production_activation_seals_the_kat_mission :
-    (activate? katRawConfig fixtureBriefings).map RunSeal.session =
-      some katRawConfig.sessionDigest := by native_decide
+/-- The one public seal producer seals the KAT mission, for the KAT session.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_production_activation_seals_the_kat_mission : Bool :=
+  decide ((activate? katRawConfig fixtureBriefings).map RunSeal.session =
+    some katRawConfig.sessionDigest)
 
 /-- The producer cannot mint a seal over the fixture suite: the authored
 fixture config names the fixture briefing/message/signing suite ids and the
-production validator refuses it. -/
-theorem production_activation_refuses_the_fixture_suite_config :
-    activate? fixtureRawConfig fixtureBriefings = none := by native_decide
+production validator refuses it. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_production_activation_refuses_the_fixture_suite_config : Bool :=
+  (activate? fixtureRawConfig fixtureBriefings).isNone
 
 /-! ### The cross-language KAT — Rust `fips204` signs, Lean `verifyCore` accepts
 
@@ -2688,42 +2736,42 @@ private def katWrongKeyEnvelope : SignatureBytes :=
     CrewSigningVectors.katWrongKeyHandoffSignature).getD (signatureBytesPattern 0)
 
 /-- The pinned vectors really are envelope-sized — and therefore none of the
-`getD` fallbacks above fired. -/
-theorem kat_envelopes_are_exact :
-    envelope? CrewSigningVectors.katSeat0PublicKey CrewSigningVectors.katSeatSignature =
-      some katSeatEnvelope ∧
-    envelope? CrewSigningVectors.katSeat0PublicKey CrewSigningVectors.katHandoffSignature =
-      some katHandoffEnvelope ∧
-    envelope? CrewSigningVectors.katWrongPublicKey
-      CrewSigningVectors.katWrongKeyHandoffSignature = some katWrongKeyEnvelope := by
-  native_decide
+`getD` fallbacks above fired. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_envelopes_are_exact : Bool :=
+  decide (envelope? CrewSigningVectors.katSeat0PublicKey
+    CrewSigningVectors.katSeatSignature = some katSeatEnvelope) &&
+  decide (envelope? CrewSigningVectors.katSeat0PublicKey
+    CrewSigningVectors.katHandoffSignature = some katHandoffEnvelope) &&
+  decide (envelope? CrewSigningVectors.katWrongPublicKey
+    CrewSigningVectors.katWrongKeyHandoffSignature = some katWrongKeyEnvelope)
 
 /-- The messages the Rust side signed are byte-identical to what the Lean
 encoder emits TODAY.  If the encoder ever drifts, this goes red separately
-from the verify theorems, so encoder drift and verifier drift are
-distinguishable at a glance. -/
-theorem kat_messages_are_the_pinned_bytes :
-    katSeatMessage = CrewSigningVectors.katSeatMessagePinned.toList ∧
-    katHandoffMessage = CrewSigningVectors.katHandoffMessagePinned.toList := by
-  native_decide
+from the verify pins, so encoder drift and verifier drift are distinguishable
+at a glance. (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_messages_are_the_pinned_bytes : Bool :=
+  decide (katSeatMessage = CrewSigningVectors.katSeatMessagePinned.toList) &&
+  decide (katHandoffMessage = CrewSigningVectors.katHandoffMessagePinned.toList)
 
 /-- ⚑ THE KEYSTONE, seat half: the honest seat-admission signature verifies
 through the REAL executable FIPS 204 verify, over the production preimage
-bytes, under the production suite — cross-language. -/
-theorem kat_seat_admission_signature_verifies_cross_language :
-    seatSignatureValidB katConfig katSeat0 katSeatBody ⟨katSeatEnvelope⟩ = true := by
-  native_decide
+bytes, under the production suite — cross-language.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_seat_admission_signature_verifies_cross_language : Bool :=
+  seatSignatureValidB katConfig katSeat0 katSeatBody ⟨katSeatEnvelope⟩
 
-/-- ⚑ THE KEYSTONE, handoff half: the honest handoff signature verifies. -/
-theorem kat_handoff_signature_verifies_cross_language :
-    handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katHandoffEnvelope⟩ = true := by
-  native_decide
+/-- ⚑ THE KEYSTONE, handoff half: the honest handoff signature verifies.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_handoff_signature_verifies_cross_language : Bool :=
+  handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katHandoffEnvelope⟩
 
 /-- One seat's signed handoff, end to end through the kernel: the ML-DSA-65
 seat admission mints the capability (`authenticateSeat?`), the briefing opens,
 and `execute` ACCEPTS the ML-DSA-65-signed handoff and advances the mission to
 sequence 1 (not yet complete — three seats remain).  This is the smallest real
-crew action, judged by the kernel under real cryptography. -/
+crew action, judged by the kernel under real cryptography.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`kat_one_seats_signed_handoff_is_executed_by_the_kernel`.) -/
 def katFirstHandoffExecutesB : Bool :=
   match authenticateSeat? katConfig ⟨0⟩ ⟨katSeatEnvelope⟩ with
   | none => false
@@ -2738,9 +2786,6 @@ def katFirstHandoffExecutesB : Bool :=
           decide (result.state.snapshot.sequence = 1) &&
           decide (result.completion = none)
 
-theorem kat_one_seats_signed_handoff_is_executed_by_the_kernel :
-    katFirstHandoffExecutesB = true := by native_decide
-
 /-- Refutation: one flipped byte in the ML-DSA signature half of the envelope,
 asserted a real mutation, refused by `verifyCore`. -/
 private def katTamperedEnvelope : SignatureBytes :=
@@ -2749,10 +2794,11 @@ private def katTamperedEnvelope : SignatureBytes :=
       ((katHandoffEnvelope.bytes.getD (MLDSA65_PUBLIC_KEY_BYTE_LENGTH + 100) 0) + 1)
     length_eq := by rw [List.length_set]; exact katHandoffEnvelope.length_eq }
 
-theorem kat_tampered_signature_byte_is_refused :
-    katTamperedEnvelope.bytes ≠ katHandoffEnvelope.bytes ∧
-    handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katTamperedEnvelope⟩ = false := by
-  native_decide
+/-- The mutation is asserted present before the refusal is read.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_tampered_signature_byte_is_refused : Bool :=
+  decide (katTamperedEnvelope.bytes ≠ katHandoffEnvelope.bytes) &&
+  !(handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katTamperedEnvelope⟩)
 
 /-- ⚑ Refutation with a GENUINE signature: the wrong-key envelope carries a
 signature that `verifyCore` itself ACCEPTS under its own public key (first
@@ -2760,30 +2806,29 @@ conjunct — the signature is not broken), and the crew verifier still refuses
 it for seat 0 (second conjunct).  Together with
 `kat_wrong_public_key_digest_is_not_the_seat_key`, the refusal is the
 two-source `SHAKE256(pk) = playerKey` pin doing its work — the case a
-self-pinned verifier could never catch. -/
-theorem kat_wrong_key_signature_is_genuine_but_refused_by_the_key_pin :
-    Dregg2.Crypto.MlDsaVerifyReal.verifyCore katWrongPublicKeyBytes katHandoffMessage
-      HANDOFF_SIGNING_CONTEXT.toUTF8.toList
-      CrewSigningVectors.katWrongKeyHandoffSignature.toList = true ∧
-    handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katWrongKeyEnvelope⟩ = false := by
-  native_decide
+self-pinned verifier could never catch.
+(Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_wrong_key_signature_is_genuine_but_refused_by_the_key_pin : Bool :=
+  Dregg2.Crypto.MlDsaVerifyReal.verifyCore katWrongPublicKeyBytes katHandoffMessage
+    HANDOFF_SIGNING_CONTEXT.toUTF8.toList
+    CrewSigningVectors.katWrongKeyHandoffSignature.toList &&
+  !(handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katWrongKeyEnvelope⟩)
 
 /-- Refutation: the honest signature does not transfer to a different body —
 one counter increment, asserted different, refused. -/
 private def katTamperedBody : HandoffBody :=
   { katHandoffBody with counter := katHandoffBody.counter + 1 }
 
-theorem kat_signature_does_not_transfer_to_a_different_body :
-    katTamperedBody ≠ katHandoffBody ∧
-    handoffSignatureValidB katConfig katSeat0 katTamperedBody ⟨katHandoffEnvelope⟩ = false := by
-  native_decide
+/-- (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_signature_does_not_transfer_to_a_different_body : Bool :=
+  decide (katTamperedBody ≠ katHandoffBody) &&
+  !(handoffSignatureValidB katConfig katSeat0 katTamperedBody ⟨katHandoffEnvelope⟩)
 
 /-- Refutation: signature-level domain separation — the genuine SEAT-admission
 envelope is refused as a HANDOFF signature (distinct FIPS 204 `ctx`, distinct
-preimage format). -/
-theorem kat_seat_admission_envelope_is_refused_as_a_handoff :
-    handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katSeatEnvelope⟩ = false := by
-  native_decide
+preimage format). (Pinned `= true` in `CrewFieldMissionFixtures`.) -/
+def check_kat_seat_admission_envelope_is_refused_as_a_handoff : Bool :=
+  !(handoffSignatureValidB katConfig katSeat0 katHandoffBody ⟨katSeatEnvelope⟩)
 
 /-! ### The step surface under real cryptography
 
@@ -2806,7 +2851,9 @@ to sequence 1.
 That is the whole loop a live seat performs, with nothing computed twice: the
 client never derives `preRoot`, never assembles a body, and never re-encodes a
 preimage — it signs the bytes it was handed.  A drift in the encoder, the
-transition, or the surface breaks it here. -/
+transition, or the surface breaks it here.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`kat_step_surface_hands_back_exactly_the_bytes_the_crate_signed`.) -/
 def katStepSurfaceHandsBackTheSignedBytesB : Bool :=
   match katRunSeal? with
   | none => false
@@ -2830,14 +2877,13 @@ def katStepSurfaceHandsBackTheSignedBytesB : Bool :=
              | .error _ => false
              | .ok result => decide (result.state.snapshot.sequence = 1))
 
-theorem kat_step_surface_hands_back_exactly_the_bytes_the_crate_signed :
-    katStepSurfaceHandsBackTheSignedBytesB = true := by native_decide
-
 /-- The production surface refuses a caller who is not the seat: the wrong
 keypair's envelope is a GENUINE ML-DSA-65 seat signature (it verifies under its
 own key) and it still opens nothing, because `authenticateSeat?` runs the same
 `SHAKE256(pk) = playerKey` pin.  Control in the same statement: seat 0's own
-envelope does open it. -/
+envelope does open it.
+(Pinned `= true` in `CrewFieldMissionFixtures`, under the theorem name
+`kat_step_surface_refuses_a_genuine_signature_under_the_wrong_key`.) -/
 def katStepSurfaceRefusesAWrongKeyEnvelopeB : Bool :=
   match katRunSeal? with
   | none => false
@@ -2846,29 +2892,12 @@ def katStepSurfaceRefusesAWrongKeyEnvelopeB : Bool :=
     (katSeal.nextSigningPreimage? [] ⟨katWrongKeyEnvelope⟩ decision).isNone &&
     (katSeal.nextSigningPreimage? [] ⟨katSeatEnvelope⟩ decision).isSome
 
-theorem kat_step_surface_refuses_a_genuine_signature_under_the_wrong_key :
-    katStepSurfaceRefusesAWrongKeyEnvelopeB = true := by native_decide
-
-#assert_compiled observation_codes_are_injective
-#assert_compiled decision_codes_are_injective
-#assert_compiled shake_digest_lengths_hold_on_instances
-#assert_compiled production_suite_ids_are_distinct_and_not_the_fixture_ids
-#assert_compiled kat_player_key_is_the_seat0_public_key_digest
-#assert_compiled kat_wrong_public_key_digest_is_not_the_seat_key
+-- Named residue: `katConfig` carries `kat_config_valid` as data, so it elaborates HERE.
 #assert_compiled kat_config_valid
-#assert_compiled production_activation_seals_the_kat_mission
-#assert_compiled production_activation_refuses_the_fixture_suite_config
-#assert_compiled kat_envelopes_are_exact
-#assert_compiled kat_messages_are_the_pinned_bytes
-#assert_compiled kat_seat_admission_signature_verifies_cross_language
-#assert_compiled kat_handoff_signature_verifies_cross_language
-#assert_compiled kat_one_seats_signed_handoff_is_executed_by_the_kernel
-#assert_compiled kat_tampered_signature_byte_is_refused
-#assert_compiled kat_wrong_key_signature_is_genuine_but_refused_by_the_key_pin
-#assert_compiled kat_signature_does_not_transfer_to_a_different_body
-#assert_compiled kat_seat_admission_envelope_is_refused_as_a_handoff
-#assert_compiled kat_step_surface_hands_back_exactly_the_bytes_the_crate_signed
-#assert_compiled kat_step_surface_refuses_a_genuine_signature_under_the_wrong_key
+
+-- The nineteen production-suite pins (`#assert_compiled` + `native_decide`) live in
+-- `CrewFieldMissionFixtures.lean`, rooted in `PathOfAngelsGuards` — see the lab header
+-- above `## Executable cooperative fixture`.
 
 end ProductionSigning
 

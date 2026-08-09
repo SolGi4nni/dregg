@@ -125,8 +125,8 @@ above, and it stops `carried` from being a public function of `(depth, vein)`.
 
 `Poseidon2BabyBearW16.perm` reduces exponentially, and `HiddenInstance.commit`,
 `runSeedFor` and `practiceRunSeed` are `@[irreducible]` because of it.  Nothing in
-this file `decide`s or `rfl`s through `daySeedFor`; the one fixture theorem that
-mentions it is `native_decide` and is pinned with `#assert_compiled`.
+this file `decide`s or `rfl`s through `daySeedFor`; the fixture checks that mention
+it are evaluated only under `native_decide`, in `VentCrawlFixtures.lean`.
 
 `SeedDraw.drawBelow?` is the only draw used.  `SalvageCrate.unbiasedIndex?`
 cannot stream — its `find?` then modulo re-reads the same byte — and nothing here
@@ -974,7 +974,22 @@ theorem the_wager_publishes_the_real_odds (s : State) (fb : Nat) (onFlood : Stat
 
 Both branches of every wager are followed, so the closure is the set of states
 reachable on SOME vein against SOME tape — exactly what a descriptor naming every
-branch has to declare. -/
+branch has to declare.
+
+⚑ **THE MEASUREMENTS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in
+the `Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made
+every game-fixture regression a hard failure of every Rust proving target (the
+compilation-unit coupling the stale-fixture outage measured). Each measured property —
+here, in the census/lines sections below, and the two Poseidon2 sentinel fixtures at the
+bottom — stays as an evaluation-free `check_* : Bool` definition (a `def` body elaborates
+without running). The EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `VentCrawlFixtures.lean`, rooted in the `PathOfAngelsGuards`
+library: a plain `lake build` still runs every pin, and a stale fixture reds the guard
+library instead of the archive.
+
+Named residue: NONE. No construction in this module consumes a `native_decide` proof as
+data, so every pin moved.  (`by decide` theorems — the carry ladder, the thin calls, the
+map discount — never touch a sponge and stay.) -/
 
 def parametricSuccessors (s : State) : List State :=
   allActions.flatMap (rowSuccessors s)
@@ -990,25 +1005,27 @@ def parametricStates : List State := parametricWithin (ACTION_LIMIT + 1)
 def parametricRowCount : Nat := parametricStates.length * allActions.length
 
 /-- ⚑ **The table is closed.**  Every successor any row names is a state the
-descriptor declares, so a client can never be handed an id it does not have. -/
-theorem parametric_closure_is_closed :
-    parametricStates.all (fun s =>
-      allActions.all (fun a =>
-        (rowSuccessors s a).all (fun n => parametricStates.contains n))) = true := by
-  native_decide
+descriptor declares, so a client can never be handed an id it does not have.
+(Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_parametric_closure_is_closed : Bool :=
+  parametricStates.all (fun s =>
+    allActions.all (fun a =>
+      (rowSuccessors s a).all (fun n => parametricStates.contains n)))
 
-theorem parametric_states_nodup : parametricStates.eraseDups = parametricStates := by
-  native_decide
+/-- (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_parametric_states_nodup : Bool :=
+  decide (parametricStates.eraseDups = parametricStates)
 
-theorem initial_state_is_declared : parametricStates.contains initialState = true := by
-  native_decide
+/-- (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_initial_state_is_declared : Bool := parametricStates.contains initialState
 
 /-- The emitted shape, so the descriptor's size is a number a reader has before
 they open the file.  ⚠ 51 states is SMALL and it is meant to be — see the
-parameter table in the docblock for what each axis buys. -/
-theorem parametric_shape_is_measured :
-    parametricStates.length = 51 ∧ allActions.length = 2 ∧ parametricRowCount = 102 := by
-  refine ⟨by native_decide, by decide, by native_decide⟩
+parameter table in the docblock for what each axis buys.
+(Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_parametric_shape_is_measured : Bool :=
+  decide (parametricStates.length = 51) && decide (allActions.length = 2) &&
+  decide (parametricRowCount = 102)
 
 /-- ⚑ **The table really consults the day.**  Some rows are wagers with more than
 one haul, so the gate's "every transition is deterministic and the instance
@@ -1019,30 +1036,29 @@ def branchingWagerCount : Nat :=
     | .wager _ _ hauls => 1 < (hauls.map Prod.snd).eraseDups.length
     | _ => false)).length
 
-theorem the_table_consults_the_day : 0 < branchingWagerCount := by native_decide
+/-- (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_the_table_consults_the_day : Bool := decide (0 < branchingWagerCount)
 
 /-- ⚑ **Every declared refusal reason fires somewhere reachable.**  A sibling game
 declared four reasons and reached two; this is the check that says all three of
-these are real. -/
-theorem every_declared_reason_fires :
-    declaredReasons.all (fun r =>
-      parametricStates.any (fun s =>
-        allActions.any (fun a =>
-          match rowFor s a with
-          | .refuse r' => r' == r
-          | _ => false))) = true := by
-  native_decide
+these are real. (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_every_declared_reason_fires : Bool :=
+  declaredReasons.all (fun r =>
+    parametricStates.any (fun s =>
+      allActions.any (fun a =>
+        match rowFor s a with
+        | .refuse r' => r' == r
+        | _ => false)))
 
 /-- And nothing else fires: the reasons the table actually carries are exactly
 the three declared.  Without this, `every_declared_reason_fires` would be one
-half of a vocabulary check. -/
-theorem no_undeclared_reason_fires :
-    parametricStates.all (fun s =>
-      allActions.all (fun a =>
-        match rowFor s a with
-        | .refuse r => declaredReasons.contains r
-        | _ => true)) = true := by
-  native_decide
+half of a vocabulary check. (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_no_undeclared_reason_fires : Bool :=
+  parametricStates.all (fun s =>
+    allActions.all (fun a =>
+      match rowFor s a with
+      | .refuse r => declaredReasons.contains r
+      | _ => true))
 
 /-! ### The per-vein census
 
@@ -1081,19 +1097,19 @@ def familyTotal (f : Vein → Nat) : Nat :=
 /-- ⚑ **The measured shape of the family.**  These are the numbers
 `scripts/poa-design-gate.py` must independently arrive at by simulating the
 emitted descriptor; they are stated here so a disagreement is loud.  A pin
-against its own definition is decoration — this is one of two sources. -/
-theorem family_shape_is_measured :
-    familyTotal (fun v => (veinReachable v).length) = 136 ∧
-    familyTotal veinDecisionCount = 40 ∧
-    familyTotal veinDrownCount = 40 := by
-  native_decide
+against its own definition is decoration — this is one of two sources.
+(Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_family_shape_is_measured : Bool :=
+  decide (familyTotal (fun v => (veinReachable v).length) = 136) &&
+  decide (familyTotal veinDecisionCount = 40) &&
+  decide (familyTotal veinDrownCount = 40)
 
 /-- ⚑ **Every vein can be crawled to the bottom and every vein can drown you.**
-No draw is a dead day and no draw is a safe one. -/
-theorem every_vein_forks :
-    allVeins.all (fun v => decide (0 < veinDecisionCount v)) = true ∧
-    allVeins.all (fun v => decide (0 < veinDrownCount v)) = true := by
-  native_decide
+No draw is a dead day and no draw is a safe one.
+(Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_every_vein_forks : Bool :=
+  allVeins.all (fun v => decide (0 < veinDecisionCount v)) &&
+  allVeins.all (fun v => decide (0 < veinDrownCount v))
 
 /-- ⚑ **The veins are not relabellings of each other.**  The eight hidden draws
 produce eight DIFFERENT deepest carries, so the bits that distinguish them buy a
@@ -1122,16 +1138,16 @@ def greedLine : List Action := [.crawl, .crawl, .crawl, .crawl, .crawl, .bank]
 theorem the_greed_line_is_the_whole_budget : greedLine.length = ACTION_LIMIT := by decide
 
 /-- ⚑ **On a calm tape every line banks, and the deepest one banks the most.**
-The tape is what decides; the vein is what it is worth. -/
-theorem a_calm_tape_rewards_the_deep_line :
-    allVeins.all (fun v =>
-      match playOut v calmTape greedLine, playOut v calmTape timidLine with
-      | some deep, some shallow =>
-          decide (deep.outcome = Outcome.banked) &&
-          decide (shallow.outcome = Outcome.banked) &&
-          decide (shallow.carried < deep.carried)
-      | _, _ => false) = true := by
-  native_decide
+The tape is what decides; the vein is what it is worth.
+(Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_a_calm_tape_rewards_the_deep_line : Bool :=
+  allVeins.all (fun v =>
+    match playOut v calmTape greedLine, playOut v calmTape timidLine with
+    | some deep, some shallow =>
+        decide (deep.outcome = Outcome.banked) &&
+        decide (shallow.outcome = Outcome.banked) &&
+        decide (shallow.carried < deep.carried)
+    | _, _ => false)
 
 /-- ⚑ **A tape that runs against you takes the very first crawl.**  Rung 2 is
 1-in-8 and this is that one: on every vein, because the vein is what a rung is
@@ -1140,23 +1156,23 @@ def foulTape : FloodTape :=
   { r1 := ⟨0, by decide⟩, r2 := ⟨0, by decide⟩, r3 := ⟨0, by decide⟩
     r4 := ⟨0, by decide⟩, r5 := ⟨0, by decide⟩, r6 := ⟨0, by decide⟩ }
 
-theorem a_foul_tape_drowns_the_first_crawl :
-    allVeins.all (fun v =>
-      match playOut v foulTape [Action.crawl] with
-      | some s =>
-          decide (s.outcome = Outcome.drowned) && decide (s.carried = 0) &&
-          decide (s.depth = 2)
-      | none => false) = true := by
-  native_decide
+/-- (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_a_foul_tape_drowns_the_first_crawl : Bool :=
+  allVeins.all (fun v =>
+    match playOut v foulTape [Action.crawl] with
+    | some s =>
+        decide (s.outcome = Outcome.drowned) && decide (s.carried = 0) &&
+        decide (s.depth = 2)
+    | none => false)
 
 /-- ⚑ **And a drowned run cannot keep going.**  Every continuation past the water
 is refused, so a drowning is always the last thing in a transcript and a receipt
-cannot report a crawler who kept crawling. -/
-theorem a_drowned_run_cannot_keep_going :
-    allVeins.all (fun v =>
-      (playOut v foulTape [Action.crawl, Action.crawl]).isNone &&
-      (playOut v foulTape [Action.crawl, Action.bank]).isNone) = true := by
-  native_decide
+cannot report a crawler who kept crawling.
+(Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_a_drowned_run_cannot_keep_going : Bool :=
+  allVeins.all (fun v =>
+    (playOut v foulTape [Action.crawl, Action.crawl]).isNone &&
+    (playOut v foulTape [Action.crawl, Action.bank]).isNone)
 
 /-- Three crawls and no bank: the line that goes looking for the water. -/
 def riskyLine : List Action := [.crawl, .crawl, .crawl]
@@ -1170,16 +1186,16 @@ def middlingTape : FloodTape :=
   { r1 := ⟨7, by decide⟩, r2 := ⟨7, by decide⟩, r3 := ⟨7, by decide⟩
     r4 := ⟨2, by decide⟩, r5 := ⟨0, by decide⟩, r6 := ⟨0, by decide⟩ }
 
-theorem the_scout_comes_home_where_the_third_crawl_drowns :
-    allVeins.all (fun v =>
-      match playOut v middlingTape scoutLine, playOut v middlingTape riskyLine with
-      | some scout, some risky =>
-          decide (scout.outcome = Outcome.banked) && decide (0 < scout.carried) &&
-          decide (scout.depth = 3) &&
-          decide (risky.outcome = Outcome.drowned) && decide (risky.carried = 0) &&
-          decide (risky.depth = 4)
-      | _, _ => false) = true := by
-  native_decide
+/-- (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_the_scout_comes_home_where_the_third_crawl_drowns : Bool :=
+  allVeins.all (fun v =>
+    match playOut v middlingTape scoutLine, playOut v middlingTape riskyLine with
+    | some scout, some risky =>
+        decide (scout.outcome = Outcome.banked) && decide (0 < scout.carried) &&
+        decide (scout.depth = 3) &&
+        decide (risky.outcome = Outcome.drowned) && decide (risky.carried = 0) &&
+        decide (risky.depth = 4)
+    | _, _ => false)
 
 /-! ## Rendering names
 
@@ -1189,10 +1205,9 @@ a different order produces the same wire. -/
 def stateId (s : State) : String :=
   "vc:" ++ toString s.depth ++ ":" ++ toString s.carried ++ ":" ++ s.outcome.tag
 
-/-- ⚑ **Ids separate states.** -/
-theorem state_ids_are_distinct :
-    (parametricStates.map stateId).eraseDups.length = parametricStates.length := by
-  native_decide
+/-- ⚑ **Ids separate states.** (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_state_ids_are_distinct : Bool :=
+  decide ((parametricStates.map stateId).eraseDups.length = parametricStates.length)
 
 /-- What a client may render.  Everything the rules read is here, which is the
 property the design gate's differential depends on: it rebuilds every verdict
@@ -1291,12 +1306,12 @@ def Config.rawPayout (cfg : Config) (s : State) : RawContribution :=
 actually reach — the shallowest is rung 2 — pays at least one `intel`, so the
 carrying turn is never spent for nothing.  This is the residual the consolation
 exists for and it survives the discount; a pricing that took it to zero would
-have bought the tradeoff by making the public record blind to drownings. -/
-theorem a_drowned_run_is_always_worth_submitting :
-    parametricStates.all (fun s =>
-      !decide (s.outcome = Outcome.drowned) ||
-        decide (0 < mapDrowned s.depth)) = true := by
-  native_decide
+have bought the tradeoff by making the public record blind to drownings.
+(Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_a_drowned_run_is_always_worth_submitting : Bool :=
+  parametricStates.all (fun s =>
+    !decide (s.outcome = Outcome.drowned) ||
+      decide (0 < mapDrowned s.depth))
 
 /-- The payout reads the map through the two named ladders and nowhere else, so
 the numbers `VentCrawlEmit` renders into `vent.payout` are these ones. -/
@@ -1503,9 +1518,10 @@ theorem judged_run_within_budget (cfg : Config) (before : WorldState)
 /-! ## The sentinel, on a fixture
 
 The claim that `DAY_TABLE_KEY` separates the shared draw from a player's own is
-made refutable here rather than left in the docblock.  ⚠ Both theorems are
-`native_decide` and are pinned with `#assert_compiled`: they evaluate Poseidon2
-sponges, and the elaborator must never be asked to. -/
+made refutable here rather than left in the docblock.  ⚠ Both checks evaluate
+Poseidon2 sponges, so they run ONLY under `native_decide` — in
+`VentCrawlFixtures.lean`, never in this module — and the elaborator is never
+asked to reduce a sponge (the `check_*` bodies below are inert `def`s). -/
 
 private def taggedDigest (tag : List Nat) : Digest32 where
   bytes := List.ofFn fun i : Fin 32 =>
@@ -1526,35 +1542,32 @@ private def fixtureContext : HiddenInstance.MissionContext where
   contentSession := taggedDigest [83, 69, 83, 83]
 
 /-- ⚑ **The day's table is not any crawler's stream.**  Two crawlers in the slot
-draw two different tapes, and neither of them is the seed the vein came off. -/
-theorem the_day_table_is_not_a_player_stream :
-    daySeedFor fixtureSecret fixtureSlot fixtureContext ≠
-      HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩ fixtureContext ∧
-    daySeedFor fixtureSecret fixtureSlot fixtureContext ≠
-      HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
-        fixtureContext ∧
-    HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩ fixtureContext ≠
-      HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
-        fixtureContext := by
-  refine ⟨?_, ?_, ?_⟩
-  · native_decide
-  · native_decide
-  · native_decide
+draw two different tapes, and neither of them is the seed the vein came off.
+(Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_the_day_table_is_not_a_player_stream : Bool :=
+  decide (daySeedFor fixtureSecret fixtureSlot fixtureContext ≠
+    HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
+      fixtureContext) &&
+  decide (daySeedFor fixtureSecret fixtureSlot fixtureContext ≠
+    HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
+      fixtureContext) &&
+  decide (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
+      fixtureContext ≠
+    HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
+      fixtureContext)
 
 /-- ⚑ **Two crawlers on one day draw two tapes.**  The vein they share; the water
 they do not.  This is what makes a neighbour's drowning news about the day and
-not news about the crawler. -/
-theorem two_crawlers_share_a_vein_and_not_a_tape :
-    veinFromDaySeed (daySeedFor fixtureSecret fixtureSlot fixtureContext) =
-      veinFromDaySeed (daySeedFor fixtureSecret fixtureSlot fixtureContext) ∧
+not news about the crawler. (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_two_crawlers_share_a_vein_and_not_a_tape : Bool :=
+  decide (veinFromDaySeed (daySeedFor fixtureSecret fixtureSlot fixtureContext) =
+    veinFromDaySeed (daySeedFor fixtureSecret fixtureSlot fixtureContext)) &&
+  decide (floodTapeFromRunSeed
+      (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
+        fixtureContext) ≠
     floodTapeFromRunSeed
-        (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
-          fixtureContext) ≠
-      floodTapeFromRunSeed
-        (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
-          fixtureContext) := by
-  refine ⟨rfl, ?_⟩
-  native_decide
+      (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
+        fixtureContext))
 
 #assert_axioms allVeins_complete
 #assert_axioms allVeins_nodup
@@ -1623,22 +1636,8 @@ theorem two_crawlers_share_a_vein_and_not_a_tape :
 #assert_axioms judged_run_is_terminal
 #assert_axioms judged_run_within_budget
 
-#assert_compiled parametric_closure_is_closed
-#assert_compiled parametric_states_nodup
-#assert_compiled initial_state_is_declared
-#assert_compiled parametric_shape_is_measured
-#assert_compiled the_table_consults_the_day
-#assert_compiled every_declared_reason_fires
-#assert_compiled no_undeclared_reason_fires
-#assert_compiled family_shape_is_measured
-#assert_compiled a_drowned_run_is_always_worth_submitting
-#assert_compiled every_vein_forks
-#assert_compiled state_ids_are_distinct
-#assert_compiled a_calm_tape_rewards_the_deep_line
-#assert_compiled a_foul_tape_drowns_the_first_crawl
-#assert_compiled a_drowned_run_cannot_keep_going
-#assert_compiled the_scout_comes_home_where_the_third_crawl_drowns
-#assert_compiled the_day_table_is_not_a_player_stream
-#assert_compiled two_crawlers_share_a_vein_and_not_a_tape
+-- The seventeen measured-design and sentinel pins (`#assert_compiled` + `native_decide`)
+-- live in `VentCrawlFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- reachable-closure header above.
 
 end Dregg2.Games.PathOfAngels.VentCrawl

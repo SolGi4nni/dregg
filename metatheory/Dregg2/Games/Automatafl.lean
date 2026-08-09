@@ -540,8 +540,9 @@ theorem applyMoves_deterministic (b : Board) (ms : List Move) :
 Fairness": move success and order are independent of any ordering on players or on
 the move list — the resolution is PERMUTATION-INVARIANT).  Stated as a named `Prop`;
 it is the deferred residual (general permutation-invariance needs the full SCC
-decomposition + a canonical merge order).  The §8 `#guard`s witness concrete real
-resolutions (single move, chain, fork-conflict, full turn) for non-vacuity. -/
+decomposition + a canonical merge order).  The §8 witnesses (pinned as named theorems in
+`AutomataflFixtures.lean`) exhibit concrete real resolutions (single move, chain,
+fork-conflict, full turn) for non-vacuity. -/
 def FairnessObligation : Prop :=
   ∀ (b : Board) (ms₁ ms₂ : List Move), ms₁.Perm ms₂ →
     ∀ c : Coord, (applyMoves b ms₁).cellAt c = (applyMoves b ms₂).cellAt c
@@ -664,58 +665,36 @@ theorem automatafl_air_refines_applyTurn
     air.admits b ms nb ↔ nb = applyTurn b ms :=
   hair b ms nb
 
-/-! ## §8  Non-vacuity witnesses — real board transitions (`#guard`)
+/-! ## §8  Non-vacuity witnesses — real board transitions
 
 A 5×5 board, Automaton at (2,2), an attractor two north at (2,4).  The Daemon
-should step one square toward it, to (2,3). -/
+should step one square toward it, to (2,3).
+
+⚑ **THE WITNESSES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and the 18 `#guard`s that used to run at
+elaboration here made every game-fixture regression a hard failure of every Rust proving
+target. The witness boards and moves STAY here; the EVALUATION — each fact as a NAMED theorem
+per GUARD-DISCIPLINE, `native_decide` + `#assert_compiled` — lives in
+`AutomataflFixtures.lean`, rooted in the central guard library: a plain `lake build` still runs
+every pin, and a stale fixture reds the guard library instead of the archive. Every pinned
+expression mentions only PUBLIC names, so the pins moved verbatim. -/
 
 /-- Automaton at (2,2); attractor at (2,4); everything else vacuum. -/
 def demoBoard : Board :=
   mkBoard 5 [(⟨2, 4⟩, .attractor)] ⟨2, 2⟩
 
--- The attractor is seen two steps north (dist 2, room to move): the Daemon steps north.
-#guard (automatonStep demoBoard).automaton = (⟨2, 3⟩ : Coord)
-#guard (automatonStep demoBoard).cellAt ⟨2, 3⟩ = Particle.automaton
-#guard (automatonStep demoBoard).cellAt ⟨2, 2⟩ = Particle.vacuum
--- The attractor is untouched by the Daemon's step.
-#guard (automatonStep demoBoard).cellAt ⟨2, 4⟩ = Particle.attractor
-
 /-- A repulsor board: repulsor one step south at (2,1) with empty space north — the
 Daemon flees north (FromRepulsor). -/
 def repBoard : Board := mkBoard 5 [(⟨2, 1⟩, .repulsor)] ⟨2, 2⟩
-#guard (automatonStep repBoard).automaton = (⟨2, 3⟩ : Coord)
 
 /-- A move-resolution witness: player moves the attractor from (0,0) to (0,3) on an
 otherwise-empty 5×5 board (Automaton parked in a corner out of the way). -/
 def moveBoard : Board := mkBoard 5 [(⟨0, 0⟩, .attractor)] ⟨4, 4⟩
 def demoMove : Move := { who := 0, frm := ⟨0, 0⟩, to := ⟨0, 3⟩ }
 
-#guard moveValidB moveBoard demoMove = true
-#guard (applyMoves moveBoard [demoMove]).cellAt ⟨0, 3⟩ = Particle.attractor
-#guard (applyMoves moveBoard [demoMove]).cellAt ⟨0, 0⟩ = Particle.vacuum
-
--- A full turn: the piece moves, then the Daemon (no opposing pair / repulsor in
--- range from the corner) does not move.
-#guard (applyTurn moveBoard [demoMove]).cellAt ⟨0, 3⟩ = Particle.attractor
-
--- Validity teeth (non-vacuous both polarities).
-#guard moveValidB moveBoard { who := 0, frm := ⟨0, 0⟩, to := ⟨0, 0⟩ } = false   -- from = to
-#guard moveValidB moveBoard { who := 0, frm := ⟨0, 0⟩, to := ⟨1, 3⟩ } = false   -- not rook-aligned
-#guard moveValidB moveBoard { who := 0, frm := ⟨4, 4⟩, to := ⟨4, 0⟩ } = false   -- source is Automaton
-#guard moveValidB moveBoard { who := 0, frm := ⟨0, 0⟩, to := ⟨0, 9⟩ } = false   -- dest OOB
-
--- Conflict detection: two distinct destinations from one source = a fork conflict,
--- so both moves are dropped and the piece stays.
+-- Conflict detection witnesses: two distinct destinations from one source = a fork conflict.
 def forkA : Move := { who := 0, frm := ⟨0, 0⟩, to := ⟨0, 3⟩ }
 def forkB : Move := { who := 1, frm := ⟨0, 0⟩, to := ⟨3, 0⟩ }
-#guard conflictResolve moveBoard [forkA, forkB] = ([] : List Move)
-#guard (applyMoves moveBoard (conflictResolve moveBoard [forkA, forkB])).cellAt ⟨0, 0⟩
-        = Particle.attractor
-
--- Win-check: the Automaton on a goal wins; off a goal, no win.
-#guard winner demoBoard [(⟨2, 2⟩, 7)] = some 7
-#guard winner demoBoard [(⟨0, 0⟩, 7)] = none
-#guard hasWon (automatonStep demoBoard) [(⟨2, 3⟩, 3)] = true    -- steps onto the goal → win
 
 /-! ## §8b  CELL-WISE CONGRUENCE for the Automaton step — the SEAM LEMMA.
 

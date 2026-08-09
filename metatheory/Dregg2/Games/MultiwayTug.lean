@@ -1159,7 +1159,19 @@ theorem air_functional
     (h₁ : air o p a n₁) (h₂ : air o p a n₂) : n₁ = n₂ :=
   ((h o p a n₁).mp h₁).trans ((h o p a n₂).mp h₂).symm
 
-/-! ## 10. A real play witness (`#guard` smoke — the model runs, cards are conserved) -/
+/-! ## 10. A real play witness (smoke — the model runs, cards are conserved)
+
+⚑ **THE WITNESS NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and the 12 `#guard`s that used to run at
+elaboration here made every game-fixture regression a hard failure of every Rust proving
+target. The `demo` state STAYS here (a `def` body elaborates without running); the
+EVALUATION — each fact as a NAMED theorem per GUARD-DISCIPLINE, `native_decide` +
+`#assert_compiled` — lives in `MultiwayTugFixtures.lean`, rooted in the central guard library:
+a plain `lake build` still runs every pin, and a stale fixture reds the guard library instead
+of the archive. Every pinned expression mentions only PUBLIC names, so the pins moved
+verbatim: the legal cut, conservation over cut and answer, the pending offer and seat pass,
+the anti-self-deal refusal, the interlock, the used-flag, the illegal-action no-op, the
+21-card deck, and the 12-turn round. -/
 
 /-- A concrete mid-game state: P1 to move, both hands dealt, nothing on the table. -/
 def demo : GState :=
@@ -1167,30 +1179,6 @@ def demo : GState :=
     hand := fun p => if p = .p1 then ({3, 3, 5, 6, 6, 0} : Multiset Geisha)
                                  else ({1, 2, 4, 5, 6, 0} : Multiset Geisha)
     current := .p1 }
-
--- P1 CUTS a legal Gift (presents 3, 3 and 5 — the split is NOT theirs to make).
-#guard legalB demo .p1 (Action.offerGift 3 3 5)
--- Conservation holds on the cut: the three favors are in escrow, none created or destroyed.
-#guard totalCards (applyAction demo .p1 (Action.offerGift 3 3 5)) = totalCards demo
--- The offer is now PENDING and the seat has passed to P2.
-#guard (applyAction demo .p1 (Action.offerGift 3 3 5)).pending = some (Offer.gift .p1 3 3 5)
-#guard (applyAction demo .p1 (Action.offerGift 3 3 5)).current = Player.p2
--- P1 cannot answer their own cut; P2 can.
-#guard legalRespB (applyAction demo .p1 (Action.offerGift 3 3 5)) .p1 (Response.gift 0) = false
-#guard legalRespB (applyAction demo .p1 (Action.offerGift 3 3 5)) .p2 (Response.gift 0) = true
--- While the offer stands, NOTHING else is legal (the interlock).
-#guard legalB (applyAction demo .p1 (Action.offerGift 3 3 5)) .p2 (Action.secret 1) = false
--- The whole cut-then-choose sequence conserves the deck.
-#guard totalCards (applyResponse (applyAction demo .p1 (Action.offerGift 3 3 5)) .p2
-        (Response.gift 0)) = totalCards demo
--- The Gift's kind is now marked used (cannot repeat this round).
-#guard (applyAction demo .p1 (Action.offerGift 3 3 5)).used .p1 ActionKind.giftK
--- An illegal action (card not in hand) is a no-op.
-#guard totalCards (applyAction demo .p1 (Action.secret 4)) = totalCards demo
--- The full deck holds 21 cards (Σ charm).
-#guard (∑ g : Geisha, Multiset.replicate (charm g) g).card = 21
--- A full round is 12 committed turns: 8 actions + 4 responses (two offers per player).
-#guard (8 + 4 : ℕ) = 12
 
 /-! ## 11. Axiom hygiene — the PROVEN invariants pinned to the standard kernel triple. -/
 

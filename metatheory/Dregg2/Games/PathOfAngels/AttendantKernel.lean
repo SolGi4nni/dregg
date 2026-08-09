@@ -1665,7 +1665,30 @@ theorem TransitionReceipt.continuity_exact {template : Template}
       receipt.continuityAnchor.instancePolicy = receipt.result.after.instancePolicy :=
   ⟨rfl, rfl, rfl⟩
 
-/-! ## Executable settled-credit care/training/field loop and hostile cases -/
+/-! ## Executable settled-credit care/training/field loop and hostile cases
+
+⚑ **THE LAB NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured). The lab's STATEMENTS stay here, each as an
+evaluation-free `check_* : Bool` definition (a `def` body elaborates without running),
+because they must see the private fixtures (`fixtureTemplate`, `fixtureRuntime`, `act`,
+`play`, …) that exercise the opaque authority boundary. The EVALUATION — each
+`check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`AttendantKernelFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Fail-closed convention: probes over `Option` compare against the exact expected value
+(`decide (probe = some …)`), so a broken prerequisite yields `false` and fails the pin in
+the guard library rather than wedging this module.
+
+⚠ Named residue, two construction proofs: `fixtureSupplyTarget_is_the_drawn_instance` and
+`fixtureIntelTarget_is_the_drawn_instance` stay `native_decide` HERE because
+`SignalTriangulation.Config` carries the drawn-target equation as data —
+`fixtureSupplyConfig`/`fixtureIntelConfig` cannot be constructed without them at
+elaboration. Breaking either draw therefore still reds this module (and the archive).
+Everything else moved. -/
 
 def digestByte (byte : Fin 256) : Digest32 where
   bytes := List.replicate 32 byte
@@ -2290,20 +2313,23 @@ private def runtimeSnapshot (runtime : Runtime) : LoopSnapshot where
   consumedSupplies := runtime.projection.mutable.consumed.supplies.val
   globallySpent := runtime.ledger.spentCredits.card
 
-theorem playable_care_training_field_loop :
-    playableLoop.map runtimeSnapshot = some {
-      epoch := 2
-      location := .home
-      charge := 68
-      condition := 67
-      training := 3
-      deployments := 1
-      sequence := 6
-      counter := 6
-      consumedIntel := 3
-      consumedSupplies := 10
-      globallySpent := 2
-    } := by native_decide
+private def playableLoopExpected : LoopSnapshot where
+  epoch := 2
+  location := .home
+  charge := 68
+  condition := 67
+  training := 3
+  deployments := 1
+  sequence := 6
+  counter := 6
+  consumedIntel := 3
+  consumedSupplies := 10
+  globallySpent := 2
+
+/-- The full care/train/equip/deploy/advance/return loop settles at exactly the
+expected snapshot. (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_playable_care_training_field_loop : Bool :=
+  decide (playableLoop.map runtimeSnapshot = some playableLoopExpected)
 
 /-- A wire/UI projection can be checked, but never substituted for opaque state. -/
 structure ProgressionClaim where
@@ -2330,264 +2356,335 @@ def Projection.progressionClaim (projection : Projection) : ProgressionClaim whe
 def validateProgressionClaim (projection : Projection) (claim : ProgressionClaim) : Bool :=
   decide (claim = projection.progressionClaim)
 
-theorem hostile_forged_progression_claim_is_refused :
-    (fixtureRuntime.map fun runtime =>
-      let honest := runtime.projection.progressionClaim
-      validateProgressionClaim runtime.projection { honest with training := honest.training + 1 }) =
-      some false := by native_decide
+private def forgedProgressionProbe : Option Bool :=
+  fixtureRuntime.map fun runtime =>
+    let honest := runtime.projection.progressionClaim
+    validateProgressionClaim runtime.projection { honest with training := honest.training + 1 }
 
-theorem hostile_judged_but_unsettled_credit_is_unavailable :
-    let active := fixtureActive fixtureSupplyConfig fixtureCanon
-    let carrier := fixtureCarrier fixtureCanon
-    let claim := fixtureClaim fixtureSupplyConfig fixtureCanon
-    let submitted := fixtureSubmitted fixtureSupplyConfig
-    let wrongCanon := CanonState.empty fixtureFederation (digestByte 222)
-      fixtureActivation fixtureSession ⟨1⟩ (digestByte 91)
-    (judgeActive active carrier claim submitted).isSome = true ∧
-      (evaluateCreditCandidate active carrier claim submitted wrongCanon).isNone = true := by native_decide
+/-- A wire claim with one inflated field validates as `false`.
+(Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_forged_progression_claim_is_refused : Bool :=
+  decide (forgedProgressionProbe = some false)
 
-theorem hostile_ledger_reopen_credit_reset_is_refused :
-    (do
-      let (_, afterRegistry) ← fixtureOpenedOwner
-      /- This is a newly authenticated command for the advanced registry, not
-      merely a replay of the stale open command.  The one-owner registry still
-      refuses to manufacture a fresh empty spend set. -/
-      let reopened := openOwnerLedger fixtureTemplate afterRegistry
-        (fixtureLedgerOpenCommand afterRegistry fixtureOwner)
-      some reopened.isNone) = some true := by native_decide
+private def unsettledWrongCanon : CanonState :=
+  CanonState.empty fixtureFederation (digestByte 222)
+    fixtureActivation fixtureSession ⟨1⟩ (digestByte 91)
 
-theorem hostile_owner_global_credit_replay_is_refused :
-    (do
-      let runtime ← fixtureRuntime
-      let (supply, _) ← fixtureCredits
-      let once ← act fixtureTemplate fixtureInstance runtime (.care .recharge supply)
-      some (act fixtureTemplate fixtureInstance once (.care .recharge supply) |>.isNone)) =
-      some true := by native_decide
+/-- A judged run is not yet a spendable credit: the same submission judges
+successfully but yields no credit candidate against a foreign canon.
+(Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_judged_but_unsettled_credit_is_unavailable : Bool :=
+  (judgeActive (fixtureActive fixtureSupplyConfig fixtureCanon) (fixtureCarrier fixtureCanon)
+    (fixtureClaim fixtureSupplyConfig fixtureCanon) (fixtureSubmitted fixtureSupplyConfig)).isSome
+  && (evaluateCreditCandidate (fixtureActive fixtureSupplyConfig fixtureCanon)
+    (fixtureCarrier fixtureCanon) (fixtureClaim fixtureSupplyConfig fixtureCanon)
+    (fixtureSubmitted fixtureSupplyConfig) unsettledWrongCanon).isNone
 
-theorem hostile_cross_attendant_credit_double_spend_is_refused :
-    (do
-      let (first, second, ledger) ← fixtureTwoRuntimes
-      let (supply, _) ← fixtureCredits
-      let spent ← evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance ledger first
-        (envelopeFor fixtureInstance ledger first (.care .recharge supply))
-      some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstanceTwo spent.afterLedger second
-        (envelopeFor fixtureInstanceTwo spent.afterLedger second (.care .recharge supply))).isNone)) =
-      some true := by native_decide
+private def ledgerReopenProbe : Option Bool := do
+  let (_, afterRegistry) ← fixtureOpenedOwner
+  /- This is a newly authenticated command for the advanced registry, not
+  merely a replay of the stale open command.  The one-owner registry still
+  refuses to manufacture a fresh empty spend set. -/
+  let reopened := openOwnerLedger fixtureTemplate afterRegistry
+    (fixtureLedgerOpenCommand afterRegistry fixtureOwner)
+  some reopened.isNone
 
-theorem hostile_cross_instance_envelope_is_refused :
-    (fixtureTwoRuntimes.map fun triple =>
-      let (first, second, ledger) := triple
-      (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstanceTwo ledger second
-        (envelopeFor fixtureInstance ledger first .unequip)).isNone) = some true := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_ledger_reopen_credit_reset_is_refused : Bool :=
+  decide (ledgerReopenProbe = some true)
 
-theorem hostile_projection_transplant_is_refused :
-    (fixtureTwoRuntimes.map fun triple =>
-      let (first, _, ledger) := triple
-      (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstanceTwo ledger first
-        (envelopeFor fixtureInstanceTwo ledger first .unequip)).isNone) = some true := by native_decide
+private def ownerGlobalReplayProbe : Option Bool := do
+  let runtime ← fixtureRuntime
+  let (supply, _) ← fixtureCredits
+  let once ← act fixtureTemplate fixtureInstance runtime (.care .recharge supply)
+  some (act fixtureTemplate fixtureInstance once (.care .recharge supply) |>.isNone)
 
-theorem hostile_same_header_different_template_policy_is_refused :
-    (fixtureRuntime.map fun runtime =>
-      let substituted := envelopeFor fixtureAlteredInstance runtime.ledger runtime.projection
-        (.advanceEpoch ⟨2⟩)
-      let honest := envelopeFor fixtureInstance runtime.ledger runtime.projection
-        (.advanceEpoch ⟨2⟩)
-      (evaluateAuthenticatedStepCandidate fixtureTemplateAltered fixtureAlteredInstance runtime.ledger
-        runtime.projection substituted).isNone &&
-      (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger
-        runtime.projection honest).isSome) = some true := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_owner_global_credit_replay_is_refused : Bool :=
+  decide (ownerGlobalReplayProbe = some true)
 
-theorem hostile_inventory_policy_substitution_is_refused :
-    (fixtureRuntime.map fun runtime =>
-      let substituted := envelopeFor fixtureNoToolInstance runtime.ledger runtime.projection
-        (.advanceEpoch ⟨2⟩)
-      (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureNoToolInstance runtime.ledger
-        runtime.projection substituted).isNone) = some true := by native_decide
+private def crossAttendantDoubleSpendProbe : Option Bool := do
+  let (first, second, ledger) ← fixtureTwoRuntimes
+  let (supply, _) ← fixtureCredits
+  let spent ← evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance ledger first
+    (envelopeFor fixtureInstance ledger first (.care .recharge supply))
+  some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstanceTwo spent.afterLedger second
+    (envelopeFor fixtureInstanceTwo spent.afterLedger second (.care .recharge supply))).isNone)
 
-theorem hostile_cross_owner_colliding_identity_oracle_is_refused :
-    fixtureInstance.id = hostileCollidingInstance.id ∧
-    (fixtureRuntime.map fun runtime =>
-      let substituted := envelopeFor hostileCollidingInstance runtime.ledger runtime.projection
-        (.advanceEpoch ⟨2⟩)
-      (evaluateAuthenticatedStepCandidate fixtureTemplate hostileCollidingInstance runtime.ledger
-        runtime.projection substituted).isNone) = some true := by native_decide
+/-- Credits are spent owner-globally, not once per attendant.
+(Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_cross_attendant_credit_double_spend_is_refused : Bool :=
+  decide (crossAttendantDoubleSpendProbe = some true)
 
-theorem hostile_same_epoch_return_is_refused :
-    (do
-      let runtime ← fixtureRuntime
-      let (_, intel) ← fixtureCredits
-      let deployed ← play fixtureTemplate fixtureInstance runtime [
-        .train intel, .equip fixtureTool, .deploy fixtureFieldMission .survey]
-      some (act fixtureTemplate fixtureInstance deployed .returnHome |>.isNone)) = some true := by
-  native_decide
+private def crossInstanceEnvelopeProbe : Option Bool :=
+  fixtureTwoRuntimes.map fun triple =>
+    let (first, second, ledger) := triple
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstanceTwo ledger second
+      (envelopeFor fixtureInstance ledger first .unequip)).isNone
 
-theorem hostile_wrong_signer_is_refused :
-    (fixtureRuntime.map fun runtime =>
-      let envelope := envelopeFor fixtureInstance runtime.ledger runtime.projection .unequip
-      (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger runtime.projection
-        { envelope with authority := { envelope.authority with signer := hostileOwner } }).isNone) =
-      some true := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_cross_instance_envelope_is_refused : Bool :=
+  decide (crossInstanceEnvelopeProbe = some true)
 
-theorem hostile_counter_replay_is_refused :
-    (do
-      let runtime ← fixtureRuntime
-      let replay := envelopeFor fixtureInstance runtime.ledger runtime.projection
-        (.advanceEpoch ⟨2⟩)
-      let result ← evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger runtime.projection
-        replay
-      some (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance result.afterLedger result.after replay |>.isNone)) =
-      some true := by native_decide
+private def projectionTransplantProbe : Option Bool :=
+  fixtureTwoRuntimes.map fun triple =>
+    let (first, _, ledger) := triple
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstanceTwo ledger first
+      (envelopeFor fixtureInstanceTwo ledger first .unequip)).isNone
 
-theorem hostile_stale_cas_tooth_refuses_advanced_head :
-    (do
-      let runtime ← fixtureRuntime
-      let stale := envelopeFor fixtureInstance runtime.ledger runtime.projection
-        (.advanceEpoch ⟨2⟩)
-      let first ← evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger
-        runtime.projection stale
-      let fresh := envelopeFor fixtureInstance first.afterLedger first.after
-        (.advanceEpoch ⟨3⟩)
-      some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance first.afterLedger first.after stale).isNone &&
-        (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance first.afterLedger first.after fresh).isSome)) =
-      some true := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_projection_transplant_is_refused : Bool :=
+  decide (projectionTransplantProbe = some true)
+
+private def alteredTemplatePolicyProbe : Option Bool :=
+  fixtureRuntime.map fun runtime =>
+    let substituted := envelopeFor fixtureAlteredInstance runtime.ledger runtime.projection
+      (.advanceEpoch ⟨2⟩)
+    let honest := envelopeFor fixtureInstance runtime.ledger runtime.projection
+      (.advanceEpoch ⟨2⟩)
+    (evaluateAuthenticatedStepCandidate fixtureTemplateAltered fixtureAlteredInstance runtime.ledger
+      runtime.projection substituted).isNone &&
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger
+      runtime.projection honest).isSome
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_same_header_different_template_policy_is_refused : Bool :=
+  decide (alteredTemplatePolicyProbe = some true)
+
+private def inventoryPolicySubstitutionProbe : Option Bool :=
+  fixtureRuntime.map fun runtime =>
+    let substituted := envelopeFor fixtureNoToolInstance runtime.ledger runtime.projection
+      (.advanceEpoch ⟨2⟩)
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureNoToolInstance runtime.ledger
+      runtime.projection substituted).isNone
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_inventory_policy_substitution_is_refused : Bool :=
+  decide (inventoryPolicySubstitutionProbe = some true)
+
+private def collidingOracleProbe : Option Bool :=
+  fixtureRuntime.map fun runtime =>
+    let substituted := envelopeFor hostileCollidingInstance runtime.ledger runtime.projection
+      (.advanceEpoch ⟨2⟩)
+    (evaluateAuthenticatedStepCandidate fixtureTemplate hostileCollidingInstance runtime.ledger
+      runtime.projection substituted).isNone
+
+/-- The colliding oracle really does produce the SAME local id (first conjunct),
+and the owner-qualified key still refuses the foreign owner (second).
+(Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_cross_owner_colliding_identity_oracle_is_refused : Bool :=
+  decide (fixtureInstance.id = hostileCollidingInstance.id)
+    && decide (collidingOracleProbe = some true)
+
+private def sameEpochReturnProbe : Option Bool := do
+  let runtime ← fixtureRuntime
+  let (_, intel) ← fixtureCredits
+  let deployed ← play fixtureTemplate fixtureInstance runtime [
+    .train intel, .equip fixtureTool, .deploy fixtureFieldMission .survey]
+  some (act fixtureTemplate fixtureInstance deployed .returnHome |>.isNone)
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_same_epoch_return_is_refused : Bool :=
+  decide (sameEpochReturnProbe = some true)
+
+private def wrongSignerProbe : Option Bool :=
+  fixtureRuntime.map fun runtime =>
+    let envelope := envelopeFor fixtureInstance runtime.ledger runtime.projection .unequip
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger runtime.projection
+      { envelope with authority := { envelope.authority with signer := hostileOwner } }).isNone
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_wrong_signer_is_refused : Bool :=
+  decide (wrongSignerProbe = some true)
+
+private def counterReplayProbe : Option Bool := do
+  let runtime ← fixtureRuntime
+  let replay := envelopeFor fixtureInstance runtime.ledger runtime.projection
+    (.advanceEpoch ⟨2⟩)
+  let result ← evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger runtime.projection
+    replay
+  some (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance result.afterLedger result.after replay |>.isNone)
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_counter_replay_is_refused : Bool :=
+  decide (counterReplayProbe = some true)
+
+private def staleCasToothProbe : Option Bool := do
+  let runtime ← fixtureRuntime
+  let stale := envelopeFor fixtureInstance runtime.ledger runtime.projection
+    (.advanceEpoch ⟨2⟩)
+  let first ← evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger
+    runtime.projection stale
+  let fresh := envelopeFor fixtureInstance first.afterLedger first.after
+    (.advanceEpoch ⟨3⟩)
+  some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance first.afterLedger first.after stale).isNone &&
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance first.afterLedger first.after fresh).isSome)
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_stale_cas_tooth_refuses_advanced_head : Bool :=
+  decide (staleCasToothProbe = some true)
+
+private def sameSnapshotForkProbe : Option Bool := do
+  let runtime ← fixtureRuntime
+  let envelope := envelopeFor fixtureInstance runtime.ledger runtime.projection
+    (.advanceEpoch ⟨2⟩)
+  let left := evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance
+    runtime.ledger runtime.projection envelope
+  let right := evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance
+    runtime.ledger runtime.projection envelope
+  let beforeCas : CanonicalCasState := {
+    head := runtime.ledger.canonicalHead
+    revision := runtime.ledger.canonicalRevision
+    consumedNullifiers := ∅
+  }
+  let afterCas ← evaluateCasTransition beforeCas envelope.authority.tooth
+  some (left.isSome && right.isSome &&
+    (evaluateCasTransition beforeCas envelope.authority.tooth).isSome &&
+    (evaluateCasTransition afterCas envelope.authority.tooth).isNone)
 
 /-- Pure Lean evaluation is intentionally replayable from an identical snapshot:
 both calls produce the same fork candidate.  Canonical replay resistance lives
 in the explicit CAS/nullifier transition: after the first proposed CAS state,
-the identical tooth is rejected.  The node must make that state update atomic. -/
-theorem hostile_same_snapshot_fork_is_explicit_and_nullifier_closes_replay :
-    (do
-      let runtime ← fixtureRuntime
-      let envelope := envelopeFor fixtureInstance runtime.ledger runtime.projection
-        (.advanceEpoch ⟨2⟩)
-      let left := evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance
-        runtime.ledger runtime.projection envelope
-      let right := evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance
-        runtime.ledger runtime.projection envelope
-      let beforeCas : CanonicalCasState := {
-        head := runtime.ledger.canonicalHead
-        revision := runtime.ledger.canonicalRevision
-        consumedNullifiers := ∅
-      }
-      let afterCas ← evaluateCasTransition beforeCas envelope.authority.tooth
-      some (left.isSome && right.isSome &&
-        (evaluateCasTransition beforeCas envelope.authority.tooth).isSome &&
-        (evaluateCasTransition afterCas envelope.authority.tooth).isNone)) =
-      some true := by native_decide
+the identical tooth is rejected.  The node must make that state update atomic.
+(Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_same_snapshot_fork_is_explicit_and_nullifier_closes_replay : Bool :=
+  decide (sameSnapshotForkProbe = some true)
 
-theorem hostile_wrong_canonical_settlement_identity_is_refused :
-    (do
-      let supply ← evaluateCreditCandidate (fixtureActive fixtureSupplyConfig fixtureCanon)
-        (fixtureCarrier fixtureCanon) (fixtureClaim fixtureSupplyConfig fixtureCanon)
-        (fixtureSubmitted fixtureSupplyConfig) fixtureCanon
-      let intel ← evaluateCreditCandidate (fixtureActive fixtureIntelConfig supply.settlement.settled.postCanon)
-        (fixtureCarrier supply.settlement.settled.postCanon)
-        (fixtureClaim fixtureIntelConfig supply.settlement.settled.postCanon)
-        (fixtureSubmitted fixtureIntelConfig) supply.settlement.settled.postCanon
-      some (admitCanonicalCredit intel (fixtureCanonicalSettlement supply) |>.isNone)) =
-      some true := by native_decide
+private def wrongCanonicalSettlementProbe : Option Bool := do
+  let supply ← evaluateCreditCandidate (fixtureActive fixtureSupplyConfig fixtureCanon)
+    (fixtureCarrier fixtureCanon) (fixtureClaim fixtureSupplyConfig fixtureCanon)
+    (fixtureSubmitted fixtureSupplyConfig) fixtureCanon
+  let intel ← evaluateCreditCandidate (fixtureActive fixtureIntelConfig supply.settlement.settled.postCanon)
+    (fixtureCarrier supply.settlement.settled.postCanon)
+    (fixtureClaim fixtureIntelConfig supply.settlement.settled.postCanon)
+    (fixtureSubmitted fixtureIntelConfig) supply.settlement.settled.postCanon
+  some (admitCanonicalCredit intel (fixtureCanonicalSettlement supply) |>.isNone)
 
-theorem hostile_settlement_successor_and_root_substitution_are_refused :
-    (do
-      let candidate ← evaluateCreditCandidate (fixtureActive fixtureSupplyConfig fixtureCanon)
-        (fixtureCarrier fixtureCanon) (fixtureClaim fixtureSupplyConfig fixtureCanon)
-        (fixtureSubmitted fixtureSupplyConfig) fixtureCanon
-      let capability := fixtureCanonicalSettlement candidate
-      let changedHead := { capability with tooth := {
-        capability.tooth with nextHead := digestByte 250 } }
-      let changedRoot := { capability with tooth := {
-        capability.tooth with finalizedRoot := digestByte 251 } }
-      some ((admitCanonicalCredit candidate changedHead).isNone &&
-        (admitCanonicalCredit candidate changedRoot).isNone)) = some true := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_wrong_canonical_settlement_identity_is_refused : Bool :=
+  decide (wrongCanonicalSettlementProbe = some true)
 
-theorem hostile_command_successor_and_root_substitution_are_refused :
-    (do
-      let runtime ← fixtureRuntime
-      let envelope := envelopeFor fixtureInstance runtime.ledger runtime.projection
-        (.advanceEpoch ⟨2⟩)
-      let changedHead : Envelope := { envelope with authority := {
-        envelope.authority with tooth := {
-          envelope.authority.tooth with nextHead := digestByte 250 } } }
-      let changedRoot : Envelope := { envelope with authority := {
-        envelope.authority with tooth := {
-          envelope.authority.tooth with finalizedRoot := digestByte 251 } } }
-      some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance
-          runtime.ledger runtime.projection changedHead).isNone &&
-        (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance
-          runtime.ledger runtime.projection changedRoot).isNone)) = some true := by native_decide
+private def settlementSubstitutionProbe : Option Bool := do
+  let candidate ← evaluateCreditCandidate (fixtureActive fixtureSupplyConfig fixtureCanon)
+    (fixtureCarrier fixtureCanon) (fixtureClaim fixtureSupplyConfig fixtureCanon)
+    (fixtureSubmitted fixtureSupplyConfig) fixtureCanon
+  let capability := fixtureCanonicalSettlement candidate
+  let changedHead := { capability with tooth := {
+    capability.tooth with nextHead := digestByte 250 } }
+  let changedRoot := { capability with tooth := {
+    capability.tooth with finalizedRoot := digestByte 251 } }
+  some ((admitCanonicalCredit candidate changedHead).isNone &&
+    (admitCanonicalCredit candidate changedRoot).isNone)
 
-theorem hostile_action_substitution_breaks_authenticated_preimage :
-    (do
-      let runtime ← fixtureRuntime
-      let (supply, intel) ← fixtureCredits
-      let authenticated := envelopeFor fixtureInstance runtime.ledger runtime.projection
-        (.care .recharge supply)
-      let substituted := { authenticated with action := Action.train intel }
-      let honestTrain := envelopeFor fixtureInstance runtime.ledger runtime.projection
-        (.train intel)
-      some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger runtime.projection
-        substituted).isNone &&
-        (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger runtime.projection
-          honestTrain).isSome)) = some true := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_settlement_successor_and_root_substitution_are_refused : Bool :=
+  decide (settlementSubstitutionProbe = some true)
 
-theorem hostile_prestate_substitution_breaks_authenticated_preimage :
-    (do
-      let runtime ← fixtureRuntime
-      let (supply, _) ← fixtureCredits
-      let authenticated := envelopeFor fixtureInstance runtime.ledger runtime.projection
-        (.care .recharge supply)
-      let changed : Projection := { runtime.projection with
-        mutable := { runtime.projection.mutable with rapport := 41 } }
-      let honestChanged := envelopeFor fixtureInstance runtime.ledger changed
-        (.care .recharge supply)
-      some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger changed
-        authenticated).isNone &&
-        (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger changed
-          honestChanged).isSome)) = some true := by native_decide
+private def commandSubstitutionProbe : Option Bool := do
+  let runtime ← fixtureRuntime
+  let envelope := envelopeFor fixtureInstance runtime.ledger runtime.projection
+    (.advanceEpoch ⟨2⟩)
+  let changedHead : Envelope := { envelope with authority := {
+    envelope.authority with tooth := {
+      envelope.authority.tooth with nextHead := digestByte 250 } } }
+  let changedRoot : Envelope := { envelope with authority := {
+    envelope.authority with tooth := {
+      envelope.authority.tooth with finalizedRoot := digestByte 251 } } }
+  some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance
+      runtime.ledger runtime.projection changedHead).isNone &&
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance
+      runtime.ledger runtime.projection changedRoot).isNone)
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_command_successor_and_root_substitution_are_refused : Bool :=
+  decide (commandSubstitutionProbe = some true)
+
+private def actionSubstitutionProbe : Option Bool := do
+  let runtime ← fixtureRuntime
+  let (supply, intel) ← fixtureCredits
+  let authenticated := envelopeFor fixtureInstance runtime.ledger runtime.projection
+    (.care .recharge supply)
+  let substituted := { authenticated with action := Action.train intel }
+  let honestTrain := envelopeFor fixtureInstance runtime.ledger runtime.projection
+    (.train intel)
+  some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger runtime.projection
+    substituted).isNone &&
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger runtime.projection
+      honestTrain).isSome)
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_action_substitution_breaks_authenticated_preimage : Bool :=
+  decide (actionSubstitutionProbe = some true)
+
+private def prestateSubstitutionProbe : Option Bool := do
+  let runtime ← fixtureRuntime
+  let (supply, _) ← fixtureCredits
+  let authenticated := envelopeFor fixtureInstance runtime.ledger runtime.projection
+    (.care .recharge supply)
+  let changed : Projection := { runtime.projection with
+    mutable := { runtime.projection.mutable with rapport := 41 } }
+  let honestChanged := envelopeFor fixtureInstance runtime.ledger changed
+    (.care .recharge supply)
+  some ((evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger changed
+    authenticated).isNone &&
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger changed
+      honestChanged).isSome)
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_hostile_prestate_substitution_breaks_authenticated_preimage : Bool :=
+  decide (prestateSubstitutionProbe = some true)
 
 def maxPlayerCounter : PlayerCounter :=
   ⟨PLAYER_COUNTER_MODULUS - 1, by
     have positive : 0 < PLAYER_COUNTER_MODULUS := by simp [PLAYER_COUNTER_MODULUS]
     omega⟩
 
-theorem max_counter_refuses_before_valid_epoch :
-    (fixtureRuntime.map fun runtime =>
-      let exhausted := { runtime.projection with nextCounter := maxPlayerCounter }
-      (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger exhausted
-        (envelopeFor fixtureInstance runtime.ledger exhausted (.advanceEpoch ⟨2⟩))).isNone) = some true := by
-  native_decide
+private def maxCounterProbe : Option Bool :=
+  fixtureRuntime.map fun runtime =>
+    let exhausted := { runtime.projection with nextCounter := maxPlayerCounter }
+    (evaluateAuthenticatedStepCandidate fixtureTemplate fixtureInstance runtime.ledger exhausted
+      (envelopeFor fixtureInstance runtime.ledger exhausted (.advanceEpoch ⟨2⟩))).isNone
 
-theorem field_work_without_equipment_is_refused :
-    (fixtureRuntime.map fun runtime =>
-      (act fixtureTemplate fixtureInstance runtime
-        (.deploy fixtureFieldMission .survey)).isNone) = some true := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_max_counter_refuses_before_valid_epoch : Bool :=
+  decide (maxCounterProbe = some true)
 
-theorem equipment_before_training_is_refused :
-    (fixtureRuntime.map fun runtime =>
-      (act fixtureTemplate fixtureInstance runtime (.equip fixtureTool)).isNone) = some true := by
-  native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_field_work_without_equipment_is_refused : Bool :=
+  decide ((fixtureRuntime.map fun runtime =>
+    (act fixtureTemplate fixtureInstance runtime
+      (.deploy fixtureFieldMission .survey)).isNone) = some true)
 
-theorem declared_but_unowned_equipment_is_refused :
-    (fixtureRuntime.map fun runtime =>
-      (act fixtureTemplate fixtureInstance runtime (.equip fixtureBorrowedTool)).isNone) =
-      some true := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_equipment_before_training_is_refused : Bool :=
+  decide ((fixtureRuntime.map fun runtime =>
+    (act fixtureTemplate fixtureInstance runtime (.equip fixtureTool)).isNone) = some true)
 
-theorem skipped_epoch_is_refused :
-    (fixtureRuntime.map fun runtime =>
-      (act fixtureTemplate fixtureInstance runtime (.advanceEpoch ⟨3⟩)).isNone) = some true := by
-  native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_declared_but_unowned_equipment_is_refused : Bool :=
+  decide ((fixtureRuntime.map fun runtime =>
+    (act fixtureTemplate fixtureInstance runtime (.equip fixtureBorrowedTool)).isNone) =
+    some true)
 
-theorem home_absence_cannot_erase_attachment :
-    (do
-      let runtime ← fixtureRuntime
-      let after ← play fixtureTemplate fixtureInstance runtime [
-        .advanceEpoch ⟨2⟩, .advanceEpoch ⟨3⟩, .advanceEpoch ⟨4⟩]
-      some (after.projection.mutable.charge.val, after.projection.mutable.condition.val,
-        after.projection.mutable.rapport.val, after.projection.sequence.val)) =
-      some (64, 73, 40, 3) := by native_decide
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_skipped_epoch_is_refused : Bool :=
+  decide ((fixtureRuntime.map fun runtime =>
+    (act fixtureTemplate fixtureInstance runtime (.advanceEpoch ⟨3⟩)).isNone) = some true)
 
-theorem fixture_identity_rejects_serial_substitution :
-    fixtureInstance.id ≠ fixtureInstanceTwo.id := by native_decide
+private def homeAbsenceProbe : Option (Nat × Nat × Nat × Nat) := do
+  let runtime ← fixtureRuntime
+  let after ← play fixtureTemplate fixtureInstance runtime [
+    .advanceEpoch ⟨2⟩, .advanceEpoch ⟨3⟩, .advanceEpoch ⟨4⟩]
+  some (after.projection.mutable.charge.val, after.projection.mutable.condition.val,
+    after.projection.mutable.rapport.val, after.projection.sequence.val)
+
+/-- Absence costs upkeep, never rapport. (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_home_absence_cannot_erase_attachment : Bool :=
+  decide (homeAbsenceProbe = some (64, 73, 40, 3))
+
+/-- (Pinned `= true` in `AttendantKernelFixtures`.) -/
+def check_fixture_identity_rejects_serial_substitution : Bool :=
+  decide (fixtureInstance.id ≠ fixtureInstanceTwo.id)
 
 #assert_axioms Template.findEquipment_id
 #assert_axioms Credit.is_locally_settled
@@ -2629,36 +2726,12 @@ theorem fixture_identity_rejects_serial_substitution :
 #assert_axioms continuity_identity_survives_transition
 #assert_axioms TransitionReceipt.continuity_exact
 
-#assert_compiled playable_care_training_field_loop
-#assert_compiled hostile_forged_progression_claim_is_refused
-#assert_compiled hostile_judged_but_unsettled_credit_is_unavailable
-#assert_compiled hostile_ledger_reopen_credit_reset_is_refused
-#assert_compiled hostile_owner_global_credit_replay_is_refused
-#assert_compiled hostile_cross_attendant_credit_double_spend_is_refused
-#assert_compiled hostile_cross_instance_envelope_is_refused
-#assert_compiled hostile_projection_transplant_is_refused
-#assert_compiled hostile_same_header_different_template_policy_is_refused
-#assert_compiled hostile_inventory_policy_substitution_is_refused
-#assert_compiled hostile_cross_owner_colliding_identity_oracle_is_refused
-#assert_compiled hostile_same_epoch_return_is_refused
-#assert_compiled hostile_wrong_signer_is_refused
-#assert_compiled hostile_counter_replay_is_refused
-#assert_compiled hostile_stale_cas_tooth_refuses_advanced_head
-#assert_compiled hostile_same_snapshot_fork_is_explicit_and_nullifier_closes_replay
-#assert_compiled hostile_wrong_canonical_settlement_identity_is_refused
-#assert_compiled hostile_settlement_successor_and_root_substitution_are_refused
-#assert_compiled hostile_command_successor_and_root_substitution_are_refused
-#assert_compiled hostile_action_substitution_breaks_authenticated_preimage
-#assert_compiled hostile_prestate_substitution_breaks_authenticated_preimage
-#assert_compiled max_counter_refuses_before_valid_epoch
-#assert_compiled field_work_without_equipment_is_refused
-#assert_compiled equipment_before_training_is_refused
-#assert_compiled declared_but_unowned_equipment_is_refused
-#assert_compiled skipped_epoch_is_refused
-#assert_compiled home_absence_cannot_erase_attachment
-#assert_compiled fixture_identity_rejects_serial_substitution
+-- Named residue: the two drawn-target construction proofs stay here (see the lab header).
 #assert_compiled fixtureSupplyTarget_is_the_drawn_instance
 #assert_compiled fixtureIntelTarget_is_the_drawn_instance
 #assert_axioms fixture_missions_draw_different_instances
+
+-- The twenty-eight lab pins (`#assert_compiled` + `native_decide`) live in
+-- `AttendantKernelFixtures.lean`, rooted in `PathOfAngelsGuards` — see the lab header above.
 
 end Dregg2.Games.PathOfAngels.Attendant

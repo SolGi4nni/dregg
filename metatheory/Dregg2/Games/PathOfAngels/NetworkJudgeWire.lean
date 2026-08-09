@@ -1382,7 +1382,24 @@ theorem CanonStateWire.ofSemantic_refuses_player_capacity (c : CanonState)
   simp [CanonStateWire.ofSemantic?, CanonStateWire.ofSemantic,
     canonicalCounterRowsB, Nat.not_le.mpr over]
 
-/-! ## Emitted Signal fixture -/
+/-! ## Emitted Signal fixture
+
+⚑ **THE FIXTURE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the thirteen `native_decide` pins
+below ran at elaboration, so a stale Signal-wire fixture was a hard failure of every Rust
+proving target in the workspace (the compilation-unit coupling the stale-fixture outage
+measured). The pins' STATEMENTS stay here, each as an evaluation-free `check_* : Bool`
+definition (a `def` body elaborates without running), beside the fixture values they exercise.
+The EVALUATION — each `check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives
+in `NetworkJudgeWireFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of the
+archive.
+
+⚠ Named residue, one construction proof: `fixtureTarget_is_the_drawn_instance` stays
+`native_decide` HERE because `fixtureConfig` consumes it as DATA — it discharges
+`Config.target_eq` inside `Emit.signalConfigWith`, so it must elaborate where the config is
+built. A fixture target that drifts from its seed's draw therefore still reds this module
+(and the archive). Everything else moved. -/
 
 private def zeroDigest : Digest32 where
   bytes := List.replicate 32 0
@@ -1638,35 +1655,37 @@ def fixtureOutputWire : SignalOutputWire where
 
 def fixtureOutputBytes : String := fixtureOutputWire.toJson
 
-theorem fixture_input_roundtrip :
-    decodeSignalInput fixtureInputBytes = some fixtureInputWire := by
-  native_decide
+/-- The fixture input decodes back to itself under the canonical seal.
+(Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_input_roundtrip : Bool :=
+  decide (decodeSignalInput fixtureInputBytes = some fixtureInputWire)
 
-theorem fixture_input_refuses_tight_byte_cap :
-    decodeSignalInputWithLimit (fixtureInputBytes.length - 1) fixtureInputBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_input_refuses_tight_byte_cap : Bool :=
+  (decodeSignalInputWithLimit (fixtureInputBytes.length - 1) fixtureInputBytes).isNone
 
-theorem fixture_input_semantic_inhabited :
-    fixtureInputWire.toSemantic?.isSome = true := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_input_semantic_inhabited : Bool :=
+  fixtureInputWire.toSemantic?.isSome
 
-theorem fixture_input_refuses_trailing_bytes :
-    decodeSignalInput (fixtureInputBytes ++ "\n") = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_input_refuses_trailing_bytes : Bool :=
+  (decodeSignalInput (fixtureInputBytes ++ "\n")).isNone
 
-theorem fixture_input_refuses_uppercase_digest :
-    decodeSignalInput
-      (fixtureInputBytes.replace FIXTURE_FEDERATION_HEX (String.toUpper FIXTURE_FEDERATION_HEX)) = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_input_refuses_uppercase_digest : Bool :=
+  (decodeSignalInput
+    (fixtureInputBytes.replace FIXTURE_FEDERATION_HEX
+      (String.toUpper FIXTURE_FEDERATION_HEX))).isNone
 
 def oversizedActionsInput : SignalInputWire :=
   { fixtureInputWire with request := {
       fixtureInputWire.request with actions := List.replicate (WIRE_ACTION_LIMIT + 1) { low := 0, mid := 0, high := 0 }
     } }
 
-theorem fixture_input_refuses_oversized_actions :
-    decodeSignalInput oversizedActionsInput.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_input_refuses_oversized_actions : Bool :=
+  (decodeSignalInput oversizedActionsInput.toJson).isNone
 
 def duplicateKnownInput : SignalInputWire :=
   { fixtureInputWire with canon := {
@@ -1674,41 +1693,42 @@ def duplicateKnownInput : SignalInputWire :=
       known := [fixtureInputWire.config.mission.artifact, fixtureInputWire.config.mission.artifact]
     } }
 
-theorem fixture_input_refuses_duplicate_canon_rows :
-    decodeSignalInput duplicateKnownInput.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_input_refuses_duplicate_canon_rows : Bool :=
+  (decodeSignalInput duplicateKnownInput.toJson).isNone
 
 def mismatchedWorldInput : SignalInputWire :=
   { fixtureInputWire with world := { fixtureInputWire.world with sequence := 1 } }
 
-theorem fixture_semantics_refuses_world_canon_mismatch :
-    mismatchedWorldInput.toSemantic?.isSome = false := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_semantics_refuses_world_canon_mismatch : Bool :=
+  !mismatchedWorldInput.toSemantic?.isSome
 
 def oversizedCarrierInput : SignalInputWire :=
   { fixtureInputWire with carrier := {
       fixtureInputWire.carrier with currentPlayerCounter := WIRE_NAT_LIMIT + 1
     } }
 
-theorem fixture_input_refuses_oversized_carrier_counter :
-    decodeSignalInput oversizedCarrierInput.toJson = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_input_refuses_oversized_carrier_counter : Bool :=
+  (decodeSignalInput oversizedCarrierInput.toJson).isNone
 
-theorem fixture_output_roundtrip :
-    decodeSignalOutput fixtureOutputBytes = some fixtureOutputWire := by
-  native_decide
+/-- The fixture output decodes back to itself under the canonical seal.
+(Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_output_roundtrip : Bool :=
+  decide (decodeSignalOutput fixtureOutputBytes = some fixtureOutputWire)
 
-theorem fixture_output_refuses_tight_byte_cap :
-    decodeSignalOutputWithLimit (fixtureOutputBytes.length - 1) fixtureOutputBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_output_refuses_tight_byte_cap : Bool :=
+  (decodeSignalOutputWithLimit (fixtureOutputBytes.length - 1) fixtureOutputBytes).isNone
 
-theorem fixture_output_semantic_inhabited :
-    fixtureOutputWire.toSemantic?.isSome = true := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_output_semantic_inhabited : Bool :=
+  fixtureOutputWire.toSemantic?.isSome
 
-theorem fixture_output_refuses_trailing_bytes :
-    decodeSignalOutput (fixtureOutputBytes ++ "\n") = none := by
-  native_decide
+/-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
+def check_fixture_output_refuses_trailing_bytes : Bool :=
+  (decodeSignalOutput (fixtureOutputBytes ++ "\n")).isNone
 
 #assert_axioms fixtureMissionContext_is_the_live_context
 #assert_compiled fixtureTarget_is_the_drawn_instance
@@ -1723,18 +1743,10 @@ theorem fixture_output_refuses_trailing_bytes :
 #assert_axioms CanonStateWire.ofSemantic_refuses_player_capacity
 #assert_axioms decodeCanonState_reencodes
 #assert_axioms decodeSignalConfig_reencodes
-#assert_compiled fixture_input_roundtrip
-#assert_compiled fixture_input_refuses_tight_byte_cap
-#assert_compiled fixture_input_semantic_inhabited
-#assert_compiled fixture_input_refuses_trailing_bytes
-#assert_compiled fixture_input_refuses_uppercase_digest
-#assert_compiled fixture_input_refuses_oversized_actions
-#assert_compiled fixture_input_refuses_duplicate_canon_rows
-#assert_compiled fixture_semantics_refuses_world_canon_mismatch
-#assert_compiled fixture_input_refuses_oversized_carrier_counter
-#assert_compiled fixture_output_roundtrip
-#assert_compiled fixture_output_refuses_tight_byte_cap
-#assert_compiled fixture_output_semantic_inhabited
-#assert_compiled fixture_output_refuses_trailing_bytes
+
+-- The thirteen fixture pins (`native_decide` + `#assert_compiled`) live in
+-- `NetworkJudgeWireFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixture
+-- header above.  Only the `fixtureTarget_is_the_drawn_instance` construction-proof
+-- residue still evaluates here.
 
 end Dregg2.Games.PathOfAngels.NetworkJudgeWire

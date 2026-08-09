@@ -544,11 +544,20 @@ COMPUTED HERE, by `Dregg2.Games.AutomataflRules`. -/
 @[export dregg_automatafl_rules]
 def rulesFFI (s : String) : String := rulesWire s
 
-/-! ## §5 — teeth (`#guard` FAILS the build on regression)
+/-! ## §5 — teeth (named pins in `AutomataflFFIFixtures` FAIL the build on regression)
 
 The two boards below are the audit's own smallest witnesses. `cycBoard`'s pair is the input on
 which the deleted Rust oracle SWAPPED two pieces, and `blockBoard`'s move is the one on which it
-OVERWROTE a stationary piece. Both are pinned here against the ruleset's answer. -/
+OVERWROTE a stationary piece. Both are pinned against the ruleset's answer.
+
+⚑ **THE TEETH NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and the 52 `#guard` wire pins that used to
+run at elaboration here made every game-fixture regression a hard failure of every Rust proving
+target. The witness BOARDS stay here; the EVALUATION — each pin as a NAMED theorem per
+GUARD-DISCIPLINE, `native_decide` + `#assert_compiled` — lives in `AutomataflFFIFixtures.lean`,
+rooted in the central guard library: a plain `lake build` still runs every pin, and a stale
+fixture reds the guard library instead of the archive. Every pinned expression here mentions
+only PUBLIC names, so the pins moved verbatim. -/
 
 /-- The Lean `Automatafl.lean` §8 demo board: automaton at (2,2), a lone attractor at (2,4). -/
 def demoBoard : Board := mkBoard 5 [(⟨2, 4⟩, Particle.attractor)] ⟨2, 2⟩
@@ -563,176 +572,10 @@ repulsor stands that nobody moves. The inclusive path check blocks the move. -/
 def blockBoard : Board :=
   mkBoard 5 [(⟨0, 0⟩, Particle.attractor), (⟨0, 3⟩, Particle.repulsor)] ⟨4, 4⟩
 
--- The codec round-trips a real board: decode ∘ encode is the identity on the wire.
-#guard rulesFFI ("mid " ++ encodeBoard demoBoard ++ " 0 0") == "1 " ++ encodeBoard demoBoard
-#guard rulesFFI ("mid " ++ encodeBoard stockTwoPlayer ++ " 0 0") == "1 " ++ encodeBoard stockTwoPlayer
-
--- The stock board is the 11×11 two-player opening, automaton dead centre at (5,5).
-#guard rulesFFI "stock" ==
-  "1 11 " ++
-  "11001110011" ++   -- y = 0   `rroorrroorr`
-  "00021112000" ++   -- y = 1   `oooarrraooo`
-  "00000000000" ++
-  "00000000000" ++
-  "22000000022" ++   -- y = 4   `aaoooooooaa`
-  "11000300011" ++   -- y = 5   `rrooodooorr` — the automaton dead centre
-  "22000000022" ++   -- y = 6
-  "00000000000" ++
-  "00000000000" ++
-  "00021112000" ++   -- y = 9
-  "11001110011" ++   -- y = 10
-  " 5 5 1"
-
--- The stock two-player goals: seat 0 owns the `y = 0` corners, seat 1 the `y = 10` corners.
-#guard rulesFFI "goals 11" == "1 4 0 0 0 10 0 0 0 10 1 10 10 1"
-
--- §8's demo step: the automaton walks one square toward the attractor, (2,2) → (2,3).
-#guard rulesFFI ("step 0 " ++ encodeBoard demoBoard) ==
-  "1 " ++ encodeBoard (mkBoard 5 [(⟨2, 4⟩, Particle.attractor)] ⟨2, 3⟩)
-
--- The whole automaton decision on the demo board: no X decision, a `towardAttractor` at distance 2
--- on Y, offset (0, +1).
-#guard rulesFFI ("sense 0 " ++ encodeBoard demoBoard) == "1 0 3 0 3 2 2 0 3 0 0 0 0 1 1 2 0 0 1"
-
--- ⚑ THE 2-CYCLE. Both pieces stay put — the board is unchanged. (`reference.rs::resolve_mid`
--- performed the SWAP; `resolve_witness.rs` documented the divergence rather than fixing it.)
-#guard rulesFFI ("mid " ++ encodeBoard cycBoard ++ " 0 2 0 0 0 0 1 1 0 1 0 0") ==
-  "1 " ++ encodeBoard cycBoard
-
--- ⚑ THE INCLUSIVE PATH CHECK. A move onto a square held by a piece that nobody moves FAILS, and
--- the mover is replaced at its origin — the board is unchanged. (`reference.rs::occluded` scanned
--- the strict interior only, so the mover overwrote the occupant and DESTROYED it.)
-#guard rulesFFI ("mid " ++ encodeBoard blockBoard ++ " 0 1 0 0 0 0 3") ==
-  "1 " ++ encodeBoard blockBoard
-
--- A plain move executes: the attractor at (0,0) walks to (0,2) on the empty file.
-#guard rulesFFI ("mid " ++ encodeBoard cycBoard ++ " 0 1 0 0 1 0 3") ==
-  "1 " ++ encodeBoard (mkBoard 5 [(⟨0, 3⟩, Particle.repulsor),
-                                  (⟨0, 0⟩, Particle.attractor)] ⟨4, 4⟩)
-
--- ⚑ RULING (D): the automaton square is banned as a move SOURCE ONLY. Naming it as a DESTINATION
--- is LEGAL to propose (and then fails to execute, above). `reference.rs::move_valid` banned both
--- endpoints — `logic/src/game.rs`'s reading, not the README's.
-#guard rulesFFI ("legal " ++ encodeBoard cycBoard ++ " 0 0 4 4 0 4") == "1 0"
-#guard rulesFFI ("legal " ++ encodeBoard cycBoard ++ " 0 0 0 0 4 0") == "1 1"
--- A marked coordinate is illegal at EITHER endpoint, for everyone.
-#guard rulesFFI ("legal " ++ encodeBoard cycBoard ++ " 1 0 2 0 0 0 0 2") == "1 0"
-#guard rulesFFI ("legal " ++ encodeBoard cycBoard ++ " 1 0 2 0 0 0 0 4") == "1 1"
--- The three plain illegalities: `from == to`, off-axis, out of bounds.
-#guard rulesFFI ("legal " ++ encodeBoard cycBoard ++ " 0 0 0 0 0 0") == "1 0"
-#guard rulesFFI ("legal " ++ encodeBoard cycBoard ++ " 0 0 0 0 1 3") == "1 0"
-#guard rulesFFI ("legal " ++ encodeBoard cycBoard ++ " 0 0 0 0 0 9") == "1 0"
--- A NEGATIVE coordinate is illegal, exactly as the OOB sentinel it decodes to.
-#guard rulesFFI ("legal " ++ encodeBoard cycBoard ++ " 0 0 0 0 0 -1") == "1 0"
-
--- The LEGAL TARGETS of (0,0) on the 5x5 board: the rest of row 0 and the rest of column 0 — the rook
--- line, minus the source itself. (0,1) holds a repulsor and stays legal to NAME: blocking is
--- resolution's job, not legality's (ruling D / clause 3.2).
-#guard rulesFFI ("targets " ++ encodeBoard cycBoard ++ " 0 0 0 0") ==
-  "1 8 1 0 2 0 3 0 4 0 0 1 0 2 0 3 0 4"
--- From the automaton's own square nothing is legal (it is banned as a SOURCE).
-#guard rulesFFI ("targets " ++ encodeBoard cycBoard ++ " 0 0 4 4") == "1 0"
-
-/-! ### `livetargets` — the destinations that would EXECUTE
-
-⚑ These are the teeth for the wound the guard directly above DOCUMENTS: `targets` from `(0,0)` on
-`cycBoard` includes `(0,1)` — where a repulsor stands — and `(0,2)`/`(0,3)`/`(0,4)` BEHIND it, and it
-is right to, because naming an occupied square is a legal proposal. A surface reading that set as
-"squares you can move to" lights straight through the blocker, which is what
-`dregg-automatafl/src/surface.rs` painted until this verb existed. -/
--- The same source, the same board, the EXECUTABLE half: the empty row-0 rook line only. The four
--- column-0 squares are gone — `(0,1)` is the repulsor's own square (a destination-inclusive block)
--- and `(0,2)`/`(0,3)`/`(0,4)` sit behind it.
-#guard rulesFFI ("livetargets " ++ encodeBoard cycBoard ++ " 0 0 0 0 0") ==
-  "1 4 1 0 2 0 3 0 4 0"
--- ⚑ CONDITIONAL, NOT ABSOLUTE. Hand the SAME question the fact that seat 1 is moving the repulsor
--- off `(0,1)`: a mover's source is PASSABLE, so all eight proposable squares become live — including
--- `(0,1)` itself, which empties. The two sets COINCIDE here, which is exactly why the surface may
--- not treat "blocked" as "illegal".
-#guard rulesFFI ("livetargets " ++ encodeBoard cycBoard ++ " 0 1 1 0 1 2 1 0 0 0") ==
-  rulesFFI ("targets " ++ encodeBoard cycBoard ++ " 0 0 0 0")
--- From the automaton's own square nothing executes either (nothing is even proposable).
-#guard rulesFFI ("livetargets " ++ encodeBoard cycBoard ++ " 0 0 0 4 4") == "1 0"
--- Fail-closed on a truncated wire, like every other verb.
-#guard rulesFFI "livetargets" == "0"
-#guard rulesFFI ("livetargets " ++ encodeBoard cycBoard ++ " 0 0 0") == "0"
-
-/-! ⚑ **THE SHIPPED BOARD, AND THE EXACT SQUARES A PLAYER WAS LIED TO ABOUT.**
-
-ember selected the stock opening's attractor at `⟨3,1⟩` on the live 11×11 table and the surface lit
-`⟨3,10⟩` — the far end of the file, BEHIND the attractor standing on `⟨3,9⟩` — plus the whole of row
-1 behind the three repulsors at `⟨4,1⟩`/`⟨5,1⟩`/`⟨6,1⟩`. Nine of the twenty painted squares could not
-have executed. Both polarities are pinned so neither half can regress into the other. -/
-#guard (targetsOf stockTwoPlayer [] 0 ⟨3, 1⟩).length == 20
-#guard (liveTargetsOf stockTwoPlayer [] [] 0 ⟨3, 1⟩).length == 11
--- PROPOSABLE, and it must stay so — the ruleset lets you name it.
-#guard (targetsOf stockTwoPlayer [] 0 ⟨3, 1⟩).contains ⟨3, 10⟩
-#guard (targetsOf stockTwoPlayer [] 0 ⟨3, 1⟩).contains ⟨8, 1⟩
--- NOT LIVE — the two squares from the screenshot, by name.
-#guard !((liveTargetsOf stockTwoPlayer [] [] 0 ⟨3, 1⟩).contains ⟨3, 10⟩)
-#guard !((liveTargetsOf stockTwoPlayer [] [] 0 ⟨3, 1⟩).contains ⟨8, 1⟩)
--- NON-VACUOUS: the ray does reach `⟨3,8⟩`, the square in FRONT of the blocker, so the live set is a
--- real rook line and not an empty one.
-#guard (liveTargetsOf stockTwoPlayer [] [] 0 ⟨3, 1⟩).contains ⟨3, 8⟩
--- And the whole live set, in the wire's own row-major order.
-#guard rulesFFI ("livetargets " ++ encodeBoard stockTwoPlayer ++ " 0 0 0 3 1") ==
-  "1 11 3 0 0 1 1 1 2 1 3 2 3 3 3 4 3 5 3 6 3 7 3 8"
-
--- A FORK (one source, two destinations) is a conflict on that source; a clean round has none.
-#guard rulesFFI ("clash " ++ encodeBoard cycBoard ++ " 0 2 0 0 0 0 3 1 0 0 3 0") == "1 1 0 0"
-#guard rulesFFI ("clash " ++ encodeBoard cycBoard ++ " 0 1 0 0 1 0 3") == "1 0"
-
--- `round` on a clean round RESOLVES to the same board `mid`/`step` compose to, with no win.
-#guard rulesFFI ("round 0 " ++ encodeBoard cycBoard ++ " 0 0 0 2 0 1 1 0 0 1 0 3") ==
-  "1 R -1 " ++ encodeBoard (mkBoard 5 [(⟨0, 3⟩, Particle.repulsor),
-                                       (⟨0, 0⟩, Particle.attractor)] ⟨4, 4⟩)
--- A conflicted round comes back AGAIN, with the contested coordinate marked and its seat re-entered.
-#guard rulesFFI ("round 0 " ++ encodeBoard cycBoard ++ " 0 0 0 2 0 1 2 0 0 0 0 3 1 0 0 3 0") ==
-  "1 A 1 0 0 0 2 0 1"
-
--- Fail-closed: no verb, an unknown verb, a truncated board, a lying cell count.
-#guard rulesFFI "" == "0"
-#guard rulesFFI "bogus" == "0"
-#guard rulesFFI "mid 5" == "0"
-#guard rulesFFI "mid 5 000 0 0 1 0 0" == "0"
-#guard rulesFFI "step 7 5 0000000000000000000000000 4 4 1" == "0"
-
-/-! ### `adjudicate` — the capped match's terminal rule
-
-The stock opening is a GENUINE draw, not an accident of the encoding: the automaton starts at `⟨5,5⟩`,
-seat 0 owns the `y = 0` corners and seat 1 the `y = 10` corners, so on an 11×11 both seats sit exactly
-5 away. The two direct guards below are the anti-vacuity poles — nudge the automaton one row and the
-adjudication actually picks a winner, so `-1` above is a verdict rather than a stuck default. -/
-#guard rulesFFI ("adjudicate " ++ encodeBoard stockTwoPlayer ++ " " ++ encodeGoals (stockGoals2 11))
-  == "1 -1"
-#guard adjudicateCapped ⟨5, 4⟩ (stockGoals2 11) == some 0
-#guard adjudicateCapped ⟨5, 6⟩ (stockGoals2 11) == some 1
--- A malformed `adjudicate` wire fails CLOSED, like every other verb.
-#guard rulesFFI "adjudicate" == "0"
-#guard rulesFFI "adjudicate 5" == "0"
-
-/-! ### `dist` — the two numbers behind the verdict
-
-The played surface shows a THREAT reading per seat ("N steps from a goal"). These guards pin it to
-`goalDistance`, so the number on screen is the one `adjudicateCapped` actually compares and the one
-`adjudicate_sound` is a theorem about.
-
-Non-vacuity is the point of the three poles: the stock opening is 10/10 with a `-1` verdict (a dead
-heat, matching `stock_opening_adjudicates_draw`), and the two nudged boards report DIFFERENT numbers
-with a decisive verdict — so a reader can see that the pair moves, and moves together. `⟨10,2⟩` is
-the position the play harness actually froze on (`adjudicate_decisive_witness`): 2 from seat 0's
-`⟨10,0⟩`, 8 from seat 1's `⟨10,10⟩`. -/
-#guard rulesFFI ("dist " ++ encodeBoard stockTwoPlayer ++ " " ++ encodeGoals (stockGoals2 11))
-  == "1 10 10 -1"
-#guard rulesFFI ("dist " ++ encodeBoard (mkBoard 11 [] ⟨10, 2⟩) ++ " " ++
-  encodeGoals (stockGoals2 11)) == "1 2 8 0"
-#guard rulesFFI ("dist " ++ encodeBoard (mkBoard 11 [] ⟨3, 8⟩) ++ " " ++
-  encodeGoals (stockGoals2 11)) == "1 11 5 1"
--- A seat that owns NO corner reports `-1` rather than `0`: an unseated player is not adjacent to a
--- goal, and `adjudicate` hands the match to the seat that does own one (`adjudicate_seated`).
-#guard rulesFFI ("dist " ++ encodeBoard (mkBoard 11 [] ⟨5, 5⟩) ++ " 1 0 0 0") == "1 10 -1 0"
--- Fail-closed, like every other verb.
-#guard rulesFFI "dist" == "0"
-#guard rulesFFI "dist 5" == "0"
+-- The 52 pins — codec round-trips, the stock board and goals, `step`/`sense`, the 2-cycle and
+-- inclusive-path answers, ruling (D) legality, `targets`/`livetargets` (both polarities of the
+-- shipped-board lie), `clash`/`round`, `adjudicate`/`dist`, and every fail-closed refusal —
+-- live as named theorems in `AutomataflFFIFixtures.lean`, with the section narratives beside
+-- the pins they justify.
 
 end Dregg2.Games.AutomataflFFI

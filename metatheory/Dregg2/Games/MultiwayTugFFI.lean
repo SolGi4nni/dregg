@@ -118,14 +118,15 @@ i.e. re-implement the precedence in Rust, which is the exact twin this module ex
 ## Faithfulness of the codec
 
 Mirroring the automatafl codec: the ALPHABET-level inverse is a theorem (`cardOf?_digitOf`), and the
-composite round-trips are pinned by `#guard` on real states (§5) rather than by a general
-`parse ∘ encode = id` induction. That is the same strength of claim, said the same way.
+composite round-trips are pinned on real states — as named theorems in `MultiwayTugFFIFixtures.lean`
+(§7) — rather than by a general `parse ∘ encode = id` induction. That is the same strength of claim,
+said the same way.
 
 ## Import discipline
 
 Imports only `Dregg2.Games.MultiwayTug`. The module sits OUTSIDE the `Dregg2.FFI` boundary closure
-(like the automatafl oracle), so `lean_init.c` initializes it explicitly — `charm` and the `#guard`
-witnesses read module globals, so its initializer must have run before the first call.
+(like the automatafl oracle), so `lean_init.c` initializes it explicitly — `charm` and the §7
+witness states read module globals, so its initializer must have run before the first call.
 -/
 
 namespace Dregg2.Games.MultiwayTugFFI
@@ -398,7 +399,7 @@ def controlTok : Option Player → String
   | some .p2 => "2"
 
 /-- A full round's committed turn count: 8 action-turns + 4 responses (`MultiwayTug`'s
-`#guard (8 + 4 : ℕ) = 12`). -/
+`full_round_is_twelve_turns`, pinned in `MultiwayTugFixtures`). -/
 def roundTurns : Nat := 8 + 4
 
 /-! ## §6 — verb dispatch -/
@@ -510,10 +511,23 @@ surface reports is COMPUTED HERE, by `Dregg2.Games.MultiwayTug`. -/
 @[export dregg_multiway_tug_rules]
 def rulesFFI (s : String) : String := rulesWire s
 
-/-! ## §7 — teeth (`#guard` FAILS the build on regression)
+/-! ## §7 — teeth (named pins in `MultiwayTugFFIFixtures` FAIL the build on regression)
 
 The states below are the MODEL's OWN witnesses (`demo`, `undecidedState`, `winState`, `blankState`),
-so a tooth here is pinned to the same object the theorems are about. -/
+so a tooth is pinned to the same object the theorems are about.
+
+⚑ **THE TEETH NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and the 60 `#guard` wire pins that used to
+run at elaboration here made every game-fixture regression a hard failure of every Rust proving
+target. The witness STATES stay here; the EVALUATION — each pin as a NAMED theorem per
+GUARD-DISCIPLINE, `native_decide` + `#assert_compiled` — lives in
+`MultiwayTugFFIFixtures.lean`, rooted in the central guard library: a plain `lake build` still
+runs every pin, and a stale fixture reds the guard library instead of the archive. Every pinned
+expression here mentions only PUBLIC names, so the pins moved verbatim — the influence table,
+the codec round-trips, the anti-self-deal tooth and interlock, `kinds`, the split table,
+conservation, control/score/won/winner, the CLAUSE (`branch`), the ⚑⚑ provenance tooth
+(`undecidedState`), the deepest branch (`rowTieState`), and every fail-closed refusal — with
+the section narratives beside the pins they justify. -/
 
 /-- A sub-threshold round where the charm TIES and only the ROW COUNT separates the seats: p1 holds
 row `6` (charm `5`, one row), p2 holds rows `0` and `4` (charm `2 + 3 = 5`, two rows). This reaches
@@ -524,119 +538,6 @@ def rowTieState : GState :=
 
 /-- The pending-Gift position: p1 has cut rows `3 3 5` out of `demo`'s hand. -/
 def demoCut : GState := applyAction demo .p1 (Action.offerGift 3 3 5)
-
--- The influence table is the model's, and the round is twelve committed turns.
-#guard rulesFFI "charm" == "1 7 2 2 2 3 3 4 5"
-#guard rulesFFI "turns" == "1 12"
-
--- The state codec round-trips the model's own witnesses: `act` with an ILLEGAL action is a
--- fail-closed NO-OP, so its reply is the encoding of the input state.
-#guard rulesFFI ("act " ++ encodeState demo ++ " 1 0 4") == "1 " ++ encodeState demo
-#guard rulesFFI ("act " ++ encodeState blankState ++ " 0 0 4") == "1 " ++ encodeState blankState
--- ... and `demo`'s own `#guard`: a card not in hand is a no-op.
-#guard rulesFFI ("act " ++ encodeState demo ++ " 0 0 4") == "1 " ++ encodeState demo
-
--- P1's Gift of `3 3 5` is LEGAL from `demo` (the model's first `#guard`), and executing it puts
--- the offer in escrow with the seat passed to P2.
-#guard rulesFFI ("legal " ++ encodeState demo ++ " 0 2 3 3 5") == "1 1"
-#guard rulesFFI ("act " ++ encodeState demo ++ " 0 2 3 3 5") == "1 " ++ encodeState demoCut
-
--- ⚑ THE ANTI-SELF-DEAL TOOTH. The cutter cannot answer their own cut; the other seat can.
-#guard rulesFFI ("legalresp " ++ encodeState demoCut ++ " 0 0 0") == "1 0"
-#guard rulesFFI ("legalresp " ++ encodeState demoCut ++ " 1 0 0") == "1 1"
--- THE INTERLOCK: while the offer stands, no ACTION is legal for either seat.
-#guard rulesFFI ("legal " ++ encodeState demoCut ++ " 1 0 1") == "1 0"
-#guard rulesFFI ("legal " ++ encodeState demoCut ++ " 0 0 3") == "1 0"
--- A response with nothing on the table is refused.
-#guard rulesFFI ("legalresp " ++ encodeState demo ++ " 0 0 0") == "1 0"
--- A SHAPE-MISMATCHED response (a comp answer to a gift offer) is refused.
-#guard rulesFFI ("legalresp " ++ encodeState demoCut ++ " 1 1 0") == "1 0"
-
--- `kinds` before and during the offer: all four open for the seat to move, none for the other;
--- during the offer NO kind is open and only the non-proposer's response is.
-#guard rulesFFI ("kinds " ++ encodeState demo ++ " 0") == "1 1 1 1 1 0"
-#guard rulesFFI ("kinds " ++ encodeState demo ++ " 1") == "1 0 0 0 0 0"
-#guard rulesFFI ("kinds " ++ encodeState demoCut ++ " 0") == "1 0 0 0 0 0"
-#guard rulesFFI ("kinds " ++ encodeState demoCut ++ " 1") == "1 0 0 0 0 1"
-
--- THE SPLIT TABLE (`takerShare` / `cutterShare`): the taker takes ONE of a gift's three, the
--- cutter keeps the other two; on a competition the taker takes a PAIR.
-#guard rulesFFI "split 1 0 6 0 2 0 0" == "1 6 02"
-#guard rulesFFI "split 1 0 6 0 2 0 1" == "1 0 26"
-#guard rulesFFI "split 1 0 6 0 2 0 2" == "1 2 06"
-#guard rulesFFI "split 2 0 6 5 1 0 1 0" == "1 56 01"
-#guard rulesFFI "split 2 0 6 5 1 0 1 1" == "1 01 56"
--- A pick that does not exist on the shape REFUSES (fail-closed, not "share nothing").
-#guard rulesFFI "split 1 0 6 0 2 0 3" == "0"
-#guard rulesFFI "split 2 0 6 5 1 0 1 2" == "0"
-
--- CONSERVATION over the cut and the answer: the total multiset is invariant (`conservation_move`).
-#guard rulesFFI ("total " ++ encodeState demo) == rulesFFI ("total " ++ encodeState demoCut)
-#guard rulesFFI ("total " ++ encodeState (applyResponse demoCut .p2 (Response.gift 0)))
-  == rulesFFI ("total " ++ encodeState demo)
-
--- THE SECRET IS SCORED (`secret_is_scored`): a card in the secret pile counts toward its row.
-#guard rulesFFI ("count " ++ encodeState { blankState with
-    secret := fun p => if p = .p1 then ({4} : Multiset Geisha) else 0 } ++ " 0 4") == "1 1"
-#guard rulesFFI ("control " ++ encodeState { blankState with
-    secret := fun p => if p = .p1 then ({4} : Multiset Geisha) else 0 }) == "1 7 0 0 0 0 1 0 0"
-
--- CONTROL goes to whoever placed MORE; an exact tie leaves the row UNCONTROLLED.
-#guard rulesFFI ("control " ++ encodeState winState) == "1 7 0 0 0 1 0 1 1"
-#guard rulesFFI ("control " ++ encodeState blankState) == "1 7 0 0 0 0 0 0 0"
-
--- A THRESHOLD win, where the two objects AGREE: `winState` is p1 at 12 charm on 3 rows.
-#guard rulesFFI ("score " ++ encodeState winState) == "1 12 3 0 0"
-#guard rulesFFI ("won " ++ encodeState winState ++ " 0") == "1 1"
-#guard rulesFFI ("winner " ++ encodeState winState) == "1 1"
--- A GENUINE dead heat is a draw.
-#guard rulesFFI ("winner " ++ encodeState blankState) == "1 0"
-
--- ⚑ THE CLAUSE, which is what a deployed scoring turn must name. `winState` fires clause 0
--- (charm threshold, p1); `blankState` clause 8 (dead heat); `undecidedState` clause 4 (charm LEAD,
--- p1 — no threshold cleared); `rowTieState` clause 7 (charm tied, ROW lead, p2). Clauses 4 and 7
--- are precisely the ones the deleted Rust could not reach. `straddleState` is the case where BOTH
--- seats are `Won` — the precedence, not exclusivity, decides it (clause 0, p1 on charm).
-#guard rulesFFI ("branch " ++ encodeState winState) == "1 0 1"
-#guard rulesFFI ("branch " ++ encodeState blankState) == "1 8 0"
-#guard rulesFFI ("branch " ++ encodeState undecidedState) == "1 4 1"
-#guard rulesFFI ("branch " ++ encodeState rowTieState) == "1 7 2"
-#guard rulesFFI ("branch " ++ encodeState straddleState) == "1 0 1"
--- A malformed `branch` wire REFUSES like every other verb.
-#guard rulesFFI "branch" == "0"
-#guard rulesFFI ("branch " ++ encodeState blankState ++ " 0") == "0"
-
--- ⚑⚑ THE PROVENANCE TOOTH — `undecidedState`, the round the Rust twin THREW AWAY.
--- p1 holds rows 5,6 (charm 9, two rows); p2 holds row 3 (charm 3, one row). NEITHER seat clears a
--- threshold, so `won` is 0 for BOTH (`undecidedState_not_Won`) — and yet the round HAS a winner
--- (`undecidedState_adjudicates`: `roundWinner = some .p1`). `reference.rs::winner_of` is
--- `roundWinner` truncated to its four threshold branches, so it answers "no winner" here. The
--- `won` 0/0 beside the `winner` 1 is what makes a pass evidence about WHICH OBJECT ANSWERED.
-#guard rulesFFI ("score " ++ encodeState undecidedState) == "1 9 2 3 1"
-#guard rulesFFI ("won " ++ encodeState undecidedState ++ " 0") == "1 0"
-#guard rulesFFI ("won " ++ encodeState undecidedState ++ " 1") == "1 0"
-#guard rulesFFI ("winner " ++ encodeState undecidedState) == "1 1"
-
--- ⚑⚑ THE DEEPEST BRANCH — charm TIES 5-5 and the ROW COUNT decides, for p2. The truncated Rust
--- cannot reach this answer by any input: it has no charm tie-break and no row tie-break.
-#guard rulesFFI ("score " ++ encodeState rowTieState) == "1 5 1 5 2"
-#guard rulesFFI ("won " ++ encodeState rowTieState ++ " 0") == "1 0"
-#guard rulesFFI ("won " ++ encodeState rowTieState ++ " 1") == "1 0"
-#guard rulesFFI ("winner " ++ encodeState rowTieState) == "1 2"
-
--- Fail-closed: no verb, an unknown verb, a truncated state, a bad card digit, a non-digit card,
--- a malformed used-flag field, a trailing token where the grammar ends.
-#guard rulesFFI "" == "0"
-#guard rulesFFI "bogus" == "0"
-#guard rulesFFI "winner" == "0"
-#guard rulesFFI "winner - - - -" == "0"
-#guard rulesFFI ("winner " ++ encodeState blankState ++ " 7") == "0"
-#guard rulesFFI "winner - - 7 - - - - - - - 0000 0000 0 0 0" == "0"
-#guard rulesFFI "winner - - x - - - - - - - 0000 0000 0 0 0" == "0"
-#guard rulesFFI "winner - - - - - - - - - - 0002 0000 0 0 0" == "0"
-#guard rulesFFI "winner - - - - - - - - - - 0000 0000 0 2 0" == "0"
-#guard rulesFFI ("legal " ++ encodeState demo ++ " 0 2 3 3") == "0"
-#guard rulesFFI ("legal " ++ encodeState demo ++ " 0 9 3 3 5") == "0"
 
 /-! ## §8 — axiom hygiene for this module's own claims -/
 

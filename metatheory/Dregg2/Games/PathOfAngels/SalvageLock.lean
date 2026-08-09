@@ -189,42 +189,55 @@ def realizedMatchings : List (List (Fin 6)) :=
 def realizedBoards : List (List (Fin 3)) :=
   ((List.finRange SEED_SPACE).map boardRow).eraseDups
 
+/-! ⚑ **THE SEED-SPACE ENUMERATIONS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This
+module is in the `Dregg2.FFI` closure — the crypto archive's build root — and the four
+`native_decide` pins below enumerate 6^6 partner rows, 3^6 glyph rows and all 90 seeds at
+elaboration, so any change to the seed space was a hard failure of every Rust proving target in
+the workspace (the compilation-unit coupling the stale-fixture outage measured). The pins'
+STATEMENTS stay here as evaluation-free `check_* : Bool` definitions (a `def` body elaborates
+without running), beside the domains they compare. The EVALUATION — each `check_* = true`,
+pinned by `native_decide` + `#assert_compiled` — lives in `SalvageLockFixtures.lean`, rooted in
+the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a degenerate
+seed space reds the guard library instead of the archive.
+
+Named residue: NONE — nothing here demands a proof as data, so all four pins moved. -/
+
 /-- Six plates admit exactly 15 perfect matchings; every seed names one of them, and
 every one of them is named by some seed.  This is the statement the old board failed:
-its 3 seeds named ONE matching. -/
-theorem seed_space_realizes_every_perfect_matching :
-    (allMatchings.length == 15 &&
-      realizedMatchings.length == 15 &&
-      realizedMatchings.all isPerfectMatchingB &&
-      allMatchings.all (fun m => realizedMatchings.contains m)) = true := by
-  native_decide
+its 3 seeds named ONE matching.
+(Pinned `= true` in `SalvageLockFixtures`.) -/
+def check_seed_space_realizes_every_perfect_matching : Bool :=
+  allMatchings.length == 15 &&
+  realizedMatchings.length == 15 &&
+  realizedMatchings.all isPerfectMatchingB &&
+  allMatchings.all (fun m => realizedMatchings.contains m)
 
 /-- The 90 seeds name 90 distinct boards, and those are exactly the boards carrying
 two copies of each glyph: the seed-to-board map is a bijection onto them, so the
-seed space is neither degenerate nor redundant. -/
-theorem seed_space_is_exactly_the_two_of_each_boards :
-    (allBoards.length == SEED_SPACE &&
-      realizedBoards.length == SEED_SPACE &&
-      allBoards.all (fun b => realizedBoards.contains b)) = true := by
-  native_decide
+seed space is neither degenerate nor redundant.
+(Pinned `= true` in `SalvageLockFixtures`.) -/
+def check_seed_space_is_exactly_the_two_of_each_boards : Bool :=
+  allBoards.length == SEED_SPACE &&
+  realizedBoards.length == SEED_SPACE &&
+  allBoards.all (fun b => realizedBoards.contains b)
 
 /-- Six seeds share each matching — the 3! relabellings of its pairs — so a glyph
 name carries no information about the pairing beyond agreement with a glyph already
 seen.  A canonical labelling would leak: "this plate shows glyph 0" would mean "this
-plate is plate 0's partner". -/
-theorem every_matching_has_all_six_labellings :
-    (realizedMatchings.all fun m =>
-      ((List.finRange SEED_SPACE).filter (fun s => partnerRow s == m)).length == 6) = true := by
-  native_decide
+plate is plate 0's partner".
+(Pinned `= true` in `SalvageLockFixtures`.) -/
+def check_every_matching_has_all_six_labellings : Bool :=
+  realizedMatchings.all fun m =>
+    ((List.finRange SEED_SPACE).filter (fun s => partnerRow s == m)).length == 6
 
 def glyphPopulation (seed : Fin SEED_SPACE) (glyph : Fin 3) : Nat :=
   (allSlots.filter (fun slot => glyphAt seed slot = glyph)).length
 
-/-- Generated boards contain exactly two of each glyph, for every seed. -/
-theorem glyph_population_two :
-    ((List.finRange SEED_SPACE).all fun seed =>
-      (List.finRange 3).all fun glyph => glyphPopulation seed glyph == 2) = true := by
-  native_decide
+/-- Generated boards contain exactly two of each glyph, for every seed.
+(Pinned `= true` in `SalvageLockFixtures`.) -/
+def check_glyph_population_two : Bool :=
+  (List.finRange SEED_SPACE).all fun seed =>
+    (List.finRange 3).all fun glyph => glyphPopulation seed glyph == 2
 
 structure Config where
   seed : Fin SEED_SPACE
@@ -515,10 +528,8 @@ theorem judge_receipt_binds_transcript (cfg : Config) (before : WorldState) (ctx
     run.receipt.transcriptDigest = transcriptDigest actions := by
   exact (judge_some_sound cfg before ctx actions h).2.2.2.2
 
-#assert_compiled seed_space_realizes_every_perfect_matching
-#assert_compiled seed_space_is_exactly_the_two_of_each_boards
-#assert_compiled every_matching_has_all_six_labellings
-#assert_compiled glyph_population_two
+-- The four seed-space pins (`native_decide` + `#assert_compiled`) live in
+-- `SalvageLockFixtures.lean`, rooted in `PathOfAngelsGuards` — see the note above them.
 #assert_axioms exposed_population_le_one
 #assert_axioms step_deterministic
 #assert_axioms step_some_turns

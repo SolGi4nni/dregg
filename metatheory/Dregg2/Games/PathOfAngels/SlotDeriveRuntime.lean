@@ -360,11 +360,24 @@ theorem derive_satisfies_admission {request : Request} {reply : Reply}
 
 /-! ## Concrete requests, and why these are compiled pins
 
-Each theorem below names a real digest, so `decide`-style reduction would have to run
+Each fixture below names a real digest, so `decide`-style reduction would have to run
 the Poseidon2 permutation in the kernel, which does not terminate at any useful size.
-They are `native_decide` and pinned with `#assert_compiled`.  What they buy is that the
-general statements above are not vacuous over an empty accepted set: the wire really
-does decode, the derivation really does run, and the refusals really are reachable. -/
+The pins are `native_decide` and pinned with `#assert_compiled`.  What they buy is that
+the general statements above are not vacuous over an empty accepted set: the wire really
+does decode, the derivation really does run, and the refusals really are reachable.
+
+⚑ **THE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the thirteen `native_decide`
+pins below ran at elaboration, so a stale derivation fixture was a hard failure of every
+Rust proving target in the workspace (the compilation-unit coupling the stale-fixture
+outage measured). The pins' STATEMENTS stay here, each as an evaluation-free
+`check_* : Bool` definition (a `def` body elaborates without running).  The EVALUATION —
+each `check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`SlotDeriveRuntimeFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Named residue: NONE — no construction here demands a proof as data. -/
 
 private def hexDigest (hex : String) : Digest32 :=
   (Emit.parseBytes32Hex? hex).getD ⟨List.replicate 32 0, by simp⟩
@@ -392,56 +405,56 @@ def fixtureRequest : Request where
 
 def fixtureRequestBytes : String := fixtureRequest.toJson
 
-theorem fixture_request_roundtrips :
-    decodeRequest fixtureRequestBytes = some fixtureRequest := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_request_roundtrips : Bool :=
+  decide (decodeRequest fixtureRequestBytes = some fixtureRequest)
 
 /-- ⚑ **THE FIXTURE REQUEST DRAWS.**  `derive?` is partial now, so every pin below is a
 statement about a `some`; without this one they could all be satisfied by a refusal and
-the whole compiled suite would read green against an export that answers nothing. -/
-theorem fixture_derives : (derive? fixtureRequest).isSome = true := by
-  native_decide
+the whole compiled suite would read green against an export that answers nothing.
+(Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_derives : Bool := (derive? fixtureRequest).isSome
 
-/-- The export answers, and its answer is the canonical reply it would have written. -/
-theorem fixture_export_answers :
-    some (slotDeriveFFI fixtureRequestBytes) = (derive? fixtureRequest).map Reply.toJson := by
-  native_decide
+/-- The export answers, and its answer is the canonical reply it would have written.
+(Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_export_answers : Bool :=
+  decide (some (slotDeriveFFI fixtureRequestBytes) = (derive? fixtureRequest).map Reply.toJson)
 
-/-- The answer is non-empty, so the refusal sentinel is unambiguous on this wire. -/
-theorem fixture_export_is_not_the_refusal :
-    slotDeriveFFI fixtureRequestBytes ≠ "" := by
-  native_decide
+/-- The answer is non-empty, so the refusal sentinel is unambiguous on this wire.
+(Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_export_is_not_the_refusal : Bool :=
+  decide (slotDeriveFFI fixtureRequestBytes ≠ "")
 
-theorem fixture_reply_is_canonical_and_states_the_format :
-    ((derive? fixtureRequest).map Reply.toJson).any
-      (fun j => j.startsWith ("{\"format\":\"" ++ OUTPUT_FORMAT ++ "\"")) = true := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_reply_is_canonical_and_states_the_format : Bool :=
+  ((derive? fixtureRequest).map Reply.toJson).any
+    (fun j => j.startsWith ("{\"format\":\"" ++ OUTPUT_FORMAT ++ "\""))
 
 /-- ⚠ The reply does not echo the secret.  A one-instance check, and it is exactly one:
 the general statement is that `Reply` has no secret FIELD, which is a type-level fact
-visible above, not a theorem. -/
-theorem fixture_reply_does_not_carry_the_secret :
-    ((derive? fixtureRequest).map
-      (fun r => (r.toJson.splitOn FIXTURE_SECRET_HEX).length)) = some 1 := by
-  native_decide
+visible above, not a theorem. (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_reply_does_not_carry_the_secret : Bool :=
+  decide (((derive? fixtureRequest).map
+    (fun r => (r.toJson.splitOn FIXTURE_SECRET_HEX).length)) = some 1)
 
-theorem fixture_trailing_byte_refused :
-    slotDeriveFFI (fixtureRequestBytes ++ "\n") = "" := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_trailing_byte_refused : Bool :=
+  decide (slotDeriveFFI (fixtureRequestBytes ++ "\n") = "")
 
-theorem fixture_unknown_field_refused :
-    slotDeriveFFI (fixtureRequestBytes.replace "\"slot\":9" "\"slot\":9,\"extra\":0") = "" := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_unknown_field_refused : Bool :=
+  decide (slotDeriveFFI
+    (fixtureRequestBytes.replace "\"slot\":9" "\"slot\":9,\"extra\":0") = "")
 
-theorem fixture_uppercase_digest_refused :
-    slotDeriveFFI
-      (fixtureRequestBytes.replace FIXTURE_FEDERATION_HEX
-        (String.toUpper FIXTURE_FEDERATION_HEX)) = "" := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_uppercase_digest_refused : Bool :=
+  decide (slotDeriveFFI
+    (fixtureRequestBytes.replace FIXTURE_FEDERATION_HEX
+      (String.toUpper FIXTURE_FEDERATION_HEX)) = "")
 
-theorem fixture_wrong_format_refused :
-    slotDeriveFFI (fixtureRequestBytes.replace INPUT_FORMAT "POA-SLOT-DERIVE-2") = "" := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_wrong_format_refused : Bool :=
+  decide (slotDeriveFFI (fixtureRequestBytes.replace INPUT_FORMAT "POA-SLOT-DERIVE-2") = "")
 
 /-- Key ORDER is pinned by the seal, not merely key membership: the same eight fields
 in a different order re-encode to different bytes and are refused. -/
@@ -454,8 +467,9 @@ def transposedRequestBytes : String :=
     ",\"content_session\":" ++ jsonString FIXTURE_SESSION_HEX ++
     ",\"player_key\":" ++ jsonString FIXTURE_PLAYER_HEX ++ "}"
 
-theorem fixture_transposed_keys_refused : slotDeriveFFI transposedRequestBytes = "" := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_transposed_keys_refused : Bool :=
+  decide (slotDeriveFFI transposedRequestBytes = "")
 
 /-- ⚑ A DIFFERENT SECRET DRAWS A DIFFERENT INSTANCE, through the export, on the wire.
 Everything else is held fixed — slot, mission, epoch, federation, session, player — so
@@ -465,12 +479,12 @@ def otherSecretRequest : Request :=
   { fixtureRequest with
     secret := hexDigest "8888888888888888888888888888888888888888888888888888888888888888" }
 
-theorem fixture_other_secret_draws_another_instance :
-    (derive? fixtureRequest).map Reply.runSeed ≠
-        (derive? otherSecretRequest).map Reply.runSeed ∧
-      (derive? fixtureRequest).map Reply.commitment ≠
-        (derive? otherSecretRequest).map Reply.commitment := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_other_secret_draws_another_instance : Bool :=
+  decide ((derive? fixtureRequest).map Reply.runSeed ≠
+      (derive? otherSecretRequest).map Reply.runSeed) &&
+    decide ((derive? fixtureRequest).map Reply.commitment ≠
+      (derive? otherSecretRequest).map Reply.commitment)
 
 /-- The commitment takes no player and no mission, so two players in one slot under one
 secret are shown the SAME commitment and draw DIFFERENT instances. -/
@@ -478,12 +492,12 @@ def otherPlayerRequest : Request :=
   { fixtureRequest with
     playerKey := hexDigest "6666666666666666666666666666666666666666666666666666666666666666" }
 
-theorem fixture_commitment_is_player_independent_but_the_seed_is_not :
-    (derive? fixtureRequest).map Reply.commitment =
-        (derive? otherPlayerRequest).map Reply.commitment ∧
-      (derive? fixtureRequest).map Reply.runSeed ≠
-        (derive? otherPlayerRequest).map Reply.runSeed := by
-  native_decide
+/-- (Pinned `= true` in `SlotDeriveRuntimeFixtures`.) -/
+def check_fixture_commitment_is_player_independent_but_the_seed_is_not : Bool :=
+  decide ((derive? fixtureRequest).map Reply.commitment =
+      (derive? otherPlayerRequest).map Reply.commitment) &&
+    decide ((derive? fixtureRequest).map Reply.runSeed ≠
+      (derive? otherPlayerRequest).map Reply.runSeed)
 
 #assert_axioms decodeRequest_reencodes
 #assert_axioms decodeRequest_accepted_bytes_injective
@@ -495,18 +509,9 @@ theorem fixture_commitment_is_player_independent_but_the_seed_is_not :
 #assert_axioms derive_target_discharges_config_target_eq
 #assert_axioms derive_refuses_a_seed_that_draws_nothing
 #assert_axioms derive_satisfies_admission
-#assert_compiled fixture_derives
-#assert_compiled fixture_request_roundtrips
-#assert_compiled fixture_export_answers
-#assert_compiled fixture_export_is_not_the_refusal
-#assert_compiled fixture_reply_is_canonical_and_states_the_format
-#assert_compiled fixture_reply_does_not_carry_the_secret
-#assert_compiled fixture_trailing_byte_refused
-#assert_compiled fixture_unknown_field_refused
-#assert_compiled fixture_uppercase_digest_refused
-#assert_compiled fixture_wrong_format_refused
-#assert_compiled fixture_transposed_keys_refused
-#assert_compiled fixture_other_secret_draws_another_instance
-#assert_compiled fixture_commitment_is_player_independent_but_the_seed_is_not
+
+-- The thirteen fixture pins (`native_decide` + `#assert_compiled`) live in
+-- `SlotDeriveRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- concrete-requests header above.
 
 end Dregg2.Games.PathOfAngels.SlotDeriveRuntime

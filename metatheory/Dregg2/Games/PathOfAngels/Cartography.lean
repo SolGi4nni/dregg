@@ -699,8 +699,11 @@ structure CommunityMap (config : Config) where
   disputes_normalized : disputedHazards = conflictedHazards hazardClaims
 deriving DecidableEq
 
+/-- The empty aggregate.  ⚠ Its normalization obligation used to be discharged by
+`native_decide` — a compiled evaluation inside the `Dregg2.FFI` closure, for a fact that is
+two rewrites: filtering the empty claim set is empty, and the image of empty is empty. -/
 def CommunityMap.empty (config : Config) : CommunityMap config :=
-  ⟨∅, ∅, ∅, ∅, ∅, by native_decide⟩
+  ⟨∅, ∅, ∅, ∅, ∅, by simp [conflictedHazards]⟩
 
 def CommunityMap.ofRevision {config : Config}
     (revision : MapRevision config) : CommunityMap config :=
@@ -842,7 +845,37 @@ theorem accepted_step_respects_operation_budget
     contradiction
   omega
 
-/-! ## Cooperative and adversarial executable fixture -/
+/-! ## Cooperative and adversarial executable fixture
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured).  The STATEMENTS stay here, each as an
+evaluation-free `check_* : Bool` definition (a `def` body elaborates without running),
+beside the receipts, catalogue and notebooks they are stated over.  The EVALUATION — each
+`check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`CartographyFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Fail-closed convention: where a check needs an accepted judgement as a PREREQUISITE, it
+matches on the `Option` and answers `false` on `none`, and where a def needed a
+`.get (by native_decide)` it now drops the missing element (`filterMap id`) or falls back
+to the un-mutated value — either way the pin goes red rather than the module wedging.
+
+⚠ Named residue, four proofs that CANNOT move:
+
+* `playerA_receipt_exists` / `playerB_receipt_exists` — `receiptA`/`receiptB` are
+  `Option.get`s, and `DeckExpedition.ExtractionReceipt` has a PRIVATE constructor upstream,
+  so no fallback receipt is constructible in this module.  The proof is required as data.
+* `fixture_config_valid` / `reordered_catalogue_config_valid` — `Config` carries its
+  validity proof as data, so constructing the fixture configs at all requires the proof at
+  elaboration.
+
+Breaking any of those four still reds this module (and the archive).  Everything else
+moved.  ⚠ `fixture_config_valid` is also what makes the `filterMap id` above fail-closed:
+a refused observation shortens `fixtureObservations`, and a short catalogue does not
+validate. -/
 
 def digestFilled (value : Fin 256) : Digest32 where
   bytes := List.replicate 32 value
@@ -878,7 +911,12 @@ def expeditionReceipt? (player : Digest32) :
   | some (_, [receipt]) => some receipt
   | _ => none
 
+/-- ⚠ NAMED RESIDUE.  `receiptA` below is `(expeditionReceipt? playerA).get`, and
+`ExtractionReceipt`'s constructor is private to `DeckExpedition`, so this proof is required
+as DATA and there is no fallback receipt this module could name.  See the fixtures header. -/
 theorem playerA_receipt_exists : (expeditionReceipt? playerA).isSome = true := by native_decide
+
+/-- ⚠ NAMED RESIDUE, for the same reason as `playerA_receipt_exists`. -/
 theorem playerB_receipt_exists : (expeditionReceipt? playerB).isSome = true := by native_decide
 
 def receiptA : DeckExpedition.ExtractionReceipt DeckExpedition.fixtureConfig :=
@@ -905,15 +943,22 @@ def allObservationsExistB : Bool :=
   roomObservation?.isSome && connectionA?.isSome && connectionB?.isSome &&
   hazardPresent?.isSome && hazardCleared?.isSome && extractionObservation?.isSome
 
-theorem fixture_receipted_observations_exist : allObservationsExistB = true := by native_decide
+/-- All six receipt-derived observations are accepted by `Observation.ofReceipt?`.
+(Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_receipted_observations_exist : Bool := allObservationsExistB
 
+/-- The six authored observations, in catalogue order.  ⚠ Each element used to be an
+`Option.get (by native_decide)` — six compiled evaluations inside the `Dregg2.FFI` closure.
+`filterMap id` is total and needs none of them, and it is FAIL-CLOSED: a refused
+observation shortens this list, and a short catalogue fails `configValidB`, which
+`fixture_config_valid` still checks here. -/
 def fixtureObservations : List Observation :=
-  [ roomObservation?.get (by native_decide)
-  , connectionA?.get (by native_decide)
-  , connectionB?.get (by native_decide)
-  , hazardPresent?.get (by native_decide)
-  , hazardCleared?.get (by native_decide)
-  , extractionObservation?.get (by native_decide) ]
+  [ roomObservation?
+  , connectionA?
+  , connectionB?
+  , hazardPresent?
+  , hazardCleared?
+  , extractionObservation? ].filterMap id
 
 def fixtureBridge : SourceMapBridge where
   sourceMissionId := DeckExpedition.fixtureMission.missionId
@@ -932,6 +977,9 @@ def fixtureRawConfig : RawConfig where
   observations := fixtureObservations
   operationBudget := 12
 
+/-- ⚠ NAMED RESIDUE.  `Config` carries its validity proof as data, so this must elaborate
+here for `fixtureConfig` to exist at all — and it is what makes `fixtureObservations`'
+`filterMap id` fail-closed.  See the fixtures header. -/
 theorem fixture_config_valid : configValidB fixtureRawConfig = true := by native_decide
 def fixtureConfig : Config := ⟨fixtureRawConfig, fixture_config_valid⟩
 
@@ -987,20 +1035,25 @@ def clearedOnlyActions : List Action :=
 def revisionFor? (actions : List Action) : Option (MapRevision fixtureConfig) := do
   judge fixtureConfig fixtureContext actions
 
-theorem fixture_cooperative_revision_publishes :
-    (revisionFor? cooperativeActions).isSome = true := by native_decide
+/-- The cooperative notebook publishes a revision.
+(Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_cooperative_revision_publishes : Bool :=
+  (revisionFor? cooperativeActions).isSome
 
-theorem fixture_max_player_counter_refuses_publication :
-    judge fixtureConfig exhaustedCounterContext cooperativeActions = none := by
-  native_decide
+/-- An exhausted player counter refuses publication outright.
+(Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_max_player_counter_refuses_publication : Bool :=
+  (judge fixtureConfig exhaustedCounterContext cooperativeActions).isNone
 
 def communityFor? (actions : List Action) : Option (CommunityMap fixtureConfig) :=
   (revisionFor? actions).map CommunityMap.ofRevision
 
-/-- Semantic map output is independent of the two legal browser orderings. -/
-theorem fixture_reordered_play_has_same_community_map :
-    communityFor? cooperativeActions = communityFor? reorderedActions := by
-  native_decide
+/-- Semantic map output is independent of the two legal browser orderings.  ⚠ The `.isSome`
+conjunct is not decoration: without it two REFUSED notebooks would satisfy the equality.
+(Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_reordered_play_has_same_community_map : Bool :=
+  decide (communityFor? cooperativeActions = communityFor? reorderedActions) &&
+    (communityFor? cooperativeActions).isSome
 
 def splitRevisionConflictB : Bool :=
   match communityFor? presentOnlyActions, communityFor? clearedOnlyActions with
@@ -1012,29 +1065,32 @@ def splitRevisionConflictB : Bool :=
       decide (presentBoard.merge clearedBoard = clearedBoard.merge presentBoard)
   | _, _ => false
 
-theorem fixture_separate_revisions_normalize_cross_claim_dispute :
-    splitRevisionConflictB = true := by native_decide
+/-- (Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_separate_revisions_normalize_cross_claim_dispute : Bool :=
+  splitRevisionConflictB
 
 def reorderedCatalogueRaw : RawConfig :=
   { fixtureRawConfig with observations := fixtureRawConfig.observations.reverse }
 
+/-- ⚠ NAMED RESIDUE, the second `Config` construction proof.  See the fixtures header. -/
 theorem reordered_catalogue_config_valid : configValidB reorderedCatalogueRaw = true := by
   native_decide
 
 def reorderedCatalogueConfig : Config :=
   ⟨reorderedCatalogueRaw, reordered_catalogue_config_valid⟩
 
-theorem fixture_catalogue_digest_moves_with_observation_order :
-    fixtureConfig.raw.catalogueDigest ≠ reorderedCatalogueConfig.raw.catalogueDigest := by
-  native_decide
+/-- Reordering the observation catalogue changes the catalogue digest.
+(Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_catalogue_digest_moves_with_observation_order : Bool :=
+  decide (fixtureConfig.raw.catalogueDigest ≠ reorderedCatalogueConfig.raw.catalogueDigest)
 
 /-- An ID-only action signed for one catalogue cannot be replayed against a
-different catalogue in the same federation/content/player/counter domain. -/
-theorem fixture_cross_catalogue_session_replay_refuses :
-    step reorderedCatalogueConfig
-      (initialState reorderedCatalogueConfig fixtureContext)
-      (action 0 (.submit ⟨0⟩)) = none := by
-  native_decide
+different catalogue in the same federation/content/player/counter domain.
+(Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_cross_catalogue_session_replay_refuses : Bool :=
+  (step reorderedCatalogueConfig
+    (initialState reorderedCatalogueConfig fixtureContext)
+    (action 0 (.submit ⟨0⟩))).isNone
 
 def phantomRoomRefusedB : Bool :=
   (observation? receiptA 99 (.roomSeen ⟨999_999⟩)).isNone
@@ -1057,20 +1113,27 @@ def hostilePlayRefusalsB : Bool :=
       decide (step fixtureConfig afterFirst (action 1 (.dispute ⟨3⟩ ⟨4⟩)) = none) &&
       decide (step fixtureConfig afterFirst (action 1 .publish) = none)
 
-theorem fixture_phantom_objects_refuse :
-    phantomRoomRefusedB && phantomHotspotRefusedB && phantomHazardRefusedB = true := by
-  native_decide
+/-- (Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_phantom_objects_refuse : Bool :=
+  phantomRoomRefusedB && phantomHotspotRefusedB && phantomHazardRefusedB
 
-theorem fixture_replays_weak_links_and_early_publish_refuse :
-    hostilePlayRefusalsB = true := by native_decide
+/-- (Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_replays_weak_links_and_early_publish_refuse : Bool :=
+  hostilePlayRefusalsB
 
+/-- The catalogue with one observation re-authored under a second id — the same
+(origin, fact) pair twice.  ⚠ The `none` arm leaves the catalogue UNMUTATED, which
+validates, which fails `check_fixture_duplicate_origin_fact_refuses`: fail-closed, rather
+than a `.get (by native_decide)` inside the archive's build. -/
 def duplicateOriginFactRaw : RawConfig :=
   { fixtureRawConfig with
-    observations := fixtureObservations ++
-      [{ connectionA?.get (by native_decide) with id := ⟨60⟩ }] }
+    observations :=
+      match connectionA? with
+      | some observation => fixtureObservations ++ [{ observation with id := ⟨60⟩ }]
+      | none => fixtureObservations }
 
-theorem fixture_duplicate_origin_fact_refuses :
-    configValidB duplicateOriginFactRaw = false := by native_decide
+/-- (Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_duplicate_origin_fact_refuses : Bool := !(configValidB duplicateOriginFactRaw)
 
 def wrongFederationSource : SourceCatalogue :=
   { fixtureRawConfig.source with federationId := digestFilled 200 }
@@ -1078,8 +1141,9 @@ def wrongFederationSource : SourceCatalogue :=
 def wrongFederationRaw : RawConfig :=
   { fixtureRawConfig with source := wrongFederationSource }
 
-theorem fixture_wrong_federation_provenance_refuses :
-    configValidB wrongFederationRaw = false := by native_decide
+/-- (Pinned `= true` in `CartographyFixtures`.) -/
+def check_fixture_wrong_federation_provenance_refuses : Bool :=
+  !(configValidB wrongFederationRaw)
 
 #assert_axioms extraction_receipt_constructor_is_private
 #assert_axioms Observation.ofReceipt_exact_provenance
@@ -1105,20 +1169,12 @@ theorem fixture_wrong_federation_provenance_refuses :
 #assert_axioms accepted_step_advances_sequence_and_cost
 #assert_axioms accepted_step_respects_operation_budget
 
+-- The four named construction-proof residues stay here; every other pin
+-- (`#assert_compiled` + `native_decide`) lives in `CartographyFixtures.lean`, rooted in
+-- `PathOfAngelsGuards` — see the fixtures header.
 #assert_compiled playerA_receipt_exists
 #assert_compiled playerB_receipt_exists
-#assert_compiled fixture_receipted_observations_exist
 #assert_compiled fixture_config_valid
-#assert_compiled fixture_cooperative_revision_publishes
-#assert_compiled fixture_max_player_counter_refuses_publication
-#assert_compiled fixture_reordered_play_has_same_community_map
-#assert_compiled fixture_separate_revisions_normalize_cross_claim_dispute
 #assert_compiled reordered_catalogue_config_valid
-#assert_compiled fixture_catalogue_digest_moves_with_observation_order
-#assert_compiled fixture_cross_catalogue_session_replay_refuses
-#assert_compiled fixture_phantom_objects_refuse
-#assert_compiled fixture_replays_weak_links_and_early_publish_refuse
-#assert_compiled fixture_duplicate_origin_fact_refuses
-#assert_compiled fixture_wrong_federation_provenance_refuses
 
 end Dregg2.Games.PathOfAngels.Cartography

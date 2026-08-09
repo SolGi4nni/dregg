@@ -140,11 +140,18 @@ theorem candidateRows_length : candidateRows.length = 3125 := by
   rfl
 
 /-- The image of the seed space is EXACTLY the set of permutations, measured
-against the independently enumerated 5^5 candidate domain. -/
-theorem order_space_is_exactly_the_permutations :
-    permutationRows.length = ORDER_SPACE ∧
-    permutationRows.all (fun row => decide (row ∈ allOrderRows)) = true := by
-  native_decide
+against the independently enumerated 5^5 candidate domain.
+
+⚑ The evaluation moved out of the `Dregg2.FFI` closure (2026-08-08): a
+`native_decide` here made every game-fixture regression a hard failure of every
+Rust proving target. Statements stay as evaluation-free `check_* : Bool` defs;
+each is pinned `= true` by `native_decide` + `#assert_compiled` in
+`BlackBoxReconstructionFixtures.lean`, rooted in the `PathOfAngelsGuards`
+library. Named residue: none — every evaluation moved.
+(Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
+def check_order_space_is_exactly_the_permutations : Bool :=
+  decide (permutationRows.length = ORDER_SPACE) &&
+  permutationRows.all (fun row => decide (row ∈ allOrderRows))
 
 /-! ## The hidden order comes from the run seed -/
 
@@ -722,15 +729,15 @@ def scanLengths : List Nat :=
 
 /-- ⚑ **Every instance is winnable inside the budget.**  Without this the game
 could ship unplayable on some seeds — the design gate's `unwinnable-instance`
-FAIL, proved here instead of measured after the fact. -/
-theorem five_positions_cost_exactly_fifteen_probes : scanWinsEverywhereB = true := by
-  native_decide
+FAIL, proved by pin instead of measured after the fact.
+(Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
+def check_five_positions_cost_exactly_fifteen_probes : Bool := scanWinsEverywhereB
 
 /-- ⚑ **The budget is attained, so it is not slack.**  Some instance costs the
-reference policy all fifteen probes, and none costs more. -/
-theorem scan_worst_case_is_the_budget :
-    scanLengths.all (fun n => decide (n ≤ MAX_TURNS)) = true ∧ MAX_TURNS ∈ scanLengths := by
-  native_decide
+reference policy all fifteen probes, and none costs more.
+(Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
+def check_scan_worst_case_is_the_budget : Bool :=
+  scanLengths.all (fun n => decide (n ≤ MAX_TURNS)) && decide (MAX_TURNS ∈ scanLengths)
 
 /-- A transcript that is accepted at every step, spends the whole budget, and is
 NOT rewarded.  Fifteen probes that never name a correct pair: the run is legal
@@ -741,12 +748,13 @@ def losingTranscript : List Action :=
       if fragment == orderAt 0 slot then none else some (Action.probe slot fragment)).take MAX_TURNS
 
 /-- ⚑ **A run can be lost.**  The design gate names `cannot-lose` as a WARN for a
-reason: if failure is unrepresentable then no choice carries a consequence. -/
-theorem a_run_can_be_lost :
-    (match replay 0 initialState losingTranscript with
-     | none => false
-     | some s => !solvedB 0 s && decide (s.turns = MAX_TURNS)) = true := by
-  native_decide
+reason: if failure is unrepresentable then no choice carries a consequence.
+Fail-closed: a refused replay answers `false`.
+(Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
+def check_a_run_can_be_lost : Bool :=
+  match replay 0 initialState losingTranscript with
+  | none => false
+  | some s => !solvedB 0 s && decide (s.turns = MAX_TURNS)
 
 /-! ## Refusal reachability, witnessed
 
@@ -812,18 +820,18 @@ def everyRefusalIsWitnessedB : Bool :=
   refusalWitnesses.all witnessFiresB &&
     allRefusals.all fun r => refusalWitnesses.any fun w => decide (w.reason = r)
 
-theorem every_refusal_is_witnessed : everyRefusalIsWitnessedB = true := by
-  native_decide
+/-- (Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
+def check_every_refusal_is_witnessed : Bool := everyRefusalIsWitnessedB
 
 /-- The falsifier, constructed rather than asserted: a witness whose prefix is
 legal and whose further probe is NOT refused at all does not fire.  Probing
 `(0,1)` after `(0,2)` on the identity is a perfectly ordinary accepted move, so
-`witnessFiresB` must reject any claim that it refuses. -/
-theorem a_probe_that_is_accepted_witnesses_nothing :
-    (allRefusals.any fun r =>
-      witnessFiresB { reason := r, order := 0, history := [.probe 0 2],
-                      probe := .probe 0 1 }) = false := by
-  native_decide
+`witnessFiresB` must reject any claim that it refuses.
+(Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
+def check_a_probe_that_is_accepted_witnesses_nothing : Bool :=
+  !(allRefusals.any fun r =>
+    witnessFiresB { reason := r, order := 0, history := [.probe 0 2],
+                    probe := .probe 0 1 })
 
 #assert_axioms orderRow_length
 #assert_axioms orderRow_nodup
@@ -831,7 +839,6 @@ theorem a_probe_that_is_accepted_witnesses_nothing :
 #assert_axioms allOrderRows_nodup
 #assert_axioms allOrderRows_length
 #assert_axioms candidateRows_length
-#assert_compiled order_space_is_exactly_the_permutations
 #assert_axioms step_deterministic
 #assert_axioms step_refused_iff
 #assert_axioms step_eq_none_of_refused
@@ -866,10 +873,9 @@ theorem a_probe_that_is_accepted_witnesses_nothing :
 #assert_axioms judge_binds_run_seed
 #assert_axioms allRefusals_complete
 #assert_axioms refusal_tags_are_distinct
-#assert_compiled five_positions_cost_exactly_fifteen_probes
-#assert_compiled scan_worst_case_is_the_budget
-#assert_compiled a_run_can_be_lost
-#assert_compiled every_refusal_is_witnessed
-#assert_compiled a_probe_that_is_accepted_witnesses_nothing
+
+-- The six pins (`#assert_compiled` + `native_decide`) live in
+-- `BlackBoxReconstructionFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- note on `check_order_space_is_exactly_the_permutations` above.
 
 end Dregg2.Games.PathOfAngels.BlackBoxReconstruction

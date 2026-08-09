@@ -391,7 +391,26 @@ ever score. -/
 
 /-! ## Fixtures
 
-Concrete witnesses, so the claims above are refutable rather than decorative. -/
+Concrete witnesses, so the claims above are refutable rather than decorative.
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured).  The STATEMENTS stay here, each as an
+evaluation-free `check_* : Bool` definition (a `def` body elaborates without running),
+beside the private secrets and mission they are stated over.  The EVALUATION — each
+`check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`HiddenInstanceFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+⚠ This matters more here than anywhere: `commit`, `runSeedFor` and `practiceRunSeed` are
+`@[irreducible]` precisely because a seventeen-permutation Poseidon2 draw through Lean's
+interpreter cost 47.6 GB and 68 minutes on one file.  A `def` body does not run, so these
+checks cost nothing to elaborate; only the guard library pays the sponge.
+
+Named residue: NONE.  Nothing here needs a drawn seed as DATA — the fixtures are digests
+and missions, and every claim about them is a Bool. -/
 
 private def taggedDigest (tag : List Nat) : Digest32 where
   bytes := List.ofFn fun i : Fin 32 =>
@@ -442,56 +461,53 @@ private def slotEight : EpochId := ⟨8⟩
 
 /-- **Binding.**  Two secrets, one slot, two commitments.  A curator cannot
 publish one commitment and open it to a different secret without finding a sponge
-collision. -/
-theorem commit_separates_secrets :
-    commit secretA slotSeven ≠ commit secretB slotSeven := by
-  native_decide
+collision. (Pinned `= true` in `HiddenInstanceFixtures`.) -/
+def check_commit_separates_secrets : Bool :=
+  decide (commit secretA slotSeven ≠ commit secretB slotSeven)
 
 /-- The commitment is slot-scoped: reusing a secret across slots does not reuse
-its commitment. -/
-theorem commit_separates_slots :
-    commit secretA slotSeven ≠ commit secretA slotEight := by
-  native_decide
+its commitment. (Pinned `= true` in `HiddenInstanceFixtures`.) -/
+def check_commit_separates_slots : Bool :=
+  decide (commit secretA slotSeven ≠ commit secretA slotEight)
 
 /-- **The descriptor does not determine the instance.**  Everything an artifact
 carries is fixed here — mission, federation, content session, slot, player — and
 the run seed still moves when the secret does.  This is the statement the old
-`signalTarget_literal` could not make, because there the seed WAS the artifact. -/
-theorem published_context_does_not_determine_the_run_seed :
-    runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
-      runSeedFor ⟨secretB, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) := by
-  native_decide
+`signalTarget_literal` could not make, because there the seed WAS the artifact.
+(Pinned `= true` in `HiddenInstanceFixtures`.) -/
+def check_published_context_does_not_determine_the_run_seed : Bool :=
+  decide (runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
+    runSeedFor ⟨secretB, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission))
 
 /-- **Per player.**  Two players in the same slot, under the same secret, draw
 different instances, so a solved run tells its neighbour nothing.  The cost of
 this choice is that two scores are draws from one distribution rather than
 attempts at one puzzle; the benefit is that the first finisher cannot hand the
-answer to the rest of the slot. -/
-theorem two_players_draw_different_instances :
-    runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
-      runSeedFor ⟨secretA, slotSeven, bob⟩ (MissionContext.ofMission fixtureMission) := by
-  native_decide
+answer to the rest of the slot. (Pinned `= true` in `HiddenInstanceFixtures`.) -/
+def check_two_players_draw_different_instances : Bool :=
+  decide (runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
+    runSeedFor ⟨secretA, slotSeven, bob⟩ (MissionContext.ofMission fixtureMission))
 
 /-- **Per slot.**  The same player in two slots draws two instances, so yesterday
-does not answer today. -/
-theorem two_slots_draw_different_instances :
-    runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
-      runSeedFor ⟨secretA, slotEight, alice⟩ (MissionContext.ofMission fixtureMission) := by
-  native_decide
+does not answer today. (Pinned `= true` in `HiddenInstanceFixtures`.) -/
+def check_two_slots_draw_different_instances : Bool :=
+  decide (runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) ≠
+    runSeedFor ⟨secretA, slotEight, alice⟩ (MissionContext.ofMission fixtureMission))
 
 /-- **Practice is not the live game.**  Handing the practice draw the slot secret
 itself — the most favourable possible confusion — still does not reproduce a
-judged seed, because the purpose tag is in the preimage. -/
-theorem practice_is_not_judged :
-    practiceRunSeed secretA.value (MissionContext.ofMission fixtureMission) ≠
-      runSeedFor ⟨secretA, ⟨0⟩, secretA.value⟩ (MissionContext.ofMission fixtureMission) := by
-  native_decide
+judged seed, because the purpose tag is in the preimage.
+(Pinned `= true` in `HiddenInstanceFixtures`.) -/
+def check_practice_is_not_judged : Bool :=
+  decide (practiceRunSeed secretA.value (MissionContext.ofMission fixtureMission) ≠
+    runSeedFor ⟨secretA, ⟨0⟩, secretA.value⟩ (MissionContext.ofMission fixtureMission))
 
 /-- The commitment does not repeat the run seed: publishing it is not publishing
-a value one draw away from the instance. -/
-theorem commitment_is_not_the_seed :
-    commit secretA slotSeven ≠ runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission) := by
-  native_decide
+a value one draw away from the instance.
+(Pinned `= true` in `HiddenInstanceFixtures`.) -/
+def check_commitment_is_not_the_seed : Bool :=
+  decide (commit secretA slotSeven ≠
+    runSeedFor ⟨secretA, slotSeven, alice⟩ (MissionContext.ofMission fixtureMission))
 
 /-! ## Generic draws over a derived stream
 
@@ -519,12 +535,8 @@ theorem drawOne_is_the_consuming_draw (bound : Nat) (hb : 0 < bound)
 #assert_axioms Purpose.tags_are_distinct
 #assert_axioms context_ignores_the_run_seed
 #assert_axioms drawOne_is_the_consuming_draw
-#assert_compiled commit_separates_secrets
-#assert_compiled commit_separates_slots
-#assert_compiled published_context_does_not_determine_the_run_seed
-#assert_compiled two_players_draw_different_instances
-#assert_compiled two_slots_draw_different_instances
-#assert_compiled practice_is_not_judged
-#assert_compiled commitment_is_not_the_seed
+
+-- The seven fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `HiddenInstanceFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixtures header.
 
 end Dregg2.Games.PathOfAngels.HiddenInstance

@@ -393,6 +393,23 @@ arithmetic corners (an almost-full meter) that the crate's authored table cannot
 produce.  The ones named `welded_*` consume `SalvageCrate.fixtureOpenReceipt` —
 a REAL accepted opening — so the seam this module actually ships is exercised
 rather than a re-typed mirror of it.
+
+⚑ **THE LAB NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target (the compilation-unit
+coupling the stale-fixture outage measured). The lab's STATEMENTS stay here, each as an
+evaluation-free `check_* : Bool` definition (a `def` body elaborates without running), because
+they must see the private lab objects (`labPanel`, `alphaWelded`, the private `Receipt`
+constructor) that the seam is exercised through. The EVALUATION — each `check_* = true`,
+pinned by `native_decide` + `#assert_compiled` — lives in `ShipInstrumentPanelFixtures.lean`,
+rooted in the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a
+stale fixture reds the guard library instead of the archive.
+
+⚠ Named residue, three construction proofs: `lab_panel_valid`, `other_panel_valid` and
+`tiny_panel_valid` stay `native_decide` HERE because `Panel` carries its validity proof as
+data — constructing the lab panels at all requires the proof at elaboration. Breaking
+`panelValidB` on a lab panel therefore still reds this module (and the archive).
+Everything else moved.
 -/
 
 private def labDigest (tag : Nat) : Digest32 where
@@ -511,60 +528,63 @@ private def betaWelded : Receipt :=
 
 /-! ### The five declared refusals, each fired -/
 
-theorem lab_state_from_another_panel_refuses :
-    refusedWithB .panelIdentityMismatch
-      (observe labPanel foreignState alphaWelded) = true := by native_decide
+/-- (Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_lab_state_from_another_panel_refuses : Bool :=
+  refusedWithB .panelIdentityMismatch
+    (observe labPanel foreignState alphaWelded)
 
 /-- The deliberately public crate lab witness is contained: a panel on any other
-federation refuses it, so exposing it cannot move a real ship. -/
-theorem welded_lab_witness_is_refused_by_another_deployment :
-    refusedWithB .foreignDeployment
-      (observe otherPanel (initial otherPanel) alphaWelded) = true := by native_decide
+federation refuses it, so exposing it cannot move a real ship.
+(Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_welded_lab_witness_is_refused_by_another_deployment : Bool :=
+  refusedWithB .foreignDeployment
+    (observe otherPanel (initial otherPanel) alphaWelded)
 
-theorem welded_same_crew_member_cannot_be_counted_twice :
-    refusedWithB .alreadyObserved
-      (observeChain labPanel (initial labPanel) [alphaWelded, alphaWelded]) = true := by
-  native_decide
+/-- (Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_welded_same_crew_member_cannot_be_counted_twice : Bool :=
+  refusedWithB .alreadyObserved
+    (observeChain labPanel (initial labPanel) [alphaWelded, alphaWelded])
 
-theorem lab_capacity_refuses_rather_than_forgetting_a_receipt :
-    refusedWithB .capacityReached
-      (observeChain tinyPanel (initial tinyPanel) [alphaWelded, betaWelded]) = true := by
-  native_decide
+/-- (Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_lab_capacity_refuses_rather_than_forgetting_a_receipt : Bool :=
+  refusedWithB .capacityReached
+    (observeChain tinyPanel (initial tinyPanel) [alphaWelded, betaWelded])
 
-/-- An almost-full meter refuses the next receipt instead of saturating. -/
-theorem lab_meter_overflow_refuses_instead_of_clipping :
-    refusedWithB .meterOverflow
-      (observe labPanel brimmingState (labReceipt (labDigest 7) ⟨12⟩ oneSupply)) = true := by
-  native_decide
+/-- An almost-full meter refuses the next receipt instead of saturating.
+(Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_lab_meter_overflow_refuses_instead_of_clipping : Bool :=
+  refusedWithB .meterOverflow
+    (observe labPanel brimmingState (labReceipt (labDigest 7) ⟨12⟩ oneSupply))
 
 /-! ### The weld, end to end -/
 
-theorem welded_lab_witness_is_admitted_by_its_own_deployment :
-    isOkB (observe labPanel (initial labPanel) alphaWelded) = true := by native_decide
+/-- (Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_welded_lab_witness_is_admitted_by_its_own_deployment : Bool :=
+  isOkB (observe labPanel (initial labPanel) alphaWelded)
 
 /-- Two crew members opening on the SAME period are both counted.  Together with
 `the_face_does_not_record_who_opened` this is the whole social shape: the panel
 keeps people apart well enough to count them, and never well enough to rank
-them. -/
-theorem welded_two_crew_members_of_one_day_are_both_counted :
-    isOkB (observeChain labPanel (initial labPanel) [alphaWelded, betaWelded]) = true ∧
-    alphaWelded.key ≠ betaWelded.key ∧
-    alphaWelded.key.period = betaWelded.key.period := by native_decide
+them. (Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_welded_two_crew_members_of_one_day_are_both_counted : Bool :=
+  isOkB (observeChain labPanel (initial labPanel) [alphaWelded, betaWelded]) &&
+  decide (alphaWelded.key ≠ betaWelded.key) &&
+  decide (alphaWelded.key.period = betaWelded.key.period)
 
 /-- On the authored lab rotation both crew members draw the cosmetic, whose
-table row carries `Contribution.zero`.  That is what an ordinary day IS. -/
-theorem welded_lab_day_is_an_ordinary_one :
-    alphaWelded.contribution = Contribution.zero ∧
-    betaWelded.contribution = Contribution.zero := by native_decide
+table row carries `Contribution.zero`.  That is what an ordinary day IS.
+(Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_welded_lab_day_is_an_ordinary_one : Bool :=
+  decide (alphaWelded.contribution = Contribution.zero) &&
+  decide (betaWelded.contribution = Contribution.zero)
 
 /-- ⭐ Two crew members really opened the crate, both openings were admitted, and
 the ship really did not move.  This is `an_ordinary_day_moves_no_gauge` on ACTUAL
 crate output rather than on a lab receipt: the mundane case is mundane all the
-way down to the emitted table. -/
-theorem welded_two_ordinary_days_leave_the_ship_unchanged :
-    admittedAndShipUnchangedB labPanel (initial labPanel)
-      (observeChain labPanel (initial labPanel) [alphaWelded, betaWelded]) = true := by
-  native_decide
+way down to the emitted table. (Pinned `= true` in `ShipInstrumentPanelFixtures`.) -/
+def check_welded_two_ordinary_days_leave_the_ship_unchanged : Bool :=
+  admittedAndShipUnchangedB labPanel (initial labPanel)
+    (observeChain labPanel (initial labPanel) [alphaWelded, betaWelded])
 
 #assert_axioms mergeExact
 #assert_axioms observe_adds_exactly_the_receipt
@@ -575,14 +595,8 @@ theorem welded_two_ordinary_days_leave_the_ship_unchanged :
 #assert_axioms welded_contribution_is_the_authored_table_row
 #assert_axioms welded_subject_is_the_signed_player
 #assert_axioms welded_period_is_the_consumed_period
-#assert_compiled lab_state_from_another_panel_refuses
-#assert_compiled welded_lab_witness_is_refused_by_another_deployment
-#assert_compiled welded_same_crew_member_cannot_be_counted_twice
-#assert_compiled lab_capacity_refuses_rather_than_forgetting_a_receipt
-#assert_compiled lab_meter_overflow_refuses_instead_of_clipping
-#assert_compiled welded_lab_witness_is_admitted_by_its_own_deployment
-#assert_compiled welded_two_crew_members_of_one_day_are_both_counted
-#assert_compiled welded_lab_day_is_an_ordinary_one
-#assert_compiled welded_two_ordinary_days_leave_the_ship_unchanged
+
+-- The nine lab pins (`#assert_compiled` + `native_decide`) live in
+-- `ShipInstrumentPanelFixtures.lean`, rooted in `PathOfAngelsGuards` — see the lab header above.
 
 end Dregg2.Games.PathOfAngels.ShipInstrumentPanel

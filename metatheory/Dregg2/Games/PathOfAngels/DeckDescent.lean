@@ -1255,9 +1255,24 @@ theorem judged_run_within_budget (cfg : Config) (before : WorldState)
 
 /-! ## The design properties, measured over the actual transition
 
-Everything below is `decide`/`native_decide` over `stepB` and `replayB` — the
-same functions the emitter tabulates and the judge runs.  There is no second
-model of the descent anywhere in this repository. -/
+Everything below is over `stepB` and `replayB` — the same functions the emitter
+tabulates and the judge runs.  There is no second model of the descent anywhere
+in this repository.
+
+⚑ **THE MEASUREMENTS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in
+the `Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made
+every game-fixture regression a hard failure of every Rust proving target (the
+compilation-unit coupling the stale-fixture outage measured). Each measured design
+property — here and in the parametric-table and rendering sections below — stays as an
+evaluation-free `check_* : Bool` definition (a `def` body elaborates without running).
+The EVALUATION — each `check_* = true`, pinned by `native_decide` + `#assert_compiled` —
+lives in `DeckDescentFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Named residue: NONE. No construction in this module consumes a `native_decide` proof as
+data, so every pin moved.  (`by decide` theorems — the line lengths, the id-alphabet
+falsifier, the action tags — are kernel-checked and stay.) -/
 
 def playsOutB (b : Board) (acts : List Action) : Bool :=
   match replayB b initialState acts with
@@ -1300,41 +1315,35 @@ theorem every_line_is_the_whole_budget :
 
 /-- ⚑ **Every instance is winnable, down either spur.**  Both cautious lines bank
 on all eight boards, so no draw is a dead mission and the spur choice is never
-forced. -/
-theorem every_board_can_be_banked :
-    (∀ i : Fin 8, playsOutB (boardAt i) cautiousWestLine = true) ∧
-    (∀ i : Fin 8, playsOutB (boardAt i) cautiousEastLine = true) := by
-  refine ⟨?_, ?_⟩
-  · native_decide
-  · native_decide
+forced. (Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_every_board_can_be_banked : Bool :=
+  decide (∀ i : Fin 8, playsOutB (boardAt i) cautiousWestLine = true) &&
+  decide (∀ i : Fin 8, playsOutB (boardAt i) cautiousEastLine = true)
 
 /-- ⚑ **The east spur alone is an expedition.**  The deep-east line banks the
 target on all eight boards without lifting the mouth relic or entering west.
 There is no west twin of this line — one relic short — so the two branches of
 the junction differ BEFORE any bit is revealed, in what committing to them can
-win, not in what reaching them costs. -/
-theorem the_second_relic_makes_east_bankable_alone :
-    deepEastLine.length = AIR ∧
-    (∀ i : Fin 8, playsOutB (boardAt i) deepEastLine = true) := by
-  refine ⟨by decide, ?_⟩
-  native_decide
+win, not in what reaching them costs.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_the_second_relic_makes_east_bankable_alone : Bool :=
+  decide (deepEastLine.length = AIR) &&
+  decide (∀ i : Fin 8, playsOutB (boardAt i) deepEastLine = true)
 
-/-- ⚑ **The budget binds on the cautious lines.** -/
-theorem budget_binds_on_the_cautious_lines :
-    cautiousWestLine.length = AIR ∧ cautiousEastLine.length = AIR ∧
-      ∀ i : Fin 8, playsOutB (boardAt i) cautiousWestLine = true := by
-  refine ⟨by decide, by decide, ?_⟩
-  native_decide
+/-- ⚑ **The budget binds on the cautious lines.**
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_budget_binds_on_the_cautious_lines : Bool :=
+  decide (cautiousWestLine.length = AIR) && decide (cautiousEastLine.length = AIR) &&
+  decide (∀ i : Fin 8, playsOutB (boardAt i) cautiousWestLine = true)
 
 /-- ⚑ **And on the sweep, from the other side.**  Visiting both spurs costs
 exactly the same nine actions, and banks on exactly one board in eight — the
-sound one.  Same budget, opposite wager. -/
-theorem sweep_costs_the_budget_and_banks_on_one_board :
-    sweepLine.length = AIR ∧
-    playsOutB (boardAt 0) sweepLine = true ∧
-    (∀ i : Fin 8, i ≠ 0 → playsOutB (boardAt i) sweepLine = false) := by
-  refine ⟨by decide, by native_decide, ?_⟩
-  native_decide
+sound one.  Same budget, opposite wager.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_sweep_costs_the_budget_and_banks_on_one_board : Bool :=
+  decide (sweepLine.length = AIR) &&
+  playsOutB (boardAt 0) sweepLine &&
+  decide (∀ i : Fin 8, i ≠ 0 → playsOutB (boardAt i) sweepLine = false)
 
 /-- ⚑ **The two budgets are incomparable.**  The cautious lines spend the whole
 supply and no body; the sweep spends no supply and, on the board where it works,
@@ -1346,12 +1355,12 @@ def lineCost (b : Board) (acts : List Action) : Option (Nat × Nat × Nat) :=
   | none => none
   | some s => some (AIR - s.air, SHORING - s.shoring, s.damage)
 
-theorem budgets_are_incomparable :
-    lineCost (boardAt 0) cautiousWestLine = some (9, 2, 0) ∧
-    lineCost (boardAt 7) cautiousWestLine = some (9, 2, 0) ∧
-    lineCost (boardAt 0) sweepLine = some (9, 0, 0) ∧
-    playsOutB (boardAt 7) sweepLine = false := by
-  native_decide
+/-- (Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_budgets_are_incomparable : Bool :=
+  decide (lineCost (boardAt 0) cautiousWestLine = some (9, 2, 0)) &&
+  decide (lineCost (boardAt 7) cautiousWestLine = some (9, 2, 0)) &&
+  decide (lineCost (boardAt 0) sweepLine = some (9, 0, 0)) &&
+  !(playsOutB (boardAt 7) sweepLine)
 
 /-! ### Forks, doom, and the scout decision
 
@@ -1390,23 +1399,23 @@ def doomCount (b : Board) : Nat :=
 def familyTotal (f : Board → Nat) : Nat :=
   (List.finRange 8).foldl (fun acc i => acc + f (boardAt i)) 0
 
-/-- ⚑ **Every board offers an outcome-changing fork.** -/
-theorem every_board_forks : ∀ i : Fin 8, 0 < forkCount (boardAt i) := by
-  native_decide
+/-- ⚑ **Every board offers an outcome-changing fork.**
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_every_board_forks : Bool := decide (∀ i : Fin 8, 0 < forkCount (boardAt i))
 
-/-- ⚑ **Every board can be lost.** -/
-theorem every_board_can_be_lost : ∀ i : Fin 8, 0 < doomCount (boardAt i) := by
-  native_decide
+/-- ⚑ **Every board can be lost.** (Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_every_board_can_be_lost : Bool :=
+  decide (∀ i : Fin 8, 0 < doomCount (boardAt i))
 
 /-- The measured shape of the family, per board and summed.  These are the
 numbers `scripts/poa-design-gate.py` must independently arrive at from the
 emitted table; they are stated here so a disagreement is loud.  Before the
-east spur's second relic the triple was 3905 / 1145 / 2059. -/
-theorem family_shape_is_measured :
-    familyTotal (fun b => (reachableStates b).length) = 4688 ∧
-    familyTotal forkCount = 1360 ∧
-    familyTotal doomCount = 2469 := by
-  native_decide
+east spur's second relic the triple was 3905 / 1145 / 2059.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_family_shape_is_measured : Bool :=
+  decide (familyTotal (fun b => (reachableStates b).length) = 4688) &&
+  decide (familyTotal forkCount = 1360) &&
+  decide (familyTotal doomCount = 2469)
 
 /-- One board's census, as a comparable shape. -/
 def boardShape (b : Board) : Nat × Nat × Nat :=
@@ -1417,25 +1426,25 @@ boards share a (reachable, forks, doomed) shape.  Before the second relic a
 board and its west/east reflection were the same game and the eight draws
 collapsed to six shapes — 0.42 of a bit of the instance doing no work, the
 gate's `the-family-collapses` finding.  This is the kernel-side statement whose
-gate-side twin is `distinct_board_shapes = 8`. -/
-theorem the_mirror_is_broken :
-    ((List.finRange 8).map (fun i => boardShape (boardAt i))).Nodup := by
-  native_decide
+gate-side twin is `distinct_board_shapes = 8`.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_the_mirror_is_broken : Bool :=
+  decide (((List.finRange 8).map (fun i => boardShape (boardAt i))).Nodup)
 
 /-- The scout decision, named.  From the hatch on a flooded mouth, walking in
 blind costs a point of damage that nothing in a descent restores; looking first
-and shoring blind both cost a unit of air and no body. -/
-theorem walking_in_blind_costs_a_body :
-    (match stepB (boardAt 4) initialState .descend with
-      | none => none
-      | some t => some t.damage) = some 1 ∧
-    (match stepB (boardAt 4) initialState .survey with
-      | none => none
-      | some t => some t.damage) = some 0 ∧
-    (match stepB (boardAt 4) initialState .shore with
-      | none => none
-      | some t => some t.damage) = some 0 := by
-  native_decide
+and shoring blind both cost a unit of air and no body.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_walking_in_blind_costs_a_body : Bool :=
+  decide ((match stepB (boardAt 4) initialState .descend with
+    | none => none
+    | some t => some t.damage) = some 1) &&
+  decide ((match stepB (boardAt 4) initialState .survey with
+    | none => none
+    | some t => some t.damage) = some 0) &&
+  decide ((match stepB (boardAt 4) initialState .shore with
+    | none => none
+    | some t => some t.damage) = some 0)
 
 /-- ⚑ **Extraction debt, and the deck's cut.**  Walk in blind on a flooded mouth,
 take the mouth and west relics, and turn round: the second crossing of the same
@@ -1445,23 +1454,23 @@ to spare and no way to use it. -/
 def blindGrabLine : List Action :=
   [.descend, .lift, .descend, .lift, .ascend, .ascend]
 
-theorem the_deck_keeps_what_you_could_not_carry :
-    (match replayB (boardAt 4) initialState blindGrabLine with
-      | none => false
-      | some s =>
-          decide (s.position = Node.hatch) && decide (s.damage = 2) &&
-          decide (capacity s = 1) && decide (s.sling.count = 1) &&
-          decide (0 < s.air) && doomedB s) = true := by
-  native_decide
+/-- (Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_the_deck_keeps_what_you_could_not_carry : Bool :=
+  match replayB (boardAt 4) initialState blindGrabLine with
+  | none => false
+  | some s =>
+      decide (s.position = Node.hatch) && decide (s.damage = 2) &&
+      decide (capacity s = 1) && decide (s.sling.count = 1) &&
+      decide (0 < s.air) && doomedB s
 
-/-- The same six actions on a sound shaft come home with both. -/
-theorem a_sound_shaft_keeps_both_relics :
-    (match replayB (boardAt 0) initialState blindGrabLine with
-      | none => false
-      | some s =>
-          decide (s.position = Node.hatch) && decide (s.damage = 0) &&
-          decide (s.sling.count = 2) && reachableBankB s) = true := by
-  native_decide
+/-- The same six actions on a sound shaft come home with both.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_a_sound_shaft_keeps_both_relics : Bool :=
+  match replayB (boardAt 0) initialState blindGrabLine with
+  | none => false
+  | some s =>
+      decide (s.position = Node.hatch) && decide (s.damage = 0) &&
+      decide (s.sling.count = 2) && reachableBankB s
 
 /-- The reachable state space of the whole family, for the emitter's benefit and
 so the descriptor's size is a stated number rather than a surprise. -/
@@ -1668,33 +1677,34 @@ def parametricStates : List State := parametricWithin AIR
 def parametricRowCount : Nat := parametricStates.length * allActions.length
 
 /-- ⚑ **The table is closed.**  Every successor any row names is a state the
-descriptor declares, so a client can never be handed an id it does not have. -/
-theorem parametric_closure_is_closed :
-    parametricStates.all (fun s =>
-      allActions.all (fun a =>
-        (rowSuccessors s a).all (fun n => parametricStates.contains n))) = true := by
-  native_decide
+descriptor declares, so a client can never be handed an id it does not have.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_parametric_closure_is_closed : Bool :=
+  parametricStates.all (fun s =>
+    allActions.all (fun a =>
+      (rowSuccessors s a).all (fun n => parametricStates.contains n)))
 
-theorem parametric_states_nodup : parametricStates.eraseDups = parametricStates := by
-  native_decide
+/-- (Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_parametric_states_nodup : Bool :=
+  decide (parametricStates.eraseDups = parametricStates)
 
-theorem initial_state_is_declared : parametricStates.contains initialState = true := by
-  native_decide
+/-- (Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_initial_state_is_declared : Bool := parametricStates.contains initialState
 
 /-- The emitted shape, stated so the descriptor's size is a number a reader has
-before they open the file.  Before the second relic: 1598 states, 14382 rows. -/
-theorem parametric_shape_is_measured :
-    parametricStates.length = 1924 ∧ allActions.length = 9 ∧
-      parametricRowCount = 17316 := by
-  refine ⟨by native_decide, by decide, by native_decide⟩
+before they open the file.  Before the second relic: 1598 states, 14382 rows.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_parametric_shape_is_measured : Bool :=
+  decide (parametricStates.length = 1924) && decide (allActions.length = 9) &&
+  decide (parametricRowCount = 17316)
 
 /-- `Sling.count` is unbounded as a TYPE — the counts are `Nat` — but capacity
 is the wall the transition enforces: no declared state carries more than
 `BASE_CAPACITY` relics.  This replaces the old `Sling.count_le_three`, which was
-a fact about the type and is false of it now. -/
-theorem declared_states_fit_the_sling :
-    parametricStates.all (fun s => decide (s.sling.count ≤ BASE_CAPACITY)) = true := by
-  native_decide
+a fact about the type and is false of it now.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_declared_states_fit_the_sling : Bool :=
+  parametricStates.all (fun s => decide (s.sling.count ≤ BASE_CAPACITY))
 
 /-- ⚑ **The table really consults the instance.**  Some rows resolve, so the
 gate's `no-oracle-row` FAIL — "every transition is deterministic, so the instance
@@ -1704,8 +1714,8 @@ def resolveRowCount : Nat :=
     allActions.filter (fun a => match rowFor s a with | .resolve _ _ => true | _ => false)))
   |>.length
 
-theorem the_table_consults_the_instance : 0 < resolveRowCount := by
-  native_decide
+/-- (Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_the_table_consults_the_instance : Bool := decide (0 < resolveRowCount)
 
 /-! ### Rendering names
 
@@ -1779,10 +1789,10 @@ def stateId (s : State) : String :=
   ":" ++ (if s.banked then "banked" else "in")
 
 /-- ⚑ **Ids separate states.**  Two declared states never share an id, so the
-transition table's string references are unambiguous. -/
-theorem state_ids_are_distinct :
-    (parametricStates.map stateId).eraseDups.length = parametricStates.length := by
-  native_decide
+transition table's string references are unambiguous.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_state_ids_are_distinct : Bool :=
+  decide ((parametricStates.map stateId).eraseDups.length = parametricStates.length)
 
 /-! ### The id alphabet, as a fact rather than a habit
 
@@ -1809,10 +1819,10 @@ def isPoag1Identifier (s : String) : Bool :=
 
 /-- ⚑ **Every id a client is handed is an identifier.**  This is the pin that
 `?` and `+` walked past; it is stated over the SAME `stateId` the descriptor
-renders, so re-introducing either character goes red here. -/
-theorem state_ids_are_identifiers :
-    parametricStates.all (fun s => isPoag1Identifier (stateId s)) = true := by
-  native_decide
+renders, so re-introducing either character goes red here.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_state_ids_are_identifiers : Bool :=
+  parametricStates.all (fun s => isPoag1Identifier (stateId s))
 
 theorem action_tags_are_identifiers :
     allActions.all (fun a => isPoag1Identifier a.tag) = true := by
@@ -1843,13 +1853,9 @@ def solvedB (s : State) : Bool := s.banked
 #assert_axioms action_tags_are_identifiers
 #assert_axioms the_id_alphabet_refuses_the_old_codes
 
-#assert_compiled parametric_closure_is_closed
-#assert_compiled parametric_states_nodup
-#assert_compiled initial_state_is_declared
-#assert_compiled parametric_shape_is_measured
-#assert_compiled the_table_consults_the_instance
-#assert_compiled state_ids_are_distinct
-#assert_compiled state_ids_are_identifiers
+-- The seven parametric-table pins (`#assert_compiled` + `native_decide`) live in
+-- `DeckDescentFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- design-properties header above.
 
 #assert_axioms allChambers_complete
 #assert_axioms allNodes_complete
@@ -1915,18 +1921,8 @@ def solvedB (s : State) : Bool := s.banked
 #assert_axioms judged_run_within_budget
 #assert_axioms every_line_is_the_whole_budget
 
-#assert_compiled every_board_can_be_banked
-#assert_compiled the_second_relic_makes_east_bankable_alone
-#assert_compiled budget_binds_on_the_cautious_lines
-#assert_compiled sweep_costs_the_budget_and_banks_on_one_board
-#assert_compiled budgets_are_incomparable
-#assert_compiled every_board_forks
-#assert_compiled every_board_can_be_lost
-#assert_compiled family_shape_is_measured
-#assert_compiled the_mirror_is_broken
-#assert_compiled declared_states_fit_the_sling
-#assert_compiled walking_in_blind_costs_a_body
-#assert_compiled the_deck_keeps_what_you_could_not_carry
-#assert_compiled a_sound_shaft_keeps_both_relics
+-- The thirteen measured-design pins (`#assert_compiled` + `native_decide`) live in
+-- `DeckDescentFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- design-properties header above.
 
 end Dregg2.Games.PathOfAngels.DeckDescent

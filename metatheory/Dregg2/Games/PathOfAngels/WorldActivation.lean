@@ -485,7 +485,25 @@ def authorizesWire (bytes : String) : String :=
       | .ok replayed =>
           if replayed = input.state && authorizesWorld input.state input.candidate then "1" else "0"
 
-/-! ## Executable honest and hostile witnesses -/
+/-! ## Executable honest and hostile witnesses
+
+⚑ **THE WITNESSES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the twelve `native_decide` pins
+below ran at elaboration, so any fixture regression here was a hard failure of every Rust
+proving target in the workspace (the compilation-unit coupling the stale-fixture outage
+measured). The STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition (a
+`def` body elaborates without running), beside the private fixture envelopes and the private
+`admit`/`replayHistory` core they exercise. The EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `WorldActivationFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale fixture
+reds the guard library instead of the archive.
+
+Fail-closed convention: a check that must inspect the SHAPE of an `Except` answers `false` on
+every arm but the one the witness asserts, so a regression fails the pin in the guard library
+rather than silently widening what the witness accepts.
+
+Named residue: NONE. No construction here demands a proof as data, so all twelve moved.
+-/
 
 private def digestByte (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -532,47 +550,78 @@ private def successorEnvelope : SignedActivationEnvelope where
   curatorKey := pin
   signature := signatureByte 92
 
-theorem honest_successor_accepts :
-    (admit pin true bootstrapState successorEnvelope).isOk = true := by native_decide
+/-- Fail-closed refusal shape: the judged lineage rejected the envelope with exactly this
+error.  Every other arm — a different error, or acceptance — answers `false`. -/
+private def refusedWith (result : Except Error State) (error : Error) : Bool :=
+  match result with
+  | .error actual => actual == error
+  | .ok _ => false
 
-theorem stale_epoch_refused :
-    admit pin true bootstrapState
-      { successorEnvelope with statement :=
-        { successorEnvelope.statement with world := world 4 20 21 22 } } =
-      .error .staleOrSkippedEpoch := by native_decide
+/-- The honest successor advance is admitted.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_honest_successor_accepts : Bool :=
+  (admit pin true bootstrapState successorEnvelope).isOk
 
-theorem counter_skip_refused :
-    admit pin true bootstrapState
-      { successorEnvelope with statement := { successorEnvelope.statement with counter := 6 } } =
-      .error .wrongCounter := by native_decide
+private def staleEpochEnvelope : SignedActivationEnvelope :=
+  { successorEnvelope with statement :=
+    { successorEnvelope.statement with world := world 4 20 21 22 } }
 
-theorem wrong_predecessor_refused :
-    admit pin true bootstrapState
-      { successorEnvelope with statement :=
-        { successorEnvelope.statement with predecessorHead := digestByte 88 } } =
-      .error .wrongPredecessor := by native_decide
+/-- Re-using the predecessor's content epoch is refused as a stale/skipped epoch.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_stale_epoch_refused : Bool :=
+  refusedWith (admit pin true bootstrapState staleEpochEnvelope) .staleOrSkippedEpoch
 
-theorem unrecorded_rollback_refused :
-    let rollback := { successorEnvelope with statement :=
-      { successorEnvelope.statement with
-        world := bootstrapEnvelope.statement.world
-        kind := .rollback
-        rollbackTarget := some (digestByte 77) } }
-    admit pin true bootstrapState rollback = .error .rollbackTargetMissing := by native_decide
+private def counterSkipEnvelope : SignedActivationEnvelope :=
+  { successorEnvelope with statement := { successorEnvelope.statement with counter := 6 } }
 
-theorem wrong_curator_key_refused :
-    admit pin true bootstrapState { successorEnvelope with curatorKey := digestByte 89 } =
-      .error .wrongCuratorKey := by native_decide
+/-- The activation counter advances by exactly one; a skip is refused.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_counter_skip_refused : Bool :=
+  refusedWith (admit pin true bootstrapState counterSkipEnvelope) .wrongCounter
 
-theorem unverified_native_signature_refused :
-    admit pin false bootstrapState successorEnvelope =
-      .error .nativeSignatureNotVerified := by native_decide
+private def wrongPredecessorEnvelope : SignedActivationEnvelope :=
+  { successorEnvelope with statement :=
+    { successorEnvelope.statement with predecessorHead := digestByte 88 } }
 
-theorem same_federation_different_content_refused_by_active_world :
-    authorizesWorld bootstrapState (world 4 99 11 12) = false := by native_decide
+/-- The signed predecessor head must be the durable head's envelope digest.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_wrong_predecessor_refused : Bool :=
+  refusedWith (admit pin true bootstrapState wrongPredecessorEnvelope) .wrongPredecessor
 
-theorem same_federation_different_session_refused_by_active_world :
-    authorizesWorld bootstrapState (world 4 10 11 99) = false := by native_decide
+private def unrecordedRollbackEnvelope : SignedActivationEnvelope :=
+  { successorEnvelope with statement :=
+    { successorEnvelope.statement with
+      world := bootstrapEnvelope.statement.world
+      kind := .rollback
+      rollbackTarget := some (digestByte 77) } }
+
+/-- A rollback may only name a digest that is actually in the replayed lineage.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_unrecorded_rollback_refused : Bool :=
+  refusedWith (admit pin true bootstrapState unrecordedRollbackEnvelope) .rollbackTargetMissing
+
+private def wrongCuratorEnvelope : SignedActivationEnvelope :=
+  { successorEnvelope with curatorKey := digestByte 89 }
+
+/-- The envelope's curator key must be the externally distributed pin.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_wrong_curator_key_refused : Bool :=
+  refusedWith (admit pin true bootstrapState wrongCuratorEnvelope) .wrongCuratorKey
+
+/-- Without the host's native Ed25519 verdict nothing is admitted, however
+structurally perfect the envelope is. (Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_unverified_native_signature_refused : Bool :=
+  refusedWith (admit pin false bootstrapState successorEnvelope) .nativeSignatureNotVerified
+
+/-- Same federation, different content root, is NOT the active world.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_same_federation_different_content_refused_by_active_world : Bool :=
+  !(authorizesWorld bootstrapState (world 4 99 11 12))
+
+/-- Same federation, different content session, is NOT the active world.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_same_federation_different_session_refused_by_active_world : Bool :=
+  !(authorizesWorld bootstrapState (world 4 10 11 99))
 
 private def successorState : State :=
   (admit pin true bootstrapState successorEnvelope).toOption.getD []
@@ -588,41 +637,41 @@ private def rollbackEnvelope : SignedActivationEnvelope where
   curatorKey := pin
   signature := signatureByte 93
 
-theorem recorded_rollback_accepts_and_restores_exact_world :
-    (admit pin true successorState rollbackEnvelope).map activeWorld? =
-      .ok (some bootstrapEnvelope.statement.world) := by native_decide
+/-- A rollback naming a recorded envelope is admitted and restores that record's ENTIRE
+`WorldIdentity`, not a federation-only projection.  Fail-closed: a refusal, or an accepted
+lineage with no active world, answers `false`.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_recorded_rollback_accepts_and_restores_exact_world : Bool :=
+  match (admit pin true successorState rollbackEnvelope).map activeWorld? with
+  | .ok (some restored) => restored == bootstrapEnvelope.statement.world
+  | _ => false
 
-theorem fixture_canonical_input_roundtrips :
-    let input : InputWire := {
-      externalCuratorKeyPin := pin
-      nativeSignatureVerified := true
-      state := bootstrapState
-      envelope := successorEnvelope
-    }
-    decodeInput input.toJson = some input := by native_decide
+private def fixtureInput : InputWire where
+  externalCuratorKeyPin := pin
+  nativeSignatureVerified := true
+  state := bootstrapState
+  envelope := successorEnvelope
 
-theorem exact_world_query_accepts_head_and_refuses_other_content :
-    let honest : AuthorizeInputWire := {
-      externalCuratorKeyPin := pin
-      nativeSignaturesVerified := true
-      state := bootstrapState
-      candidate := bootstrapEnvelope.statement.world
-    }
-    authorizesWire honest.toJson = "1" ∧
-      authorizesWire { honest with candidate := world 4 99 11 12 }.toJson = "0" := by native_decide
+/-- The canonical input wire decodes back to the exact value that encoded it.
+(Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_fixture_canonical_input_roundtrips : Bool :=
+  decodeInput fixtureInput.toJson == some fixtureInput
+
+private def honestAuthorizeInput : AuthorizeInputWire where
+  externalCuratorKeyPin := pin
+  nativeSignaturesVerified := true
+  state := bootstrapState
+  candidate := bootstrapEnvelope.statement.world
+
+/-- The exact-world query answers `"1"` for the durable active head and `"0"` for the same
+federation with different content. (Pinned `= true` in `WorldActivationFixtures`.) -/
+def check_exact_world_query_accepts_head_and_refuses_other_content : Bool :=
+  (authorizesWire honestAuthorizeInput.toJson == "1") &&
+  (authorizesWire { honestAuthorizeInput with candidate := world 4 99 11 12 }.toJson == "0")
 
 #assert_axioms decodeInput_reencodes
-#assert_compiled honest_successor_accepts
-#assert_compiled stale_epoch_refused
-#assert_compiled counter_skip_refused
-#assert_compiled wrong_predecessor_refused
-#assert_compiled unrecorded_rollback_refused
-#assert_compiled wrong_curator_key_refused
-#assert_compiled unverified_native_signature_refused
-#assert_compiled same_federation_different_content_refused_by_active_world
-#assert_compiled same_federation_different_session_refused_by_active_world
-#assert_compiled recorded_rollback_accepts_and_restores_exact_world
-#assert_compiled fixture_canonical_input_roundtrips
-#assert_compiled exact_world_query_accepts_head_and_refuses_other_content
+
+-- The twelve witness pins (`native_decide` + `#assert_compiled`) live in
+-- `WorldActivationFixtures.lean`, rooted in `PathOfAngelsGuards` — see the witness header above.
 
 end Dregg2.Games.PathOfAngels.WorldActivation

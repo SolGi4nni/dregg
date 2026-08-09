@@ -501,7 +501,27 @@ theorem replay_deterministic (boundary : DigestBoundary) (before : Projection)
   rw [hl] at hr
   exact Except.ok.inj hr
 
-/-! ## Executable exact and hostile fixtures -/
+/-! ## Executable exact and hostile fixtures
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target. The fixtures'
+STATEMENTS stay here, each as an evaluation-free `check_* : Bool` definition beside the
+private fixture material; the EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `OfficerLogbookFixtures.lean`, rooted in
+the `PathOfAngelsGuards` library: a plain `lake build` still runs every pin, and a stale
+fixture reds the guard library instead of the archive.
+
+Fail-closed convention: `fixtureAfter` matches on the applied batch and falls back to the
+untouched `fixtureInitial` — unreachable while the projection-shape pins hold, and if a
+regression ever made the batch refuse, every length/shape check over `fixtureAfter` reads
+the empty projection and fails the pins in the guard library.
+
+⚠ Named residue, one construction proof: `fixture_settlement_settles` stays
+`native_decide` HERE because `Shipworks.Settlement` has a private constructor with no
+fallback inhabitant reachable from this module — `fixtureSettlement` can only be obtained
+through `Option.get` over the successful settle. Breaking that settle therefore still reds
+this module (and the archive). Everything else moved. -/
 
 private def digestByte (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -573,9 +593,15 @@ private def fixtureGalleyReceipt : GalleyMaintenanceDailyRuntime.ReceiptWire whe
   lootDelta := 0
   canonRevisionDelta := 0
 
+/-- Named residue: `Shipworks.Settlement` has no fallback inhabitant reachable here, so
+the `Option.get` construction below needs this proof as data at elaboration. -/
+private theorem fixture_settlement_settles :
+    (Shipworks.settle Shipworks.CareRecord.empty
+      (Shipworks.powerSubmission 20000)).isSome = true := by native_decide
+
 private def fixtureSettlement : Shipworks.Settlement :=
   (Shipworks.settle Shipworks.CareRecord.empty
-    (Shipworks.powerSubmission 20000)).get (by native_decide)
+    (Shipworks.powerSubmission 20000)).get fixture_settlement_settles
 
 private def fixtureRoster : List Seat :=
   [ ⟨⟨0⟩, fixtureOfficer, ⟨10⟩, .pathfinder, 0⟩
@@ -633,33 +659,36 @@ private def fixtureInitial : Projection :=
   Projection.empty ⟨fixtureWorld, fixtureOfficer⟩
 
 private def fixtureAfter : Projection :=
-  (applyFinalizedBatch fixtureBoundary fixtureInitial fixtureBatch).toOption.get
-    (by native_decide)
+  match applyFinalizedBatch fixtureBoundary fixtureInitial fixtureBatch with
+  | .ok after => after
+  -- unreachable while the shape pins below hold: on a refusal every length/shape
+  -- check reads this empty projection and fails in the guard library
+  | .error _ => fixtureInitial
 
-theorem fixture_three_source_batch_is_exactly_projected :
-    fixtureAfter.missions.length = 3 &&
-    fixtureAfter.roles.length = 1 &&
-    fixtureAfter.assists.length = 0 &&
-    fixtureAfter.recoveries.length = 1 &&
-    fixtureAfter.routes.map RouteRecord.route = ["signal-gallery"] &&
-    fixtureAfter.discoveries.map (fun record => record.artifact.value) = [20] &&
-    fixtureAfter.ordinarySalvage.length = 1 &&
-    fixtureAfter.custody.length = 1 &&
-    fixtureAfter.contributions.length = 3 := by
-  native_decide
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_fixture_three_source_batch_is_exactly_projected : Bool :=
+  decide (fixtureAfter.missions.length = 3) &&
+  decide (fixtureAfter.roles.length = 1) &&
+  decide (fixtureAfter.assists.length = 0) &&
+  decide (fixtureAfter.recoveries.length = 1) &&
+  decide (fixtureAfter.routes.map RouteRecord.route = ["signal-gallery"]) &&
+  decide (fixtureAfter.discoveries.map (fun record => record.artifact.value) = [20]) &&
+  decide (fixtureAfter.ordinarySalvage.length = 1) &&
+  decide (fixtureAfter.custody.length = 1) &&
+  decide (fixtureAfter.contributions.length = 3)
 
-theorem fixture_projection_remains_non_authoritative :
-    fixtureAfter.ordinarySalvage.map
-      (fun record => record.authorization.recipient) = [fixtureOfficer] &&
-    fixtureAfter.custody.map
-      (fun record => record.authorization.marketEligible) = [false] &&
-    fixtureAfter.custody.map
-      (fun record => record.authorization.directTradeAllowed) = [false] &&
-    fixtureAfter.recoveries.map
-      (fun record => record.consequence.implementation) = [.betaRecordOnly] &&
-    fixtureAfter.recoveries.map
-      (fun record => record.consequence.globalMeterDebit) = [0] := by
-  native_decide
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_fixture_projection_remains_non_authoritative : Bool :=
+  decide (fixtureAfter.ordinarySalvage.map
+    (fun record => record.authorization.recipient) = [fixtureOfficer]) &&
+  decide (fixtureAfter.custody.map
+    (fun record => record.authorization.marketEligible) = [false]) &&
+  decide (fixtureAfter.custody.map
+    (fun record => record.authorization.directTradeAllowed) = [false]) &&
+  decide (fixtureAfter.recoveries.map
+    (fun record => record.consequence.implementation) = [.betaRecordOnly]) &&
+  decide (fixtureAfter.recoveries.map
+    (fun record => record.consequence.globalMeterDebit) = [0])
 
 private def assistEvent : EventBatch.IndexedEvent :=
   fixtureEvent 0 crewHead.stream crewHead.head (crewPayload fixtureAssistant)
@@ -676,103 +705,92 @@ private def assistBatch : FinalizedBatch :=
 private def assistantInitial : Projection :=
   Projection.empty ⟨fixtureWorld, fixtureAssistant⟩
 
-theorem finalized_crew_member_gets_role_and_assist_not_personal_salvage :
-    (applyFinalizedBatch fixtureBoundary assistantInitial assistBatch).map (fun state =>
-      (state.missions.map MissionRecord.participation,
-        state.roles.map RoleRecord.role,
-        state.assists.map AssistRecord.principal,
-        state.ordinarySalvage.length)) =
-      .ok ([.assist], [.engineer], [fixtureOfficer], 0) := by
-  native_decide
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_finalized_crew_member_gets_role_and_assist_not_personal_salvage : Bool :=
+  decide ((applyFinalizedBatch fixtureBoundary assistantInitial assistBatch).map (fun state =>
+    (state.missions.map MissionRecord.participation,
+      state.roles.map RoleRecord.role,
+      state.assists.map AssistRecord.principal,
+      state.ordinarySalvage.length)) =
+    .ok ([.assist], [.engineer], [fixtureOfficer], 0))
 
-theorem hostile_exact_batch_replay_refused :
-    applyFinalizedBatch fixtureBoundary fixtureAfter fixtureBatch =
-      .error .staleCoordinate := by
-  native_decide
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_hostile_exact_batch_replay_refused : Bool :=
+  decide (applyFinalizedBatch fixtureBoundary fixtureAfter fixtureBatch =
+    .error .staleCoordinate)
 
-theorem hostile_receipt_reorder_refused :
-    applyFinalizedBatch fixtureBoundary fixtureInitial
-      { fixtureBatch with receipts :=
-        [shipworksPayload, galleyPayload, crewPayload fixtureOfficer] } =
-      .error .receiptBinding := by
-  native_decide
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_hostile_receipt_reorder_refused : Bool :=
+  decide (applyFinalizedBatch fixtureBoundary fixtureInitial
+    { fixtureBatch with receipts :=
+      [shipworksPayload, galleyPayload, crewPayload fixtureOfficer] } =
+    .error .receiptBinding)
 
-theorem hostile_nonparticipant_cannot_receive_crew_log :
-    let stranger := digestByte 99
-    let payload := crewPayload stranger
-    let event := fixtureEvent 0 crewHead.stream crewHead.head payload
-    let statement : EventBatch.Statement :=
-      ⟨fixtureCoordinate 3 fixtureOfficer, [event]⟩
-    let input : FinalizedBatch := {
-      initialHeads := [crewHead]
-      envelope := ⟨statement, fixtureBoundary.batch.batchDigest statement⟩
-      receipts := [payload] }
-    applyFinalizedBatch fixtureBoundary (Projection.empty ⟨fixtureWorld, stranger⟩) input =
-      .error .receiptBinding := by
-  native_decide
+private def stranger : Digest32 := digestByte 99
 
-theorem hostile_automatic_recovery_mutation_refused :
-    let source := { fixtureCrewReceipt with recovery :=
-      { fixtureCrewReceipt.recovery with
-        implementation := .automaticWorldMutation, globalMeterDebit := 1 } }
-    let payload : ReceiptPayload := ⟨fixtureOfficer, .crew source⟩
-    let event := fixtureEvent 0 crewHead.stream crewHead.head payload
-    let statement : EventBatch.Statement :=
-      ⟨fixtureCoordinate 4 fixtureOfficer, [event]⟩
-    let input : FinalizedBatch := {
-      initialHeads := [crewHead]
-      envelope := ⟨statement, fixtureBoundary.batch.batchDigest statement⟩
-      receipts := [payload] }
-    applyFinalizedBatch fixtureBoundary fixtureInitial input = .error .receiptBinding := by
-  native_decide
+private def strangerBatch : FinalizedBatch :=
+  let payload := crewPayload stranger
+  let event := fixtureEvent 0 crewHead.stream crewHead.head payload
+  let statement : EventBatch.Statement :=
+    ⟨fixtureCoordinate 3 fixtureOfficer, [event]⟩
+  { initialHeads := [crewHead]
+    envelope := ⟨statement, fixtureBoundary.batch.batchDigest statement⟩
+    receipts := [payload] }
 
-theorem hostile_market_relic_custody_refused :
-    let badAuthorization : CrewFieldMissionRuntime.RelicCustodyAuthorization :=
-      ⟨⟨8⟩, .market, true, true⟩
-    let source := { fixtureCrewReceipt with receipt :=
-      { fixtureCrewReceipt.receipt with relicCustody := [badAuthorization] } }
-    let payload : ReceiptPayload := ⟨fixtureOfficer, .crew source⟩
-    let event := fixtureEvent 0 crewHead.stream crewHead.head payload
-    let statement : EventBatch.Statement :=
-      ⟨fixtureCoordinate 5 fixtureOfficer, [event]⟩
-    let input : FinalizedBatch := {
-      initialHeads := [crewHead]
-      envelope := ⟨statement, fixtureBoundary.batch.batchDigest statement⟩
-      receipts := [payload] }
-    applyFinalizedBatch fixtureBoundary fixtureInitial input = .error .receiptBinding := by
-  native_decide
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_hostile_nonparticipant_cannot_receive_crew_log : Bool :=
+  decide (applyFinalizedBatch fixtureBoundary
+    (Projection.empty ⟨fixtureWorld, stranger⟩) strangerBatch = .error .receiptBinding)
 
-theorem hostile_contribution_overflow_refused :
-    let source := { fixtureCrewReceipt with receipt :=
-      { fixtureCrewReceipt.receipt with contribution :=
-        { fixtureCrewReceipt.receipt.contribution with intel := METRIC_LIMIT + 1 } } }
-    let payload : ReceiptPayload := ⟨fixtureOfficer, .crew source⟩
-    let event := fixtureEvent 0 crewHead.stream crewHead.head payload
-    let statement : EventBatch.Statement :=
-      ⟨fixtureCoordinate 6 fixtureOfficer, [event]⟩
-    let input : FinalizedBatch := {
-      initialHeads := [crewHead]
-      envelope := ⟨statement, fixtureBoundary.batch.batchDigest statement⟩
-      receipts := [payload] }
-    applyFinalizedBatch fixtureBoundary fixtureInitial input = .error .receiptBinding := by
-  native_decide
+private def crewBatchFor (ordinal : Nat) (source : CrewReceipt) : FinalizedBatch :=
+  let payload : ReceiptPayload := ⟨fixtureOfficer, .crew source⟩
+  let event := fixtureEvent 0 crewHead.stream crewHead.head payload
+  let statement : EventBatch.Statement :=
+    ⟨fixtureCoordinate ordinal fixtureOfficer, [event]⟩
+  { initialHeads := [crewHead]
+    envelope := ⟨statement, fixtureBoundary.batch.batchDigest statement⟩
+    receipts := [payload] }
 
-theorem hostile_foreign_world_refused :
-    let foreignWorld := { fixtureWorld with contentEpoch := ⟨99⟩ }
-    applyFinalizedBatch fixtureBoundary
-      (Projection.empty ⟨foreignWorld, fixtureOfficer⟩) fixtureBatch =
-      .error .wrongWorld := by
-  native_decide
+private def automaticRecoveryReceipt : CrewReceipt :=
+  { fixtureCrewReceipt with recovery :=
+    { fixtureCrewReceipt.recovery with
+      implementation := .automaticWorldMutation, globalMeterDebit := 1 } }
 
-#assert_compiled fixture_three_source_batch_is_exactly_projected
-#assert_compiled fixture_projection_remains_non_authoritative
-#assert_compiled finalized_crew_member_gets_role_and_assist_not_personal_salvage
-#assert_compiled hostile_exact_batch_replay_refused
-#assert_compiled hostile_receipt_reorder_refused
-#assert_compiled hostile_nonparticipant_cannot_receive_crew_log
-#assert_compiled hostile_automatic_recovery_mutation_refused
-#assert_compiled hostile_market_relic_custody_refused
-#assert_compiled hostile_contribution_overflow_refused
-#assert_compiled hostile_foreign_world_refused
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_hostile_automatic_recovery_mutation_refused : Bool :=
+  decide (applyFinalizedBatch fixtureBoundary fixtureInitial
+    (crewBatchFor 4 automaticRecoveryReceipt) = .error .receiptBinding)
+
+private def marketCustodyReceipt : CrewReceipt :=
+  { fixtureCrewReceipt with receipt :=
+    { fixtureCrewReceipt.receipt with relicCustody := [⟨⟨8⟩, .market, true, true⟩] } }
+
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_hostile_market_relic_custody_refused : Bool :=
+  decide (applyFinalizedBatch fixtureBoundary fixtureInitial
+    (crewBatchFor 5 marketCustodyReceipt) = .error .receiptBinding)
+
+private def overflowContributionReceipt : CrewReceipt :=
+  { fixtureCrewReceipt with receipt :=
+    { fixtureCrewReceipt.receipt with contribution :=
+      { fixtureCrewReceipt.receipt.contribution with intel := METRIC_LIMIT + 1 } } }
+
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_hostile_contribution_overflow_refused : Bool :=
+  decide (applyFinalizedBatch fixtureBoundary fixtureInitial
+    (crewBatchFor 6 overflowContributionReceipt) = .error .receiptBinding)
+
+private def foreignWorld : EventBatch.WorldIdentity :=
+  { fixtureWorld with contentEpoch := ⟨99⟩ }
+
+/-- (Pinned `= true` in `OfficerLogbookFixtures`.) -/
+def check_hostile_foreign_world_refused : Bool :=
+  decide (applyFinalizedBatch fixtureBoundary
+    (Projection.empty ⟨foreignWorld, fixtureOfficer⟩) fixtureBatch = .error .wrongWorld)
+
+-- The ten fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `OfficerLogbookFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixtures header
+-- above. Named residue staying here: `fixture_settlement_settles` (private construction
+-- proof for `fixtureSettlement`).
 
 end Dregg2.Games.PathOfAngels.OfficerLogbook

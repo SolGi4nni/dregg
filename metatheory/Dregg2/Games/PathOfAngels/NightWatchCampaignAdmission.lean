@@ -588,8 +588,23 @@ theorem WorldScopedCampaignConfigMember.exact_content_root
 Deployment-free test vectors, not canon.  Digests are built by hand (`markDigest`)
 except the two that CANNOT be: `slotCommitment` is `HiddenInstance.commit` of the
 fixture secret and the manifest root is a real SHA-256 of the manifest bytes.  Every
-theorem touching either is `native_decide` and pinned `#assert_compiled`, because a
-kernel `decide` through the Poseidon2 sponge is a 47 GB bomb. -/
+pin touching either is `native_decide` and `#assert_compiled`, because a kernel
+`decide` through the Poseidon2 sponge is a 47 GB bomb.
+
+⚑ **THE TEETH NO LONGER BITE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the eleven `native_decide` pins
+below ran at elaboration, each one a Poseidon2 sponge and a SHA-256 of manifest bytes, so any
+fixture regression here was a hard failure of every Rust proving target in the workspace (the
+compilation-unit coupling the stale-fixture outage measured). The teeth's STATEMENTS stay here,
+each as an evaluation-free `check_* : Bool` definition (a `def` body elaborates without
+running), beside the fixture world/manifest/member they bite on — which `NightWatchCampaignWire`
+shares. The EVALUATION — each `check_* = true`, pinned by `native_decide` + `#assert_compiled` —
+lives in `NightWatchCampaignAdmissionFixtures.lean`, rooted in the `PathOfAngelsGuards` library:
+a plain `lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Named residue: NONE — every fixture value here is a plain `def`, so no proof is demanded as
+data at construction and all eleven pins moved. -/
 
 def markDigest (mark : Fin 256) : Digest32 where
   bytes := List.replicate 31 (0 : Fin 256) ++ [mark]
@@ -750,19 +765,21 @@ def fixtureMember? : Option WorldScopedCampaignConfigMember := do
 
 /-! ## Teeth -/
 
-theorem fixture_config_round_trips_through_the_wire :
-    decodeConfig (configJson fixtureRaw) = some fixtureRaw := by
-  native_decide
+/-- The fixture config round-trips through the exact wire codec the manifest carries.
+(Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_fixture_config_round_trips_through_the_wire : Bool :=
+  decide (decodeConfig (configJson fixtureRaw) = some fixtureRaw)
 
-theorem fixture_manifest_decodes_canonically :
-    fixtureValidatedManifest?.isSome = true := by
-  native_decide
+/-- The fixture manifest decodes canonically.
+(Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_fixture_manifest_decodes_canonically : Bool :=
+  fixtureValidatedManifest?.isSome
 
 /-- ⚑ The one that closes the hole: a config the CURATOR published, located inside the
-active world's own content root, is admitted. -/
-theorem the_activated_world_admits_its_own_campaign_config :
-    fixtureMember?.isSome = true := by
-  native_decide
+active world's own content root, is admitted.
+(Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_the_activated_world_admits_its_own_campaign_config : Bool :=
+  fixtureMember?.isSome
 
 /-- A config with a different rule table re-hashes the manifest and therefore no
 longer matches the activated world's content root: a player cannot swap the rules and
@@ -783,12 +800,12 @@ def forgedMember? : Option WorldScopedCampaignConfigMember := do
   let manifest ← ActivatedContent.decodeManifest forgedManifest.toJson
   authorizeCampaignConfigForWorld? fixtureWorld manifest
 
-theorem a_free_risk_table_rehashes_the_manifest_and_the_world_refuses_it :
-    (NightWatchCampaign.activate? forgedRaw).isSome = true ∧
-    (ActivatedContent.decodeManifest forgedManifest.toJson).isSome = true ∧
-    forgedManifest.matchesWorldB fixtureWorld = false ∧
-    forgedMember? = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_a_free_risk_table_rehashes_the_manifest_and_the_world_refuses_it : Bool :=
+  (NightWatchCampaign.activate? forgedRaw).isSome &&
+  (ActivatedContent.decodeManifest forgedManifest.toJson).isSome &&
+  !(forgedManifest.matchesWorldB fixtureWorld) &&
+  forgedMember?.isNone
 
 /-- The component name is exact.  ⚠ The world here is the one whose `contentRoot` IS
 the misnamed manifest's root, so `matchesWorldB` PASSES — first conjunct — and the
@@ -805,11 +822,11 @@ def misnamedMember? : Option WorldScopedCampaignConfigMember := do
   let manifest ← ActivatedContent.decodeManifest misnamedManifest.toJson
   authorizeCampaignConfigForWorld? misnamedWorld manifest
 
-theorem a_component_under_another_name_is_not_this_organs_config :
-    misnamedManifest.matchesWorldB misnamedWorld = true ∧
-    ActivatedContent.componentByName? misnamedManifest.components CONFIG_COMPONENT = none ∧
-    misnamedMember? = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_a_component_under_another_name_is_not_this_organs_config : Bool :=
+  misnamedManifest.matchesWorldB misnamedWorld &&
+  (ActivatedContent.componentByName? misnamedManifest.components CONFIG_COMPONENT).isNone &&
+  misnamedMember?.isNone
 
 /-- A world that is structurally fine and names a different content session cannot
 consume this manifest, even though the manifest root is unchanged. -/
@@ -820,9 +837,9 @@ def crossSessionMember? : Option WorldScopedCampaignConfigMember := do
   let manifest ← fixtureValidatedManifest?
   authorizeCampaignConfigForWorld? crossSessionWorld manifest
 
-theorem a_config_cannot_be_carried_into_another_content_session :
-    crossSessionMember? = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_a_config_cannot_be_carried_into_another_content_session : Bool :=
+  crossSessionMember?.isNone
 
 /-- A config that decodes perfectly can still fail `activate?`, and then there is no
 member — the witness never manufactures a `Config`. -/
@@ -842,12 +859,12 @@ def forgedRosterMember? : Option WorldScopedCampaignConfigMember := do
   let manifest ← ActivatedContent.decodeManifest forgedRosterManifest.toJson
   authorizeCampaignConfigForWorld? forgedRosterWorld manifest
 
-theorem an_invalid_config_in_an_exactly_matching_world_still_yields_no_member :
-    (ActivatedContent.decodeManifest forgedRosterManifest.toJson).isSome = true ∧
-    forgedRosterManifest.matchesWorldB forgedRosterWorld = true ∧
-    NightWatchCampaign.activate? fixtureForgedRoster = none ∧
-    forgedRosterMember? = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_an_invalid_config_in_an_exactly_matching_world_still_yields_no_member : Bool :=
+  (ActivatedContent.decodeManifest forgedRosterManifest.toJson).isSome &&
+  forgedRosterManifest.matchesWorldB forgedRosterWorld &&
+  (NightWatchCampaign.activate? fixtureForgedRoster).isNone &&
+  forgedRosterMember?.isNone
 
 /-! ## Config-shape refusals, on the real decoder -/
 
@@ -869,31 +886,23 @@ ignored.  `exactKeys` is exact in both directions. -/
 def legacyHazardCycleBytes : String :=
   ((configJson fixtureRaw).dropEnd 1).toString ++ ",\"hazard_cycle\":[70,10,55]}"
 
-theorem oversized_rule_list_refuses : decodeConfig oversizedRulesBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_oversized_rule_list_refuses : Bool := (decodeConfig oversizedRulesBytes).isNone
 
-theorem a_risk_threshold_above_the_face_count_refuses :
-    decodeConfig riskAboveTheFaceCountBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_a_risk_threshold_above_the_face_count_refuses : Bool :=
+  (decodeConfig riskAboveTheFaceCountBytes).isNone
 
-theorem initial_resource_above_the_bound_refuses :
-    decodeConfig resourceAboveBoundBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_initial_resource_above_the_bound_refuses : Bool :=
+  (decodeConfig resourceAboveBoundBytes).isNone
 
-theorem a_config_carrying_the_retired_hazard_cycle_refuses :
-    decodeConfig legacyHazardCycleBytes = none := by
-  native_decide
+/-- (Pinned `= true` in `NightWatchCampaignAdmissionFixtures`.) -/
+def check_a_config_carrying_the_retired_hazard_cycle_refuses : Bool :=
+  (decodeConfig legacyHazardCycleBytes).isNone
 
-#assert_compiled fixture_config_round_trips_through_the_wire
-#assert_compiled fixture_manifest_decodes_canonically
-#assert_compiled the_activated_world_admits_its_own_campaign_config
-#assert_compiled a_free_risk_table_rehashes_the_manifest_and_the_world_refuses_it
-#assert_compiled a_component_under_another_name_is_not_this_organs_config
-#assert_compiled a_config_cannot_be_carried_into_another_content_session
-#assert_compiled an_invalid_config_in_an_exactly_matching_world_still_yields_no_member
-#assert_compiled oversized_rule_list_refuses
-#assert_compiled a_risk_threshold_above_the_face_count_refuses
-#assert_compiled initial_resource_above_the_bound_refuses
-#assert_compiled a_config_carrying_the_retired_hazard_cycle_refuses
+-- The eleven teeth (`native_decide` + `#assert_compiled`) live in
+-- `NightWatchCampaignAdmissionFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- fixture header above.
 
 end Dregg2.Games.PathOfAngels.NightWatchCampaignAdmission

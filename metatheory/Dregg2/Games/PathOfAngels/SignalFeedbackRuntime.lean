@@ -404,11 +404,28 @@ theorem served_counts_are_bounded (request : Request) :
 
 /-! ## Concrete requests, and why these are compiled pins
 
-Each theorem below names a real digest, so kernel reduction would have to run the
-Poseidon2 permutation.  They are `native_decide` and pinned with `#assert_compiled`.
+Each fixture below names a real digest, so kernel reduction would have to run the
+Poseidon2 permutation.  The pins are `native_decide` and pinned with `#assert_compiled`.
 What they buy is that the general statements above are not vacuous over an empty
 accepted set: the wire really does decode, the sponge really does run, and the refusals
-really are reachable. -/
+really are reachable.
+
+⚑ **THE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and the twenty `native_decide`
+pins below ran at elaboration, so a stale feedback fixture was a hard failure of every
+Rust proving target in the workspace (the compilation-unit coupling the stale-fixture
+outage measured). The pins' STATEMENTS stay here, each as an evaluation-free
+`check_* : Bool` definition (a `def` body elaborates without running).  The EVALUATION —
+each `check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`SignalFeedbackRuntimeFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of
+the archive.
+
+Named residue: NONE — no construction here demands a proof as data.  In particular
+`fixtureTarget` is a carried literal, and the measurement tying it to the draw
+(`fixtureTarget_is_the_drawn_instance`) is a pin like any other, not constructor data —
+unlike its namesake in `NetworkJudgeWire`, which discharges `Config.target_eq` and had to
+stay put. -/
 
 private def hexDigest (hex : String) : Digest32 :=
   (Emit.parseBytes32Hex? hex).getD ⟨List.replicate 32 0, by simp⟩
@@ -425,10 +442,10 @@ def fixtureCommitment : Digest32 :=
   HiddenInstance.commit ⟨SlotDeriveRuntime.fixtureRequest.secret⟩
     ⟨SlotDeriveRuntime.fixtureRequest.slot⟩
 
-theorem fixtureCommitment_is_the_derived_commitment :
-    (SlotDeriveRuntime.derive? SlotDeriveRuntime.fixtureRequest).map
-      SlotDeriveRuntime.Reply.commitment = some fixtureCommitment := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixtureCommitment_is_the_derived_commitment : Bool :=
+  decide ((SlotDeriveRuntime.derive? SlotDeriveRuntime.fixtureRequest).map
+    SlotDeriveRuntime.Reply.commitment = some fixtureCommitment)
 
 def fixtureRequest : Request where
   slot := SlotDeriveRuntime.fixtureRequest.slot
@@ -443,63 +460,65 @@ def fixtureRequest : Request where
 
 def fixtureRequestBytes : String := fixtureRequest.toJson
 
-theorem fixture_request_roundtrips :
-    decodeRequest fixtureRequestBytes = some fixtureRequest := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_request_roundtrips : Bool :=
+  decide (decodeRequest fixtureRequestBytes = some fixtureRequest)
 
 /-- ⚑ **THE FIXTURE'S SEED DRAWS, AND THIS IS THE INSTANCE.**  Carried as a literal and
 measured, not derived: every pin below is a statement about a `some`, and without this
 one they could all be satisfied by a refusal while reading green. -/
 def fixtureTarget : SignalTriangulation.Code := { low := 2, mid := 5, high := 1 }
 
-theorem fixtureTarget_is_the_drawn_instance :
-    targetOf? fixtureRequest = some fixtureTarget := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixtureTarget_is_the_drawn_instance : Bool :=
+  decide (targetOf? fixtureRequest = some fixtureTarget)
 
 /-- The bytes this fixture is served, once. -/
 def fixtureReplyJson? : Option String := (replyOf? fixtureRequest).map Reply.toJson
 
-theorem fixture_export_answers :
-    some (signalFeedbackFFI fixtureRequestBytes) = fixtureReplyJson? := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_export_answers : Bool :=
+  decide (some (signalFeedbackFFI fixtureRequestBytes) = fixtureReplyJson?)
 
-theorem fixture_export_is_not_the_refusal :
-    signalFeedbackFFI fixtureRequestBytes ≠ "" := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_export_is_not_the_refusal : Bool :=
+  decide (signalFeedbackFFI fixtureRequestBytes ≠ "")
 
-theorem fixture_reply_is_canonical_and_states_the_format :
-    fixtureReplyJson?.any
-      (fun j => j.startsWith ("{\"format\":\"" ++ OUTPUT_FORMAT ++ "\"")) = true := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_reply_is_canonical_and_states_the_format : Bool :=
+  fixtureReplyJson?.any
+    (fun j => j.startsWith ("{\"format\":\"" ++ OUTPUT_FORMAT ++ "\""))
 
-/-- ⚠ The reply does not echo the SECRET. -/
-theorem fixture_reply_does_not_carry_the_secret :
-    fixtureReplyJson?.map
-      (fun j => (j.splitOn SlotDeriveRuntime.FIXTURE_SECRET_HEX).length) = some 1 := by
-  native_decide
+/-- ⚠ The reply does not echo the SECRET.
+(Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_reply_does_not_carry_the_secret : Bool :=
+  decide (fixtureReplyJson?.map
+    (fun j => (j.splitOn SlotDeriveRuntime.FIXTURE_SECRET_HEX).length) = some 1)
+
+/-- The `do`-block scrutinee of the run-seed absence pin, hoisted so the check below is a
+plain equality on an `Option Nat`. -/
+private def fixtureReplyRunSeedSplitCount? : Option Nat := do
+  let j ← fixtureReplyJson?
+  let d ← derivedOf? fixtureRequest
+  pure (j.splitOn (Emit.bytes32Hex d.runSeed)).length
 
 /-- ⚠ The reply does not echo the RUN SEED — the value the draw reads to pick the
-answer. -/
-theorem fixture_reply_does_not_carry_the_run_seed :
-    (do
-      let j ← fixtureReplyJson?
-      let d ← derivedOf? fixtureRequest
-      pure (j.splitOn (Emit.bytes32Hex d.runSeed)).length) = some 1 := by
-  native_decide
+answer. (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_reply_does_not_carry_the_run_seed : Bool :=
+  decide (fixtureReplyRunSeedSplitCount? = some 1)
 
-/-- ⚠ The reply does not echo the COMMITMENT either, though that value is public. -/
-theorem fixture_reply_does_not_carry_the_commitment :
-    fixtureReplyJson?.map
-      (fun j => (j.splitOn (Emit.bytes32Hex fixtureCommitment)).length) = some 1 := by
-  native_decide
+/-- ⚠ The reply does not echo the COMMITMENT either, though that value is public.
+(Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_reply_does_not_carry_the_commitment : Bool :=
+  decide (fixtureReplyJson?.map
+    (fun j => (j.splitOn (Emit.bytes32Hex fixtureCommitment)).length) = some 1)
 
 /-- ⚠ The reply does not spell the TARGET.  A three-band code has a canonical JSON
 spelling on this very wire (it is how the guess arrives); the served bytes do not
-contain it. -/
-theorem fixture_reply_does_not_carry_the_target :
-    fixtureReplyJson?.map
-      (fun j => (j.splitOn (codeJson fixtureTarget)).length) = some 1 := by
-  native_decide
+contain it. (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_reply_does_not_carry_the_target : Bool :=
+  decide (fixtureReplyJson?.map
+    (fun j => (j.splitOn (codeJson fixtureTarget)).length) = some 1)
 
 /-- ⚑ THE ORACLE IS NOT CONSTANT.  Two guesses against the same instance get different
 answers — so the export really is classifying, and the invariance theorems above are not
@@ -507,9 +526,9 @@ statements about a function that says the same thing to everyone. -/
 def fixtureOtherGuess : Request :=
   { fixtureRequest with guess := { low := 3, mid := 4, high := 5 } }
 
-theorem fixture_two_guesses_are_classified_differently :
-    signalFeedbackFFI fixtureRequestBytes ≠ signalFeedbackFFI fixtureOtherGuess.toJson := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_two_guesses_are_classified_differently : Bool :=
+  decide (signalFeedbackFFI fixtureRequestBytes ≠ signalFeedbackFFI fixtureOtherGuess.toJson)
 
 /-- ⚑ THE TARGET SOLVES, AND IT IS THE ONLY THING THAT DOES on this instance.  The
 session's solved bit is `exact = 3` and this is a live witness that the bit is
@@ -517,10 +536,10 @@ reachable. -/
 def fixtureSolvingRequest : Request :=
   { fixtureRequest with guess := fixtureTarget }
 
-theorem fixture_the_target_locks_all_three :
-    signalFeedbackFFI fixtureSolvingRequest.toJson =
-      (Reply.mk { exact := 3, present := 0 }).toJson := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_the_target_locks_all_three : Bool :=
+  decide (signalFeedbackFFI fixtureSolvingRequest.toJson =
+    (Reply.mk { exact := 3, present := 0 }).toJson)
 
 /-- ⚑ A DIFFERENT PLAYER IS A DIFFERENT GAME.  The same slot, secret, mission and guess
 under another player key is classified against another instance — which is why a
@@ -529,9 +548,9 @@ a session must be bound to the key that will sign the settling turn. -/
 def fixtureOtherPlayer : Request :=
   { fixtureRequest with playerKey := SlotDeriveRuntime.otherPlayerRequest.playerKey }
 
-theorem fixture_another_player_draws_another_instance :
-    targetOf? fixtureRequest ≠ targetOf? fixtureOtherPlayer := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_another_player_draws_another_instance : Bool :=
+  decide (targetOf? fixtureRequest ≠ targetOf? fixtureOtherPlayer)
 
 /-- A secret that does not open the stated commitment is refused, not classified. -/
 def fixtureWrongCommitment : Request :=
@@ -539,34 +558,36 @@ def fixtureWrongCommitment : Request :=
     commitment := hexDigest
       "0000000000000000000000000000000000000000000000000000000000000000" }
 
-theorem fixture_unopened_commitment_refused :
-    signalFeedbackFFI fixtureWrongCommitment.toJson = "" := by
-  native_decide
+/-- A secret that does not open the stated commitment is refused, not classified.
+(Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_unopened_commitment_refused : Bool :=
+  decide (signalFeedbackFFI fixtureWrongCommitment.toJson = "")
 
-theorem fixture_trailing_byte_refused :
-    signalFeedbackFFI (fixtureRequestBytes ++ "\n") = "" := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_trailing_byte_refused : Bool :=
+  decide (signalFeedbackFFI (fixtureRequestBytes ++ "\n") = "")
 
-theorem fixture_unknown_field_refused :
-    signalFeedbackFFI
-      (fixtureRequestBytes.replace "\"slot\":9" "\"slot\":9,\"extra\":0") = "" := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_unknown_field_refused : Bool :=
+  decide (signalFeedbackFFI
+    (fixtureRequestBytes.replace "\"slot\":9" "\"slot\":9,\"extra\":0") = "")
 
-theorem fixture_uppercase_digest_refused :
-    signalFeedbackFFI
-      (fixtureRequestBytes.replace SlotDeriveRuntime.FIXTURE_FEDERATION_HEX
-        (String.toUpper SlotDeriveRuntime.FIXTURE_FEDERATION_HEX)) = "" := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_uppercase_digest_refused : Bool :=
+  decide (signalFeedbackFFI
+    (fixtureRequestBytes.replace SlotDeriveRuntime.FIXTURE_FEDERATION_HEX
+      (String.toUpper SlotDeriveRuntime.FIXTURE_FEDERATION_HEX)) = "")
 
-theorem fixture_wrong_format_refused :
-    signalFeedbackFFI (fixtureRequestBytes.replace INPUT_FORMAT "POA-SIGNAL-FEEDBACK-2") = "" := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_wrong_format_refused : Bool :=
+  decide (signalFeedbackFFI
+    (fixtureRequestBytes.replace INPUT_FORMAT "POA-SIGNAL-FEEDBACK-2") = "")
 
 /-- An out-of-range band is refused rather than reduced modulo six — a wrapped band
-would be a second spelling of a legal guess and would hand the player a free round. -/
-theorem fixture_out_of_range_band_refused :
-    signalFeedbackFFI (fixtureRequestBytes.replace "\"high\":2}}" "\"high\":6}}") = "" := by
-  native_decide
+would be a second spelling of a legal guess and would hand the player a free round.
+(Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_out_of_range_band_refused : Bool :=
+  decide (signalFeedbackFFI (fixtureRequestBytes.replace "\"high\":2}}" "\"high\":6}}") = "")
 
 /-- Key ORDER is pinned by the seal, not merely key membership. -/
 def transposedRequestBytes : String :=
@@ -580,8 +601,9 @@ def transposedRequestBytes : String :=
     ",\"commitment\":" ++ jsonString (Emit.bytes32Hex fixtureCommitment) ++
     ",\"guess\":{\"low\":0,\"mid\":1,\"high\":2}}"
 
-theorem fixture_transposed_keys_refused : signalFeedbackFFI transposedRequestBytes = "" := by
-  native_decide
+/-- (Pinned `= true` in `SignalFeedbackRuntimeFixtures`.) -/
+def check_fixture_transposed_keys_refused : Bool :=
+  decide (signalFeedbackFFI transposedRequestBytes = "")
 
 #assert_axioms decodeRequest_reencodes
 #assert_axioms decodeRequest_accepted_bytes_injective
@@ -596,25 +618,9 @@ theorem fixture_transposed_keys_refused : signalFeedbackFFI transposedRequestByt
 #assert_axioms served_transcript_cannot_separate_feedback_equivalent_targets
 #assert_axioms reply_reports_solved_iff_the_guess_is_the_target
 #assert_axioms served_counts_are_bounded
-#assert_compiled fixtureCommitment_is_the_derived_commitment
-#assert_compiled fixtureTarget_is_the_drawn_instance
-#assert_compiled fixture_request_roundtrips
-#assert_compiled fixture_export_answers
-#assert_compiled fixture_export_is_not_the_refusal
-#assert_compiled fixture_reply_is_canonical_and_states_the_format
-#assert_compiled fixture_reply_does_not_carry_the_secret
-#assert_compiled fixture_reply_does_not_carry_the_run_seed
-#assert_compiled fixture_reply_does_not_carry_the_commitment
-#assert_compiled fixture_reply_does_not_carry_the_target
-#assert_compiled fixture_two_guesses_are_classified_differently
-#assert_compiled fixture_the_target_locks_all_three
-#assert_compiled fixture_another_player_draws_another_instance
-#assert_compiled fixture_unopened_commitment_refused
-#assert_compiled fixture_trailing_byte_refused
-#assert_compiled fixture_unknown_field_refused
-#assert_compiled fixture_uppercase_digest_refused
-#assert_compiled fixture_wrong_format_refused
-#assert_compiled fixture_out_of_range_band_refused
-#assert_compiled fixture_transposed_keys_refused
+
+-- The twenty fixture pins (`native_decide` + `#assert_compiled`) live in
+-- `SignalFeedbackRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the
+-- concrete-requests header above.
 
 end Dregg2.Games.PathOfAngels.SignalFeedbackRuntime

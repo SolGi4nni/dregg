@@ -181,57 +181,84 @@ def env41 : SalvageCrate.OpenEnvelope := envForCrate crew41 ⟨31⟩ 0 1 0
 /-- Crew 40, opening the genesis period: draws a bound record (zero contribution). -/
 def env40 : SalvageCrate.OpenEnvelope := envForCrate crew40 ⟨31⟩ 0 1 0
 
-/-! ## The two poles -/
+/-! ## The two poles
+
+⚑ **THE POLES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target.  Each fixture theorem
+below is now an evaluation-free `check_* : Bool` definition; the EVALUATION — each
+`check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`StationCrateOpenFixtures.lean`, rooted in the `PathOfAngelsGuards` library.  A plain
+`lake build` still runs every pin; `lake build Dregg2.FFI` never does.
+
+Fail-closed convention: where a check needs the accepted first open as a PREREQUISITE (the
+old `.get (by native_decide)` shape on `firstResult`), it matches on the `Option` and answers
+`false` on `none` — a broken prerequisite fails the pin in the guard library rather than
+wedging this module.
+
+⚠ Named residue, one construction proof: `panel_valid` stays `native_decide` HERE because
+`Panel` carries its validity proof as data — constructing `panel` at all requires the proof
+at elaboration.  Breaking `panelValidB` on `panelRaw` therefore still reds this module (and
+the archive).  Everything else moved. -/
 
 /-- ⭐ THE RITUAL MOVES THE SHIP.  The supplies gauge advances by exactly the drawn
 contribution (1), the recovered set gains one kind, and the open is counted —
 observed and admitted both 1.  A refusal is `none`, so this cannot be met by
-declining. -/
-theorem an_honest_salvage_open_moves_the_supplies_gauge :
-    (observeOne env41).map (fun s =>
-        (s.face panel, s.recovered.card, s.observed.card, s.admitted)) =
-      some ([{ gauge := ⟨1⟩, meter := .supplies, exactTotal := 1, fullAt := 64,
-               shown := 1, atFull := false }], 1, 1, 1) := by native_decide
+declining. (Pinned `= true` in `StationCrateOpenFixtures`.) -/
+def check_an_honest_salvage_open_moves_the_supplies_gauge : Bool :=
+  decide ((observeOne env41).map (fun s =>
+      (s.face panel, s.recovered.card, s.observed.card, s.admitted)) =
+    some ([{ gauge := ⟨1⟩, meter := .supplies, exactTotal := 1, fullAt := 64,
+             shown := 1, atFull := false }], 1, 1, 1))
 
 /-- ⭐ AN ORDINARY DAY MOVES NO GAUGE, on real crate output.  Crew 40 opened — it
 is observed and admitted — and the ship is bit-identical to the installed one:
-supplies zero, no salvage recovered.  Missing a day is uninteresting. -/
-theorem an_ordinary_open_moves_no_gauge :
-    (observeOne env40).map (fun s =>
-        (s.face panel, s.recovered.card, s.observed.card, s.admitted)) =
-      some ([{ gauge := ⟨1⟩, meter := .supplies, exactTotal := 0, fullAt := 64,
-               shown := 0, atFull := false }], 0, 1, 1) := by native_decide
+supplies zero, no salvage recovered.  Missing a day is uninteresting.
+(Pinned `= true` in `StationCrateOpenFixtures`.) -/
+def check_an_ordinary_open_moves_no_gauge : Bool :=
+  decide ((observeOne env40).map (fun s =>
+      (s.face panel, s.recovered.card, s.observed.card, s.admitted)) =
+    some ([{ gauge := ⟨1⟩, meter := .supplies, exactTotal := 0, fullAt := 64,
+             shown := 0, atFull := false }], 0, 1, 1))
 
 /-! ## The hostile openings, constructed and refused
 
-`firstResult` is the ACCEPTED first open of crew 41 — its existence witnesses that
-the refusals below are not vacuous (there really was a ship-moving open to
-replay). -/
+`firstOpen?` is the ACCEPTED first open of crew 41 — the checks below match on it, so its
+existence witnesses that the refusals are not vacuous (there really was a ship-moving open
+to replay), and a refused prerequisite answers `false` (fail-closed) rather than wedging
+this module.  `OpenResult`'s constructor is private and it carries its exactness proofs, so
+no fallback value is constructible — the dependent uses are FOLDED into each check's own
+`match`, exactly the exemplar's `check_public_double_open_in_one_period_refuses` shape. -/
 
-private def firstResult : SalvageCrate.OpenResult crate env41 :=
-  (SalvageCrate.openCrate crate (SalvageCrate.genesis crate)
-    (SalvageCrate.genesisCapability crate) env41).get (by native_decide)
-
-private def afterFirst : SalvageCrate.State crate := firstResult.after
-private def afterFirstCap : SalvageCrate.CurrentStateCapability afterFirst :=
-  firstResult.nextCapability
+private def firstOpen? : Option (SalvageCrate.OpenResult crate env41) :=
+  SalvageCrate.openCrate crate (SalvageCrate.genesis crate)
+    (SalvageCrate.genesisCapability crate) env41
 
 /-- The mutation: the SAME crew member opening the SAME period again, on the
 successor state, with the correctly advanced counter — so the only check left to
 refuse it is the append-only consumed-period guard. -/
 def replayEnv41 : SalvageCrate.OpenEnvelope := envForCrate crew41 ⟨31⟩ 1 2 1
 
-/-- The mutation is present: crew 41 already consumed the genesis period. -/
-theorem the_first_period_is_consumed_by_crew_41 :
-    SalvageCrate.openKey crate ⟨31⟩ crew41 ∈ afterFirst.consumed := by
-  have := firstResult.consumes_exact_period
-  simpa using this
+/-- The mutation is present: crew 41 already consumed the genesis period.  Matches on the
+accepted first open; `none` answers `false` (fail-closed).  This used to cite the accepted
+result's own `consumes_exact_period` proof; the pin now evaluates the same membership on the
+same accepted successor state. (Pinned `= true` in `StationCrateOpenFixtures`.) -/
+def check_the_first_period_is_consumed_by_crew_41 : Bool :=
+  match firstOpen? with
+  | some result =>
+      decide (SalvageCrate.openKey crate ⟨31⟩ crew41 ∈ result.after.consumed)
+  | none => false
 
 /-- ⭐ REPLAY REFUSED, and it never reaches the panel.  Holding a perfectly valid
-successor capability does not let crew 41 open the genesis period twice. -/
-theorem the_replay_open_is_refused_and_never_reaches_the_panel :
-    observeDay afterFirst afterFirstCap (ShipInstrumentPanel.initial panel) [replayEnv41]
-      = none := by native_decide
+successor capability does not let crew 41 open the genesis period twice.  Matches on the
+accepted first open; `none` answers `false` (fail-closed).
+(Pinned `= true` in `StationCrateOpenFixtures`.) -/
+def check_the_replay_open_is_refused_and_never_reaches_the_panel : Bool :=
+  match firstOpen? with
+  | some result =>
+      (observeDay result.after result.nextCapability
+        (ShipInstrumentPanel.initial panel) [replayEnv41]).isNone
+  | none => false
 
 /-- The mutation: crew 41 asking for period 32 while the ship is still at the
 genesis period 31. -/
@@ -239,9 +266,10 @@ def wrongPeriodEnv41 : SalvageCrate.OpenEnvelope := envForCrate crew41 ⟨32⟩ 
 
 /-- ⭐ WRONG-PERIOD REFUSED, and it never reaches the panel.  A capability for the
 installed state authorizes opening the CURRENT finalized period, not a future one.
-The honest pole above shows this same crew, same genesis, DOES open period 31. -/
-theorem a_wrong_period_open_is_refused_and_never_reaches_the_panel :
-    observeOne wrongPeriodEnv41 = none := by native_decide
+The honest pole above shows this same crew, same genesis, DOES open period 31.
+(Pinned `= true` in `StationCrateOpenFixtures`.) -/
+def check_a_wrong_period_open_is_refused_and_never_reaches_the_panel : Bool :=
+  (observeOne wrongPeriodEnv41).isNone
 
 /-! ## Communal and unattributed, on the composed write path -/
 
@@ -256,12 +284,13 @@ def theWholeCrewOpens : Option ShipInstrumentPanel.State :=
 /-- ⭐ The communal gauge carries only the one salvage draw though THREE crew
 opened: supplies 1, one recovered kind, three observed, three admitted.  The panel
 counts arrivals well enough to keep them apart (observed = 3) and never well enough
-to rank them (the face is one supplies number). -/
-theorem the_communal_gauge_accumulates_only_the_salvage_draw :
-    theWholeCrewOpens.map (fun s =>
-        (s.face panel, s.recovered.card, s.observed.card, s.admitted)) =
-      some ([{ gauge := ⟨1⟩, meter := .supplies, exactTotal := 1, fullAt := 64,
-               shown := 1, atFull := false }], 1, 3, 3) := by native_decide
+to rank them (the face is one supplies number).
+(Pinned `= true` in `StationCrateOpenFixtures`.) -/
+def check_the_communal_gauge_accumulates_only_the_salvage_draw : Bool :=
+  decide (theWholeCrewOpens.map (fun s =>
+      (s.face panel, s.recovered.card, s.observed.card, s.admitted)) =
+    some ([{ gauge := ⟨1⟩, meter := .supplies, exactTotal := 1, fullAt := 64,
+             shown := 1, atFull := false }], 1, 3, 3))
 
 def env42Seq0 : SalvageCrate.OpenEnvelope := envForCrate crew42 ⟨31⟩ 0 1 0
 def env41Seq2 : SalvageCrate.OpenEnvelope := envForCrate crew41 ⟨31⟩ 0 1 2
@@ -272,19 +301,16 @@ def theWholeCrewOpensReordered : Option ShipInstrumentPanel.State :=
     (ShipInstrumentPanel.initial panel) [env42Seq0, env40Seq1, env41Seq2]
 
 /-- ⭐ Whoever reached the reclamation desk first, the ship reads the same — the
-communal face does not depend on arrival order, on the composed write path. -/
-theorem the_face_is_the_same_whatever_order_the_crew_arrives :
-    theWholeCrewOpens.map (fun s => s.face panel) =
-      theWholeCrewOpensReordered.map (fun s => s.face panel) := by native_decide
+communal face does not depend on arrival order, on the composed write path.
+(Pinned `= true` in `StationCrateOpenFixtures`.) -/
+def check_the_face_is_the_same_whatever_order_the_crew_arrives : Bool :=
+  decide (theWholeCrewOpens.map (fun s => s.face panel) =
+    theWholeCrewOpensReordered.map (fun s => s.face panel))
 
 #assert_compiled panel_valid
 #assert_compiled panel_and_crate_are_one_deployment
-#assert_compiled an_honest_salvage_open_moves_the_supplies_gauge
-#assert_compiled an_ordinary_open_moves_no_gauge
-#assert_compiled the_first_period_is_consumed_by_crew_41
-#assert_compiled the_replay_open_is_refused_and_never_reaches_the_panel
-#assert_compiled a_wrong_period_open_is_refused_and_never_reaches_the_panel
-#assert_compiled the_communal_gauge_accumulates_only_the_salvage_draw
-#assert_compiled the_face_is_the_same_whatever_order_the_crew_arrives
+
+-- The seven pole/hostility pins (`#assert_compiled` + `native_decide`) live in
+-- `StationCrateOpenFixtures.lean`, rooted in `PathOfAngelsGuards` — see the poles header above.
 
 end Dregg2.Games.PathOfAngels.StationCrateOpen

@@ -203,14 +203,14 @@ abbrev stationCrate : SalvageCrate.Config := SalvageCrateExamples.config
 
 /-- ⭐ Every authored row leaves four of the five meters at zero, so the panel
 below authors exactly one dial.  A second dial would be one that provably cannot
-move — this theorem is the reason there is not one. -/
-theorem the_authored_table_moves_only_supplies :
-    stationCrate.raw.table.all (fun entry =>
-      decide (entry.contribution.intel = 0) &&
-      decide (entry.contribution.cohesion = 0) &&
-      decide (entry.contribution.influence = 0) &&
-      decide (entry.contribution.score = 0)) = true := by
-  native_decide
+move — this fact is the reason there is not one.
+(Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_the_authored_table_moves_only_supplies : Bool :=
+  stationCrate.raw.table.all (fun entry =>
+    decide (entry.contribution.intel = 0) &&
+    decide (entry.contribution.cohesion = 0) &&
+    decide (entry.contribution.influence = 0) &&
+    decide (entry.contribution.score = 0))
 
 /-- The station's panel — `StationCrateOpen.panel`, the one the WRITE path folds
 receipts into.  Identity is read off the crate's mission rather than re-typed;
@@ -705,6 +705,13 @@ theorem the_mutation_is_exactly_one_logged_open :
     theLogAfterOneOpen = [{ player := StationCrateOpen.crew41, period := 31 }] := by
   refine ⟨by simp [theLogAfterOneOpen], rfl, rfl⟩
 
+/-- The communal fields a reader takes off the served document for a given log —
+hoisted so the gate check below has no `let` inside its `decide`. -/
+private def servedSummaryFor (history : List HistoryRow) :
+    Option (List GaugeWire × Nat × Nat × Nat) :=
+  (readFor { crew := none, history }).map
+    (fun reply => (reply.gauges, reply.recoveredKinds, reply.observed, reply.admitted))
+
 /-- ⭐ THE SERVED SHIP MOVES WHEN THE LOG RECORDS AN OPENING.  Same deployment,
 same anonymous request, one row of difference in the node's durable log: the
 empty log serves one dial at zero with nothing observed or admitted, and the
@@ -714,41 +721,39 @@ admission.
 This is the assertion the retired one claimed to be.  Delete the fold — make
 `servedStateOver` ignore its history and answer `ShipInstrumentPanel.initial` —
 and the second half goes red immediately, because the two halves would then be
-the same document. -/
-theorem the_served_ship_moves_when_the_log_records_an_opening :
-    (readFor { crew := none, history := [] }).map
-        (fun reply => (reply.gauges, reply.recoveredKinds, reply.observed, reply.admitted)) =
-      some ([{ gauge := 1, meter := "supplies", exactTotal := 0, fullAt := 64,
-               shown := 0, atFull := false }], 0, 0, 0) ∧
-    (readFor { crew := none, history := theLogAfterOneOpen }).map
-        (fun reply => (reply.gauges, reply.recoveredKinds, reply.observed, reply.admitted)) =
-      some ([{ gauge := 1, meter := "supplies", exactTotal := 1, fullAt := 64,
-               shown := 1, atFull := false }], 1, 1, 1) := by
-  native_decide
+the same document. (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_the_served_ship_moves_when_the_log_records_an_opening : Bool :=
+  decide (servedSummaryFor [] =
+    some ([{ gauge := 1, meter := "supplies", exactTotal := 0, fullAt := 64,
+             shown := 0, atFull := false }], 0, 0, 0)) &&
+  decide (servedSummaryFor theLogAfterOneOpen =
+    some ([{ gauge := 1, meter := "supplies", exactTotal := 1, fullAt := 64,
+             shown := 1, atFull := false }], 1, 1, 1))
 
 /-- ⭐ And the two really are DIFFERENT DOCUMENTS on the wire, byte for byte, so
 the move is visible to a reader who parses nothing.  A refusal is `""`, so this
-cannot be satisfied by declining either one. -/
-theorem the_two_logs_serve_different_documents :
-    stationDailyReadFFI { crew := none, history := [] : Request }.toJson ≠ "" ∧
-    stationDailyReadFFI { crew := none, history := theLogAfterOneOpen : Request }.toJson ≠ "" ∧
-    stationDailyReadFFI { crew := none, history := [] : Request }.toJson ≠
-      stationDailyReadFFI { crew := none, history := theLogAfterOneOpen : Request }.toJson := by
-  native_decide
+cannot be satisfied by declining either one.
+(Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_the_two_logs_serve_different_documents : Bool :=
+  decide (stationDailyReadFFI { crew := none, history := [] : Request }.toJson ≠ "") &&
+  decide (stationDailyReadFFI
+    { crew := none, history := theLogAfterOneOpen : Request }.toJson ≠ "") &&
+  decide (stationDailyReadFFI { crew := none, history := [] : Request }.toJson ≠
+    stationDailyReadFFI { crew := none, history := theLogAfterOneOpen : Request }.toJson)
 
 /-- ⭐ A log that is not one this crate could have produced is REFUSED, and the
 honest pole above shows the same wire shape does serve a document — so this is
 the replay guard firing rather than the transport failing.  `period 32` is not
-the period the crate is at, and a row is never silently re-dated. -/
-theorem a_log_row_from_another_period_is_refused :
-    stationDailyReadFFI
-      { crew := none,
-        history := [{ player := StationCrateOpen.crew41, period := 32 }] : Request }.toJson = "" ∧
-    stationDailyReadFFI
-      { crew := none,
-        history := [{ player := SalvageCrateExamples.digest 77,
-                      period := 31 }] : Request }.toJson = "" := by
-  native_decide
+the period the crate is at, and a row is never silently re-dated.
+(Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_a_log_row_from_another_period_is_refused : Bool :=
+  decide (stationDailyReadFFI
+    { crew := none,
+      history := [{ player := StationCrateOpen.crew41, period := 32 }] : Request }.toJson = "") &&
+  decide (stationDailyReadFFI
+    { crew := none,
+      history := [{ player := SalvageCrateExamples.digest 77,
+                    period := 31 }] : Request }.toJson = "")
 
 /-! ## Executable fixture and hostile paths -/
 
@@ -756,83 +761,79 @@ def anonymousRequest : Request := { crew := none, history := [] }
 
 def officerRequest : Request := { crew := some SalvageCrateExamples.officer, history := [] }
 
-theorem anonymous_request_round_trips :
-    decodeRequest anonymousRequest.toJson = some anonymousRequest := by
-  native_decide
+/-- (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_anonymous_request_round_trips : Bool :=
+  decide (decodeRequest anonymousRequest.toJson = some anonymousRequest)
 
-theorem officer_request_round_trips :
-    decodeRequest officerRequest.toJson = some officerRequest := by
-  native_decide
+/-- (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_officer_request_round_trips : Bool :=
+  decide (decodeRequest officerRequest.toJson = some officerRequest)
 
 /-- The export really emits a document for both spellings; a refusal is `""`, so
-this cannot be satisfied by declining. -/
-theorem both_requests_are_served :
-    stationDailyReadFFI anonymousRequest.toJson ≠ "" ∧
-    stationDailyReadFFI officerRequest.toJson ≠ "" := by
-  native_decide
+this cannot be satisfied by declining. (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_both_requests_are_served : Bool :=
+  decide (stationDailyReadFFI anonymousRequest.toJson ≠ "") &&
+  decide (stationDailyReadFFI officerRequest.toJson ≠ "")
 
 /-- The authored officer is on the curator's roster and their whole rotation is
-served: three authored periods, every one of them with a drawn row. -/
-theorem the_officer_is_eligible_and_draws_every_authored_period :
-    (crewWireOf SalvageCrateExamples.officer).eligible = true ∧
-    (crewWireOf SalvageCrateExamples.officer).rotation.length =
-      stationCrate.raw.beacons.length ∧
-    (crewWireOf SalvageCrateExamples.officer).rotation.all
-      (fun period => period.entry.isSome) = true := by
-  native_decide
+served: three authored periods, every one of them with a drawn row.
+(Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_the_officer_is_eligible_and_draws_every_authored_period : Bool :=
+  (crewWireOf SalvageCrateExamples.officer).eligible &&
+  decide ((crewWireOf SalvageCrateExamples.officer).rotation.length =
+    stationCrate.raw.beacons.length) &&
+  (crewWireOf SalvageCrateExamples.officer).rotation.all
+    (fun period => period.entry.isSome)
 
 /-! ### Hostile wires, each refused -/
 
 /-- An extra field — the shape an attempt to smuggle a streak or an attendance
-count would take. -/
-theorem hostile_unknown_field_refuses :
-    stationDailyReadFFI
-      "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":null,\"history\":[],\"streak\":3}" = "" := by
-  native_decide
+count would take. (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_hostile_unknown_field_refuses : Bool :=
+  decide (stationDailyReadFFI
+    "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":null,\"history\":[],\"streak\":3}" = "")
 
-theorem hostile_transposed_keys_refuse :
-    stationDailyReadFFI
-      "{\"crew\":null,\"format\":\"POA-STATION-DAILY-1\",\"history\":[]}" = "" := by
-  native_decide
+/-- (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_hostile_transposed_keys_refuse : Bool :=
+  decide (stationDailyReadFFI
+    "{\"crew\":null,\"format\":\"POA-STATION-DAILY-1\",\"history\":[]}" = "")
 
-theorem hostile_wrong_format_refuses :
-    stationDailyReadFFI
-      "{\"format\":\"POA-STATION-DAILY-OUT-1\",\"crew\":null,\"history\":[]}" = "" := by
-  native_decide
+/-- (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_hostile_wrong_format_refuses : Bool :=
+  decide (stationDailyReadFFI
+    "{\"format\":\"POA-STATION-DAILY-OUT-1\",\"crew\":null,\"history\":[]}" = "")
 
-/-- `false` is not a spelling of "absent". -/
-theorem hostile_boolean_crew_refuses :
-    stationDailyReadFFI
-      "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":false,\"history\":[]}" = "" := by
-  native_decide
+/-- `false` is not a spelling of "absent". (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_hostile_boolean_crew_refuses : Bool :=
+  decide (stationDailyReadFFI
+    "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":false,\"history\":[]}" = "")
 
-theorem hostile_short_digest_refuses :
-    stationDailyReadFFI
-      "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":\"00\",\"history\":[]}" = "" := by
-  native_decide
+/-- (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_hostile_short_digest_refuses : Bool :=
+  decide (stationDailyReadFFI
+    "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":\"00\",\"history\":[]}" = "")
 
-theorem hostile_trailing_byte_refuses :
-    stationDailyReadFFI
-      "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":null,\"history\":[]} " = "" := by
-  native_decide
+/-- (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_hostile_trailing_byte_refuses : Bool :=
+  decide (stationDailyReadFFI
+    "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":null,\"history\":[]} " = "")
 
 /-- ⚠ THE OLD REQUEST SHAPE REFUSES TO LOAD.  `{"format":…,"crew":null}` was the
 whole request until this module grew the log, and it is now a MISSING FIELD
 rather than a request with an implicitly empty history.  A wire that defaulted it
 would serve the installed ship to every caller of the old shape — which is
-precisely the silent zero this change exists to remove. -/
-theorem the_pre_history_request_shape_refuses :
-    stationDailyReadFFI "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":null}" = "" := by
-  native_decide
+precisely the silent zero this change exists to remove.
+(Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_the_pre_history_request_shape_refuses : Bool :=
+  decide (stationDailyReadFFI "{\"format\":\"POA-STATION-DAILY-1\",\"crew\":null}" = "")
 
 /-- A log row carrying its own counter — the field the fold DERIVES — is not a
-row this wire has a spelling for. -/
-theorem hostile_row_with_a_counter_refuses :
-    stationDailyReadFFI
-      ("{\"format\":\"POA-STATION-DAILY-1\",\"crew\":null,\"history\":[{\"player\":\"" ++
-        Emit.bytes32Hex StationCrateOpen.crew41 ++
-        "\",\"period\":31,\"counter\":0}]}") = "" := by
-  native_decide
+row this wire has a spelling for. (Pinned `= true` in `StationDailyRuntimeFixtures`.) -/
+def check_hostile_row_with_a_counter_refuses : Bool :=
+  decide (stationDailyReadFFI
+    ("{\"format\":\"POA-STATION-DAILY-1\",\"crew\":null,\"history\":[{\"player\":\"" ++
+      Emit.bytes32Hex StationCrateOpen.crew41 ++
+      "\",\"period\":31,\"counter\":0}]}") = "")
 
 /-! ## The pins, split honestly
 
@@ -840,7 +841,17 @@ Everything about the PROJECTION and the SEAL is kernel-clean and gets the strong
 pin.  Everything about the STATION's particular authored content inherits that
 content's `configValidB`/`panelValidB` compiled evaluation — which is a
 compiled-evaluator fact and is labelled as one, exactly as `SlotDeriveRuntime`
-splits its sponge theorems. -/
+splits its sponge theorems.
+
+⚑ **THE FIXTURE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module is in
+the `Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made
+every game-fixture regression a hard failure of every Rust proving target.  Every fixture
+theorem above is now an evaluation-free `check_* : Bool` definition; the EVALUATION — each
+`check_* = true`, pinned by `native_decide` + `#assert_compiled` — lives in
+`StationDailyRuntimeFixtures.lean`, rooted in the `PathOfAngelsGuards` library.  A plain
+`lake build` still runs every pin; `lake build Dregg2.FFI` never does.  This module keeps
+NO `native_decide` residue: its panel proof is `StationCrateOpen.panel_valid`, cited by
+name, and the general seal/projection laws stay kernel-clean below. -/
 
 #assert_axioms decodeRequest_reencodes
 #assert_axioms decodeRequest_accepted_bytes_injective
@@ -854,22 +865,9 @@ splits its sponge theorems. -/
 #assert_axioms the_mutation_is_exactly_one_logged_open
 #assert_compiled the_panel_and_the_crate_are_one_deployment
 #assert_compiled stationDailyReadFFI_refuses_uncanonical
-#assert_compiled the_authored_table_moves_only_supplies
 #assert_compiled station_panel_valid
-#assert_compiled the_served_ship_moves_when_the_log_records_an_opening
-#assert_compiled the_two_logs_serve_different_documents
-#assert_compiled a_log_row_from_another_period_is_refused
-#assert_compiled anonymous_request_round_trips
-#assert_compiled officer_request_round_trips
-#assert_compiled both_requests_are_served
-#assert_compiled the_officer_is_eligible_and_draws_every_authored_period
-#assert_compiled hostile_unknown_field_refuses
-#assert_compiled hostile_transposed_keys_refuse
-#assert_compiled hostile_wrong_format_refuses
-#assert_compiled hostile_boolean_crew_refuses
-#assert_compiled hostile_short_digest_refuses
-#assert_compiled hostile_trailing_byte_refuses
-#assert_compiled the_pre_history_request_shape_refuses
-#assert_compiled hostile_row_with_a_counter_refuses
+
+-- The sixteen fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `StationDailyRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the header above.
 
 end Dregg2.Games.PathOfAngels.StationDailyRuntime

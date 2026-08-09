@@ -1177,7 +1177,32 @@ def stepProcess (activation : Activation) (requestBytes : String) : Option Strin
   | .error _ => none
   | .ok response => some response.toJson
 
-/-! ## Executable activation and hostile cases -/
+/-! ## Executable activation and hostile cases
+
+⚑ **THIS LABORATORY NO LONGER EVALUATES IN THIS MODULE (2026-08-08).** This module is in the
+`Dregg2.FFI` closure — the crypto archive's build root — and its twenty-seven `native_decide`
+pins ran at elaboration, so a stale runtime fixture was a hard failure of every Rust proving
+target in the workspace (the compilation-unit coupling the stale-fixture outage measured). The
+STATEMENTS stay here, beside the private activation world (`fixtureActivation`, `fixtureGenesis`,
+`fixtureSafeCommand`, the rekeyed crew) they must see; a `def` body elaborates without running.
+The EVALUATION — each pin `= true`, by `native_decide` + `#assert_compiled` — lives in
+`CrewFieldMissionRuntimeFixtures.lean`, rooted in the `PathOfAngelsGuards` library: a plain
+`lake build` still runs every pin, and a stale fixture reds the guard library instead of the
+archive.
+
+Two statement shapes, both evaluation-free here: pins whose statement was ALREADY a named
+public `Bool` definition (`honestOrdinarySalvageB`, `stepAbiRefusalsB`, `crossCrewRunRefusedB`,
+…) keep that definition and are pinned under it; the rest become
+`check_<original_theorem_name> : Bool` here. Every theorem keeps its fully-qualified name.
+
+⚠ **Named residue, two construction proofs** that CANNOT move, because `Activation` carries
+`activationValidB raw = true` as a field: `fixture_activation_valid` and
+`rekeyed_crew_activation_is_valid` — building `fixtureActivation` and `rekeyedActivation` at all
+requires them at elaboration. Breaking `activationValidB` on either raw activation therefore
+still reds this module (and the archive).
+`hostile_rekeyed_roster_shares_the_authored_activation_id` also stays: it is `rfl`, but its
+statement reaches `CrewFieldMission.fixturePolicy`'s `native_decide`, so its census line is
+`#assert_compiled` rather than `#assert_axioms`. -/
 
 private def fixtureDigest (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -1259,9 +1284,12 @@ private def fixtureRuntimeContent : ContentContract.RawContent := {
   }
 }
 
-private theorem fixture_runtime_content_valid :
-    ContentContract.contentValidB fixtureRuntimeContent = true := by
-  native_decide
+/-- The fixture runtime content passes the content contract.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`fixture_runtime_content_valid`.  Public because the pin now lives in a sibling module;
+nothing else reads it.) -/
+def check_fixture_runtime_content_valid : Bool :=
+  ContentContract.contentValidB fixtureRuntimeContent
 
 private def fixtureRawActivation : RawActivation where
   activationId := CrewFieldMission.fixtureRawConfig.policy.mission.activationDigest
@@ -1316,13 +1344,13 @@ private def fixtureDeepTranscript : List TraceWire :=
 
 /-- The wire encoder is a genuine inverse on the transcripts the kernel signed:
 decoding the encoding returns the kernel's own traces.  Without this the
-fixtures below could be exercising a transcript the runtime silently reinterprets. -/
-theorem fixture_wire_transcripts_decode_back_to_the_kernel_traces :
-    fixtureSafeTranscript.mapM (TraceWire.toSemantic? fixtureActivation) =
-      some CrewFieldMission.fixtureSafeMaintenanceTranscript ∧
-    fixtureDeepTranscript.mapM (TraceWire.toSemantic? fixtureActivation) =
-      some CrewFieldMission.fixtureDeepTranscript := by
-  native_decide
+fixtures below could be exercising a transcript the runtime silently reinterprets.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_fixture_wire_transcripts_decode_back_to_the_kernel_traces : Bool :=
+  decide (fixtureSafeTranscript.mapM (TraceWire.toSemantic? fixtureActivation) =
+    some CrewFieldMission.fixtureSafeMaintenanceTranscript) &&
+  decide (fixtureDeepTranscript.mapM (TraceWire.toSemantic? fixtureActivation) =
+    some CrewFieldMission.fixtureDeepTranscript)
 
 private def fixtureGenesis : StateWire := initialState fixtureActivation (fixtureDigest 223)
 
@@ -1356,6 +1384,9 @@ private def fixtureSafeResult : Except Refusal OutputWire :=
 private def fixtureDeepResult : Except Refusal OutputWire :=
   judge fixtureActivation fixtureGenesis fixtureDeepCommand
 
+/-- The honest complete run emits exactly one ordinary salvage authorization and no
+relic custody. (Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem
+name `honest_complete_run_emits_one_ordinary_salvage_authorization`.) -/
 def honestOrdinarySalvageB : Bool :=
   match fixtureSafeResult with
   | .error _ => false
@@ -1364,10 +1395,9 @@ def honestOrdinarySalvageB : Bool :=
         [⟨⟨900⟩, 2, CrewRelayExpedition.fixtureSeat0.playerKey, true⟩] ∧
       output.receipt.relicCustody = [])
 
-theorem honest_complete_run_emits_one_ordinary_salvage_authorization :
-    honestOrdinarySalvageB = true := by
-  native_decide
-
+/-- The deep run separates exchangeable parts from non-market relic custody.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`deep_run_separates_exchangeable_parts_from_nonmarket_relic_custody`.) -/
 def deepTaxonomyB : Bool :=
   match fixtureDeepResult with
   | .error _ => false
@@ -1377,54 +1407,52 @@ def deepTaxonomyB : Bool :=
       output.receipt.relicCustody =
         [⟨⟨447⟩, .quarantine, false, false⟩])
 
-theorem deep_run_separates_exchangeable_parts_from_nonmarket_relic_custody :
-    deepTaxonomyB = true := by
-  native_decide
-
+/-- The same admission and run cannot be replayed: the cursor is stale.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`hostile_same_admission_and_run_cannot_replay`.) -/
 def replayRefusedB : Bool :=
   match fixtureSafeResult with
   | .error _ => false
   | .ok first => decide (judge fixtureActivation first.state fixtureSafeCommand =
       .error .staleCursor)
 
-theorem hostile_same_admission_and_run_cannot_replay : replayRefusedB = true := by
-  native_decide
+/-- A command carrying another activation's id is refused as `.wrongActivation`.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_cross_activation_command_refused : Bool :=
+  decide (judge fixtureActivation fixtureGenesis
+    { fixtureSafeCommand with activationId := fixtureDigest 250 } = .error .wrongActivation)
 
-theorem hostile_cross_activation_command_refused :
-    judge fixtureActivation fixtureGenesis
-      { fixtureSafeCommand with activationId := fixtureDigest 250 } =
-        .error .wrongActivation := by
-  native_decide
+/-- A claimed route the signed transcript did not reach is refused.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_forged_route_refused : Bool :=
+  decide (judge fixtureActivation fixtureGenesis
+    { fixtureSafeCommand with claimedRoute := "sealed-nave" } = .error .invalidTranscript)
 
-theorem hostile_forged_route_refused :
-    judge fixtureActivation fixtureGenesis
-      { fixtureSafeCommand with claimedRoute := "sealed-nave" } =
-        .error .invalidTranscript := by
-  native_decide
+/-- A claimed outcome the signed transcript did not produce is refused.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_forged_outcome_refused : Bool :=
+  decide (judge fixtureActivation fixtureGenesis
+    { fixtureSafeCommand with claimedContribution :=
+        { fixtureSafeCommand.claimedContribution with score := 999 } } =
+      .error .invalidTranscript)
 
-theorem hostile_forged_outcome_refused :
-    judge fixtureActivation fixtureGenesis
-      { fixtureSafeCommand with claimedContribution :=
-          { fixtureSafeCommand.claimedContribution with score := 999 } } =
-        .error .invalidTranscript := by
-  native_decide
-
-theorem hostile_actor_who_is_not_the_selected_officer_refused :
-    judge fixtureActivation fixtureGenesis
-      { fixtureSafeCommand with actor := CrewRelayExpedition.fixtureSeat1.playerKey } =
-        .error .unauthorizedOfficer := by
-  native_decide
+/-- An actor who is not the selected officer is refused.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_actor_who_is_not_the_selected_officer_refused : Bool :=
+  decide (judge fixtureActivation fixtureGenesis
+    { fixtureSafeCommand with actor := CrewRelayExpedition.fixtureSeat1.playerKey } =
+      .error .unauthorizedOfficer)
 
 /-- ⚑ The refusal MOVED, and that is the weld showing.  This used to be
 `.invalidTranscript` — this module's own `traces.length = CREW_SIZE` check.  It
 is now `.replayRefused`: three signed handoffs replay fine, the run simply never
 reaches `.extracted`, so the kernel has no completed record to give back.  The
-truncation is refused by the state machine rather than by a length comparison. -/
-theorem hostile_truncated_crew_transcript_refused :
-    judge fixtureActivation fixtureGenesis
-      { fixtureSafeCommand with transcript := fixtureSafeTranscript.take 3 } =
-        .error .replayRefused := by
-  native_decide
+truncation is refused by the state machine rather than by a length comparison.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_truncated_crew_transcript_refused : Bool :=
+  decide (judge fixtureActivation fixtureGenesis
+    { fixtureSafeCommand with transcript := fixtureSafeTranscript.take 3 } =
+      .error .replayRefused)
 
 private def forgedSignatureBytes : CrewFieldMission.SignatureBytes where
   bytes := List.replicate CrewFieldMission.SIGNATURE_BYTE_LENGTH 7
@@ -1441,7 +1469,9 @@ trace and the signature has to verify.
 
 The forgery is constructed from the live fixture trace and asserted DIFFERENT
 before the verdict is read: if a fixture re-emit ever makes the mutation a
-no-op, this goes red instead of quietly comparing a value with itself. -/
+no-op, this goes red instead of quietly comparing a value with itself.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`hostile_forged_handoff_signature_refused_by_the_kernel`.) -/
 def forgedHandoffSignatureRefusedB : Bool :=
   match fixtureSafeTranscript with
   | [] => false
@@ -1451,18 +1481,15 @@ def forgedHandoffSignatureRefusedB : Bool :=
       decide (judge fixtureActivation fixtureGenesis
         { fixtureSafeCommand with transcript := forged :: rest } = .error .replayRefused)
 
-theorem hostile_forged_handoff_signature_refused_by_the_kernel :
-    forgedHandoffSignatureRefusedB = true := by native_decide
-
 /-- ⚑ Replaces `hostile_wrong_replay_authority_id_refused`, which checked that
 `activate?` refused a `ReplayAuthority` whose `id` disagreed with the
 activation's own `replayVerifierId` — two fields the same caller supplied.  This
 is the check that has teeth: a seal minted for a DIFFERENT session cannot be
 attached to this activation, and the two sessions are proved distinct in the
-kernel (`the_two_fixture_seals_carry_different_sessions`). -/
-theorem hostile_seal_for_another_session_cannot_activate :
-    activate? fixtureRawActivation CrewFieldMission.fixtureRekeyedRunSeal = none := by
-  native_decide
+kernel (`the_two_fixture_seals_carry_different_sessions`).
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_seal_for_another_session_cannot_activate : Bool :=
+  (activate? fixtureRawActivation CrewFieldMission.fixtureRekeyedRunSeal).isNone
 
 private def hostileMarketContent : ContentContract.RawContent := {
   fixtureRuntimeContent with
@@ -1477,31 +1504,37 @@ private def hostileTradeContent : ContentContract.RawContent := {
       directTradeAllowed := true }]
 }
 
-theorem hostile_canon_relic_market_activation_refused :
-    activate? { fixtureRawActivation with content := hostileMarketContent }
-      CrewFieldMission.fixtureRunSeal = none := by
-  native_decide
+/-- A canon relic made market-eligible cannot be activated.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_canon_relic_market_activation_refused : Bool :=
+  (activate? { fixtureRawActivation with content := hostileMarketContent }
+    CrewFieldMission.fixtureRunSeal).isNone
 
-theorem hostile_canon_relic_direct_trade_activation_refused :
-    activate? { fixtureRawActivation with content := hostileTradeContent }
-      CrewFieldMission.fixtureRunSeal = none := by
-  native_decide
+/-- A canon relic with direct trade allowed cannot be activated.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_canon_relic_direct_trade_activation_refused : Bool :=
+  (activate? { fixtureRawActivation with content := hostileTradeContent }
+    CrewFieldMission.fixtureRunSeal).isNone
 
 private def callerAuthoredMintBytes : String :=
   (fixtureSafeCommand.toJson.dropEnd 1).toString ++
     ",\"ordinary_mints\":[{\"part\":999,\"quantity\":64}]}"
 
-theorem hostile_caller_authored_salvage_field_refused_by_strict_codec :
-    decodeCommand callerAuthoredMintBytes = none := by
-  native_decide
+/-- A caller who appends an `ordinary_mints` field is refused by the strict codec —
+salvage is authorized by the judge, never claimed on the wire.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_caller_authored_salvage_field_refused_by_strict_codec : Bool :=
+  (decodeCommand callerAuthoredMintBytes).isNone
 
-theorem strict_command_roundtrip :
-    decodeCommand fixtureSafeCommand.toJson = some fixtureSafeCommand := by
-  native_decide
+/-- (Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`strict_command_roundtrip`.) -/
+def check_strict_command_roundtrip : Bool :=
+  decide (decodeCommand fixtureSafeCommand.toJson = some fixtureSafeCommand)
 
-theorem strict_state_roundtrip :
-    decodeState fixtureGenesis.toJson = some fixtureGenesis := by
-  native_decide
+/-- (Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`strict_state_roundtrip`.) -/
+def check_strict_state_roundtrip : Bool :=
+  decide (decodeState fixtureGenesis.toJson = some fixtureGenesis)
 
 /-! ### The step ABI, over the transcript the kernel signed
 
@@ -1534,6 +1567,13 @@ private def expectedStepSigningMessage? (k : Nat) : Option String := do
     (body.signingPreimage fixtureRawActivation.fieldSession.messageDigestSuiteId
       fixtureRawActivation.fieldSession.signingSuiteId))
 
+/-- ⚑ The read a live crew needs: at every one of the four prefixes the
+settlement ABI cannot parse, the step ABI answers, and the cursor it reports —
+seat, previous counter, counter — is the one the kernel's own signed trace for
+that handoff used.  The `signing_message` it carries is byte-identical to the
+preimage the kernel's step view yields by the independent `nextBody?` route.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`the_step_abi_reports_the_cursor_the_signed_transcript_used`.) -/
 def stepAbiAnswersEveryPrefixB : Bool :=
   (List.range CrewFieldMission.CREW_SIZE).all fun k =>
     match fixtureStepRequest? k, CrewFieldMission.fixtureDeepTranscript[k]?,
@@ -1555,14 +1595,10 @@ def stepAbiAnswersEveryPrefixB : Bool :=
              decide (stepProcess fixtureActivation request.toJson = some response.toJson))
     | _, _, _ => false
 
-/-- ⚑ The read a live crew needs: at every one of the four prefixes the
-settlement ABI cannot parse, the step ABI answers, and the cursor it reports —
-seat, previous counter, counter — is the one the kernel's own signed trace for
-that handoff used.  The `signing_message` it carries is byte-identical to the
-preimage the kernel's step view yields by the independent `nextBody?` route. -/
-theorem the_step_abi_reports_the_cursor_the_signed_transcript_used :
-    stepAbiAnswersEveryPrefixB = true := by native_decide
-
+/-- Four refusals, each with its mutation asserted present in the same
+statement, and the honest control that the unmutated request is accepted.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`the_step_abi_refuses_a_wrong_crew_a_wrong_seat_and_an_overlong_prefix`.) -/
 def stepAbiRefusalsB : Bool :=
   match fixtureStepRequest? 0, fixtureStepRequest? 1 with
   | some request, some second =>
@@ -1583,11 +1619,6 @@ def stepAbiRefusalsB : Bool :=
       -- and the honest control, so the four refusals above are not vacuous.
       decide ((stepProcess fixtureActivation request.toJson).isSome = true)
   | _, _ => false
-
-/-- Four refusals, each with its mutation asserted present in the same
-statement, and the honest control that the unmutated request is accepted. -/
-theorem the_step_abi_refuses_a_wrong_crew_a_wrong_seat_and_an_overlong_prefix :
-    stepAbiRefusalsB = true := by native_decide
 
 /-! ### The two-crews-one-key collision, and the binding that closes it
 
@@ -1617,7 +1648,9 @@ private def rekeyedRawActivation : RawActivation :=
     rosterBinding := rosterBindingOf rekeyedRoster }
 
 /-- Guard against a falsifier that has stopped falsifying: the substitution must
-really have happened, and must have moved *only* the player keys. -/
+really have happened, and must have moved *only* the player keys.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`rekeyed_crew_is_a_real_substitution_of_the_player_keys_alone`.) -/
 def rekeySubstitutionRealB : Bool :=
   decide (rekeyedRoster ≠ CrewFieldMission.fixtureRawConfig.roster) &&
   decide (rekeyedRoster.map Seat.playerKey ≠
@@ -1631,11 +1664,9 @@ def rekeySubstitutionRealB : Bool :=
   decide (rekeyedRoster.map Seat.initialCounter =
     CrewFieldMission.fixtureRawConfig.roster.map Seat.initialCounter)
 
-theorem rekeyed_crew_is_a_real_substitution_of_the_player_keys_alone :
-    rekeySubstitutionRealB = true := by native_decide
-
 /-- The substituted crew is *admitted*, not rejected.  Without this the
-collision below would be about an activation nothing accepts. -/
+collision below would be about an activation nothing accepts.
+⚠ NAMED RESIDUE: this one cannot move — `rekeyedActivation` below carries it as data. -/
 theorem rekeyed_crew_activation_is_valid :
     activationValidB rekeyedRawActivation = true := by native_decide
 
@@ -1648,16 +1679,16 @@ authored envelope and the roster is not in it.  It is the reason
 theorem hostile_rekeyed_roster_shares_the_authored_activation_id :
     rekeyedRawActivation.activationId = fixtureRawActivation.activationId := rfl
 
-/-- The computed binding is what separates them. -/
-theorem rekeyed_roster_changes_the_computed_crew_binding :
-    rekeyedRawActivation.rosterBinding ≠ fixtureRawActivation.rosterBinding := by
-  native_decide
+/-- The computed binding is what separates them.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_rekeyed_roster_changes_the_computed_crew_binding : Bool :=
+  decide (rekeyedRawActivation.rosterBinding ≠ fixtureRawActivation.rosterBinding)
 
 /-- …and the pin refuses in the other direction too, so it is a statement about
-the pin and not about one unlucky pairing. -/
-theorem hostile_authored_seal_cannot_activate_the_substituted_crew :
-    activate? rekeyedRawActivation CrewFieldMission.fixtureRunSeal = none := by
-  native_decide
+the pin and not about one unlucky pairing.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_hostile_authored_seal_cannot_activate_the_substituted_crew : Bool :=
+  (activate? rekeyedRawActivation CrewFieldMission.fixtureRunSeal).isNone
 
 private def rekeyedActivation : Activation :=
   ⟨rekeyedRawActivation, CrewFieldMission.fixtureRekeyedRunSeal,
@@ -1665,14 +1696,13 @@ private def rekeyedActivation : Activation :=
 
 /-- The refusal, decomposed so the *cause* is named: the authored crew's genesis
 state still matches on `activation_id` — the old key really does still collide —
-and is refused solely because the roster binding disagrees. -/
+and is refused solely because the roster binding disagrees.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`cross_crew_state_refused_only_by_the_roster_binding`.) -/
 def crossCrewStateRefusedOnRosterB : Bool :=
   decide (fixtureGenesis.activationId = rekeyedActivation.raw.activationId) &&
   decide (fixtureGenesis.rosterBinding ≠ rekeyedActivation.raw.rosterBinding) &&
   decide (StateWire.validB rekeyedActivation fixtureGenesis = false)
-
-theorem cross_crew_state_refused_only_by_the_roster_binding :
-    crossCrewStateRefusedOnRosterB = true := by native_decide
 
 /-- End to end: a substituted officer, presenting the authored crew's durable
 state, cannot consume that crew's admission. -/
@@ -1680,16 +1710,16 @@ private def rekeyedActorCommand : CommandWire :=
   { fixtureSafeCommand with
     actor := (rekeyedRoster.getD 0 CrewRelayExpedition.fixtureSeat0).playerKey }
 
+/-- (Pinned `= true` in `CrewFieldMissionRuntimeFixtures`, under the theorem name
+`hostile_substituted_crew_cannot_consume_the_authored_crews_admission`.) -/
 def crossCrewRunRefusedB : Bool :=
   decide (judge rekeyedActivation fixtureGenesis rekeyedActorCommand = .error .invalidState)
 
-theorem hostile_substituted_crew_cannot_consume_the_authored_crews_admission :
-    crossCrewRunRefusedB = true := by native_decide
-
-theorem callable_entrypoint_emits_the_exact_successful_receipt :
-    process fixtureActivation fixtureGenesis.toJson fixtureSafeCommand.toJson =
-      fixtureSafeResult.toOption.map OutputWire.toJson := by
-  native_decide
+/-- The callable entrypoint emits exactly the successful receipt the judge produced.
+(Pinned `= true` in `CrewFieldMissionRuntimeFixtures`.) -/
+def check_callable_entrypoint_emits_the_exact_successful_receipt : Bool :=
+  decide (process fixtureActivation fixtureGenesis.toJson fixtureSafeCommand.toJson =
+    fixtureSafeResult.toOption.map OutputWire.toJson)
 
 #assert_axioms canonicalDecode_reencodes
 #assert_axioms decodeCommand_reencodes
@@ -1698,32 +1728,15 @@ theorem callable_entrypoint_emits_the_exact_successful_receipt :
 -- `rfl` closes this one, but `CrewFieldMission.fixturePolicy` was itself built with
 -- `native_decide`, so the statement inherits that axiom and pins in the compiled tier.
 #assert_compiled hostile_rekeyed_roster_shares_the_authored_activation_id
-#assert_compiled rekeyed_crew_is_a_real_substitution_of_the_player_keys_alone
-#assert_compiled rekeyed_crew_activation_is_valid
-#assert_compiled rekeyed_roster_changes_the_computed_crew_binding
-#assert_compiled cross_crew_state_refused_only_by_the_roster_binding
-#assert_compiled hostile_substituted_crew_cannot_consume_the_authored_crews_admission
-#assert_compiled fixture_runtime_content_valid
+-- The two construction proofs that could not move: `Activation` carries
+-- `activationValidB raw = true` as a field, so these must elaborate HERE.
 #assert_compiled fixture_activation_valid
-#assert_compiled honest_complete_run_emits_one_ordinary_salvage_authorization
-#assert_compiled deep_run_separates_exchangeable_parts_from_nonmarket_relic_custody
-#assert_compiled hostile_same_admission_and_run_cannot_replay
-#assert_compiled hostile_cross_activation_command_refused
-#assert_compiled hostile_forged_route_refused
-#assert_compiled hostile_forged_outcome_refused
-#assert_compiled hostile_actor_who_is_not_the_selected_officer_refused
-#assert_compiled hostile_truncated_crew_transcript_refused
-#assert_compiled hostile_forged_handoff_signature_refused_by_the_kernel
-#assert_compiled hostile_seal_for_another_session_cannot_activate
-#assert_compiled hostile_authored_seal_cannot_activate_the_substituted_crew
-#assert_compiled fixture_wire_transcripts_decode_back_to_the_kernel_traces
-#assert_compiled hostile_canon_relic_market_activation_refused
-#assert_compiled hostile_canon_relic_direct_trade_activation_refused
-#assert_compiled hostile_caller_authored_salvage_field_refused_by_strict_codec
-#assert_compiled strict_command_roundtrip
-#assert_compiled strict_state_roundtrip
-#assert_compiled the_step_abi_reports_the_cursor_the_signed_transcript_used
-#assert_compiled the_step_abi_refuses_a_wrong_crew_a_wrong_seat_and_an_overlong_prefix
-#assert_compiled callable_entrypoint_emits_the_exact_successful_receipt
+#assert_compiled rekeyed_crew_activation_is_valid
+
+-- The twenty-five lab pins (`#assert_compiled` + `native_decide`) live in
+-- `CrewFieldMissionRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the lab
+-- header above `## Executable activation and hostile cases`. The two construction proofs
+-- that could not move (`fixture_activation_valid`, `rekeyed_crew_activation_is_valid`) are
+-- named there and stay here.
 
 end Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime

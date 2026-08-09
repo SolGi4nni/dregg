@@ -563,42 +563,43 @@ theorem the_mutation_is_exactly_one_logged_open :
 
 /-- The replay of that one-row log really did reach an accepted state that
 consumed period 31 for crew 41 — so the refusal below is a replay guard firing,
-not a log that failed to parse. -/
-theorem the_logged_open_really_consumed_the_installed_period :
-    ((replayOver crate panel (secondOpen crew41).history).map
-      (fun rolled =>
-        decide (SalvageCrate.openKey crate ⟨INSTALLED_PERIOD⟩ crew41 ∈ rolled.state.consumed)))
-      = some true := by native_decide
+not a log that failed to parse. (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_the_logged_open_really_consumed_the_installed_period : Bool :=
+  decide (((replayOver crate panel (secondOpen crew41).history).map
+    (fun rolled =>
+      decide (SalvageCrate.openKey crate ⟨INSTALLED_PERIOD⟩ crew41 ∈ rolled.state.consumed)))
+    = some true)
 
 /-- ⭐ THE RITUAL MOVES THE SHIP, THROUGH THE WIRE.  Crew 41 opens the installed
 period from an empty log: the document is `opened`, the drawn row is the communal
 salvage (loot id 13, one supply), and the published panel reads supplies 1 with
 one recovered kind, one observed receipt and one admitted open.  A refusal is a
-`.refused` verdict, so this cannot be met by declining. -/
-theorem an_honest_crate_open_publishes_the_moved_ship :
-    (openFor (firstOpen crew41)).period = some INSTALLED_PERIOD ∧
-    (openFor (firstOpen crew41)).verdict =
-      .opened { id := 13, prize := "communal-salvage:55", supplies := 1 }
-        { gauges := [{ gauge := 1, meter := "supplies", exactTotal := 1, fullAt := 64,
-                       shown := 1, atFull := false }],
-          recoveredKinds := 1, observed := 1, admitted := 1 } := by native_decide
+`.refused` verdict, so this cannot be met by declining.
+(Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_an_honest_crate_open_publishes_the_moved_ship : Bool :=
+  decide ((openFor (firstOpen crew41)).period = some INSTALLED_PERIOD) &&
+  decide ((openFor (firstOpen crew41)).verdict =
+    .opened { id := 13, prize := "communal-salvage:55", supplies := 1 }
+      { gauges := [{ gauge := 1, meter := "supplies", exactTotal := 1, fullAt := 64,
+                     shown := 1, atFull := false }],
+        recoveredKinds := 1, observed := 1, admitted := 1 })
 
 /-- ⭐ AND THE SECOND OPEN OF THE SAME PERIOD IS REFUSED, with no gauge.  The
 only difference from the pole above is the one log row, and the refusal names the
 append-only guard that fired.  Together these two are
 `the_replay_guard_is_exactly_as_strong_as_the_node_log`: the node's log is the
-whole replay authority, and a node that does not append re-opens the crate. -/
-theorem a_second_open_of_the_installed_period_is_refused :
-    (openFor (secondOpen crew41)).period = some INSTALLED_PERIOD ∧
-    (openFor (secondOpen crew41)).verdict = .refused .alreadyOpenedThisPeriod := by
-  native_decide
+whole replay authority, and a node that does not append re-opens the crate.
+(Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_a_second_open_of_the_installed_period_is_refused : Bool :=
+  decide ((openFor (secondOpen crew41)).period = some INSTALLED_PERIOD) &&
+  decide ((openFor (secondOpen crew41)).verdict = .refused .alreadyOpenedThisPeriod)
 
 /-- ⭐ The pair, as one statement, because the pair is the claim.  Same crew key,
 same period, same deployment: ACCEPTED against an empty log and REFUSED against a
-log that records the earlier open. -/
-theorem the_replay_guard_is_exactly_as_strong_as_the_node_log :
-    (openFor (firstOpen crew41)).verdict.openedB = true ∧
-    (openFor (secondOpen crew41)).verdict.openedB = false := by native_decide
+log that records the earlier open. (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_the_replay_guard_is_exactly_as_strong_as_the_node_log : Bool :=
+  (openFor (firstOpen crew41)).verdict.openedB &&
+  !(openFor (secondOpen crew41)).verdict.openedB
 
 /-! ### ⭐ THE LOOP, CLOSED
 
@@ -619,40 +620,42 @@ bit, one value.
 
 This is red if either half stops folding, if the two folds diverge, or if the
 read starts inventing a reading — and it is `Option`-valued on both sides, so it
-cannot be satisfied by both of them refusing. -/
-theorem the_station_read_serves_the_ship_this_write_published :
-    (StationDailyRuntime.readFor
-        { crew := none, history := (secondOpen crew41).history }).map
-      (fun reply =>
-        ({ gauges := reply.gauges, recoveredKinds := reply.recoveredKinds,
-           observed := reply.observed, admitted := reply.admitted } : PanelWire)) =
-      (openFor (firstOpen crew41)).verdict.panelWire? := by native_decide
+cannot be satisfied by both of them refusing.
+(Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_the_station_read_serves_the_ship_this_write_published : Bool :=
+  decide ((StationDailyRuntime.readFor
+      { crew := none, history := (secondOpen crew41).history }).map
+    (fun reply =>
+      ({ gauges := reply.gauges, recoveredKinds := reply.recoveredKinds,
+         observed := reply.observed, admitted := reply.admitted } : PanelWire)) =
+    (openFor (firstOpen crew41)).verdict.panelWire?)
 
 /-- ⚠ And it is not vacuous on either side: the write really published a panel
 and the read really served a document.  Without this, two `none`s would satisfy
-the equation above and the loop would be "closed" by both ends going dark. -/
-theorem neither_side_of_the_loop_is_a_refusal :
-    ((openFor (firstOpen crew41)).verdict.panelWire?).isSome = true ∧
-    (StationDailyRuntime.readFor
-      { crew := none, history := (secondOpen crew41).history }).isSome = true := by
-  native_decide
+the equation above and the loop would be "closed" by both ends going dark.
+(Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_neither_side_of_the_loop_is_a_refusal : Bool :=
+  ((openFor (firstOpen crew41)).verdict.panelWire?).isSome &&
+  (StationDailyRuntime.readFor
+    { crew := none, history := (secondOpen crew41).history }).isSome
 
 /-- An ordinary day through the wire: crew 40 draws a bound record, is `opened`
 and admitted, and every gauge reads zero.  Showing up on an ordinary day and not
 showing up are the same ship — the roadmap's "missing a day is uninteresting", on
-the transport. -/
-theorem an_ordinary_open_publishes_an_unmoved_ship :
-    (openFor (firstOpen crew40)).verdict =
-      .opened { id := 12, prize := "record:8", supplies := 0 }
-        { gauges := [{ gauge := 1, meter := "supplies", exactTotal := 0, fullAt := 64,
-                       shown := 0, atFull := false }],
-          recoveredKinds := 0, observed := 1, admitted := 1 } := by native_decide
+the transport. (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_an_ordinary_open_publishes_an_unmoved_ship : Bool :=
+  decide ((openFor (firstOpen crew40)).verdict =
+    .opened { id := 12, prize := "record:8", supplies := 0 }
+      { gauges := [{ gauge := 1, meter := "supplies", exactTotal := 0, fullAt := 64,
+                     shown := 0, atFull := false }],
+        recoveredKinds := 0, observed := 1, admitted := 1 })
 
 /-- A crew member who is not on the curator's roster is refused by name.  The
 honest pole above shows the same empty log DOES admit an eligible crew member, so
-this is the roster refusing and not the transport failing. -/
-theorem an_ineligible_crew_key_is_refused :
-    (openFor (firstOpen stowaway)).verdict = .refused .ineligibleCrew := by native_decide
+this is the roster refusing and not the transport failing.
+(Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_an_ineligible_crew_key_is_refused : Bool :=
+  decide ((openFor (firstOpen stowaway)).verdict = .refused .ineligibleCrew)
 
 /-- A log row that names a period the crate is not at is refused, and the whole
 request with it: the reply carries `period: null` because there is no crate state
@@ -660,17 +663,19 @@ to read one off.  A row is never silently re-dated to the current period. -/
 def logFromAnotherPeriod : Request :=
   { opener := crew42, history := [{ player := crew41, period := 32 }] }
 
-theorem a_log_row_from_another_period_refuses :
-    (openFor logFromAnotherPeriod).period = none ∧
-    (openFor logFromAnotherPeriod).verdict = .refused .historyRefused := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_a_log_row_from_another_period_refuses : Bool :=
+  decide ((openFor logFromAnotherPeriod).period = none) &&
+  decide ((openFor logFromAnotherPeriod).verdict = .refused .historyRefused)
 
 /-- A log row naming a crew key the curator never enrolled is refused the same
 way: the log is not one this crate could have produced. -/
 def logWithAStowaway : Request :=
   { opener := crew41, history := [{ player := stowaway, period := INSTALLED_PERIOD }] }
 
-theorem a_log_row_naming_a_stowaway_refuses :
-    (openFor logWithAStowaway).verdict = .refused .historyRefused := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_a_log_row_naming_a_stowaway_refuses : Bool :=
+  decide ((openFor logWithAStowaway).verdict = .refused .historyRefused)
 
 /-- ⭐ The communal ship accumulates across the whole crew, and the panel counts
 arrivals well enough to keep them apart and never well enough to rank them: after
@@ -681,80 +686,101 @@ def theThirdCrewMember : Request :=
     history := [{ player := crew41, period := INSTALLED_PERIOD },
                 { player := crew40, period := INSTALLED_PERIOD }] }
 
-theorem the_published_ship_accumulates_the_whole_crew :
-    (openFor theThirdCrewMember).verdict =
-      .opened { id := 10, prize := "warm-air", supplies := 0 }
-        { gauges := [{ gauge := 1, meter := "supplies", exactTotal := 1, fullAt := 64,
-                       shown := 1, atFull := false }],
-          recoveredKinds := 1, observed := 3, admitted := 3 } := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_the_published_ship_accumulates_the_whole_crew : Bool :=
+  decide ((openFor theThirdCrewMember).verdict =
+    .opened { id := 10, prize := "warm-air", supplies := 0 }
+      { gauges := [{ gauge := 1, meter := "supplies", exactTotal := 1, fullAt := 64,
+                     shown := 1, atFull := false }],
+        recoveredKinds := 1, observed := 3, admitted := 3 })
 
 /-! ## Round trips and the export -/
 
-theorem first_open_request_round_trips :
-    decodeRequest (firstOpen crew41).toJson = some (firstOpen crew41) := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_first_open_request_round_trips : Bool :=
+  decide (decodeRequest (firstOpen crew41).toJson = some (firstOpen crew41))
 
-theorem second_open_request_round_trips :
-    decodeRequest (secondOpen crew41).toJson = some (secondOpen crew41) := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_second_open_request_round_trips : Bool :=
+  decide (decodeRequest (secondOpen crew41).toJson = some (secondOpen crew41))
 
 /-- ⭐ The export really emits both documents, and they are DIFFERENT bytes: the
 move and the refusal are distinguishable on the wire.  A refusal is `""`, so
-neither half can be satisfied by declining. -/
-theorem the_export_emits_a_move_and_a_refusal :
-    crateOpenFFI (firstOpen crew41).toJson ≠ "" ∧
-    crateOpenFFI (secondOpen crew41).toJson ≠ "" ∧
-    crateOpenFFI (firstOpen crew41).toJson ≠ crateOpenFFI (secondOpen crew41).toJson := by
-  native_decide
+neither half can be satisfied by declining.
+(Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_the_export_emits_a_move_and_a_refusal : Bool :=
+  decide (crateOpenFFI (firstOpen crew41).toJson ≠ "") &&
+  decide (crateOpenFFI (secondOpen crew41).toJson ≠ "") &&
+  decide (crateOpenFFI (firstOpen crew41).toJson ≠ crateOpenFFI (secondOpen crew41).toJson)
 
 /-! ### Hostile wires, each refused -/
 
 /-- An extra field — the shape an attempt to smuggle a period, a counter or a
-contribution would take. -/
-theorem hostile_unknown_field_refuses :
-    crateOpenFFI
-      ("{\"format\":\"POA-CRATE-OPEN-1\",\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
-        "\",\"history\":[],\"period\":31}") = "" := by native_decide
+contribution would take. (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_hostile_unknown_field_refuses : Bool :=
+  decide (crateOpenFFI
+    ("{\"format\":\"POA-CRATE-OPEN-1\",\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
+      "\",\"history\":[],\"period\":31}") = "")
 
-theorem hostile_transposed_keys_refuse :
-    crateOpenFFI
-      ("{\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
-        "\",\"format\":\"POA-CRATE-OPEN-1\",\"history\":[]}") = "" := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_hostile_transposed_keys_refuse : Bool :=
+  decide (crateOpenFFI
+    ("{\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
+      "\",\"format\":\"POA-CRATE-OPEN-1\",\"history\":[]}") = "")
 
-theorem hostile_wrong_format_refuses :
-    crateOpenFFI
-      ("{\"format\":\"POA-CRATE-OPEN-OUT-1\",\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
-        "\",\"history\":[]}") = "" := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_hostile_wrong_format_refuses : Bool :=
+  decide (crateOpenFFI
+    ("{\"format\":\"POA-CRATE-OPEN-OUT-1\",\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
+      "\",\"history\":[]}") = "")
 
 /-- A log row carrying its own counter — the field this module DERIVES — is not a
-row this wire has a spelling for. -/
-theorem hostile_row_with_a_counter_refuses :
-    crateOpenFFI
-      ("{\"format\":\"POA-CRATE-OPEN-1\",\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
-        "\",\"history\":[{\"player\":\"" ++ Emit.bytes32Hex crew41 ++
-        "\",\"period\":31,\"counter\":0}]}") = "" := by native_decide
+row this wire has a spelling for. (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_hostile_row_with_a_counter_refuses : Bool :=
+  decide (crateOpenFFI
+    ("{\"format\":\"POA-CRATE-OPEN-1\",\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
+      "\",\"history\":[{\"player\":\"" ++ Emit.bytes32Hex crew41 ++
+      "\",\"period\":31,\"counter\":0}]}") = "")
 
 /-- `digest 41` spells as `29…`, which has no letters to case, so the mutation
-would be a no-op on it.  `digest 77` spells as `4d…` and really does change. -/
-theorem the_uppercase_mutation_is_not_a_no_op :
-    (Emit.bytes32Hex stowaway).toUpper ≠ Emit.bytes32Hex stowaway := by native_decide
+would be a no-op on it.  `digest 77` spells as `4d…` and really does change.
+(Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_the_uppercase_mutation_is_not_a_no_op : Bool :=
+  decide ((Emit.bytes32Hex stowaway).toUpper ≠ Emit.bytes32Hex stowaway)
 
-theorem hostile_uppercase_digest_refuses :
-    crateOpenFFI
-      ("{\"format\":\"POA-CRATE-OPEN-1\",\"opener\":\"" ++
-        (Emit.bytes32Hex stowaway).toUpper ++ "\",\"history\":[]}") = "" := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_hostile_uppercase_digest_refuses : Bool :=
+  decide (crateOpenFFI
+    ("{\"format\":\"POA-CRATE-OPEN-1\",\"opener\":\"" ++
+      (Emit.bytes32Hex stowaway).toUpper ++ "\",\"history\":[]}") = "")
 
-theorem hostile_trailing_byte_refuses :
-    crateOpenFFI
-      ("{\"format\":\"POA-CRATE-OPEN-1\",\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
-        "\",\"history\":[]} ") = "" := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_hostile_trailing_byte_refuses : Bool :=
+  decide (crateOpenFFI
+    ("{\"format\":\"POA-CRATE-OPEN-1\",\"opener\":\"" ++ Emit.bytes32Hex crew41 ++
+      "\",\"history\":[]} ") = "")
 
-theorem hostile_empty_wire_refuses : crateOpenFFI "" = "" := by native_decide
+/-- (Pinned `= true` in `StationCrateOpenRuntimeFixtures`.) -/
+def check_hostile_empty_wire_refuses : Bool :=
+  decide (crateOpenFFI "" = "")
 
 /-! ## The pins, split honestly
 
 Everything about the SEAL and the DOCUMENT SHAPE is kernel-clean and gets the
 strong pin.  Everything about the STATION's particular authored content inherits
 that content's `configValidB` / `panelValidB` compiled evaluation — which is a
-compiled-evaluator fact and is labelled as one. -/
+compiled-evaluator fact and is labelled as one.
+
+⚑ **THE FIXTURE PINS NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module is in
+the `Dregg2.FFI` closure — the crypto archive's build; `dregg_poa_crate_open` is exported
+from it — and a `native_decide` here made every game-fixture regression a hard failure of
+every Rust proving target.  Every fixture theorem above is now an evaluation-free
+`check_* : Bool` definition; the EVALUATION — each `check_* = true`, pinned by
+`native_decide` + `#assert_compiled` — lives in `StationCrateOpenRuntimeFixtures.lean`,
+rooted in the `PathOfAngelsGuards` library.  A plain `lake build` still runs every pin;
+`lake build Dregg2.FFI` never does.  This module keeps NO `native_decide` residue: its
+deployment is `StationCrateOpen`'s `crate`/`panel`, cited by name, and the general
+seal/document laws stay kernel-clean below. -/
 
 #assert_axioms decodeRequest_reencodes
 #assert_axioms decodeRequest_accepted_bytes_injective
@@ -765,27 +791,8 @@ compiled-evaluator fact and is labelled as one. -/
 #assert_axioms the_published_period_is_the_crate_state_period
 #assert_axioms the_mutation_is_exactly_one_logged_open
 #assert_compiled crateOpenFFI_refuses_uncanonical
-#assert_compiled the_uppercase_mutation_is_not_a_no_op
-#assert_compiled the_logged_open_really_consumed_the_installed_period
-#assert_compiled an_honest_crate_open_publishes_the_moved_ship
-#assert_compiled a_second_open_of_the_installed_period_is_refused
-#assert_compiled the_replay_guard_is_exactly_as_strong_as_the_node_log
-#assert_compiled the_station_read_serves_the_ship_this_write_published
-#assert_compiled neither_side_of_the_loop_is_a_refusal
-#assert_compiled an_ordinary_open_publishes_an_unmoved_ship
-#assert_compiled an_ineligible_crew_key_is_refused
-#assert_compiled a_log_row_from_another_period_refuses
-#assert_compiled a_log_row_naming_a_stowaway_refuses
-#assert_compiled the_published_ship_accumulates_the_whole_crew
-#assert_compiled first_open_request_round_trips
-#assert_compiled second_open_request_round_trips
-#assert_compiled the_export_emits_a_move_and_a_refusal
-#assert_compiled hostile_unknown_field_refuses
-#assert_compiled hostile_transposed_keys_refuse
-#assert_compiled hostile_wrong_format_refuses
-#assert_compiled hostile_row_with_a_counter_refuses
-#assert_compiled hostile_uppercase_digest_refuses
-#assert_compiled hostile_trailing_byte_refuses
-#assert_compiled hostile_empty_wire_refuses
+
+-- The twenty-two fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `StationCrateOpenRuntimeFixtures.lean`, rooted in `PathOfAngelsGuards` — see the header above.
 
 end Dregg2.Games.PathOfAngels.StationCrateOpenRuntime

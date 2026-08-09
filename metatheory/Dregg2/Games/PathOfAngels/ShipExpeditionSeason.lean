@@ -527,7 +527,23 @@ def eventBatchEnvelope? (boundary : FanoutBatchBoundary)
     let statement : EventBatch.Statement := ⟨coordinate, events⟩
     some ⟨statement, boundary.digests.batchDigest statement⟩
 
-/-! ## Executable projection and taxonomy fixtures -/
+/-! ## Executable projection and taxonomy fixtures
+
+⚑ **THE FIXTURES NO LONGER EVALUATE IN THIS MODULE (2026-08-08).**  This module is in the
+`Dregg2.FFI` closure — the crypto archive's build — and a `native_decide` here made every
+game-fixture regression a hard failure of every Rust proving target.  The fixture facts
+below are now evaluation-free `check_* : Bool` definitions (a `def` body elaborates without
+running), kept here because they must see the private fixture receipts that bypass the
+public sealer; the EVALUATION — each `check_* = true`, pinned by `native_decide` +
+`#assert_compiled` — lives in `ShipExpeditionSeasonFixtures.lean`, rooted in the
+`PathOfAngelsGuards` library.  A plain `lake build` still runs every pin; `lake build
+Dregg2.FFI` never does.
+
+Fail-closed convention: the accepted first runtime projection is `fixtureAfterRuntime?`
+(the old `.get (by native_decide)` shape); every check that needs it matches on the
+`Option` and answers `false` on `none`, so a broken prerequisite reds the guard library
+rather than wedging this module.  No `native_decide` residue remains here: every fixture
+receipt is constructed with `rfl`/`simp` proofs only. -/
 
 private def digestFilled (value : Nat) : Digest32 where
   bytes := List.replicate 32 ⟨value % 256, Nat.mod_lt _ (by omega)⟩
@@ -626,9 +642,12 @@ private def fixtureRuntimeReceipt : RuntimeEventBatchReceipt where
   runtimeRoster := fixturePlan.selectedCrew
   rosterExact := rfl
 
-private def fixtureAfterRuntime : State :=
-  (reduce fixtureConfig (initialState fixtureConfig) (.runtime fixtureRuntimeReceipt)).get
-    (by native_decide)
+/-- The accepted first runtime projection.  The checks below match on it and answer
+`false` on `none` (fail-closed); `check_runtime_receipt_projects_parts_relics_and_candidate
+_without_owning_them` pinning true in `ShipExpeditionSeasonFixtures` is what makes the
+`none` arms unreachable. -/
+private def fixtureAfterRuntime? : Option State :=
+  reduce fixtureConfig (initialState fixtureConfig) (.runtime fixtureRuntimeReceipt)
 
 private def fixtureHealthReceipt : CanonicalHealthReceiptInterface where
   receiptId := digestFilled 40
@@ -649,42 +668,52 @@ private def fixtureMarketReceipt : BazaarPartReceiptInterface where
   offeredExact := ⟨rfl, rfl⟩
   requestedExact := ⟨rfl, rfl⟩
 
-theorem runtime_receipt_projects_parts_relics_and_candidate_without_owning_them :
-    fixtureAfterRuntime.completed.length = 1 ∧
-      fixtureAfterRuntime.career.expeditions = 1 ∧
-      fixtureAfterRuntime.ordinaryParts = [⟨digestFilled 21, ⟨901⟩, 1,
-        fixturePlan.officer.playerKey⟩] ∧
-      fixtureAfterRuntime.nonMarketRelics =
-        [⟨digestFilled 21, ⟨447⟩, .quarantine⟩] ∧
-      fixtureAfterRuntime.betaCandidates = [⟨digestFilled 21, 12⟩] := by
-  native_decide
+/-- (Pinned `= true` in `ShipExpeditionSeasonFixtures`.) -/
+def check_runtime_receipt_projects_parts_relics_and_candidate_without_owning_them : Bool :=
+  match fixtureAfterRuntime? with
+  | some after =>
+      decide (after.completed.length = 1 ∧
+        after.career.expeditions = 1 ∧
+        after.ordinaryParts = [⟨digestFilled 21, ⟨901⟩, 1,
+          fixturePlan.officer.playerKey⟩] ∧
+        after.nonMarketRelics = [⟨digestFilled 21, ⟨447⟩, .quarantine⟩] ∧
+        after.betaCandidates = [⟨digestFilled 21, 12⟩])
+  | none => false
 
-theorem hostile_same_runtime_run_cannot_project_twice :
-    reduce fixtureConfig fixtureAfterRuntime (.runtime fixtureRuntimeReceipt) = none := by
-  native_decide
+/-- Matches on the ACCEPTED first projection; `none` answers `false` (fail-closed), so
+this can never be satisfied by the first projection refusing.
+(Pinned `= true` in `ShipExpeditionSeasonFixtures`.) -/
+def check_hostile_same_runtime_run_cannot_project_twice : Bool :=
+  match fixtureAfterRuntime? with
+  | some after =>
+      (reduce fixtureConfig after (.runtime fixtureRuntimeReceipt)).isNone
+  | none => false
 
-theorem sealed_health_receipt_only_updates_derived_health :
-    (reduce fixtureConfig (initialState fixtureConfig) (.health fixtureHealthReceipt)).map
-      (fun state => (state.health, state.consumedRuntimeRuns,
-        state.ordinaryParts, state.nonMarketRelics)) =
-      some (fixtureHealthReceipt.after, ∅, [], []) := by
-  native_decide
+/-- (Pinned `= true` in `ShipExpeditionSeasonFixtures`.) -/
+def check_sealed_health_receipt_only_updates_derived_health : Bool :=
+  decide ((reduce fixtureConfig (initialState fixtureConfig) (.health fixtureHealthReceipt)).map
+    (fun state => (state.health, state.consumedRuntimeRuns,
+      state.ordinaryParts, state.nonMarketRelics)) =
+    some (fixtureHealthReceipt.after, ∅, [], []))
 
-theorem sealed_part_market_receipt_never_moves_relic_or_runtime_projection :
-    (reduce fixtureConfig fixtureAfterRuntime (.partMarket fixtureMarketReceipt)).map
-      (fun state => (state.health, state.consumedRuntimeRuns,
-        state.ordinaryParts, state.nonMarketRelics)) =
-      some (fixtureAfterRuntime.health, fixtureAfterRuntime.consumedRuntimeRuns,
-        fixtureAfterRuntime.ordinaryParts, fixtureAfterRuntime.nonMarketRelics) := by
-  native_decide
+/-- Matches on the ACCEPTED first projection; `none` answers `false` (fail-closed).
+(Pinned `= true` in `ShipExpeditionSeasonFixtures`.) -/
+def check_sealed_part_market_receipt_never_moves_relic_or_runtime_projection : Bool :=
+  match fixtureAfterRuntime? with
+  | some after =>
+      decide ((reduce fixtureConfig after (.partMarket fixtureMarketReceipt)).map
+        (fun state => (state.health, state.consumedRuntimeRuns,
+          state.ordinaryParts, state.nonMarketRelics)) =
+        some (after.health, after.consumedRuntimeRuns,
+          after.ordinaryParts, after.nonMarketRelics))
+  | none => false
 
 #assert_axioms reduce_deterministic
 #assert_axioms runtime_receipt_only_projects
 #assert_axioms market_receipt_cannot_change_health_or_runtime_history
 #assert_axioms content_contract_relic_is_non_market
-#assert_compiled runtime_receipt_projects_parts_relics_and_candidate_without_owning_them
-#assert_compiled hostile_same_runtime_run_cannot_project_twice
-#assert_compiled sealed_health_receipt_only_updates_derived_health
-#assert_compiled sealed_part_market_receipt_never_moves_relic_or_runtime_projection
+
+-- The four fixture pins (`#assert_compiled` + `native_decide`) live in
+-- `ShipExpeditionSeasonFixtures.lean`, rooted in `PathOfAngelsGuards` — see the header above.
 
 end Dregg2.Games.PathOfAngels.ShipExpeditionSeason
