@@ -1110,9 +1110,11 @@ theorem fpHonest_quotient_bump_residual_nonzero :
     szResidual (fun c => if c = Q_BASE then fpHonest c + 1 else fpHonest c)
       X_BASE Y_BASE Z_BASE Q_BASE C_BASE pLimb ≠ 0 := by
   intro h
-  have h0 := congrArg (fun p : Polynomial ℤ => p.coeff 0) h
+  have h0 : (szResidual (fun c => if c = Q_BASE then fpHonest c + 1 else fpHonest c)
+      X_BASE Y_BASE Z_BASE Q_BASE C_BASE pLimb).coeff 0 = 0 := by
+    rw [h, Polynomial.coeff_zero]
   rw [szResidual_coeff _ _ _ _ _ _ _ 0 (by decide)] at h0
-  exact fpHonest_quotient_bump_is_caught (by simpa using h0)
+  exact fpHonest_quotient_bump_is_caught h0
 
 end Soundness
 
