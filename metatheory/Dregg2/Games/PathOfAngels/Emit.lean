@@ -781,15 +781,15 @@ private def blackBoxProbeId
 private def blackBoxProbeJson
     (probe : BlackBoxReconstruction.Slot × BlackBoxReconstruction.Fragment) : String :=
   "    {\"id\":" ++ jsonString (blackBoxProbeId probe) ++
-    ",\"label\":" ++ jsonString ("Ask whether fragment " ++ toString probe.2.val ++
-      " belongs at position " ++ toString probe.1.val) ++
+    ",\"label\":" ++ jsonString ("Ask where position " ++ toString probe.1.val ++
+      " sits relative to fragment " ++ toString probe.2.val) ++
     ",\"slot\":" ++ toString probe.1.val ++
     ",\"fragment\":" ++ toString probe.2.val ++ "}"
 
 /-- One instance's answers to every probe, in `blackBoxProbes` order. -/
 private def blackBoxOracleRow (order : Fin BlackBoxReconstruction.ORDER_SPACE) : String :=
   String.mk (blackBoxProbes.map fun probe =>
-    if BlackBoxReconstruction.hitB order probe then '1' else '0')
+    (BlackBoxReconstruction.answerOf order probe).code)
 
 private def blackBoxOracleTableJson : String :=
   jsonPrettyArray ((List.finRange BlackBoxReconstruction.ORDER_SPACE).map fun order =>
@@ -829,9 +829,10 @@ def blackBoxDescriptorJson : String :=
   "    \"instance_shape\":\"a permutation of five fragments over five positions\",\n" ++
   "    \"required_per_instance\":" ++ toString BlackBoxReconstruction.SLOT_COUNT ++ ",\n" ++
   "    \"settles\":\"slot-and-fragment\",\n" ++
-  "    \"class_alphabet\":\"01\",\n" ++
-  "    \"classes\":[{\"id\":\"mismatch\",\"solving\":false}," ++
-    "{\"id\":\"match\",\"solving\":true}],\n" ++
+  "    \"class_alphabet\":\"012\",\n" ++
+  "    \"classes\":[{\"id\":\"earlier\",\"solving\":false}," ++
+    "{\"id\":\"placed\",\"solving\":true}," ++
+    "{\"id\":\"later\",\"solving\":false}],\n" ++
   "    \"probes\":" ++ jsonPrettyArray (blackBoxProbes.map blackBoxProbeJson) ++ ",\n" ++
   "    \"table\":" ++ blackBoxOracleTableJson ++ "\n" ++
   "  },\n" ++
@@ -957,8 +958,13 @@ def validateBlackBoxDescriptor (bytes : String) : Except String Unit := do
   for probe in probes do
     exactKeys probe ["id", "label", "slot", "fragment"]
   let classes ← (oracle.getObjVal? "classes") >>= Json.getArr?
-  if classes.size != 2 then
-    throw s!"POAG1 black-box emits {classes.size} observation classes, expected 2"
+  -- ⚠ THREE since 2026-08-09.  A descriptor still carrying the two-class
+  -- `mismatch`/`match` alphabet is the pre-repair shape and must not load: its
+  -- table cannot say which SIDE of a named fragment the held one is on, which is
+  -- the whole of the information the budget of eleven is priced against.
+  if classes.size != BlackBoxReconstruction.allAnswers.length then
+    throw s!"POAG1 black-box emits {classes.size} observation classes, expected \
+      {BlackBoxReconstruction.allAnswers.length}"
   for cls in classes do
     exactKeys cls ["id", "solving"]
   let table ← (oracle.getObjVal? "table") >>= Json.getArr?
@@ -967,8 +973,10 @@ def validateBlackBoxDescriptor (bytes : String) : Except String Unit := do
 
 /-- ⚑ **The emitted oracle is the kernel's, cell by cell.**  This reads the table
 back out of the RENDERED descriptor — the bytes a client actually fetches — and
-compares all 3000 cells against `BlackBoxReconstruction.hitB`.  Without it the
-artifact would be an unchecked second statement of the rules. -/
+compares all 3000 cells against `BlackBoxReconstruction.answerOf` — the whole
+three-class answer, not just whether it settled.  Without it the artifact would be
+an unchecked second statement of the rules, and a table that lost `earlier` /
+`later` would still look well-formed. -/
 def blackBoxTableRefinesKernel : Except String Unit := do
   let document ← Json.parse blackBoxDescriptorJson
   let oracle ← document.getObjVal? "oracle"
@@ -982,8 +990,7 @@ def blackBoxTableRefinesKernel : Except String Unit := do
         if chars.length != blackBoxProbes.length then
           throw s!"POAG1 black-box row {order.val} is {chars.length} cells wide"
         for pair in blackBoxProbes.zip chars do
-          let emitted := pair.2 == '1'
-          if emitted != BlackBoxReconstruction.hitB order pair.1 then
+          if pair.2 != (BlackBoxReconstruction.answerOf order pair.1).code then
             throw s!"POAG1 black-box cell ({order.val}, {blackBoxProbeId pair.1}) \
               disagrees with the kernel"
 

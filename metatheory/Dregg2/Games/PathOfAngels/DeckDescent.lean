@@ -42,31 +42,61 @@ So the east spur holds two relics, the asymmetry is in the PRIZE and never the
 PRICE (`asymmetry_is_prize_not_price`), and `Sling`/`ChamberState` count relics
 per chamber instead of flagging them.
 
+## ⚑ 2026-08-09, fourth pass — the game had no decision, and here is why
+
+The playtest found a NINE-ACTION SCRIPT that banked fifteen fresh boards in a row
+buying no information: shore, descend, shore-east, descend-east, lift, lift,
+climb, climb, exit.  Two exact fits made it, and both are now gone.
+
+  * **`SHORING = 2` exactly covered a spur route's two passages.**  A body could
+    timber the mouth AND a spur it had never looked at, so no bit ever needed
+    reading.  Supply is ONE now (`supply_does_not_cover_the_route`): every
+    descent leaves a passage open and must choose which.
+  * **`AIR = 9` was exactly that route's length.**  It still is nine — but the
+    route it now pays for is the SCOUTED one, seven crossings and lifts plus the
+    timber plus THE LOOK.  The look is inside the budget instead of outside it.
+
+The instance changed with them.  With one timber and both spurs able to flood,
+the all-flooded draw is a mission no play banks — an unwinnable instance, which
+is a design-gate FAIL and a run a player loses having done everything right.  So
+the spurs share a bulkhead: at most one takes water (`the_spurs_share_a_bulkhead`),
+the family is SIX draws instead of eight, and a dry spur always exists.  Finding
+it is the game.
+
+MEASURED, over this kernel, before and after:
+
+  | | best blind script | optimal play | look strictly optimal |
+  |-|-|-|-|
+  | before (8 draws, 2 timber) | **8/8** — and seven distinct scripts did it | 8/8 | never |
+  | after (6 draws, 1 timber) | **4/6** (`check_no_blind_line_banks_every_board`) | 6/6 | yes |
+
+Both edits are load-bearing and neither works alone: six draws with two timbers
+leaves a blind script at 6/6, and eight draws with one timber drops OPTIMAL play
+to 6/8 — a player who plays perfectly and loses, which is the thing this repair
+is not allowed to produce.
+
 ## The four properties this design is accountable for
 
 1. **Two incomparable budgets.**  `AIR` is the clock and `SHORING` is the supply.
-   No action converts one into the other, and `budgets_are_incomparable` exhibits
-   two accepted lines that trade them in opposite directions.
-2. **Information is purchasable.**  A chamber's passage is hidden until `survey`
-   spends a unit of air on it, or until a body walks into it.  `shore` may be
-   spent blind, so the real fork is *air to learn* against *supply to not need
-   to*.
-3. **Route commitment.**  Two kinds, and the junction is what adds the second.
-   Every chamber entered must be crossed again on the way out, and an unshored
-   flood damages on both crossings; and beyond the mouth the shaft *branches*, so
-   choosing a spur puts the other one two units of air away.
+   No action converts one into the other, and `check_budgets_are_incomparable`
+   exhibits two accepted lines that trade them in opposite directions.
+2. **Information is purchasable — and now worth purchasing.**  A chamber's passage
+   is hidden until `survey` spends a unit of air on it, or until a body walks into
+   it.  `shore` may still be spent blind, but there is only one timber, so the
+   fork is real: air to learn WHERE to spend it, against supply spent on a guess.
+3. **Route commitment.**  Every chamber entered must be crossed again on the way
+   out, and an unshored flood damages on both crossings; and beyond the mouth the
+   shaft *branches*, so choosing a spur puts the other one two units of air away.
 4. **Extraction is the point.**  A relic in the sling is worth nothing; a relic
    through the hatch is the find.  Damage lowers carrying capacity, and a
    crossing that overruns it leaves the deepest relic on the deck.
 
 ## What the budget is sized for
 
-`AIR = 9` is not slack.  FOUR different lines cost exactly nine and no fewer:
-the cautious line down the west spur, the same discipline down the east spur,
-the deep-east line that shores twice and lifts BOTH east relics, and the sweep
-that takes the mouth relic out of the plan and visits both spurs instead.  The
-first three bank on every board because they read no bit; the sweep banks on one
-board in eight because it reads three.  Same budget, opposite wagers.
+`AIR = 9` is the SCOUTED line and nothing else: timber the mouth, enter it, take
+its relic, sound a spur, descend the dry one, lift, climb, climb, exit.  Nine.
+The blind lines are EIGHT and lose anyway — a run that refuses to look does not
+run out of air, it runs out of knowing, and the spare unit buys nothing.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
@@ -82,8 +112,15 @@ set_option autoImplicit false
 emitted `action_limit` and the state view's `turns` are the same quantity. -/
 abbrev AIR : Nat := 9
 
-/-- The supply.  Only `shore` spends it and nothing replaces it. -/
-abbrev SHORING : Nat := 2
+/-- The supply.  Only `shore` spends it and nothing replaces it.
+
+⚑ **ONE, and that is the whole repair of 2026-08-09.**  At TWO it exactly covered
+a route's two passages, so a body could timber the mouth AND the spur it had not
+looked at, and the look was never worth its air.  `supply_does_not_cover_the_route`
+is the arithmetic: a spur route crosses `Chamber.west.debt = 2` passages and the
+supply is one.  A descent must therefore leave one passage unprotected and choose
+WHICH — and that choice is the only thing a survey is for. -/
+abbrev SHORING : Nat := 1
 
 /-- Base carrying capacity.  `capacity = BASE_CAPACITY - damage`.
 
@@ -289,8 +326,18 @@ theorem Deck.get_set_same (d : Deck) (c : Chamber) (s : ChamberState) :
 
 /-! ## The instance -/
 
-/-- One instance: which chambers flood.  Eight of them, and the descriptor names
-none of them — it names both successors of every row that consults one. -/
+/-- One instance: which chambers flood.  SIX of them, and the descriptor names
+none of them — it names both successors of every row that consults one.
+
+⚑ **The spurs share a bulkhead** (2026-08-09).  Water on the lower deck is behind
+one door: at most one spur takes it, and `the_spurs_share_a_bulkhead` is that
+fact over the whole table.  The mouth is the main shaft and floods on its own.
+
+This is not decoration and it is not a shrunken instance space for its own sake.
+With one timber (`SHORING`) and both spurs able to flood, the all-flooded draw is
+a mission no play can bank — an unwinnable instance, which is a design-gate FAIL
+and, worse, a run a player loses having done everything right.  The bulkhead is
+what makes "there is always a dry spur, and finding it is the game" TRUE. -/
 structure Board where
   mouth : Passage
   west : Passage
@@ -308,28 +355,50 @@ def Board.lore (b : Board) (c : Chamber) : Lore :=
   | .sound => .sound
   | .flooded => .flooded
 
+/-- The table, ordered `mouth * 3 + breach` so that the two draws below index it
+directly: the mouth's own passage, then which spur the lower deck let water
+into. -/
 def boardTable : List Board :=
   [ { mouth := .sound,   west := .sound,   east := .sound }
-  , { mouth := .sound,   west := .sound,   east := .flooded }
   , { mouth := .sound,   west := .flooded, east := .sound }
-  , { mouth := .sound,   west := .flooded, east := .flooded }
+  , { mouth := .sound,   west := .sound,   east := .flooded }
   , { mouth := .flooded, west := .sound,   east := .sound }
-  , { mouth := .flooded, west := .sound,   east := .flooded }
   , { mouth := .flooded, west := .flooded, east := .sound }
-  , { mouth := .flooded, west := .flooded, east := .flooded } ]
+  , { mouth := .flooded, west := .sound,   east := .flooded } ]
 
-theorem boardTable_length : boardTable.length = 8 := rfl
+theorem boardTable_length : boardTable.length = 6 := rfl
 
 theorem boardTable_nodup : boardTable.Nodup := by decide
 
-def boardAt (i : Fin 8) : Board :=
+/-- ⚑ **The spurs share a bulkhead.**  No draw floods both, so a dry spur always
+exists and `check_every_board_can_be_banked` is a statement about a game that can
+be played rather than one that can be survived. -/
+theorem the_spurs_share_a_bulkhead :
+    ∀ b ∈ boardTable, b.west = Passage.sound ∨ b.east = Passage.sound := by decide
+
+/-- ⚠ The falsifier for the bulkhead: the shape it excludes is a real `Board`,
+so the theorem above is a fact about the TABLE and not about the type. -/
+theorem the_bulkhead_excludes_a_real_board :
+    ({ mouth := .sound, west := .flooded, east := .flooded } : Board) ∉ boardTable := by
+  decide
+
+def boardAt (i : Fin 6) : Board :=
   boardTable.get (Fin.cast boardTable_length.symm i)
 
-theorem boardAt_mem : ∀ i : Fin 8, boardAt i ∈ boardTable := by decide
+theorem boardAt_mem : ∀ i : Fin 6, boardAt i ∈ boardTable := by decide
 
-/-- Every board is realized by exactly one index, so the family is eight distinct
-instances and not eight names for fewer. -/
-theorem boardAt_injective : ∀ i j : Fin 8, boardAt i = boardAt j → i = j := by decide
+/-- Every board is realized by exactly one index, so the family is six distinct
+instances and not six names for fewer. -/
+theorem boardAt_injective : ∀ i j : Fin 6, boardAt i = boardAt j → i = j := by decide
+
+/-- ⚑ **The supply does not cover a route.**  A spur route crosses two passages —
+the mouth and the spur — and the supply is one.  Every descent leaves a passage
+unprotected, and this is the arithmetic that makes the choice of WHICH one the
+game's decision.  Before 2026-08-09 this was `SHORING = 2 = Chamber.west.debt`,
+an exact fit, and the fit is what made the look worthless. -/
+theorem supply_does_not_cover_the_route :
+    SHORING < Chamber.west.debt ∧ SHORING < Chamber.east.debt := by
+  refine ⟨by decide, by decide⟩
 
 /-! ### Drawing the instance from the precommitted run seed
 
@@ -337,26 +406,33 @@ Three CONSUMING draws off one stream (`SeedDraw.drawBelow?`), so the three bits
 are independent reads and not one byte wearing three hats — the wound
 `SalvageCrate.unbiasedIndex?` carries and `SeedDraw` exists to close. -/
 
-def passageOfDraw (v : Fin 2) : Passage :=
-  if v.val = 0 then .sound else .flooded
-
-/-- `none` only if the 32-byte seed runs out of acceptable bytes, which needs 32
-consecutive rejections against a ceiling of 256; `boardFromRunSeed` fails closed
-to the all-sound board in that case and `boardFromRunSeed_total` records that the
-fallback is unreachable for the bound actually used. -/
+/-- ⚠ Honest note, CHANGED 2026-08-09.  The spur draw is below THREE, and 256 is
+not a multiple of three, so `SeedDraw.ceilingFor 3 = 255` and the byte 255 IS
+rejected.  The `getD` fallback below is therefore no longer dead code: it is
+reached when every remaining seed byte is 255.  The docblock this replaces said
+the fallback was unreachable — true of three below-two draws, false of this
+derivation — and it is corrected rather than carried forward.
+`draw_below_two_never_rejects` still covers the MOUTH draw. -/
 def boardFromRunSeed? (runSeed : Digest32) : Option Board := do
-  let (a, s₁) ← SeedDraw.drawBelow? 2 (by decide) runSeed.bytes
-  let (b, s₂) ← SeedDraw.drawBelow? 2 (by decide) s₁
-  let (c, _) ← SeedDraw.drawBelow? 2 (by decide) s₂
-  some { mouth := passageOfDraw a, west := passageOfDraw b, east := passageOfDraw c }
+  let (m, s₁) ← SeedDraw.drawBelow? 2 (by decide) runSeed.bytes
+  let (b, _) ← SeedDraw.drawBelow? 3 (by decide) s₁
+  some (boardAt ⟨3 * m.val + b.val, by
+    have hm : m.val < 2 := m.isLt
+    have hb : b.val < 3 := b.isLt
+    omega⟩)
 
 def boardFromRunSeed (runSeed : Digest32) : Board :=
   (boardFromRunSeed? runSeed).getD { mouth := .sound, west := .sound, east := .sound }
 
+/-- The fallback is a board the table really holds, so a seed that runs out of
+acceptable bytes still names a declared instance rather than a shape no
+descriptor row was emitted for. -/
+theorem board_fallback_is_in_the_table :
+    ({ mouth := .sound, west := .sound, east := .sound } : Board) ∈ boardTable := by
+  decide
+
 /-- A bound of 2 divides 256, so `ceilingFor 2 = 256` and no byte is ever
-rejected: three draws always succeed off a 32-byte seed.  The `getD` fallback in
-`boardFromRunSeed` is therefore dead code, and this says so rather than leaving a
-reader to assume it. -/
+rejected: the MOUTH draw always succeeds off a 32-byte seed. -/
 theorem draw_below_two_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
     SeedDraw.drawBelow? 2 (by decide) (b :: rest)
       = some (⟨b.val % 2, Nat.mod_lt _ (by decide)⟩, rest) := by
@@ -1279,77 +1355,159 @@ def playsOutB (b : Board) (acts : List Action) : Bool :=
   | none => false
   | some s => s.banked
 
-/-- The cautious line down the WEST spur: buy safety with supply rather than
-time, twice.  Nine actions, and it works on every board because it reads no
-bit. -/
-def cautiousWestLine : List Action :=
-  [.shore, .descend, .lift, .shore, .descend, .lift, .ascend, .ascend, .extract]
+/-! ### The lines, and the one that cannot exist
 
-/-- The same discipline down the EAST spur, taking the mouth relic and ONE east
-relic.  Also nine, also board-independent — so the spur choice is a genuine
-choice and not a right answer. -/
-def cautiousEastLine : List Action :=
-  [.shore, .descend, .lift, .shoreEast, .descendEast, .lift, .ascend, .ascend,
+⚑ 2026-08-09.  Every line named below is a BLIND line: a fixed script that reads
+no answer.  Until this pass THREE of them banked on all eight draws — the
+playtest found `deepEastLine` and won fifteen fresh boards in a row buying no
+information — because two timbers exactly covered a route's two passages and
+nine air was exactly that route's length.  Both fits are gone: the supply covers
+ONE passage (`supply_does_not_cover_the_route`) and the nine air now buys the
+route AND the look.  `check_no_blind_line_banks_every_board` is the playtest's
+own experiment, run exhaustively inside the kernel. -/
+
+/-- Timber the mouth, take its relic, and commit to the WEST spur without
+looking.  EIGHT actions — one under the budget, and the spare air is worth
+nothing — and it drowns whenever west is the spur that took water. -/
+def blindWestLine : List Action :=
+  [.shore, .descend, .lift, .descend, .lift, .ascend, .ascend, .extract]
+
+/-- The same wager down the EAST spur. -/
+def blindEastLine : List Action :=
+  [.shore, .descend, .lift, .descendEast, .lift, .ascend, .ascend, .extract]
+
+/-- ⚑ The scouted line, west branch: timber the mouth, take its relic, SOUND the
+west spur, and walk down it.  NINE actions — the whole budget, with the look
+inside it.  This is what the nine air is now sized for. -/
+def scoutedWestLine : List Action :=
+  [.shore, .descend, .lift, .survey, .descend, .lift, .ascend, .ascend, .extract]
+
+/-- The same script when the answer sends the body the other way.  These two are
+not two plans: they are the two branches of ONE plan, and which one is played is
+decided by a bit the run bought. -/
+def scoutedEastLine : List Action :=
+  [.shore, .descend, .lift, .survey, .descendEast, .lift, .ascend, .ascend,
    .extract]
 
-/-- ⚑ The line the second relic creates: leave the mouth relic on the deck,
-shore both crossings, and lift the east spur TWICE.  Nine actions, board-
-independent, and it never touches west — the east commitment is a complete
-expedition of its own, which is what makes the junction a decision before any
-bit is read. -/
-def deepEastLine : List Action :=
-  [.shore, .descend, .shoreEast, .descendEast, .lift, .lift, .ascend, .ascend,
-   .extract]
-
-/-- ⚑ The sweep: leave the mouth relic where it is, walk in blind, and take BOTH
-spurs.  Nine actions again — the two extra crossings between spurs are paid for
-by not shoring and not lifting at the mouth — and it reads all three bits. -/
+/-- The sweep: leave the mouth relic where it is, walk in blind, and take BOTH
+spurs.  Nine actions, no supply spent at all, and it wagers every bit. -/
 def sweepLine : List Action :=
   [.descend, .descend, .lift, .ascend, .descendEast, .lift, .ascend, .ascend,
    .extract]
 
-theorem every_line_is_the_whole_budget :
-    cautiousWestLine.length = AIR ∧ cautiousEastLine.length = AIR ∧
-      deepEastLine.length = AIR ∧ sweepLine.length = AIR := by
-  refine ⟨by decide, by decide, by decide, by decide⟩
+theorem the_scouted_lines_are_the_whole_budget :
+    scoutedWestLine.length = AIR ∧ scoutedEastLine.length = AIR ∧
+      sweepLine.length = AIR := by
+  refine ⟨by decide, by decide, by decide⟩
 
-/-- ⚑ **Every instance is winnable, down either spur.**  Both cautious lines bank
-on all eight boards, so no draw is a dead mission and the spur choice is never
-forced. (Pinned `= true` in `DeckDescentFixtures`.) -/
+/-- ⚑ The blind lines are CHEAPER than the budget and still lose.  A run that
+refuses to look does not run out of air — it runs out of knowing, and the spare
+unit of air buys nothing that helps. -/
+theorem the_blind_lines_are_under_the_budget :
+    blindWestLine.length < AIR ∧ blindEastLine.length < AIR := by
+  refine ⟨by decide, by decide⟩
+
+/-- ⚑ **Every instance is winnable — and only by a play that reads an answer.**
+The two scouted lines are the two branches of one policy: sound the west spur,
+then descend the spur the answer leaves dry.  Between them they bank all six
+draws, so no seed is a dead mission and a player who plays correctly never loses.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
 def check_every_board_can_be_banked : Bool :=
-  decide (∀ i : Fin 8, playsOutB (boardAt i) cautiousWestLine = true) &&
-  decide (∀ i : Fin 8, playsOutB (boardAt i) cautiousEastLine = true)
+  (List.finRange 6).all (fun i =>
+    playsOutB (boardAt i) scoutedWestLine || playsOutB (boardAt i) scoutedEastLine)
 
-/-- ⚑ **The east spur alone is an expedition.**  The deep-east line banks the
-target on all eight boards without lifting the mouth relic or entering west.
-There is no west twin of this line — one relic short — so the two branches of
-the junction differ BEFORE any bit is revealed, in what committing to them can
-win, not in what reaching them costs.
+/-- ⚑ **And the ANSWER is what selects the branch.**  On every board the branch
+that banks is exactly the one that walks into the spur the survey found dry.
+Without this, the check above would say only that some line works — not that the
+look is what tells a player which.
 (Pinned `= true` in `DeckDescentFixtures`.) -/
-def check_the_second_relic_makes_east_bankable_alone : Bool :=
-  decide (deepEastLine.length = AIR) &&
-  decide (∀ i : Fin 8, playsOutB (boardAt i) deepEastLine = true)
+def check_the_answer_selects_the_branch : Bool :=
+  (List.finRange 6).all (fun i =>
+    if (boardAt i).west = Passage.sound then playsOutB (boardAt i) scoutedWestLine
+    else playsOutB (boardAt i) scoutedEastLine)
 
-/-- ⚑ **The budget binds on the cautious lines.**
+/-! ### The falsifier: the best script there is
+
+The playtest's experiment, made a kernel computation.  A blind line is a fixed
+list of actions, replayed against every board at once; a board is lost the moment
+the script's next action is refused there or the run is doomed; `bestBlind` is
+the largest number of draws ANY script of the budget's length banks.  The search
+is exhaustive over the whole nine-action alphabet to depth `AIR`. -/
+
+def blindBanked (ss : List (Option State)) : Nat :=
+  (ss.filter (fun s => match s with | some t => t.banked | none => false)).length
+
+def blindAlive (ss : List (Option State)) : Nat :=
+  (ss.filter (fun s => match s with | some t => !t.banked | none => false)).length
+
+def blindStep (ss : List (Option State)) (a : Action) : List (Option State) :=
+  (boardTable.zip ss).map (fun p =>
+    match p.2 with
+    | none => none
+    | some s => if s.banked then some s else stepB p.1 s a)
+
+def bestBlindFrom : Nat → List (Option State) → Nat
+  | 0, ss => blindBanked ss
+  | fuel + 1, ss =>
+      if blindAlive ss = 0 then blindBanked ss
+      else allActions.foldl
+        (fun best a => Nat.max best (bestBlindFrom fuel (blindStep ss a)))
+        (blindBanked ss)
+
+/-- The best score any blind script achieves, over the whole family. -/
+def bestBlind : Nat := bestBlindFrom AIR (boardTable.map (fun _ => some initialState))
+
+/-- ⚑ **NO BLIND LINE BANKS EVERY BOARD** — and this is the best one's score, not
+a claim that one does not exist.  Exhaustive over every script of nine actions:
+the best banks FOUR of the six draws.  The same search on the shipped rules
+answered EIGHT of eight, with seven distinct nine-action scripts achieving it.
+This is the property the whole repair exists to make true.
 (Pinned `= true` in `DeckDescentFixtures`.) -/
-def check_budget_binds_on_the_cautious_lines : Bool :=
-  decide (cautiousWestLine.length = AIR) && decide (cautiousEastLine.length = AIR) &&
-  decide (∀ i : Fin 8, playsOutB (boardAt i) cautiousWestLine = true)
+def check_no_blind_line_banks_every_board : Bool :=
+  decide (bestBlind = 4) && decide (bestBlind < boardTable.length)
 
-/-- ⚑ **And on the sweep, from the other side.**  Visiting both spurs costs
-exactly the same nine actions, and banks on exactly one board in eight — the
-sound one.  Same budget, opposite wager.
+/-! ### The look, priced
+
+The decision the game is named for, as a number rather than an intention. -/
+
+/-- Timber the mouth, enter it, take its relic.  Three actions that read nothing:
+the mouth is shored before it is crossed, so the state after them is the same
+under every draw. -/
+def junctionPrefix : List Action := [.shore, .descend, .lift]
+
+/-- ⚑ The junction is ONE state under SIX instances — nothing has been observed
+yet — which is what makes the spur choice a single decision under uncertainty
+rather than six decisions under six certainties.
 (Pinned `= true` in `DeckDescentFixtures`.) -/
-def check_sweep_costs_the_budget_and_banks_on_one_board : Bool :=
-  decide (sweepLine.length = AIR) &&
-  playsOutB (boardAt 0) sweepLine &&
-  decide (∀ i : Fin 8, i ≠ 0 → playsOutB (boardAt i) sweepLine = false)
+def check_the_junction_is_one_state : Bool :=
+  match replayB (boardAt 0) initialState junctionPrefix with
+  | none => false
+  | some j =>
+      (List.finRange 6).all (fun i =>
+        decide (replayB (boardAt i) initialState junctionPrefix = some j))
 
-/-- ⚑ **The two budgets are incomparable.**  The cautious lines spend the whole
-supply and no body; the sweep spends no supply and, on the board where it works,
-no body either — but it wagers three hidden bits to do it.  Neither cost vector
-dominates the other, and no action converts air into shoring or shoring into
-air. -/
+/-- How many draws a continuation from the junction still banks. -/
+def banksFromJunction (rest : List Action) : Nat :=
+  ((List.finRange 6).filter (fun i =>
+    playsOutB (boardAt i) (junctionPrefix ++ rest))).length
+
+/-- ⚑ **The look is worth its air, and the budget is sized for exactly one.**
+From the junction six air remain.  Committing straight down a spur costs five of
+them and banks FOUR of the six draws, whichever spur it picks.  Spending ONE of
+the six on the answer first and then committing banks all six — and lands on
+nine actions exactly.  The information verb is not decoration and it is not
+dominated: it is the difference between four and six.
+(Pinned `= true` in `DeckDescentFixtures`.) -/
+def check_the_look_is_worth_its_air : Bool :=
+  decide (banksFromJunction [.descend, .lift, .ascend, .ascend, .extract] = 4) &&
+  decide (banksFromJunction [.descendEast, .lift, .ascend, .ascend, .extract] = 4) &&
+  check_the_answer_selects_the_branch &&
+  decide (scoutedWestLine.length = AIR)
+
+/-- ⚑ **The two budgets are still incomparable.**  The scouted line spends the
+whole clock and the whole supply and takes no damage; the sweep spends the whole
+clock, no supply at all, and wagers every bit.  Neither cost vector dominates the
+other, and no action converts air into supply or supply into air. -/
 def lineCost (b : Board) (acts : List Action) : Option (Nat × Nat × Nat) :=
   match replayB b initialState acts with
   | none => none
@@ -1357,10 +1515,10 @@ def lineCost (b : Board) (acts : List Action) : Option (Nat × Nat × Nat) :=
 
 /-- (Pinned `= true` in `DeckDescentFixtures`.) -/
 def check_budgets_are_incomparable : Bool :=
-  decide (lineCost (boardAt 0) cautiousWestLine = some (9, 2, 0)) &&
-  decide (lineCost (boardAt 7) cautiousWestLine = some (9, 2, 0)) &&
+  decide (lineCost (boardAt 0) scoutedWestLine = some (9, 1, 0)) &&
   decide (lineCost (boardAt 0) sweepLine = some (9, 0, 0)) &&
-  !(playsOutB (boardAt 7) sweepLine)
+  playsOutB (boardAt 0) sweepLine &&
+  decide (banksFromJunction [.descend, .lift, .ascend, .ascend, .extract] < 6)
 
 /-! ### Forks, doom, and the scout decision
 
@@ -1397,52 +1555,54 @@ def doomCount (b : Board) : Nat :=
   ((reachableStates b).filter doomedB).length
 
 def familyTotal (f : Board → Nat) : Nat :=
-  (List.finRange 8).foldl (fun acc i => acc + f (boardAt i)) 0
+  (List.finRange 6).foldl (fun acc i => acc + f (boardAt i)) 0
 
 /-- ⚑ **Every board offers an outcome-changing fork.**
 (Pinned `= true` in `DeckDescentFixtures`.) -/
-def check_every_board_forks : Bool := decide (∀ i : Fin 8, 0 < forkCount (boardAt i))
+def check_every_board_forks : Bool := decide (∀ i : Fin 6, 0 < forkCount (boardAt i))
 
 /-- ⚑ **Every board can be lost.** (Pinned `= true` in `DeckDescentFixtures`.) -/
 def check_every_board_can_be_lost : Bool :=
-  decide (∀ i : Fin 8, 0 < doomCount (boardAt i))
+  decide (∀ i : Fin 6, 0 < doomCount (boardAt i))
 
 /-- The measured shape of the family, per board and summed.  These are the
 numbers `scripts/poa-design-gate.py` must independently arrive at from the
-emitted table; they are stated here so a disagreement is loud.  Before the
-east spur's second relic the triple was 3905 / 1145 / 2059.
+emitted table; they are stated here so a disagreement is loud.  Eight boards and
+two timbers gave 4688 / 1360 / 2469; six boards and one timber give the triple
+below, and the drop is the state space the second timber was buying.
 (Pinned `= true` in `DeckDescentFixtures`.) -/
 def check_family_shape_is_measured : Bool :=
-  decide (familyTotal (fun b => (reachableStates b).length) = 4688) &&
-  decide (familyTotal forkCount = 1360) &&
-  decide (familyTotal doomCount = 2469)
+  decide (familyTotal (fun b => (reachableStates b).length) = 2928) &&
+  decide (familyTotal forkCount = 871) &&
+  decide (familyTotal doomCount = 1469)
 
 /-- One board's census, as a comparable shape. -/
 def boardShape (b : Board) : Nat × Nat × Nat :=
   ((reachableStates b).length, forkCount b, doomCount b)
 
-/-- ⚑ **The mirror is broken.**  All eight draws are now distinct games: no two
-boards share a (reachable, forks, doomed) shape.  Before the second relic a
-board and its west/east reflection were the same game and the eight draws
-collapsed to six shapes — 0.42 of a bit of the instance doing no work, the
-gate's `the-family-collapses` finding.  This is the kernel-side statement whose
-gate-side twin is `distinct_board_shapes = 8`.
+/-- ⚑ **The mirror is broken.**  All six draws are distinct games: no two boards
+share a (reachable, forks, doomed) shape.  Before the east spur's second relic a
+board and its west/east reflection were the same game and the draws collapsed —
+0.42 of a bit of the instance doing no work, the gate's `the-family-collapses`
+finding.  The second relic still does that work: the spurs hold ONE and TWO, so
+`(·, flooded, sound)` and `(·, sound, flooded)` are different games even though
+the bulkhead makes them the two halves of one draw.
 (Pinned `= true` in `DeckDescentFixtures`.) -/
 def check_the_mirror_is_broken : Bool :=
-  decide (((List.finRange 8).map (fun i => boardShape (boardAt i))).Nodup)
+  decide (((List.finRange 6).map (fun i => boardShape (boardAt i))).Nodup)
 
 /-- The scout decision, named.  From the hatch on a flooded mouth, walking in
 blind costs a point of damage that nothing in a descent restores; looking first
 and shoring blind both cost a unit of air and no body.
 (Pinned `= true` in `DeckDescentFixtures`.) -/
 def check_walking_in_blind_costs_a_body : Bool :=
-  decide ((match stepB (boardAt 4) initialState .descend with
+  decide ((match stepB (boardAt 3) initialState .descend with
     | none => none
     | some t => some t.damage) = some 1) &&
-  decide ((match stepB (boardAt 4) initialState .survey with
+  decide ((match stepB (boardAt 3) initialState .survey with
     | none => none
     | some t => some t.damage) = some 0) &&
-  decide ((match stepB (boardAt 4) initialState .shore with
+  decide ((match stepB (boardAt 3) initialState .shore with
     | none => none
     | some t => some t.damage) = some 0)
 
@@ -1456,7 +1616,7 @@ def blindGrabLine : List Action :=
 
 /-- (Pinned `= true` in `DeckDescentFixtures`.) -/
 def check_the_deck_keeps_what_you_could_not_carry : Bool :=
-  match replayB (boardAt 4) initialState blindGrabLine with
+  match replayB (boardAt 3) initialState blindGrabLine with
   | none => false
   | some s =>
       decide (s.position = Node.hatch) && decide (s.damage = 2) &&
@@ -1475,7 +1635,7 @@ def check_a_sound_shaft_keeps_both_relics : Bool :=
 /-- The reachable state space of the whole family, for the emitter's benefit and
 so the descriptor's size is a stated number rather than a surprise. -/
 def familyStateCount : Nat :=
-  (List.finRange 8).foldl (fun acc i => acc + (reachableWithin (boardAt i) AIR).length) 0
+  (List.finRange 6).foldl (fun acc i => acc + (reachableWithin (boardAt i) AIR).length) 0
 
 /-! ## The parametric table — the rules without the instance
 
@@ -1692,11 +1852,13 @@ def check_parametric_states_nodup : Bool :=
 def check_initial_state_is_declared : Bool := parametricStates.contains initialState
 
 /-- The emitted shape, stated so the descriptor's size is a number a reader has
-before they open the file.  Before the second relic: 1598 states, 14382 rows.
+before they open the file.  Before the second relic: 1598 states, 14382 rows;
+with two timbers and eight boards: 1924 states, 17316 rows.  One timber removes a
+whole supply level from the closure.
 (Pinned `= true` in `DeckDescentFixtures`.) -/
 def check_parametric_shape_is_measured : Bool :=
-  decide (parametricStates.length = 1924) && decide (allActions.length = 9) &&
-  decide (parametricRowCount = 17316)
+  decide (parametricStates.length = 1692) && decide (allActions.length = 9) &&
+  decide (parametricRowCount = 15228)
 
 /-- `Sling.count` is unbounded as a TYPE — the counts are `Nat` — but capacity
 is the wall the transition enforces: no declared state carries more than
@@ -1865,6 +2027,10 @@ def solvedB (s : State) : Bool := s.banked
 #assert_axioms crossing_between_spurs_costs_two
 #assert_axioms Deck.get_set_same
 #assert_axioms boardTable_nodup
+#assert_axioms the_spurs_share_a_bulkhead
+#assert_axioms the_bulkhead_excludes_a_real_board
+#assert_axioms supply_does_not_cover_the_route
+#assert_axioms board_fallback_is_in_the_table
 #assert_axioms boardAt_mem
 #assert_axioms boardAt_injective
 #assert_axioms draw_below_two_never_rejects
@@ -1919,7 +2085,8 @@ def solvedB (s : State) : Bool := s.banked
 #assert_axioms judge_receipt_binds_transcript
 #assert_axioms judged_run_banked
 #assert_axioms judged_run_within_budget
-#assert_axioms every_line_is_the_whole_budget
+#assert_axioms the_scouted_lines_are_the_whole_budget
+#assert_axioms the_blind_lines_are_under_the_budget
 
 -- The thirteen measured-design pins (`#assert_compiled` + `native_decide`) live in
 -- `DeckDescentFixtures.lean`, rooted in `PathOfAngelsGuards` — see the

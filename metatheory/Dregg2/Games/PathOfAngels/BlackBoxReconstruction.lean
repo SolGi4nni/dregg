@@ -30,20 +30,42 @@ The recorder has five sequence positions and five recovered fragments.  A hidden
 permutation says which fragment belongs at which position.  One action —
 `probe slot fragment` — asks the recorder a single question:
 
-    does this fragment belong at this position?
+    where does the fragment at this position sit relative to this one?
 
-A **match** settles that position, and both the position and the fragment leave
-play.  A **mismatch** costs the turn and eliminates that pair.  A run wins when
-every position is settled, and loses by running out of probes.
+and the recorder answers **earlier**, **placed**, or **later**.  A `placed`
+settles that position, and both the position and the fragment leave play.  An
+`earlier`/`later` costs the turn, eliminates that pair, AND names the side of it
+the true fragment is on.  A run wins when every position is settled, and loses by
+running out of probes.
 
-`MAX_TURNS = 15` is not a taste: it is the exact worst case under optimal play
-against an adversary answering any way still consistent with some permutation.
-`five_positions_cost_exactly_fifteen_probes` proves the achievability half over
-every one of the 120 instances; the matching lower bound is stated in
-`docs`/the design gate (a cell of `K(5,5)` becomes forced only after four
-eliminations in its row or column, and those eliminations vanish with the row and
-column when the position settles, so each of the five positions costs 5, 4, 3, 2
-and 1 probes: 15).  The mean over a uniform instance is 10.
+## ⚑ Why the answer grew a third class (2026-08-09)
+
+The previous kernel answered `match`/`mismatch` and set `MAX_TURNS = 15`.  Both
+numbers were wrong in the same way, and the playtest found it: **any systematic
+scan won 100% of runs.**
+
+The measurement behind that.  With a two-class answer the game is exactly the
+problem of finding a hidden perfect matching in `K(5,5)` by asking about cells,
+against an adversary who answers `mismatch` whenever a matching avoiding the cell
+survives.  Forcing the first cell needs four eliminations (Hall: a deficiency in
+`K(5,5)` needs five missing edges, and the target cell is one of them), and every
+one of those four sits in the row or column that then LEAVES with the settled
+position — so nothing carries over and the five positions cost 5, 4, 3, 2, 1.
+**The exact minimax was 15, and the left-to-right scan attains it.**  The budget
+was therefore the worst case of the DUMBEST sensible strategy and of the best one
+at the same time, which is what "nothing to think about" means arithmetically:
+no budget could separate them, because there was nothing to separate.
+
+So the ANSWER changed rather than the budget.  With `earlier`/`later` a probe
+that misses still halves the candidates on one side, and the exact minimax —
+searched adversarially over every strategy — is **11**.  `MAX_TURNS = 11` is that
+number: a player who uses what the recorder tells them never loses, and the
+left-to-right scan that ignores it now banks **91 of 120** draws.
+
+The trade the third class creates is the one the budget is for: probing the
+MIDDLE of the surviving range learns the most and is least likely to settle
+anything; probing the end you believe in settles fastest and learns least when it
+misses.  Breadth against certainty, priced at one turn either way.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
@@ -56,8 +78,9 @@ open Dregg2.Games.PathOfAngels
 /-- Positions in the recovered sequence, and fragments to place in them. -/
 abbrev SLOT_COUNT : Nat := 5
 
-/-- The exact worst case under optimal play; see the module docblock. -/
-abbrev MAX_TURNS : Nat := 15
+/-- The exact worst case under optimal play — searched adversarially over EVERY
+strategy, not attained by one; see the module docblock. -/
+abbrev MAX_TURNS : Nat := 11
 
 /-- Every permutation of five fragments is reachable: 5! = 120. -/
 abbrev ORDER_SPACE : Nat := 120
@@ -209,9 +232,76 @@ def Action.fragment : Action → Fragment
 def Action.pair : Action → Probe
   | .probe slot fragment => (slot, fragment)
 
-/-- A probe MATCHED iff it named the fragment that belongs at that position. -/
+/-! ## What the recorder answers
+
+⚑ THREE classes, not two.  The third is the whole of the 2026-08-09 repair: a
+probe that misses still says which SIDE of the named fragment the true one sits
+on, so a miss is worth information instead of only an elimination. -/
+
+/-- The recorder's answer to one probe. -/
+inductive Answer where
+  /-- The fragment at this position sorts BEFORE the one named. -/
+  | earlier
+  /-- It is the one named.  This settles the position. -/
+  | placed
+  /-- It sorts AFTER the one named. -/
+  | later
+deriving Repr, DecidableEq
+
+def allAnswers : List Answer := [.earlier, .placed, .later]
+
+theorem allAnswers_complete (a : Answer) : a ∈ allAnswers := by
+  cases a <;> decide
+
+/-- The wire code.  One character per class, and the alphabet the descriptor
+declares.  ⚠ It is not `01` any more: a client reading the old two-character
+alphabet against this table would read `2` as out of range and refuse, which is
+the failure mode this project wants over a silent misread. -/
+def Answer.code : Answer → Char
+  | .earlier => '0'
+  | .placed => '1'
+  | .later => '2'
+
+def Answer.tag : Answer → String
+  | .earlier => "earlier"
+  | .placed => "placed"
+  | .later => "later"
+
+theorem answer_codes_are_distinct :
+    (allAnswers.map Answer.code).eraseDups = allAnswers.map Answer.code := by decide
+
+theorem answer_tags_are_distinct :
+    (allAnswers.map Answer.tag).eraseDups = allAnswers.map Answer.tag := by decide
+
+/-- The recorder, as a total function of the instance and the probe. -/
+def answerOf (order : Fin ORDER_SPACE) (p : Probe) : Answer :=
+  let held := (orderAt order p.1).val
+  if held < p.2.val then .earlier
+  else if held == p.2.val then .placed
+  else .later
+
+/-- A probe SETTLED iff the recorder answered `placed`. -/
 def hitB (order : Fin ORDER_SPACE) (p : Probe) : Bool :=
-  orderAt order p.1 == p.2
+  decide (answerOf order p = Answer.placed)
+
+/-- ⚑ `placed` and "named the right fragment" are the same event, so every
+theorem below that reads `hitB` reads the recorder and not a second rule. -/
+theorem hit_iff_named_the_held_fragment (order : Fin ORDER_SPACE) (p : Probe) :
+    hitB order p = (orderAt order p.1 == p.2) := by
+  simp only [hitB, answerOf]
+  rcases Nat.lt_trichotomy (orderAt order p.1).val p.2.val with h | h | h
+  · simp [h, Fin.ext_iff, Nat.ne_of_lt h]
+  · simp [h, Fin.ext_iff]
+  · simp [Nat.not_lt.mpr (Nat.le_of_lt h), Fin.ext_iff, Nat.ne_of_gt h]
+
+/-- ⚠ The falsifier for the third class: a miss really does distinguish the two
+sides.  Without this, `Answer.earlier` and `Answer.later` could be two names for
+one outcome and the whole repair would be a relabelling. -/
+theorem a_miss_names_a_side :
+    answerOf 0 (⟨0, by decide⟩, ⟨1, by decide⟩) = Answer.earlier ∧
+    answerOf 0 (⟨1, by decide⟩, ⟨0, by decide⟩) = Answer.later ∧
+    answerOf 0 (⟨0, by decide⟩, ⟨0, by decide⟩) = Answer.placed := by
+  refine ⟨by decide, by decide, by decide⟩
 
 /-- A position is settled once the run has probed its correct fragment. -/
 def settledSlotB (order : Fin ORDER_SPACE) (s : State) (slot : Slot) : Bool :=
@@ -685,23 +775,33 @@ theorem judge_binds_run_seed (cfg : Config) (before : WorldState) (ctx : JudgeCo
   rw [run.receipt.run_seed_matches, hs.2.2.2.1]
   exact cfg.order_eq
 
-/-! ## The budget is exactly the worst case
+/-! ## The budget is exactly the worst case OF OPTIMAL PLAY
 
-`MAX_TURNS` is a design claim and it has two halves.  The ACHIEVABILITY half is
-proved here over every one of the 120 instances: the reference policy wins on all
-of them and never spends more than fifteen probes.  It also ATTAINS fifteen on at
-least one instance, so the budget is not slack.
+`MAX_TURNS` is a design claim and it has two halves.
 
-The matching lower bound — that no policy does better than fifteen in the worst
-case — is a statement about all strategies, not about this one; it is measured by
-`scripts/poa-design-gate.py`, which searches the adversarial minimax exactly.  The
-argument is short enough to record: in `K(5,5)` a cell becomes forced only once
-four cells of its row or column are eliminated, and those eliminations vanish
-together with the row and the column when the position settles, so the five
-positions cost 5, 4, 3, 2 and 1 probes. -/
+The ACHIEVABILITY half is pinned here over every one of the 120 instances: the
+reference policy that USES the recorder's answer — `bisectActions`, which probes
+the middle of the range the answers have left standing — wins on all of them and
+never spends more than eleven probes, and ATTAINS eleven, so the budget is not
+slack.
 
-/-- One position of the reference sweep: try the still-unsettled fragments in
-order and stop at the match. -/
+The matching lower bound — that no policy does better than eleven in the worst
+case — is a statement about all strategies, not about this one.  It was searched
+exactly (adversarial minimax over the belief lattice, every strategy, every
+answer): the player cannot guarantee a win in ten and can in eleven.  That search
+is the design gate's job to reproduce from the emitted oracle, and it is recorded
+here as a measurement rather than as a theorem of this file.
+
+⚑ And the FOIL is kept, because the repair is only visible against it.
+`scanActions` is the left-to-right sweep this game shipped with — the policy that
+ignores `earlier`/`later` and just tries fragments in order.  It won 120/120 at
+the old budget.  It wins 91 of 120 now, and `check_the_hint_ignoring_scan_no_longer_wins`
+is that number.  A player who does not use what they are told loses about one run
+in four. -/
+
+/-- One position of the hint-IGNORING sweep: try the still-unsettled fragments in
+order and stop at the match.  This is the shipped reference policy, kept as the
+foil the budget is measured against. -/
 def scanForSlot (order : Fin ORDER_SPACE) (remaining : List Fragment) (slot : Slot) :
     List Action × List Fragment :=
   let correct := orderAt order slot
@@ -722,25 +822,82 @@ def scanWinsB (order : Fin ORDER_SPACE) : Bool :=
    | none => false
    | some s => solvedB order s)
 
-def scanWinsEverywhereB : Bool := (List.finRange ORDER_SPACE).all scanWinsB
-
 def scanLengths : List Nat :=
   (List.finRange ORDER_SPACE).map (fun order => (scanActions order).length)
 
+/-- How many of the 120 draws the hint-ignoring sweep still banks. -/
+def scanWinCount : Nat :=
+  ((List.finRange ORDER_SPACE).filter scanWinsB).length
+
+/-! ### The reference policy that listens
+
+`bisectAux` probes the MIDDLE of the fragments the answers have left standing for
+this position, and recurses into the side the recorder names.  It is a policy, not
+a rule: it reads `orderAt` directly because it is the reference player, and every
+action it produces is replayed through `step` like any other. -/
+
+private def bisectAux (order : Fin ORDER_SPACE) (slot : Slot) :
+    Nat → List Fragment → List Action
+  | 0, _ => []
+  | _, [] => []
+  | fuel + 1, cands =>
+      let g := cands.getD (cands.length / 2) ⟨0, by decide⟩
+      let a := Action.probe slot g
+      match answerOf order (slot, g) with
+      | .placed => [a]
+      | .earlier => a :: bisectAux order slot fuel (cands.filter (fun f => decide (f.val < g.val)))
+      | .later => a :: bisectAux order slot fuel (cands.filter (fun f => decide (g.val < f.val)))
+
+def bisectActions (order : Fin ORDER_SPACE) : List Action :=
+  (allSlots.foldl
+    (fun acc slot =>
+      (acc.1 ++ bisectAux order slot SLOT_COUNT acc.2,
+        acc.2.filter (fun f => f != orderAt order slot)))
+    (([] : List Action), allFragments)).1
+
+def bisectWinsB (order : Fin ORDER_SPACE) : Bool :=
+  decide ((bisectActions order).length ≤ MAX_TURNS) &&
+  (match replay order initialState (bisectActions order) with
+   | none => false
+   | some s => solvedB order s)
+
+def bisectLengths : List Nat :=
+  (List.finRange ORDER_SPACE).map (fun order => (bisectActions order).length)
+
 /-- ⚑ **Every instance is winnable inside the budget.**  Without this the game
 could ship unplayable on some seeds — the design gate's `unwinnable-instance`
-FAIL, proved by pin instead of measured after the fact.
+FAIL — and a player who plays perfectly could still lose, which is the one thing
+a budget must never do.
 (Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
-def check_five_positions_cost_exactly_fifteen_probes : Bool := scanWinsEverywhereB
+def check_every_instance_is_winnable_inside_the_budget : Bool :=
+  (List.finRange ORDER_SPACE).all bisectWinsB
 
 /-- ⚑ **The budget is attained, so it is not slack.**  Some instance costs the
-reference policy all fifteen probes, and none costs more.
+listening policy all eleven probes, and none costs more.
 (Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
-def check_scan_worst_case_is_the_budget : Bool :=
-  scanLengths.all (fun n => decide (n ≤ MAX_TURNS)) && decide (MAX_TURNS ∈ scanLengths)
+def check_the_budget_is_the_listening_policy_worst_case : Bool :=
+  bisectLengths.all (fun n => decide (n ≤ MAX_TURNS)) && decide (MAX_TURNS ∈ bisectLengths)
+
+/-- ⚑ **THE FALSIFIER: the scan that ignores the answer no longer wins.**  This
+is the playtest finding, turned into a number the kernel keeps.  The shipped
+left-to-right sweep banked 120 of 120 at the old budget; it banks 91 now, and its
+worst case is fifteen against a budget of eleven.
+(Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
+def check_the_hint_ignoring_scan_no_longer_wins : Bool :=
+  decide (scanWinCount = 91) && decide (scanWinCount < ORDER_SPACE) &&
+  decide (scanLengths.foldl Nat.max 0 = 15)
+
+/-- ⚑ **And listening is what closes the gap.**  Same instances, same budget, same
+alphabet of actions: the only difference is whether the run reads `earlier` and
+`later`.  This is the statement that the third answer class does WORK.
+(Pinned `= true` in `BlackBoxReconstructionFixtures`.) -/
+def check_listening_is_what_closes_the_gap : Bool :=
+  decide (scanWinCount < ORDER_SPACE) &&
+  ((List.finRange ORDER_SPACE).all bisectWinsB) &&
+  decide (bisectLengths.foldl Nat.max 0 < scanLengths.foldl Nat.max 0)
 
 /-- A transcript that is accepted at every step, spends the whole budget, and is
-NOT rewarded.  Fifteen probes that never name a correct pair: the run is legal
+NOT rewarded.  Eleven probes that never name a correct pair: the run is legal
 throughout and loses. -/
 def losingTranscript : List Action :=
   (allSlots.flatMap fun slot =>

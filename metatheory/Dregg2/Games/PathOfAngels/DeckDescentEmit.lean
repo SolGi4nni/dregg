@@ -15,8 +15,8 @@ file rather than performed in a file another lane is editing.
 
 ## What the descriptor carries, and what it cannot
 
-The board is THREE hidden bits — does the mouth flood, does the west spur, does
-the east spur — and the descriptor names none of them.  What it names instead is
+The board is a draw from SIX — does the mouth flood, and which spur (if either)
+the lower deck let water into — and the descriptor names none of them.  What it names instead is
 a table in which every row that consults a bit carries BOTH successors
 (`step_is_one_of_the_two_branches`), and a `shaft` block giving the public rules:
 the topology, the two budgets, the carrying capacity, the bank target, how many
@@ -30,7 +30,7 @@ rather than analysing a table it has to take on trust.  It must NOT be called
 `rules` key routes to the deduction backend.
 
 ⚑ It also must not become a place to put the board.  Everything in it is a
-statement about the shaft that is true on all eight instances.
+statement about the shaft that is true on all six instances.
 -/
 import Lean.Data.Json
 import Dregg2.Games.PathOfAngels.DeckDescent
@@ -166,7 +166,7 @@ private def transitionJson (t : DescentRow) : String :=
         jsonString (DeckDescent.stateId onMatch) ++
         ",\"on_mismatch\":" ++ jsonString (DeckDescent.stateId onMismatch) ++ "}"
 
-/-! ### The shaft — the public rules, true on all eight boards -/
+/-! ### The shaft — the public rules, true on all six boards -/
 
 private def parentJson : String :=
   "{" ++ String.intercalate "," (DeckDescent.allChambers.map fun c =>
@@ -226,14 +226,14 @@ chamber counts once per relic it still holds, one lift per relic - plus the \
 extraction, on the most favourable board still consistent with what the run has \
 seen\"}"
 
-/-! ### The practice family — all eight boards, and no answer
+/-! ### The practice family — all six boards, and no answer
 
 ⚑ **PUBLISHING THE FAMILY IS NOT PUBLISHING THE INSTANCE**, and here the family
 was already public before this block existed.  `shaft` names three chambers and
 declares `lore` and `damaging_lore`; every `resolve` row names two successors
 whose views differ in exactly one chamber's reading, and those two readings ARE
 `sound` and `flooded`.  From that alone `scripts/poa-design-gate.py` rebuilds all
-eight boards and walks them — it did so before this block was written and reads
+six boards and walks them — it did so before this block was written and reads
 nothing from it now.  So the bits are all already there; what this block removes
 is the RULE a client would otherwise have to carry ("each chamber is
 independently sound or flooded") in order to enumerate them.  A lookup replaces a
@@ -243,7 +243,7 @@ second model of the game.
 board comes from `HiddenInstance` under purpose tag 1 off a slot secret this
 artifact does not contain and could not; a practice run picks a row here, under a
 client-chosen index, and is `scored:false` in the block and `mode:"practice"` in
-the transcript.  A reader who has not played can reconstruct the eight; nobody
+the transcript.  A reader who has not played can reconstruct the six; nobody
 can reconstruct the one. -/
 private def boardLoreJson (b : DeckDescent.Board) : String :=
   "{" ++ String.intercalate "," (DeckDescent.allChambers.map fun c =>
@@ -528,14 +528,14 @@ def flattenedResolveDescriptor : String :=
 def truncatedDescriptor : String :=
   descriptorFrom descentStates descentRows.tail descentPracticeBoards
 
-/-- Seven of the eight boards.  ⚠ This is a LEAK and not merely a shortage: a
+/-- Five of the six boards.  ⚠ This is a LEAK and not merely a shortage: a
 family missing a member has told every reader which board the run is not playing,
-which is one bit of the three the descriptor exists to withhold. -/
+out of the ~2.58 bits the descriptor exists to withhold. -/
 def sevenBoardDescriptor : String :=
   descriptorFrom descentStates descentRows (descentPracticeBoards.eraseIdx 3)
 
-/-- Eight boards, one of them a duplicate of another — so the family is seven
-distinct instances wearing eight names, and a reader who counts is told that one
+/-- Six boards, one of them a duplicate of another — so the family is five
+distinct instances wearing six names, and a reader who counts is told that one
 board is twice as likely as the rest. -/
 def duplicatedBoardDescriptor : String :=
   descriptorFrom descentStates descentRows
@@ -595,7 +595,7 @@ def check_a_missing_board_is_caught : Bool :=
   decide (validateDescentDescriptor sevenBoardDescriptor ≠ .ok ()) &&
   decide (descentPracticeRefinesKernel sevenBoardDescriptor ≠ .ok ())
 
-/-- ⚠ The one a count cannot see.  Eight rows, so `instance_space` agrees and the
+/-- ⚠ The one a count cannot see.  Six rows, so `instance_space` agrees and the
 schema check passes; the family is still wrong, and only a comparison against the
 kernel's boards catches it. (Pinned `= true` in `DeckDescentEmitFixtures`.) -/
 def check_a_duplicated_board_is_caught : Bool :=

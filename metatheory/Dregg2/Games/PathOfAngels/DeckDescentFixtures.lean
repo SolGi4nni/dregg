@@ -3,8 +3,7 @@
 
 `DeckDescent.lean` sits in the `Dregg2.FFI` closure (the crypto archive's build root), and
 until 2026-08-08 its measured design properties ran twenty-two `native_decide` evaluations at
-elaboration — the eight-board family census, the four nine-action lines, and the full
-1924-state parametric closure — so any game-fixture regression was a hard failure of every
+elaboration — the family census, the named lines, and the full parametric closure — so any game-fixture regression was a hard failure of every
 Rust proving target in the workspace (the compilation-unit coupling the stale-fixture outage
 measured). The properties' STATEMENTS remain in `DeckDescent.lean` as evaluation-free
 `check_* : Bool` definitions over `stepB`/`replayB`/`rowFor` — the same functions the emitter
@@ -30,14 +29,18 @@ set_option autoImplicit false
 theorem every_board_can_be_banked :
     check_every_board_can_be_banked = true := by native_decide
 
-theorem the_second_relic_makes_east_bankable_alone :
-    check_the_second_relic_makes_east_bankable_alone = true := by native_decide
+theorem the_answer_selects_the_branch :
+    check_the_answer_selects_the_branch = true := by native_decide
 
-theorem budget_binds_on_the_cautious_lines :
-    check_budget_binds_on_the_cautious_lines = true := by native_decide
+/-- ⚑ The falsifier of 2026-08-09: exhaustive over every nine-action script. -/
+theorem no_blind_line_banks_every_board :
+    check_no_blind_line_banks_every_board = true := by native_decide
 
-theorem sweep_costs_the_budget_and_banks_on_one_board :
-    check_sweep_costs_the_budget_and_banks_on_one_board = true := by native_decide
+theorem the_junction_is_one_state :
+    check_the_junction_is_one_state = true := by native_decide
+
+theorem the_look_is_worth_its_air :
+    check_the_look_is_worth_its_air = true := by native_decide
 
 theorem budgets_are_incomparable :
     check_budgets_are_incomparable = true := by native_decide
@@ -88,9 +91,10 @@ theorem state_ids_are_identifiers :
     check_state_ids_are_identifiers = true := by native_decide
 
 #assert_compiled every_board_can_be_banked
-#assert_compiled the_second_relic_makes_east_bankable_alone
-#assert_compiled budget_binds_on_the_cautious_lines
-#assert_compiled sweep_costs_the_budget_and_banks_on_one_board
+#assert_compiled the_answer_selects_the_branch
+#assert_compiled no_blind_line_banks_every_board
+#assert_compiled the_junction_is_one_state
+#assert_compiled the_look_is_worth_its_air
 #assert_compiled budgets_are_incomparable
 #assert_compiled every_board_forks
 #assert_compiled every_board_can_be_lost
