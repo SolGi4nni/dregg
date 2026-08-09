@@ -104,10 +104,12 @@ root = "MinaChainEmit"
 name = "mina_fp_chain_emit"
 root = "MinaFpChainEmit"
 
-# mina_finalize_scalars_emit — `dregg-mina-finalize-scalars::v1`: the descriptor, the real-block
-# honest trace/PIs, two refusal traces and the lct-shift port exhibit. COMPILED for the same
-# measured reason as the chain emitters (the interpreter is ~50x slower on trace rendering).
-# Deliberately NOT in defaultTargets.
+# mina_finalize_scalars_emit — `dregg-mina-finalize-scalars::v2`: the descriptor, the real-block
+# honest trace/PIs and three refusal traces — the lct-shift trace among them: it ACCEPTED at v1
+# (the open LCT port's one-parameter family) and the v2 gate-linearization leaf REFUSES it.
+# COMPILED for the same measured reason as the chain emitters (the interpreter is ~50x slower on
+# trace rendering). Deliberately NOT in defaultTargets. (The §4 slot tables are re-rendered by
+# `lake env lean --run FsAllocRender.lean` and machine-spliced — never hand-typed.)
 #
 #     lake build mina_finalize_scalars_emit
 #     ./.lake/build/bin/mina_finalize_scalars_emit ../circuit/tests/fixtures
