@@ -51,8 +51,15 @@ const LINK_NAME: &str = "dregg-mina-lightclient-link::v1";
 const ABSORB_NAME: &str = "dregg-pasta-fp-absorb::v1";
 
 /// `LightClientMinaLinkAir.ABSORB_VK_LANES`, transcribed. Recomputed below.
+///
+/// ⚑ MOVED 2026-08-08. `067f63780` re-emitted `pasta-fp-absorb.json` and the Lean literal did not
+/// follow, so the state-hash seam named a program no descriptor in this tree had and THIS TEST WAS
+/// RED AT HEAD from that commit until the repair. The nine below are the RECOMPUTED fingerprint
+/// (`conj_fingerprint` over the served bytes), not a number copied to make the check agree — the
+/// assertion in §1 recomputes them again from `ABSORB_JSON` on every run, which is the whole point
+/// of the file.
 const LEAN_ABSORB_VK_LANES: [i64; 9] = [
-    446814635, 83884421, 374082988, 139195248, 519518863, 422740375, 389354132, 515631608, 9097818,
+    484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268,
 ];
 
 /// `LightClientMinaLinkAir.MINA_PROTO_STATE_SALT_LANES`, transcribed. Recomposed below against
@@ -75,11 +82,20 @@ const OPENMINA_SALT_PROTO_STATE: [&str; 3] = [
 ];
 
 /// The link descriptor's column layout (`LightClientMinaLinkAir` §1).
+///
+/// ⚑ `LINK_WIDTH` 40 → 57 on 2026-08-08: the `piCount` 20 → 37 publication flag day appended
+/// `BODY_ACC 0..7` (columns 40..47) and `CHAIN_VK 0..8` (columns 48..56) for the body-hash chain's
+/// second seam. The four offsets above it are UNMOVED — the new columns are appended, not
+/// interleaved — so this constant is the only layout number the flag day touched here.
 const PARENT_0: usize = 0;
 const OWNHASH_0: usize = 9;
 const BODYHASH_0: usize = 22;
 const HASH_VK_0: usize = 31;
-const LINK_WIDTH: usize = 40;
+const LINK_WIDTH: usize = 57;
+
+/// The state-hash seam's commitment width: `salt(27) ‖ PARENT(9) ‖ BODYHASH(9) ‖ OWNHASH(9)`.
+/// ⚑ It is also the KEY this file resolves the seam by — see [`the_seam`].
+const STATE_HASH_COMMIT_LANES: usize = 54;
 
 /// `PastaFieldSound.SK` — 32 eight-bit limbs an `Fp` element on the absorb side.
 const SK: usize = 32;
@@ -139,15 +155,44 @@ fn lanes9_to_decimal(lanes: &[i64]) -> String {
     digits.iter().map(|d| char::from(b'0' + *d as u8)).collect()
 }
 
+/// ⚑ **THE STATE-HASH SEAM, RESOLVED BY SHAPE — NOT BY LIST POSITION.**
+///
+/// Until 2026-08-08 this asserted `exactly one seam (minaLink_proofBinds)` and took it. The
+/// `piCount` 20 → 37 flag day published `BODYHASH` and the body-hash chain's 8-lane transcript
+/// accumulator and added a SECOND `proof_bind` — the body-chain seam against
+/// `dregg-pasta-fp-chainlink::v1` — so that assertion became the failure, and both §2 and §3 died
+/// on it rather than on anything they are about.
+///
+/// ⚠ The two seams are NOT separable by guard (both are the unconditional `.const 1`; §3 asserts
+/// that, and it is deliberate) and MUST NOT be separated by index — resolving two binds by list
+/// position is exactly the mis-resolution `reference-a-display-name-is-not-a-key` records, and the
+/// sibling consumer (`mina_head_verifier::head_bind_by_guard`) refuses to do it too. They ARE
+/// separable by the width of the sentence they commit to: the state-hash seam commits 54 lanes
+/// (`salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH`) and the body-chain seam 44 (`salt ‖ BODYHASH ‖ acc`).
+/// This resolves on that, and REFUSES on disagreement rather than picking one.
 fn the_seam(d: &EffectVmDescriptor2) -> &ProofBindSpec {
+    let mut all = Vec::new();
     let mut found = None;
     for c in &d.constraints {
         if let VmConstraint2::ProofBind(m) = c {
-            assert!(found.is_none(), "exactly one seam (minaLink_proofBinds)");
-            found = Some(m);
+            all.push(m.commit.len());
+            if m.commit.len() == STATE_HASH_COMMIT_LANES {
+                assert!(
+                    found.is_none(),
+                    "two seams commit {STATE_HASH_COMMIT_LANES} lanes — the state-hash seam is no \
+                     longer identified by its commitment width, and this file would be grading an \
+                     arbitrary one of them"
+                );
+                found = Some(m);
+            }
         }
     }
-    found.expect("the segment descriptor declares a state-hash seam")
+    found.unwrap_or_else(|| {
+        panic!(
+            "no seam commits {STATE_HASH_COMMIT_LANES} lanes; the segment descriptor's binds commit \
+             {all:?}. Either the state-hash seam is gone or its commitment reshaped."
+        )
+    })
 }
 
 /// ⚑ **§1 — THE SEAM PINS THE REAL ABSORB PROGRAM.** Side A: the nine lanes Lean carries. Side B:

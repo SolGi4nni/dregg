@@ -857,13 +857,37 @@ fn the_emitters_transcript_dump_says_delta_came_first() {
             _ => panic!("the incoming state is a constant"),
         })
         .collect();
-    let mut v: u128 = 0;
-    for (j, l) in lane0.iter().enumerate() {
-        v |= (*l as u128) << (8 * j);
+    // ⚑ **THIRTY-TWO EIGHT-BIT LIMBS ARE 256 BITS AND DO NOT FIT IN A `u128`.** This was
+    // `v |= (*l as u128) << (8 * j)` over `j in 0..32` until 2026-08-08: `8·j` reaches 248, so
+    // every `j >= 16` is a shift past the width. In DEBUG that is an `attempt to shift left with
+    // overflow` panic — this test was RED at HEAD — and in RELEASE it is a MASKED shift
+    // (`8·j mod 128`), which happened to give the right answer only because limbs 16..31 are zero
+    // for this particular transcript state. A check that is a panic in one profile and an accident
+    // in the other is not a check. Recomposed on decimal digits instead, the same way
+    // `mina_statehash_seam_proves::lanes9_to_decimal` does it: no bignum dependency, no width to
+    // overflow, and it stays correct if the high limbs ever become non-zero.
+    let mut digits: Vec<u32> = vec![0];
+    for l in lane0.iter().rev() {
+        let mut carry = u64::try_from(*l).expect("a commit limb is a non-negative 8-bit value");
+        for d in digits.iter_mut().rev() {
+            let cur = u64::from(*d) * 256 + carry;
+            *d = (cur % 10) as u32;
+            carry = cur / 10;
+        }
+        while carry > 0 {
+            digits.insert(0, (carry % 10) as u32);
+            carry /= 10;
+        }
     }
+    while digits.len() > 1 && digits[0] == 0 {
+        digits.remove(0);
+    }
+    let v: String = digits
+        .iter()
+        .map(|d| char::from(b'0' + u8::try_from(*d).expect("a decimal digit")))
+        .collect();
     assert_eq!(
-        v.to_string(),
-        tr_in[0],
+        v, tr_in[0],
         "commit lanes 0..32 recompose to the transcript state's lane 0"
     );
 }

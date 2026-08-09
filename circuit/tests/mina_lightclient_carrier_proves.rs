@@ -122,6 +122,35 @@ const CONJ_PI_0: usize = 68;
 const MINA_LC_WIDTH: usize = 77;
 const MINA_PI_COUNT: usize = 39;
 const STATE_LANES: usize = 9;
+
+// ⚑ THE SEGMENT DESCRIPTOR'S LAYOUT AFTER THE 2026-08-08 PUBLICATION FLAG DAY (`piCount` 20 → 37,
+// `trace_width` 40 → 57). This file was the FIFTH consumer of that flag day and the one its own
+// commit message did NOT name — the four it named were `mina_link_segment_multirow.rs`,
+// `mina_statehash_seam_proves.rs`, `mina_transcript_carrier_binding.rs` and
+// `turn/src/executor/mina_head_verifier.rs`. A named break list is only as good as the grep behind
+// it; this one was found by running the suite, not by reading the list.
+const LINK_BODYHASH_0: usize = 22;
+const LINK_HASH_VK_0: usize = 31;
+const LINK_BODY_ACC_0: usize = 40;
+const LINK_CHAIN_VK_0: usize = 48;
+const LINK_BODY_ACC_LANES: usize = 8;
+const LINK_PI_COUNT: usize = 37;
+
+/// `dregg-pasta-fp-absorb::v1`'s nine fingerprint lanes — the state-hash seam's `vkPin`.
+/// ⚑ Recomputed 2026-08-08 (`conj_fingerprint`); the old `[446814635, …]` named a program no
+/// descriptor in this tree had.
+const ABSORB_VK_LANES: [u32; 9] = [
+    484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268,
+];
+/// `dregg-pasta-fp-chainlink::v1`'s nine fingerprint lanes — the body-chain seam's `vkPin`.
+const FP_CHAINLINK_VK_LANES: [u32; 9] = [
+    331349446, 492579056, 87664392, 244507792, 473722701, 515537956, 384678982, 534069614, 6023200,
+];
+/// Canonical stand-ins. ⚑ SHAPE witnesses: this descriptor forces that the seams' program lanes are
+/// the pinned ones and that the chain is contiguous, not what the body hash or the accumulator ARE
+/// — those ties are the seams' off-row halves.
+const SEG_BODY_LANES: [u32; 9] = [3, 6, 9, 12, 15, 18, 21, 24, 27];
+const SEG_BODY_ACC_LANES: [u32; 8] = [7, 14, 21, 28, 35, 42, 49, 56];
 const PI_SUB_COMMIT_BASE: usize = 20;
 /// ⚑ PI slot 29 — the weak-subjectivity anchor's `blockchain_length` (`LightClientMinaAir.PI_ANCHOR_H`).
 /// Added by `adf5aa892`; this file asserted 29 PIs for hours afterwards and every prove in it was a
@@ -146,7 +175,7 @@ const DEVNET_TIP_LANES: [u32; 9] = [
 /// semantic fingerprint. `mina_transcript_carrier_binding.rs` recomputes these from that
 /// descriptor's own bytes; here they are the row a prover must fill.
 const CHAINLINK_VK_LANES: [u32; 9] = [
-    40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485,
+    158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666,
 ];
 /// `LightClientMinaAir.CHAINLINK_PI_LANES` — the nine lanes of the digest of the chainlink
 /// sub-proof's 256 public inputs on the block-539508 instance's 46th and last link.
@@ -162,7 +191,7 @@ const CHAINLINK_PI_LANES: [u32; 9] = [
 /// `circuit/tests/mina_transcript_carrier_binding.rs`, which is what makes them a gate rather than
 /// a transcription.
 const LINK_VK_LANES: [u32; 9] = [
-    233430738, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074,
+    521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626,
 ];
 
 /// `LightClientMinaAir.CONJ_VK_LANES` — the nine `Faithful9` lanes of the FINALIZE-CONJUNCTION
@@ -334,9 +363,13 @@ fn the_served_descriptor_has_the_recursion_shape() {
     // unreachable.
     let seg_desc = descriptor_by_name(LINK_DESCRIPTOR)
         .expect("the segment sub-proof descriptor must dispatch (fail-closed otherwise)");
+    // ⚑ 20 → 37 on 2026-08-08 (the publication flag day): `BODYHASH` (PI 20..28) and the body-hash
+    // chain's 8-lane ordered transcript accumulator (PI 29..36) are PUBLISHED, because a
+    // `proofBind`'s `commit`/`vk` may only name published values.
     assert_eq!(
-        seg_desc.public_input_count, 20,
-        "nine anchor lanes, nine tip lanes, the anchor height, the counted segment length"
+        seg_desc.public_input_count, 37,
+        "nine anchor lanes, nine tip lanes, the anchor height, the counted segment length, the \
+         nine published body-hash lanes and the eight transcript-accumulator lanes"
     );
 
     // ⚑ AND THE SUB-PROOF DESCRIPTOR IT NAMES IS ACTUALLY SERVED. A recursion bind to a program
@@ -506,8 +539,9 @@ fn disarming_the_segment_guard_is_refused() {
 #[test]
 fn the_segment_sub_proof_proves_from_the_served_descriptor() {
     let d = descriptor_by_name(LINK_DESCRIPTOR).expect("served");
-    assert_eq!(d.public_input_count, 20);
-    // Column layout: PARENT 0..8, OWNHASH 9..17, HEIGHT 18, IS_REAL 19, REAL_COUNT 20, ANCHOR_H 21.
+    assert_eq!(d.public_input_count, LINK_PI_COUNT);
+    // Column layout: PARENT 0..8, OWNHASH 9..17, HEIGHT 18, IS_REAL 19, REAL_COUNT 20, ANCHOR_H 21,
+    // ⚑ BODYHASH 22..30, HASH_VK 31..39, BODY_ACC 40..47, CHAIN_VK 48..56 (2026-08-08, width 57).
     let mut r0 = vec![BabyBear::new(0); d.trace_width];
     let mut r1 = vec![BabyBear::new(0); d.trace_width];
     for i in 0..STATE_LANES {
@@ -525,14 +559,35 @@ fn the_segment_sub_proof_proves_from_the_served_descriptor() {
     r1[20] = BabyBear::new(1);
     r0[21] = BabyBear::new(1000);
     r1[21] = BabyBear::new(1000);
+    // ⚑ The two seams' attested-program lanes. A row that leaves them unfilled is UNSAT: each
+    // `proof_bind`'s `vk_pin` congruence is an emitted constraint on every row (guard `.const 1`).
+    for i in 0..STATE_LANES {
+        r0[LINK_BODYHASH_0 + i] = BabyBear::new(SEG_BODY_LANES[i]);
+        r1[LINK_BODYHASH_0 + i] = BabyBear::new(SEG_BODY_LANES[i]);
+        r0[LINK_HASH_VK_0 + i] = BabyBear::new(ABSORB_VK_LANES[i]);
+        r1[LINK_HASH_VK_0 + i] = BabyBear::new(ABSORB_VK_LANES[i]);
+        r0[LINK_CHAIN_VK_0 + i] = BabyBear::new(FP_CHAINLINK_VK_LANES[i]);
+        r1[LINK_CHAIN_VK_0 + i] = BabyBear::new(FP_CHAINLINK_VK_LANES[i]);
+    }
+    for i in 0..LINK_BODY_ACC_LANES {
+        r0[LINK_BODY_ACC_0 + i] = BabyBear::new(SEG_BODY_ACC_LANES[i]);
+        r1[LINK_BODY_ACC_0 + i] = BabyBear::new(SEG_BODY_ACC_LANES[i]);
+    }
     let trace = vec![r0.clone(), r1.clone()];
-    let mut pis = vec![BabyBear::new(0); 20];
+    let mut pis = vec![BabyBear::new(0); LINK_PI_COUNT];
     for i in 0..STATE_LANES {
         pis[i] = r0[i];
         pis[STATE_LANES + i] = r1[STATE_LANES + i];
     }
     pis[18] = r0[21];
     pis[19] = r1[20];
+    // ⚑ Both new blocks are pinned to the FIRST row (`pi_binding row=first`, cols 22..30 / 40..47).
+    for i in 0..STATE_LANES {
+        pis[20 + i] = r0[LINK_BODYHASH_0 + i];
+    }
+    for i in 0..LINK_BODY_ACC_LANES {
+        pis[29 + i] = r0[LINK_BODY_ACC_0 + i];
+    }
     // A prove/verify pair is the claim; a shape fault would surface here as a panic, not a refusal.
     refusal::assert_committed_shape("mina segment sub-proof", &d, &trace, &pis);
 }

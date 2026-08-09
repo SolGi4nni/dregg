@@ -110,7 +110,7 @@ const CONJ_PI_BASE: usize = 68;
 /// `LEAN_CHAINLINK_PI_LANES`: Lean cannot compute blake3, so the literal there is a transcription,
 /// and a transcription is only a gate if something recomputes it.
 const LEAN_SEGMENT_VK_LANES: [u64; 9] = [
-    233430738, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074,
+    521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626,
 ];
 
 /// ⚑ **AND IT MOVED ON 2026-08-06, WHICH IS WHY THIS FILE EXISTS.** A sibling lane re-emitted
@@ -395,16 +395,23 @@ fn segment_desc() -> EffectVmDescriptor2 {
 /// * side B — `effect_vm_descriptor2_semantic_fingerprint(dregg-mina-lightclient-link-v1.json)`,
 ///   recomputed here from the SIBLING descriptor's own canonical bytes.
 ///
-/// ⚠⚠ **AND ONE OF THESE IS CURRENTLY THE OTHER LANE'S RED — READ THIS BEFORE "FIXING" IT.**
-/// Measured 2026-08-06: `pasta-fq-chainlink.json`, `dregg-mina-lightclient-link-v1.json` and
+/// ⚑⚑ **THE 2026-08-06 NOTE THAT USED TO STAND HERE EXPIRED, AND NOTHING RE-ASKED THE QUESTION.**
+/// It read: *"`pasta-fq-chainlink.json`, `dregg-mina-lightclient-link-v1.json` and
 /// `mina-xi-endo-lift.json` are all UNCOMMITTED-MODIFIED in the shared tree by a sibling lane's
-/// re-emit batch, and the chainlink's fingerprint moves from `[40589529, 494773874, …]` (the bytes
-/// at HEAD, which `LightClientMinaAir.CHAINLINK_VK_LANES` pins) to `[158847877, 496723774, …]`. So
-/// against a WORKING TREE that has picked up that batch this test is RED, and against HEAD it is
-/// GREEN. **The pin is correct as committed and must move WITH the descriptor, in the commit that
-/// lands it** — it is not this file's to chase, and chasing it would pin HEAD to bytes HEAD does not
-/// have. That is the whole shape of the drift the wraplink already caused: the two halves must move
-/// together or the head names a program no descriptor in this tree has.
+/// re-emit batch … against a WORKING TREE that has picked up that batch this test is RED, and
+/// against HEAD it is GREEN. The pin is correct as committed … it is not this file's to chase."*
+///
+/// That was a correct reading of a working tree, and it stopped being true the moment the batch
+/// LANDED. Measured 2026-08-08 with every by-name descriptor byte-identical to `git show HEAD:` —
+/// so this is a HEAD red, not a working-tree artifact — `pasta-fq-chainlink.json` fingerprints to
+/// `[158847877, 496723774, …]` and `CHAINLINK_VK_LANES` still said `[40589529, 494773874, …]`. The
+/// note's own condition (*"the two halves must move together or the head names a program no
+/// descriptor in this tree has"*) is exactly what failed, and the note is why nobody looked.
+///
+/// ⚠ **A DATED VERDICT ABOUT A WORKING TREE OUTLIVES THE TREE IT WAS MEASURED ON.** If a red is
+/// deferred to another lane, the deferral needs a trigger that fires when the premise changes —
+/// which is what this test IS. Do not write the deferral into the instrument that would have
+/// caught it.
 ///
 /// If the segment descriptor is re-emitted and the head is not, side B moves and this goes RED —
 /// exactly the drift that already happened once with the wraplink and was caught by nothing else.
@@ -414,9 +421,14 @@ fn segment_desc() -> EffectVmDescriptor2 {
 fn the_segment_seam_pins_the_real_link_program() {
     let seg = segment_desc();
     assert_eq!(seg.name, SEGMENT_NAME);
+    // ⚑ 20 → 37 on 2026-08-08 (the publication flag day): the nine `BODYHASH` lanes (PI 20..28)
+    // and the body-hash chain's 8-lane ordered transcript accumulator (PI 29..36) are PUBLISHED,
+    // because a `proofBind`'s `commit`/`vk` can only name published values and an unpublished
+    // `BODYHASH` cannot be `cb.connect`ed by a fold at all.
     assert_eq!(
-        seg.public_input_count, 20,
-        "nine anchor lanes, nine tip lanes, the anchor height, the counted segment length"
+        seg.public_input_count, 37,
+        "nine anchor lanes, nine tip lanes, the anchor height, the counted segment length, the \
+         nine published body-hash lanes and the eight transcript-accumulator lanes"
     );
 
     let fp = effect_vm_descriptor2_semantic_fingerprint(&seg).expect("representable");

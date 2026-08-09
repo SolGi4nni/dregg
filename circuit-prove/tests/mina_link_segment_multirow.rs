@@ -71,21 +71,53 @@ const ANCHOR_H: usize = 21;
 const BODYHASH_0: usize = 22;
 /// ⚑ 2026-08-06: the attested state-hash program's nine `Faithful9` fingerprint lanes.
 const HASH_VK_0: usize = 31;
-const LINK_WIDTH: usize = 40;
+/// ⚑ 2026-08-08: the body-hash chain's ORDERED TRANSCRIPT ACCUMULATOR, columns 40..47, published at
+/// PI 29..36. It is what keeps the body-chain seam from being vacuous — a bind of `(salt, BODYHASH)`
+/// alone would not be, since `perm` is a permutation and 25 links from a fixed head with free
+/// absorbed inputs reach every field element. Not range-gated (these are BabyBear Poseidon2 digest
+/// lanes; a 29-bit lookup would refuse an honest accumulator).
+const BODY_ACC_0: usize = 40;
+/// ⚑ 2026-08-08: the body-hash chain program's nine `Faithful9` fingerprint lanes, columns 48..56.
+const CHAIN_VK_0: usize = 48;
+/// ⚑ 40 → 57 on 2026-08-08, the publication flag day: `BODY_ACC` (8) + `CHAIN_VK` (9) appended.
+const LINK_WIDTH: usize = 57;
 
 /// ⚑ The nine `Faithful9` lanes of `effect_vm_descriptor2_semantic_fingerprint`
 /// (`dregg-pasta-fp-absorb::v1`), transcribed in `LightClientMinaLinkAir.ABSORB_VK_LANES` and
 /// recomputed from that descriptor's own bytes by
 /// `circuit/tests/mina_statehash_seam_proves.rs::the_seam_pins_the_real_absorb_program`.
+///
+/// ⚑ MOVED 2026-08-08: `067f63780` re-emitted `pasta-fp-absorb.json` and the pin did not follow, so
+/// the seam named a program no descriptor in this tree had. Recomputed, not copied.
 const ABSORB_VK_LANES: [u32; 9] = [
-    446814635, 83884421, 374082988, 139195248, 519518863, 422740375, 389354132, 515631608, 9097818,
+    484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268,
+];
+
+/// ⚑ The nine lanes of `dregg-pasta-fp-chainlink::v1`'s fingerprint
+/// (`LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES`) — the body-chain seam's `vkPin`. Recomputed
+/// from that descriptor's own bytes by `conj_fingerprint`; unchanged by this flag day.
+const FP_CHAINLINK_VK_LANES: [u32; 9] = [
+    331349446, 492579056, 87664392, 244507792, 473722701, 515537956, 384678982, 534069614, 6023200,
 ];
 
 const PI_ANCHOR_BASE: usize = 0;
 const PI_TIP_BASE: usize = 9;
 const PI_ANCHOR_H: usize = 18;
 const PI_SEG_LEN: usize = 19;
-const LINK_PI_COUNT: usize = 20;
+/// ⚑ 2026-08-08: the FIRST row's nine `BODYHASH` lanes, published at slots 20..28.
+const PI_BODYHASH_BASE: usize = 20;
+/// ⚑ 2026-08-08: the FIRST row's eight `BODY_ACC` lanes, published at slots 29..36.
+const PI_BODY_ACC_BASE: usize = 29;
+/// ⚑ 20 → 37 on 2026-08-08. A `proofBind`'s `commit`/`vk` may name only PUBLISHED values, so an
+/// unpublished `BODYHASH` could not be `cb.connect`ed by a fold at all — publication is what makes
+/// the body-chain seam REACHABLE. The old 20-PI shape now REFUSES (`public input count … !=
+/// descriptor public_input_count`) rather than being reinterpreted at the wrong offsets.
+const LINK_PI_COUNT: usize = 37;
+
+/// A canonical stand-in for the chain's 8-lane transcript accumulator. ⚑ Like `BODY_LANES`, this is
+/// a SHAPE witness: the AIR forces the seam's `vk` lanes and publishes these eight, and relates them
+/// to `MinaStateBodyHashChain`'s root nowhere on-row — that tie is the seam's off-row half.
+const BODY_ACC_LANES: [u32; 8] = [7, 14, 21, 28, 35, 42, 49, 56];
 
 /// The base-`2^29` lanes of Mina devnet GENESIS's state hash — the same nine digits
 /// `LightClientMinaAir.GENESIS_ANCHOR_LANES` pins against the Base58Check decimal.
@@ -146,6 +178,11 @@ fn row_of(b: Block, real_count: u32, anchor_h: u32) -> Vec<BabyBear> {
         // ⚑ The seam's `vk` vector. A witness generator that leaves these unfilled produces an
         // UNSAT row: the `proof_bind`'s `vk_pin` congruence is an emitted constraint.
         r[HASH_VK_0 + i] = BabyBear::new(ABSORB_VK_LANES[i]);
+        // ⚑ 2026-08-08: the body-chain seam's own `vk` vector, same discipline.
+        r[CHAIN_VK_0 + i] = BabyBear::new(FP_CHAINLINK_VK_LANES[i]);
+    }
+    for i in 0..8 {
+        r[BODY_ACC_0 + i] = BabyBear::new(BODY_ACC_LANES[i]);
     }
     r[HEIGHT] = BabyBear::new(b.height);
     r[IS_REAL] = BabyBear::new(b.is_real);
@@ -154,7 +191,7 @@ fn row_of(b: Block, real_count: u32, anchor_h: u32) -> Vec<BabyBear> {
     r
 }
 
-/// Build the padded trace and the twenty public inputs for an exhibited segment.
+/// Build the padded trace and the thirty-seven public inputs for an exhibited segment.
 ///
 /// ⚑ The padding rows repeat `(parent, own) = (tip, tip)` and CONTINUE the height and the counter,
 /// so the transition gates fire across the real→padding boundary and the last row's `REAL_COUNT` is
@@ -196,6 +233,15 @@ fn trace_and_pis(
     }
     pis[PI_ANCHOR_H] = BabyBear::new(anchor_h);
     pis[PI_SEG_LEN] = BabyBear::new(published_seg_len);
+    // ⚑ 2026-08-08: both new blocks are pinned to the FIRST row (`pi_binding row=first`, cols
+    // 22..30 and 40..47), so they carry the first exhibited block's body hash and the accumulator
+    // every row repeats.
+    for i in 0..9 {
+        pis[PI_BODYHASH_BASE + i] = BabyBear::new(blocks[0].body[i]);
+    }
+    for i in 0..8 {
+        pis[PI_BODY_ACC_BASE + i] = BabyBear::new(BODY_ACC_LANES[i]);
+    }
 
     (rows, pis)
 }

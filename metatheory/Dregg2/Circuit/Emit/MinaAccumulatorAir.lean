@@ -1919,7 +1919,16 @@ by `mina_accumulator_head_proves.rs::the_pinned_head_program_is_the_served_head_
 gate exists because `75df624cf` once re-emitted a descriptor and left a `vkPin` naming a program no
 descriptor in this tree had. -/
 def MINA_HEAD_VK_LANES : List ℤ :=
-  [164314002, 222897309, 128412693, 475553674, 499468058, 337539357, 27327466, 136743749, 10293761]
+  -- ⚑ MOVED 2026-08-08. `dregg-mina-lightclient-verify-v1.json` re-emitted twice over on that day's
+  -- pin flag day: `LightClientMinaAir.CHAINLINK_VK_LANES` had gone stale against a re-emitted
+  -- `pasta-fq-chainlink.json`, and `LINK_VK_LANES` moved with the segment descriptor (whose own
+  -- `ABSORB_VK_LANES` had gone stale against a re-emitted `pasta-fp-absorb.json`). Two rungs down,
+  -- this one. `the_pinned_head_program_is_the_served_head_descriptor` was RED at HEAD on exactly
+  -- this comparison and is what named it. Recomputed from the NEW bytes:
+  --   cargo run -p dregg-circuit --example conj_fingerprint -- \
+  --     circuit/descriptors/by-name/dregg-mina-lightclient-verify-v1.json
+  --   fp=e64df5b684619a0fe22cafe11fd0115298591fa37212848e638e6a6a25599f7e
+  [385175014, 483593253, 197867651, 60833731, 362382625, 154751375, 428751376, 78466385, 8298329]
 
 theorem the_head_vk_pin_is_nine_lanes : MINA_HEAD_VK_LANES.length = HEAD_LANES := by decide
 
