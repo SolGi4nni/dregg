@@ -370,6 +370,22 @@ globs = [
   # ⚠ No emitter yet, so `scripts/poa-design-gate.py` cannot see this game — the
   # measurement is Lean-side only and is NOT gate-corroborated.
   "Dregg2.Games.PathOfAngels.VentCrawlPair",
+  # ⚑ 2026-08-09 (compose-the-rack lane) — THE DAY'S WATER. The rack's first
+  # kernel that two DIFFERENT GAMES read: one per-slot bit under its own sponge
+  # domain (`SHIP_DOMAIN`, taking no mission and no player), Vent Crawl's vein
+  # BOTTOM bound to it exactly and Deck Descent's MOUTH to a 3/4-accurate reading
+  # of it. 32 `#assert_axioms`, all `decide` over complete finite domains — the
+  # calibration, the two posteriors, both games' families proved UNCHANGED in
+  # distribution, and the conditioned falsifiers that keep the coupling from being
+  # narration. Rooted ON ARRIVAL. ~4 s (no sponge is evaluated; `shipSeedFor` is
+  # `@[irreducible]` for the Poseidon2 reduction-bomb reason).
+  # ⚠ NOT YET WIRED into the two games' draw functions — that cutover changes the
+  # emitted bytes of `deck-descent.json` and `vent-crawl.json`, and a re-emit plus
+  # counter-11 signing was in flight when this landed. `scripts/poa-design-gate.py`
+  # is strictly per-descriptor and cannot see a cross-game coupling at all, so the
+  # measurement behind the 3/4 is Lean-kernel-replay only and is NOT
+  # gate-corroborated.
+  "Dregg2.Games.PathOfAngels.DayWater",
   # ⚑ 2026-08-05 — THE GALLEY BOUNDARY TEETH RAN NOWHERE. This block asked for
   # `Dregg2.Games.PathOfAngels.GalleyCommonsBoundary` and
   # `Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary`, crediting them with "33
