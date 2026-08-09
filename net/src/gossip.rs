@@ -661,6 +661,15 @@ struct GossipState {
     /// is lazily populated on first send to a connection and pruned of stale
     /// (closed-connection) entries when it grows past [`MAX_SEND_BUDGET_ENTRIES`].
     send_budgets: HashMap<usize, Arc<Semaphore>>,
+    /// FAULT INJECTION (measurement only, default 0 = off): probability in
+    /// permille that an outbound envelope send to a single target is silently
+    /// dropped before it reaches the wire. This models application-layer egress
+    /// message loss (the Shoal++ §8.3 injection, "message drops for 1% of
+    /// egress traffic", adapted to our gossip layer: QUIC below us retransmits
+    /// packet loss, so the meaningful drop unit HERE is a whole gossip frame).
+    /// Set per-node via [`GossipNetwork::set_egress_drop_permille`]; nothing in
+    /// production sets it.
+    egress_drop_permille: u16,
 }
 
 impl GossipState {
@@ -947,6 +956,13 @@ enum OutgoingGossip {
         payload: Vec<u8>,
         target: SocketAddr,
     },
+    /// Point-to-point message to exactly one peer ([`GossipEnvelope::Direct`]).
+    Direct {
+        topic_id: TopicId,
+        message: PeerMessage,
+        msg_hash: MessageHash,
+        target: SocketAddr,
+    },
 }
 
 /// A subscription to a gossip topic.
@@ -1063,6 +1079,32 @@ enum GossipEnvelope {
     /// exchange — so the committee meshes transitively from one bootstrap peer.
     SelfAddr {
         addr: SocketAddr,
+    },
+    /// POINT-TO-POINT topic message (the fan-out fix for request/response
+    /// traffic): delivered to the target's topic subscribers and NEVER
+    /// re-forwarded, cached, IHave-announced, or Grafted.
+    ///
+    /// ⚑ WHY a distinct envelope kind rather than a one-target `FullMessage`:
+    /// the `FullMessage` receive arm re-forwards every first-seen payload to
+    /// its own eager peers (Plumtree dissemination), so a "unicast" sent as a
+    /// single-target `FullMessage` is re-broadcast at one remove — the mesh
+    /// cost is the same as `publish_eager`. Request/response traffic
+    /// (`Pull`/`PullResponse`/frontier delta pushes on the blocklace topic) is
+    /// addressed to ONE peer that asked for it; fanning the answer out to the
+    /// whole committee was measured (n=3, 2026-07) as 77–82% of all outbound
+    /// gossip work — structural duplicates queued ahead of the round cohort.
+    /// This variant is how a reply goes to the requester and nobody else.
+    ///
+    /// Same authentication as every other envelope (`SignedEnvelope`,
+    /// registered sender key), same hash-integrity check as `FullMessage`.
+    ///
+    /// FLAG DAY (postcard tag appended after `SelfAddr`): a pre-`Direct` node
+    /// receiving this frame fails `decode_inner` and drops it — refuses to
+    /// load, never reinterprets. Devnet re-genesis covers the fleet.
+    Direct {
+        topic_id: TopicId,
+        msg_hash: MessageHash,
+        payload: Vec<u8>,
     },
 }
 
@@ -1188,6 +1230,7 @@ impl GossipNetwork {
             anchors: HashSet::new(),
             verified_addrs: HashMap::new(),
             send_budgets: HashMap::new(),
+            egress_drop_permille: 0,
         }));
 
         let signing_key = Arc::new(signing_key);
@@ -1763,6 +1806,55 @@ impl GossipNetwork {
         Ok(())
     }
 
+    /// Send `message` to exactly ONE peer, point-to-point, on `topic`.
+    ///
+    /// The receiver delivers it to its topic subscribers and NEVER re-forwards
+    /// ([`GossipEnvelope::Direct`]). This is the right primitive for
+    /// request/response traffic — a `Pull`, its `PullResponse`, a frontier
+    /// delta computed FOR one peer — where `publish_eager`'s
+    /// every-peer-every-link fan-out (plus each receiver's Plumtree re-forward)
+    /// multiplies one logical reply into O(n²) frames on the mesh.
+    ///
+    /// `target` may be a peer's dialable listen address OR the ephemeral
+    /// `remote_address()` an inbound connection presented (the `from` of a
+    /// received [`GossipEvent::Message`]): accepted connections are registered
+    /// in the link map under exactly that address, so a reply routes over the
+    /// live link the request arrived on. No local delivery (a node never
+    /// direct-sends to itself), no `seen` marking on the sender (the addressee
+    /// never echoes a Direct frame back).
+    ///
+    /// Best-effort like every gossip send: if no live link to `target` exists
+    /// the frame is dropped silently; retry/backoff belongs to the caller's
+    /// anti-entropy loop (which is where it already lives for every user of
+    /// this primitive).
+    pub async fn send_direct(
+        &self,
+        topic: &TopicHandle,
+        target: SocketAddr,
+        message: &PeerMessage,
+    ) -> Result<(), GossipError> {
+        let encoded = message.encode_raw();
+        let msg_hash = *blake3::hash(&encoded).as_bytes();
+        self.outgoing_tx
+            .send(OutgoingGossip::Direct {
+                topic_id: topic.topic_id,
+                message: message.clone(),
+                msg_hash,
+                target,
+            })
+            .map_err(|_| GossipError::Shutdown)
+    }
+
+    /// FAULT INJECTION (measurement only): set the probability, in permille,
+    /// that any single outbound gossip frame to any single target is silently
+    /// dropped before the wire. 0 (the default, and the only value production
+    /// code ever holds) disables injection entirely. Used by the loss-injection
+    /// measurement harness to reproduce the Shoal++ §8.3 scenario — egress
+    /// message drops on a subset of nodes — against our own synchronizer.
+    pub async fn set_egress_drop_permille(&self, permille: u16) {
+        self.state.write().await.egress_drop_permille = permille.min(1000);
+    }
+
     /// Subscribe to a gossip topic, receiving messages as they arrive.
     pub async fn subscribe(&self, topic: &TopicHandle) -> Result<MessageStream, GossipError> {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -1930,6 +2022,27 @@ impl GossipNetwork {
                     Self::send_to_peers(&envelope_bytes, &targets, &state).await;
                 }
 
+                OutgoingGossip::Direct {
+                    topic_id,
+                    message,
+                    msg_hash,
+                    target,
+                } => {
+                    let encoded = message.encode_raw();
+                    let envelope = GossipEnvelope::Direct {
+                        topic_id,
+                        msg_hash,
+                        payload: encoded,
+                    };
+                    let Some(envelope_bytes) =
+                        Self::sign_envelope(&envelope, node_id, &signing_key)
+                    else {
+                        warn!("gossip direct envelope serialization failed");
+                        continue;
+                    };
+                    Self::send_to_peers(&envelope_bytes, &[target], &state).await;
+                }
+
                 OutgoingGossip::Graft {
                     topic_id,
                     msg_hash,
@@ -2008,7 +2121,17 @@ impl GossipNetwork {
         // not the whole padded frame (an N-link broadcast was N full copies).
         let padded = Arc::new(crate::message::pad_message(data));
 
+        // FAULT INJECTION (measurement only; 0 in production): drop this frame
+        // for a given target with the configured per-node probability, before
+        // any link I/O — one sample per (frame, target), i.e. per unit of
+        // egress traffic. See `GossipState::egress_drop_permille`.
+        let drop_permille = { state.read().await.egress_drop_permille };
+
         for &addr in targets {
+            if drop_permille > 0 && rand::random::<f64>() < f64::from(drop_permille) / 1000.0 {
+                trace!(target = %addr, "egress fault injection: dropped outbound gossip frame");
+                continue;
+            }
             // Send over EVERY live link to this peer, not just one. A committee
             // peer is typically reachable over two coexisting QUIC connections
             // (one we dialed, one we accepted); both present the same
@@ -2559,6 +2682,62 @@ impl GossipNetwork {
                         }
                     }
                 }
+            }
+
+            GossipEnvelope::Direct {
+                topic_id,
+                msg_hash,
+                payload,
+            } => {
+                // Same hash-integrity gate as `FullMessage`: a peer relaying a
+                // corrupt/forged payload is penalized.
+                let computed_hash = *blake3::hash(&payload).as_bytes();
+                if computed_hash != msg_hash {
+                    warn!(
+                        "Rejecting direct gossip message from {} — hash mismatch",
+                        remote_addr
+                    );
+                    state
+                        .write()
+                        .await
+                        .scoreboard
+                        .penalize(remote_addr, Penalty::InvalidMessage);
+                    return;
+                }
+
+                let subscribers = {
+                    let mut s = state.write().await;
+                    // Replay suppression via the shared seen-set (each direct
+                    // send carries its own nonce, so distinct sends never
+                    // collide). NO cache_insert (nothing will ever Graft for a
+                    // point-to-point frame), NO pending-IHave bookkeeping, and
+                    // — the entire point — NO re-forward below.
+                    if s.seen.contains(&msg_hash) {
+                        return;
+                    }
+                    s.seen.insert(msg_hash);
+                    // Bidirectional membership, as for `FullMessage`: a peer we
+                    // heard from directly is a topic peer even if we never
+                    // dialed it.
+                    match s.topics.get_mut(&topic_id) {
+                        Some(topic_state) => {
+                            topic_state.add_peer(remote_addr);
+                            topic_state.subscribers.clone()
+                        }
+                        None => Vec::new(),
+                    }
+                };
+
+                if let Ok(msg) = PeerMessage::decode_raw(&payload) {
+                    for sub in &subscribers {
+                        let _ = sub.send(GossipEvent::Message {
+                            from: remote_addr,
+                            message: msg.clone(),
+                        });
+                    }
+                }
+                // Deliberately absent: eager/lazy re-forwarding. A Direct frame
+                // terminates at its addressee.
             }
 
             GossipEnvelope::IHave { topic_id, msg_hash } => {
@@ -3381,6 +3560,7 @@ mod narrow_join_channel_tests {
             anchors: HashSet::new(),
             verified_addrs: HashMap::new(),
             send_budgets: HashMap::new(),
+            egress_drop_permille: 0,
         }))
     }
 
@@ -4290,6 +4470,7 @@ mod tests {
             anchors: HashSet::new(),
             verified_addrs: HashMap::new(),
             send_budgets: HashMap::new(),
+            egress_drop_permille: 0,
         };
 
         // Add a topic with 5 peers (3 eager, 2 lazy)
@@ -4398,6 +4579,7 @@ mod tests {
             anchors: HashSet::new(),
             verified_addrs: HashMap::new(),
             send_budgets: HashMap::new(),
+            egress_drop_permille: 0,
         };
 
         // 3 eager + 2 lazy peers
@@ -4619,6 +4801,7 @@ mod tests {
             anchors: HashSet::new(),
             verified_addrs: HashMap::new(),
             send_budgets: HashMap::new(),
+            egress_drop_permille: 0,
         };
         // No links yet: links_to is empty and the address counts as not-connected.
         let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
@@ -5463,6 +5646,145 @@ mod tests {
             assert!(
                 gossips[i].connected_peer_count().await >= 3,
                 "node {i} must reach a full mesh (>= 3 live peers)"
+            );
+        }
+    }
+
+    /// BOTH POLES of [`GossipNetwork::send_direct`] over real QUIC:
+    /// * the addressee's topic subscriber receives the message;
+    /// * a third meshed peer NEVER sees it — a `Direct` frame terminates at its
+    ///   addressee (no Plumtree re-forward), which is the whole reason the
+    ///   variant exists (a one-target `FullMessage` WOULD be re-forwarded).
+    /// A `publish_eager` control message afterwards proves the silence at C is
+    /// non-forwarding, not a dead mesh.
+    #[tokio::test]
+    async fn direct_send_reaches_only_its_addressee_and_is_never_forwarded() {
+        use crate::node::{PeerNode, PeerNodeConfig};
+
+        // Three nodes, registered keys, full mesh.
+        let mut keys: HashMap<NodeId, PublicKey> = HashMap::new();
+        let mut sks = Vec::new();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (sk, pk) = dregg_types::generate_keypair();
+            let id: NodeId = *blake3::hash(pk.as_bytes()).as_bytes();
+            keys.insert(id, pk);
+            sks.push(sk);
+            ids.push(id);
+        }
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes.push(PeerNode::new(PeerNodeConfig::default()).await.unwrap());
+        }
+        let addrs: Vec<SocketAddr> = nodes.iter().map(|n| n.local_addr()).collect();
+        let mut gossips = Vec::new();
+        let mut topics = Vec::new();
+        let mut streams = Vec::new();
+        for (i, node) in nodes.iter().enumerate() {
+            let g = GossipNetwork::new(node.endpoint().clone(), ids[i], sks[i].clone(), keys.clone());
+            let peer_addrs: Vec<SocketAddr> = addrs
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, a)| *a)
+                .collect();
+            let topic = g.join_topic("dregg/direct-test", &peer_addrs).await.unwrap();
+            let stream = g.subscribe(&topic).await.unwrap();
+            gossips.push(g);
+            topics.push(topic);
+            streams.push(stream);
+        }
+        // Wait for the mesh.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut meshed = true;
+            for g in &gossips {
+                if g.connected_peer_count().await < 2 {
+                    meshed = false;
+                }
+            }
+            if meshed {
+                break;
+            }
+            assert!(Instant::now() < deadline, "3-node mesh failed to form");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let direct_msg = PeerMessage::PublishTurn {
+            turn_hash: [0xD1; 32],
+            turn_data: b"direct-payload".to_vec(),
+            causal_deps: vec![],
+        };
+        // A (0) sends direct to B (1). C (2) must never see it.
+        gossips[0]
+            .send_direct(&topics[0], addrs[1], &direct_msg)
+            .await
+            .unwrap();
+
+        // B receives it, with A as the transport sender.
+        let got = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match streams[1].recv().await {
+                    Some(GossipEvent::Message { message, .. }) => {
+                        if let PeerMessage::PublishTurn { ref turn_data, .. } = message
+                            && turn_data == b"direct-payload"
+                        {
+                            return;
+                        }
+                    }
+                    Some(_) => continue,
+                    None => panic!("B's stream ended"),
+                }
+            }
+        })
+        .await;
+        assert!(got.is_ok(), "the addressee must receive a direct message");
+
+        // Control: an eager publish from A reaches C (the mesh works) …
+        let control = PeerMessage::PublishTurn {
+            turn_hash: [0xD2; 32],
+            turn_data: b"control-broadcast".to_vec(),
+            causal_deps: vec![],
+        };
+        gossips[0]
+            .publish_eager(&topics[0], &control)
+            .await
+            .unwrap();
+
+        // … and everything C observes up to and INCLUDING the control is
+        // inspected: the direct payload must not be among it. Eager pushes are
+        // sent in order per link, and a Direct that WOULD be re-forwarded
+        // would have been enqueued at C before the later control broadcast.
+        let saw_control = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match streams[2].recv().await {
+                    Some(GossipEvent::Message { message, .. }) => {
+                        if let PeerMessage::PublishTurn { ref turn_data, .. } = message {
+                            assert!(
+                                turn_data != b"direct-payload",
+                                "a Direct frame must NEVER be forwarded to a third peer"
+                            );
+                            if turn_data == b"control-broadcast" {
+                                return;
+                            }
+                        }
+                    }
+                    Some(_) => continue,
+                    None => panic!("C's stream ended"),
+                }
+            }
+        })
+        .await;
+        assert!(saw_control.is_ok(), "the control broadcast must reach C");
+
+        // Grace pass: nothing further delivers the direct payload to C.
+        let extra = tokio::time::timeout(Duration::from_millis(500), streams[2].recv()).await;
+        if let Ok(Some(GossipEvent::Message { message, .. })) = extra
+            && let PeerMessage::PublishTurn { ref turn_data, .. } = message
+        {
+            assert!(
+                turn_data != b"direct-payload",
+                "a Direct frame must NEVER be forwarded to a third peer (late)"
             );
         }
     }
