@@ -77,8 +77,12 @@ affine coordinates cannot represent — `offset_is_a_real_pallas_point`.
 `native_decide`. Facts are NAMED THEOREMS — this file adds zero `#guard`s.
 -/
 import Dregg2.Circuit.Emit.MinaWrapCommitMachine
-import Dregg2.Circuit.Emit.MinaWrapAggregationGate
-import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
+import Dregg2.Circuit.Emit.MinaWrapAggregationData
+-- ⚑ the DATA module, not the GATE (2026-08-09). This file reads `LAGRANGE`, `NEG_PUBLIC`,
+-- `PUBLIC_COMM_GOLD` and `SRS_H` — all literals — and mentions `tamper_blinder_dropped` only in a
+-- DOCBLOCK, so it cited no term from the gate. The gate is a 14.5 GB kernel `decide`, and this
+-- import is what put it behind `MinaWrapXiEndoLift` and therefore behind `KimchiStepMainPins19d`.
+import Dregg2.Circuit.Emit.MinaWrapPublicCommData
 import Dregg2.Circuit.Emit.EffectLowerCertified
 
 namespace Dregg2.Circuit.Emit.MinaWrapCommitStages

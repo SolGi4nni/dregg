@@ -279,26 +279,34 @@ theorem the_blocks_own_scalars_close_the_blocks_own_lhs :
 
 #assert_compiled the_blocks_own_scalars_close_the_blocks_own_lhs
 
-/-- ⚑⚑ **(f) AND STILL IT REFUSES — THE RESIDUE AFTER THE TRANSCRIPT IS THE FOLD, MEASURED ON THE
-SHAPE.**
+/-- ⚑⚑ **(f) AND STILL IT REFUSES — BUT THE RESIDUE IS NO LONGER THE FOLD'S SHAPE. RENAMED WITH THE
+ROW REWIRING (2026-08-09), NOT ANNOTATED.**
 
-At the corrected transcript ((d)'s premise, restated as this theorem's first leg), the assembly's
-own fold output is NOT the block's `lhs`, and `bpCloses` at the block's `(sg, z₁, z₂, b₀)` still
-refuses on it. The two count conjuncts LOCATE the cause in R4's wiring rather than conjecture it:
-the 46 combine rounds consume 23 distinct round-robin transcript cells (`StepShape.ipaChal`) where
-upstream Horner-nests ONE ξ from `unfinalized.deferred_values` (`scale_and_add`,
-`step_verifier.ml:270-299`; `pcs_batch.ml`), and only 2 of the 30 `bullet_reduce` rounds land by
-round-robin accident on their own round's squeeze — upstream keys BOTH halves of pair `j` on
-prechallenge `j`, with `endo_inv` on the L half (`:203-206`). The `b` conjuncts add the fused-cell
-half: even at the block's transcript, R8's `Fp` fold (`bpBOf`, what the fused `vBShift` cell must
-carry) is neither the block's `b₀` nor its shifted form — the advice cell has to SPLIT from R8's
-word before any transcript can fill it.
+This theorem was `…_and_the_residue_is_the_fold` and its two count conjuncts measured R4's
+round-robin keying — 23 distinct cells across the 46 combine rounds, 2 of 30 bullet halves on their
+own squeeze. **Those conjuncts stopped describing anything the day `runIpa` was rewired**: they are
+facts about a retired expression, and leaving them in a live theorem would have been a falsifier
+that stopped falsifying. `StepShape.ipaChal` is deleted; §19d's wiring is what the rows emit; and
+the poles that refute the OLD shape live in `…Pins19d`, where they are red controls rather than
+descriptions.
 
-⚠ What this theorem does NOT license: swapping `G := SG_XY` in segment D while this refusal stands
-would publish the real accumulator over `equal_g = 0` — a stapled slot. `G` stays `solveG`'s
-output until R4 is rebuilt and the advice cells are split; `solveG`'s docblock carries the same
-flag, dated. -/
-theorem the_corrected_transcript_still_refuses_and_the_residue_is_the_fold :
+What is left, and it is smaller and named: at the corrected transcript the assembly's own `lhs` is
+still not the block's, and `bpCloses` at the block's `(sg, z₁, z₂, b₀)` still refuses — for TWO
+reasons, both conjuncts here.
+
+  * **ξ's INSTANCE.** The fold now Horner-nests one ξ, but the ξ it nests is the assembly's own
+    §8g chain 0 (`defc.pre 0` — the lift of `vXiStmt`, tied by R8's `xi_correct` to a fr-sponge
+    running over FIXTURE evaluations), and that is not the block's ξ′. Segment B over the block's
+    own evaluations is what would close it. ⚑ MEASURED IN `…Pins19d`, not here — see the conjunct
+    comment below for why the import stays out of this module.
+  * **THE FUSED ADVICE CELL.** R8's `Fp` fold (`bpBOf`, what the fused `vBShift` cell must carry)
+    is neither the block's `b₀` nor its shifted form, at any transcript.
+
+⚠ What this theorem does NOT license, unchanged: swapping `G := SG_XY` in segment D while this
+refusal stands would publish the real accumulator over `equal_g = 0` — a stapled slot. `G` stays
+`solveG`'s output until ξ's instance and the advice-cell split land; `solveG`'s docblock carries
+the same flag, dated. -/
+theorem the_corrected_transcript_still_refuses_and_the_residue_is_xi_and_the_fused_advice_cell :
     (-- (d)'s premise, restated on this theorem's own subject…
      uSqueezeVal shapeStep tRealAdvice.sp == T_FQ
      -- …the fold's output at that transcript is NOT the block's lhs…
@@ -306,16 +314,26 @@ theorem the_corrected_transcript_still_refuses_and_the_residue_is_the_fold :
      -- …and the block's own scalars are still refused on it…
      && bpCloses (bpUOf tRealAdvice) GENERATORS_H (bpLhsOf tRealAdvice) (jOf SG_XY)
           B0_SHIFTED Z1_SHIFTED Z2_SHIFTED == false
-     -- …because: 28 of 30 bullet rounds are keyed off a foreign cell…
-     && ((List.range 30).filter (fun j =>
-          shapeStep.ipaChal (46 + j) == shapeStep.bulletChal (j / 2))).length == 2
-     -- …and the 46 combine rounds consume 23 distinct cells where upstream consumes one ξ…
-     && ((List.range 46).map (fun r => shapeStep.ipaChal r)).eraseDups.length == 23
-     -- …and the fused `b` cell cannot say the block's `b₀` at ANY transcript.
+     -- …the rewired fold is nonetheless upstream's SHAPE: every combine round runs at ONE cell…
+     && ((List.range (nCombine shapeStep)).map
+           (fun r => ipaLadderCounter shapeStep r)).eraseDups.length == 1
+     -- …and both halves of every `bullet_reduce` pair run at that pair's OWN squeeze…
+     && (List.range 15).all (fun j =>
+          ipaLadderCounter shapeStep (nCombine shapeStep + 2 * j)
+            == vN shapeStep (shapeStep.bulletChal j) shapeStep.emsRows
+          && ipaLadderCounter shapeStep (nCombine shapeStep + 2 * j + 1)
+            == vN shapeStep (shapeStep.bulletChal j) shapeStep.emsRows)
+     -- …so what is left is an INSTANCE and not a shape. ⚑ The ξ half is stated NEXT DOOR, in
+     -- `…Pins19d.the_emitted_rows_are_the_rebuilt_fold`, and deliberately not here: naming the
+     -- block's ξ′ needs `MinaWrapXiEndoLift`, whose import closure is 182 modules against this
+     -- file's 186 — and importing it for one constant would put a whole second cone behind every
+     -- one of THIS module's `native_decide`s. Pins19d already carries that cone.
+     -- …what IS here is the other half: the fused `b` cell cannot say the block's `b₀` at ANY
+     -- transcript, which needs nothing but this file's own fixture.
      && bpBOf tRealAdvice != B0_SHIFTED
      && bpBOf tRealAdvice != B0) = true := by
   native_decide
 
-#assert_compiled the_corrected_transcript_still_refuses_and_the_residue_is_the_fold
+#assert_compiled the_corrected_transcript_still_refuses_and_the_residue_is_xi_and_the_fused_advice_cell
 
 end Dregg2.Circuit.Emit.KimchiStepMain

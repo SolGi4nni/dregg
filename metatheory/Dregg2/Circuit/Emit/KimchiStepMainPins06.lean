@@ -220,21 +220,22 @@ set_option maxRecDepth 100000
 -- `Scalar_challenge.endo` had BOTH free witnesses, and its point seed was also the WRONG POINT.
 -- Upstream: `let p = G.( + ) t (seal (Field.scale xt Endo.base), yt) in ref G.(p + p)` and
 -- `let n_acc = ref Field.zero`. `runIpa` seeded at `dblA T` — `2t`, not `2(t + φ(t))` — with
--- `qAcc r 0` and `vQN r 0` read by NO row. So the fold was self-consistent arithmetic that was not
+-- `qAcc r 0` and `vQNMid r 0` read by NO row. So the fold was self-consistent arithmetic that was not
 -- `Scalar_challenge.endo`, over a starting point the prover could name.
 
 -- ⚑ THE SEED IS THE ENDOMORPHISM'S, and it is a different point from what this file used to emit.
 #guard Dregg2.Circuit.Emit.KimchiRenderEndoMul.endo != 1
-#guard (endoQ (tS.ipa.bases.getD absR0 (0, 0))).1 != (tS.ipa.bases.getD absR0 (0, 0)).1
-#guard (endoQ (tS.ipa.bases.getD absR0 (0, 0))).2 == (tS.ipa.bases.getD absR0 (0, 0)).2
-#guard endoSeed (tS.ipa.bases.getD absR0 (0, 0)) != dblA (tS.ipa.bases.getD absR0 (0, 0))
+#guard (endoQ ipaB0).1 != ipaB0.1
+#guard (endoQ ipaB0).2 == ipaB0.2
+#guard endoSeed ipaB0 != dblA ipaB0
 -- …and `φ(t)` is on the curve, which is what makes `endo` the base-field endomorphism and not a
 -- number: `a = 0` on Pallas, so `(ζx)³ + b = x³ + b` for a cube root of unity.
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
   onCurveA (endoQ (tS.ipa.bases.getD r (0, 0))) == onCurveA (tS.ipa.bases.getD r (0, 0)))
--- …the seed the assembly RUNS is the emitted rows' own output, round for round.
+-- …the seed the assembly RUNS is the emitted rows' own output, round for round. ⚑ over
+-- `ladderBases` since §19d: the seed is `2·(B + φ(B))` for the point the LADDER multiplies.
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
-  (tS.ipa.accs.getD r []).getD 0 (0, 0) == endoSeed (tS.ipa.bases.getD r (0, 0)))
+  (tS.ipa.accs.getD r []).getD 0 (0, 0) == endoSeed (tS.ipa.ladderBases.getD r (0, 0)))
 
 -- ⚑⚑ **THE SAME EXHIBIT AS §12f, ON THE ENDO LADDER.** A forged accumulator seed leaves the endo
 -- gate's own eleven DEPLOYED constraints satisfied at every block — `endoMulConstraints`, read-only
@@ -242,33 +243,33 @@ set_option maxRecDepth 100000
 -- cell says nothing about it.
 
 -- the helpers reproduce the assembly's OWN accepted rows on the honest seed…
-#guard ipaAccsFrom (endoSeed ipaT0) == tS.ipa.accs.getD absR0 []
+#guard ipaAccsFrom (endoSeed ipaB0) == tS.ipa.accs.getD absR0 []
 #guard (List.range shapeSmoke.ipaBlocks).all (fun e =>
-  emOk (emCells (ipaBlocksFrom (endoSeed ipaT0)) (ipaAccsFrom (endoSeed ipaT0))
+  emOk (emCells (ipaBlocksFrom (endoSeed ipaB0)) (ipaAccsFrom (endoSeed ipaB0))
                 (tS.ipa.ns.getD absR0 []) e))
 -- ⚑⚑ …and the FORGED seed's rows are accepted just the same, with a different round output.
-#guard ipaSeedForged != endoSeed ipaT0
+#guard ipaSeedForged != endoSeed ipaB0
 #guard (List.range shapeSmoke.ipaBlocks).all (fun e =>
   emOk (emCells (ipaBlocksFrom ipaSeedForged) (ipaAccsFrom ipaSeedForged)
                 (tS.ipa.ns.getD absR0 []) e))
-#guard (ipaAccsFrom ipaSeedForged).getLastD (0, 0) != (ipaAccsFrom (endoSeed ipaT0)).getLastD (0, 0)
+#guard (ipaAccsFrom ipaSeedForged).getLastD (0, 0) != (ipaAccsFrom (endoSeed ipaB0)).getLastD (0, 0)
 
 -- ⚑⚑ **AND THE TWO NEW `Ops.add_fast` ROWS REFUSE IT.** `acc₀ = p + p`'s own gate body is 0 at the
 -- endomorphism seed and NONZERO at the prover's point.
-#guard caOk (ipaDblCellsAt (endoSeed ipaT0))
+#guard caOk (ipaDblCellsAt (endoSeed ipaB0))
 #guard caOk (ipaDblCellsAt ipaSeedForged) == false
 -- …and it is satisfiable at every round, both `add_fast`s.
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
-  let T := tS.ipa.bases.getD r (0, 0)
+  let T := tS.ipa.ladderBases.getD r (0, 0)
   let q := endoQ T
   let p := endoP T
   caOk (completeAddWitness T.1 T.2 q.1 q.2) && caOk (completeAddWitness p.1 p.2 p.1 p.2))
 -- ⚑ …and the cells that were in a ONE-cell class are not any more. `qAcc r 0`: the seed add's
--- output and block 0's `EndoMul` input. `vQN r 0`: the `Field.zero` pin and block 0's `n`.
+-- output and block 0's `EndoMul` input. `vQNMid r 0`: the `Field.zero` pin and block 0's `n`.
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
   (classCells posS (ipx shapeSmoke (qAcc shapeSmoke r 0))).length == 2
   && (classCells posS (ipy shapeSmoke (qAcc shapeSmoke r 0))).length == 2
-  && (classCells posS (vQN shapeSmoke r 0)).length == 2)
+  && (classCells posS (vQNMid shapeSmoke r 0)).length == 2)
 -- …and `φ(t)`'s x is read by its pin row and by the `p = t + φ(t)` add, nowhere else.
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
   (classCells posS (vQEndo shapeSmoke r)).length == 2)
@@ -279,6 +280,6 @@ set_option maxRecDepth 100000
 #guard (List.range (ftcTerms shapeSmoke)).all (fun k =>
   (classCells posS (ftcN shapeSmoke k 0)).length == 2)
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
-  (classCells posS (vQN shapeSmoke r 0)).length == 2)
+  (classCells posS (vQNMid shapeSmoke r 0)).length == 2)
 
 end Dregg2.Circuit.Emit.KimchiStepMain

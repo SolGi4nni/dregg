@@ -172,7 +172,8 @@ set_option maxRecDepth 100000
 -- so R4 round `FTC_ROUND`'s base moves and the fold moves with it. Before §6b that substitution
 -- changed one sponge input and NOTHING else in the circuit.
 #guard ftcSwap0.out != tS.ftc.out
-#guard (runIpa shapeSmoke (stepBases shapeSmoke) tS.sp ftcSwap0.out (tS.bp.term 0).res).sums.getLastD (0, 0)
+#guard (runIpa shapeSmoke (stepBases shapeSmoke) tS.sp ftcSwap0.out (tS.bp.term 0).res
+          (tS.defc.pre.getD 0 0)).sums.getLastD (0, 0)
         != tS.ipa.sums.getLastD (0, 0)
 -- …and the Horner SEED matters too, through the ladder rather than through an add.
 #guard (ftcScaleTerm (Dregg2.Bridge.MinaStepPrevCommitments.GAMMA_XY.getD 29 (0, 0))

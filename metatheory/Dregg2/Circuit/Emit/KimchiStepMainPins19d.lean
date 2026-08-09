@@ -37,18 +37,25 @@ states what it does, in three theorems and a refutation pole for each named defe
     block's own `(sg, b₀, z₁, z₂)` CLOSE `equal_g` under this assembly's own `bpCloses`. `G` can be
     the real accumulator: `SG_XY` is no longer refused.
 
-## ⚠ WHAT THIS IS NOT, and it is two things
+## ⚑ THE ROWS ARE REWIRED (2026-08-09) — and this module gained the theorem that says so
 
-1. **The rows are not rewired yet.** `runIpa` still emits the round-robin sum; §19d's docblock
-   carries the wiring the rewrite is (which operand of which row each commitment becomes). Until
-   that lands, `G` STAYS `solveG`'s output — publishing `SG_XY` over an `equal_g` the emitted rows
-   still refuse would be a stapled slot, which is the shortcut §19b already declined.
-2. **ξ is the BLOCK's, supplied — not the assembly's own `defc.pre 0`.** §8g chain 0 lifts the
-   STATEMENT word `vXiStmt`, and R8's `xi_correct` ties that word to the assembly's fr-sponge,
-   which runs over FIXTURE evaluations. The last conjunct of theorem 3 measures the gap rather
-   than eliding it. So after the row rewiring the residue is not "the fold" any more — it is the
-   **fr-sponge's instance** (segment B over the block's own evaluations) plus the advice-cell
-   split §19c(f) named. Both are smaller and neither is this one.
+`runIpa` emits §19d's fold now: `ipaLadderBase` / `ipaLadderCounter` / `ipaAddOperands` are the
+wiring the docblock specified, and `qEndoInv` + `endoInvEqRows` are the fifteen witnessed
+`endo_inv` points with their asserts. **`the_emitted_rows_are_the_rebuilt_fold`** is the leg that
+was missing: driven at the BLOCK's own ξ′, the EMITTED assembly's own combine accumulator lands on
+`COMBINED_GOLD` and its own `lhs` lands on `lhsRealOpening`. Before the rewiring it did neither, at
+any ξ.
+
+## ⚠ WHAT THIS IS STILL NOT — and it is now ONE thing, not two
+
+**ξ is the BLOCK's, supplied — not the assembly's own `defc.pre 0`.** §8g chain 0 lifts the
+STATEMENT word `vXiStmt`, and R8's `xi_correct` ties that word to the assembly's fr-sponge, which
+runs over FIXTURE evaluations. So the assembly's OWN run (`tRealAdvice`) still does not close
+`equal_g`, and **`G` STAYS `solveG`'s output**: publishing `SG_XY` over an `equal_g` the emitted
+rows refuse would be a stapled slot, which is the shortcut §19b already declined and which the row
+rewiring does NOT license. The residue is the **fr-sponge's instance** (segment B over the block's
+own evaluations) plus the advice-cell split §19c(f) named. Both are smaller than the fold was and
+neither is this one.
 -/
 import Dregg2.Circuit.Emit.KimchiStepMainPins19
 import Dregg2.Circuit.Emit.MinaWrapXiEndoLift
@@ -85,11 +92,13 @@ def foldPres : List Nat :=
 /-- …and the closing squeeze `c′`, likewise the assembly's own. -/
 def foldCPre : Nat := chalOf shapeStep tRealAdvice.sp shapeStep.cChal
 
-/-- ⚑ The keying the EMITTED shape uses for the same thirty halves — `ipaChal (46 + 2j)`, the
-round-robin cell. Pair `j`'s two halves land on it by accident at two `j` and nowhere else
-(`…Pins19`'s count conjunct). Here it is the refutation pole for defect (i). -/
+/-- ⚑ The keying the emitted shape used for the same thirty halves BEFORE 2026-08-09 —
+`(msmTerms + r) % chals` at `r = 46 + 2j`, the round-robin cell. `StepShape.ipaChal` is DELETED;
+the expression survives here, and only here, as defect (i)'s refutation pole. Pair `j`'s two halves
+landed on their own squeeze by accident at two `j` and nowhere else. -/
 def foldPresRoundRobin : List Nat :=
-  (List.range 15).map (fun j => chalOf shapeStep tRealAdvice.sp (shapeStep.ipaChal (46 + 2 * j)))
+  (List.range 15).map (fun j =>
+    chalOf shapeStep tRealAdvice.sp ((shapeStep.msmTerms + 46 + 2 * j) % shapeStep.chals))
 
 /-- `uc = scale_fast2 u advice.combined_inner_product`, off §19's own `group_map` half at the
 assembly's own squeeze and the block's advice. -/
@@ -132,6 +141,16 @@ theorem the_ladder_is_multiplication_by_the_pallas_lift :
 
 #assert_compiled the_ladder_is_multiplication_by_the_pallas_lift
 
+/-- ⚑ **THE RETIRED FOLD, AS A VALUE.** `Σ_r Scalar_challenge.endo(C_{r+1}, roundRobin r)` chained
+by `Ops.add_fast` from `sg_old[0]` — exactly what `runIpa` emitted until 2026-08-09, built here from
+its own parts because the rows no longer produce it. Defect (i)'s refutation pole. -/
+def roundRobinCombine : Nat × Nat :=
+  (List.range 46).foldl
+    (fun acc r => addA acc
+      (endoOutOf shapeStep (COMBINE_XY.getD (r + 1) (0, 0))
+        (chalOf shapeStep tRealAdvice.sp ((shapeStep.msmTerms + r) % shapeStep.chals))))
+    (COMBINE_XY.getD 0 (0, 0))
+
 /-- ⚑⚑ **(h) THE REBUILT COMBINE REPRODUCES O1-LABS' OWN AGGREGATE, AND THE EMITTED ONE DOES NOT.**
 
 `COMBINED_GOLD` is `PolyComm::multi_scalar_mul` over o1-labs' own `combine_commitments` output for
@@ -144,8 +163,12 @@ The refutation poles are what stop that being an accident of a fold that collaps
   * a moved ξ misses it — so the ONE ξ is load-bearing;
   * the REVERSED commitment list misses it — so it is a Horner and not a sum, and
     `combine_split_commitments`' `List.rev` is read correctly;
-  * ⚑ **the EMITTED fold's own 46-round accumulator misses it** — which is defect (i), measured on
-    the very instance §19c corrected the transcript of, rather than argued. -/
+  * ⚑ **the RETIRED round-robin fold misses it** — defect (i). ⚠ Since 2026-08-09 the rows no
+    longer emit that value, so the pole is CONSTRUCTED here (`roundRobinCombine`) rather than read
+    off `tRealAdvice`: a control that quietly becomes the same object it is refuting is a
+    falsifier that stopped falsifying, and this one would have;
+  * ⚑ **and the same Horner at the ASSEMBLY's own ξ misses it too** — which is the residue this
+    module hands forward, now that the shape is right and only the instance is not. -/
 theorem the_rebuilt_combine_reproduces_o1labs_own_aggregate :
     (-- the Horner IS o1-labs' aggregate…
      combineSplit shapeStep COMBINE_XY XI_PRE == COMBINED_GOLD_A
@@ -155,7 +178,12 @@ theorem the_rebuilt_combine_reproduces_o1labs_own_aggregate :
      && combineSplit shapeStep COMBINE_XY (XI_PRE + 1) != COMBINED_GOLD_A
      -- …it is a HORNER, not a sum: the reversed list is a different point…
      && combineSplit shapeStep COMBINE_XY.reverse XI_PRE != COMBINED_GOLD_A
-     -- …and the EMITTED round-robin fold's own 46-round accumulator is NOT it.
+     -- …and the RETIRED round-robin fold is NOT it, reconstructed as a value so the pole outlives
+     -- the rows that used to emit it.
+     && roundRobinCombine != COMBINED_GOLD_A
+     -- …⚠ and neither is the same Horner at the ASSEMBLY's own ξ: that is the instance residue,
+     -- and it is what `tRealAdvice.ipa.sums.getD 45` now carries.
+     && combineSplit shapeStep COMBINE_XY (tRealAdvice.defc.pre.getD 0 0) != COMBINED_GOLD_A
      && (tRealAdvice.ipa.sums.getD 45 (0, 0)) != COMBINED_GOLD_A) = true := by
   native_decide
 
@@ -210,5 +238,88 @@ theorem the_rebuilt_fold_closes_at_the_blocks_own_opening :
   native_decide
 
 #assert_compiled the_rebuilt_fold_closes_at_the_blocks_own_opening
+
+/-- ⚑ **THE EMITTED ROWS' OWN `IpaData`, at the two data the assembly does not yet derive.**
+
+`runIpa` is the row emitter's value side — the very function `ipaRows`, `circuitEnv` and
+`stepWitness` read — and this runs it on the committed shape over the block's own commitments and
+the block's own transcript. ⚠ **TWO arguments are the BLOCK's rather than the assembly's, and both
+are named rather than hidden:**
+
+  * **ξ′** — §8g chain 0 lifts `vXiStmt`, which R8's `xi_correct` ties to a fr-sponge running over
+    FIXTURE evaluations, so the assembly's own ξ is not the block's;
+  * **`ft_comm`** — §6b's MSM runs at R6's own deferred scalars, so the assembly's round-2 base is
+    not `COMBINE_XY[3]`.
+
+Everything else — the 47 commitments, the thirty gammas, the fifteen prechallenges, `c′`, `delta`,
+`uc` — is what the emitted assembly itself computes. The theorem below is therefore about the
+fold's SHAPE and its `endo_inv` half; the two instances are the residue, and the last two conjuncts
+measure each one on `tRealAdvice`. -/
+def emittedAtBlockData : IpaData :=
+  runIpa shapeStep (stepBases shapeStep) tRealAdvice.sp (COMBINE_XY.getD 3 (0, 0)) foldUc XI_PRE
+
+def emittedLhs : Nat × Nat :=
+  (emittedAtBlockData.lhsAdd.getD 4 0, emittedAtBlockData.lhsAdd.getD 5 0)
+
+/-- ⚑⚑⚑ **(j) THE EMITTED ROWS ARE THE REBUILT FOLD — the leg §19d was missing.**
+
+Theorems (g)–(i) are about `combineSplit` / `bulletTerm` / `foldLhs`, definitions §19d introduced.
+This one is about **`runIpa`**, the function the row schedule and the witness environment both read.
+It says the two are the same object, and it says it at the strongest available point: driven at the
+block's ξ′ and `ft_comm`, the EMITTED fold's own 46-round accumulator IS `PolyComm::multi_scalar_mul`
+over o1-labs' own `combine_commitments` output, its own `lhs` IS the block's opening point, and the
+block's own `(sg, b₀, z₁, z₂)` CLOSE `equal_g` on it.
+
+The wiring conjuncts are what make that a statement about the ROWS rather than a coincidence:
+
+  * every combine ladder's base is the PREVIOUS step's add output, and step 0's is the LAST
+    commitment — `combine_split_commitments`' `List.rev … init`;
+  * `sg_old[0]` IS `COMBINE_XY[0]`, so the point the emitted chain closes on is the flat list's
+    head and not a second copy of it;
+  * each `endo_inv` witness is ON THE CURVE and its ladder's OUTPUT is the absorbed L commitment —
+    which is what `endoInvEqRows` asserts, checked here at the value layer;
+  * the fifteen witnesses are NOT the commitments they check (an identity carrier would satisfy
+    every conjunct above and bind nothing).
+
+⚠ **AND IT DOES NOT LICENSE PUBLISHING `SG_XY`.** The last two conjuncts are the assembly's own
+run: its ξ is not the block's, its `ft_comm` is not the block's, and its `lhs` is therefore not
+`lhsRealOpening`. `G` stays `solveG`'s output; `equal_g` on the emitted rows still refuses the real
+accumulator, and stapling `SG_XY` over that refusal is the shortcut §19b declined. -/
+theorem the_emitted_rows_are_the_rebuilt_fold :
+    (-- the EMITTED fold's own combine accumulator IS o1-labs' aggregate…
+     emittedAtBlockData.sums.getD 45 (0, 0) == COMBINED_GOLD_A
+     -- …the EMITTED `lhs` is §19d's `foldLhs`, so rows and definitions are one object…
+     && emittedLhs == foldLhsReal
+     -- …and it is the block's own opening point…
+     && emittedLhs == lhsRealOpening
+     -- …so the block's own scalars CLOSE `equal_g` on the emitted rows' own `lhs`…
+     && bpCloses U_BASE_A GENERATORS_H emittedLhs (jOf SG_XY)
+          B0_SHIFTED Z1_SHIFTED Z2_SHIFTED
+     -- ── the WIRING, read off the emitted data ──
+     -- …every combine ladder runs on the previous step's add output…
+     && (List.range 45).all (fun a =>
+          emittedAtBlockData.ladderBases.getD (a + 1) (0, 0)
+            == emittedAtBlockData.sums.getD a (0, 0))
+     -- …and step 0's on the LAST commitment…
+     && emittedAtBlockData.ladderBases.getD 0 (0, 0) == COMBINE_XY.getD 46 (0, 0)
+     -- …`sg_old[0]` IS the flat list's head, so the chain closes on `COMBINE_XY[0]` itself…
+     && Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY == COMBINE_XY.getD 0 (0, 0)
+     -- …the fifteen `endo_inv` witnesses exist, are on the curve…
+     && emittedAtBlockData.invs.length == 15
+     && emittedAtBlockData.invs.all onCurveA
+     -- …their ladders' OUTPUTS are the absorbed L commitments (what `endoInvEqRows` asserts)…
+     && (List.range 15).all (fun j =>
+          (emittedAtBlockData.accs.getD (46 + 2 * j) []).getLastD (0, 0)
+            == GAMMA_XY.getD (2 * j) (0, 0))
+     -- …and they are NOT those commitments, so the binding is not an identity carrier…
+     && (List.range 15).all (fun j =>
+          emittedAtBlockData.invs.getD j (0, 0) != GAMMA_XY.getD (2 * j) (0, 0))
+     -- ⚠ ── the residue, on the ASSEMBLY's OWN run ──
+     && tRealAdvice.defc.pre.getD 0 0 != XI_PRE
+     && tRealAdvice.ftc.out != COMBINE_XY.getD 3 (0, 0)
+     && bpLhsOf tRealAdvice != lhsRealOpening) = true := by
+  native_decide
+
+#assert_compiled the_emitted_rows_are_the_rebuilt_fold
 
 end Dregg2.Circuit.Emit.KimchiStepMain

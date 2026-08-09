@@ -55,7 +55,7 @@ def main : IO Unit := do
   timed "stepBases s" (fun _ => (stepBases s).length)
   timed "runEndo x1 (32 endo blocks)" (fun _ => (runEndo s (0, 0) 12345).1.length)
   timed "runIpa s bs t.sp t.ftc.out (0,0)  [ipaRounds endo ladders]" (fun _ =>
-    (runIpa s bs t.sp t.ftc.out (0, 0)).accs.length)
+    (runIpa s bs t.sp t.ftc.out (0, 0) (t.defc.pre.getD 0 0)).accs.length)
   timed "runMsm s bs (real scalars)" (fun _ =>
     (runMsm s bs (msmScalars s (chalOf s t.sp) (digestBeforeEvalsVal s t.sp) t.ft t.fin t.segC)).terms.length)
   timed "runFtc s t.ftw" (fun _ => (runFtc s t.ftw).terms.length)

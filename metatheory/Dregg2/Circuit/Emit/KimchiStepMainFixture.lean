@@ -436,18 +436,23 @@ def nZeroBody (v : Nat) : ZMod pN :=
     [(v : ZMod pN), 0, 0, 0, 0, 0]
 
 -- ── the values §12g pins ────────────────────────────────────────
-def ipaT0 : Nat × Nat := tS.ipa.bases.getD absR0 (0, 0)
+/-- ⚑ Round `absR0`'s LADDER BASE — `ladderBases`, not `bases`, since §19d: at the smoke shape
+every round is a `combine_split_commitments` step, so round 0's ladder runs over the LAST
+commitment (`combine_split_commitments`' `~init`-side seed) and not over its own. The renaming is
+the point: `ipaT0` said "round `absR0`'s `T`", and `T` is no longer what the `EndoMul` rows read. -/
+def ipaB0 : Nat × Nat := tS.ipa.ladderBases.getD absR0 (0, 0)
 
-def ipaSeedForged : Nat × Nat := addA (endoSeed ipaT0) ipaT0
+def ipaSeedForged : Nat × Nat := addA (endoSeed ipaB0) ipaB0
 
 /-- Round `absR0`'s endo blocks from an ARBITRARY accumulator seed — `endoStep`, the assembly's own
 generator, at the assembly's own bits. -/
 def ipaBlocksFrom (seed : Nat × Nat) : List EndoBlock :=
-  let bits := endoBitsOf shapeSmoke (chalOf shapeSmoke tS.sp (shapeSmoke.ipaChal absR0))
+  -- ⚑ §19d: a combine round's ladder scalar is §8g chain 0's ξ, not a round-robin transcript cell.
+  let bits := endoBitsOf shapeSmoke (tS.defc.pre.getD 0 0)
   ((List.range shapeSmoke.ipaBlocks).foldl
     (fun (st : List (Nat × Nat) × List EndoBlock) e =>
       let cur := st.1.getLastD (0, 0)
-      let b := endoStep ipaT0.1 ipaT0.2 cur.1 cur.2
+      let b := endoStep ipaB0.1 ipaB0.2 cur.1 cur.2
         (bits.getD (4*e) 0) (bits.getD (4*e+1) 0) (bits.getD (4*e+2) 0) (bits.getD (4*e+3) 0)
       (st.1 ++ [(b.xs, b.ys)], st.2 ++ [b]))
     ([seed], [])).2
@@ -458,7 +463,7 @@ def emCells (blks : List EndoBlock) (accs : List (Nat × Nat)) (ns : List Nat) (
   let b := blks.getD e default
   let a := accs.getD e (0, 0)
   let a' := accs.getD (e + 1) (0, 0)
-  ( [ ipaT0.1, ipaT0.2, b.inv, 0, a.1, a.2, ns.getD e 0
+  ( [ ipaB0.1, ipaB0.2, b.inv, 0, a.1, a.2, ns.getD e 0
     , b.xr, b.yr, b.s1, b.s3, b.b1, b.b2, b.b3, b.b4 ]
   , [ 0, 0, 0, 0, a'.1, a'.2, ns.getD (e + 1) 0, 0, 0, 0, 0, 0, 0, 0, 0 ] )
 
@@ -469,17 +474,18 @@ def emOk (c : List Nat × List Nat) : Bool :=
 
 /-- Block accumulators from an arbitrary seed. -/
 def ipaAccsFrom (seed : Nat × Nat) : List (Nat × Nat) :=
-  let bits := endoBitsOf shapeSmoke (chalOf shapeSmoke tS.sp (shapeSmoke.ipaChal absR0))
+  -- ⚑ §19d: a combine round's ladder scalar is §8g chain 0's ξ, not a round-robin transcript cell.
+  let bits := endoBitsOf shapeSmoke (tS.defc.pre.getD 0 0)
   (List.range shapeSmoke.ipaBlocks).foldl
     (fun (st : List (Nat × Nat)) e =>
       let cur := st.getLastD (0, 0)
-      let b := endoStep ipaT0.1 ipaT0.2 cur.1 cur.2
+      let b := endoStep ipaB0.1 ipaB0.2 cur.1 cur.2
         (bits.getD (4*e) 0) (bits.getD (4*e+1) 0) (bits.getD (4*e+2) 0) (bits.getD (4*e+3) 0)
       st ++ [(b.xs, b.ys)])
     [seed]
 
 def ipaDblCellsAt (seed : Nat × Nat) : List Nat :=
-  let p := endoP ipaT0
+  let p := endoP ipaB0
   ((completeAddWitness p.1 p.2 p.1 p.2).set 4 seed.1).set 5 seed.2
 
 -- ── the values §13 pins ────────────────────────────────────────

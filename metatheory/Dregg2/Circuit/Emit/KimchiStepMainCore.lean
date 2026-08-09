@@ -105,8 +105,12 @@ challenge MSM term `i` consumes". `multiscale_known` consumes NO challenge: term
 statement WORD `i` (`step_verifier.ml:543-544,1236-1251`), and the round-robin was a placeholder that
 made a 255-bit ladder run over a structurally `< 2¹²⁸` value. The wiring is `stmtVar` (§2c); the old
 expression survives only inside §12m's red control, where it is the thing being refuted. -/
-/-- Which challenge IPA round `r` consumes. -/
-def StepShape.ipaChal (s : StepShape) (r : Nat) : Nat := (s.msmTerms + r) % s.chals
+/-! ⚑ **RETIRED 2026-08-09 (§19d), and DELETED rather than softened.** There was a
+`StepShape.ipaChal r = (s.msmTerms + r) % s.chals` here — "which challenge IPA round `r` consumes".
+Upstream's fold consumes ONE ξ across all 46 combine rounds and pair `j`'s own squeeze across both
+`bullet_reduce` halves; a round-robin over 23 transcript cells is neither. The wiring is `ipaPairOf`
+(§2, below `nCombine`); the old expression survives only inside `…Pins19d`'s red control, where it
+is the thing being refuted. -/
 
 /-! ### ⚑⚑ §1b — **`Spec.pack`'s PER-WORD SCALAR WIDTHS.**
 
@@ -238,6 +242,17 @@ def N_WDB : Nat := 47
 round past `combine_split_commitments`'. TWO transcript blocks each, then one `squeeze_scalar`. -/
 def gamRounds (s : StepShape) : List Nat :=
   (List.range s.ipaRounds).filter (fun r => N_WDB ≤ r + 1)
+
+/-- ⚑⚑ **THE FOLD'S TWO HALVES, as counts — §19d's rewiring is stated in terms of these.**
+`combine_split_commitments`' rounds are `0 .. nCombine−1` (46 at the committed shape: `N_WDB`'s 47
+commitments less the one the `~init` accumulator starts at); `bullet_reduce`'s are the `gamRounds`
+tail, TWO to a pair. A shape too small to reach `N_WDB` has `nBulletPairs = 0` and is a pure
+Horner — which is exactly what `shapeSmoke` is, and why the smoke shape exercises the combine half
+of the rewiring and none of the `endo_inv` half. -/
+def nCombine (s : StepShape) : Nat := s.ipaRounds - (gamRounds s).length
+/-- …and `bullet_reduce`'s pair count: fifteen at the committed shape, zero at the smoke one. -/
+def nBulletPairs (s : StepShape) : Nat := (gamRounds s).length / 2
+
 /-- ⚑ The transcript squeezes upstream takes at SCHEDULED positions (§2b): β, γ, α, ζ, `u`, one per
 `bullet_reduce` round, and `c`. **21** at the committed shape; `chals − 21` is what this file still
 takes off the transcript that upstream takes off the fr-sponge (ξ and r, §8g). -/
@@ -259,6 +274,29 @@ takes them off the transcript (the round-robin sharing #4 names), and takes them
 AFTER ζ — which at the committed shape ARE `u` and `bullet_reduce`'s fifteen. It was `k + 1` when ζ
 was challenge 0; at ζ = 3 that would have made ζ one of its own `uₖ`. -/
 def StepShape.uChal (s : StepShape) (k : Nat) : Nat := s.zetaChal + 1 + k
+/-- ⚑ Which `bullet_reduce` squeeze carries `bulletproof_challenges.(k)` — the squeezes after
+β γ α ζ and `u` (`sqScheduled`'s own order, §2b). ⚑ MOVED HERE 2026-08-09 with §19d's rewiring: the
+fold's own keying is stated in `ipaPairOf` below, which is §2-early, so this cannot stay at §8h. -/
+def StepShape.bulletChal (s : StepShape) (k : Nat) : Nat := s.zetaChal + 2 + k
+
+/-- ⚑⚑ **§19d's KEYING — fold round `r`'s `bullet_reduce` PAIR, or `none` if it is a combine round.**
+
+This is what replaced `StepShape.ipaChal` (RETIRED 2026-08-09, deleted rather than annotated).
+That function was `(s.msmTerms + r) % s.chals` — a ROUND-ROBIN over every transcript squeeze — and
+it was upstream's fold in neither half:
+
+  * `combine_split_commitments` Horner-nests **ONE ξ** on the accumulator (`scale_and_add`,
+    `step_verifier.ml:270-299`; `pcs_batch.ml:71-84`), and that ξ is `unfinalized.deferred_values`'
+    — here §8g's chain 0, whose terminal counter cell is `vDN s 0 s.emsRows`, NOT a transcript
+    squeeze at all. So a combine round has no transcript challenge and this returns `none`.
+  * `bullet_reduce` keys BOTH halves of pair `j` on pair `j`'s OWN squeeze (`:203-206`), which is
+    `s.bulletChal j`. Under the round-robin only 2 of the 30 halves landed on it by accident
+    (`…Pins19`'s count conjunct, kept as the refutation pole).
+
+⚠ The old expression survives ONLY inside the red controls that refute it
+(`…Pins19d.foldPresRoundRobin`), the way §21 retired `msmChal`. -/
+def ipaPairOf (s : StepShape) (r : Nat) : Option Nat :=
+  if r < nCombine s then none else some ((r - nCombine s) / 2)
 
 /-- ⚑ Upstream's provenance census for `combine_split_commitments`' 47 `without_degree_bound`
 commitments, in ITS OWN ORDER (`step_verifier.ml:601-616`); `true` = absorbed into the transcript.
@@ -820,19 +858,30 @@ def qLhsOut (s : StepShape) : Nat := qInit s + s.ipaBlocks + 4
 curve is associative and commutative, so the point is the same one; what the difference costs is one
 `Ops.add_fast` placed later in the schedule, and it is said here rather than elided. -/
 def qPrime (s : StepShape) : Nat := qInit s + s.ipaBlocks + 5
-def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds + s.ipaBlocks + 6
+/-- ⚑⚑ **`Scalar_challenge.endo_inv gammas.L_j pre_j`'s WITNESSED POINT** (`scalar_challenge.ml:343-354`,
+NEW 2026-08-09 with §19d). `endo_inv` is not a ladder run backwards — it is an `exists` whose
+CONSTRAINT is a forward ladder: `let x, y = endo res chal in Field.Assert.(equal gx x; equal gy y)`.
+So pair `j` costs one more curve point (`nIpaPts` grows by `nBulletPairs`), one `assert_on_curve`
+(`nOnC` likewise — a witnessed `Inner_curve` arrives through `Inner_curve.typ` exactly as an
+absorbed commitment does), and TWO `Generic` halves tying the L ladder's OUTPUT back to the absorbed
+commitment. ⚠ It is `res` and NOT the ladder output that enters `lr_prod`; the ladder is the check. -/
+def qEndoInv (s : StepShape) (j : Nat) : Nat := qInit s + s.ipaBlocks + 6 + j
+def nIpaPts (s : StepShape) : Nat :=
+  s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds + s.ipaBlocks + 6 + nBulletPairs s
 
 def baseQN (s : StepShape) : Nat := baseIpa s + 2 * nIpaPts s
-/-- IPA round `r`'s endo scalar counter after `e` blocks; at `e = ipaBlocks` it IS the round's
-challenge variable.
+/-- IPA round `r`'s endo scalar counter after `e` blocks, for `e < ipaBlocks`.
+
+⚑⚑ **THE TERMINAL CELL LEFT THIS FUNCTION IN §19d.** It was `vN s (s.ipaChal r) s.emsRows` — the
+round-robin transcript challenge — and the terminal counter IS the ladder's scalar, so that one
+`if` was the whole of the fold's keying. Which cell it is now depends on which half of the fold the
+round is in (`ipaLadderCounter`, §7): §8g's deferred ξ chain for a combine round, pair `j`'s own
+transcript chain for a `bullet_reduce` half. The name changed with the meaning.
 
 ⚑ The `…At` form takes `baseQN s` — see `mpxAt`'s note. `EndoSlots.n` is a PARTIAL APPLICATION of
-this, so the base is evaluated once per ladder rather than once per `endo_mul` block; the terminal
-`vN` branch fires once a ladder and keeps its own chain. -/
-def vQNAt (s : StepShape) (bq : Nat) (r e : Nat) : PVar :=
-  if e == s.ipaBlocks then vN s (s.ipaChal r) s.emsRows
-  else xv (bq + r * s.ipaBlocks + e)
-def vQN (s : StepShape) (r e : Nat) : PVar := vQNAt s (baseQN s) r e
+the composed function, so the base is evaluated once per ladder and not once per `endo_mul` block. -/
+def vQNMidAt (s : StepShape) (bq : Nat) (r e : Nat) : PVar := xv (bq + r * s.ipaBlocks + e)
+def vQNMid (s : StepShape) (r e : Nat) : PVar := vQNMidAt s (baseQN s) r e
 /-- ⚑ `Field.scale xt Endo.base` — the endomorphism image's x, the SECOND operand of
 `scalar_challenge.ml:232`'s `add_fast`. One `Generic` half per round pins it to `endo·xt`, so the
 seed's provenance is the base and a constant rather than a witness. -/
@@ -894,8 +943,15 @@ A CONSTANT base is pinned coordinate-for-coordinate and needs no membership chec
 base (`ft_comm`, fold round `FTC_ROUND`) is on the curve because the `complete_add` chain that
 produced it is. ⚑ …and since 2026-08-02 the THIRD non-round point is `G`, the previous proof's
 `opening.challenge_polynomial_commitment` (`vGx`/`vGy`): it too arrives through `Inner_curve.typ`
-(`wrap_proof.ml:39,60`) and it is what segment D absorbs. -/
-def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s + 3
+(`wrap_proof.ml:39,60`) and it is what segment D absorbs.
+
+⚑ **…and since §19d the FOURTH class is `bullet_reduce`'s `nBulletPairs` `endo_inv` witnesses.**
+`Scalar_challenge.endo_inv` runs `exists Inner_curve.typ` (`scalar_challenge.ml:345-348`), so Snarky
+runs `assert_on_curve` on each one exactly as it does on an absorbed commitment. Leaving them out
+would be the §7b hole re-opened at the one point in the fold a PROVER supplies: the ladder that
+checks `res` constrains the addition arithmetic only, and an off-curve `res` satisfies every
+`EndoMul` polynomial. -/
+def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s + 3 + nBulletPairs s
 def baseOnC (s : StepShape) : Nat :=
   baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks + 1
 def vOcX2At (b : Nat) (k : Nat) : PVar := xv (b + 2 * k)
@@ -2662,11 +2718,55 @@ def endoP (T : Nat × Nat) : Nat × Nat := addA T (endoQ T)
 /-- `acc₀ = add_fast p p`. -/
 def endoSeed (T : Nat × Nat) : Nat × Nat := dblA (endoP T)
 
+/-- Jacobian → affine, so a witnessed `endo_inv` point (and, at §19, a SOLVED `G`) can be handed to
+a ladder and to segment D as a commitment. ⚑ MOVED here from §19 on 2026-08-09: `runIpa` witnesses
+`bullet_reduce`'s fifteen `endo_inv` points, so this has to elaborate before the fold does. -/
+def jAffOf (P : Nat × Nat × Nat) : Nat × Nat :=
+  let zi := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv P.2.2
+  let z2 := fMul zi zi
+  (fMul P.1 z2, fMul P.2.1 (fMul z2 zi))
+
+/-- ⚑ **`ScalarChallenge::to_field` IN THE PALLAS SCALAR FIELD** — the scalar one `runEndo` ladder
+multiplies its base by, i.e. `endoMap λ_Pallas` at `ZMod qN`.
+
+⚠ **NOT `liftVal`, AND THE DIFFERENCE IS THE CLASSIC PASTA CONFUSION.** `liftVal` is the same fold
+at `ENDO_R = λ_Vesta` in **`Fp`** — §8g's DEFERRED word, the multiplier the C8 *scalar* fold reads.
+The *curve* ladder's scalar is `λ_Pallas` in **`Fq`**. Both are "the endo scalar"; they are
+different numbers in different fields, and reading one for the other is a fold that is
+self-consistent and wrong. `…Pins19d.the_ladder_is_multiplication_by_the_pallas_lift` is what
+makes this a measured bridge instead of a comment. -/
+def endoScalarQ (chal : Nat) : Nat :=
+  (Dregg2.Circuit.Emit.KimchiVerify.endoMap
+    ((Dregg2.Circuit.Emit.PastaCurve.lambdaPallas : ZMod Dregg2.Circuit.Emit.PastaField.qN))
+    chal).val
+
+/-- ⚑ **`Scalar_challenge.endo_inv g chal`** (`scalar_challenge.ml:343-354`): a WITNESSED point
+`res`, constrained by `let x, y = endo res chal in Field.Assert.(equal gx x; equal gy y)`. Its
+value is `to_field(chal)⁻¹ · g` in the Pallas scalar field — one inverse and one ladder, and the
+ASSERT is what binds it. In R4's rewiring `res` is the ladder's base variable and `g` is the
+absorbed commitment. -/
+def endoInvOf (g : Nat × Nat) (chal : Nat) : Nat × Nat :=
+  jAffOf ((scMulM pN (qInv (endoScalarQ chal)) (jOf g)).getD (0, 0, 0))
+
+
 structure IpaData where
   accs : List (List (Nat × Nat))
   blks : List (List EndoBlock)
   ns : List (List Nat)
+  /-- ⚑ The SUPPLIED commitment at round `r` — what `qT s r` holds, what the transcript absorbed,
+  what an `Inner_curve.constant` row pins and what `assert_on_curve` checks. Since §19d this is NOT
+  in general the point round `r`'s ladder runs over; see `ladderBases`. -/
   bases : List (Nat × Nat)
+  /-- ⚑⚑ **THE POINT ROUND `r`'s `EndoMul` LADDER ACTUALLY MULTIPLIES (§19d, 2026-08-09).** For a
+  combine round it is the RUNNING ACCUMULATOR (`combine_split_commitments` Horner-nests one ξ on the
+  accumulator, `pcs_batch.ml:71-84`); for a `bullet_reduce` L half it is the witnessed `endo_inv`
+  point; only for an R half is it the commitment. `endoSeedRows`, the seed pins and `qP`'s
+  intermediates all read THIS list — reading `bases` there is what made the old fold a sum of
+  independent endo-scalings. -/
+  ladderBases : List (Nat × Nat) := []
+  /-- ⚑ `Scalar_challenge.endo_inv gammas.L_j pre_j`, one per `bullet_reduce` pair — the witnessed
+  points `qEndoInv` names. `res` is what enters `lr_prod`; its ladder is the CHECK. -/
+  invs : List (Nat × Nat) := []
   sums : List (Nat × Nat)
   addCells : List (List Nat)
   /-- ⚑ `check_bulletproof`'s tail (`:325-327`): `Scalar_challenge.endo q c`'s accumulator trace,
@@ -2694,6 +2794,16 @@ def runEndo (s : StepShape) (T : Nat × Nat) (v : Nat)
        st.2.2 ++ [16 * st.2.2.getLastD 0 + 8*b.b1 + 4*b.b2 + 2*b.b3 + b.b4]))
     ([endoSeed T], [], [0])
 
+/-- ⚑ §19d's fold CARRIER. `combine_split_commitments` Horner-nests on the accumulator, so round
+`a`'s ladder base is round `a−1`'s add output: the fold cannot `map` its rounds and then sum them,
+which is exactly the shape the round-robin version had. This is what it folds instead. -/
+structure IpaFold where
+  ladders : List (List (Nat × Nat) × List EndoBlock × List Nat) := []
+  ladderBases : List (Nat × Nat) := []
+  sums : List (Nat × Nat) := []
+  addCells : List (List Nat) := []
+  deriving Inhabited
+
 /-- ⚑ `ftcOut` is `Common.ft_comm`'s ASSEMBLED value — round `FTC_ROUND`'s base since §6b. The
 supplied list still carries `COMBINE_XY[3]` (the real block's own `ft_comm`) and the assembly
 IGNORES it: that round's base is computed, so a supplied one would be a second copy.
@@ -2702,32 +2812,77 @@ IGNORES it: that round's base is computed, so a supplied one would be a second c
 `~init:(function `Finite x -> `Finite x | …)` (`step_verifier.ml:606`), i.e. the accumulator IS
 `sg_old[0]`; every round's output is folded into it, so there are `ipaRounds` adds and not
 `ipaRounds − 1`. Until 2026-08-02 the chain started at round 0's output and `sg_old[0]` was one of
-the three transcript words nothing read. -/
+the three transcript words nothing read.
+
+⚑⚑ **AND SINCE 2026-08-09 THIS IS §19d's FOLD AND NOT A ROUND-ROBIN SUM.** What changed is stated
+at `KimchiStepMain.combineSplit` / `bulletTerm` (§19d) and refuted pole by pole in `…Pins19d`; here
+is the wiring those definitions specify, emitted:
+
+  * **combine step `a`** — the ladder's base is the RUNNING ACCUMULATOR (`qSum (a−1)`, seeded at
+    the LAST commitment `qT (nCombine−1)`), its scalar is the ONE ξ this assembly derives at §8g
+    chain 0, and the complete-add's other operand is commitment `qT (nCombine−2−a)`, with `qInit`
+    (`sg_old[0]`) at the last step. Before: base = commitment `qT a`, scalar = a round-robin
+    transcript cell, addend = the running sum. That is `Σ_a ξ_a·C_a`, not `Σ_a ξ^a·C_a`.
+  * **`bullet_reduce` pair `j`** — BOTH halves run at pair `j`'s OWN squeeze `bulletChal j`
+    (`step_verifier.ml:203-206`), the R half over the absorbed commitment and the L half over a
+    WITNESSED `endo_inv` point whose ladder output `endoInvEqHalves` asserts equal to the absorbed
+    L commitment. The pair term is `res_j + endo(R_j)` and the running total takes it in.
+
+⚠ **The ξ this runs at is the ASSEMBLY's** (`defc.pre 0`, §8g chain 0 — the lift of the statement
+word `vXiStmt` that R8's `xi_correct` ties to the fr-sponge), passed in rather than read off the
+transcript, which is why `mkStepAtAdvice` evaluates segment B BEFORE the fold. It is not the
+block's ξ′; `…Pins19d`'s last conjunct measures that gap rather than eliding it. -/
 def runIpa (s : StepShape) (allB : List (Nat × Nat)) (d : SpongeData) (ftcOut : Nat × Nat)
-    (ucRes : Nat × Nat) : IpaData :=
+    (ucRes : Nat × Nat) (xiPre : Nat) : IpaData :=
+  let nc := nCombine s
+  let np := nBulletPairs s
   let bases := (List.range s.ipaRounds).map (fun r =>
     if ipaSrc s r == BaseSrc.computed then ftcOut else ipaBaseOf s allB r)
-  let rounds := (List.range s.ipaRounds).map (fun r =>
-    runEndo s (bases.getD r (0, 0)) (chalOf s d (s.ipaChal r)))
-  let pts := rounds.map (fun r => r.1.getLastD (0, 0))
-  let st := (List.range s.ipaRounds).foldl
-    (fun (acc : List (Nat × Nat) × List (List Nat)) a =>
-      let l := if a == 0 then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
-               else acc.1.getLastD (0, 0)
-      let r := pts.getD a (0, 0)
-      let cells := completeAddWitness l.1 l.2 r.1 r.2
-      (acc.1 ++ [(cells.getD 4 0, cells.getD 5 0)], acc.2 ++ [cells]))
-    ([], [])
+  -- ⚑ `Scalar_challenge.endo_inv l pre` — WITNESSED, one per pair, checked by its own ladder.
+  let invs := (List.range np).map (fun j =>
+    endoInvOf (bases.getD (nc + 2 * j) (0, 0)) (chalOf s d (s.bulletChal j)))
+  -- ⚑⚑ THE COMBINE HALF IS A CHAIN, so it folds: step `a`'s ladder runs over step `a−1`'s output.
+  let comb := (List.range nc).foldl
+    (fun (st : IpaFold) a =>
+      let B := if a == 0 then bases.getD (nc - 1) (0, 0) else st.sums.getLastD (0, 0)
+      let L := runEndo s B xiPre
+      let A := if a + 2 ≤ nc then bases.getD (nc - 2 - a) (0, 0)
+               else Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
+      let o := L.1.getLastD (0, 0)
+      let cells := completeAddWitness A.1 A.2 o.1 o.2
+      { ladders := st.ladders ++ [L], ladderBases := st.ladderBases ++ [B]
+      , sums := st.sums ++ [(cells.getD 4 0, cells.getD 5 0)]
+      , addCells := st.addCells ++ [cells] })
+    {}
+  -- ⚑ `bullet_reduce`: two ladders and two adds per pair — the pair TERM, then the running total.
+  let bul := (List.range np).foldl
+    (fun (st : IpaFold) j =>
+      let pre := chalOf s d (s.bulletChal j)
+      let inv := invs.getD j (0, 0)
+      let LL := runEndo s inv pre
+      let RB := bases.getD (nc + 2 * j + 1) (0, 0)
+      let RL := runEndo s RB pre
+      let ro := RL.1.getLastD (0, 0)
+      let tc := completeAddWitness inv.1 inv.2 ro.1 ro.2
+      let tp : Nat × Nat := (tc.getD 4 0, tc.getD 5 0)
+      let acc0 := st.sums.getLastD (0, 0)
+      let ac := completeAddWitness acc0.1 acc0.2 tp.1 tp.2
+      { ladders := st.ladders ++ [LL, RL], ladderBases := st.ladderBases ++ [inv, RB]
+      , sums := st.sums ++ [tp, (ac.getD 4 0, ac.getD 5 0)]
+      , addCells := st.addCells ++ [tc, ac] })
+    comb
   -- ⚑ §19: `q = p_prime + lr_prod` — the fold sum plus `uc = scale_fast2 u cip` (`:316-320`).
-  let q0 := st.1.getLastD (0, 0)
+  let q0 := bul.sums.getLastD (0, 0)
   let qpc := completeAddWitness q0.1 q0.2 ucRes.1 ucRes.2
   let q : Nat × Nat := (qpc.getD 4 0, qpc.getD 5 0)
   -- ⚑ `check_bulletproof`'s tail: `cq = Scalar_challenge.endo q c`, `lhs = cq + delta`.
   let lhs := runEndo s q (chalOf s d s.cChal)
   let cq := lhs.1.getLastD (0, 0)
   let dl := Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
-  { accs := rounds.map (·.1), blks := rounds.map (·.2.1), ns := rounds.map (·.2.2)
-  , bases := bases, sums := st.1, addCells := st.2
+  { accs := bul.ladders.map (·.1), blks := bul.ladders.map (·.2.1)
+  , ns := bul.ladders.map (·.2.2)
+  , bases := bases, ladderBases := bul.ladderBases, invs := invs
+  , sums := bul.sums, addCells := bul.addCells
   , lhsAccs := lhs.1, lhsBlks := lhs.2.1, lhsNs := lhs.2.2
   , lhsAdd := completeAddWitness cq.1 cq.2 dl.1 dl.2
   , qPrimeAdd := qpc }
@@ -2746,12 +2901,50 @@ structure EndoSlots where
   /-- `endo · x_t`. -/
   endoX : PVar
 
-/-- ⚑ ONE `baseQN` for the whole ladder, not one per block: `n` is `vQNAt`'s partial application and
-`endoX` is a strict field, so the region chain (and the `spLay` under it) is walked once here rather
-than `ipaBlocks + 1` times inside `endoRoundRows`. -/
+/-- ⚑⚑ **§19d — THE POINT ROUND `r`'s LADDER RUNS OVER**, which is the whole of the rewiring on the
+row side. `qT s r` stays the SUPPLIED commitment's slot in every case (its pin, its
+`assert_on_curve` and `sponge_after_index`'s read of it are untouched); what moved is which operand
+of which row it is.
+
+  * **combine round `a`** — the running accumulator `qSum (a−1)`, seeded at the LAST commitment
+    `qT (nCombine−1)` (`combine_split_commitments`' `List.rev … init`, `pcs_batch.ml:71-84`).
+  * **`bullet_reduce` L half of pair `j`** — the WITNESSED `endo_inv` point `qEndoInv j`.
+  * **`bullet_reduce` R half** — the absorbed commitment, the one case where base and commitment
+    still coincide. -/
+def ipaLadderBase (s : StepShape) (r : Nat) : Nat :=
+  let nc := nCombine s
+  if r < nc then (if r == 0 then qT s (nc - 1) else qSum s (r - 1))
+  else if (r - nc) % 2 == 0 then qEndoInv s ((r - nc) / 2)
+  else qT s r
+
+/-- ⚑⚑ **§19d — THE LADDER'S SCALAR CELL.** The terminal counter of an `EndoMul` chain IS the
+scalar it multiplied by, so this one line is the fold's keying. A combine round reads §8g chain 0's
+reconstructed ξ (`vDN s 0 s.emsRows` — the cell `xi_correct` ties to the fr-sponge, i.e.
+`unfinalized.deferred_values.xi`); a `bullet_reduce` half reads its OWN pair's transcript squeeze.
+It was `vN s (s.ipaChal r) s.emsRows`, a round-robin over all 23 squeezes, in both halves.
+
+⚠ **AND IT MOVES WHICH RUNG BINDS THE FOLD'S ξ — say it rather than let a rung discover it.**
+`xiDefRows` (§8g chain 0) rides with R5, i.e. rung `.full`, while R4's rows are rung `.ipa`. So at
+`.ipa` and below the 46 combine ladders' shared counter cell is a FREE witness — no row defines it —
+and from `.full` up it is `to_field_checked` of the statement word `xi_correct` ties to the
+fr-sponge. That is exactly the position §8g already documents for chain 1's `r`, and it is why
+`carriesStatement`'s rungs and the graded artifact are `r8_finalize`: at the rung anything is proved
+at, ξ is derived. Under the round-robin keying the counter was `challengeRows`' output and therefore
+bound from rung `.challenges` — a lower rung, but bound to the WRONG cell. -/
+def ipaLadderCounter (s : StepShape) (r : Nat) : PVar :=
+  match ipaPairOf s r with
+  | none => vDN s 0 s.emsRows
+  | some j => vN s (s.bulletChal j) s.emsRows
+
+/-- ⚑ ONE `baseQN` for the whole ladder, not one per block: `n` composes `vQNMidAt`'s partial
+application with the terminal cell and `endoX` is a strict field, so the region chain (and the
+`spLay` under it) is walked once here rather than `ipaBlocks + 1` times inside `endoRoundRows`. -/
 def roundSlots (s : StepShape) (r : Nat) : EndoSlots :=
   let bq := baseQN s
-  { base := qT s r, p := qP s r, acc := qAcc s r, n := vQNAt s bq r, endoX := vQEndoAt s bq r }
+  let term := ipaLadderCounter s r
+  { base := ipaLadderBase s r, p := qP s r, acc := qAcc s r
+  , n := fun e => if e == s.ipaBlocks then term else vQNMidAt s bq r e
+  , endoX := vQEndoAt s bq r }
 /-- ⚑ The tail's base is the FOLD OUTPUT `q = p_prime + lr_prod` — a computed point, not a supplied
 one, so it needs no pin and no `assert_on_curve`. ⚑ Since §19 it is `qPrime` and not
 `qSum (ipaRounds−1)`: `p_prime` carries the `uc` term, so `combined_inner_product` reaches `lhs`. -/
@@ -2782,12 +2975,31 @@ def endoRoundRows (s : StepShape) (sl : EndoSlots) (bl : List EndoBlock) : List 
 def ipaRoundRows (s : StepShape) (v : IpaData) (r : Nat) : List SRow :=
   endoRoundRows s (roundSlots s r) (v.blks.getD r [])
 
-/-- ⚑ The `a`-th fold add. `a = 0`'s LEFT operand is `qInit` — `sg_old[0]`, the `~init` accumulator
-(`step_verifier.ml:606`) whose two coordinates ARE transcript block `oSgOld0`'s absorbed words. -/
+/-- ⚑⚑ **§19d — the `a`-th fold add's two operands.**
+
+  * **combine step `a`** — `qSum a = qT (nCombine−2−a) + endo(acc, ξ)`. The commitment is now the
+    complete-add's LEFT operand and the LADDER's output the right, which is `scale_and_add`'s own
+    shape (`p + Scalar_challenge.endo acc xi`, `step_verifier.ml:270-299`). The last step's
+    commitment is `qInit` — `sg_old[0]`, `combine_split_commitments`' `~init` (`:606`), whose two
+    coordinates ARE transcript block `oSgOld0`'s absorbed words.
+  * **pair `j`'s L slot** — the pair TERM `res_j + endo(R_j, pre_j)` (`:203-206`): the witnessed
+    `endo_inv` point plus the R half's ladder output. ⚠ `res_j`, not the L ladder's output — the L
+    ladder is `endo_inv`'s CHECK and its output is asserted equal to the absorbed commitment.
+  * **pair `j`'s R slot** — the running total `qSum (a−2) + qSum (a−1)`, i.e.
+    `Array.reduce_exn terms ~f:Inner_curve.( + )` folded into `combined_polynomial`. -/
+def ipaAddOperands (s : StepShape) (a : Nat) : Nat × Nat :=
+  let nc := nCombine s
+  if a < nc then
+    ((if a + 2 ≤ nc then qT s (nc - 2 - a) else qInit s), qAcc s a s.ipaBlocks)
+  else if (a - nc) % 2 == 0 then (qEndoInv s ((a - nc) / 2), qAcc s (a + 1) s.ipaBlocks)
+  else (qSum s (a - 2), qSum s (a - 1))
+
+/-- The `a`-th fold add, over `ipaAddOperands`. -/
 def ipaAddRow (s : StepShape) (v : IpaData) (a : Nat) : SRow :=
   let bi := baseIpa s
-  let lp := if a == 0 then qInit s else qSum s (a - 1)
-  let rp := qAcc s a s.ipaBlocks
+  let op := ipaAddOperands s a
+  let lp := op.1
+  let rp := op.2
   let c := v.addCells.getD a []
   { kind := .completeAdd
   , perm := [ some (ipxAt bi lp), some (ipyAt bi lp), some (ipxAt bi rp), some (ipyAt bi rp)
@@ -2833,8 +3045,9 @@ def onCurveHalves (s : StepShape) (k : Nat) (vx vy : PVar) :
     List (List (Option PVar) × List Int) := onCurveHalvesAt (baseOnC s) k vx vy
 
 /-- The `k`-th CHECKED point's coordinate VARIABLES: the `absRoundList` fold bases, `t_comm`'s
-`tCommN` chunks, and — since the R1 interleaving — `sg_old[0]` and `delta`. Every SUPPLIED commitment
-the transcript swallows, and no other. -/
+`tCommN` chunks, — since the R1 interleaving — `sg_old[0]`, `delta` and `G`, and — since §19d —
+`bullet_reduce`'s `nBulletPairs` `endo_inv` witnesses. Every point a PROVER supplies, and no
+other. -/
 def onCVarAt (s : StepShape) (bi : Nat) (k : Nat) : PVar × PVar :=
   let l := (absRoundList s).length
   let t := l + tCommN s
@@ -2842,7 +3055,8 @@ def onCVarAt (s : StepShape) (bi : Nat) (k : Nat) : PVar × PVar :=
   else if k < t then (vTcX s (k - l), vTcY s (k - l))
   else if k == t then (ipxAt bi (qInit s), ipyAt bi (qInit s))
   else if k == t + 1 then (ipxAt bi (qDel s), ipyAt bi (qDel s))
-  else (vGx s, vGy s)
+  else if k == t + 2 then (vGx s, vGy s)
+  else let j := k - t - 3; (ipxAt bi (qEndoInv s j), ipyAt bi (qEndoInv s j))
 def onCVar (s : StepShape) (k : Nat) : PVar × PVar := onCVarAt s (baseIpa s) k
 
 /-- **R4's on-curve rows** — one `assert_on_curve` per ABSORBED commitment, over the very coordinate
@@ -2886,8 +3100,33 @@ def endoSeedRows (s : StepShape) (sl : EndoSlots) (T : Nat × Nat) (wired : Bool
   , caRow (ipxAt bi sl.p, ipyAt bi sl.p) (ipxAt bi sl.p, ipyAt bi sl.p)
           (ipxAt bi (sl.acc 0), ipyAt bi (sl.acc 0)) (completeAddWitness p.1 p.2 p.1 p.2) ]
 
+/-- ⚠ ⚑ **`ladderBases`, NOT `bases` — this line is where the rewiring would silently un-do itself.**
+The seed is `2·(t + φ(t))` over the point the ladder multiplies, and since §19d that is the running
+accumulator (or an `endo_inv` witness) at every round but `bullet_reduce`'s R halves. Reading
+`bases` here would emit a seed over the commitment while the `EndoMul` rows named the accumulator's
+variables: every σ class would still close and the witness would be rejected by the prover with a
+vanishing-polynomial remainder, which is the failure §19's own `qPrime` env bug already cost once. -/
 def ipaSeedRows (s : StepShape) (v : IpaData) (wired : Bool) (r : Nat) : List SRow :=
-  endoSeedRows s (roundSlots s r) (v.bases.getD r (0, 0)) wired
+  endoSeedRows s (roundSlots s r) (v.ladderBases.getD r (0, 0)) wired
+
+/-- ⚑⚑ **`Scalar_challenge.endo_inv`'s OWN ASSERT** (`scalar_challenge.ml:343-354`):
+
+    let res = exists Inner_curve.typ ~compute:… in
+    let x, y = endo res chal in
+    Field.Assert.(equal gx x ; equal gy y) ;
+    res
+
+Two `Generic` halves per pair — the L ladder's OUTPUT tied to the ABSORBED L commitment. This is
+the only thing that binds `res`: the `EndoMul` chain over it is satisfied by any `res` whatever
+(it constrains the addition arithmetic, §7b's point), and `res` is what enters `lr_prod`. Drop
+these halves and pair `j`'s contribution is a free curve point. -/
+def endoInvEqHalves (s : StepShape) (bi : Nat) : List (List (Option PVar) × List Int) :=
+  (List.range (nBulletPairs s)).flatMap (fun j =>
+    let r := nCombine s + 2 * j
+    [ ([some (ipxAt bi (qAcc s r s.ipaBlocks)), some (ipxAt bi (qT s r)), none], cEq)
+    , ([some (ipyAt bi (qAcc s r s.ipaBlocks)), some (ipyAt bi (qT s r)), none], cEq) ])
+
+def endoInvEqRows (s : StepShape) : List SRow := packHalves (endoInvEqHalves s (baseIpa s))
 
 /-- ⚑ `q = p_prime + lr_prod`'s VALUE — §19's `uc` folded into the fold sum. -/
 def IpaData.qPrimePt (v : IpaData) : Nat × Nat := (v.qPrimeAdd.getD 4 0, v.qPrimeAdd.getD 5 0)
@@ -2936,12 +3175,28 @@ def ipaRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
   ipaBaseRows s v
   ++ ipaSeedPinRows s
   ++ onCurveRows s
-  ++ (List.range s.ipaRounds).flatMap (fun r =>
+  -- ⚑ `combine_split_commitments`, Horner-nested: `qSum a = C_{nc−2−a} + endo(qSum (a−1), ξ)`.
+  ++ (List.range (nCombine s)).flatMap (fun r =>
        ipaSeedRows s v wired r
        ++ ipaRoundRows s v r
        ++ [probeRow wired (ipxAt bi (qAcc s r s.ipaBlocks)) (ipyAt bi (qAcc s r s.ipaBlocks))]
        ++ [ipaAddRow s v r]
        ++ [probeRow wired (ipxAt bi (qSum s r)) (ipyAt bi (qSum s r))])
+  -- ⚑ `bullet_reduce`, pair by pair (`step_verifier.ml:199-206`) — BOTH ladders at the pair's own
+  -- prechallenge, then the pair TERM, then the running total. Emitted in pairs rather than in round
+  -- order because the L slot's add reads the R half's ladder output: same rows, upstream's order.
+  ++ (List.range (nBulletPairs s)).flatMap (fun j =>
+       let l := nCombine s + 2 * j
+       (List.range 2).flatMap (fun h =>
+         ipaSeedRows s v wired (l + h)
+         ++ ipaRoundRows s v (l + h)
+         ++ [probeRow wired (ipxAt bi (qAcc s (l + h) s.ipaBlocks))
+                            (ipyAt bi (qAcc s (l + h) s.ipaBlocks))])
+       ++ (List.range 2).flatMap (fun h =>
+         [ ipaAddRow s v (l + h)
+         , probeRow wired (ipxAt bi (qSum s (l + h))) (ipyAt bi (qSum s (l + h))) ]))
+  -- ⚑ `endo_inv`'s own asserts — the only thing that binds the fifteen witnessed points.
+  ++ endoInvEqRows s
   -- ⚑ §19: `q = p_prime + lr_prod` (`:316-320`) — the `Ops.add_fast` that puts `uc` into the point
   -- `Scalar_challenge.endo q c` reads. It rides here and not in §19's own block because `lhsRows` is
   -- its only consumer; `bpResX/Y 0` is `uc`, defined by §19's ladder 0.
@@ -4939,9 +5194,8 @@ They are `vStmtDef 4..7` now, two cells and two values, and
 `KimchiStepStatementPins.the_statement_slots_are_all_distinct` is the strengthened pin that replaced
 the one naming the exception. -/
 
-/-- ⚑ Which `bullet_reduce` squeeze carries `bulletproof_challenges.(k)` — the squeezes after
-β γ α ζ and `u` (`sqScheduled`'s own order, §2b). -/
-def StepShape.bulletChal (s : StepShape) (k : Nat) : Nat := s.zetaChal + 2 + k
+-- (⚑ `StepShape.bulletChal` MOVED to §2 with §19d's rewiring — `ipaPairOf` keys the fold's own
+-- thirty `bullet_reduce` halves on it, and that is §2-early.)
 
 /-- ⚑ **Can this shape carry a `Types.Step.Statement` at all?** DERIVED, not declared: a statement
 needs `PP_BP_LOG2` `bullet_reduce` squeezes to fill `bulletproof_challenges` from, and
@@ -5392,11 +5646,8 @@ def BpData.ver (v : BpData) : Nat := if v.lhs == v.rhs then 1 else 0
 `group_map → uc → q → lhs → rhs → equal_g` and it is a chain, not a cycle. -/
 def runUc (t cip : Nat) : FtcTerm := ftcScaleTerm (gmOut t) cip
 
-/-- Jacobian → affine, so a SOLVED `G` can be handed to a ladder and to segment D as a commitment. -/
-def jAffOf (P : Nat × Nat × Nat) : Nat × Nat :=
-  let zi := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv P.2.2
-  let z2 := fMul zi zi
-  (fMul P.1 z2, fMul P.2.1 (fMul z2 zi))
+-- (⚑ `jAffOf`, `endoScalarQ` and `endoInvOf` MOVED to §7 on 2026-08-09: `runIpa` now WITNESSES the
+-- fifteen `endo_inv` points, so their arithmetic has to be elaborated before the fold is.)
 
 /-- ⚑⚑ **`challenge_polynomial_commitment`, SOLVED — and this is the finding, not a shortcut.**
 `G := z₁⁻¹·(lhs − z₂·H) − b·u` (`KimchiStepMainField.bpSolveG`). §17 measures that `G`, `z₁` and `z₂`
@@ -5422,19 +5673,22 @@ WHAT REMAINS IS NOT A TRANSCRIPT.** Feed the sponge the block's own advice pair
 `(CIP_SHIFTED/2, CIP_SHIFTED%2)` — the ONE absorbed word-pair of the 117 that was not already the
 block's — and the assembly's own run squeezes `t = T_FQ`, `group_map t = U_BASE`, all fifteen
 prechallenges and `c′` (`KimchiStepMainPins19.the_transcript_half_closes_at_the_blocks_own_advice_pair`,
-via `mkStepAtAdvice`). What still refuses `bpCloses` at (`SG_XY`, `Z1`, `Z2`) is measured at
-`…the_corrected_transcript_still_refuses_and_the_residue_is_the_fold`: (i) R4 keys its 46 combine
-rounds on 23 round-robin transcript cells (`StepShape.ipaChal`) and SUMS independent
-endo-scalings, where upstream Horner-nests ONE ξ from `unfinalized.deferred_values`
-(`scale_and_add`, `step_verifier.ml:270-299`; `pcs_batch.ml combine_split_commitments`); (ii) 28 of
-the 30 `bullet_reduce` rounds are keyed off a cell that is not their own round's squeeze, and the
-L-halves lack `endo_inv` (`step_verifier.ml:203-206`: `endo_inv l pre + endo r pre`); (iii) the
-advice cells are FUSED — `vCipShift`/`vBShift` each serve the absorbed Wrap advice, R8's deferred
-word and §19's ladder scalar at once, three objects upstream keeps apart
+via `mkStepAtAdvice`). Defects (i) and (ii) of that measurement — the round-robin keying and the
+missing `endo_inv` — are **CLOSED as of 2026-08-09**: §19d's fold is what `runIpa` emits, and
+`…Pins19d.the_emitted_rows_are_the_rebuilt_fold` says the EMITTED rows' own combine accumulator is
+o1-labs' `COMBINED_GOLD` and their own `lhs` is `lhsRealOpening`, at the block's ξ′ and `ft_comm`.
+
+⚠ **AND `G` IS STILL THIS SOLVE, because what refuses is now INSTANCES rather than shape**
+(`…Pins19.the_corrected_transcript_still_refuses_and_the_residue_is_xi_and_the_fused_advice_cell`):
+(i) the ξ the fold Horner-nests is §8g chain 0's — the lift of `vXiStmt`, tied by `xi_correct` to a
+fr-sponge running over FIXTURE evaluations — and it is not the block's ξ′; (ii) round `FTC_ROUND`'s
+base is §6b's own `ft_comm`, computed at R6's deferred scalars, and it is not `COMBINE_XY[3]`;
+(iii) the advice cells are FUSED — `vCipShift`/`vBShift` each serve the absorbed Wrap advice, R8's
+deferred word and §19's ladder scalar at once, three objects upstream keeps apart
 (`{ xi; combined_inner_product; b } = unfinalized.deferred_values`, `:1253-1255`) — so a satisfying
 witness cannot absorb the real pair while the §12c tie pins the same cell to R5's Horner. Closing
-slot 12 is therefore an R4 REBUILD plus an advice-cell split, not a value swap; `G` stays this
-solve until then, and this paragraph is the flag on it.
+slot 12 is therefore segment B's INSTANCE plus an advice-cell split, not a value swap and no longer
+a fold rebuild; `G` stays this solve until then, and this paragraph is the flag on it.
 
 ⚠ It is also why `G` is data-dependent now: it is a function of `lhs`, hence of the transcript, hence
 of every commitment the fold consumed. A bent commitment moves `lhs`, moves the solved `G`, and moves
@@ -5449,46 +5703,35 @@ def solveG (u : Nat × Nat) (lhs : Nat × Nat) (bAdv z1 z2 : Nat) : Nat × Nat :
 OWN gadgets — `runEndo` (R4's emitted `EndoMul` ladder), `addA` (`Ops.add_fast`) — over the
 assembly's OWN bases. Nothing is re-implemented in Rust and nothing here is a second arithmetic.
 
-**WHY IT EXISTS.** `…Pins19.the_corrected_transcript_still_refuses_and_the_residue_is_the_fold`
-measured that after the transcript half closes (ONE corrected absorb pair makes `t`, `u`, the
-fifteen prechallenges and `c′` the block's own) the emitted R4 fold is still not upstream's:
+**WHY IT EXISTS.** §19c measured that after the transcript half closes (ONE corrected absorb pair
+makes `t`, `u`, the fifteen prechallenges and `c′` the block's own) the emitted R4 fold was still
+not upstream's:
 
-  * R4 keys its 46 combine rounds on **23 round-robin transcript cells** (`StepShape.ipaChal`) and
-    SUMS independent endo-scalings, where `combine_split_commitments` (`pcs_batch.ml:71-84`)
-    reverses the flat list, seeds the accumulator with its LAST element, and Horner-nests **ONE ξ**
-    on the ACCUMULATOR (`scale_and_add`, `step_verifier.ml:270-299`);
-  * 28 of the 30 `bullet_reduce` halves are keyed off a cell that is not their pair's own squeeze,
-    and the L halves lack `endo_inv` (`step_verifier.ml:203-206`: `endo_inv l pre + endo r pre`).
+  * R4 keyed its 46 combine rounds on **23 round-robin transcript cells** and SUMMED independent
+    endo-scalings, where `combine_split_commitments` (`pcs_batch.ml:71-84`) reverses the flat list,
+    seeds the accumulator with its LAST element, and Horner-nests **ONE ξ** on the ACCUMULATOR
+    (`scale_and_add`, `step_verifier.ml:270-299`);
+  * 28 of the 30 `bullet_reduce` halves were keyed off a cell that is not their pair's own squeeze,
+    and the L halves lacked `endo_inv` (`step_verifier.ml:203-206`: `endo_inv l pre + endo r pre`).
 
-⚑ **THIS IS THE FOLD R4's ROWS MUST BE REWIRED TO, AND IT IS NOT A TWIN OF THEM.** `runIpa` still
-emits the round-robin sum; these definitions are what it becomes, and the rewiring is specified by
-them exactly: for combine step `a`, the LADDER's base is the running accumulator (`qSum s (a−1)`,
-seeded at `qT s 45 = COMBINE_XY[46]`) and the complete-add's other operand is the commitment
-`qT s (44−a)` (`qInit = COMBINE_XY[0]` at `a = 45`); for `bullet_reduce` pair `j` both halves take
-prechallenge `bulletChal j`, and the L half's ladder base is a witnessed `endo_inv` point whose
-ladder OUTPUT is asserted equal to the absorbed commitment. The commitment variables, their
-`Inner_curve.constant` pins, their `assert_on_curve` rows and `sponge_after_index`'s reads of them
-are all UNCHANGED by that rewiring; what moves is which operand of which row they are.
-`…Pins19d` is where both polarities are stated. -/
+⚑⚑ **THE ROWS ARE REWIRED TO THIS FOLD AS OF 2026-08-09, so these definitions are no longer a
+specification of future work — they are the SECOND reading of what `runIpa` emits, and
+`…Pins19d.the_emitted_rows_are_the_rebuilt_fold` is the theorem that the two agree.** The wiring,
+in the row emitter's own names: for combine step `a` the ladder's base is `ipaLadderBase` — the
+running accumulator `qSum (a−1)`, seeded at `qT (nCombine−1) = COMBINE_XY[46]` — its scalar cell is
+`ipaLadderCounter`'s §8g ξ, and the complete-add's other operand is `ipaAddOperands`' commitment
+`qT (nCombine−2−a)`, `qInit = COMBINE_XY[0]` at the last step; for `bullet_reduce` pair `j` both
+halves take `bulletChal j`, and the L half's ladder base is the witnessed `endo_inv` point
+`qEndoInv j`, whose ladder OUTPUT `endoInvEqRows` asserts equal to the absorbed commitment. The
+commitment variables, their `Inner_curve.constant` pins, their `assert_on_curve` rows and
+`sponge_after_index`'s reads of them are all UNCHANGED; what moved is which operand of which row
+they are. What is NEW is the fifteen witnesses: `nIpaPts` and `nOnC` each grow by `nBulletPairs`.
+`…Pins19d` is where every polarity is stated. -/
 
 /-- One `Scalar_challenge.endo` ladder's OUTPUT — the value a fold consumes, taken off `runEndo`,
 which is the very ladder R4's `EndoMul` rows emit. -/
 def endoOutOf (s : StepShape) (T : Nat × Nat) (v : Nat) : Nat × Nat :=
   (runEndo s T v).1.getLastD (0, 0)
-
-/-- ⚑ **`ScalarChallenge::to_field` IN THE PALLAS SCALAR FIELD** — the scalar one `runEndo` ladder
-multiplies its base by, i.e. `endoMap λ_Pallas` at `ZMod qN`.
-
-⚠ **NOT `liftVal`, AND THE DIFFERENCE IS THE CLASSIC PASTA CONFUSION.** `liftVal` is the same fold
-at `ENDO_R = λ_Vesta` in **`Fp`** — §8g's DEFERRED word, the multiplier the C8 *scalar* fold reads.
-The *curve* ladder's scalar is `λ_Pallas` in **`Fq`**. Both are "the endo scalar"; they are
-different numbers in different fields, and reading one for the other is a fold that is
-self-consistent and wrong. `…Pins19d.the_ladder_is_multiplication_by_the_pallas_lift` is what
-makes this a measured bridge instead of a comment. -/
-def endoScalarQ (chal : Nat) : Nat :=
-  (Dregg2.Circuit.Emit.KimchiVerify.endoMap
-    ((Dregg2.Circuit.Emit.PastaCurve.lambdaPallas : ZMod Dregg2.Circuit.Emit.PastaField.qN))
-    chal).val
 
 /-- ⚑⚑ **`combine_split_commitments`** (`pcs_batch.ml:71-84`), read at source:
 
@@ -5503,14 +5746,6 @@ def combineSplit (s : StepShape) (flat : List (Nat × Nat)) (xiPre : Nat) : Nat 
   (List.range (n - 1)).foldl
     (fun acc k => addA (flat.getD (n - 2 - k) (0, 0)) (endoOutOf s acc xiPre))
     (flat.getD (n - 1) (0, 0))
-
-/-- ⚑ **`Scalar_challenge.endo_inv g chal`** (`scalar_challenge.ml:343-354`): a WITNESSED point
-`res`, constrained by `let x, y = endo res chal in Field.Assert.(equal gx x; equal gy y)`. Its
-value is `to_field(chal)⁻¹ · g` in the Pallas scalar field — one inverse and one ladder, and the
-ASSERT is what binds it. In R4's rewiring `res` is the ladder's base variable and `g` is the
-absorbed commitment. -/
-def endoInvOf (g : Nat × Nat) (chal : Nat) : Nat × Nat :=
-  jAffOf ((scMulM pN (qInv (endoScalarQ chal)) (jOf g)).getD (0, 0, 0))
 
 /-- ⚑ **`bullet_reduce`'s term for pair `j`** — `endo_inv l pre_j + endo r pre_j`
 (`step_verifier.ml:203-206`). BOTH halves take the pair's OWN prechallenge, and only the R half is
@@ -5880,12 +6115,18 @@ def mkStepAtAdvice (s : StepShape) (bs : List (Nat × Nat)) (cipAbs : Nat × Nat
   -- none of them closes a cycle, which is why two passes still suffice.
   let tSq := uSqueezeVal s sp
   let uc := runUc tSq cipSc
-  let ipa := runIpa s bs sp ftc.out uc.res
   let ftv := ft.out
+  -- ⚑⚑ **THE FR-SPONGE NOW RUNS AHEAD OF THE FOLD, AND THAT IS §19d's ORDERING CONSEQUENCE.**
+  -- `combine_split_commitments` Horner-nests ONE ξ, and upstream's ξ is
+  -- `unfinalized.deferred_values.xi` — here §8g chain 0's prechallenge. So `runIpa` needs `defc`
+  -- and cannot precede it. It is still a CHAIN and not a cycle: `frSpec` reads the transcript's
+  -- ζ-squeeze digest, segment A's digest and R6's `ft_eval1`, and none of the three depends on the
+  -- fold. (Under the round-robin keying the fold read the transcript directly and could run first.)
   let specB := frSpec s (digestBeforeEvalsVar s, digestBeforeEvalsVal s sp) dg ftv
   let segB := runSeg specB
   -- ⚑ §8g: ξ and r, squeezed from the fr-sponge and lifted, are the fold's multipliers.
   let defc := runDefc segB specB
+  let ipa := runIpa s bs sp ftc.out uc.res (defc.pre.getD 0 0)
   let df := runDef s sp ftv (defc.lift s 0) (defc.lift s 1) FT_OMEGA prevChalVal MASK_BITS
   -- ⚑ §19, SECOND HALF. `advice.b` is R8's statement word, and its VALUE is `bActualOf` — available
   -- without running the whole finalize program, which is what keeps `G` off a cycle.
@@ -6064,16 +6305,25 @@ def circuitEnv (t : StepData) : VarEnv :=
       let p := t.msm.sums.getD a (0, 0)
       [ (mpxAt bm (pSum s a), (p.1 : Int)), (mpyAt bm (pSum s a), (p.2 : Int)) ])
   ++ (List.range s.ipaRounds).flatMap (fun r =>
+      -- ⚑ TWO points per round since §19d, and they are different objects: `T` is the SUPPLIED
+      -- commitment `qT` holds (absorbed, pinned, on-curve-checked), `B` is what the ladder runs
+      -- over. Only a `bullet_reduce` R half has `T = B`.
       let T := t.ipa.bases.getD r (0, 0)
+      let B := t.ipa.ladderBases.getD r (0, 0)
       [ (ipxAt bi (qT s r), (T.1 : Int)), (ipyAt bi (qT s r), (T.2 : Int)) ]
       ++ (List.range (s.ipaBlocks + 1)).flatMap (fun e =>
           let a := (t.ipa.accs.getD r []).getD e (0, 0)
           [ (ipxAt bi (qAcc s r e), (a.1 : Int)), (ipyAt bi (qAcc s r e), (a.2 : Int)) ])
       ++ (List.range s.ipaBlocks).map (fun e =>
-          (vQNAt s bq r e, ((t.ipa.ns.getD r []).getD e 0 : Int)))
-      -- §7's seed: `φ(t)`'s x and the `p = t + φ(t)` intermediate `acc₀ = p + p` doubles.
-      ++ [ (vQEndoAt s bq r, ((endoQ T).1 : Int))
-         , (ipxAt bi (qP s r), ((endoP T).1 : Int)), (ipyAt bi (qP s r), ((endoP T).2 : Int)) ])
+          (vQNMidAt s bq r e, ((t.ipa.ns.getD r []).getD e 0 : Int)))
+      -- §7's seed: `φ(B)`'s x and the `p = B + φ(B)` intermediate `acc₀ = p + p` doubles.
+      ++ [ (vQEndoAt s bq r, ((endoQ B).1 : Int))
+         , (ipxAt bi (qP s r), ((endoP B).1 : Int)), (ipyAt bi (qP s r), ((endoP B).2 : Int)) ])
+  -- ⚑ §19d: `bullet_reduce`'s `endo_inv` witnesses. `res` is a PROVER-SUPPLIED curve point whose
+  -- only binder is `endoInvEqRows`; its on-curve intermediates ride in the `nOnC` block below.
+  ++ (List.range (nBulletPairs s)).flatMap (fun j =>
+      let g := t.ipa.invs.getD j (0, 0)
+      [ (ipxAt bi (qEndoInv s j), (g.1 : Int)), (ipyAt bi (qEndoInv s j), (g.2 : Int)) ])
   ++ (List.range s.ipaRounds).flatMap (fun a =>
       let p := t.ipa.sums.getD a (0, 0)
       [ (ipxAt bi (qSum s a), (p.1 : Int)), (ipyAt bi (qSum s a), (p.2 : Int)) ])
@@ -6107,7 +6357,9 @@ def circuitEnv (t : StepData) : VarEnv :=
                else if k < l + tCommN s then (ftcTc (k - l)).1
                else if k == l + tCommN s then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY.1
                else if k == l + tCommN s + 1 then Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY.1
-               else t.gXY.1
+               else if k == l + tCommN s + 2 then t.gXY.1
+               -- ⚑ §19d's `endo_inv` witnesses — checked exactly like an absorbed commitment.
+               else (t.ipa.invs.getD (k - l - tCommN s - 3) (0, 0)).1
       [ (vOcX2At bo k, (fMul x x : Int)), (vOcX3At bo k, (fMul (fMul x x) x : Int)) ])
   -- ⚑ §6b: `Common.ft_comm`'s MSM — the eight `scale_fast2` ladders, `t_comm`'s absorbed
   -- coordinates, the `Ops.add_fast` chain and `Shifted_value.Type2`'s two split pairs.

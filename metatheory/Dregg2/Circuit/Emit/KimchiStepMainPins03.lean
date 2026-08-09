@@ -236,16 +236,26 @@ theorem the_absorbed_ipa_base_is_read_once_in_the_transcript :
 -- ⚑ THE ROWS ARE THE CENSUS, stated as equalities. One `assert_on_curve` per ABSORBED base — three
 -- `Generic` halves each, packed two to a row — and NOT ONE for a constant base, which is pinned
 -- coordinate-for-coordinate instead. A deleted check moves both numbers.
-#guard nOnC shapeSmoke == (absRoundList shapeSmoke).length + tCommN shapeSmoke + 3
-#guard nOnC shapeStep == 48 + 7 + 3
+-- ⚑ …and since §19d a FOURTH class: `bullet_reduce`'s `nBulletPairs` `endo_inv` witnesses, which
+-- `Scalar_challenge.endo_inv` `exists`-es through `Inner_curve.typ` exactly as a commitment
+-- arrives. 58 → 73 at the committed shape; `shapeSmoke` has no bullet pairs, so its number is
+-- unmoved and the smoke fixtures exercise NONE of the fifteen.
+#guard nOnC shapeSmoke
+        == (absRoundList shapeSmoke).length + tCommN shapeSmoke + 3 + nBulletPairs shapeSmoke
+#guard nOnC shapeStep == 48 + 7 + 3 + 15 && nBulletPairs shapeStep == 15
+        && nBulletPairs shapeSmoke == 0
 #guard nOnCRows == (3 * nOnC shapeSmoke + 1) / 2
-#guard (onCurveRows shapeStep).length == (3 * 58 + 1) / 2
+#guard (onCurveRows shapeStep).length == (3 * 73 + 1) / 2
 -- ⚑ …and the three non-round points are `sg_old[0]`, `delta` and — since segment D — `G`, at the
 -- tail of the checked list and over the very variables the fold's `~init`, the `cq + delta` add and
 -- the outer hash read.
 #guard onCVar shapeStep (48 + 7) == (ipx shapeStep (qInit shapeStep), ipy shapeStep (qInit shapeStep))
 #guard onCVar shapeStep (48 + 8) == (ipx shapeStep (qDel shapeStep), ipy shapeStep (qDel shapeStep))
 #guard onCVar shapeStep (48 + 9) == (vGx shapeStep, vGy shapeStep)
+        && onCVar shapeStep (48 + 10)
+             == (ipx shapeStep (qEndoInv shapeStep 0), ipy shapeStep (qEndoInv shapeStep 0))
+        && onCVar shapeStep (48 + 24)
+             == (ipx shapeStep (qEndoInv shapeStep 14), ipy shapeStep (qEndoInv shapeStep 14))
 #guard Dregg2.Bridge.MinaStepPrevCommitments.onCurve
          Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
 #guard Dregg2.Bridge.MinaStepPrevCommitments.onCurve

@@ -292,8 +292,12 @@ buys the same factor and costs each pin its own failure site. -/
 -- scalars are the packed statement, not this transcript's squeezes. The value pin lives in
 -- `…Pins16.msm_counters_close_on_the_packed_statement_words` as a NAMED theorem; R4's fold DOES close
 -- on its own challenge, and that half stays here.
+-- ⚑ …and since §19d the fold's own challenge is ONE ξ across every combine round — §8g chain 0's
+-- prechallenge, the cell `xi_correct` ties to the fr-sponge — not a round-robin transcript squeeze.
+-- At `shapeSmoke` every round is a combine round (`nBulletPairs shapeSmoke = 0`).
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
-  (tS.ipa.ns.getD r []).getLastD 0 == chalOf shapeSmoke tS.sp (shapeSmoke.ipaChal r))
+    (tS.ipa.ns.getD r []).getLastD 0 == tS.defc.pre.getD 0 0)
+  && nBulletPairs shapeSmoke == 0 && nCombine shapeSmoke == shapeSmoke.ipaRounds
 
 -- ⚑ EVERY var_base_mul BIT STEP is `accₖ₊₁ = [2]accₖ + (2bₖ−1)·T`, checked with `PastaCurve`'s
 -- INDEPENDENT Jacobian double/add (a different formula family from the affine `stepVbm` that
@@ -322,7 +326,9 @@ buys the same factor and costs each pin its own failure site. -/
 -- ⚑ EVERY endo_mul BLOCK is `accₑ₊₁ = [2]([2]accₑ + Q₁) + Q₂` with `Qₖ = ±φ^{b}(T)` — the
 -- endomorphism selection included — same independent Jacobian oracle.
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
-  let T := tS.ipa.bases.getD r (0, 0)
+  -- ⚑ `ladderBases`: since §19d the point the `EndoMul` chain multiplies is the running
+  -- accumulator, not round `r`'s own commitment.
+  let T := tS.ipa.ladderBases.getD r (0, 0)
   (List.range shapeSmoke.ipaBlocks).all (fun e =>
     let b := (tS.ipa.blks.getD r []).getD e default
     let a := (tS.ipa.accs.getD r []).getD e (0, 0)

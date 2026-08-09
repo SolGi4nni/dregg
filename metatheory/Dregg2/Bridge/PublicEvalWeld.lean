@@ -1,5 +1,6 @@
 import Dregg2.Bridge.MinaWrapFtEval0
-import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
+-- ⚑ the DATA module, not the GATE (2026-08-09): only `PUBLIC_INPUT` is read here.
+import Dregg2.Circuit.Emit.MinaWrapPublicCommData
 import Dregg2.Circuit.Emit.MinaRealBlockGate
 import Dregg2.Circuit.Emit.KimchiVerify
 import Dregg2.Circuit.Emit.PastaBasePrime

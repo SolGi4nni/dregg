@@ -40,7 +40,10 @@ modules and 3.7 MB on an 89 MB closure**.
 
 No `sorry`, no `native_decide`; the `#guard`s below reduce in the interpreter.
 -/
-import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
+-- ⚑ the DATA module, not the GATE (2026-08-09): this file uses `LAGRANGE` and nothing else,
+-- and the gate is a 14.5 GB kernel `decide`. This module is in `KimchiStepMainCore`'s import
+-- closure, so that cost was on the step emitter's every cold build.
+import Dregg2.Circuit.Emit.MinaWrapPublicCommData
 import Dregg2.Circuit.Emit.MinaWrapAggregationGate
 import Dregg2.Circuit.Emit.MinaWrapOpeningGate
 
