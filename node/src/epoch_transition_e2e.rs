@@ -202,21 +202,41 @@ fn finalize_across(nodes: &mut [Node], signer_seeds: &[u8], blk: BlockId) -> Vec
 }
 
 /// [A] ADD + chain-continues, and [B] REMOVE, on a live multi-node federation.
+///
+/// ⚑ THIS TEST WAS RED AT HEAD BEFORE THE DRAIN LANDED, AND THE RED WAS REAL.
+/// It was written in `611d104a2` over a genesis committee of THREE, so its remove
+/// leg was a `4 -> 3` step. `2fce89d4a` then landed the Lean-authored configuration
+/// step bound and **`4 -> 3` is REFUSED BY NAME** — `ConfigBoundary.classifyStep
+/// 4 0 1 = .refuseRosterFloor`, because a 3-member roster's Byzantine budget is
+/// ZERO, so shrinking a BFT-capable roster onto it buys a committee that tolerates
+/// nothing. That commit shipped its own tests (`blocklace/tests/
+/// membership_safety_differential.rs` asserts exactly this refusal) and left THIS
+/// consumer asserting the opposite: caller committed, callee not, in the test
+/// layer. `apply_if_passed` returned `Err(RosterFloor)`, `unwrap_or(false)` turned
+/// it into "did not apply", and the assert had been failing ever since.
+///
+/// FIXED FORWARD, not by deleting the bar: the genesis committee is FOUR, the live
+/// add is `4 -> 5` and the live remove is `5 -> 4` — both steps the bound admits
+/// (`stepAllowed 4 1 0` and `stepAllowed 5 0 1`). The [B] bar ("a validator removed
+/// live stops counting toward quorum") is unchanged; only the roster shape moved
+/// to one the consensus rule permits. The refused `4 -> 3` shape now has its own
+/// pole below, so nobody restores it by accident.
 #[test]
 fn validator_added_and_removed_live_chain_continues() {
     let a = keypair(1);
     let b = keypair(2);
     let c = keypair(3);
-    let d = keypair(4); // the validator added live (not in genesis)
+    let d = keypair(4);
+    let e = keypair(5); // the validator added live (not in genesis)
 
     // Three nodes, each with its own constitution + collector over the genesis
-    // committee {1,2,3} (quorum = supermajority(3) = 3). All four validators'
-    // ML-DSA keys are published (d publishes its key when it asks to join).
+    // committee {1,2,3,4} (quorum = supermajority(4) = 3). All five validators'
+    // ML-DSA keys are published (e publishes its key when it asks to join).
     let mut nodes: Vec<Node> = (0..3)
-        .map(|_| Node::new(&[1, 2, 3], &[1, 2, 3, 4]))
+        .map(|_| Node::new(&[1, 2, 3, 4], &[1, 2, 3, 4, 5]))
         .collect();
 
-    // ── The chain is already running: a block finalizes under the 3-committee. ──
+    // ── The chain is already running: a block finalizes under the 4-committee. ──
     let blk_pre = BlockId([100; 32]);
     let attested_pre = finalize_across(&mut nodes, &[1, 2, 3], blk_pre);
     assert!(
@@ -224,10 +244,10 @@ fn validator_added_and_removed_live_chain_continues() {
         "the pre-transition block must finalize under the genesis committee"
     );
 
-    // ── Before ratification, the new validator d cannot influence finality. ──
+    // ── Before ratification, the new validator e cannot influence finality. ──
     for node in &mut nodes {
-        assert!(!node.votes.is_committee_member(&pk(&d)));
-        let v = signed_vote(4, BlockId([101; 32]));
+        assert!(!node.votes.is_committee_member(&pk(&e)));
+        let v = signed_vote(5, BlockId([101; 32]));
         assert_eq!(
             node.votes.record(&v),
             RecordOutcome::Rejected,
@@ -235,13 +255,13 @@ fn validator_added_and_removed_live_chain_continues() {
         );
     }
 
-    // ── ADD d live: every node ratifies the Join with a quorum of the CURRENT ──
-    //    committee {a,b,c} (all three approve — supermajority(3) = 3), then
-    //    advances its live committee.
-    let genesis = [pk(&a), pk(&b), pk(&c)];
+    // ── ADD e live: every node ratifies the Join with a quorum of the CURRENT ──
+    //    committee {a,b,c,d} (supermajority(4) = 3), then advances its live
+    //    committee. `4 -> 5` is an allowed step (Lean `stepAllowed 4 1 0`).
+    let genesis = [pk(&a), pk(&b), pk(&c), pk(&d)];
     let join_block = BlockId([0xAA; 32]);
     let join = MembershipProposal::Join {
-        node_key: pk(&d),
+        node_key: pk(&e),
         justification: vec![],
     };
     for node in &mut nodes {
@@ -254,18 +274,18 @@ fn validator_added_and_removed_live_chain_continues() {
         );
     }
 
-    // Every node now carries the 4-member committee, threshold = supermajority(4) = 3.
+    // Every node now carries the 5-member committee, threshold = supermajority(5) = 4.
     for node in &nodes {
-        assert_eq!(node.cm.current.participant_count(), 4);
-        assert!(node.cm.current.is_participant(&pk(&d)));
-        assert_eq!(node.votes.committee_size(), 4);
-        assert_eq!(node.votes.quorum_threshold(), supermajority_threshold(4));
-        assert!(node.votes.is_committee_member(&pk(&d)));
+        assert_eq!(node.cm.current.participant_count(), 5);
+        assert!(node.cm.current.is_participant(&pk(&e)));
+        assert_eq!(node.votes.committee_size(), 5);
+        assert_eq!(node.votes.quorum_threshold(), supermajority_threshold(5));
+        assert!(node.votes.is_committee_member(&pk(&e)));
     }
 
     // ── The chain CONTINUES — the pre-transition block stays finalized (no ──
     //    reset / fresh chain) AND a new block finalizes under the NEW committee,
-    //    with the freshly-added validator d among the signers.
+    //    with the freshly-added validator e among the signers.
     for node in &nodes {
         assert!(
             node.votes.is_consensus_attested(&blk_pre),
@@ -273,32 +293,99 @@ fn validator_added_and_removed_live_chain_continues() {
         );
     }
     let blk_post = BlockId([102; 32]);
-    let attested_post = finalize_across(&mut nodes, &[1, 2, 4], blk_post);
+    let attested_post = finalize_across(&mut nodes, &[1, 2, 3, 5], blk_post);
     assert!(
         attested_post.iter().all(|x| *x),
         "a new block must finalize under the post-transition committee (chain continues), \
-         with the added validator d contributing to quorum"
+         with the added validator e contributing to quorum"
     );
 
-    // ── REMOVE d live: the now-4-member committee ratifies Leave(d) (quorum 3), ──
-    //    and every node drops d again.
+    // ── REMOVE e live: the now-5-member committee ratifies Leave(e) (quorum 4), ──
+    //    and every node drops e again. `5 -> 4` is an allowed step.
     let leave_block = BlockId([0xBB; 32]);
     let leave = MembershipProposal::Leave {
-        node_key: pk(&d),
+        node_key: pk(&e),
         reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
     };
-    let four = [pk(&a), pk(&b), pk(&c), pk(&d)];
+    let five = [pk(&a), pk(&b), pk(&c), pk(&d), pk(&e)];
     for node in &mut nodes {
-        node.drive_amendment(leave_block, leave.clone(), &four)
+        node.drive_amendment(leave_block, leave.clone(), &five)
             .expect("the Leave ratified by the current quorum must apply");
     }
     for node in &mut nodes {
-        assert_eq!(node.cm.current.participant_count(), 3);
-        assert!(!node.cm.current.is_participant(&pk(&d)));
-        assert!(!node.votes.is_committee_member(&pk(&d)));
-        // d (removed) can no longer contribute to a quorum.
-        let v = signed_vote(4, BlockId([103; 32]));
+        assert_eq!(node.cm.current.participant_count(), 4);
+        assert_eq!(node.votes.quorum_threshold(), supermajority_threshold(4));
+        assert!(!node.cm.current.is_participant(&pk(&e)));
+        assert!(!node.votes.is_committee_member(&pk(&e)));
+        // e (removed) can no longer contribute to a quorum.
+        let v = signed_vote(5, BlockId([103; 32]));
         assert_eq!(node.votes.record(&v), RecordOutcome::Rejected);
+    }
+}
+
+/// [F] ⚑ **THE STEP BOUND REFUSES A LEAVE BY NAME, on the live multi-node path.**
+///
+/// The shape the test above used to assert would apply: a ratified `Leave` that
+/// shrinks a 4-member committee to 3. The Lean-authored bound refuses it —
+/// `ConfigBoundary.classifyStep 4 0 1 = .refuseRosterFloor` — because `f(3) = 0`:
+/// the surviving roster would tolerate no faults at all, which is the teeth for
+/// the NON-CONTIGUOUS leave trap (at `n = 7`, `l = 4` passes the counting bound
+/// only VACUOUSLY for the same reason, while `l = 3` fails it outright).
+///
+/// ⚠ MUTATION ASSERTED PRESENT BEFORE THE VERDICT. A committee that did not shrink
+/// because nobody voted proves nothing, so this pins that the proposal genuinely
+/// REACHED QUORUM (`has_passed` under the current committee) and that the member is
+/// genuinely IN the roster — and only then reads "unchanged" as a refusal. It also
+/// reads the refusal's NAME off `apply_if_passed`, not merely its falsity.
+#[test]
+fn a_leave_that_would_breach_the_roster_floor_is_refused_by_name() {
+    use dregg_blocklace::constitution::StepRefusal;
+
+    let victim = pk(&keypair(4));
+    let four = [pk(&keypair(1)), pk(&keypair(2)), pk(&keypair(3)), victim];
+    let mut nodes: Vec<Node> = (0..3)
+        .map(|_| Node::new(&[1, 2, 3, 4], &[1, 2, 3, 4]))
+        .collect();
+
+    let leave_block = BlockId([0xF0; 32]);
+    let leave = MembershipProposal::Leave {
+        node_key: victim,
+        reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
+    };
+
+    for node in &mut nodes {
+        // MUTATION PRESENT (1/2): the member really is in the roster.
+        assert!(node.cm.current.is_participant(&victim));
+        node.cm.submit_proposal(leave_block, leave.clone());
+        for voter in &four {
+            let vote = MembershipVote {
+                proposal_block: leave_block,
+                approve: true,
+            };
+            node.cm.submit_vote(&vote, *voter);
+        }
+        // MUTATION PRESENT (2/2): the proposal really did reach quorum.
+        assert!(
+            node.cm.votes.has_passed(&leave_block, &node.cm.current),
+            "the Leave must actually PASS — a refusal read off a proposal that never \
+             reached quorum would be a vacuous green"
+        );
+        // THE VERDICT, by name.
+        assert_eq!(
+            node.cm.apply_if_passed(&leave_block),
+            Err(StepRefusal::RosterFloor {
+                roster: 4,
+                survivors: 3
+            }),
+            "a ratified 4 -> 3 Leave must be REFUSED BY NAME, not silently applied \
+             and not silently ignored"
+        );
+        // And NOTHING mutated: the roster, the threshold and the collector all hold.
+        assert_eq!(node.cm.current.participant_count(), 4);
+        assert_eq!(node.cm.threshold(), supermajority_threshold(4));
+        assert!(node.cm.current.is_participant(&victim));
+        assert!(node.votes.is_committee_member(&victim));
+        assert_eq!(node.votes.config_seq(), 0, "no install happened");
     }
 }
 
