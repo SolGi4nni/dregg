@@ -1,5 +1,5 @@
 name = "Dregg2"
-defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards", "TurnAuthGuards", "PicklesEmitDrivers", "DivergenceToothGuards", "PathOfAngelsGuards"]
+defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards", "TurnAuthGuards", "PicklesEmitDrivers", "DivergenceToothGuards", "PathOfAngelsGuards", "GameFixtureGuards"]
 
 # Pin mathlib to the exact revision matching v4.30.0
 # (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). This is a PORTABLE `git`+`rev`
@@ -525,4 +525,76 @@ globs = [
   # Same names, same count (18 + 1 witness pin), new blast radius: `lake build` still runs all
   # of them; `lake build Dregg2.FFI` runs none.
   "Dregg2.Games.PathOfAngels.SalvageCrateFixtures",
+  # ⚑ 2026-08-08: the fixture split landed 47 more of these. `PathOfAngelsGuards`
+  # keys on EXPLICIT module names, not a directory glob, so a `*Fixtures.lean` on
+  # disk that is not listed here is an ORPHAN — `lake build` never checks it and
+  # its `native_decide` pins are dead. Measured before the split: the FFI closure
+  # ran 83 evaluations across six modules; after, 7. Adding a Fixtures module here
+  # is what keeps that a no-loss-of-checking move rather than a deletion.
+  "Dregg2.Games.PathOfAngels.ArtificerLogicEmitFixtures",
+  "Dregg2.Games.PathOfAngels.ArtificerLogicFixtures",
+  "Dregg2.Games.PathOfAngels.AttendantContinuityAggregateFixtures",
+  "Dregg2.Games.PathOfAngels.AttendantKernelFixtures",
+  "Dregg2.Games.PathOfAngels.BazaarGameRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.BlackBoxReconstructionFixtures",
+  "Dregg2.Games.PathOfAngels.CartographyFixtures",
+  "Dregg2.Games.PathOfAngels.ContentContractFixtures",
+  "Dregg2.Games.PathOfAngels.CrewFieldMissionAdmissionFixtures",
+  "Dregg2.Games.PathOfAngels.CrewFieldMissionFixtures",
+  "Dregg2.Games.PathOfAngels.CrewFieldMissionRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.CrewRelayExpeditionFixtures",
+  "Dregg2.Games.PathOfAngels.DarkBazaarJudgeFixtures",
+  "Dregg2.Games.PathOfAngels.DeckDescentEmitFixtures",
+  "Dregg2.Games.PathOfAngels.DeckDescentFixtures",
+  "Dregg2.Games.PathOfAngels.DeckExpeditionFixtures",
+  "Dregg2.Games.PathOfAngels.EditorialRegistryFixtures",
+  "Dregg2.Games.PathOfAngels.EmitFixtures",
+  "Dregg2.Games.PathOfAngels.EventBatchFixtures",
+  "Dregg2.Games.PathOfAngels.EventBatchRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.EventSourcingFixtures",
+  "Dregg2.Games.PathOfAngels.FinalizedRunEventAggregateFixtures",
+  "Dregg2.Games.PathOfAngels.FiniteTablesFixtures",
+  "Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.HiddenInstanceFixtures",
+  "Dregg2.Games.PathOfAngels.NetworkGenesisFixtures",
+  "Dregg2.Games.PathOfAngels.NetworkJudgeFixtures",
+  "Dregg2.Games.PathOfAngels.NetworkJudgeWireFixtures",
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignAdmissionFixtures",
+  "Dregg2.Games.PathOfAngels.NightWatchCampaignWireFixtures",
+  "Dregg2.Games.PathOfAngels.OfficerLogbookFixtures",
+  "Dregg2.Games.PathOfAngels.RecordsRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.SalvageCrateExamplesFixtures",
+  "Dregg2.Games.PathOfAngels.SalvageLockFixtures",
+  "Dregg2.Games.PathOfAngels.SeedDrawFixtures",
+  "Dregg2.Games.PathOfAngels.ShipExpeditionSeasonFixtures",
+  "Dregg2.Games.PathOfAngels.ShipInstrumentPanelFixtures",
+  "Dregg2.Games.PathOfAngels.ShipLifeProgressionFixtures",
+  "Dregg2.Games.PathOfAngels.ShipworksFixtures",
+  "Dregg2.Games.PathOfAngels.SignalFeedbackRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.SlotDeriveRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.StationCrateOpenFixtures",
+  "Dregg2.Games.PathOfAngels.StationCrateOpenRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.StationDailyRuntimeFixtures",
+  "Dregg2.Games.PathOfAngels.VentCrawlEmitFixtures",
+  "Dregg2.Games.PathOfAngels.VentCrawlFixtures",
+  "Dregg2.Games.PathOfAngels.WorldActivationFixtures",
+]
+
+# GameFixtureGuards — the non-PathOfAngels half of the 2026-08-08 fixture split: the
+# Automatafl and MultiwayTug fixture pins, converted from 252 in-module `#guard`s into
+# named `native_decide` theorems (per docs/GUARD-DISCIPLINE.md — a fact worth asserting
+# is worth naming) and moved OUT of the `Dregg2.FFI` closure. The five parent modules
+# (`AutomataflRules`/`AutomataflFFI`/`Automatafl`/`MultiwayTug`/`MultiwayTugFFI`) stay in
+# the closure for their exports and definitions and now carry ZERO elaboration-time
+# evaluation; these five Fixtures modules carry all of it, so a game-fixture regression
+# reds THIS library in a plain `lake build` and can no longer take the crypto archive
+# down. Direct globs, same mechanism as PathOfAngelsGuards.
+[[lean_lib]]
+name = "GameFixtureGuards"
+globs = [
+  "Dregg2.Games.AutomataflRulesFixtures",
+  "Dregg2.Games.AutomataflFFIFixtures",
+  "Dregg2.Games.AutomataflFixtures",
+  "Dregg2.Games.MultiwayTugFixtures",
+  "Dregg2.Games.MultiwayTugFFIFixtures",
 ]
