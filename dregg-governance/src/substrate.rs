@@ -213,12 +213,15 @@ impl ExecutorEnactReactor {
         {
             return EnactOutcome::NoReaction;
         }
-        if gov.constitution.apply_if_passed(&proposal_block) {
-            EnactOutcome::Enacted {
+        match gov.constitution.apply_if_passed(&proposal_block) {
+            Ok(true) => EnactOutcome::Enacted {
                 new_version: gov.constitution.version(),
-            }
-        } else {
-            EnactOutcome::NotApplied
+            },
+            // `Err` = the configuration step bound REFUSED the change BY NAME
+            // (Lean `ConfigBoundary.classifyStep`; already logged at the
+            // constitution choke point). Distinct from a proposal that has not
+            // passed, but both are "not enacted" to this reactor.
+            Ok(false) | Err(_) => EnactOutcome::NotApplied,
         }
     }
 }
