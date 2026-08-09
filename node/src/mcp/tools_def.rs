@@ -971,13 +971,16 @@ pub(super) fn tool_definitions_raw() -> Vec<McpToolDef> {
             title: None,
             output_schema: None,
             annotations: None,
-            description: "Propose a membership change (join/leave/threshold change) to the federation",
+            // No "threshold change": `MembershipAction` is Join or Leave, and the
+            // threshold is derived from committee size. Claiming a third action
+            // the payload cannot express is how a caller gets a success verdict
+            // for something that never happened.
+            description: "Propose a live membership change (join/leave) on the running node's committee. Authors, self-votes, persists and disseminates a real proposal block; it APPLIES only once a quorum of the CURRENT committee ratifies it through finality. A join for a candidate whose ML-DSA-65 key this node has never seen is REFUSED, not proposed.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["join", "leave"], "description": "Whether to propose joining or leaving" },
-                    "participant": { "type": "string", "description": "Hex-encoded 32-byte public key of the participant (for join: new member; for leave: departing member)" },
-                    "reason": { "type": "string", "description": "Human-readable reason for the proposal" }
+                    "action": { "type": "string", "enum": ["join", "leave"], "description": "Propose adding (join) or removing (leave) the participant" },
+                    "participant": { "type": "string", "description": "Hex-encoded 32-byte ed25519 public key of the participant (for join: the new member; for leave: the departing member)" }
                 },
                 "required": ["action", "participant"]
             }),

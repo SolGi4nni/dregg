@@ -571,6 +571,47 @@ pub fn add_validator(
 // propose-epoch-transition (live, running-network path)
 // =============================================================================
 
+/// Decide whether a `/epoch/propose-transition` response body is a REFUSAL, and
+/// name it. `Some(reason)` ⇒ the CLI must exit non-zero.
+///
+/// The node reports refusals in-band: HTTP 200 with `success: false` and a
+/// per-proposal diagnosis (an add whose candidate has no published ML-DSA key,
+/// an F2 durable-persist rollback). A refusal must exit non-zero — it used to
+/// print the success banner and exit 0.
+///
+/// ⚑ FAIL-CLOSED ON A BODY IT CANNOT READ, which is the half that was still
+/// open. The previous form was `from_str(..).ok().filter(success == false)`, so
+/// EVERY unreadable answer — a truncated body, an HTML error page from a proxy,
+/// a future response shape, any 200 without a `success` field — collapsed to
+/// `None`, printed "Live epoch transition proposed on the running node", and
+/// exited 0. That is the same failure as the one this function exists to
+/// prevent, wearing the same congratulation: not a refusal misdiagnosed, but a
+/// non-answer rendered as the expected verdict. A body that does not decode as
+/// this endpoint's response is not evidence that anything was proposed.
+fn epoch_transition_refusal(resp_body: &str) -> Option<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(resp_body) else {
+        return Some(format!(
+            "the node's answer is not JSON, so nothing here says a proposal was created \
+             (first 200 bytes: {})",
+            resp_body.chars().take(200).collect::<String>()
+        ));
+    };
+    match v.get("success").and_then(|s| s.as_bool()) {
+        Some(true) => None,
+        Some(false) => Some(
+            v.get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("node refused the proposal (no diagnosis provided)")
+                .to_string(),
+        ),
+        None => Some(
+            "the node's answer carries no `success` verdict — this is not a \
+             ProposeEpochTransitionResponse, and nothing in it says a proposal was created"
+                .to_string(),
+        ),
+    }
+}
+
 /// Propose a LIVE epoch transition (validator-set reconfiguration) to a RUNNING
 /// node via its HTTP API.
 ///
@@ -612,19 +653,7 @@ pub async fn propose_epoch_transition(
     let (status, resp_body) =
         http_post_localhost(port, "/epoch/propose-transition", token, &body).await?;
 
-    // The node reports refusals in-band: HTTP 200 with `success: false` and a
-    // per-proposal diagnosis (e.g. an add whose candidate has no published
-    // ML-DSA key, or an F2 durable-persist rollback). A refusal must exit
-    // non-zero — it used to print the success banner and exit 0.
-    let refusal = serde_json::from_str::<serde_json::Value>(&resp_body)
-        .ok()
-        .filter(|v| v.get("success").and_then(|s| s.as_bool()) == Some(false))
-        .map(|v| {
-            v.get("error")
-                .and_then(|e| e.as_str())
-                .unwrap_or("node refused the proposal (no diagnosis provided)")
-                .to_string()
-        });
+    let refusal = epoch_transition_refusal(&resp_body);
 
     if json_out {
         println!("{resp_body}");
@@ -924,6 +953,57 @@ mod tests {
         getrandom::fill(&mut seed).unwrap();
         let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
         (seed, sk.verifying_key().to_bytes())
+    }
+
+    /// BOTH POLES OF `propose-epoch-transition`'s EXIT CODE, and the third
+    /// state that has no pole: an answer the CLI cannot read.
+    ///
+    /// `Some` ⇒ the CLI returns `Err` ⇒ `lib.rs` exits 1. `None` ⇒ it prints the
+    /// success banner and exits 0, so every `None` below is a claim that a
+    /// proposal really was authored and disseminated.
+    #[test]
+    fn an_answer_that_does_not_say_a_proposal_was_created_is_a_refusal() {
+        // POLE 1 — the node authored the proposals. Exit 0.
+        assert_eq!(
+            epoch_transition_refusal(
+                r#"{"success":true,"proposals":[{"action":"add","validator":"aa","proposal_block":"beef"}],"committee_size":4,"threshold":3,"error":null}"#
+            ),
+            None
+        );
+
+        // POLE 2 — the refusal that motivated all of this: an add for a
+        // candidate whose ML-DSA-65 key the committee has never seen. The
+        // diagnosis must be the node's OWN, verbatim, not a neighbouring arm's.
+        let missing_key = epoch_transition_refusal(
+            r#"{"success":false,"proposals":[],"committee_size":4,"threshold":3,"error":"add aabb: no ML-DSA-65 public key is known for this candidate — the joiner must first publish it over the join channel; proposal not created"}"#,
+        )
+        .expect("success:false must refuse");
+        assert!(missing_key.contains("no ML-DSA-65 public key is known"));
+        assert!(
+            !missing_key.contains("durable persist"),
+            "a refusal must never be reported under the OTHER arm's diagnosis"
+        );
+
+        // A refusal with no diagnosis is still a refusal.
+        assert!(epoch_transition_refusal(r#"{"success":false}"#).is_some());
+
+        // ⚑ THE FAIL-OPEN. Each of these used to decode to `None` — the success
+        // banner and exit 0 — because the old form was
+        // `from_str(..).ok().filter(success == false)`, which cannot distinguish
+        // "the node said yes" from "the CLI could not read the answer".
+        for unreadable in [
+            "",                                       // empty body
+            "<html><body>502 Bad Gateway</body>",     // a proxy, not the node
+            r#"{"success":true"#,                     // truncated mid-object
+            r#"{"proposals":[],"committee_size":4}"#, // no `success` verdict at all
+            r#"{"success":"true"}"#,                  // a string, not a bool
+            "null",
+        ] {
+            assert!(
+                epoch_transition_refusal(unreadable).is_some(),
+                "an answer the CLI cannot read must not exit 0: {unreadable:?}"
+            );
+        }
     }
 
     /// A legacy (Ed25519-only) committee member.

@@ -851,66 +851,103 @@ pub(super) async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) 
 // Factory tools
 // =============================================================================
 
+/// Propose a live membership change on the RUNNING node — the MCP twin of
+/// `POST /epoch/propose-transition`.
+///
+/// ⚑ THIS TOOL USED TO AUTHOR NOTHING AND SAY IT HAD. It built a
+/// `MembershipProposal` into `_proposal`, discarded it, BLAKE3'd
+/// `(action, participant)` into a `proposal_id` naming an object that did not
+/// exist, and answered `"proposed": true` with the note "Proposal submitted.
+/// Requires quorum votes from current participants to take effect." No block
+/// was authored, nothing was broadcast, no committee ever saw it, and the
+/// caller had a hex id to poll for a proposal that was never made.
+///
+/// It now calls the same `BlocklaceHandle::propose_membership` the HTTP route
+/// does, and returns the REAL authored block id. Every way that call can fail —
+/// no consensus handle, a candidate with no published ML-DSA-65 key (which
+/// would author a wedge), an F2 durable-persist rollback — comes back as an
+/// error carrying ITS OWN diagnosis. A refusal must never render as the
+/// expected verdict.
+///
+/// `reason` is gone rather than ignored: `MembershipAction` carries the node id
+/// and the PQ key and has no justification field, so an accepted-and-dropped
+/// free-text argument is a promise the chain does not keep.
 pub(super) async fn tool_propose_membership(params: &Value, state: &NodeState) -> McpToolResult {
     let action = match params.get("action").and_then(|v| v.as_str()) {
         Some(a) => a,
         None => return McpToolResult::error("missing required parameter: action"),
     };
-    let participant_hex = match params.get("participant").and_then(|v| v.as_str()) {
-        Some(h) => h,
-        None => return McpToolResult::error("missing required parameter: participant"),
-    };
-    let reason = params
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("MCP proposal");
-
-    let participant_bytes = match hex_decode(participant_hex) {
-        Ok(b) => b,
-        Err(_) => return McpToolResult::error("invalid hex for participant"),
-    };
-
-    let s = state.read().await;
-    if !s.unlocked {
-        return McpToolResult::error("cipherclerk is locked; unlock first");
-    }
-
-    if !s.federation_configured {
-        return McpToolResult::error(
-            "federation not configured; cannot propose membership changes",
-        );
-    }
-
-    let _proposal = match action {
-        "join" => dregg_blocklace::constitution::MembershipProposal::Join {
-            node_key: participant_bytes,
-            justification: reason.as_bytes().to_vec(),
-        },
-        "leave" => dregg_blocklace::constitution::MembershipProposal::Leave {
-            node_key: participant_bytes,
-            reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
-        },
+    let add = match action {
+        "join" => true,
+        "leave" => false,
         other => {
             return McpToolResult::error(format!(
                 "invalid action: '{other}'. Use 'join' or 'leave'"
             ));
         }
     };
+    let participant_hex = match params.get("participant").and_then(|v| v.as_str()) {
+        Some(h) => h,
+        None => return McpToolResult::error("missing required parameter: participant"),
+    };
+    // A short key was silently accepted before, because nothing downstream ever
+    // used the bytes.
+    let participant: [u8; 32] = match hex_decode(participant_hex)
+        .ok()
+        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+    {
+        Some(k) => k,
+        None => {
+            return McpToolResult::error(
+                "invalid participant: expected exactly 64 hex chars (a 32-byte ed25519 public key)",
+            );
+        }
+    };
 
-    // Compute a proposal ID for tracking.
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-membership-proposal-v1");
-    hasher.update(action.as_bytes());
-    hasher.update(&participant_bytes);
-    let proposal_id: [u8; 32] = *hasher.finalize().as_bytes();
+    {
+        let s = state.read().await;
+        if !s.unlocked {
+            return McpToolResult::error("cipherclerk is locked; unlock first");
+        }
+        if !s.federation_configured {
+            return McpToolResult::error(
+                "federation not configured; cannot propose membership changes",
+            );
+        }
+    }
 
-    McpToolResult::json(&serde_json::json!({
-        "proposed": true,
-        "proposal_id": hex_encode(&proposal_id),
-        "action": action,
-        "participant": participant_hex,
-        "reason": reason,
-        "note": "Proposal submitted. Requires quorum votes from current participants to take effect."
-    }))
+    // Dropped before `propose_membership`, which takes the state lock itself.
+    let Some(blocklace) = state.blocklace().await else {
+        return McpToolResult::error(
+            "node is not running blocklace consensus (no committee to reconfigure) — nothing was \
+             proposed",
+        );
+    };
+
+    match blocklace.propose_membership(state, participant, add).await {
+        Ok(block_id) => {
+            let (committee_size, threshold) = {
+                let c = blocklace.constitution.read().await;
+                (c.current.participant_count(), c.threshold())
+            };
+            McpToolResult::json(&serde_json::json!({
+                "proposed": true,
+                // The id of the block that was actually authored, self-voted,
+                // persisted and disseminated — not a hash of the arguments.
+                "proposal_block": hex_encode(&block_id.0),
+                "action": action,
+                "participant": participant_hex,
+                "committee_size": committee_size,
+                "threshold": threshold,
+                "note": "Proposal authored and disseminated. Proposing is not authority: it \
+                         APPLIES only once a quorum of the CURRENT committee ratifies it through \
+                         finality."
+            }))
+        }
+        Err(reason) => McpToolResult::error(format!(
+            "membership proposal REFUSED — nothing was authored or broadcast: {reason}"
+        )),
+    }
 }
 
 // =============================================================================
