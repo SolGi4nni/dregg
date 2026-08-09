@@ -14,8 +14,13 @@
 # value.
 #
 #   Usage:
-#     scripts/federation-join-poles.sh all           # genesis, up, both poles
-#     scripts/federation-join-poles.sh genesis|up|pole1|pole2|report|down|clean
+#     scripts/federation-join-poles.sh all           # genesis, up, all three poles
+#     scripts/federation-join-poles.sh genesis|up|pole1|pole2|restart|report|down|clean
+#
+# Pole 3 (`restart`) is the one that was coded and never run: a live-joined
+# validator is in NOBODY's genesis.json, so every node must relearn its ML-DSA-65
+# key by scanning the chain at boot, or come back with `projected < admitted` and
+# fail finality closed. See `cmd_restart`.
 #
 # Config (env overridable):
 #   JP_N        committee size                (default 4)
@@ -177,6 +182,101 @@ cmd_pole2() {
   grep -ah "join request ACCEPTED" "$JP_ROOT"/node*/node.log | tail -5 || echo "   (none — correct)"
 }
 
+cmd_restart() {
+  echo
+  echo "=============================================================="
+  echo "POLE 3 — the federation SURVIVES A RESTART with a live-joined member"
+  echo "=============================================================="
+  # ⚑ WHY THIS EXISTS. `known_federation_ml_dsa_keys` is re-read from
+  # `genesis.json` on EVERY boot, and a validator admitted by a LIVE join is not
+  # in anyone's genesis.json. Committee replay restores it as a PARTICIPANT
+  # anyway, so without the chain-scan restore in `run_blocklace_sync` every node
+  # comes back with `projected < admitted` and `poll_finalized_blocks` FAILS
+  # CLOSED: right committee, zero finality. A restart would silently un-join a
+  # live validator and halt the federation. That path was coded and never run.
+  local hp0 chp; hp0=$(http_port 0); chp=$(http_port "$CAND_IDX")
+
+  # ── THE MUTATION, ASSERTED PRESENT BEFORE ANY VERDICT IS READ ──────────────
+  # A restart is only evidence about live-joined keys if a member actually
+  # joined LIVE. On a federation that never admitted anyone, every node restores
+  # from genesis alone, the restore scan is a no-op, and this pole would pass
+  # while proving nothing.
+  local n_before; n_before=$(participants_on "$hp0")
+  local cand_member; cand_member=$(api "$chp" /status | jqf 'd.get("join_member","absent")')
+  echo "   participants before restart : $n_before (expected $((JP_N + 1)))"
+  echo "   candidate join_member       : $cand_member"
+  if [ "$n_before" != "$((JP_N + 1))" ] || [ "$cand_member" != "True" ]; then
+    echo "   FATAL: no live-joined member is in this committee — pole 3 would be vacuous" >&2
+    return 1
+  fi
+  local h_before; h_before=$(api "$hp0" /status | jqf 'd.get("dag_height",0)')
+  echo "   node0 dag_height before     : $h_before"
+
+  # ── DOWN, ALL OF THEM ──────────────────────────────────────────────────────
+  echo "   -- stopping every node (committee + the live-joined member) --"
+  for d in "$JP_ROOT"/node* "$JP_ROOT/candidate"; do
+    [ -f "$d/node.pid" ] || continue
+    kill "$(cat "$d/node.pid")" 2>/dev/null || true
+  done
+  for _ in $(seq 1 40); do
+    pgrep -f "$JP_BIN (run|join)" >/dev/null 2>&1 || break
+    sleep 1
+  done
+  pkill -9 -f "$JP_BIN (run|join)" 2>/dev/null || true
+  sleep 2
+  # Each node's log is rolled so the post-restart evidence cannot be confused
+  # with the pre-restart run's.
+  for d in "$JP_ROOT"/node* "$JP_ROOT/candidate"; do
+    [ -f "$d/node.log" ] && mv "$d/node.log" "$d/node.prerestart.log"
+  done
+  echo "   -- all down --"
+
+  # ── UP AGAIN, from the SAME data dirs ──────────────────────────────────────
+  launch_committee
+  launch_joiner candidate "$CAND_IDX"
+  sleep 20
+
+  # ── DID THE RESTORE ACTUALLY FIRE? ─────────────────────────────────────────
+  # If it did not, whatever finality we observe afterwards is not evidence about
+  # this path — it would mean the federation never needed it.
+  echo "   -- chain-scan restore of live-joined ML-DSA-65 keys, per node --"
+  local fired=0
+  for i in $(seq 0 $((JP_N - 1))); do
+    local line
+    line=$(grep -ah "restored live-joined members" "$JP_ROOT/node$i/node.log" | tail -1)
+    if [ -n "$line" ]; then
+      fired=$((fired + 1))
+      printf '   node%s: %s\n' "$i" "$(echo "$line" | grep -o 'restored_keys=[0-9]*')"
+    else
+      printf '   node%s: NO RESTORE LINE\n' "$i"
+    fi
+  done
+  if [ "$fired" -eq 0 ]; then
+    echo "   FATAL: not one node restored a live-joined key — this restart exercised nothing" >&2
+    return 1
+  fi
+
+  # ── THE FAILURE THIS PREVENTS, named so its absence is meaningful ──────────
+  echo "   -- fail-closed finality halts (the un-joined-on-restart signature) --"
+  grep -ahc "projected < admitted\|fail.closed" "$JP_ROOT"/node*/node.log 2>/dev/null | paste -sd' ' - || true
+
+  # ── VERDICT: does finality ADVANCE after the restart? ──────────────────────
+  echo "   -- does the chain move again? --"
+  local h_after t=0
+  while [ "$t" -lt 90 ]; do
+    h_after=$(api "$hp0" /status | jqf 'd.get("dag_height",0)')
+    printf '   t=%2ss node0 dag_height=%s participants=%s\n' \
+      "$t" "$h_after" "$(participants_on "$hp0")"
+    sleep 10; t=$((t + 10))
+  done
+  echo "   -- post-restart status, every node --"
+  for i in $(seq 0 $((JP_N - 1))) "$CAND_IDX"; do
+    local p; p=$(http_port "$i")
+    printf '   port %s: ' "$p"
+    api "$p" /status | jqf '" ".join(f"{k}={d[k]}" for k in ("healthy","dag_height","latest_height","quorum_reachable","finality_stalled","live_committee_voters","ever_reached_quorum","join_member") if k in d)'
+  done
+}
+
 cmd_report() {
   echo
   echo "=============================================================="
@@ -185,7 +285,7 @@ cmd_report() {
   for i in $(seq 0 $((JP_N - 1))) "$CAND_IDX" "$IMP_IDX"; do
     local p; p=$(http_port "$i")
     printf 'port %s: ' "$p"
-    api "$p" /status | jqf '" ".join(f"{k}={d[k]}" for k in ("healthy","peer_count","latest_height","dag_height","block_count","consensus_live") if k in d)'
+    api "$p" /status | jqf '" ".join(f"{k}={d[k]}" for k in ("healthy","peer_count","latest_height","dag_height","block_count","consensus_live","quorum_reachable","finality_stalled","join_member","join_requests_sent","join_waiting_secs","join_proposal_seen") if k in d)'
   done
   echo
   echo "-- unknown_sender WARN counts (the old failure's signature) --"
@@ -216,9 +316,10 @@ case "${1:-}" in
   up) cmd_up ;;
   pole1) cmd_pole1 ;;
   pole2) cmd_pole2 ;;
+  restart) cmd_restart ;;
   report) cmd_report ;;
   down) cmd_down ;;
   clean) cmd_clean ;;
-  all) cmd_genesis; cmd_up; cmd_pole1; cmd_pole2; cmd_report ;;
-  *) echo "usage: $0 {genesis|up|pole1|pole2|report|down|clean|all}" >&2; exit 2 ;;
+  all) cmd_genesis; cmd_up; cmd_pole1; cmd_pole2; cmd_restart; cmd_report ;;
+  *) echo "usage: $0 {genesis|up|pole1|pole2|restart|report|down|clean|all}" >&2; exit 2 ;;
 esac
