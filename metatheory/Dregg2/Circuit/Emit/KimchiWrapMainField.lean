@@ -62,7 +62,11 @@ import Dregg2.Circuit.Emit.KimchiWrapHackDigest
 -- since 2026-08-07, so the step statement and the wrap derivation cannot hold two copies.
 import Dregg2.Circuit.Emit.MinaWrapProofDeferredWords
 -- ⚑ the marshalled forty, for the ONE word the step statement still does not carry: slot 12,
--- `messages_for_next_step_proof`, where the two sides hash preimages of different arity.
+-- `messages_for_next_step_proof`. ⚠ THIS LINE SAID "where the two sides hash preimages of different
+-- arity" until 2026-08-09. That is REFUTED: `segd_slot12_probe` reproduces segment D's squeeze with
+-- openmina's OWN hasher on segment D's OWN 56+20 preimage, to the digit
+-- (`KimchiWrapMainPins10`, `KimchiWrapMainPins12`). The gap is WHICH VALUES fill eighteen of the
+-- seventy-six cells, not how many there are.
 import Dregg2.Circuit.Emit.MinaWrapDeferredWords
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
@@ -1515,11 +1519,26 @@ which are Fq `Type2` values about the WRAP proof. One set of cells, two statemen
 unsatisfiable, because the step circuit never derived these words in the first place — it DEFERS
 them, and this file is their checker.
 
-⚑ **WHAT IS LEFT IS ONE, AND IT IS THE ONE THAT WAS NEVER THE SAME KIND OF THING: word 54.** The
-step circuit's segment D and the marshaller's `MessagesForNextStepProof::hash()` hash preimages of
-DIFFERENT ARITY — 56+20 against 56+36 (`KimchiWrapMainPins10`) — so nothing on either side can move
-onto the other without wiring the two together first. That is an arity gap, not a wiring one, and
-deriving harder on either side does not close it.
+⚑ **WHAT IS LEFT IS ONE, AND IT IS THE ONE THAT WAS NEVER THE SAME KIND OF THING: word 54.**
+
+⚠ ⚑ **AND THE REASON GIVEN HERE UNTIL 2026-08-09 WAS ONE OF THE FOUR REFUTED ANSWERS.** It read:
+*"segment D and the marshaller's `MessagesForNextStepProof::hash()` hash preimages of DIFFERENT
+ARITY — 56+20 against 56+36 — so nothing on either side can move onto the other … That is an arity
+gap, not a wiring one."* **There is no arity gap.** `segd_slot12_probe` hands openmina's OWN
+`MessagesForNextStepProof::hash()` segment D's OWN 56+20 preimage and gets segment D's squeeze **to
+the digit** (`KimchiWrapMainPins10`'s §, `KimchiWrapMainPins12:670-674`); the outer hash, the
+arities, "a fixpoint" and a missing IPA extraction are all refuted, and reviving any of them costs
+a lane a night. What is left is **WHICH VALUES fill eighteen of the seventy-six cells**: the
+`[Gx; Gy]` pair and the sixteen challenges. Fifty-eight — all 56 index coordinates and both
+app-state words — already agree.
+
+⚑ **THE `G` HALF NOW HAS A CLOSED ANSWER AND AN OPEN WIRING.**
+`KimchiStepMainPins19d.the_rebuilt_fold_closes_at_the_blocks_own_opening` shows that R4 rebuilt to
+`combine_split_commitments`' one-ξ Horner plus `endo_inv` on the `bullet_reduce` L halves makes the
+assembly's own `lhs` the block's own `lhs`, so block 539508's real `sg` CLOSES `equal_g` and segment
+D can absorb the real accumulator. Until R4's ROWS are rewired to that fold, `G` stays `solveG`'s
+output and this word stays refused — deriving harder on either side still does not close it, but
+the reason is now a named rewiring rather than an arity.
 
 ⚑ **WHAT IS NOT AFFECTED, MEASURED RATHER THAN ASSERTED.** None of the six is absorbed by the
 transcript and none is read at or below `w4_bind`, which is why the twenty-two slots that rung

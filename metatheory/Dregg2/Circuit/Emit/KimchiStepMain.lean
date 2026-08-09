@@ -1182,4 +1182,7 @@ import Dregg2.Circuit.Emit.KimchiStepMainPins18
 -- ⚑ §19b — the block's own IPA opening is ON DISK and does not close this assembly's transcript.
 -- Imported here rather than left orphaned: a pin module nobody reaches asserts nothing.
 import Dregg2.Circuit.Emit.KimchiStepMainPins19
+-- ⚑ §19d — the R4 fold REBUILT to `combine_split_commitments` + `endo_inv`, and it closes
+-- `equal_g` at block 539508's own `(sg, b₀, z₁, z₂)`. Same reason for the import.
+import Dregg2.Circuit.Emit.KimchiStepMainPins19d
 import Dregg2.Circuit.Emit.KimchiStepStatementPins

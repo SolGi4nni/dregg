@@ -193,6 +193,15 @@ D's OWN 56+20 preimage and gets segment D's squeeze to the digit
 refutation and the new answer named. The theorem is unchanged — it was always right; its reason was
 not.
 
+### ⚑ ONE STANDING DEVNET BLOCKER IS ALREADY CLOSED — checked rather than relayed
+
+The brief this pass ran on said *"`pickles-vk-derive/fixtures/wrapmain_smoke_w4_bind.json` is two
+emissions behind and IS the registration anchor."* **It is not, at HEAD.** The anchor is
+`public_input_size = 40`, **519 rows**, and **md5-identical** to the harness's own current
+`wrapmain_smoke_w4_bind.json` — refreshed at `a2719942b` (*"the vk-derive crate's carried wrapmain
+copies follow the harness re-emit — step 1b was RED at HEAD"*). So when 40/40 does land, the
+re-registration does not have to wait on that fixture. What it still waits on is 40/40 itself.
+
 **FLAG DAY: none.** No emitted byte moves, no VK rotates, nothing re-genesises, no descriptor and no
 fixture re-emits — §19d is new `def`s nothing wired yet and `…Pins19d` is a new pin module imported
 by `KimchiStepMain` so it is not an orphan. `PROVENANCE.json` is not stamped. ⚠ The rewiring in
