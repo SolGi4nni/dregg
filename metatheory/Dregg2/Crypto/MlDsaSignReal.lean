@@ -74,6 +74,8 @@ import Dregg2.Crypto.AcvpHex
 namespace Dregg2.Crypto.MlDsaSignReal
 
 open Dregg2.Crypto.MlDsaRing (Poly q zeroPoly ntt intt pointwiseMul addPoly subPoly)
+-- ⚑ `signCore` calls the `…Fast` ROUTED ALIASES — see `MlDsaRing`'s "THE ROUTED ALIASES".
+open Dregg2.Crypto.MlDsaRing (nttFast inttFast pointwiseMulFast addPolyFast subPolyFast)
 open Dregg2.Crypto.Keccak (shake256)
 open Dregg2.Crypto.MlDsaSampleInBall (sampleInBall)
 open Dregg2.Crypto.MlDsaExpandA (expandA)
@@ -203,14 +205,14 @@ partial def signAttempt (fuel kappa : Nat) (rhoP mu : List UInt8)
   let y := expandMask rhoP kappa
   let mut yHat : Array Poly := Array.mkEmpty paramL
   for l in [0:paramL] do
-    yHat := yHat.push (ntt (y[l]!))
+    yHat := yHat.push (nttFast (y[l]!))
   -- 12: w = NTT⁻¹(Â ∘ ŷ), per row.
   let mut w : Array Poly := Array.mkEmpty paramK
   for i in [0:paramK] do
     let mut az := zeroPoly
     for l in [0:paramL] do
-      az := addPoly az (pointwiseMul (aHat[i * paramL + l]!) (yHat[l]!))
-    w := w.push (intt az)
+      az := addPolyFast az (pointwiseMulFast (aHat[i * paramL + l]!) (yHat[l]!))
+    w := w.push (inttFast az)
   -- 13: w1 = HighBits(w).
   let mut w1 : Array Poly := Array.mkEmpty paramK
   for i in [0:paramK] do
@@ -222,22 +224,22 @@ partial def signAttempt (fuel kappa : Nat) (rhoP mu : List UInt8)
   -- 15: c̃ = H(μ ‖ w1Encode(w1), 48).
   let ctilde := shake256 (mu ++ w1Encode w1) 48
   -- 16-17: c = SampleInBall(c̃);  ĉ = NTT(c).
-  let cHat := ntt (sampleInBall ctilde)
+  let cHat := nttFast (sampleInBall ctilde)
   -- 18-19: c·s1 (ℓ), c·s2 (k) via pointwise ∘ then NTT⁻¹.
   let mut cs1 : Array Poly := Array.mkEmpty paramL
   for l in [0:paramL] do
-    cs1 := cs1.push (intt (pointwiseMul cHat (s1Hat[l]!)))
+    cs1 := cs1.push (inttFast (pointwiseMulFast cHat (s1Hat[l]!)))
   let mut cs2 : Array Poly := Array.mkEmpty paramK
   for i in [0:paramK] do
-    cs2 := cs2.push (intt (pointwiseMul cHat (s2Hat[i]!)))
+    cs2 := cs2.push (inttFast (pointwiseMulFast cHat (s2Hat[i]!)))
   -- 20: z = y + c·s1.
   let mut z : Array Poly := Array.mkEmpty paramL
   for l in [0:paramL] do
-    z := z.push (addPoly (y[l]!) (cs1[l]!))
+    z := z.push (addPolyFast (y[l]!) (cs1[l]!))
   -- 21: r0 side needs w − c·s2.
   let mut wmcs2 : Array Poly := Array.mkEmpty paramK
   for i in [0:paramK] do
-    wmcs2 := wmcs2.push (subPoly (w[i]!) (cs2[i]!))
+    wmcs2 := wmcs2.push (subPolyFast (w[i]!) (cs2[i]!))
   -- 23: reject on ‖z‖∞ ≥ γ₁ − β or ‖r0‖∞ ≥ γ₂ − β.
   if decide (zBound ≤ infNormZ z) || decide (r0Bound ≤ r0InfNorm wmcs2) then
     signAttempt (fuel - 1) (kappa + paramL) rhoP mu aHat s1Hat s2Hat t0Hat
@@ -245,7 +247,7 @@ partial def signAttempt (fuel kappa : Nat) (rhoP mu : List UInt8)
     -- 25: c·t0.
     let mut ct0 : Array Poly := Array.mkEmpty paramK
     for i in [0:paramK] do
-      ct0 := ct0.push (intt (pointwiseMul cHat (t0Hat[i]!)))
+      ct0 := ct0.push (inttFast (pointwiseMulFast cHat (t0Hat[i]!)))
     -- 26: h = MakeHint(−c·t0, w − c·s2 + c·t0).
     let mut h : Array Poly := Array.mkEmpty paramK
     for i in [0:paramK] do
@@ -265,13 +267,13 @@ def signCore (sk msg ctx : List UInt8) : List UInt8 := Id.run do
   let aHat := expandA rho
   let mut s1Hat : Array Poly := Array.mkEmpty paramL
   for l in [0:paramL] do
-    s1Hat := s1Hat.push (ntt (s1[l]!))
+    s1Hat := s1Hat.push (nttFast (s1[l]!))
   let mut s2Hat : Array Poly := Array.mkEmpty paramK
   for i in [0:paramK] do
-    s2Hat := s2Hat.push (ntt (s2[i]!))
+    s2Hat := s2Hat.push (nttFast (s2[i]!))
   let mut t0Hat : Array Poly := Array.mkEmpty paramK
   for i in [0:paramK] do
-    t0Hat := t0Hat.push (ntt (t0[i]!))
+    t0Hat := t0Hat.push (nttFast (t0[i]!))
   -- μ = H(tr ‖ 0x00 ‖ |ctx| ‖ ctx ‖ msg, 64).
   let mPrime := (UInt8.ofNat 0) :: (UInt8.ofNat ctx.length) :: (ctx ++ msg)
   let mu := shake256 (tr ++ mPrime) 64

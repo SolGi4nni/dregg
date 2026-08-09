@@ -40,6 +40,8 @@ import Dregg2.Crypto.MlKemDecaps
 namespace Dregg2.Crypto.MlDsaKeygen
 
 open Dregg2.Crypto.MlDsaRing (Poly q zeroPoly ntt intt pointwiseMul addPoly)
+-- ⚑ The keygen ring ops call the `…Fast` ROUTED ALIASES — see `MlDsaRing`'s "THE ROUTED ALIASES".
+open Dregg2.Crypto.MlDsaRing (nttFast inttFast pointwiseMulFast addPolyFast)
 open Dregg2.Crypto.MlDsaExpandA (expandA)
 open Dregg2.Crypto.MlDsaCodec (paramK paramL t1Bits pkEncode packBits)
 open Dregg2.Crypto.Keccak (shake256)
@@ -154,7 +156,7 @@ structure RingKey where
 def matAcc (aHat s1Hat : Array Poly) (i : Nat) : Poly := Id.run do
   let mut acc : Poly := zeroPoly
   for j in [0:paramL] do
-    acc := addPoly acc (pointwiseMul aHat[i * paramL + j]! s1Hat[j]!)
+    acc := addPolyFast acc (pointwiseMulFast aHat[i * paramL + j]! s1Hat[j]!)
   return acc
 
 /-- Coefficient-wise `Power2Round` of one polynomial: `(t1ᵢ, t0ᵢ)` (FIPS 204 Alg 6 step 5). -/
@@ -171,7 +173,7 @@ def p2rLoop (ti : Poly) : (Poly × Poly) := Id.run do
 def s1HatOf (s1 : Array Poly) : Array Poly := Id.run do
   let mut s1Hat : Array Poly := Array.mkEmpty paramL
   for j in [0:paramL] do
-    s1Hat := s1Hat.push (ntt s1[j]!)
+    s1Hat := s1Hat.push (nttFast s1[j]!)
   return s1Hat
 
 /-- The per-row `Power2Round` split: row `i` yields the pair `(t1ᵢ, t0ᵢ)` for
@@ -187,7 +189,7 @@ uses. Same values, same order; `tLoop` below just projects the two columns. -/
 def tPairs (aHat s1Hat s2 : Array Poly) : Array (Poly × Poly) := Id.run do
   let mut tp : Array (Poly × Poly) := Array.mkEmpty paramK
   for i in [0:paramK] do
-    tp := tp.push (p2rLoop (addPoly (intt (matAcc aHat s1Hat i)) s2[i]!))
+    tp := tp.push (p2rLoop (addPolyFast (inttFast (matAcc aHat s1Hat i)) s2[i]!))
   return tp
 
 /-- The `t` vector split: `t[i] = NTT⁻¹(Σⱼ Â[i][j] ∘ ŝ1[j]) + s2[i]`, then `Power2Round` per coefficient

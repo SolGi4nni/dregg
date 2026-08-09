@@ -126,6 +126,19 @@ GATES=(
   "check-guard-discipline-red|60|python3 scripts/check-guard-discipline.py --self-test"
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
+  # ⚑ `@[implemented_by]` ON THE PURE DEF MAKES ITS OWN DIFFERENTIAL A TAUTOLOGY.
+  # The attribute is honoured by the COMPILED evaluator, which is the same evaluator `#guard` and
+  # `native_decide` run on — so `#guard twin x == pure x` prints `true` for ANY twin when the
+  # attribute sits on `pure`. Five ML-DSA ring seams were in that shape on the live FIPS 204
+  # sign/verify path until 2026-08-09, and the obvious fix would have been a permanently green
+  # check that READ as closure. This gate demands the structural fix: the attribute goes on an
+  # alias carrying a `<target>_eq` witness, leaving an unrouted pure side to compare against.
+  # The `-red` row is not optional — the headline is a negative assertion, so it passes just as
+  # happily on a broken reader; the self-test plants the attribute on a pure def (both the
+  # `attribute` and the inline `@[...]` form), plants a witness whose RHS is itself routed, and
+  # checks a prose-only mention stays green. The working tree is never touched.
+  "implemented-by-alias|120|python3 scripts/check-implemented-by-alias.py"
+  "implemented-by-alias-red|60|python3 scripts/check-implemented-by-alias.py --self-test"
   # ⚑ THE WRAP VK's 56 COORDINATES ARE GENERATED, AND THIS IS THE DRIFT GUARD.
   # `Dregg2/Circuit/Emit/MinaWrapVkDigestChain.lean` derives the verifier-index digest — the one
   # element of the phase-1 tape that used to be a bare constant — from the sha256-pinned devnet Wrap

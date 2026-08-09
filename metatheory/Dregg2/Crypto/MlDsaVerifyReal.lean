@@ -77,6 +77,11 @@ import Dregg2.Crypto.MlDsaCodec
 namespace Dregg2.Crypto.MlDsaVerifyReal
 
 open Dregg2.Crypto.MlDsaRing (Poly q zeroPoly ntt intt pointwiseMul addPoly subPoly)
+-- ⚑ `verifyCore` calls the `…Fast` ROUTED ALIASES, not the pure defs. The `@[implemented_by]`
+-- twins hang off the aliases so the pure `ntt`/`intt`/… stay unrouted and a fast-vs-pure
+-- differential is expressible at all (`MlDsaRing`'s "THE ROUTED ALIASES" note; each alias is
+-- `rfl`-equal to its pure def, so every theorem here is unaffected).
+open Dregg2.Crypto.MlDsaRing (nttFast inttFast pointwiseMulFast addPolyFast subPolyFast)
 open Dregg2.Crypto.Keccak (shake256)
 open Dregg2.Crypto.MlDsaSampleInBall (sampleInBall)
 open Dregg2.Crypto.MlDsaExpandA (expandA)
@@ -169,19 +174,19 @@ def verifyCore (pk M ctx sig : List UInt8) : Bool := Id.run do
   -- Algorithm 3 pure-framing of `M'`: `0x00 ‖ IntegerToBytes(|ctx|, 1) ‖ ctx ‖ M`.
   let mPrime := (UInt8.ofNat 0) :: (UInt8.ofNat ctx.length) :: (ctx ++ M)
   let mu := shake256 (tr ++ mPrime) 64
-  let cHat := ntt (sampleInBall ctilde)
+  let cHat := nttFast (sampleInBall ctilde)
   -- Precompute `ntt(z_j)`.
   let mut zHat : Array Poly := Array.mkEmpty paramL
   for j in [0:paramL] do
-    zHat := zHat.push (ntt (z[j]!))
+    zHat := zHat.push (nttFast (z[j]!))
   -- Per row: `w1'_i = UseHint(h_i, intt(Az_i − ct1_i))`.
   let mut w1 : Array Poly := Array.mkEmpty paramK
   for i in [0:paramK] do
     let mut az := zeroPoly
     for j in [0:paramL] do
-      az := addPoly az (pointwiseMul (aHat[i * paramL + j]!) (zHat[j]!))
-    let ct1 := pointwiseMul cHat (ntt (scaleT1 (t1[i]!)))
-    let w := intt (subPoly az ct1)
+      az := addPolyFast az (pointwiseMulFast (aHat[i * paramL + j]!) (zHat[j]!))
+    let ct1 := pointwiseMulFast cHat (nttFast (scaleT1 (t1[i]!)))
+    let w := inttFast (subPolyFast az ct1)
     let hi := h[i]!
     let mut w1i := zeroPoly
     for jj in [0:256] do

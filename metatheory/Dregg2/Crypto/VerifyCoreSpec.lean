@@ -74,6 +74,10 @@ namespace Dregg2.Crypto.VerifyCoreSpec
 
 open Dregg2.Crypto.MlDsaVerifyReal
 open Dregg2.Crypto.MlDsaRing (Poly q zeroPoly ntt intt pointwiseMul addPoly subPoly schoolbookMul)
+-- ⚑ `challengeMatches` below mirrors `MlDsaVerifyReal.verifyCore` VERBATIM, and that body
+-- calls the `…Fast` ROUTED ALIASES (`MlDsaRing`'s "THE ROUTED ALIASES"). The copy must
+-- name the same constants or `verifyCore_split`'s `unfold` no longer closes.
+open Dregg2.Crypto.MlDsaRing (nttFast inttFast pointwiseMulFast addPolyFast subPolyFast)
 open Dregg2.Crypto.Keccak (shake256)
 open Dregg2.Crypto.MlDsaSampleInBall (sampleInBall)
 open Dregg2.Crypto.MlDsaExpandA (expandA)
@@ -116,17 +120,17 @@ def challengeMatches (pk M ctx sig : List UInt8) : Bool := Id.run do
   let tr := shake256 pk 64
   let mPrime := (UInt8.ofNat 0) :: (UInt8.ofNat ctx.length) :: (ctx ++ M)
   let mu := shake256 (tr ++ mPrime) 64
-  let cHat := ntt (sampleInBall ctilde)
+  let cHat := nttFast (sampleInBall ctilde)
   let mut zHat : Array Poly := Array.mkEmpty paramL
   for j in [0:paramL] do
-    zHat := zHat.push (ntt (z[j]!))
+    zHat := zHat.push (nttFast (z[j]!))
   let mut w1 : Array Poly := Array.mkEmpty paramK
   for i in [0:paramK] do
     let mut az := zeroPoly
     for j in [0:paramL] do
-      az := addPoly az (pointwiseMul (aHat[i * paramL + j]!) (zHat[j]!))
-    let ct1 := pointwiseMul cHat (ntt (scaleT1 (t1[i]!)))
-    let w := intt (subPoly az ct1)
+      az := addPolyFast az (pointwiseMulFast (aHat[i * paramL + j]!) (zHat[j]!))
+    let ct1 := pointwiseMulFast cHat (nttFast (scaleT1 (t1[i]!)))
+    let w := inttFast (subPolyFast az ct1)
     let hi := h[i]!
     let mut w1i := zeroPoly
     for jj in [0:256] do

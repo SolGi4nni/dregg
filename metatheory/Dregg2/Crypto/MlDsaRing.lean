@@ -343,13 +343,78 @@ def fastIntt (w : Poly) : Poly := Id.run do
     a := a.set! j (mulQu nInvU a[j]!)
   return toNatA a
 
-attribute [implemented_by fastAddPoly] addPoly
-attribute [implemented_by fastSubPoly] subPoly
-attribute [implemented_by fastPointwiseMul] pointwiseMul
-attribute [implemented_by fastNtt] ntt
-attribute [implemented_by fastIntt] intt
+/-! ### ⚑ THE ROUTED ALIASES — why NO `@[implemented_by]` sits on a pure def here.
 
-/-! ### Twin differentials — each `fast…` twin vs an UNROUTED pure ground truth (non-vacuous). -/
+`@[implemented_by]` is honoured by the COMPILED evaluator, and `#guard`/`native_decide`/`#eval` all
+run on that evaluator. So an attribute attached to the pure def makes **its own differential a
+tautology**. Demonstrated (2026-08-09):
+
+    def pureF (n : Nat) : Nat := n + 1
+    def twinF (n : Nat) : Nat := n + 999
+    attribute [implemented_by twinF] pureF
+    #eval pureF 1                    -- 1000  — the TWIN answers
+    #eval (twinF 1 == pureF 1)       -- true  — for ANY twin, always
+    theorem k : pureF 1 = 2 := rfl   -- and the kernel still sees the pure body
+
+Until today these five attributes were on `addPoly`/`subPoly`/`pointwiseMul`/`ntt`/`intt`
+themselves. `fastNtt x == ntt x` was therefore **fast-vs-fast**: not merely untested, but
+UNTESTABLE — writing the obvious check would have produced a permanently green tautology, which is
+worse than no check because it reads as closure. The only two tests that touched `ntt`/`intt` were
+the composite product and the round trip, and a constructed twin pair (`fastNtt` post-composed with
+`List.reverse`, `fastIntt` pre-composed with the same involution — pointwise multiplication is
+permutation-equivariant) satisfies BOTH while differing from the routed twin, on the live sign and
+verify path. That falsifier is rebuilt and evaluated in `Dregg2.Crypto.MlDsaRingTwinDifferential`.
+
+So each attribute now sits on a `…Fast` ALIAS, and the EXECUTABLE callers (`MlDsaVerifyReal`,
+`MlDsaSignReal`, `MlDsaKeygen`) call the alias. Consequences, all of them the point:
+
+  * the pure `ntt`/`intt`/`addPoly`/`subPoly`/`pointwiseMul` keep their NORMAL compilation, so
+    `fastNtt x == ntt x` is now a genuine fast-vs-pure comparison — a differential that can go RED;
+  * the alias is `rfl`-equal to its pure def (`…Fast_eq` below), so every existing theorem,
+    including `NttFaithful`'s ∀-theorems, transports unchanged and the kernel sees the same object;
+  * `@[implemented_by]` still carries NO proof obligation. What changed is that the obligation is
+    now DISCHARGEABLE by evidence instead of unstatable.
+
+This is the structure `Distributed.BlocklaceFinality` already had (`:1373`, attribute on the
+`tauOrderFast` alias, pure `tauOrder` left unrouted) — the sixth and only seam in the tree that was
+already testable. It is why that seam has a real differential and these five did not. -/
+
+/-- Routed alias of `addPoly` — `rfl`-equal to it; carries the `@[implemented_by]` so the pure def
+stays unrouted and comparable. -/
+def addPolyFast (a b : Poly) : Poly := addPoly a b
+/-- Routed alias of `subPoly`. See `addPolyFast`. -/
+def subPolyFast (a b : Poly) : Poly := subPoly a b
+/-- Routed alias of `pointwiseMul`. See `addPolyFast`. -/
+def pointwiseMulFast (a b : Poly) : Poly := pointwiseMul a b
+/-- Routed alias of `ntt`. See `addPolyFast`. -/
+def nttFast (w : Poly) : Poly := ntt w
+/-- Routed alias of `intt`. See `addPolyFast`. -/
+def inttFast (w : Poly) : Poly := intt w
+
+/-! The alias is the SAME OBJECT to the kernel — these are `rfl`, and they are what lets a caller be
+retargeted onto the alias without disturbing a single proof about the pure def. -/
+@[simp] theorem addPolyFast_eq : addPolyFast = addPoly := rfl
+@[simp] theorem subPolyFast_eq : subPolyFast = subPoly := rfl
+@[simp] theorem pointwiseMulFast_eq : pointwiseMulFast = pointwiseMul := rfl
+@[simp] theorem nttFast_eq : nttFast = ntt := rfl
+@[simp] theorem inttFast_eq : inttFast = intt := rfl
+
+attribute [implemented_by fastAddPoly] addPolyFast
+attribute [implemented_by fastSubPoly] subPolyFast
+attribute [implemented_by fastPointwiseMul] pointwiseMulFast
+attribute [implemented_by fastNtt] nttFast
+attribute [implemented_by fastIntt] inttFast
+
+/-! ### Twin differentials — each `fast…` twin vs an UNROUTED pure ground truth (non-vacuous).
+
+⚠ These six are the ORIGINAL corpus and they are WEAK: measured over all 256 lanes, the largest
+`sampleA[i] * sampleB[i]` is **4** and the largest `sampleA[i] + sampleB[i]` is **7**, against a
+`2³²` truncation threshold and a `q = 8 380 417` reduction threshold. So the element-wise guards
+below stay green against a `mulQu` written the naive 32-bit way, and against an `addQu` with its
+`% qU` deleted — the exact two faults their docstring says they exist to catch. Both facts, and
+twins that exhibit them, are named theorems in `Dregg2.Crypto.MlDsaRingTwinDifferential`, which
+carries the full-range corpus these should have had. They are kept because they are still true and
+still cheap, not because they are adequate. -/
 
 -- The whole fast NTT multiply pipeline equals the pure negacyclic `schoolbookMul` (the load-bearing gate:
 -- `ntt_computes_negacyclic_mul` computed with the fast twins on one side, pure `schoolbookMul` on the other).
