@@ -72,6 +72,19 @@ built here, and **no claim of "conjunct 3 closed" may omit this sentence.** The 
 exactly `MinaWrapConjunctionAir.xiCorrect`'s ("a consumer's constraint, real in the fold") —
 except the consumer does not exist yet, which is worse, and is said here rather than discovered.
 
+## PORTS, in `SeamSpec` §4's sense: NONE — and that is a statement, not an omission
+
+`Seam.PiPort` names a published block whose columns form an ISLAND (`portIslandFree`: no leg joins
+them to the rest of the trace — `xiCorrect`'s compared-but-underived shape). **Every published
+block here is CONSUMED by gates** — the evals by the folds, the challenges by the ladders, `LCT`
+by `ft_eval0`'s closing subtraction, the claims by the eq comparisons — so `portIslandFree` is
+FALSE of each and none is representable as a `PiPort`. The external-forcing obligations are
+therefore CLAIM-WELD obligations, `SeamSpec`-shaped, one per row of the table above, to be
+emitted with this descriptor's measured fingerprint lanes; **`LCT`'s weld has no seam and no
+candidate seam** — its open state is exhibited by an ACCEPTING adversarial proof (the Rust
+`lct-shift` tooth), which is stronger than a census row and worse news. No `proofBind` leg exists
+in this AIR, so no `bound := none` seam is created here.
+
 ## THE SCHEDULE, THE REGISTER, AND WHAT IS REUSED
 
 One op per row, 301 ops, 512-row trace (power of two, idle tail). A 302-wide one-hot phase

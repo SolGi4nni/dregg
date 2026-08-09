@@ -1,5 +1,158 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 8 — finalize conjuncts 3 and 4 are an AIR now, and the width is the PIN SURFACE, not the arithmetic
+
+**`dregg-mina-finalize-scalars::v1`** (`metatheory/Dregg2/Circuit/Emit/MinaFinalizeScalars.lean`)
+renders the **Wrap-side** `ft_eval0` (C5: the 14-squaring ζ ladder, `zkPolyR`, the witnessed inverse
+forced by a `den·DINV = 1` gate, both permutation folds), the **FULL 47-entry
+`combined_inner_product` ξ-fold** with the in-AIR `ft_eval0` in slot 3, and **`perm_scalars`** — as
+**301 sound field ops at the Pallas-scalar prime, one op per row on the scheduled substrate**, the
+claims forced by eq gates. ζ/α/ξ/r arrive endo-MAPPED (lift-instance ports), β/γ RAW with in-leaf
+zero-pins on limbs 16..31 — the `prefix_weld` shape exactly. The allocation is MATERIALIZED as
+literal tables and the kernel checks the three facts the forcing walk needs
+(`the_ranges_cover_the_reads`, `same_slot_ranges_are_disjoint`, `the_tables_cover_the_values`);
+the carries are **complement-masked** (`1 − Σ handover-phases`), which is what keeps a 301-row
+schedule's carry legs O(tenants) instead of O(live-length). ⚠ The first paste of `hiTable` had a
+FABRICATED tail (hand-typed past a truncated buffer); `decide` refused it, and the tables are now
+machine-spliced from the generator's own output — the class where the falsifier caught the author.
+
+**THE FOUR-CONJUNCT ANSWER, with where each forcing lives:**
+| conjunct | where forced |
+|---|---|
+| 1 `xiCorrect` | the FOLD (`fold_endo_into_finalize`'s 32 connects) — unchanged |
+| 2 `bCorrect` | IN-AIR, `dregg-mina-wrap-conjunction::v1` — unchanged |
+| 3 `cipCorrect` | ⚑ **IN-AIR here — modulo the `LCT` port, welded to NOTHING yet** |
+| 4 `plonkChecksPassed` | ⚑ **IN-AIR here, whole** (upstream's comparison list is `[perm]`) |
+
+**MEASURED.** Declared **4 461** / committed **12 903** columns (`fs_committed_width`), 27 319
+constraints, 3 296 PIs, 512 rows — inner LDE **2^15** at the descriptor engine. Honest prove+verify
+**41.5 s** release (load ~43, sibling lanes live). Committed cells 12 903 × 512 ≈ 6.6 × 10⁶ ≈ 4 %
+of `WRAP_CELLS = 161 308 368`. ⚠ **The decider's "~2.4K columns" estimate under-counted the PIN
+SURFACE**: the elementwise eval seam forces 103 input blocks = **3 296 `.first`-pinned columns** to
+exist before one op is scheduled — pins are the only publication mechanism, so that width is
+structural to the seam, not fat. The arithmetic adds ~1.2K columns. ⚠ The artifact is **45.7 MB /
+27 319 constraints** — fixtures + gitignore, NOT by-name; shrinking it (share the 63-gate cores
+across rows via selector-summed operand routing) is the priced follow-up.
+
+**THE DIFFERENTIAL IS UPSTREAM'S OWN NUMBERS, kernel-clean** (`MinaFinalizeScalarsWeld`, all
+`decide`, no `native_decide`): the program's ξ-fold lands on `proof.oracles(…)`'s
+`combined_inner_product` for devnet block 539508 (`the_program_reproduces_the_blocks_cip`) and its
+permutation scalar on o1-labs' own `perm_scalars` (`the_program_reproduces_perm_scalars` =
+`MinaWrapGroupGate.PERM_SCALAR`); the §5 reference composition meets the same numbers at the same
+point; a bumped eval, a bumped `LCT`, a bumped σ each move them; ω is derived AND the fixture's;
+the shifts are the conformance fixture's own list, non-vacuously over every wrap block.
+
+**BOTH POLARITIES, RELEASE, 7/7** (`circuit/tests/mina_finalize_scalars_proves.rs`, 198.8 s):
+honest proves; a moved eval and a moved perm claim are each REFUSED
+(`OodEvaluationMismatch { index: Some(0) }`, `assert_violated_constraint_not_bus`, through
+`prove_vm_descriptor2_unchecked`); falsifier integrity checked before any verdict (1 PI limb moves,
+9 644 trace cells follow, all in-width).
+
+⚑⚑ **AND THE `LCT` PORT IS EXHIBITED AS A LIVE ORBIT, NOT PROSE**: `lct-shift` — `LCT` bumped, the
+cip claim recomputed — **PROVES AND VERIFIES**. `cipActualOf` is affine in `LCT`, so the in-AIR cip
+check narrows the claim's SHAPE (a ξ-fold of the welded evals at a ported constant), not its VALUE,
+until the **gate-linearization leaf** (`gateLinConst`'s six transcribed bodies over the same 86
+blocks, ~320 more ops on this same substrate) closes it. That leaf is the NAMED next object. Never
+write "conjunct 3 closed" without this sentence. ⚠ In `SeamSpec` §4's sense this leaf has **no
+`PiPort`s** — every published block is CONSUMED by gates, so the external forcings are CLAIM-weld
+(`SeamSpec`-shaped) obligations; no `proofBind` leg exists here, so no `bound := none` seam was
+created.
+
+**THE SEAM MAP this leaf's claim exposes** (all elementwise, no digests): `EZ_k ↔` phase-2 link
+`⌊(5+2k)/2⌋` slot `(5+2k) mod 2`; `EW_k ↔` link `⌊(6+2k)/2⌋` slot `(6+2k) mod 2`; `FT1/PUBZ/PUBW ↔`
+links 1–2 (tape[2..4]); `β/γ ↔` phase-1 state-19 lanes 0/1 (low-16-limb + zero-pins, `prefix_weld`);
+`α/ζ/ξ/r ↔` endo-lift instances (the descriptor is challenge-INDEPENDENT — verified at the emit:
+bits ride in `Step.2`, so new instances are witness/PI regens, not re-emits); `BP0Z/BP0W/BP1Z/BP1W ↔`
+conjunction instances at `CHALS0`/`CHALS1`'s **published b-halves — PORTS here, never recomputed**;
+`CIP_CLAIM ↔` the conjunction's `CIP` block; `PERM_CLAIM ↔` the `f_comm` MSM scalar lane; `LCT ↔`
+**NOTHING (the open port)**. Emitting these as `SeamSpec` JSONs needs this descriptor's measured
+`Faithful9` lanes (post-emit step, `conj_fingerprint.rs`).
+
+**PENDING, NAMED, WITH SHAPES:** (1) **the forcing walk** — rows + carries + register ⇒ slot values
+≡ `progEval`, i.e. `AirCrossRow`'s composition at 301 ops; the selector premises are this register's
+instances of the **mod-`P`** `PhaseIndicator` (use the restated form — the ℤ form was false of the
+descriptor), the complement masks need `mask ≡ 1` on live transitions = PhaseIndicator +
+`same_slot_ranges_are_disjoint`. Until it lands the polarity evidence is the deployed prover's
+refusal — behavioural. (2) **the generic §5 tie** `progEval = cipR/ftEval0R/permScalarR` at every
+ring (stage lemmas + two fold inductions); the weld ties them at the real-block point and the emit
+driver REFUSES on renderer/denotation drift. (3) **the conjunction re-emit** (PI 160 → 256: `CIP`
+[160,192), `bEval ζ` [192,224), `bEval ζω` [224,256); VK rotates; both conjunction artifacts +
+`LightClientMinaAir.CONJ_VK_LANES` + the xi-endo seam JSON's `claimLen` re-emit) — DEFERRED one
+pass because the SeamSpec lane's deployed JSONs pin the 160-lane layout and that lane was live in
+the tree; ordinary flag day, nothing else holds the old shape. (4) **by-name routing + rooting**
+(size gate above). (5) ⚠ **THE CARRIED-LANE PROBE DID NOT RUN**:
+`circuit-prove/tests/mina_finalize_seam_probe.rs` (a 3 048-lane padded claim vs the 200-lane
+baseline, same binary, sequential — the elementwise-vs-acc decision input) is WRITTEN and
+debug-compiles; its RELEASE binary was refused three times in one session by the `dregg-lean-ffi`
+coherence gate on three DIFFERENT sibling in-flight reds (`FinalityGate`,
+`PathOfAngels.NetworkGenesis`, the missing `dregg_ack_admit` export). The gate is right to refuse;
+run the probe in the first green window, ALONE. **The elementwise-vs-acc choice is STILL OPEN and
+nothing in this landing commits to either side.**
+
+⚠ **Two compiler-trusted verdicts, said out loud**: `finalizeAir_mainRailOk` /
+`finalizeAir_pinsTied` are `native_decide` + `#assert_compiled` — the kernel re-instantiates the
+23 290-leg list under the traversal lambdas (21 min / 16 GiB / 3 % CPU before the switch), the wall
+`SeamSpec` §4 records. Everything else in the cone is kernel, including the weld's differentials.
+
+**⚑⚑ DAY:** nothing deployed changes shape; no VK rotates until item (3). New artifacts in
+`circuit/tests/fixtures/` (descriptor + 4 traces untracked, re-emitted by
+`mina_finalize_scalars_emit`; PI vectors + `.gitignore` tracked). ⚠ **`metatheory/lakefile.toml` is
+NOT committed with this entry** — my 12-line `mina_finalize_scalars_emit` exe stanza sits in a
+worktree copy that also carries the games lane's half-landed 47-module fixture roster; committing
+the file would sweep a build-breaking mid-flight change. The stanza lands with the next lakefile
+commit; until then `lake env lean --run MinaFinalizeScalarsEmit.lean` is the fallback emit path.
+
+## ⛑⛑⛑⛑ AUGUST 8 (REFUSAL 15 WIRED, BODY PORTS WELDED, THE TIE VERDICT'S RED TAKEN) — the three wounds the ports census counted are closed or honestly red
+
+The August-8 ports entry below counted three wounds; this entry is their burn-down, same day.
+
+- **REFUSAL 15 IS NO LONGER DEAD CODE.** `check_conjunction_binding` — defined 2026-08-06,
+  documented, matched by nothing, the `EffectsHashMismatch` class — is CALLED in
+  `MinaAnchoredHeadStarkVerifier::verify`: `MinaHeadProofWire` gains REQUIRED
+  `conjunction_public_inputs`/`conjunction_proof`, the dispatch verifies the conjunction STARK
+  after a program pin resolved by guard column `FINALIZE_XI_B_PROVED` (58,
+  `HEAD_CONJ_GUARD_COL`), and the commitment weld refuses head PI 30..38 against the digest
+  recompute. Both polarities in `mina_head_verifier.rs`'s REFUSAL-15 suite (falsifier checked
+  non-zero, in-width). `MinaSeams.the_conjunction_commitment_port_has_no_live_weld = 1` is
+  retired by `conjPiWeld` + `the_head_commitment_ports_are_weld_covered = []`. ⚠ What it does
+  NOT buy is unchanged and stays said: the ξ weld is `fold_endo_into_finalize`'s, whose root
+  this executor still does not consume.
+- **THE SEVENTEEN BODY SLOTS HAVE THEIR READER — REFUSAL 16.** The wire gains REQUIRED
+  `body_chain_root_proof`; `MinaChainRootBackend` gains `pinned_body_root_vk()` (no default —
+  a host that has not decided its body anchor does not compile; the two towers' claim shapes
+  are identical and the fingerprint is the only discriminator); `check_body_chain_binding`
+  refuses an unset/mismatched body anchor, a chain head that is not the `MinaProtoStateBody`
+  salt (`MINA_BODY_SALT_LIMBS`, regated against the tracked fixture), `BODY_ACC` ≠ the root's
+  `transcript_acc` (elementwise), and `BODYHASH` ≠ the `Faithful9` re-limbing of the root's
+  squeezed lane 0. Both polarities + shape refusals in the REFUSAL-16 suite.
+  `MinaSeams.the_link_body_ports_have_no_registered_cover = 2` is retired by
+  `bodyHashWeld`/`bodyAccWeld` + `the_link_body_ports_are_weld_covered = []`. ⚠ Still an
+  EXECUTOR weld, said so everywhere it is named; a fold `cb.connect` remains unbuilt (the
+  `BODYHASH` half is a re-limbing and cannot be a `SeamSpec`).
+- **`AirLeg.readCols` IS EMISSION-FAITHFUL AND THE RED WAS TAKEN, NOT SOFTENED.** The `.bind`
+  arm reads guard always, `vk` only under a `vkPin`, `commit`/`bound` only under a `bound` —
+  the same confession `relatedCols`/`legJoinsAcross` made below, one rail up. Consequences,
+  stated as named theorems, none narrated: `minaHeadAir.pinsTied = false` (untied = EXACTLY
+  `subPiPins ++ conjPiPins`), `minaLinkAir.pinsTied = false` (untied = EXACTLY `bodyAccPins` —
+  no width lookup is owed: a BabyBear digest lane fills its column and a 29-bit table would
+  refuse honest witnesses). Both `TiedAir`s DEMOTED to `lowerAirCertified` at IDENTICAL bytes
+  (refinement certificate kept, tie verdict honestly dropped; the `_eq_lowerAir` rfl pins
+  stand). `PinsTiedCensus` re-measured with the fixed walker: **95 pass / 16 fail on 183 pins**
+  (was 97/14/157); the two new rows are the Mina pair, classified FAITHFUL-BY-HOST-WELD with
+  their welds named; `the_tied_neighbours_pass` no longer claims them.
+- **FLAG DAYS, exactly:** `MinaHeadProofWire` — every previously produced blob FAILS TO DECODE
+  (three REQUIRED fields; postcard EOF, refusal at the codec). `MinaChainRootBackend` — trait
+  gains a method with no default; all three impls updated (`P3MinaChainRootBackend` now
+  requires BOTH `DREGG_MINA_CHAIN_ROOT_VK` and ⚑ NEW `DREGG_MINA_BODY_ROOT_VK` or installs
+  nothing = refusal 0). **No descriptor re-emits, no VK rotates, nothing re-genesises**: the
+  head/link descriptor bytes are `rfl`-unchanged under the demotion, `mina_head_predicate_vk`
+  is a function of the unchanged descriptor NAME, and the seams/ports JSON is untouched (weld
+  covers are Lean census objects, deliberately not `ports.json` rows — `seam_specs.rs` gate 3
+  stays a hard invariant). Stale `turn` layout asserts (20/30-era) moved to 37/39 with the
+  wiring. ⚠ `PROVENANCE.json` was NOT stamped: a clean stamp would cover the unchanged
+  descriptor set only after the full local gates run; nothing in this change moves descriptor
+  bytes, so there is nothing new to stamp — the ceremony stays the operator's.
+
 ## ⛑⛑⛑⛑ AUGUST 8 (SEAMS EMIT OR PORT) — every `bound := none` `proofBind` is now a DECLARED PORT with a named cover or a COUNTED wound; the connectivity census counts CONSTRAINTS, not declarations
 
 The class, verified at source: `circuit/src/descriptor_ir2.rs`'s `proofBind` arm emits polynomials
@@ -192,6 +345,23 @@ working exactly as intended.
 `check_segment_binding`'s arity check (`MINA_LINK_PI_COUNT` 20 → 37) and a 40-wide trace fails
 `base row width … must equal descriptor trace_width` (40 → 57).
 
+⚑⚑ **AND THE FLAG DAY'S OWN NAMED BREAK LIST WAS SHORT BY ONE.** `piCount 20 → 37` named four Rust
+consumers *"so the break is findable rather than absent"* — `mina_link_segment_multirow.rs`,
+`mina_statehash_seam_proves.rs`, `mina_transcript_carrier_binding.rs`,
+`turn/src/executor/mina_head_verifier.rs`. There is a **fifth**:
+`circuit/tests/mina_lightclient_carrier_proves.rs`, which asserts the segment descriptor's arity in
+TWO places and builds a 2-row segment trace at the old 40-wide layout. It was found by RUNNING the
+suite, not by reading the list. **A named break list is only as good as the grep behind it** — and
+the honest generalisation is that a hand-written list of consumers is a `#guard` in prose: it
+records one author's search, and the next re-emit does not re-run it.
+
+⚠ **ONE WITNESS FIXTURE ROTATES WITH THE HEAD VK**, and it is not a descriptor:
+`circuit/tests/fixtures/mina-accumulator-head-trace.txt`, all 8 rows, columns 3059..3067
+(`HEAD_VK 0..8`) `[164314002, …]` → `[385175014, …]`. Those columns are the ones the seam's
+`vkPin` congruence CONSTRAINS, so an honest prover fills them with the pin by definition — leaving
+them stale made `the_head_chain_proves` fail on exactly nine constraints (`#1794`…`#1802`), one per
+lane, which is the shape of the diagnosis rather than a hint at it.
+
 ⚑ **ALL FOUR ARTIFACTS RE-EMITTED FROM LEAN AND INSTALLED**, none hand-edited:
 `dregg-mina-lightclient-link-v1.json` (`EmitByName`), `dregg-mina-lightclient-verify-v1.json`
 (`EmitInAirPickles`) and `mina-accumulator-head{,-genesis}.json` (`EmitMinaAccumulator desc
@@ -231,13 +401,27 @@ be built at all, behind two successive shared-tree blockers, neither this lane's
      `:187` unsolved goals, and `:280`/`:423` **axiom-hygiene FAIL … depends on non-kernel axioms
      [sorryAx]** on `advanceGateFast_eq` and `round_advance_eq_gate`.
 
-⚠ **THE COUPLING IS THE FINDING, NOT EITHER MODULE.** A consensus lane iterating on gate proofs
-takes the entire workspace's Rust test surface down with it, one incomplete module at a time, and
-nothing tells the lane that. Two candidate reliefs, neither taken here because both are that lane's
-call: keep in-progress gate modules OUT of the `Dregg2.FFI` closure until they close, or give the
-FFI gate a way to name WHICH module refused it in its own error (today it says only "a module failed
-to elaborate" and the reader has to run `lake build Dregg2.FFI` by hand to find out — this lane did,
-twice).
+   * `circuit-prove/src/seam.rs` — `include_str!` of three `circuit/descriptors/seams/*.json` that
+     did not exist yet. Since fixed by `5baf07548`.
+   * `dregg-lean-ffi/src/distributed_ffi.rs` — `#[cfg(… dregg_ack_admit_present)]`, a cfg name the
+     build script does not declare to rustc, so `unexpected cfg condition name` is a hard ERROR.
+     Both that file and `build.rs` are UNCOMMITTED; the name appears **0 times in HEAD**.
+
+⚠⚠ **THE COUPLING IS THE FINDING, NOT ANY ONE MODULE — and it is ONE LANE, FOUR TIMES IN ONE
+SESSION.** A consensus lane iterating on gate proofs and their FFI bridge takes **the entire
+workspace's Rust test surface** down with it, one incomplete artifact at a time, and nothing tells
+that lane it is doing so — the blast radius is invisible from inside it. Each block cost this lane a
+full build cycle to diagnose and re-attribute, because the failure surfaces in whatever crate
+happened to be building.
+
+Three candidate reliefs, none taken here because all are that lane's call or a shared-infra
+decision:
+  1. keep in-progress gate modules OUT of the `Dregg2.FFI` closure until they close;
+  2. make the FFI gate NAME the module that refused it — today it says only *"a module failed to
+     elaborate"* and the reader must run `lake build Dregg2.FFI` by hand (this lane did, twice);
+  3. declare every `#[cfg(dregg_*_present)]` name in `build.rs`'s `rustc-check-cfg` block at the
+     point the gate is written, not after — an undeclared cfg is a compile ERROR here, not a
+     warning, so the cheap habit is the whole fix.
 
 **Re-run once `Dregg2.FFI` elaborates:** `cargo nextest run --no-fail-fast -p dregg-circuit --test
 mina_transcript_carrier_binding --test mina_lightclient_carrier_proves --test
@@ -251,6 +435,34 @@ across `.github/workflows/`: no `go`, no `gnark`, no `chain/`. Wired as `ci.yml`
 is: a differential over committed artifacts, which detects DISAGREEMENT and never STALENESS. The
 freshness instrument is `derive_deployed_apex_vk_identity_and_check_fixture` (route `armed-dark`),
 which folds a fresh apex at HEAD — armed on 08-08 by splitting the WRITER out of it.
+
+✅ **THE SUITE IS GREEN: `ok github.com/emberian/dregg/chain/gnark 2399.439s`** — all 174 tests,
+including the eight the shape move had reddened. The Lean-emitted twin was RE-EMITTED, never
+hand-edited: `EmitJson.apexShrinkShape` moved to `rounds := 16` / `logGlobalMaxHeight := 19` with the
+new class heights and per-round widths, and `merkle_path_bn254_d18.json`, the four `inputopen_batch`
+templates, the selectors and the FRI-fold templates all re-emitted with it.
+
+⚠⚠ **AND THE FIRST RUN OF THAT NEW JOB WOULD HAVE GONE RED FOR A REASON THAT IS NOT THE CODE.**
+Go's `-timeout` defaults to **10m for the WHOLE binary** and it is a **PANIC, not a failure**: the
+run dies with a goroutine dump and NO per-test verdict for anything unfinished. Measured 2026-08-08,
+immediately after the apex-shrink fixture's shape moved (FRI rounds 15 → 16, log-height 18 → 19,
+wider opened rows): `TestEmittedVerifierFullTranscriptLinkIsLoadBearing` alone took **9m21s** and
+tripped the wall — `panic: test timed out after 10m0s` — while **every test that had already run
+had PASSED**. The suite still reported `FAIL`. Both the `ci.yml` job and the `local-gates.sh` row
+now pass `-timeout 70m` explicitly and say why, and the job's `timeout-minutes` went 45 → 90.
+**A wall-clock wall reported as a red is the worst kind of red, because it reads as the code** — and
+this one would have arrived on the very commit that wired the lane, i.e. exactly when nobody yet
+trusts the new job.
+
+⚑ **AND THE FULL MEASUREMENT MOVED THE JOB'S HOME, WHICH IS THE POINT OF MEASURING.** At **2399 s
+(40 min)** the lane cannot sit on a push trigger: this file's own header records main's median
+inter-commit gap as **92 SECONDS**, so a 40-minute job has ~26 copies of itself in flight at steady
+state, and `main` is deliberately not `cancel-in-progress` — they queue rather than supersede and
+none reaches a verdict. That is precisely the pathology the header measured as *"ZERO succeeded"*
+across 60 runs. So `gnark` carries `if: github.event_name != 'push'` like the other slow lanes
+(nightly / PR / dispatch), and the `local-gates.sh` row moved out of the everyday table into
+`GATES_ALL`. ⚠ **The first wiring of a gate is where its cadence gets decided by accident**; the
+honest order is measure, then place — not place, then discover.
 
 **⚑⚑ THE SETTLEMENT PATH ACCEPTS CHAINS OF EXACTLY ONE LENGTH, AND NOW SAYS SO.**
 `DREGG_APEX_PINNED_CHAIN_TURNS = 2` (`apex_shrink_gnark_export.rs`). The apex is not depth-invariant

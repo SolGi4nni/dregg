@@ -1,0 +1,10 @@
+# mina-finalize-scalars: the descriptor (~15 MB at 27,319 constraints) and the four 512x4461
+# traces (~9 MB each) are UNTRACKED — deterministically re-emitted by
+#   cd metatheory && lake build mina_finalize_scalars_emit
+#   ./.lake/build/bin/mina_finalize_scalars_emit ../circuit/tests/fixtures
+# The PI vectors are small and tracked. Same discipline as pasta-fq-chainlink/'s witnesses.
+mina-finalize-scalars.json
+mina-finalize-scalars-trace.txt
+mina-finalize-scalars-forged-eval-trace.txt
+mina-finalize-scalars-forged-perm-trace.txt
+mina-finalize-scalars-lct-shift-trace.txt
