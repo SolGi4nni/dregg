@@ -4,6 +4,7 @@ import {
   canonicalTableTranscript,
   createFiniteTableRun,
   submitFiniteTableAction,
+  tableRowFor,
   tableRunView,
 } from "./finite-table-runtime.js";
 
@@ -72,27 +73,77 @@ export function mountFiniteTableController(root, descriptor, options) {
   header.append(heading, reset);
 
   const brief = element("p", "poa-minigame__brief", options.brief);
-  const board = element("div", "poa-minigame__board");
-  board.setAttribute("role", options.boardRole ?? "group");
-  board.setAttribute("aria-label", options.boardLabel);
+
+  /**
+   * ⚑ ONE BOARD, OR ONE BOARD PER VERB CLASS.
+   *
+   * A game whose actions are all the same KIND of decision — six plates, five
+   * links — is one grid, and that is what every game shipped as. Artificer Logic
+   * is not: eight of its actions BUY INFORMATION and sixteen COMMIT AN ANSWER,
+   * and rendering twenty-four identical cells in one column made the only
+   * decision the game asks invisible, with a wrong answer one mis-tap away from
+   * a question. It also wants different widths — "IIB" and "no two neighbouring
+   * cogs share a metal" do not belong in the same track.
+   *
+   * `boardGroups` is therefore optional and must PARTITION the action list: every
+   * action lands on exactly one board, or the controller refuses. A verb quietly
+   * dropped from the board is a move a player cannot make and cannot see.
+   */
+  const groups = (options.boardGroups?.(descriptor) ?? [
+    { id: "all", label: options.boardLabel, columns: options.columns, actionIds: descriptor.actions.map((action) => action.id) },
+  ]).map((group) => ({ ...group, actionIds: [...group.actionIds] }));
+  const partitioned = groups.flatMap((group) => group.actionIds);
+  if (partitioned.length !== descriptor.actions.length ||
+      new Set(partitioned).size !== partitioned.length ||
+      !descriptor.actions.every((action) => partitioned.includes(action.id))) {
+    throw new TypeError(`${options.id} board groups do not partition its actions`);
+  }
+
+  const boards = element("div", "poa-minigame__boards");
+  const grids = groups.map((group) => {
+    const grid = element("div", "poa-minigame__board");
+    grid.dataset.group = group.id;
+    // ⚠ A data attribute, not `style.setProperty`. This page serves
+    // `style-src 'self'` with no `unsafe-inline`, so an inline style property is
+    // BLOCKED by the terminal's own CSP — the board would have silently fallen
+    // back to two columns on the real site while every test passed.
+    grid.dataset.columns = String(group.columns);
+    grid.setAttribute("role", options.boardRole ?? "group");
+    grid.setAttribute("aria-label", group.label);
+    // A single unnamed board needs no visible heading; two do, or the split is a
+    // gap in the layout and nothing a player can name.
+    if (groups.length > 1) {
+      const legend = element("p", "poa-minigame__board-label", group.label);
+      legend.setAttribute("aria-hidden", "true");
+      boards.append(legend);
+    }
+    boards.append(grid);
+    return grid;
+  });
   const status = element("p", "poa-minigame__status");
   status.id = `${options.id}-status`;
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
   status.setAttribute("aria-atomic", "true");
   const boundary = element("p", "poa-minigame__boundary", boundaryCopy(run));
-  shell.append(header, brief, board, status, boundary);
+  shell.append(header, brief, boards, status, boundary);
   root.replaceChildren(shell);
 
+  const groupOfAction = new Map(groups.flatMap((group, index) => group.actionIds.map((id) => [id, index])));
   const buttons = descriptor.actions.map((action, index) => {
     const button = element("button", "poa-minigame__action");
     button.type = "button";
     button.dataset.action = action.id;
     button.setAttribute("aria-describedby", status.id);
     button.tabIndex = index === rovingIndex ? 0 : -1;
-    board.append(button);
+    grids[groupOfAction.get(action.id)].append(button);
     return button;
   });
+  // Arrow keys stay INSIDE the board the focus is on, and step by that board's
+  // own column count. One roving index across a grid of 4 and a grid of 2 walks a
+  // geometry neither board has.
+  const ring = descriptor.actions.map((_, index) => index);
+  const ringOf = groups.map((group, groupIndex) => ring.filter((index) => groupOfAction.get(descriptor.actions[index].id) === groupIndex));
 
   function listen(target, event, callback) {
     target.addEventListener(event, callback);
@@ -106,10 +157,13 @@ export function mountFiniteTableController(root, descriptor, options) {
   }
 
   function moveRoving(index, key) {
-    let candidate = index;
-    for (let attempts = 0; attempts < buttons.length; attempts += 1) {
-      candidate = nextRovingIndex(candidate, key, buttons.length, options.columns);
-      if (!buttons[candidate].disabled) return setRoving(candidate, true);
+    const groupIndex = groupOfAction.get(descriptor.actions[index].id);
+    const members = ringOf[groupIndex];
+    const columns = groups[groupIndex].columns;
+    let local = members.indexOf(index);
+    for (let attempts = 0; attempts < members.length; attempts += 1) {
+      local = nextRovingIndex(local, key, members.length, columns);
+      if (!buttons[members[local]].disabled) return setRoving(members[local], true);
     }
   }
 
@@ -122,7 +176,15 @@ export function mountFiniteTableController(root, descriptor, options) {
       const detail = element("span", "poa-minigame__action-detail", presentation.detail);
       button.append(name, detail);
       button.className = `poa-minigame__action poa-minigame__action--${presentation.state}`;
-      button.disabled = Boolean(presentation.disabled || run.terminal || pending !== null);
+      // ⚑ THE TABLE DECIDES WHETHER A CONTROL IS LIVE, not the presenter. A
+      // presenter may grey a button it wants to discourage, but it may not OFFER
+      // one the emitted row refuses — that is the "nine live buttons on a doomed
+      // run" defect, and it recurred in Artificer the moment a presenter tried to
+      // work out the refusal predicate for itself. Read `verdict`; do not restate
+      // it. A missing row is also closed: `submitFiniteTableAction` refuses it.
+      const row = tableRowFor(descriptor, run, descriptor.actions[index].id);
+      const closed = !row || row.verdict === "refuse" || run.steps.length >= descriptor.actionLimit;
+      button.disabled = Boolean(presentation.disabled || closed || run.terminal || pending !== null);
       button.setAttribute("aria-label", presentation.ariaLabel);
       if (presentation.pressed === undefined) button.removeAttribute("aria-pressed");
       else button.setAttribute("aria-pressed", String(presentation.pressed));

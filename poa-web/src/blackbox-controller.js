@@ -26,8 +26,13 @@ function element(tag, className, text) {
 
 function boundaryCopy(run, descriptor) {
   if (run.mode === "practice") {
-    return `PRACTICE — this client picked instance ${run.practiceInstance} of ` +
-      `${descriptor.oracle.instanceSpace} out of the published oracle and is answering itself. ` +
+    // ⚠ THE INDEX IS NOT PRINTED. This line used to name the exact instance the
+    // client drew — "picked instance 72 of 120" — and the oracle table is
+    // PUBLISHED, so row 72 is the answer, on screen, in the game about deducing
+    // it. Every other practice boundary on the rack says which board it is
+    // playing without saying which one it drew; this one is now the same.
+    return `PRACTICE — this client drew one of the ${descriptor.oracle.instanceSpace} ` +
+      "published units for itself and is answering its own probes. " +
       "Nothing here is scored, and the real rules refuse probes this rehearsal will allow.";
   }
   return `JUDGED — slot ${run.slot}, commitment ${run.slotCommitment.slice(0, 16)}…. ` +
@@ -76,8 +81,29 @@ export function mountBlackBox(root, descriptor, options = {}) {
     `Ask whether a fragment belongs at a position. The sealed unit answers one bit and nothing else. ` +
       `Settle ${requiredPerInstance} positions within ${descriptor.actionLimit} probes.`,
   );
+  /**
+   * ⚑ THE BOARD IS A MATRIX AND WAS BEING DRAWN AS A LIST.
+   *
+   * Every probe is a (position, fragment) cell, and the entire skill of this game
+   * is reading a ROW and a COLUMN — one settled cell rules out four others in each
+   * direction. `.black-box__grid` had no column rule anywhere, so the 25 probes
+   * fell into the default two-wide stack and came out as "1·1, 1·2, 1·3, 1·4,
+   * 1·5, 2·1, …": the one structure that makes the game playable, deleted by a
+   * missing stylesheet rule. Keyboard navigation stepped by `fragmentCount`, so
+   * arrow keys were already walking the grid CSS was not drawing.
+   *
+   * It is `columns + 1` wide with a header rank and a header file, which is the
+   * `columns: 6` its presentation record has claimed all along.
+   *
+   * ⚠ `role="grid"` is GONE, not fixed. An ARIA grid requires `row` children
+   * holding `gridcell`s; this had 25 buttons as direct children, which is a grid
+   * with no rows — malformed, and announced as such. Each button's own label
+   * already names its position and fragment, so the honest markup is the same
+   * `group` every other board on the rack uses.
+   */
   const board = element("div", "poa-minigame__board black-box__grid");
-  board.setAttribute("role", "grid");
+  board.dataset.columns = String(fragmentCount + 1);
+  board.setAttribute("role", "group");
   board.setAttribute("aria-label", `${slotCount} positions by ${fragmentCount} fragments`);
   const status = element("p", "poa-minigame__status");
   status.id = "black-box-status";
@@ -88,7 +114,19 @@ export function mountBlackBox(root, descriptor, options = {}) {
   shell.append(header, brief, board, status, boundary);
   root.replaceChildren(shell);
 
+  // The header rank. Purely a reading aid over labels each button already
+  // carries, so it is hidden from the accessibility tree rather than repeated
+  // into it 25 more times.
+  function headerCell(text) {
+    const cell = element("span", "black-box__header", text);
+    cell.setAttribute("aria-hidden", "true");
+    board.append(cell);
+  }
+  headerCell("");
+  for (let fragment = 0; fragment < fragmentCount; fragment += 1) headerCell(`f${fragment + 1}`);
+
   const buttons = probes.map((probe, index) => {
+    if (probe.fragment === 0) headerCell(`p${probe.slot + 1}`);
     const button = element("button", "poa-minigame__action");
     button.type = "button";
     button.dataset.probe = probe.id;

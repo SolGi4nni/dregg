@@ -208,8 +208,15 @@ test("a practice grid says PRACTICE and answers itself", () => {
     assert.equal(controller.getRun().settled, 1);
     const boundary = all(root).find((node) => node.className?.includes("boundary"));
     assert.match(boundary.textContent, /PRACTICE/);
-    assert.match(boundary.textContent, /answering itself/);
+    assert.match(boundary.textContent, /answering its own probes/);
     assert.match(boundary.textContent, /real rules refuse probes this rehearsal will allow/);
+    // ⚑ AND IT DOES NOT NAME THE UNIT IT DREW. This line used to print "picked
+    // instance 72 of 120"; the oracle table is published, so that names row 72 —
+    // the answer — on the screen of the game about deducing it. The rest of this
+    // file is careful that no CELL narrows the instance beyond the answers
+    // received, and the boundary copy underneath was giving it away outright.
+    assert.doesNotMatch(boundary.textContent, /instance \d/);
+    assert.doesNotMatch(boundary.textContent, new RegExp(`\\b${controller.getRun().practiceInstance}\\b(?!\\d)`));
   });
 });
 

@@ -1,3 +1,35 @@
+/* ⚑ `--ink` MEANS THE OPPOSITE THING IN THE TWO STYLESHEETS THIS FILE LOADS WITH,
+   and the collision was invisible for as long as nobody looked at the board.
+
+   This file was written beside `labs/*.css`, where `--ink: #e4ede8` is the page's
+   FOREGROUND. `index.html` loads it beside `styles.css`, where `--ink: #10201f`
+   is the dark text that sits ON a mint button. So on the real terminal every
+   action button's primary label — the law, the link, the plate, the verb —
+   rendered #10201f on a #0d1e1f panel: contrast 1.02:1, invisible, while the
+   secondary `--dim` detail line under it stayed perfectly readable. The
+   information hierarchy was not merely poor, it was inverted, on four games at
+   once (Relay, Salvage, Artificer, Deck Descent) and on Vent Crawl's verbs.
+
+   Nothing was broken: `var(--ink, #d7e7df)` reads fine in the standalone
+   `tests/mission-launch-browser.html`, which defines no tokens at all and takes
+   the fallback. A shared token name is not a shared meaning, so this file now
+   declares ONE foreground token of its own and every rule reads that. */
+/* The same argument applies to the other three. `--signal`, `--ok` and `--warn`
+   are the LABS' names and the terminal defines none of them, so every board here
+   was drawing its "here", "cleared" and "flooded" marks in a palette the page
+   around it does not use — a second amber and a second green, three degrees off,
+   which reads as a rendering fault rather than as a house style. Each local token
+   prefers the terminal's own colour and keeps the lab value as the fallback, so
+   the standalone harness is unchanged and the board joins the room it is in. */
+.poa-minigame,
+.vent-crawl {
+  --poa-minigame-fg: var(--text, #d7e7df);
+  --poa-minigame-mark: var(--amber, #d6a95a);
+  --poa-minigame-ok: var(--mint, #58b894);
+  --poa-minigame-warn: var(--red, #d98a72);
+  --poa-minigame-focus: var(--acid, #d6a95a);
+}
+
 .poa-minigame {
   display: grid;
   gap: 1rem;
@@ -27,14 +59,82 @@
   margin: 0.2rem 0 0;
 }
 
+.poa-minigame__boards {
+  display: grid;
+  gap: 1.1rem;
+}
+
+/* The column count is the one the CONTROLLER navigates by. It used to be set
+   here and passed there separately, and Artificer's disagreed: arrow keys
+   stepped by 4 down a grid CSS was rendering 2 wide, so ArrowDown moved two rows
+   for anyone playing by keyboard. One source now — the controller writes
+   `data-columns` and these rules read it, so the two cannot drift again. */
 .poa-minigame__board {
   display: grid;
   gap: 0.65rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.salvage-lock .poa-minigame__board {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.poa-minigame__board[data-columns="1"] { grid-template-columns: minmax(0, 1fr); }
+.poa-minigame__board[data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.poa-minigame__board[data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.poa-minigame__board[data-columns="5"] { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.poa-minigame__board[data-columns="6"] { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.poa-minigame__board[data-columns="7"] { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.poa-minigame__board[data-columns="8"] { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+
+.poa-minigame__board-label {
+  margin: 0;
+  color: var(--dim, #809b97);
+  font: 700 0.72rem/1.4 ui-monospace, monospace;
+  letter-spacing: 0.08em;
+}
+
+/* The verb that ENDS the run is not drawn like the verbs that continue it. */
+.poa-minigame__board[data-group="manual"] .poa-minigame__action--live {
+  border-left: 3px solid var(--poa-minigame-mark);
+}
+
+/* Black Box's 5x5 matrix, with a header rank and file. The cells are square-ish
+   and centred because what a player reads here is the SHAPE of what is settled,
+   not the text in any one cell. */
+.black-box__grid {
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.black-box__header {
+  color: var(--dim, #809b97);
+  font: 700 0.7rem/1 ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.black-box__grid .poa-minigame__action {
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.5rem 0.35rem;
+  text-align: center;
+}
+
+.black-box__grid .poa-minigame__action-detail {
+  font-size: 0.66rem;
+}
+
+/* A settled cell rules out its whole rank and file, so it is the one mark on
+   this board that has to carry across the grid at a glance. */
+.black-box__grid .poa-minigame__action--settled {
+  border-color: var(--poa-minigame-ok);
+  box-shadow: inset 0 0 0 1px var(--poa-minigame-ok);
+}
+
+.black-box__grid .poa-minigame__action--excluded {
+  border-style: dashed;
+  color: var(--dim, #809b97);
+}
+
+.black-box__grid .poa-minigame__action--refused {
+  border-color: var(--poa-minigame-warn);
 }
 
 .poa-minigame__action,
@@ -47,7 +147,7 @@
   align-items: start;
   background: color-mix(in srgb, var(--panel, #112124) 88%, transparent);
   border: 1px solid var(--line, #36504d);
-  color: var(--ink, #d7e7df);
+  color: var(--poa-minigame-fg);
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -58,7 +158,7 @@
 
 .poa-minigame__action:focus-visible,
 .poa-minigame__reset:focus-visible {
-  outline: 3px solid var(--signal, #d6a95a);
+  outline: 3px solid var(--poa-minigame-focus);
   outline-offset: 3px;
 }
 
@@ -74,12 +174,12 @@
 
 .poa-minigame__action--installed,
 .poa-minigame__action--cleared {
-  border-color: var(--ok, #58b894);
+  border-color: var(--poa-minigame-ok);
 }
 
 .poa-minigame__action--exposed {
-  border-color: var(--signal, #d6a95a);
-  box-shadow: inset 0 0 0 1px var(--signal, #d6a95a);
+  border-color: var(--poa-minigame-mark);
+  box-shadow: inset 0 0 0 1px var(--poa-minigame-mark);
 }
 
 .poa-minigame__action:disabled {
@@ -113,13 +213,9 @@
 .deck-descent .poa-minigame__header { order: 1; }
 .deck-descent .poa-minigame__brief { order: 2; }
 .deck-descent .descent-shaft { order: 3; }
-.deck-descent .poa-minigame__board { order: 4; }
+.deck-descent .poa-minigame__boards { order: 4; }
 .deck-descent .poa-minigame__status { order: 5; }
 .deck-descent .poa-minigame__boundary { order: 6; }
-
-.deck-descent .poa-minigame__board {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
 
 .descent-shaft {
   display: grid;
@@ -145,7 +241,7 @@
 }
 
 .descent-shaft__reading {
-  color: var(--signal, #d6a95a);
+  color: var(--poa-minigame-mark);
   font: 700 0.7rem/1.4 ui-monospace, monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -159,13 +255,13 @@
 
 /* Where the body is. The only positional cue on the map, so it is not subtle. */
 .descent-shaft__node[data-here="true"] {
-  border-left-color: var(--signal, #d6a95a);
-  box-shadow: inset 0 0 0 1px var(--signal, #d6a95a);
+  border-left-color: var(--poa-minigame-mark);
+  box-shadow: inset 0 0 0 1px var(--poa-minigame-mark);
 }
 
 /* A passage that has read flooded. It has already cost a body; it says so. */
 .descent-shaft__node[data-cold="true"] .descent-shaft__reading {
-  color: var(--warn, #d98a72);
+  color: var(--poa-minigame-warn);
 }
 
 /* ⚑ A doomed run's map goes cold rather than staying inviting. The status line
@@ -226,13 +322,13 @@
 }
 
 .vent-crawl__rung[data-passed="true"] {
-  border-color: var(--ok, #58b894);
+  border-color: var(--poa-minigame-ok);
   opacity: 0.75;
 }
 
 .vent-crawl__rung[data-here="true"] {
-  border-color: var(--signal, #d6a95a);
-  box-shadow: inset 0 0 0 1px var(--signal, #d6a95a);
+  border-color: var(--poa-minigame-mark);
+  box-shadow: inset 0 0 0 1px var(--poa-minigame-mark);
 }
 
 .vent-crawl__rung-index {
@@ -246,7 +342,7 @@
 }
 
 .vent-crawl__rung-pay {
-  color: var(--ok, #58b894);
+  color: var(--poa-minigame-ok);
   font-size: 0.72rem;
 }
 
@@ -272,7 +368,7 @@
   align-items: start;
   background: color-mix(in srgb, var(--panel, #112124) 88%, transparent);
   border: 1px solid var(--line, #36504d);
-  color: var(--ink, #d7e7df);
+  color: var(--poa-minigame-fg);
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -282,16 +378,16 @@
 }
 
 .vent-crawl__verb--crawl:not(:disabled) {
-  border-color: var(--signal, #d6a95a);
+  border-color: var(--poa-minigame-mark);
 }
 
 .vent-crawl__verb--bank:not(:disabled) {
-  border-color: var(--ok, #58b894);
+  border-color: var(--poa-minigame-ok);
 }
 
 .vent-crawl__verb:focus-visible,
 .vent-crawl__reset:focus-visible {
-  outline: 3px solid var(--signal, #d6a95a);
+  outline: 3px solid var(--poa-minigame-focus);
   outline-offset: 3px;
 }
 
@@ -311,11 +407,11 @@
 }
 
 .vent-crawl__verb-risk {
-  color: var(--signal, #d6a95a);
+  color: var(--poa-minigame-mark);
 }
 
 .vent-crawl__verb-prize {
-  color: var(--ok, #58b894);
+  color: var(--poa-minigame-ok);
 }
 
 .vent-crawl__verb-stake {

@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { mountArtificerLogic } from "../src/artificer-controller.js";
+import { mountDeckDescent } from "../src/descent-controller.js";
 import { mountRelayRepair } from "../src/relay-controller.js";
 import { mountSalvageLock } from "../src/salvage-controller.js";
 import { nextRovingIndex } from "../src/finite-table-controller.js";
+import { artificerPracticeOracle } from "../src/artificer-runtime.js";
+import { descentPracticeOracle } from "../src/descent-runtime.js";
 import { salvagePracticeOracle } from "../src/salvage-runtime.js";
+import {
+  TableOracleQuery, TableTransitionRefusal, submitFiniteTableAction,
+} from "../src/finite-table-runtime.js";
 import { canonicalDescriptors } from "./canonical-descriptors.mjs";
 
 class FakeElement {
@@ -147,6 +154,62 @@ test("a Salvage practice session answers itself and says PRACTICE on screen", as
     assert.match(boundary.textContent, /PRACTICE/);
     assert.match(boundary.textContent, /nothing here is scored/);
   });
+});
+
+/**
+ * ⚑ A CONTROL IS ENABLED EXACTLY WHEN THE TABLE WILL TAKE IT.
+ *
+ * Deck Descent shipped the failure this holds shut: a doomed run drew nine live
+ * buttons and every one of them refused. Artificer Logic had it twice over — a
+ * charge every surviving law agrees on, and a law the evidence has ruled out —
+ * and its `spent` state had no rendering, so a dead control looked live.
+ *
+ * The other direction is checked too, and matters more: a control DISABLED for a
+ * move the table would have accepted is a legal move the player cannot make and
+ * cannot see. Enabling is presentation; refusing is the emitted table's; this
+ * asks both and compares, which is the only way either answer is worth anything.
+ */
+async function noDeadControls(mount, descriptor, session, steps) {
+  withFakeDocument(() => {
+    const root = new FakeElement("div");
+    const controller = mount(root, descriptor, { session });
+    const buttons = () => all(root).filter((node) => node.tagName === "BUTTON" && node.dataset.action);
+    for (let step = 0; step <= steps; step += 1) {
+      const run = controller.getRun();
+      if (run.terminal) {
+        assert.ok(buttons().every((button) => button.disabled), "a terminal run must offer no live control");
+        return;
+      }
+      for (const button of buttons()) {
+        let refused = false;
+        try {
+          submitFiniteTableAction(descriptor, run, button.dataset.action, null);
+        } catch (error) {
+          // An oracle query is the table ASKING, not refusing: the move is legal.
+          if (error instanceof TableTransitionRefusal) refused = true;
+          else if (!(error instanceof TableOracleQuery)) throw error;
+        }
+        assert.equal(
+          button.disabled, refused,
+          `${descriptor.gameId}: ${button.dataset.action} is ${button.disabled ? "disabled" : "enabled"} and the table ${refused ? "refuses" : "accepts"} it`,
+        );
+      }
+      const live = buttons().find((button) => !button.disabled);
+      if (!live) return;
+      live.dispatch("click");
+    }
+  });
+}
+
+test("no finite-table game offers a control its emitted table refuses", async () => {
+  const { artificer, descent, relay, salvage } = await canonicalDescriptors();
+  await noDeadControls(mountArtificerLogic, artificer,
+    { mode: "practice", member: 0, oracle: artificerPracticeOracle(artificer, 0) }, 4);
+  await noDeadControls(mountDeckDescent, descent,
+    { mode: "practice", member: 0, oracle: descentPracticeOracle(descent, 0) }, 9);
+  await noDeadControls(mountRelayRepair, relay, { mode: "practice", member: 3 }, 3);
+  await noDeadControls(mountSalvageLock, salvage,
+    { mode: "practice", member: 0, oracle: salvagePracticeOracle(salvage, 0) }, 6);
 });
 
 test("minigame controls retain touch targets, focus visibility, and mobile layout", async () => {

@@ -148,10 +148,20 @@ export function mountVentCrawl(root, descriptor, callbacks = {}) {
         `Bottom rung pays out at ${vein.carry[descriptor.depthCap]}.`;
       return;
     }
-    day.textContent =
-      `Today could still be ${possible.map(veinName).join(" or ")} — ` +
-      `${possible.length} of ${descriptor.veins.length} days still fit what you have ` +
-      `pulled.`;
+    // ⚠ NOT `join(" or ")`. Four of the eight display names carry a comma of
+    // their own ("Barren, pocket at the bottom"), so an or-joined run read as
+    // "Barren or Barren, pocket at the bottom or Patchy or Patchy, pocket at the
+    // bottom or …" — sixteen ambiguous clauses where there were eight names. A
+    // middle dot separates names that contain punctuation; the words say what the
+    // list is.
+    // And the state a player actually reads for is the NARROWING. Naming all
+    // eight ladders when all eight still fit is the longest line on the screen at
+    // the moment it carries the least — every run opens there, and on a phone it
+    // pushed the two verbs below the fold. The list appears when it means
+    // something: when something has been ruled out.
+    day.textContent = possible.length === descriptor.veins.length
+      ? `Nothing pulled yet rules out any of the ${descriptor.veins.length} ladders the shaft could be paying today.`
+      : `${possible.length} of ${descriptor.veins.length} ladders still fit what you have pulled: ${possible.map(veinName).join(" · ")}`;
   }
 
   function render() {

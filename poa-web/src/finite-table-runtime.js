@@ -581,6 +581,25 @@ export class TableOracleQuery extends Error {
  * defers to the hidden instance, and is refused otherwise — a client that could
  * volunteer an answer to a determined row could steer the run.
  */
+/**
+ * The emitted row for a run's current state and one action, or `undefined`.
+ *
+ * ⚑ THIS IS HOW A CONTROLLER LEARNS A MOVE IS CLOSED, and the only honest way.
+ * `artificer-controller.js` briefly re-derived "this charge buys nothing" from
+ * the manual and disabled on that; it was right about two of the three ways the
+ * table refuses a charge and silently wrong about the third (`no-charges-left`),
+ * which left eight dead buttons on the board at the end of every run. A client
+ * that re-derives a refusal predicate is authoring the rule, and it will author a
+ * subset of it. The table already decided; read it.
+ */
+export function tableRowFor(descriptor, run, actionId) {
+  // ⚠ `machineFor`, not `memberOf`: an oracle-only game plays ONE emitted machine
+  // and its practice `member` names the hidden instance the rehearsal chose, not
+  // a machine key. Resolving it as a member refuses every oracle-only game.
+  const member = machineFor(descriptor, run);
+  return member.transitions.find((transition) => transition.state === run.stateId && transition.action === actionId);
+}
+
 export function submitFiniteTableAction(descriptor, run, actionId, resolution = null) {
   const member = validateRun(descriptor, run);
   refuse(!run.terminal, "table-run-terminal", "table transcript is already terminal");
