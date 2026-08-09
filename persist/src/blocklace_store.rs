@@ -234,9 +234,27 @@ impl PersistentStore {
 
     /// Restore a complete blocklace from persisted state.
     ///
-    /// Loads all blocks and metadata, then reconstructs the blocklace using
-    /// `Blocklace::from_checkpoint()`. This trusts the persisted data (no
-    /// signature re-verification) since it came from our own local store.
+    /// Loads all blocks and metadata, then reconstructs the blocklace using the
+    /// AUTHENTICATING `Blocklace::from_checkpoint()`: every block's Ed25519
+    /// signature is re-verified, causal closure is enforced (a dangling
+    /// predecessor refuses the whole restore), equivocation is re-derived, and
+    /// tips are re-derived from the authenticated blocks rather than copied
+    /// from metadata. The persisted `equivocators` set is folded in only as a
+    /// LOWER bound — an offline tamper of the metadata can never UN-flag a
+    /// creator whose evidence pair is still in the blocks.
+    ///
+    /// ⚑ Until 2026-08-08 this used `from_checkpoint_trusted` on the grounds
+    /// that "it came from our own local store". That justification contradicts
+    /// the node's own recovery threat model: the NODE-1 signed-anchor exists
+    /// precisely because an offline attacker with write access to this redb can
+    /// rewrite it. The restart path must not trust what the running path
+    /// verifies. What this still does NOT re-check (and why): the ML-DSA half
+    /// of each block (the enrolled PQ roster is derived from committee state
+    /// that is itself derived from this lace — checking it here would be
+    /// circular; the ed25519 half plus the hybrid `creator` commitment carries
+    /// the binding, and only a quantum adversary WITH store write access beats
+    /// it), and the ordering/attested frontier (asserted; bounded by the
+    /// NODE-1 root convergence and the commit-log identity cursor).
     ///
     /// Returns `None` if no blocks have been persisted (fresh start).
     pub fn load_blocklace(
@@ -270,13 +288,13 @@ impl PersistentStore {
                 .unwrap_or_default(),
         };
 
-        // Local-disk provenance: this checkpoint was written by THIS node and its
-        // integrity is the persistence layer's responsibility, so we use the
-        // trusted (no-reauth) loader. A network/peer-supplied checkpoint must
-        // instead use the authenticating `Blocklace::from_checkpoint`.
-        let blocklace =
-            Blocklace::from_checkpoint_trusted(&checkpoint, signing_key, quorum_threshold)
-                .map_err(StoreError::Integrity)?;
+        // AUTHENTICATE on restore. Local-disk provenance is not an integrity
+        // boundary (the NODE-1 anchor's own threat model: an offline attacker
+        // can write this redb), so the restart path runs the same signature +
+        // closure + equivocation checks the live receive path runs. A refusal
+        // here is a STORE INTEGRITY EVENT and the node must not start on it.
+        let blocklace = Blocklace::from_checkpoint(&checkpoint, signing_key, quorum_threshold)
+            .map_err(StoreError::Integrity)?;
 
         Ok(Some((blocklace, executed_up_to)))
     }
@@ -292,6 +310,141 @@ impl PersistentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn key(seed: u8) -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+    }
+
+    /// A small honest lace persisted the way the node persists it (blocks
+    /// individually + meta blob).
+    fn persist_honest_lace(store: &PersistentStore, sk: &ed25519_dalek::SigningKey) -> Blocklace {
+        let mut lace = Blocklace::new(sk.clone(), 1);
+        lace.add_block(dregg_blocklace::finality::Payload::Ack);
+        lace.add_block(dregg_blocklace::finality::Payload::Ack);
+        lace.add_block(dregg_blocklace::finality::Payload::Ack);
+        let blocks: Vec<Block> = lace.iter().map(|(_, b)| b.clone()).collect();
+        store.persist_blocks(&blocks).expect("persist blocks");
+        let cp = lace.checkpoint();
+        store
+            .persist_blocklace_meta(&BlocklaceMeta {
+                tips: cp.tips.clone(),
+                equivocators: cp.equivocators.clone(),
+                ordered_block_ids: cp.ordered_block_ids.clone(),
+                attested_block_ids: cp.attested_block_ids.clone(),
+            })
+            .expect("persist meta");
+        lace
+    }
+
+    /// HONEST POLE: a restart over an untampered store restores the same lace
+    /// through the AUTHENTICATING loader (every block re-verified).
+    #[test]
+    fn honest_restart_restores_through_authentication() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        let sk = key(7);
+        let lace = persist_honest_lace(&store, &sk);
+        let (restored, _) = store
+            .load_blocklace(sk, 1)
+            .expect("load")
+            .expect("blocks were persisted");
+        assert_eq!(restored.len(), lace.len(), "every honest block restores");
+        assert_eq!(restored.tips(), lace.tips(), "tips re-derive identically");
+    }
+
+    /// ⚑ CORRUPTED-CHECKPOINT POLE: a forged block in the store (valid shape,
+    /// signature that does NOT verify — what an offline attacker with redb
+    /// write access plants) REFUSES the whole restart. Until 2026-08-08 the
+    /// restart path used `from_checkpoint_trusted` and this block sailed into
+    /// the restored DAG unverified.
+    #[test]
+    fn forged_block_in_store_refuses_restart() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        let sk = key(7);
+        persist_honest_lace(&store, &sk);
+
+        // The mutation: an honestly-created block whose payload is altered
+        // AFTER signing (the signature no longer covers the content).
+        let mut forged = Block::new(
+            &key(9),
+            0,
+            dregg_blocklace::finality::Payload::Ack,
+            Vec::new(),
+        );
+        forged.payload = dregg_blocklace::finality::Payload::Checkpoint {
+            root: [0xEE; 32],
+            height: 99,
+        };
+        // ASSERT THE MUTATION IS PRESENT before reading the verdict: the
+        // forged block genuinely fails authentication on its own.
+        assert!(
+            forged.verify_signature().is_err(),
+            "the falsifier must be live: the tampered block's signature must not verify"
+        );
+        store.persist_block(&forged).expect("attacker writes the row");
+
+        // `expect_err` is unavailable here: the Ok payload is `(Blocklace, usize)`
+        // and `Blocklace` is not `Debug`. Match, so the refusal is read explicitly.
+        let err = match store.load_blocklace(key(7), 1) {
+            Err(e) => e,
+            Ok(_) => panic!("a store carrying a forged block must REFUSE the restart"),
+        };
+        assert!(
+            format!("{err}").contains("signature"),
+            "the refusal names the failed authentication: {err}"
+        );
+    }
+
+    /// ⚑ EQUIVOCATOR-UNFLAG POLE (the `auto_evict` reversion class): the store
+    /// holds a creator's incomparable pair (real, signed equivocation
+    /// evidence) while the persisted metadata claims NO equivocators — the
+    /// mutation an attacker (or a stale meta write) uses to launder a fork
+    /// through a restart. The authenticating loader re-DERIVES equivocation
+    /// from the blocks, so the flag comes back.
+    #[test]
+    fn cleared_equivocator_meta_cannot_unflag_on_restart() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        let sk = key(7);
+        persist_honest_lace(&store, &sk);
+
+        // A genuine equivocation: same creator, same seq, different payloads,
+        // neither in the other's past.
+        let eq = key(11);
+        let a = Block::new(&eq, 0, dregg_blocklace::finality::Payload::Ack, Vec::new());
+        let b = Block::new(
+            &eq,
+            0,
+            dregg_blocklace::finality::Payload::Checkpoint {
+                root: [0xAA; 32],
+                height: 0,
+            },
+            Vec::new(),
+        );
+        assert!(
+            a.verify_signature().is_ok() && b.verify_signature().is_ok(),
+            "both halves of the pair are REAL signed blocks"
+        );
+        assert_eq!(a.creator, b.creator);
+        store.persist_blocks(&[a.clone(), b.clone()]).expect("persist the pair");
+        // ASSERT THE MUTATION: the persisted meta names NO equivocators.
+        let meta = store
+            .load_blocklace_meta()
+            .expect("meta")
+            .expect("meta present");
+        assert!(
+            meta.equivocators.is_empty(),
+            "the falsifier must be live: the meta claims a clean creator set"
+        );
+
+        let (restored, _) = store
+            .load_blocklace(key(7), 1)
+            .expect("load")
+            .expect("blocks present");
+        assert!(
+            restored.equivocators().contains(&a.creator),
+            "restart re-derives the equivocation from the blocks — cleared metadata \
+             cannot un-flag a creator whose evidence pair is persisted"
+        );
+    }
 
     /// The executed-block identity set round-trips (the durable resume state of
     /// the node's identity execution cursor — TauPrefixMonotone closure), and a
