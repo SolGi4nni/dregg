@@ -103,6 +103,13 @@ import Dregg2.Games.PathOfAngels.StationCrateOpenRuntime
 -- was being COMPILED INTO THE ARCHIVE ALL ALONG and exported nothing — the dark-organ shape
 -- this file's header describes, costing its full compile time and offering no symbol. Only
 -- the admission module is new.
+-- ⚑ 2026-08-09 — the SAME module now carries a SECOND export,
+-- `dregg_poa_crew_field_seat_preimage`, and no further import: the paragraph above described
+-- the step read as the thing a client could not otherwise get, and that was true and
+-- incomplete. `stepWire` will not answer until the caller presents the seat's ML-DSA-65
+-- SEAT-ADMISSION envelope, and NOTHING emitted the bytes of that envelope — so the organ had
+-- a handoff surface and no way to take the first seat, and the twin this import exists to
+-- prevent was still forced on any client, one move earlier in the run.
 import Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission
 import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime

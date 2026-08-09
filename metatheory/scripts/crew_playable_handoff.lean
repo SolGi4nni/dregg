@@ -1,47 +1,31 @@
 /-
-# crew_playable_handoff — the PoA crew field mission's handoff, driven end to end
+# crew_playable_handoff — the PoA crew field mission, driven end to end through BOTH exports
 
-⚑ **WHAT THIS EXISTS TO SHOW.**  `@[export dregg_poa_crew_field_step]` landed on 2026-08-07
-(`ca986ccfd`) and the C bridge in `7497a9dcb`, and the organ was written up as needing only "a
-Rust FFI arm, a route, a store and a client".  It needs one thing UPSTREAM of all four, and this
-script is how that was measured:
+⚑ 2026-08-09.  This drives the ADMITTED crew — `CrewFieldMissionAdmission.admittedRaw`, the
+module's own demonstration world — through the two `@[export]`s in the order a player would:
 
-* `CrewFieldMissionAdmission.admittedRawConfig` — the module's own admitted world — carries
-  `CrewRelayExpedition.fixtureRoster`, whose player keys are `digestFilled 10..13`
-  (`0a0a0a…`, `0b0b0b…`).  It also names the PRODUCTION signing suite, whose `verifySeat`
-  demands `SHAKE256(publicKey, 32) = playerKey`.  **No ML-DSA-65 public key digests to
-  `0a0a0a…`**, so no seat of that world can ever be authenticated and `stepWire` over it is the
-  `""` refusal for every input.  MEASURED: mint succeeds, step refuses.
-* The organ IS reachable — but only for a roster of REAL ML-DSA-65 keys, and only for a caller
-  who already knows the SEAT-ADMISSION preimage bytes.  Nothing exports those.  `stepWire` hands
-  a client the HANDOFF preimage and tells it to "sign THESE BYTES"; the seat-admission preimage,
-  which a seat must sign FIRST to be admitted at all, has no export and no route.  A browser
-  that re-encoded it would be building the very body the module forbids clients to build.
-  **That is the gap, and it is a Lean gap, not a plumbing gap.**
+1. `dregg_poa_crew_field_seat_preimage` (`seatPreimageWire`) — world + manifest + seat index in,
+   the canonical `POA-CREW-SEAT-SIGNING-1` bytes that seat must sign out.  This is the ENTRY
+   POINT; before it landed there was no way to take a seat at all.
+2. the seat signs those bytes under `POA-CREW-SEAT-MLDSA65-1` (real `fips204` 0.4.6);
+3. `dregg_poa_crew_field_step` (`stepWire`) — that admission envelope plus the transcript so far
+   in, the exact `POA-CREW-HANDOFF-SIGNING-1` bytes out;
+4. the seat signs THOSE under `POA-CREW-HANDOFF-MLDSA65-1`, and the trace built from them is one
+   the kernel replays;
+5. step again with the transcript one entry longer — and the answer is the NEXT seat's preimage.
+   That is the handoff: one seat's signed action becoming the next seat's starting state.
 
-So this script authors a crew that CAN play: seats 0 and 1 hold the two real ML-DSA-65 keypairs
-already pinned in `CrewSigningVectors` (xi seeds `POA-CREW-KAT-SEAT0-XI-SEED-0001!` and
-`POA-CREW-KAT-WRONG-XI-SEED-0002!`).  ⚠ Both secrets are derivable by anyone from those seeds.
-This crew is TEST material and must never be deployed — same status as the KAT crew.
+⚠ **TEST MATERIAL.**  All four of the admitted crew's secret keys are derivable by anyone from
+the xi seeds pinned beside the roster in `CrewFieldMissionAdmission.lean`.  This crew exists so
+the accepting pole of the organ is checkable and for no other purpose; never deploy it.
 
-## Measured 2026-08-09, through the real `@[export]` (`stepWire`), on this tree
+## What this replaced
 
-```
-playable mint succeeds        : true
-seat0 admission message bytes : 6202      seat1 admission message bytes : 6202
-[step ] envelope 34743 bytes -> answer 13770 bytes
-        sequence 0, next_seat 0, next_counter 11, budget 13
-        seat 0 handoff preimage: 12343 bytes
-[step2] transcript = [seat 0 signed handoff] -> answer 51553 bytes
-        sequence 1, next_seat 1, next_counter 21, budget 12
-        the pre_root seat 1 signs carries seat 0's trace, seat 0's counter 10 -> 11
-[REFUSE wrong-seat envelope]  mutation present: true   answer length: 0
-[REFUSE tampered signature]   mutation present: true   answer length: 0
-[REFUSE forged trace sig]     mutation present: true   answer length: 0
-```
-
-That is the handoff: one seat's signed action becoming the next seat's starting state, with
-every byte either emitted or judged by Lean.
+The first version of this script authored a SEPARATE "playable" crew, because the admitted crew
+could not play: its roster carried `digestFilled 10..13` against a production `verifySeat` that
+demands `SHAKE256(publicKey, 32) = playerKey`, so it minted, was admitted, and refused every
+step.  That is fixed at the source now — the admitted roster is four real ML-DSA-65 keys — so
+this script drives the real fixture instead of a twin of it beside the real fixture.
 
 ## Running it
 
@@ -54,16 +38,17 @@ crewsign seat0 handoff <dir>/handoff0_msg.hex  <dir>/handoff0_env.hex
 lake env lean --run scripts/crew_playable_handoff.lean step2 <dir>
 ```
 
-`crewsign` is the `crew-kat-gen` harness of `CrewSigningVectors` with one subcommand shape —
-`<seat0|seat1> <seat|handoff> <msg.hex> <out_env.hex>` — reading the Lean-emitted message and
-writing `publicKey ‖ signature` (1952 + 3309 = 5261 bytes), the envelope the Lean production
-verifier splits.  Its `Cargo.toml` is `fips204 = "0.4.6"`, `rand_core = "0.6"`; its body is the
-generator reproduced at the bottom of `Dregg2/Games/PathOfAngels/CrewSigningVectors.lean` with
-`main` replaced by:
+`crewsign` is the `crew-kat-gen` harness of `CrewSigningVectors` — same `fips204 = "0.4.6"` /
+`rand_core = "0.6"` Cargo.toml, same `KatRng`, same contexts — with `main` taking
+`<seat0|seat1|seat2|seat3> <seat|handoff> <msg.hex> <out_env.hex>`, four xi seeds
+(`POA-CREW-KAT-SEAT0-XI-SEED-0001!`, `POA-CREW-KAT-WRONG-XI-SEED-0002!`,
+`POA-CREW-ADMITTED-SEAT2-XI-0003!`, `POA-CREW-ADMITTED-SEAT3-XI-0004!`), and a body that reads
+the Lean-emitted message and writes `publicKey ‖ signature` (1952 + 3309 = 5261 bytes) — the
+envelope the Lean production verifier splits:
 
 ```rust
-let (which, ctxname, msgpath, outpath) = (&a[1], &a[2], &a[3], &a[4]);
-let xi = if which == "seat0" { SEAT0_XI } else { WRONG_XI };
+let xi = match which.as_str() {
+    "seat0" => SEAT0_XI, "seat1" => WRONG_XI, "seat2" => SEAT2_XI, _ => SEAT3_XI };
 let (pk, sk) = ml_dsa_65::KG::keygen_from_seed(xi);
 let ctx: &[u8] = if ctxname == "seat" { CTX_SEAT } else { CTX_HANDOFF };
 let msg = unhex(&std::fs::read_to_string(msgpath).unwrap());
@@ -73,17 +58,17 @@ let mut env = pk.into_bytes().to_vec(); env.extend_from_slice(&sig);
 std::fs::write(outpath, hex(&env)).unwrap();
 ```
 
-⚠ This is a GENERATOR, not a proof.  It runs the real export over real signatures and prints what
-comes back; it pins nothing and asserts nothing to the kernel.  The named-theorem version of the
-reachability fact wants the three envelopes pinned as vectors beside `CrewSigningVectors`.
+⚠ This is a GENERATOR, not a proof.  It runs the real exports over real signatures and prints
+what comes back; it pins nothing.  The accepting poles that a GATE checks are the
+`native_decide` pins in `CrewFieldMissionAdmissionFixtures.lean`
+(`the_entry_point_answers_for_every_admitted_seat` and its siblings).  ⚑ STILL OWED: the three
+signature envelopes this produces, pinned as vectors beside `CrewSigningVectors`, so that the
+HANDOFF itself — not just the preimage emission — is a named theorem rather than a run I did.
 -/
 import Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission
 
 open Dregg2.Games.PathOfAngels
 open Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission
-
-namespace Playable
-
 
 def hexOf (bytes : List UInt8) : String :=
   String.join (bytes.map fun b =>
@@ -114,134 +99,57 @@ def bytesOfHex? (s : String) : Option (List UInt8) :=
     | _ => none
   go cs
 
-/-! ### The roster: seat 0 and seat 1 hold REAL ML-DSA-65 keypairs.
-
-Seat 0's key is `CrewSigningVectors.katSeat0PublicKey` (xi = `POA-CREW-KAT-SEAT0-XI-SEED-0001!`)
-and seat 1's is `katWrongPublicKey` (xi = `POA-CREW-KAT-WRONG-XI-SEED-0002!`).  Both secrets are
-derivable by anyone from the pinned seeds; this crew is TEST material and must never be deployed. -/
-
-def seat0Key : Digest32 := CrewFieldMission.ProductionSigning.katPlayerKey
-
-def seat1Key : Digest32 :=
-  (CrewFieldMission.ProductionSigning.shakeDigest32? CrewSigningVectors.katWrongPublicKey.toList).getD
-    (CrewFieldMission.digestFilled 0xEE)
-
-def pSeat0 : CrewRelayExpedition.Seat :=
-  { CrewRelayExpedition.fixtureSeat0 with playerKey := seat0Key }
-def pSeat1 : CrewRelayExpedition.Seat :=
-  { CrewRelayExpedition.fixtureSeat1 with playerKey := seat1Key }
-
-def playableRoster : List CrewRelayExpedition.Seat :=
-  [ pSeat0
-  , pSeat1
-  , CrewRelayExpedition.fixtureSeat2
-  , CrewRelayExpedition.fixtureSeat3 ]
-
-def baseConfig : CrewFieldMission.RawConfig :=
-  { admittedRawConfigBase with roster := playableRoster }
-
-def playableConfig : CrewFieldMission.RawConfig :=
-  { baseConfig with
-    briefingCommitment := CrewFieldMission.ProductionSigning.productionBriefingDigest.digest
-      (CrewFieldMission.briefingDeckPreimage baseConfig CrewFieldMission.fixtureBriefings) }
-
-def playableRaw : CrewFieldMissionRuntime.RawActivation :=
-  { admittedRaw with
-    fieldSession := playableConfig.sessionDigest
-    rosterBinding := CrewFieldMissionRuntime.rosterBindingOf playableRoster }
-
-def playableComponent : ActivatedContent.Component where
-  name := ACTIVATION_COMPONENT
-  sha256 := (ActivatedContent.sha256Utf8? (activationJson playableRaw)).getD
-    (CrewFieldMission.digestFilled 0)
-  bytesUtf8 := activationJson playableRaw
-
-def playableManifest : ActivatedContent.Manifest :=
-  { admittedManifest with components := [playableComponent] }
-
-def playableWorld : WorldActivation.WorldIdentity :=
-  { admittedWorld with
-    contentRoot := (ActivatedContent.manifestRoot? playableManifest).getD
-      (CrewFieldMission.digestFilled 0) }
-
-def playableMember? : Option WorldScopedCrewActivation := do
-  let manifest ← ActivatedContent.decodeManifest playableManifest.toJson
-  authorizeCrewActivationForWorld? playableWorld manifest
-
-/-- The exact bytes a seat's ML-DSA-65 key must sign under `POA-CREW-SEAT-MLDSA65-1`
-to be admitted to this crew.  ⚑ Nothing exports this today — see the report. -/
-def seatMessage (seat : CrewRelayExpedition.Seat) : List UInt8 :=
-  CrewFieldMission.ProductionSigning.seatPreimageMessage
-    ((CrewFieldMission.SeatAdmissionBody.mk playableConfig.sessionDigest seat).signingPreimage
-      playableConfig.messageDigestSuiteId playableConfig.signingSuiteId)
-
-end Playable
-
-open Playable
-
 def mkSigBytes (env : List UInt8) : Option CrewFieldMission.SignatureBytes :=
   let fins : List (Fin 256) := env.map fun b => ⟨b.toNat, b.toFin.isLt⟩
-  if h : fins.length = CrewFieldMission.SIGNATURE_BYTE_LENGTH then
-    some ⟨fins, h⟩
-  else none
+  if h : fins.length = CrewFieldMission.SIGNATURE_BYTE_LENGTH then some ⟨fins, h⟩ else none
+
+/-- The signing message field of either export's canonical answer. -/
+def signingMessageOf (answer : String) : Option String :=
+  (Lean.Json.parse answer >>= (·.getObjValAs? String "signing_message")).toOption
 
 def main (args : List String) : IO UInt32 := do
   let dir := (args[1]?).getD "."
-  IO.println s!"playable mint succeeds       : {playableMember?.isSome}"
-  IO.println s!"seat0 playerKey              : {Emit.bytes32Hex seat0Key}"
-  IO.println s!"seat1 playerKey              : {Emit.bytes32Hex seat1Key}"
+  let readEnv (name : String) : IO (Option CrewFieldMission.SignatureBytes) := do
+    let h ← IO.FS.readFile (dir ++ "/" ++ name)
+    pure (bytesOfHex? h >>= mkSigBytes)
+  IO.println s!"admitted mint succeeds       : {admittedMember?.isSome}"
   match args[0]? with
   | some "emit" =>
-      let m0 := seatMessage pSeat0
-      let m1 := seatMessage pSeat1
-      IO.FS.writeFile (dir ++ "/seat0_msg.hex") (hexOf m0)
-      IO.FS.writeFile (dir ++ "/seat1_msg.hex") (hexOf m1)
-      IO.FS.writeFile (dir ++ "/world.json") playableWorld.toJson
-      IO.FS.writeFile (dir ++ "/manifest.json") playableManifest.toJson
-      IO.println s!"seat0 admission message bytes: {m0.length}"
-      IO.println s!"seat1 admission message bytes: {m1.length}"
-      IO.println s!"wrote {dir}/seat0_msg.hex, seat1_msg.hex, world.json, manifest.json"
+      -- ⚑ Through the REAL entry point export, not a Lean-internal call.
+      for i in [0, 1, 2, 3] do
+        let answer := seatPreimageWire (admittedSeatEnvelope i).toJson
+        match signingMessageOf answer with
+        | none => IO.println s!"seat {i}: ENTRY POINT REFUSED (answer {answer.length} bytes)"
+        | some msg =>
+            IO.FS.writeFile (dir ++ s!"/seat{i}_msg.hex") (hexOf msg.toUTF8.toList)
+            IO.println s!"seat {i} admission preimage    : {msg.toUTF8.size} bytes (answer {answer.length})"
+      IO.FS.writeFile (dir ++ "/world.json") admittedWorld.toJson
+      IO.FS.writeFile (dir ++ "/manifest.json") admittedManifest.toJson
       pure 0
   | some "step" =>
-      let s0hex ← IO.FS.readFile (dir ++ "/seat0_env.hex")
-      let some s0 := bytesOfHex? s0hex | do IO.println "seat0 env not hex"; pure 1
-      let some sig0 := mkSigBytes s0
-        | do IO.println s!"seat0 env wrong length {s0.length}, want {CrewFieldMission.SIGNATURE_BYTE_LENGTH}"; pure 1
+      let some sig0 ← readEnv "seat0_env.hex" | do IO.println "bad seat0_env"; pure 1
       let req : CrewFieldMissionRuntime.StepRequestWire := {
-        activationId := playableRaw.activationId
-        rosterBinding := playableRaw.rosterBinding
+        activationId := admittedRaw.activationId
+        rosterBinding := admittedRaw.rosterBinding
         transcript := []
         seatSignature := sig0
         decision := "specialist"
         decidedRoute := "signal-gallery"
         extraction := "none"
         command := "chart-pressure-route" }
-      let envelope : StepEnvelopeWire := {
-        world := playableWorld
-        manifestJson := playableManifest.toJson
-        stepRequestJson := req.toJson }
-      let bytes := envelope.toJson
-      IO.FS.writeFile (dir ++ "/envelope0.json") bytes
+      let bytes := StepEnvelopeWire.toJson
+        { world := admittedWorld, manifestJson := admittedManifest.toJson,
+          stepRequestJson := req.toJson }
       let out := stepWire bytes
-      IO.println s!"envelope bytes               : {bytes.length}"
-      IO.println s!"stepWire answer length       : {out.length}"
-      if out.isEmpty then
-        IO.println "stepWire answer              : REFUSED (empty sentinel)"
-        pure 1
-      else
-        IO.FS.writeFile (dir ++ "/step0_out.json") out
-        match Lean.Json.parse out >>= (·.getObjValAs? String "signing_message") with
-        | .error e => do IO.println s!"could not read signing_message: {e}"; pure 1
-        | .ok msg => do
-            IO.FS.writeFile (dir ++ "/handoff0_msg.hex") (hexOf msg.toUTF8.toList)
-            IO.println s!"seat 0 handoff preimage bytes: {msg.toUTF8.size}"
-            IO.println "SEAT 0 HAS ITS ORDERS. Sign handoff0_msg.hex, then run step2."
-            pure 0
+      IO.println s!"[step ] envelope {bytes.length} bytes -> answer {out.length} bytes"
+      match signingMessageOf out with
+      | none => do IO.println "[step ] REFUSED"; pure 1
+      | some msg => do
+          IO.FS.writeFile (dir ++ "/handoff0_msg.hex") (hexOf msg.toUTF8.toList)
+          IO.FS.writeFile (dir ++ "/step0_out.json") out
+          IO.println s!"[step ] seat 0 handoff preimage: {msg.toUTF8.size} bytes"
+          pure 0
   | some "step2" =>
-      -- transcript = [seat 0's completed, signed handoff]; asks: what does SEAT 1 sign?
-      let readEnv (name : String) : IO (Option CrewFieldMission.SignatureBytes) := do
-        let h ← IO.FS.readFile (dir ++ "/" ++ name)
-        pure (bytesOfHex? h >>= mkSigBytes)
       let some sig0 ← readEnv "seat0_env.hex" | do IO.println "bad seat0_env"; pure 1
       let some hs0 ← readEnv "handoff0_env.hex" | do IO.println "bad handoff0_env"; pure 1
       let some sig1 ← readEnv "seat1_env.hex" | do IO.println "bad seat1_env"; pure 1
@@ -254,8 +162,8 @@ def main (args : List String) : IO UInt32 := do
       let mkEnv (tr : List CrewFieldMissionRuntime.TraceWire)
           (seatSig : CrewFieldMission.SignatureBytes) : String :=
         let req : CrewFieldMissionRuntime.StepRequestWire := {
-          activationId := playableRaw.activationId
-          rosterBinding := playableRaw.rosterBinding
+          activationId := admittedRaw.activationId
+          rosterBinding := admittedRaw.rosterBinding
           transcript := tr
           seatSignature := seatSig
           decision := "specialist"
@@ -263,7 +171,7 @@ def main (args : List String) : IO UInt32 := do
           extraction := "none"
           command := "brace-transit" }
         StepEnvelopeWire.toJson
-          { world := playableWorld, manifestJson := playableManifest.toJson,
+          { world := admittedWorld, manifestJson := admittedManifest.toJson,
             stepRequestJson := req.toJson }
       let good := mkEnv [trace0] sig1
       let out := stepWire good
@@ -283,11 +191,9 @@ def main (args : List String) : IO UInt32 := do
             IO.println ("[HANDOFF] next_counter        : " ++ fld "next_counter")
             IO.println ("[HANDOFF] budget remaining    : " ++ fld "operational_budget_remaining")
         | .error _ => IO.println "[HANDOFF] answer not JSON?"
-      -- ---- REFUSAL POLE 1: seat 1's turn, presented with SEAT 0's admission envelope.
       let wrongSeat := mkEnv [trace0] sig0
       IO.println s!"[REFUSE wrong-seat envelope] mutation present: {wrongSeat != good}"
       IO.println s!"[REFUSE wrong-seat envelope] answer length   : {(stepWire wrongSeat).length}"
-      -- ---- REFUSAL POLE 2: seat 1's admission envelope with ONE byte flipped.
       let flip (sb : CrewFieldMission.SignatureBytes) : CrewFieldMission.SignatureBytes :=
         let old := sb.bytes[2000]!
         let nv : Fin 256 := ⟨(old.val + 1) % 256, Nat.mod_lt _ (by omega)⟩
@@ -295,10 +201,8 @@ def main (args : List String) : IO UInt32 := do
       let tampered := mkEnv [trace0] (flip sig1)
       IO.println s!"[REFUSE tampered signature] mutation present : {tampered != good}"
       IO.println s!"[REFUSE tampered signature] answer length    : {(stepWire tampered).length}"
-      -- ---- REFUSAL POLE 3: the transcript replays, but the handoff signature is seat 1's admission.
-      let forgedTrace := { trace0 with handoffSignature := sig1 }
-      let forged := mkEnv [forgedTrace] sig1
+      let forged := mkEnv [{ trace0 with handoffSignature := sig1 }] sig1
       IO.println s!"[REFUSE forged trace sig] mutation present   : {forged != good}"
       IO.println s!"[REFUSE forged trace sig] answer length      : {(stepWire forged).length}"
       pure 0
-  | _ => do IO.println "usage: emit|step <dir>"; pure 1
+  | _ => do IO.println "usage: emit|step|step2 <dir>"; pure 1

@@ -134,6 +134,30 @@ out; a canonical envelope naming a world with no manifest member, `""` out. -/
 theorem the_export_refuses_the_empty_request : stepWire "" = "" := by
   native_decide
 
+/-! ## ⚑ 2026-08-09 — the roster that could not play, and the entry point
+
+Until today `admittedRawConfig` carried `CrewRelayExpedition.fixtureRoster` — player
+keys `0a0a0a…`..`0d0d0d…` — against the PRODUCTION signing suite, whose `verifySeat`
+demands `SHAKE256(publicKey, 32) = playerKey`.  No ML-DSA-65 public key digests to
+`0a0a0a…`, so every theorem above was a REFUSAL tooth over a crew that had no accepting
+pole at all: it minted, it was admitted, and it refused every step.  These two pins are
+the accepting poles that were missing. -/
+
+theorem every_admitted_seat_holds_a_real_ml_dsa_public_key :
+    check_every_admitted_seat_holds_a_real_ml_dsa_public_key = true := by
+  native_decide
+
+theorem the_entry_point_answers_for_every_admitted_seat :
+    check_the_entry_point_answers_for_every_admitted_seat = true := by
+  native_decide
+
+theorem the_entry_point_refuses_a_world_this_manifest_does_not_root :
+    check_the_entry_point_refuses_a_world_this_manifest_does_not_root = true := by
+  native_decide
+
+theorem the_entry_point_refuses_the_empty_request : seatPreimageWire "" = "" := by
+  native_decide
+
 #assert_compiled the_manifest_hex_and_the_signing_hex_agree_on_every_byte_value
 #assert_compiled the_empty_document_is_not_an_activation
 #assert_compiled the_admitted_activation_round_trips_through_the_codec
@@ -150,5 +174,9 @@ theorem the_export_refuses_the_empty_request : stepWire "" = "" := by
 #assert_compiled an_activation_carrying_a_replay_authority_field_refuses
 #assert_compiled an_oversized_salvage_table_refuses
 #assert_compiled the_export_refuses_the_empty_request
+#assert_compiled every_admitted_seat_holds_a_real_ml_dsa_public_key
+#assert_compiled the_entry_point_answers_for_every_admitted_seat
+#assert_compiled the_entry_point_refuses_a_world_this_manifest_does_not_root
+#assert_compiled the_entry_point_refuses_the_empty_request
 
 end Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission

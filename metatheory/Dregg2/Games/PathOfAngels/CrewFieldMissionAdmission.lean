@@ -120,6 +120,15 @@ abbrev ACTIVATION_COMPONENT : String := "poa.crew-field-mission.activation.v1"
 
 abbrev STEP_ENVELOPE_FORMAT : String := "POA-CREW-FIELD-STEP-ENVELOPE-1"
 
+/-- ⚑ 2026-08-09 — the ENTRY POINT's wire.  `stepWire` hands a client the HANDOFF
+preimage and tells it to sign THOSE BYTES; the SEAT-ADMISSION preimage, which a seat
+must sign FIRST to be admitted at all, had no export and no route, so the organ's own
+first move was the one thing a client could not make without re-encoding a body this
+module forbids clients to build.  `seatPreimageWire` closes that. -/
+abbrev SEAT_ENVELOPE_FORMAT : String := "POA-CREW-FIELD-SEAT-ENVELOPE-1"
+
+abbrev SEAT_OUTPUT_FORMAT : String := "POA-CREW-FIELD-SEAT-OUT-1"
+
 /-- An admitted activation is a manifest component, so it can never exceed a
 component's own bound.  Using that bound rather than a second, larger one keeps the
 decoder from accepting a document the manifest validator would have refused. -/
@@ -1453,6 +1462,143 @@ def stepWire (bytes : String) : String :=
 
 #assert_axioms decodeStepEnvelope_reencodes
 
+/-! ## The ENTRY POINT — the seat-admission preimage, and its export
+
+⚑ 2026-08-09.  `stepWire` above answers "what does the next seat sign?", and it answers
+it only for a caller that can already present that seat's ML-DSA-65 SEAT-ADMISSION
+envelope.  Producing that envelope requires knowing the seat-admission preimage bytes,
+and until this section nothing emitted them: they were reachable only by evaluating
+`CrewFieldMission.ProductionSigning.seatPreimageJson` inside Lean.  A browser that
+re-derived them would be building the exact body the step surface's own docblock
+forbids a client to build — "a client signs THESE BYTES; it does not build a body,
+does not derive a `preRoot`, and does not re-encode anything."  So the organ had a
+handoff surface and no way to take the first seat.
+
+The read below is the same admission path as `stepWire` — the manifest is located by
+exact component name inside a manifest whose SHA-256 root IS the audited world's
+`contentRoot`, decoded canonically, and the seal is MINTED from those bytes — and it
+takes no `RunSeal` and no `Activation` argument, for the same structural reason. -/
+
+structure SeatEnvelopeWire where
+  world : WorldActivation.WorldIdentity
+  manifestJson : String
+  seat : Nat
+deriving DecidableEq
+
+def SeatEnvelopeWire.toJson (envelope : SeatEnvelopeWire) : String :=
+  "{\"format\":" ++ jsonString SEAT_ENVELOPE_FORMAT ++
+  ",\"world\":" ++ envelope.world.toJson ++
+  ",\"manifest_json\":" ++ jsonString envelope.manifestJson ++
+  ",\"seat\":" ++ toString envelope.seat ++ "}"
+
+private def parseSeatEnvelope (j : Json) : Except String SeatEnvelopeWire := do
+  exactKeys j ["format", "world", "manifest_json", "seat"]
+  if (← j.getObjValAs? String "format") != SEAT_ENVELOPE_FORMAT then
+    throw "wrong seat envelope format"
+  let manifestJson ← j.getObjValAs? String "manifest_json"
+  if manifestJson.utf8ByteSize > ActivatedContent.MANIFEST_BYTE_LIMIT then
+    throw "manifest exceeds bound"
+  let seat ← objectNat j "seat"
+  if seat ≥ CrewFieldMission.CREW_SIZE then throw "seat is off the roster"
+  pure {
+    world := ← parseWorldIdentity (← j.getObjVal? "world")
+    manifestJson
+    seat
+  }
+
+def decodeSeatEnvelope (bytes : String) : Option SeatEnvelopeWire :=
+  canonicalDecode parseSeatEnvelope SeatEnvelopeWire.toJson ENVELOPE_BYTE_LIMIT bytes
+
+theorem decodeSeatEnvelope_reencodes {bytes : String} {envelope : SeatEnvelopeWire}
+    (accepted : decodeSeatEnvelope bytes = some envelope) :
+    envelope.toJson = bytes :=
+  canonicalDecode_reencodes parseSeatEnvelope SeatEnvelopeWire.toJson
+    ENVELOPE_BYTE_LIMIT bytes envelope accepted
+
+structure SeatPreimageResponseWire where
+  activationId : Digest32
+  rosterBinding : Digest32
+  seat : Nat
+  /-- ⚑ The payload: the exact canonical `POA-CREW-SEAT-SIGNING-1` preimage bytes this
+  seat's key must sign, under `CrewFieldMission.ProductionSigning.SEAT_SIGNING_CONTEXT`.
+  A client signs THESE BYTES — the same discipline as `StepResponseWire.signingMessage`,
+  one move earlier in the run. -/
+  signingMessage : String
+deriving DecidableEq
+
+def SeatPreimageResponseWire.toJson (wire : SeatPreimageResponseWire) : String :=
+  "{\"format\":" ++ jsonString SEAT_OUTPUT_FORMAT ++
+    ",\"activation_id\":" ++ jsonString (Emit.bytes32Hex wire.activationId) ++
+    ",\"roster_binding\":" ++ jsonString (Emit.bytes32Hex wire.rosterBinding) ++
+    ",\"seat\":" ++ toString wire.seat ++
+    ",\"signing_message\":" ++ jsonString wire.signingMessage ++ "}"
+
+/-- The seat-admission preimage over an admitted activation's own field session.
+
+⚠ It is read off `raw.fieldSession`, not off a `CrewFieldMission.Config`, and that is
+sound rather than convenient: `CrewFieldMissionRuntime.Activation` carries
+`sealSessionExact : runSeal.session = raw.fieldSession` as a PROOF FIELD, and
+`RunSeal.session` is the seal's own `config.raw.sessionDigest`.  So the session this
+reads and the session `authenticateSeat?` checks against are the same document by the
+activation's construction, not by agreement. -/
+def seatPreimageOf (raw : RawActivation) (seat : Seat) : String :=
+  CrewFieldMission.ProductionSigning.seatPreimageJson
+    ((CrewFieldMission.SeatAdmissionBody.mk raw.fieldSession seat).signingPreimage
+      raw.fieldSession.messageDigestSuiteId raw.fieldSession.signingSuiteId)
+
+/-- ⚑ WHY THIS SURFACE MAY BE PUBLIC, AND WHY THE HANDOFF ONE MAY NOT.
+
+`RunSeal.nextSigningPreimage?` is gated behind seat authentication because a
+`HandoffBody` carries an `observation` — the seat's private briefing — so an ungated
+handoff surface would publish the next seat's briefing to anyone who asked.  A
+`SeatAdmissionBody` carries a session and a seat and NOTHING ELSE.  This theorem is
+that difference, stated: the emitted preimage is a function of the field session alone,
+and the field session is verbatim inside `activationJson raw`, which IS the manifest
+component the caller handed in.  It therefore confers nothing on a caller that the
+bytes it already supplied do not. -/
+theorem the_seat_preimage_reads_only_the_admitted_field_session
+    (left right : RawActivation) (seat : Seat)
+    (session : left.fieldSession = right.fieldSession) :
+    seatPreimageOf left seat = seatPreimageOf right seat := by
+  simp [seatPreimageOf, session]
+
+/-- ⚠ There is no `Activation` argument and no `RunSeal` argument, exactly as at
+`stepForAdmittedWorld?`.  The activation is built here, from an admitted manifest
+component, over a seal this module minted — so a caller-supplied fixture seal
+structurally cannot reach it. -/
+def seatPreimageForAdmittedWorld? (envelope : SeatEnvelopeWire) : Option String := do
+  let manifest ← ActivatedContent.decodeManifest envelope.manifestJson
+  let member ← authorizeCrewActivationForWorld? envelope.world manifest
+  let seat ← seatById? member.raw.fieldSession.roster ⟨envelope.seat⟩
+  some (SeatPreimageResponseWire.toJson {
+    activationId := member.raw.activationId
+    rosterBinding := member.raw.rosterBinding
+    seat := envelope.seat
+    signingMessage := seatPreimageOf member.raw seat })
+
+/-- **`@[export dregg_poa_crew_field_seat_preimage]`** — the crew field-mission SEAT
+ADMISSION read boundary, and the organ's entry point.  `""` is the single refusal, for
+every reason: envelope not canonical, world not matched by the manifest, no
+`poa.crew-field-mission.activation.v1` component, the component not canonical, the
+activation invalid, the SEAL UNMINTABLE (fixture suite, or a briefing deck whose
+production commitment does not check), or the named seat not on the admitted roster.
+
+⚠ The world argument is audited by PERSISTENCE, exactly as it is for `stepWire`.  A
+host that passes a world nobody signed gets an answer about nothing — and, as there,
+what this does NOT depend on that audit for is the seal.
+
+⚠ This export ANSWERS A QUESTION; it does not admit anybody.  The reply is the bytes to
+sign, never a capability: `SeatCapability.mk` is private and its only producer is
+`authenticateSeat?`, which still demands a signature this surface cannot produce. -/
+@[export dregg_poa_crew_field_seat_preimage]
+def seatPreimageWire (bytes : String) : String :=
+  match decodeSeatEnvelope bytes with
+  | none => ""
+  | some envelope => (seatPreimageForAdmittedWorld? envelope).getD ""
+
+#assert_axioms decodeSeatEnvelope_reencodes
+#assert_axioms the_seat_preimage_reads_only_the_admitted_field_session
+
 /-! ## The admitted fixture — a production-suited crew in an activated world
 
 Deployment-free test vectors, not canon.  ⚠ This crew is NOT
@@ -1460,9 +1606,85 @@ Deployment-free test vectors, not canon.  ⚠ This crew is NOT
 `DeckGraph.fixtureActivation`'s ALL-ZERO federation and content session, and
 `WorldActivation.validWorld` refuses a zero federation, so a KAT-sessioned activation
 could never be a member of any valid world.  The identity fields below are therefore
-authored nonzero, which costs the real ML-DSA-65 keypair (its signatures are bound to
-the KAT session) and buys the thing this module is about: an activation that an audited
-world can actually carry. -/
+authored nonzero — which re-bases the session, and therefore invalidates every
+signature bound to the KAT session.
+
+## ⚑ 2026-08-09 — this fixture used to pass the door and be unable to play
+
+The paragraph above used to end "which costs the real ML-DSA-65 keypair ... and buys
+an activation that an audited world can actually carry", and the roster below was
+`CrewRelayExpedition.fixtureRoster` — player keys `digestFilled 10..13`, i.e.
+`0a0a0a…`, `0b0b0b…`, `0c0c0c…`, `0d0d0d…`.  The config also names the PRODUCTION
+signing suite, whose `verifySeat` is `verifyEnvelope`, which demands
+`SHAKE256(publicKey, 32) = playerKey` before it will run FIPS 204 verify at all.
+
+**No ML-DSA-65 public key digests to `0a0a0a…`.**  So `authenticateSeat?` could never
+accept for any seat of this crew, and the organ's own demonstration material was an
+activation that MINTED, was ADMITTED to its world, and then refused every single step
+— measured: `admittedMember?.isSome = true`, `stepWire <honest envelope> = ""`.  Every
+refusal tooth below was passing over a crew that had no accepting pole to contrast
+with, which is the vacuity class in the module that exists to demonstrate the fix.
+
+The roster is now four REAL ML-DSA-65 public keys.  Seats 0 and 1 reuse the two
+keypairs already pinned in `CrewSigningVectors`; seats 2 and 3 are pinned here, from
+the same deterministic `keygen_from_seed` harness, because a four-seat crew in which
+two seats can never act still cannot complete a run.
+
+⚠ **TEST MATERIAL — NEVER DEPLOY THIS CREW.**  All four secret keys are derivable by
+anyone from the pinned xi seeds below, exactly as `CrewSigningVectors` says of the KAT
+keypair.  A real crew's player keys are its players' own; these exist so that the
+accepting pole of this organ is checkable, and for no other purpose.
+
+Provenance, reproducible: `ml_dsa_65::KG::keygen_from_seed(xi)` with
+`xi = b"POA-CREW-ADMITTED-SEAT2-XI-0003!"` and `b"POA-CREW-ADMITTED-SEAT3-XI-0004!"`,
+through the `crew-kat-gen` harness whose complete source is reproduced at the bottom of
+`CrewSigningVectors.lean`.  The end-to-end drive — seat preimages out of
+`seatPreimageWire`, signatures in from `fips204` 0.4.6, the handoff out of `stepWire` —
+is `metatheory/scripts/crew_playable_handoff.lean`. -/
+
+/-- Genuine ML-DSA-65 public key (1952 bytes), seat 2 of the admitted crew. -/
+def admittedSeat2PublicKey : Array UInt8 := #[135, 56, 73, 10, 219, 193, 56, 119, 85, 213, 130, 147, 72, 162, 44, 185, 148, 211, 18, 141, 24, 182, 34, 74, 180, 147, 140, 201, 224, 83, 4, 215, 120, 164, 10, 58, 19, 49, 235, 170, 170, 191, 30, 60, 211, 196, 2, 34, 67, 125, 113, 132, 96, 249, 144, 147, 133, 192, 160, 5, 109, 113, 66, 119, 250, 193, 168, 88, 58, 9, 98, 237, 135, 186, 70, 222, 94, 72, 31, 90, 112, 16, 128, 117, 11, 202, 76, 40, 31, 114, 254, 16, 141, 76, 24, 227, 233, 37, 241, 29, 211, 119, 53, 37, 26, 251, 51, 87, 160, 24, 135, 127, 140, 226, 219, 225, 229, 184, 45, 202, 137, 16, 4, 221, 206, 0, 48, 72, 217, 51, 16, 57, 196, 213, 105, 161, 25, 169, 132, 73, 213, 182, 163, 110, 137, 67, 36, 26, 102, 246, 175, 146, 203, 88, 45, 249, 97, 217, 106, 187, 186, 242, 54, 215, 148, 213, 25, 83, 185, 189, 198, 175, 74, 241, 128, 245, 95, 84, 26, 161, 240, 173, 16, 42, 121, 120, 91, 49, 250, 240, 197, 144, 169, 142, 168, 252, 109, 165, 242, 92, 7, 134, 64, 119, 183, 52, 233, 194, 25, 235, 5, 241, 208, 92, 34, 124, 214, 126, 247, 182, 150, 133, 238, 62, 111, 60, 156, 148, 21, 41, 101, 24, 163, 209, 6, 179, 249, 54, 104, 90, 138, 77, 110, 173, 4, 9, 194, 12, 45, 211, 125, 23, 40, 202, 111, 162, 123, 166, 47, 232, 77, 59, 150, 84, 65, 67, 120, 187, 124, 214, 114, 130, 24, 166, 60, 62, 231, 138, 214, 84, 145, 238, 99, 127, 175, 34, 150, 244, 56, 71, 26, 214, 114, 46, 236, 225, 229, 206, 202, 186, 241, 243, 73, 29, 88, 72, 240, 82, 164, 174, 160, 24, 136, 145, 225, 53, 186, 123, 236, 159, 215, 182, 89, 135, 14, 229, 20, 166, 118, 236, 69, 63, 30, 34, 184, 68, 110, 154, 211, 148, 169, 50, 178, 193, 31, 209, 178, 203, 144, 92, 168, 111, 149, 191, 74, 145, 166, 175, 111, 166, 57, 44, 7, 13, 30, 100, 224, 140, 253, 87, 2, 51, 118, 254, 225, 126, 63, 137, 124, 253, 119, 138, 175, 57, 56, 57, 210, 227, 46, 155, 118, 221, 204, 41, 254, 218, 252, 248, 0, 209, 132, 39, 159, 20, 239, 156, 210, 235, 159, 224, 176, 241, 81, 96, 31, 135, 68, 249, 46, 248, 212, 50, 158, 64, 235, 8, 205, 114, 37, 153, 39, 251, 223, 27, 178, 108, 34, 247, 158, 106, 199, 228, 149, 250, 0, 150, 183, 209, 131, 194, 99, 153, 244, 68, 119, 113, 231, 108, 235, 144, 211, 205, 27, 108, 219, 197, 252, 232, 241, 101, 73, 238, 178, 250, 192, 8, 115, 228, 246, 160, 129, 2, 156, 118, 207, 83, 221, 85, 155, 119, 85, 109, 132, 46, 81, 185, 209, 33, 139, 113, 169, 252, 199, 82, 213, 28, 224, 43, 129, 25, 107, 232, 147, 150, 14, 182, 192, 62, 39, 188, 218, 161, 57, 189, 95, 192, 1, 93, 20, 188, 62, 66, 3, 150, 185, 218, 50, 58, 66, 30, 50, 20, 66, 113, 244, 13, 63, 250, 161, 58, 87, 136, 232, 115, 126, 122, 173, 0, 234, 130, 107, 133, 59, 191, 68, 168, 20, 78, 51, 245, 125, 170, 2, 12, 17, 51, 149, 91, 31, 76, 224, 174, 185, 45, 248, 11, 46, 39, 249, 171, 219, 49, 184, 60, 36, 218, 117, 118, 19, 179, 252, 14, 138, 227, 65, 138, 97, 39, 157, 79, 175, 151, 113, 35, 196, 247, 1, 12, 63, 165, 14, 29, 156, 239, 28, 34, 30, 218, 202, 35, 70, 22, 26, 124, 124, 207, 219, 222, 2, 180, 114, 130, 206, 78, 135, 167, 89, 97, 94, 89, 126, 29, 141, 40, 36, 198, 159, 227, 223, 31, 81, 219, 75, 168, 154, 129, 64, 154, 48, 207, 247, 24, 93, 204, 77, 60, 89, 199, 58, 144, 227, 169, 240, 75, 56, 150, 98, 160, 151, 73, 167, 237, 130, 4, 252, 25, 137, 62, 72, 121, 168, 74, 250, 242, 160, 211, 110, 158, 34, 37, 147, 177, 19, 86, 145, 66, 168, 219, 58, 164, 56, 123, 55, 233, 46, 180, 171, 8, 74, 188, 127, 149, 196, 203, 156, 236, 35, 35, 21, 191, 214, 22, 185, 69, 241, 161, 13, 21, 109, 115, 136, 238, 171, 116, 175, 227, 75, 34, 79, 56, 190, 73, 164, 201, 190, 12, 209, 210, 1, 50, 64, 166, 158, 241, 9, 109, 205, 150, 25, 184, 81, 225, 150, 69, 58, 121, 59, 72, 188, 60, 138, 104, 72, 197, 209, 77, 9, 137, 207, 70, 97, 11, 98, 194, 35, 15, 16, 145, 255, 168, 231, 146, 80, 190, 60, 92, 232, 116, 211, 140, 236, 195, 197, 129, 18, 204, 76, 73, 37, 212, 150, 129, 27, 159, 141, 153, 184, 232, 51, 96, 10, 126, 157, 243, 146, 44, 99, 11, 52, 145, 147, 125, 104, 160, 131, 96, 224, 63, 200, 45, 20, 45, 148, 53, 46, 135, 22, 58, 28, 239, 100, 234, 26, 235, 35, 215, 134, 168, 188, 74, 251, 48, 57, 149, 125, 200, 173, 68, 192, 28, 11, 227, 165, 190, 183, 210, 119, 109, 98, 35, 6, 115, 21, 66, 43, 106, 87, 153, 104, 123, 143, 119, 82, 74, 102, 204, 120, 218, 149, 72, 131, 40, 69, 167, 135, 192, 106, 197, 75, 25, 91, 210, 245, 158, 0, 89, 186, 52, 236, 254, 64, 60, 133, 112, 202, 121, 70, 62, 111, 33, 166, 142, 68, 252, 233, 239, 10, 233, 198, 127, 30, 91, 117, 233, 164, 5, 228, 237, 183, 206, 35, 190, 108, 239, 84, 216, 53, 11, 154, 113, 153, 99, 78, 20, 42, 247, 37, 155, 4, 38, 68, 0, 80, 34, 147, 66, 74, 223, 106, 60, 144, 192, 202, 152, 15, 221, 173, 164, 101, 223, 130, 1, 194, 232, 41, 106, 233, 48, 46, 74, 119, 17, 111, 177, 213, 246, 186, 103, 56, 23, 197, 204, 205, 233, 102, 184, 188, 223, 81, 194, 173, 234, 210, 105, 153, 117, 80, 0, 237, 128, 36, 108, 70, 38, 165, 13, 191, 227, 206, 8, 231, 159, 92, 202, 187, 112, 23, 12, 46, 8, 177, 191, 98, 11, 93, 143, 213, 0, 171, 147, 203, 109, 179, 112, 33, 248, 67, 218, 84, 123, 213, 130, 5, 195, 102, 40, 248, 20, 103, 210, 235, 92, 23, 123, 36, 120, 38, 217, 3, 224, 5, 93, 167, 45, 116, 4, 24, 254, 250, 179, 234, 205, 250, 161, 176, 81, 86, 150, 221, 140, 240, 223, 82, 168, 106, 126, 176, 68, 147, 31, 83, 125, 92, 252, 148, 66, 208, 103, 102, 137, 41, 204, 172, 10, 194, 181, 145, 225, 41, 142, 237, 114, 46, 82, 110, 170, 184, 19, 41, 98, 196, 107, 202, 21, 18, 79, 106, 250, 56, 35, 48, 235, 158, 138, 161, 83, 138, 49, 78, 146, 247, 87, 19, 53, 23, 153, 71, 146, 185, 53, 208, 136, 20, 23, 70, 29, 236, 46, 152, 197, 44, 73, 231, 183, 99, 108, 194, 188, 56, 0, 43, 56, 104, 117, 208, 135, 253, 206, 228, 82, 196, 204, 152, 177, 209, 213, 153, 116, 98, 68, 150, 142, 210, 236, 114, 63, 234, 175, 155, 99, 161, 65, 46, 189, 222, 1, 223, 165, 234, 121, 165, 31, 204, 106, 200, 0, 200, 6, 202, 224, 251, 12, 58, 95, 55, 82, 234, 138, 91, 102, 72, 72, 199, 231, 243, 72, 174, 64, 106, 57, 75, 38, 12, 66, 250, 124, 113, 95, 33, 45, 89, 3, 111, 107, 191, 145, 84, 26, 25, 143, 21, 75, 183, 8, 105, 182, 136, 173, 242, 137, 1, 219, 167, 230, 64, 98, 35, 179, 191, 132, 56, 36, 213, 231, 227, 149, 118, 205, 62, 77, 82, 139, 55, 47, 59, 173, 247, 174, 196, 184, 163, 169, 243, 103, 57, 71, 39, 41, 97, 208, 180, 90, 151, 95, 55, 223, 93, 175, 53, 16, 107, 101, 231, 3, 58, 126, 146, 199, 127, 53, 234, 204, 220, 71, 2, 229, 158, 71, 85, 5, 3, 26, 190, 144, 220, 221, 64, 121, 109, 30, 98, 242, 120, 165, 209, 170, 3, 243, 28, 238, 95, 6, 119, 8, 57, 240, 88, 42, 79, 182, 250, 169, 159, 238, 113, 45, 229, 6, 221, 19, 53, 185, 231, 108, 185, 215, 141, 167, 144, 57, 227, 190, 193, 198, 50, 178, 14, 197, 29, 87, 233, 48, 205, 105, 189, 231, 47, 17, 205, 187, 157, 135, 163, 210, 85, 217, 82, 40, 21, 214, 224, 76, 164, 175, 175, 92, 86, 138, 184, 65, 47, 100, 155, 190, 229, 139, 26, 35, 69, 36, 160, 145, 92, 164, 135, 33, 81, 1, 90, 105, 6, 171, 45, 253, 98, 135, 126, 49, 74, 219, 154, 42, 144, 148, 147, 113, 242, 145, 102, 253, 84, 134, 150, 248, 92, 253, 87, 131, 154, 71, 166, 16, 252, 111, 18, 211, 137, 37, 222, 67, 29, 214, 95, 64, 199, 192, 43, 202, 222, 136, 250, 56, 117, 235, 51, 184, 0, 170, 1, 184, 205, 217, 147, 44, 151, 253, 255, 93, 159, 42, 165, 63, 54, 172, 101, 231, 171, 127, 131, 249, 15, 86, 209, 42, 135, 141, 31, 12, 206, 62, 131, 103, 46, 44, 19, 124, 232, 52, 157, 93, 174, 200, 21, 22, 229, 225, 167, 1, 188, 221, 35, 33, 51, 63, 220, 180, 41, 215, 254, 237, 250, 95, 61, 33, 245, 117, 220, 180, 98, 122, 138, 210, 194, 217, 252, 183, 14, 106, 110, 243, 133, 245, 223, 112, 64, 51, 51, 116, 146, 36, 168, 137, 76, 96, 178, 36, 6, 170, 103, 85, 231, 91, 158, 24, 207, 98, 86, 36, 250, 108, 168, 192, 244, 162, 202, 117, 58, 189, 8, 205, 220, 237, 113, 251, 238, 99, 189, 105, 122, 135, 191, 133, 16, 159, 229, 118, 202, 210, 158, 242, 87, 127, 91, 5, 205, 95, 144, 40, 82, 189, 171, 55, 254, 240, 157, 30, 186, 93, 27, 96, 130, 10, 74, 77, 170, 244, 17, 72, 147, 17, 148, 180, 216, 218, 72, 43, 58, 148, 203, 185, 72, 97, 255, 218, 51, 203, 215, 252, 45, 252, 132, 254, 83, 235, 197, 244, 98, 217, 144, 140, 113, 136, 108, 180, 177, 120, 109, 42, 45, 154, 213, 87, 91, 234, 14, 30, 229, 29, 88, 70, 192, 250, 108, 161, 47, 27, 142, 149, 95, 78, 111, 128, 148, 242, 171, 142, 106, 63, 144, 93, 67, 29, 118, 28, 122, 29, 208, 168, 163, 77, 39, 69, 29, 184, 160, 57, 238, 77, 179, 123, 108, 180, 44, 125, 157, 214, 156, 207, 248, 113, 81, 120, 69, 48, 67, 0, 120, 80, 178, 27, 17, 97, 211, 75, 74, 137, 246, 234, 149, 230, 175, 51, 3, 233, 88, 87, 115, 108, 164, 138, 133, 143, 10, 106, 26, 103, 200, 183, 16, 227, 124, 45, 103, 236, 106, 253, 116, 112, 144, 97, 193, 59, 223, 23, 182, 201, 175, 207, 183, 247, 226, 220, 26, 203, 138, 69, 161, 247, 0, 134, 135, 231, 147, 134, 9, 237, 37, 225, 162, 173, 63, 244, 166, 211, 223, 151, 117, 95, 157, 196, 148, 218, 238, 65, 223, 27, 52, 217, 159, 69, 71, 148, 147, 166, 151, 175, 148, 166, 164, 244, 26, 142, 223, 204, 106, 5, 47, 151, 224, 243, 244, 145]
+
+/-- Genuine ML-DSA-65 public key (1952 bytes), seat 3 of the admitted crew. -/
+def admittedSeat3PublicKey : Array UInt8 := #[33, 1, 3, 233, 90, 23, 253, 73, 13, 213, 125, 249, 73, 26, 192, 205, 183, 59, 119, 48, 34, 100, 204, 8, 125, 207, 234, 59, 166, 69, 185, 105, 165, 196, 60, 196, 48, 45, 176, 22, 11, 205, 212, 179, 118, 194, 56, 75, 111, 51, 32, 79, 136, 215, 20, 97, 40, 218, 110, 159, 95, 71, 66, 32, 175, 192, 35, 136, 253, 134, 150, 84, 205, 55, 233, 230, 2, 253, 209, 119, 106, 96, 9, 156, 187, 239, 48, 123, 239, 239, 181, 61, 32, 20, 84, 135, 166, 121, 145, 33, 56, 185, 196, 240, 16, 132, 50, 174, 98, 144, 193, 107, 208, 225, 66, 8, 237, 124, 82, 74, 205, 143, 45, 19, 144, 182, 47, 132, 79, 10, 2, 17, 180, 241, 12, 205, 199, 225, 58, 185, 124, 93, 73, 45, 60, 145, 54, 32, 95, 174, 218, 184, 72, 195, 147, 25, 15, 56, 18, 183, 59, 14, 171, 77, 47, 222, 169, 118, 154, 184, 83, 35, 16, 237, 11, 150, 106, 144, 59, 41, 178, 98, 3, 191, 201, 133, 72, 22, 50, 246, 181, 179, 124, 237, 159, 40, 200, 137, 211, 21, 122, 126, 230, 33, 160, 119, 148, 68, 194, 64, 249, 174, 230, 86, 41, 142, 213, 190, 157, 229, 195, 26, 91, 52, 29, 239, 153, 89, 233, 142, 28, 163, 55, 29, 233, 171, 20, 204, 139, 174, 232, 138, 183, 120, 58, 227, 128, 38, 74, 222, 135, 72, 32, 215, 162, 157, 215, 34, 123, 119, 31, 104, 126, 175, 67, 59, 51, 238, 186, 58, 110, 173, 124, 201, 58, 24, 206, 56, 27, 122, 43, 182, 167, 223, 5, 223, 35, 71, 179, 31, 58, 20, 139, 187, 112, 244, 173, 180, 204, 88, 218, 137, 232, 204, 165, 210, 72, 250, 157, 246, 196, 118, 222, 196, 233, 202, 114, 19, 119, 233, 159, 135, 31, 4, 6, 222, 108, 164, 136, 211, 80, 69, 141, 205, 14, 83, 27, 96, 233, 160, 127, 198, 124, 18, 80, 144, 176, 199, 27, 170, 97, 214, 99, 89, 230, 94, 212, 125, 121, 222, 115, 20, 153, 157, 235, 249, 122, 94, 103, 122, 5, 76, 180, 20, 176, 83, 215, 239, 239, 177, 227, 172, 45, 195, 231, 180, 170, 148, 127, 192, 172, 126, 185, 40, 105, 157, 198, 255, 104, 100, 134, 201, 144, 20, 237, 61, 56, 74, 68, 183, 38, 202, 40, 153, 62, 67, 14, 41, 130, 42, 255, 91, 129, 6, 180, 221, 18, 56, 118, 233, 248, 196, 238, 222, 12, 241, 220, 16, 128, 106, 26, 105, 27, 171, 189, 27, 69, 71, 219, 64, 74, 198, 10, 11, 186, 71, 93, 155, 212, 213, 210, 109, 142, 194, 93, 100, 81, 224, 77, 175, 33, 178, 131, 150, 252, 70, 50, 147, 144, 133, 177, 186, 6, 113, 112, 255, 207, 236, 136, 120, 122, 66, 116, 120, 106, 244, 25, 59, 62, 70, 185, 181, 79, 187, 19, 237, 17, 194, 101, 144, 117, 16, 13, 2, 40, 1, 64, 91, 174, 203, 11, 209, 36, 8, 141, 33, 107, 117, 65, 202, 36, 142, 141, 53, 11, 80, 15, 67, 249, 73, 94, 117, 86, 245, 141, 167, 245, 59, 84, 141, 9, 58, 222, 182, 204, 45, 204, 125, 25, 33, 141, 141, 171, 62, 137, 111, 130, 118, 121, 148, 222, 228, 143, 140, 195, 239, 203, 202, 9, 66, 230, 208, 80, 212, 10, 209, 99, 121, 105, 228, 121, 123, 98, 86, 204, 78, 191, 56, 125, 85, 254, 149, 131, 63, 232, 150, 210, 94, 66, 175, 152, 24, 217, 252, 166, 23, 160, 182, 14, 249, 41, 76, 47, 136, 53, 107, 209, 85, 176, 102, 241, 114, 151, 193, 81, 236, 103, 251, 144, 162, 106, 51, 4, 239, 229, 90, 130, 50, 83, 128, 184, 221, 83, 241, 208, 23, 234, 180, 82, 205, 131, 184, 252, 229, 172, 25, 165, 138, 171, 34, 24, 199, 41, 104, 188, 222, 195, 126, 155, 95, 27, 191, 170, 61, 53, 211, 224, 39, 22, 153, 124, 50, 112, 62, 192, 96, 158, 17, 247, 48, 87, 63, 147, 188, 216, 155, 148, 108, 43, 5, 132, 208, 44, 74, 98, 185, 231, 104, 203, 160, 254, 127, 23, 185, 51, 46, 192, 196, 42, 59, 156, 95, 42, 64, 135, 126, 227, 217, 84, 72, 16, 79, 117, 161, 100, 253, 117, 138, 193, 138, 99, 80, 182, 56, 100, 46, 232, 156, 144, 137, 0, 148, 18, 15, 131, 31, 44, 83, 160, 249, 201, 0, 125, 246, 153, 254, 247, 107, 170, 211, 219, 89, 58, 73, 63, 33, 207, 129, 146, 68, 205, 236, 41, 21, 209, 129, 102, 103, 56, 76, 252, 177, 82, 204, 165, 14, 3, 219, 189, 153, 230, 165, 164, 24, 187, 103, 12, 36, 47, 237, 0, 219, 178, 113, 159, 239, 137, 49, 177, 30, 73, 34, 127, 218, 88, 143, 55, 89, 73, 149, 125, 156, 212, 146, 179, 166, 82, 57, 49, 175, 81, 22, 29, 166, 219, 194, 8, 150, 45, 42, 189, 131, 236, 128, 168, 206, 29, 34, 86, 103, 230, 10, 159, 39, 129, 97, 242, 253, 246, 66, 226, 119, 229, 38, 15, 73, 109, 156, 210, 185, 252, 194, 194, 226, 115, 37, 18, 98, 226, 159, 125, 141, 112, 253, 87, 15, 165, 196, 112, 133, 128, 29, 111, 235, 50, 79, 145, 162, 115, 132, 109, 37, 253, 170, 176, 109, 69, 113, 123, 65, 250, 213, 54, 190, 171, 99, 30, 122, 121, 10, 154, 61, 19, 139, 32, 43, 253, 130, 150, 122, 57, 105, 82, 69, 29, 94, 167, 223, 117, 41, 153, 48, 145, 174, 238, 157, 31, 59, 236, 39, 93, 78, 136, 162, 108, 47, 242, 130, 62, 130, 139, 234, 244, 158, 68, 94, 164, 208, 51, 129, 138, 28, 7, 45, 236, 184, 105, 174, 220, 5, 211, 80, 111, 178, 166, 177, 28, 38, 73, 78, 84, 171, 92, 83, 95, 77, 1, 221, 209, 38, 209, 44, 157, 38, 241, 251, 107, 63, 229, 232, 31, 139, 156, 247, 210, 13, 66, 58, 170, 52, 203, 14, 97, 40, 101, 204, 218, 7, 172, 122, 0, 69, 227, 141, 206, 31, 193, 42, 182, 178, 233, 111, 187, 177, 55, 75, 37, 240, 98, 167, 11, 41, 172, 132, 186, 143, 24, 165, 78, 96, 114, 200, 77, 94, 249, 174, 214, 229, 99, 169, 50, 238, 137, 142, 253, 86, 88, 94, 200, 178, 237, 123, 88, 26, 76, 150, 43, 26, 194, 84, 181, 198, 74, 88, 229, 147, 29, 211, 171, 68, 239, 54, 139, 105, 241, 150, 230, 56, 219, 164, 81, 166, 90, 252, 215, 194, 237, 194, 110, 7, 168, 51, 174, 111, 189, 200, 2, 102, 218, 203, 33, 206, 105, 240, 210, 67, 129, 246, 215, 33, 9, 161, 179, 180, 112, 251, 213, 46, 147, 115, 178, 51, 152, 118, 152, 190, 169, 227, 99, 169, 211, 47, 15, 246, 88, 122, 229, 38, 184, 175, 223, 86, 110, 23, 111, 227, 177, 188, 134, 204, 130, 147, 65, 174, 84, 249, 10, 155, 183, 148, 221, 220, 201, 249, 88, 164, 168, 210, 187, 243, 204, 86, 246, 238, 233, 96, 99, 13, 103, 40, 87, 254, 159, 197, 99, 0, 56, 233, 106, 222, 237, 49, 94, 57, 13, 201, 233, 19, 75, 176, 78, 47, 47, 74, 161, 221, 177, 151, 197, 224, 3, 254, 25, 158, 233, 0, 176, 69, 249, 55, 107, 20, 139, 203, 89, 216, 185, 160, 156, 124, 148, 246, 227, 5, 199, 183, 133, 112, 168, 133, 241, 182, 145, 22, 199, 100, 178, 48, 193, 114, 36, 64, 40, 212, 225, 152, 80, 248, 11, 8, 239, 42, 79, 244, 20, 171, 199, 117, 80, 4, 119, 65, 30, 167, 77, 147, 102, 119, 244, 78, 68, 154, 44, 136, 240, 91, 98, 22, 192, 61, 134, 48, 170, 213, 219, 147, 227, 103, 104, 11, 120, 168, 3, 63, 195, 223, 55, 45, 69, 78, 115, 201, 219, 68, 112, 188, 8, 140, 68, 24, 148, 188, 3, 86, 255, 244, 66, 189, 169, 49, 253, 101, 242, 132, 251, 92, 23, 254, 214, 57, 16, 159, 200, 64, 132, 237, 33, 227, 201, 85, 249, 249, 35, 38, 227, 169, 175, 46, 165, 242, 86, 161, 48, 88, 168, 20, 151, 28, 0, 55, 206, 31, 233, 209, 140, 46, 220, 245, 250, 13, 172, 40, 39, 225, 224, 247, 220, 140, 4, 115, 224, 254, 212, 182, 254, 3, 229, 244, 169, 227, 208, 242, 174, 140, 178, 4, 169, 118, 134, 154, 194, 189, 212, 173, 145, 38, 198, 86, 104, 91, 117, 14, 122, 233, 231, 7, 183, 134, 137, 72, 71, 76, 4, 126, 76, 156, 151, 113, 249, 214, 245, 163, 72, 1, 26, 105, 171, 194, 172, 229, 131, 167, 85, 184, 72, 116, 127, 215, 192, 206, 52, 106, 248, 234, 124, 194, 39, 171, 17, 103, 203, 99, 180, 128, 83, 158, 26, 174, 113, 46, 167, 121, 117, 220, 178, 194, 39, 75, 135, 190, 236, 56, 26, 43, 211, 186, 174, 175, 141, 205, 3, 149, 99, 113, 53, 173, 247, 98, 43, 223, 6, 164, 168, 29, 137, 17, 41, 147, 92, 215, 202, 245, 177, 159, 132, 74, 242, 143, 62, 198, 77, 148, 252, 51, 46, 180, 147, 220, 37, 176, 20, 189, 91, 1, 122, 196, 36, 210, 137, 171, 47, 59, 184, 141, 7, 252, 64, 107, 0, 158, 86, 179, 214, 178, 46, 25, 39, 193, 210, 22, 97, 245, 124, 246, 214, 22, 126, 118, 197, 66, 45, 140, 152, 38, 154, 214, 4, 163, 198, 240, 186, 126, 110, 172, 33, 140, 25, 171, 253, 139, 210, 200, 81, 47, 119, 229, 1, 220, 205, 155, 202, 4, 155, 250, 138, 91, 92, 230, 154, 17, 187, 116, 95, 215, 248, 108, 132, 133, 21, 169, 125, 159, 100, 40, 241, 229, 217, 118, 169, 231, 15, 160, 129, 21, 28, 224, 25, 164, 245, 50, 35, 56, 167, 209, 104, 104, 72, 199, 41, 155, 210, 58, 78, 210, 115, 92, 19, 31, 36, 190, 142, 69, 205, 249, 137, 231, 63, 187, 32, 242, 40, 111, 88, 182, 177, 163, 229, 63, 16, 239, 183, 60, 252, 209, 181, 47, 71, 238, 36, 119, 146, 17, 2, 253, 206, 156, 129, 72, 246, 2, 219, 31, 72, 79, 138, 226, 165, 53, 206, 84, 56, 32, 86, 103, 83, 150, 238, 212, 129, 199, 76, 11, 33, 5, 43, 111, 214, 218, 89, 2, 129, 65, 65, 216, 234, 96, 4, 97, 92, 221, 204, 14, 70, 174, 124, 145, 95, 89, 85, 58, 132, 212, 108, 25, 18, 254, 175, 115, 169, 117, 109, 186, 61, 76, 176, 183, 162, 239, 123, 222, 41, 41, 84, 173, 151, 205, 144, 107, 228, 140, 209, 80, 137, 155, 80, 133, 52, 228, 233, 162, 76, 217, 233, 119, 16, 29, 30, 126, 156, 109, 0, 80, 75, 124, 90, 174, 86, 143, 91, 165, 202, 135, 111, 13, 138, 198, 230, 249, 236, 122, 182, 136, 248, 45, 220, 16, 81, 128, 143, 190, 149, 77, 30, 220, 196, 188, 18, 56, 185, 17, 187, 237, 91, 166, 59, 19, 3, 28, 58, 238, 239, 201, 253, 164, 147, 138, 145, 38, 87, 4, 69, 223, 224, 76, 247, 253, 30, 98, 238, 104, 77, 172, 216, 62, 147, 62, 165, 93, 44, 199, 97, 21, 142, 77, 92, 83, 136, 194, 64, 187, 117, 58]
+
+/-- A roster player key is the SHAKE-256 digest of the seat's real ML-DSA-65 public
+key — the two-source pin the production `verifyEnvelope` re-checks against the envelope
+the seat presents.  ⚠ The `getD` fallback is pinned never to fire by
+`every_admitted_seat_holds_a_real_ml_dsa_public_key`. -/
+def playerKeyOfPublicKey (publicKey : Array UInt8) : Digest32 :=
+  (CrewFieldMission.ProductionSigning.shakeDigest32? publicKey.toList).getD
+    (CrewFieldMission.digestFilled 0)
+
+/-- The four seats keep `fixtureRoster`'s ids, credentials, roles and counter origins —
+only the player keys change, so every structural tooth below is about the same crew it
+was about before. -/
+def admittedRoster : List Seat :=
+  [ { fixtureSeat0 with playerKey := CrewFieldMission.ProductionSigning.katPlayerKey }
+  , { fixtureSeat1 with
+      playerKey := playerKeyOfPublicKey CrewSigningVectors.katWrongPublicKey }
+  , { fixtureSeat2 with playerKey := playerKeyOfPublicKey admittedSeat2PublicKey }
+  , { fixtureSeat3 with playerKey := playerKeyOfPublicKey admittedSeat3PublicKey } ]
+
+/-- ⚑ THE SATISFIABILITY POLE OF THE ROSTER.  Every seat's player key is the SHAKE-256
+digest of a real ML-DSA-65 public key, the four are distinct, and none is the old
+placeholder — so `playerKeyOfPublicKey`'s fallback never fired and this crew is one
+whose seats a production `verifySeat` can actually admit.
+(Pinned `= true` in `CrewFieldMissionAdmissionFixtures`.) -/
+def check_every_admitted_seat_holds_a_real_ml_dsa_public_key : Bool :=
+  let keys := [CrewSigningVectors.katSeat0PublicKey, CrewSigningVectors.katWrongPublicKey,
+    admittedSeat2PublicKey, admittedSeat3PublicKey]
+  decide (keys.all (fun k => k.size = 1952)) &&
+  decide (admittedRoster.map Seat.playerKey
+    = keys.map (fun k => (CrewFieldMission.ProductionSigning.shakeDigest32? k.toList).getD
+        (CrewFieldMission.digestFilled 1))) &&
+  decide ((admittedRoster.map Seat.playerKey).Nodup) &&
+  decide (admittedRoster.map Seat.playerKey
+    ≠ CrewRelayExpedition.fixtureRoster.map Seat.playerKey) &&
+  decide (admittedRoster.map Seat.id = CrewRelayExpedition.fixtureRoster.map Seat.id) &&
+  decide (admittedRoster.map Seat.credential
+    = CrewRelayExpedition.fixtureRoster.map Seat.credential) &&
+  decide (admittedRoster.map Seat.role = CrewRelayExpedition.fixtureRoster.map Seat.role)
 
 def admittedFederation : Digest32 := CrewFieldMission.digestFilled 0x41
 def admittedContentSession : Digest32 := CrewFieldMission.digestFilled 0x42
@@ -1491,7 +1713,7 @@ def admittedRawConfigBase : CrewFieldMission.RawConfig where
   briefingCommitment := CrewFieldMission.digestFilled 0
   messageDigestSuiteId := CrewFieldMission.ProductionSigning.messageSuiteId
   signingSuiteId := CrewFieldMission.ProductionSigning.signingSuiteId
-  roster := CrewRelayExpedition.fixtureRoster
+  roster := admittedRoster
   policy := admittedPolicy
   operationalBudget := 13
   routeOutcomes := CrewFieldMission.fixtureRouteOutcomes
@@ -1639,6 +1861,44 @@ def admittedValidatedManifest? : Option ActivatedContent.ValidatedManifest :=
 def admittedMember? : Option WorldScopedCrewActivation := do
   let manifest ← admittedValidatedManifest?
   authorizeCrewActivationForWorld? admittedWorld manifest
+
+/-! ### The ENTRY POINT's own poles, over the admitted crew -/
+
+def admittedSeatEnvelope (seat : Nat) : SeatEnvelopeWire where
+  world := admittedWorld
+  manifestJson := admittedManifest.toJson
+  seat := seat
+
+/-- ⚑ THE ACCEPTING POLE OF THE ENTRY POINT.  Conjunct 1: every one of the four
+admitted seats gets an answer, so the export is not a surface that only ever refuses —
+which is exactly what it WOULD have been over the placeholder roster this fixture
+carried until 2026-08-09.  Conjunct 2: the four answers are pairwise distinct, so it is
+not emitting one constant blob under four names.  Conjunct 3: each answer re-encodes
+canonically, i.e. it is a document a decoder accepts rather than a string.  Conjunct 4:
+a seat off the roster is the `""` refusal, with the seat index as the asserted mutation.
+(Pinned `= true` in `CrewFieldMissionAdmissionFixtures`.) -/
+def check_the_entry_point_answers_for_every_admitted_seat : Bool :=
+  let answers := (List.range CrewFieldMission.CREW_SIZE).map
+    (fun i => seatPreimageWire (admittedSeatEnvelope i).toJson)
+  decide (answers.all (fun a => a ≠ "")) &&
+  decide answers.Nodup &&
+  decide ((List.range CrewFieldMission.CREW_SIZE).all
+    (fun i => (decodeSeatEnvelope (admittedSeatEnvelope i).toJson).isSome)) &&
+  decide (CrewFieldMission.CREW_SIZE < 8) &&
+  decide (seatPreimageWire (admittedSeatEnvelope CrewFieldMission.CREW_SIZE).toJson = "")
+
+/-- The entry point is scoped to the world exactly as the step surface is: the same
+seat, asked for through a world this manifest does not root, is refused — and the
+mutation is asserted present (the two worlds differ, and the honest one answers).
+(Pinned `= true` in `CrewFieldMissionAdmissionFixtures`.) -/
+def check_the_entry_point_refuses_a_world_this_manifest_does_not_root : Bool :=
+  let honest := admittedSeatEnvelope 0
+  let foreign : SeatEnvelopeWire := { honest with
+    world := { admittedWorld with
+      contentSession := CrewFieldMission.digestFilled 0x77 } }
+  decide (foreign.world ≠ honest.world) &&
+  decide (seatPreimageWire honest.toJson ≠ "") &&
+  decide (seatPreimageWire foreign.toJson = "")
 
 /-! ## Teeth
 
