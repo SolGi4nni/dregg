@@ -53,7 +53,7 @@ use dregg_blocklace::ordering::supermajority_threshold;
 use dregg_federation::frost::{MlDsaPublicKey, MlDsaSigningKey};
 use ed25519_dalek::SigningKey;
 
-use crate::finalization_votes::{FinalizationVote, RecordOutcome, VoteCollector};
+use crate::finalization_votes::{DrainReport, FinalizationVote, RecordOutcome, VoteCollector};
 
 const TIMEOUT_WAVES: u64 = 1000; // large: no spurious timeout-leave during the test
 
@@ -136,14 +136,14 @@ impl Node {
     /// does: register the proposal, record each approving voter, and — if it
     /// passes — `apply_if_passed` then advance the live committee
     /// (`votes.reconfigure` with the new participants' ML-DSA keys, the same
-    /// call `apply_committee_change` makes). Returns whether the committee
-    /// actually advanced on this node.
+    /// call `apply_committee_change` makes). Returns the D7 [`DrainReport`] when
+    /// the committee actually advanced on this node, `None` when it did not.
     fn drive_amendment(
         &mut self,
         proposal_block: BlockId,
         proposal: MembershipProposal,
         approvers: &[[u8; 32]],
-    ) -> bool {
+    ) -> Option<DrainReport> {
         self.cm.submit_proposal(proposal_block, proposal);
         let mut passed = false;
         for voter in approvers {
@@ -156,15 +156,17 @@ impl Node {
             }
         }
         if passed && self.cm.apply_if_passed(&proposal_block).unwrap_or(false) {
-            // THE LIVE COMMITTEE ADVANCE (mirrors blocklace_sync::apply_committee_change).
+            // THE LIVE COMMITTEE ADVANCE (mirrors blocklace_sync::apply_committee_change),
+            // including the D7 drain that `reconfigure` runs at the install point.
             let participants: Vec<[u8; 32]> = self.cm.current.participants.clone();
             let threshold = self.cm.threshold();
             let pq = pq_for(&self.pq_published, &participants);
-            self.votes
-                .reconfigure(participants.iter().copied(), pq, threshold);
-            true
+            Some(
+                self.votes
+                    .reconfigure(participants.iter().copied(), pq, threshold),
+            )
         } else {
-            false
+            None
         }
     }
 }
@@ -229,10 +231,12 @@ fn validator_added_and_removed_live_chain_continues() {
         justification: vec![],
     };
     for node in &mut nodes {
-        let advanced = node.drive_amendment(join_block, join.clone(), &genesis);
+        let drain = node.drive_amendment(join_block, join.clone(), &genesis);
+        let drain = drain.expect("the Join ratified by the current quorum must apply");
         assert!(
-            advanced,
-            "the Join ratified by the current quorum must apply"
+            drain.is_noop(),
+            "a JOIN removes nobody, so the D7 drain must be inert (Lean \
+             LeaveDrain.drain_join_is_identity); got {drain:?}"
         );
     }
 
@@ -271,11 +275,8 @@ fn validator_added_and_removed_live_chain_continues() {
     };
     let four = [pk(&a), pk(&b), pk(&c), pk(&d)];
     for node in &mut nodes {
-        let advanced = node.drive_amendment(leave_block, leave.clone(), &four);
-        assert!(
-            advanced,
-            "the Leave ratified by the current quorum must apply"
-        );
+        node.drive_amendment(leave_block, leave.clone(), &four)
+            .expect("the Leave ratified by the current quorum must apply");
     }
     for node in &mut nodes {
         assert_eq!(node.cm.current.participant_count(), 3);
@@ -284,6 +285,236 @@ fn validator_added_and_removed_live_chain_continues() {
         // d (removed) can no longer contribute to a quorum.
         let v = signed_vote(4, BlockId([103; 32]));
         assert_eq!(node.votes.record(&v), RecordOutcome::Rejected);
+    }
+}
+
+/// [D] ⚑ **THE DRAIN POLE (D7)** — a member leaves and the committee CONTINUES at
+/// the correct threshold, on survivor votes alone; and the crossing that would
+/// have STRADDLED the boundary is refused.
+///
+/// The shape is the one the reading doc's §5.3 hazard takes in the LEAVE
+/// direction, which the `config_seq` pin (a join-direction fix) does not reach:
+/// `record` counts DISTINCT RECORDED SIGNERS against the LIVE threshold, while
+/// `assembled_quorum` drops any signer the governing configuration holds no key
+/// for. `n = 5 → 4` moves the bar from `T(5) = 4` down to `T(4) = 3`, so a block
+/// sitting at two survivor votes plus the departing member's vote — three
+/// recorded signers, below the old bar — would MEET the new bar the instant the
+/// leave installed, and then assemble to nothing.
+///
+/// ⚠ THE MUTATION IS ASSERTED PRESENT BEFORE THE VERDICT IS READ. The test first
+/// pins that the departing member's vote really is in the tally and that the
+/// tally really does meet the post-leave bar — i.e. that the straddle is
+/// constructed, not hoped for — and only then reads the drain's verdict. Without
+/// that, a harness whose setup silently stopped producing the hazard would pass
+/// while checking nothing (the falsifier-that-stopped-falsifying class).
+///
+/// Lean: `Dregg2.Distributed.LeaveDrain` —
+/// `straddle_crosses_without_drain` ∧ `straddle_unassemblable_without_drain` are
+/// the two halves this constructs; `drain_closes_the_straddle` is the verdict;
+/// `survivors_can_still_cross` is the continuation.
+#[test]
+fn leave_drains_the_departing_members_in_flight_votes_and_the_committee_continues() {
+    let members: Vec<SigningKey> = (1..=5).map(keypair).collect();
+    let leaver = pk(&members[4]); // seed 5 — the member that departs
+    let five: Vec<[u8; 32]> = members.iter().map(pk).collect();
+
+    let mut nodes: Vec<Node> = (0..3)
+        .map(|_| Node::new(&[1, 2, 3, 4, 5], &[1, 2, 3, 4, 5]))
+        .collect();
+    for node in &nodes {
+        assert_eq!(node.votes.quorum_threshold(), supermajority_threshold(5));
+    }
+
+    // ── A block goes IN FLIGHT: survivors 1 and 2 vote, and so does the member ──
+    //    about to leave. Three recorded signers — one short of T(5) = 4.
+    let blk = BlockId([0xD7; 32]);
+    let in_flight = finalize_across(&mut nodes, &[1, 2, 5], blk);
+    assert!(
+        in_flight.iter().all(|x| !*x),
+        "three votes are below T(5) = 4, so the block must NOT be attested yet"
+    );
+
+    // ⚠ MUTATION PRESENT — the straddle is really constructed:
+    for node in &nodes {
+        assert_eq!(node.votes.vote_count(&blk), 3, "three recorded signers");
+        assert!(
+            node.votes.has_voted(&blk, &leaver),
+            "the DEPARTING member's vote must be in the tally — without it there is no \
+             straddle to close and this test would verify nothing"
+        );
+        assert!(
+            node.votes.vote_count(&blk) >= supermajority_threshold(4),
+            "and the tally must MEET the post-leave bar T(4) = 3, so that an undrained \
+             install would declare a quorum on it"
+        );
+        assert!(
+            node.votes.assembled_quorum(&blk).is_none(),
+            "it has not crossed, so nothing is assembled yet"
+        );
+    }
+
+    // ── The 5-member committee ratifies Leave(5). T(5) = 4 approvals. ──
+    let leave_block = BlockId([0xBE; 32]);
+    let leave = MembershipProposal::Leave {
+        node_key: leaver,
+        reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
+    };
+    for node in &mut nodes {
+        let drain = node
+            .drive_amendment(leave_block, leave.clone(), &five)
+            .expect("the Leave ratified by the current quorum must apply");
+        // ── THE VERDICT: the drain ran, and it closed exactly one straddle. ──
+        assert_eq!(drain.departed, 1, "exactly one member left");
+        assert_eq!(
+            drain.votes_retired, 1,
+            "the departing member's one in-flight vote must be retired"
+        );
+        assert_eq!(
+            drain.straddles_closed, 1,
+            "and it must be counted as a STRADDLE closed: the tally met the new bar only \
+             because that vote was still in it"
+        );
+    }
+
+    for node in &nodes {
+        assert_eq!(node.cm.current.participant_count(), 4);
+        assert_eq!(node.votes.quorum_threshold(), supermajority_threshold(4));
+        assert!(!node.votes.is_committee_member(&leaver));
+        assert_eq!(
+            node.votes.vote_count(&blk),
+            2,
+            "the departing member's vote is GONE from the in-flight tally"
+        );
+        assert!(
+            !node.votes.has_voted(&blk, &leaver),
+            "retired, not merely un-counted"
+        );
+        // ⚑ THE REFUSAL: no quorum was declared on the straddling tally, and none
+        // could be assembled from it either. Both, because either alone is the
+        // defect: attested-with-no-assemblable-quorum is precisely the state
+        // "one node has it final, another cannot reconstruct that it ever was".
+        assert!(
+            !node.votes.is_consensus_attested(&blk),
+            "REFUSED: a quorum must never be declared out of two configurations"
+        );
+        assert!(
+            node.votes.assembled_quorum(&blk).is_none(),
+            "and nothing assembles from the drained tally either"
+        );
+    }
+
+    // ── THE COMMITTEE CONTINUES at the correct threshold, on SURVIVORS ALONE. ──
+    //    One more survivor vote carries the block — the obligation the drain put
+    //    on the survivors, discharged (`LeaveDrain.survivors_can_still_cross`).
+    let carried = finalize_across(&mut nodes, &[3], blk);
+    assert!(
+        carried.iter().all(|x| *x),
+        "T(4) = 3 survivor votes must finalize the block after the leave — the drain \
+         delays the block by one vote, it never strands it"
+    );
+    for node in &nodes {
+        let (_pair, sigs) = node
+            .votes
+            .assembled_quorum(&blk)
+            .expect("the survivor-only quorum must assemble");
+        assert!(
+            sigs.len() >= supermajority_threshold(4),
+            "assembled at the NEW threshold"
+        );
+        assert!(
+            sigs.iter().all(|s| s.voter.0 != leaver),
+            "and NOT ONE signature in it belongs to the departed member — the quorum lies \
+             entirely inside the new configuration (DZ §III.E same-configuration delivery, \
+             Lean drained_crossing_is_assemblable)"
+        );
+    }
+
+    // ── And a NEW block finalizes under the survivor committee: the federation ──
+    //    kept running across the departure.
+    let after = BlockId([0xD8; 32]);
+    let after_attested = finalize_across(&mut nodes, &[1, 2, 3], after);
+    assert!(
+        after_attested.iter().all(|x| *x),
+        "the committee continues after the leave"
+    );
+}
+
+/// [E] ⚑ **NOTHING IS RETRACTED** — the other half of the drain rule, which is
+/// what stops it from being a blunt "forget the leaver".
+///
+/// A block that had ALREADY crossed under the 5-member configuration keeps its
+/// tally, its pin and its assembled quorum after the leave — INCLUDING the
+/// departed member's signature, because that quorum is a fact about the
+/// configuration that produced it and is assembled against that configuration's
+/// snapshot. Retiring it would make finality lie backwards in time.
+///
+/// Lean: `LeaveDrain.drain_preserves_pinned`, `pinned_survives_the_boundary`.
+#[test]
+fn a_crossed_quorum_survives_the_leave_with_the_departed_members_signature_intact() {
+    let members: Vec<SigningKey> = (1..=5).map(keypair).collect();
+    let leaver = pk(&members[4]);
+    let five: Vec<[u8; 32]> = members.iter().map(pk).collect();
+
+    let mut nodes: Vec<Node> = (0..3)
+        .map(|_| Node::new(&[1, 2, 3, 4, 5], &[1, 2, 3, 4, 5]))
+        .collect();
+
+    // A block CROSSES under the 5-committee with the departing member among the
+    // four signers — so the pin is load-bearing rather than decorative.
+    let blk = BlockId([0xC5; 32]);
+    let attested = finalize_across(&mut nodes, &[1, 2, 3, 5], blk);
+    assert!(attested.iter().all(|x| *x), "four votes meet T(5) = 4");
+    for node in &nodes {
+        assert!(
+            node.votes.has_voted(&blk, &leaver),
+            "mutation present: the \
+            departing member is one of the four signers of the crossed quorum"
+        );
+        assert_eq!(node.votes.attested_config(&blk), Some(0));
+    }
+
+    let leave_block = BlockId([0xBF; 32]);
+    let leave = MembershipProposal::Leave {
+        node_key: leaver,
+        reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
+    };
+    for node in &mut nodes {
+        let drain = node
+            .drive_amendment(leave_block, leave.clone(), &five)
+            .expect("the Leave must apply");
+        assert_eq!(drain.departed, 1);
+        assert_eq!(
+            drain.votes_retired, 0,
+            "an ALREADY-CROSSED tally is pinned and untouched — the drain must retire \
+             nothing from it"
+        );
+        assert_eq!(drain.pinned_blocks, 1, "and it must be counted as pinned");
+    }
+
+    for node in &nodes {
+        assert!(
+            node.votes.is_consensus_attested(&blk),
+            "a block finalized before the leave stays finalized across it"
+        );
+        assert_eq!(
+            node.votes.attested_config(&blk),
+            Some(0),
+            "still judged against the configuration that produced it"
+        );
+        assert!(
+            node.votes.has_voted(&blk, &leaver),
+            "the departed member's signature is STILL in the tally — retirement is not \
+             retroactive"
+        );
+        let (_pair, sigs) = node
+            .votes
+            .assembled_quorum(&blk)
+            .expect("the pinned quorum must still assemble against config 0");
+        assert!(
+            sigs.iter().any(|s| s.voter.0 == leaver),
+            "and the departed member's signature is part of it — that is what makes the \
+             persisted quorum re-verifiable on restart"
+        );
     }
 }
 
@@ -314,7 +545,7 @@ fn under_quorum_transition_is_rejected() {
     for node in &mut nodes {
         let advanced = node.drive_amendment(join_block, join.clone(), &under_quorum);
         assert!(
-            !advanced,
+            advanced.is_none(),
             "an under-quorum transition must NOT advance the committee"
         );
     }

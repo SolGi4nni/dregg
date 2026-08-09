@@ -3696,11 +3696,16 @@ impl BlocklaceHandle {
         }
         // 2. Advance the finalization-vote committee + quorum threshold — and
         //    the HYBRID-PQ key map alongside them (a participant absent from
-        //    `pq_committee` cannot contribute to quorum; fail-closed).
-        {
+        //    `pq_committee` cannot contribute to quorum; fail-closed). This is
+        //    also the D7 DRAIN point: `reconfigure` retires every departing
+        //    member's votes from the tallies that have not crossed yet, so a
+        //    post-boundary quorum can never be assembled partly out of the
+        //    configuration this install ended (Lean
+        //    `Dregg2.Distributed.LeaveDrain.drainTally`).
+        let drain = {
             let mut votes = self.votes.write().await;
-            votes.reconfigure(participants.iter().copied(), pq_committee, threshold);
-        }
+            votes.reconfigure(participants.iter().copied(), pq_committee, threshold)
+        };
         // 3. Admit every current participant to the authenticated gossip mesh.
         for pk in participants {
             let node_id = *blake3::hash(pk).as_bytes();
@@ -3711,8 +3716,35 @@ impl BlocklaceHandle {
         info!(
             participants = participants.len(),
             quorum_threshold = threshold,
+            departed = drain.departed,
+            votes_retired = drain.votes_retired,
+            straddles_closed = drain.straddles_closed,
             "live consensus committee advanced (epoch transition applied)"
         );
+        // 4. ⚑ THE LEAVER'S SIGNAL (D7 / SKM17 §3). If THIS node is the member the
+        //    install removed, say so loudly, exactly once, at the install point.
+        //    The protocol owes a departing member a SIGNAL, never a delivery
+        //    guarantee — DBRB Thms. 81/82 prove the latter unimplementable even
+        //    for one crash fault — and the signal is DERIVED, not received: the
+        //    install position is a function of the committed prefix
+        //    (`LeaveDrain.outAt_immutable`), so every honest node computes the
+        //    same one and no message has to reach us for this to be true.
+        if !participants.contains(&self.self_key) {
+            let tag: String = self.self_key[..4]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            warn!(
+                self_key = %tag,
+                new_participant_count = participants.len(),
+                "LEAVE SIGNAL: this node is NOT in the newly installed committee. Our \
+                 finalization votes are no longer admissible anywhere and our in-flight votes \
+                 have been retired by every survivor's drain. Nothing further is promised to \
+                 us and nothing is owed: the operator may switch this node off now. What we \
+                 authored before this position is already in the committed order; what we \
+                 author after it is un-includable by construction."
+            );
+        }
     }
 
     /// The ML-DSA-65 key to put in a `Join` proposal for `node_id`.

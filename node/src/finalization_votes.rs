@@ -376,6 +376,39 @@ pub struct VoteCollector {
     max_votes_per_member: usize,
 }
 
+/// What the D7 drain did at one install point — the observable record of a
+/// mutation that would otherwise be silent. Mirrors the Lean
+/// `LeaveDrain.DrainVerdict` aggregated over every tracked block:
+/// `pinned_blocks` counts `.pinned` verdicts, `drained_blocks` counts `.retired`
+/// verdicts that actually removed something, and `votes_retired` is the sum of
+/// their `dropped` payloads.
+///
+/// `straddles_closed` is the sharp one: blocks whose tally MET the new quorum bar
+/// only because a departing member's vote was still in it. Each is a
+/// consensus-attestation that would have been declared and then failed to
+/// assemble. A non-zero value is the defect firing, not an anomaly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DrainReport {
+    /// Members this install removed (`old_committee \ new_committee`).
+    pub departed: usize,
+    /// Tallies left untouched because the block had already crossed.
+    pub pinned_blocks: usize,
+    /// In-flight tallies a departing member's vote was removed from.
+    pub drained_blocks: usize,
+    /// Total votes retired.
+    pub votes_retired: usize,
+    /// In-flight tallies that met the NEW threshold before the drain and do not
+    /// after it — the straddling crossings this rule exists to prevent.
+    pub straddles_closed: usize,
+}
+
+impl DrainReport {
+    /// Did this install actually drain anything? (False for every join.)
+    pub fn is_noop(&self) -> bool {
+        self.votes_retired == 0
+    }
+}
+
 /// The outcome of recording one vote.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordOutcome {
@@ -482,9 +515,106 @@ impl VoteCollector {
         }
     }
 
-    /// Replace the committee (e.g. after an epoch transition) without dropping
-    /// already-accumulated votes; re-counting against the new membership happens
-    /// implicitly on the next vote.
+    /// **D7, THE DRAIN** — retire every departing member's vote from every tally
+    /// that has NOT already crossed. This is the Rust transcription of the
+    /// AUTHORED consensus rule `Dregg2.Distributed.LeaveDrain.drainTally`; change
+    /// nothing here without changing the Lean first.
+    ///
+    /// Two branches, matching the Lean `DrainVerdict` one-for-one:
+    ///
+    /// * **pinned** — the block already crossed under some configuration. Its
+    ///   tally is left ALONE, so [`Self::assembled_quorum`] still assembles it
+    ///   against that configuration's snapshot. Retirement is never retroactive
+    ///   (`LeaveDrain.drain_preserves_pinned`); a quorum is a fact about the
+    ///   configuration that produced it and stays one.
+    /// * **retired** — the block is still in flight. Every departing member's
+    ///   vote is dropped, so no FUTURE crossing can count it.
+    ///
+    /// ⚑ WHY THIS EXISTS, measured at source. `record` counts DISTINCT RECORDED
+    /// SIGNERS (`signers.len()`, and `marshal_quorum_wire`'s entry list) against
+    /// the LIVE threshold, while `assembled_quorum` looks each signer up in the
+    /// governing configuration's key map and DROPS anyone missing. Before this,
+    /// `reconfigure` swapped the committee and never pruned the tally — so after a
+    /// `Leave`, a block could cross the new, SMALLER threshold on a tally that
+    /// still held the departed member's vote, and then assemble to nothing:
+    /// consensus-attested with no reconstructible quorum. That is the reading
+    /// doc's §5.3 hazard ("one node has it final, another cannot reconstruct that
+    /// it ever was") surviving in the LEAVE direction past the `config_seq` pin
+    /// that closed the join direction, and a same-configuration-delivery violation
+    /// in DZ §III.E's exact sense: one quorum, two configurations. Both halves are
+    /// theorems: `LeaveDrain.straddle_crosses_without_drain` and
+    /// `straddle_unassemblable_without_drain`, against `drain_closes_the_straddle`.
+    ///
+    /// ⚑ WHAT THIS IS NOT. It is not a promise to the leaver, and it cannot be —
+    /// DBRB Thms. 81/82 prove no algorithm can promise a departing participant
+    /// delivery, in a model strictly weaker than ours. The leaver's vote is
+    /// DROPPED; if the block still needs it, the SURVIVORS owe it another vote
+    /// (`LeaveDrain.survivors_can_still_cross` proves they can always supply one).
+    /// What the leaver is owed is a SIGNAL, and it gets one by derivation rather
+    /// than delivery: the install position is a function of the committed prefix
+    /// (`LeaveDrain.outAt_immutable`).
+    ///
+    /// ⚠ AND IT IS NOT A REFUSAL. A tally is node-local — votes arrive by gossip,
+    /// not in the committed order — so conditioning the INSTALL on a local tally
+    /// would let a live read decide *what* τ emits, the exact criterion
+    /// `auto_evict_equivocator` failed (reading doc D8). The install happens
+    /// unconditionally at its committed position (the step bound, a pure function
+    /// of roster shape, is the only thing that may refuse it); the drain is what
+    /// the install DOES. Two nodes that disagree about whether a block had crossed
+    /// disagree only about liveness — one waits for one more survivor vote — never
+    /// about a committed verdict.
+    fn retire_departed_votes(&mut self, departed: &HashSet<[u8; 32]>) -> DrainReport {
+        let mut report = DrainReport {
+            departed: departed.len(),
+            ..DrainReport::default()
+        };
+        if departed.is_empty() {
+            // A JOIN drains nothing — one rule for both directions, inert in the
+            // direction where no member leaves (`LeaveDrain.drain_join_is_identity`).
+            return report;
+        }
+        let mut emptied: Vec<BlockId> = Vec::new();
+        for (block_id, signers) in self.votes.iter_mut() {
+            if self.attested.contains_key(block_id) {
+                report.pinned_blocks += 1;
+                continue;
+            }
+            let before = signers.len();
+            signers.retain(|voter, _| !departed.contains(voter));
+            let dropped = before - signers.len();
+            if dropped == 0 {
+                continue;
+            }
+            report.drained_blocks += 1;
+            report.votes_retired += dropped;
+            // The straddle this closes, counted: the tally WOULD have met the new
+            // bar with the departed votes in it, and does not without them.
+            if before >= self.quorum_threshold && signers.len() < self.quorum_threshold {
+                report.straddles_closed += 1;
+            }
+            if signers.is_empty() {
+                emptied.push(*block_id);
+            }
+        }
+        for id in emptied {
+            self.votes.remove(&id);
+        }
+        // The eviction queues of departed members are dead bookkeeping; drop them
+        // so the per-member cap index cannot be keyed on a non-member.
+        for member in departed {
+            self.voted_blocks.remove(member);
+        }
+        report
+    }
+
+    /// TEST HELPER ONLY — replace the committee WITHOUT advancing `config_seq`,
+    /// snapshotting the outgoing configuration, or running the D7 drain.
+    ///
+    /// ⚠ This is NOT an install point and must never be used as one. The install
+    /// point is [`Self::reconfigure`]; using this instead would leave a departed
+    /// member's votes in every in-flight tally, which is exactly the straddle
+    /// `retire_departed_votes` exists to close.
+    #[cfg(test)]
     pub fn set_committee(
         &mut self,
         committee: impl IntoIterator<Item = [u8; 32]>,
@@ -517,12 +647,24 @@ impl VoteCollector {
     /// no instant in which an unattested committee holds finalization
     /// authority — the epoch-handoff no-gap property
     /// (`EpochReconfig.lean::epoch_handoff_no_gap`).
+    ///
+    /// ⚑ AND IT RUNS THE D7 DRAIN ([`Self::retire_departed_votes`]): every member
+    /// this install REMOVES has its votes retired from every tally that has not
+    /// already crossed, so no post-boundary quorum can be assembled partly out of
+    /// a configuration that no longer exists. The returned [`DrainReport`] is the
+    /// observable record of that mutation — a drain that happened silently would
+    /// be indistinguishable from one that never ran.
+    #[must_use = "the drain report records a real mutation; log it or assert on it"]
     pub fn reconfigure(
         &mut self,
         committee: impl IntoIterator<Item = [u8; 32]>,
         pq_committee: HashMap<[u8; 32], MlDsaPublicKey>,
         quorum_threshold: usize,
-    ) {
+    ) -> DrainReport {
+        let incoming: HashSet<[u8; 32]> = committee.into_iter().collect();
+        // The change-set, derived from the two rosters so it cannot disagree with
+        // them (Lean `LeaveDrain.departed old new = old.roster \ new.roster`).
+        let departed: HashSet<[u8; 32]> = self.committee.difference(&incoming).copied().collect();
         // Snapshot the outgoing configuration under its number; blocks pinned
         // to it assemble against this snapshot forever.
         self.installed.insert(
@@ -534,9 +676,27 @@ impl VoteCollector {
             },
         );
         self.config_seq += 1;
-        self.committee = committee.into_iter().collect();
+        self.committee = incoming;
         self.pq_committee = pq_committee;
         self.quorum_threshold = quorum_threshold;
+        // D7: the drain runs AFTER the new bar is live, so `straddles_closed` is
+        // measured against the threshold a post-boundary crossing would face.
+        let report = self.retire_departed_votes(&departed);
+        if !report.is_noop() {
+            tracing::info!(
+                config_seq = self.config_seq,
+                departed = report.departed,
+                votes_retired = report.votes_retired,
+                drained_blocks = report.drained_blocks,
+                pinned_blocks = report.pinned_blocks,
+                straddles_closed = report.straddles_closed,
+                "D7 leave drain: departing members' votes retired from in-flight tallies \
+                 (already-crossed blocks keep their pin and stay assemblable). Any block a \
+                 retired vote was carrying now needs one more SURVIVOR vote — that is an \
+                 obligation on the survivors, never a promise to the leaver."
+            );
+        }
+        report
     }
 
     /// The collector's install counter: how many reconfigurations it has
