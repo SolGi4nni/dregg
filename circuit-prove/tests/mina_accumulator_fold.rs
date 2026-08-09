@@ -88,9 +88,12 @@
 //!   segment B = rows 4..7   (dregg-mina-accumulator-final::v1)   acc: 5G ->  O
 //! ```
 //!
-//! Inside a segment the accumulator crosses rows through the 96 `.transition` window gates. Between
-//! segments it crosses through 96 in-circuit `cb.connect`s. Both are constraints; neither is a host
-//! comparison, and that is the entire content of the claim.
+//! Inside a segment the accumulator crosses rows through the 96 `.transition` window gates — a
+//! Lean-authored AIR constraint, with `MinaAccumulatorAir.threadedLadderV_forces` as the `n`-row
+//! induction behind it. Between segments it crosses through 96 `cb.connect`s in the RECURSION
+//! circuit — Rust-authored wiring that authors no AIR, proves on a box, and inherits the
+//! undischarged FRI/STARK floor. Neither is a host comparison; ⚠ **they are not the same strength,
+//! and this paragraph said "Both are constraints" until 2026-08-08.**
 //!
 //! ## ⚑ THE FALSIFIER, AND WHY IT ISOLATES THE CARRY
 //!

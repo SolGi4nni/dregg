@@ -158,12 +158,18 @@
 //! The 96 is not a coincidence with `mina_phase2_chain_leaf`'s 96: a projective Pasta point in the
 //! sound 8-bit encoding and a Kimchi sponge state are both `3 × 32` felts.
 //!
-//! ⚑ **AND THE SEAM INSIDE A LEAF IS FORCED THE SAME WAY, ONE RAIL DOWN.** Within a segment the
-//! accumulator crosses rows through 96 `AirLeg.window .transition` gates
-//! (`PastaLadderThread.threadLegs`), and `MinaAccumulatorAir.threadedLadderV_forces` is the `n`-row
-//! induction saying rows-satisfied + threads-held force the accumulator to BE the `n`-fold chain.
-//! Between segments it crosses through `cb.connect`. Both are constraints; neither is a host
-//! comparison.
+//! ⚑ **AND THE SEAM INSIDE A LEAF IS SHUT ONE RAIL DOWN — BY A DIFFERENT MECHANISM, WHICH IS THE
+//! PART WORTH SAYING.** Within a segment the accumulator crosses rows through 96
+//! `AirLeg.window .transition` gates (`PastaLadderThread.threadLegs`), and
+//! `MinaAccumulatorAir.threadedLadderV_forces` is the `n`-row induction saying rows-satisfied +
+//! threads-held force the accumulator to BE the `n`-fold chain. **That one is a Lean-authored AIR
+//! constraint.** Between segments it crosses through `fold_accumulator_segments`' 96 `cb.connect`s
+//! — **recursion wiring: authors no AIR, proves on a box, inherits the undischarged FRI/STARK
+//! floor.** Neither is a host comparison; they are NOT the same strength.
+//!
+//! ⚠ This paragraph read *"Both are constraints; neither is a host comparison"* until 2026-08-08.
+//! The second clause was true and the first flattened an AIR gate and a fold's connects into one
+//! word — the exact substitution §"THE DISCHARGE" below is careful to avoid for the other pair.
 //!
 //! ## THE FOLD SHAPE
 //!

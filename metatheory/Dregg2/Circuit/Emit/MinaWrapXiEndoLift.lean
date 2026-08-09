@@ -287,10 +287,19 @@ sentence "the aggregate's scalars are the verifier's to be told" stops being tru
 theorem the_machine_computes_the_endo_lift :
     readVec endoRegs OUT = endoLiftQ lambdaPallas V_CHAL := by decide
 
-/-- ⚑ **AND THE SCALAR FOLD PINS THE CHALLENGE.** `SC` ends on `v′` itself, so the 128 witnessed
-bits are the bits OF the published prechallenge and not 128 free choices that happen to reach a
-convenient `A` and `B`. Without this, the lift would be of a number nobody named. -/
-theorem the_scalar_fold_pins_the_challenge : readVec endoRegs SC = V_CHAL := by decide
+/-- ⚑ **THE SCALAR FOLD LANDS ON THE CHALLENGE — AT THE HONEST WITNESS.** `SC` ends on `v′` itself,
+so on this run the 128 witnessed bits ARE the bits of the published prechallenge.
+
+⚠⚠ **CLOSURE KIND, CORRECTED 2026-08-08 — THIS IS A COMPLETENESS `decide`, NOT A FORCING THEOREM.**
+It was called `the_scalar_fold_pins_the_challenge` and read *"…and not 128 free choices that happen
+to reach a convenient `A` and `B`"*, which is the SOUNDNESS direction — quantified over every
+satisfying trace. This file has no `_of_sat` theorem and states nothing over satisfying traces at
+all: `endoRegs` is the interpreter run on `witsOf endoProg` at the single constant `V_CHAL`. What is
+established is that the honest witness lands where it should. Whether a DIFFERENT bit vector could
+also land there is not addressed here, and the sentence that said it was is deleted rather than
+softened. -/
+theorem the_scalar_fold_lands_on_the_challenge_at_the_honest_witness :
+    readVec endoRegs SC = V_CHAL := by decide
 
 /-- ⚑ **AND THE ZERO REGISTER IS FORCED, AND THE INPUT IS NEVER WRITTEN.** `VP` ends holding what
 the first-row pin put there — so the closing assertion compares the fold against the PUBLIC INPUT
@@ -474,7 +483,7 @@ theorem the_basis_tail_ends_on_this_files_polyscale :
 #assert_axioms the_program_is_eleven_hundred_and_sixty_instructions
 #assert_axioms runRegsVecAt_threads_the_trace_generator
 #assert_axioms the_machine_computes_the_endo_lift
-#assert_axioms the_scalar_fold_pins_the_challenge
+#assert_axioms the_scalar_fold_lands_on_the_challenge_at_the_honest_witness
 #assert_axioms the_input_register_survives_the_program
 #assert_axioms endoAir_mainRailOk
 #assert_axioms endoTrace_is_the_closure_trace

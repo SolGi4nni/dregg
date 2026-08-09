@@ -750,10 +750,15 @@ fn the_derivation_cannot_see_which_verifier_index_this_is() {
 // §7 — what is still substitutable, counted
 // ---------------------------------------------------------------------------------------------
 
-/// ⚑ **§7 — THE PHASE-1 TAPE'S 53, RE-COUNTED.** Printed so the number moves when the tree does, and
-/// asserted so it cannot silently grow.
+/// ⚑ **§7 — THE PHASE-1 TAPE'S 53, SPLIT BY CLOSURE KIND.** Printed so the number moves when the
+/// tree does, and asserted so it cannot silently grow.
+///
+/// ⚠ **3 UNCONDITIONAL, 50 CONDITIONAL ON P10.** The headline "53/53 forced, zero free constants"
+/// was retired 2026-08-08: it is true that no element is a free constant, and false as a reading
+/// that all 53 are closed outright. Fifty are closed only through `opening_relation_holds`, which
+/// inherits the IPA `msm == 0` opening-soundness floor.
 #[test]
-fn the_phase1_tape_is_recounted() {
+fn the_phase1_tape_split_by_unconditional_versus_p10_conditional() {
     // Bound to the block's own STATEMENT: `public_comm` is the 40-term Lagrange MSM of the public
     // input (`MinaPhase1TapeBinding.the_tape_public_comm_is_the_msm_of_the_public_input`).
     let statement_bound = 2usize;
@@ -767,12 +772,22 @@ fn the_phase1_tape_is_recounted() {
         52,
         "the 26 points' 52 coordinates"
     );
+    assert_eq!(
+        statement_bound + vk_bound,
+        3,
+        "UNCONDITIONAL: kernel-built from the statement, or derived from the pinned VK fixture"
+    );
+    assert_eq!(
+        aggregate_bound, 50,
+        "CONDITIONAL: closed only via `opening_relation_holds`, floor P10 UNMOVED"
+    );
 
     println!(
-        "\n§7 ⚑ OF THE 53 PHASE-1 TAPE ELEMENTS: {statement_bound} bound to the block's STATEMENT; \
-         {aggregate_bound} bound to the aggregate the IPA opening closes over (36 via \
-         COMBINE_POINTS, 14 via TCHUNKS→ftComm→slot 3; floor: P10, UNMOVED); {vk_bound} (the \
-         verifier-index digest) DERIVED from the sha256-pinned Wrap VK's {NVK} commitments. \
-         0 elements are now free constants."
+        "\n§7 ⚑ OF THE 53 PHASE-1 TAPE ELEMENTS: {} UNCONDITIONAL ({statement_bound} bound to the \
+         block's STATEMENT, {vk_bound} verifier-index digest DERIVED from the sha256-pinned Wrap \
+         VK's {NVK} commitments); {aggregate_bound} CONDITIONAL ON P10 (36 via COMBINE_POINTS, 14 \
+         via TCHUNKS→ftComm→slot 3, all through `opening_relation_holds`; floor UNMOVED). \
+         0 elements are free constants — which is NOT 53 unconditional closures.",
+        statement_bound + vk_bound
     );
 }

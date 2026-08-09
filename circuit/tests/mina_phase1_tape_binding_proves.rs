@@ -505,7 +505,7 @@ fn the_forgery_at_public_comms_own_slot_breaks_the_binding() {
 /// * **2** coordinates — `public_comm` — are bound to the block's own 40-element public input, the
 ///   one place an on-curve-and-wrong substitution is refused OUTRIGHT.
 #[test]
-fn what_is_still_substitutable_is_counted() {
+fn the_53_split_by_unconditional_versus_p10_conditional() {
     let vk_digest = 1usize;
     let t_comm = 14usize;
     let aggregate_bound = 36usize;
@@ -513,12 +513,23 @@ fn what_is_still_substitutable_is_counted() {
     assert_eq!(vk_digest + t_comm + aggregate_bound + statement_bound, 53);
     assert_eq!(t_comm + aggregate_bound + statement_bound, 2 * NPTS);
 
+    // ⚑ THE SPLIT IS THE POINT, AND IT IS ASSERTED RATHER THAN PRINTED. "53/53 forced, zero free
+    // constants" was the tree's headline for this census until 2026-08-08 and it reads as 53
+    // unconditional closures. It is 3.
+    let unconditional = statement_bound + vk_digest;
+    let conditional_on_p10 = aggregate_bound + t_comm;
+    assert_eq!(unconditional, 3, "kernel-built or fixture-derived, no floor under them");
+    assert_eq!(
+        conditional_on_p10, 50,
+        "closed only via `opening_relation_holds`, which inherits the IPA `msm == 0` floor (P10)"
+    );
+
     println!(
-        "\n§6 ⚑ OF THE 53: {statement_bound} bound to the block's STATEMENT (public input); \
-         {} bound to the aggregate the IPA opening closes over ({aggregate_bound} via \
-         COMBINE_POINTS, {t_comm} via TCHUNKS -> ftComm -> slot 3; floor: P10, UNMOVED); \
-         {vk_digest} (the verifier-index digest) DERIVED from the pinned Wrap VK's 28 commitments \
-         by 28 links of this same descriptor. 0 free constants remain.",
-        aggregate_bound + t_comm
+        "\n§6 ⚑ OF THE 53: {unconditional} UNCONDITIONAL ({statement_bound} `public_comm` built \
+         from the block's own public input, {vk_digest} verifier-index digest derived from the \
+         sha256-pinned Wrap VK's 28 commitments); {conditional_on_p10} CONDITIONAL ON P10 \
+         ({aggregate_bound} via COMBINE_POINTS, {t_comm} via TCHUNKS -> ftComm -> slot 3 -> \
+         `opening_relation_holds`, whose IPA `msm == 0` floor is UNMOVED). 0 free constants \
+         remain, which is NOT the same statement as 53 unconditional closures."
     );
 }
