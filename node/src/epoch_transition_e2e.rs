@@ -42,6 +42,20 @@
 //!   [C] SAFETY — an UNDER-QUORUM (unauthorized) transition does NOT apply: the
 //!       committee is unchanged and the would-be validator's votes stay rejected.
 //!       The change is gated by the CURRENT committee's quorum, full stop.
+//!   [D] ⚑ DRAIN (D7) — a member leaves and the committee CONTINUES at the new
+//!       threshold on SURVIVOR votes alone, while the crossing that would have
+//!       STRADDLED the boundary (a tally meeting the new, smaller bar only
+//!       because the departing member's vote was still in it) is refused. The
+//!       straddle is asserted CONSTRUCTED before the verdict is read.
+//!   [E] ⚑ NOTHING IS RETRACTED — a quorum that had already crossed under the
+//!       old configuration keeps its tally, its pin and its assembled quorum
+//!       across the leave, INCLUDING the departed member's signature.
+//!
+//! ⚠ [D] and [E] are the LEAVE half and they are SLOW: every vote is a real
+//! ML-DSA-65 verify (376–1880 ms measured), so all five tests here — including
+//! the three that predate the drain — are killed by `[profile.default]`'s
+//! 45 s × 4 in a DEBUG build. Run them `--release` (`--profile full`); a timeout
+//! from the default profile is a build/profile verdict, not a test verdict.
 
 #![cfg(test)]
 

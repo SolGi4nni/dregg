@@ -1,5 +1,204 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 9 — LEAVING: the drain rule lands as an obligation on the SURVIVORS, and it closes a straddling quorum the join-direction fix did not reach
+
+**SUBSTRATE: Lean.** `metatheory/Dregg2/Distributed/LeaveDrain.lean` is the AUTHORED consensus
+rule; `node/src/finalization_votes.rs::VoteCollector::retire_departed_votes` is its transcription,
+the same pairing `ConfigBoundary.classifyStep` ↔ `constitution::config_step_allowed` already has.
+
+**THE BRIEF WAS WRONG ABOUT ITEM 3, AND THAT IS THE FIRST RESULT.** "Build the step bound, refusing
+by name, including the non-contiguous case" **was already landed** (`2fce89d4a`, Lean
+`Dregg2/Distributed/ConfigBoundary.lean`), and landed *better* than the brief described: the
+non-contiguous trap (`n=7` passes at `l ∈ {1,2,4}` and fails at `3`) is closed not by a prefix scan
+but by a **roster floor** — `4 ≤ n → 4 ≤ n′` — because `l = 4` from `n = 7` passes the counting
+bound only VACUOUSLY (`faultBudget 3 = 0`), which is `leaveStepOk_vacuous_at_four_from_seven`. And
+it carries a sharpening the brief's own tables could not see: **a MIXED step of one join AND one
+leave at `n = 4` — two changes — BREAKS the intersection bound** (`churnStepOk_breaks_at_one_one_from_four`),
+so a flat "≤ 2 changes" rule is unsound in a direction neither the pure-join nor the pure-leave table
+exhibits. Nothing was re-derived here.
+
+**THE ACTUAL HOLE WAS THE DRAIN, AND IT HELD A REACHABLE DEFECT.** `VoteCollector::record` counts
+DISTINCT RECORDED SIGNERS (`signers.len()`, and `marshal_quorum_wire`'s `n=<live committee>;V=<every
+recorded signer>`) against the LIVE threshold; `assembled_quorum` looks each signer up in the
+governing configuration's key map and DROPS anyone missing. `reconfigure` swapped the committee and
+**never pruned the tally**. So after a `Leave`, a block sitting below the OLD bar on a tally that
+included the departing member could cross the NEW, smaller bar the instant the leave installed — and
+then assemble to nothing. `n = 5 → 4`: `T(5) = 4`, `T(4) = 3`, a tally of two survivors plus the
+leaver is 3.
+
+That is the reading doc's §5.3 hazard — *"one node has it final, another cannot reconstruct that it
+ever was"* — **surviving in the LEAVE direction past the `config_seq` pin that closed the join
+direction**, and a same-configuration-delivery violation in DZ §III.E's exact sense: one quorum, two
+configurations. Both halves are theorems, not prose: `straddle_crosses_without_drain` and
+`straddle_unassemblable_without_drain`, against `drain_closes_the_straddle`, with
+`straddle_step_is_allowed` pinning that `ConfigBoundary` would NOT have refused that boundary — so
+the section cannot be vacuous through a refused step.
+
+**THE RULE, and what it does NOT promise.** `drainTally old new pinned t`:
+* **pinned** (the block already crossed) → the tally is returned UNTOUCHED. `drain_preserves_pinned`.
+  A quorum is a fact about the configuration that produced it, assembled against that
+  configuration's snapshot; retiring it would make finality lie backwards in time.
+* **otherwise** → every DEPARTING member's vote is retired. `drained_voters_in_new_roster` +
+  `drained_crossing_is_assemblable`: after the drain the deployed distinct-signer count and
+  `assembled_quorum`'s roster-filtered count COINCIDE, so no post-boundary quorum straddles.
+
+⚑ **It is an obligation on the survivors and NOT a promise to the leaver, because the latter is
+unimplementable** — DBRB App. A.6 Thms. 81/82, crash-only with one fault, strictly weaker than ours.
+The leaver's vote is DROPPED (`leaver_vote_is_dropped_and_block_does_not_cross`); if a block needed
+it, the SURVIVORS owe it another vote, and `survivors_can_still_cross` proves they can always supply
+one — the drain delays a block by one vote, it never strands it. What the leaver IS owed is SKM17
+§3's **signal**, and it gets one by DERIVATION rather than delivery: `outAt_immutable` /
+`departure_signal_agrees` — the install position is a function of the committed prefix, so the
+leaver computes it and every survivor computes the same one. The node says so out loud at the
+install (`apply_committee_change`'s LEAVE SIGNAL warn).
+
+⚠ **AND THE DRAIN IS NOT A REFUSAL, deliberately.** A tally is node-local — votes arrive by gossip,
+not in the committed order — so conditioning the INSTALL on a local tally would let a live read
+decide *what* τ emits, the exact criterion `auto_evict_equivocator` failed (D8). The install happens
+unconditionally at its committed position; the **step bound** (a pure function of roster shape,
+identical on every node) is the only thing that may refuse it; the drain is what the install DOES.
+Two nodes that disagree about whether a block had crossed disagree only about liveness.
+
+**LEAVE AND EVICTION AGREE RATHER THAN COMPETING — verified at source, not assumed.** `auto_evict`
+is gone (`89238335a`): exclusion is `node(b) ∉ byz(⌊b⌋)`, a predicate over each block's own closure
+evaluated inside τ, and it never moves `Π`. And `LeaveReason` carries **no `Evicted` variant at all**
+(deliberately — the docblock says so and says why). So there is exactly ONE way a key leaves the
+roster: a voted `MembershipProposal::Leave` folded from finalized blocks, through the same step bound
+and the same drain, `Voluntary` or `Timeout`. A committee that wants an equivocator OUT of `Π` votes
+an ordinary `Leave`. No second door — and one consequence worth naming: the timeout path
+(`advance_constitution_wave`) authors that same `Leave`, so at `n = 4` a **timeout-leave is now
+REFUSED by the roster floor too**. A silent member of a 4-federation stays in `Π` and the committee
+runs at `T(4) = 3` on its three live members, which is the correct answer — `4 → 3` tolerates
+nothing.
+
+**BOTH POLES, and where they ran.** `node/src/epoch_transition_e2e.rs` (in-process, multi-node, REAL
+hybrid ed25519+ML-DSA-65 votes through the verified quorum gate):
+`leave_drains_the_departing_members_in_flight_votes_and_the_committee_continues` asserts the
+MUTATION PRESENT first — the leaver's vote really is in the tally, and the tally really does meet
+`T(4) = 3` — and only then reads the verdict, so a setup that stopped producing the hazard fails
+instead of passing vacuously. `a_crossed_quorum_survives_the_leave_with_the_departed_members_
+signature_intact` is the other pole. Multi-process: `scripts/federation-leave-poles.sh` — pole 1
+5→4 CONTINUES, pole 2 4→3 REFUSED BY NAME (`ConfigStep::RosterFloor`), with `approvals ≥ required`
+asserted before the refusal is read.
+
+⚠ **AND WHAT DID NOT RUN, said plainly rather than left to look like it did.** The Lean typechecks
+clean and `#assert_axioms` passes on every keystone; `cargo check -p dregg-node --lib --tests` is
+clean. The five `epoch_transition_e2e` tests were **KILLED by `[profile.default]`'s 45 s × 4 in
+DEBUG — all five, including the three that predate this work** — because each vote carries an
+ML-DSA-65 verify measured at **376–1880 ms** (`record`'s own docblock). **That is a profile/build
+verdict, not a test verdict**, and reading it as one would have been the exact "do not read a timeout
+as a verdict" trap. The `--release --profile full` re-run was queued behind nine sibling cargos on
+the shared target lock and had not returned. `federation-leave-poles.sh` is syntax-checked with its
+API field names read at source; it has **not been run against live processes**. ⚑ And a DEBUG binary
+cannot run it at all: `dregg-node genesis --validators 5` had not returned after **400 s** on this
+box (measured today) — the harness now says so in its own header. **A federation has still not been
+run since `7a181f741` fixed the exponential round-advance gate, so the round-11 wall remains
+un-retested by anyone.**
+
+**NAMED, NOT CLOSED.** The persisted face is untouched: `StoredAttestedRoot::verify_finalization_
+quorum` requires every signer to be in the committee it is handed, so a quorum pinned to `c` does
+not re-verify against `c+1`'s roster — that is the restart-anchor lane's version-at-block work and
+the `config_seq` docblock's own named wire residual (the vote preimage does not carry the voter's
+configuration). The drain makes the post-boundary side strictly better (single-configuration by
+construction); it does not reach the pre-boundary side.
+
+## ⛑⛑⛑⛑ AUGUST 9 — the R4 fold, REBUILT: block 539508's own `sg` closes `equal_g`, and the rows are the only thing left between that and segment D
+
+**THE TWO QUESTIONS, ANSWERED FIRST.** **No, we do not agree at 40 of 40 — we agree at 39**, slot 12
+alone, measured at `shapeWrap`/`w12_close` against a referee re-baked in this pass. **The devnet
+re-registration is NOT taken**, for the reason three lanes before this one gave and which is still
+the right one: registering a key for a 39/40 emission puts a differently-stale key on chain.
+
+⚑ **THE REFEREE IS CURRENT, AND THAT IS A MEASUREMENT AND NOT AN ASSUMPTION.**
+`pickles_kimchi_marshal` re-run in release (~17 s): `PROOF_MARSHAL_RESULT=GREEN`, and
+`installed_gate` reports all THREE generated modules — `KimchiStepWrapChainFixture`,
+`KimchiStepWrapChainKey` and `MinaWrapOwnVerifierKey` — **byte-identical to their tracked twins**, so
+2026-08-08's un-installed-emit drift is closed and stays closed. Its `wrap-public-input.json` was
+diffed slot-by-slot against the tracked `WRAP_PUBLIC_INPUT_MEASURED`: **identical at all forty**. The
+agreement number below is therefore graded by a referee that is this run's own output.
+`EmitWrapFortyAgreement` at `shapeWrap`: **AGREE at 39 of 40**, the miss at `[12]`
+(emitted `3396651593…`, Mina's `5075616743…`). ⚠ The smoke shape's 17 is a different, smaller
+circuit and is not this number.
+
+### ⚑⚑⚑ THE FOLD IS REBUILT AND IT CLOSES — three theorems, `#assert_compiled`, in the substrate
+
+§19c left the residue named but not repaired: after ONE corrected absorb pair makes `t`, `u`, the
+fifteen prechallenges and `c′` the block's own, `bpCloses` at the block's `(sg, z₁, z₂)` **still**
+refused, because R4 keys 46 combine rounds on 23 round-robin transcript cells and SUMS them where
+`combine_split_commitments` Horner-nests ONE ξ, and keys 28 of 30 `bullet_reduce` halves off a
+foreign cell with no `endo_inv` on the L half.
+
+**`KimchiStepMainCore` §19d** is that fold, written once, in the assembly's OWN algebra — `runEndo`
+(R4's emitted `EndoMul` ladder) and `addA` (`Ops.add_fast`) — over the assembly's OWN bases, which
+are block 539508's commitments. **LEAN-AUTHORED**; no Rust, no `#guard`.
+`KimchiStepMainPins19d` states what it does:
+
+* **`the_ladder_is_multiplication_by_the_pallas_lift`** — `runEndo` at a prechallenge IS scalar
+  multiplication by `endoMap λ_Pallas` in `Fq`, at all fifteen; that lift is `MinaWrapOpeningGate`'s
+  own `CHAL`; `endo_inv`'s own assert closes at all fifteen and its scalar is `CHAL_INV`; and ⚑ the
+  `Fp`/`λ_Vesta` fold `liftVal` — §8g's DEFERRED word, the C8 *scalar* fold's multiplier — is a
+  **different scalar at every one of them**. Without that last leg a fold that read one endo
+  constant for the other would be self-consistent and wrong.
+* **`the_rebuilt_combine_reproduces_o1labs_own_aggregate`** — the Horner over the block's own 47
+  `without_degree_bound` commitments at the block's own ξ′ lands on
+  `MinaWrapAggregationGate.COMBINED_GOLD`, **o1-labs' `PolyComm::multi_scalar_mul` over o1-labs'
+  own `combine_commitments` output**. Poles: a moved ξ misses it (one ξ is load-bearing), the
+  REVERSED list misses it (it is a Horner, and `combine_split_commitments`' `List.rev` is read
+  right), and **the EMITTED round-robin fold's own 46-round accumulator is not it** — defect (i)
+  measured on the very instance §19c corrected, not argued.
+* ⚑⚑ **`the_rebuilt_fold_closes_at_the_blocks_own_opening`** — the whole of `check_bulletproof`
+  rebuilt, at the assembly's OWN squeezes off `tRealAdvice.sp`: `lhs` **IS** `lhsRealOpening`, and
+  **`bpCloses` at the block's own `(sg, b₀, z₁, z₂)` is TRUE** — the same predicate that has refused
+  `SG_XY` since §19b. A moved `sg` is still refused at that same `lhs`, and the emitted fold's `lhs`
+  is a different point. Each of §19c(f)'s three defects is refuted separately: round-robin keying,
+  a forward `endo` where `endo_inv` belongs, and a moved ξ each give a different `lhs`.
+
+**So `G` can be the real accumulator.** The obstruction to slot 12's `[Gx; Gy]` pair is no longer an
+open question about the fold; it is a rewiring.
+
+### ⚠ WHAT IS *NOT* DONE, said before anything else quotes this
+
+1. **THE ROWS ARE NOT REWIRED.** `runIpa` still emits the round-robin sum, so `G` STAYS `solveG`'s
+   output. Publishing `SG_XY` over an `equal_g` the emitted rows refuse is a stapled slot, and this
+   pass declines it exactly as §19b declined it. §19d's docblock carries the wiring, and it is not
+   a design question any more: for combine step `a` the LADDER's base is the running accumulator
+   (`qSum s (a−1)`, seeded at `qT s 45 = COMBINE_XY[46]`) and the complete-add's other operand is
+   the commitment `qT s (44−a)` (`qInit = COMBINE_XY[0]` at `a = 45`); for `bullet_reduce` pair `j`
+   both halves take `bulletChal j`, and the L half's ladder base is a witnessed `endo_inv` point
+   whose ladder OUTPUT is asserted equal to the absorbed commitment. Round and add COUNTS do not
+   change (46 + 30 ladders, 76 adds). What is NEW is 15 `endo_inv` witness points — 30 variables,
+   15 `assert_on_curve`s, 30 `Field.Assert.equal` halves — so `nIpaPts`/`nOnC` grow and every
+   emitted step artifact re-emits.
+2. **ξ IS THE BLOCK'S, SUPPLIED — NOT THE ASSEMBLY'S OWN.** The last conjunct of theorem 3 measures
+   it: `tRealAdvice.defc.pre 0 ≠ XI_PRE`. §8g chain 0 lifts the statement word `vXiStmt`, and R8's
+   `xi_correct` ties it to the assembly's fr-sponge, which runs over FIXTURE evaluations. ⚑ After
+   the rewiring the residue is therefore **not the fold** any more: it is the fr-sponge's INSTANCE
+   (segment B over the block's own evaluations) plus §19c(f)'s advice-cell split. Both are smaller
+   and neither is this one.
+3. **AND SLOT 12 NEEDS MORE THAN `G`.** 58 of its 76 preimage cells already agree; the 18 that do
+   not are the `[Gx; Gy]` pair **and sixteen challenges**. The rewiring closes the pair. The sixteen
+   are `…Pins19.the_published_statement_carries_fifteen_of_segment_ds_sixteen`: the emitted step
+   statement publishes fifteen (`uChal 1 … 15`) and **`uChal 0` is published nowhere**, so that half
+   is a decision about the STATEMENT and is untouched here.
+
+### A stale docblock corrected — it stated one of the four REFUTED answers as fact
+
+`KimchiWrapMainField.lean` said slot 12 was an **arity gap** — *"segment D and the marshaller hash
+preimages of DIFFERENT ARITY, 56+20 against 56+36 … deriving harder on either side does not close
+it"* — at two sites: the `MinaWrapDeferredWords` import comment, and
+`the_published_statement_carries_every_derived_word_but_the_arity_mismatched_one`'s docblock. There
+is no arity gap: `segd_slot12_probe` hands openmina's OWN `MessagesForNextStepProof::hash()` segment
+D's OWN 56+20 preimage and gets segment D's squeeze to the digit
+(`KimchiWrapMainPins10`, `KimchiWrapMainPins12:670-674`, both current). Corrected in place, with the
+refutation and the new answer named. The theorem is unchanged — it was always right; its reason was
+not.
+
+**FLAG DAY: none.** No emitted byte moves, no VK rotates, nothing re-genesises, no descriptor and no
+fixture re-emits — §19d is new `def`s nothing wired yet and `…Pins19d` is a new pin module imported
+by `KimchiStepMain` so it is not an orphan. `PROVENANCE.json` is not stamped. ⚠ The rewiring in
+item 1 above **will** be a flag day (every step artifact + the 30 wrap fixtures), and that is
+ordinary work, not an objection.
+
 ## ⛑⛑⛑⛑ AUGUST 8 — finalize conjuncts 3 and 4 are an AIR now, and the width is the PIN SURFACE, not the arithmetic
 
 **`dregg-mina-finalize-scalars::v1`** (`metatheory/Dregg2/Circuit/Emit/MinaFinalizeScalars.lean`)

@@ -41,6 +41,11 @@
 #   LP_N2       committee size for pole 2     (default 4 — 4->3 is a REFUSED step)
 #   LP_ROOT     run root                      (default ~/dregg-leave-poles)
 #   LP_BIN      dregg-node binary             (default target/debug/dregg-node)
+#               ⚠ USE A RELEASE BINARY. Measured 2026-08-09 on this laptop: a
+#               DEBUG `dregg-node genesis --validators 5` had not returned after
+#               400 s (ML-DSA-65 keygen is the cost, and `federation-join-poles.sh`
+#               measures ~216 s for a debug candidate's genesis alone). Nine debug
+#               nodes never reach the poles. `LP_BIN=target/release/dregg-node`.
 #   LP_HTTP     base HTTP port                (default 8480)
 #   LP_GOSSIP   base gossip port              (default 9480)
 #   LP_WAIT     seconds to wait for an install (default 120)
@@ -159,6 +164,10 @@ launch_group() {
 }
 
 cmd_up() { echo "== up =="; launch_group a; launch_group b; }
+# Bring up ONE group. Useful on a contended box: pole 2 needs only group b, and
+# nine debug nodes beside a release build starve each other.
+cmd_up_a() { echo "== up (group a only) =="; launch_group a; }
+cmd_up_b() { echo "== up (group b only) =="; launch_group b; }
 
 # ── the removal drive: propose on node0, approve on the rest ────────────────
 #
@@ -341,11 +350,13 @@ cmd_clean() { cmd_down || true; rm -rf "$LP_ROOT"; }
 case "${1:-}" in
   genesis) cmd_genesis ;;
   up) cmd_up ;;
+  up-a) cmd_up_a ;;
+  up-b) cmd_up_b ;;
   pole1) cmd_pole1 ;;
   pole2) cmd_pole2 ;;
   report) cmd_report ;;
   down) cmd_down ;;
   clean) cmd_clean ;;
   all) cmd_genesis; cmd_up; cmd_pole1; cmd_pole2; cmd_report ;;
-  *) echo "usage: $0 {genesis|up|pole1|pole2|report|down|clean|all}" >&2; exit 2 ;;
+  *) echo "usage: $0 {genesis|up|up-a|up-b|pole1|pole2|report|down|clean|all}" >&2; exit 2 ;;
 esac
