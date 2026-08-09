@@ -16,8 +16,11 @@ test("the primary terminal exposes all seven platform routes and exact lab entri
   for (const id of ["platform-terminal", "crew-systems", "evidence-register", "bazaar-gates"]) {
     assert.match(html, new RegExp(`id="${id}"[^>]*aria-live="polite"`));
   }
-  assert.match(html, /Content authentication, table provenance, replay continuity, and settlement are separate claims/);
-  assert.match(html, /no persistent officer profile, crew custody object, progression receipt, or injury ledger/i);
+  // Four separate green lights, and the page must say none of them upgrades
+  // another — laundering one into the rest is the whole failure this guards.
+  assert.match(html, /Four different green lights/);
+  assert.match(html, /None of them upgrades another/);
+  assert.match(html, /no profile, no owned kit, no progression, no injury record/i);
 });
 
 test("platform rendering uses text nodes and links without inline styles or click-only cards", async () => {

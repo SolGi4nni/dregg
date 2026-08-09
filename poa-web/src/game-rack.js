@@ -24,7 +24,7 @@ import { SHAPES } from "./descriptor-shape.js";
  *   unsupported  the signed catalog enrols it and this client has no controller.
  *                Loud on purpose: it is the only combination that is a defect.
  *
- * A sealed slot saying "awaiting curator activation" is true. Inventing a length
+ * A sealed slot saying the curator has not opened it is true. Inventing a length
  * tag or a mechanics-flavoured line for a game nobody has written is not, so a
  * reserved berth carries `session: null` and `shape: null` and the rack renders
  * that absence rather than filling it in.
@@ -47,6 +47,14 @@ import { SHAPES } from "./descriptor-shape.js";
  * So the rack takes a `standing`, and no card may state a reason the terminal has
  * not established. An honest absence is a feature; an honest-sounding absence
  * standing in for a fault is the failure it is easiest to ship.
+ *
+ * ⚑ THE WORDS ON A CARD ARE NOT THE WORDS IN THIS FILE'S HEAD. Every state above
+ * keeps its name in code and says its piece in the ship's own register — see
+ * `docs/reference/POA-VOICE-2026-08-09.md`. "The signed content epoch did not
+ * authenticate at this counter" and "the curator's manifest did not check out
+ * here" are the same claim; only one of them can be read by somebody who came to
+ * play a game. What may never move is WHO DECIDED: a curator decision, a fault on
+ * this side, and a thing not yet known are three sentences and stay three.
  */
 
 /** The three session lengths. A fourth is a decision, not a new string. */
@@ -67,19 +75,19 @@ export const CARD_STATES = Object.freeze(["open", "sealed", "reserved", "unsuppo
 export const CATALOG_STANDINGS = Object.freeze(["pending", "ready", "refused"]);
 
 const SEAL_LABEL = Object.freeze({
-  sealed: "AWAITING CURATOR ACTIVATION",
-  reserved: "BERTH RESERVED",
-  unsupported: "NO CONTROLLER INSTALLED",
-  checking: "READING THE SIGNED CATALOG",
-  refused: "THIS TERMINAL COULD NOT READ THE CATALOG",
+  sealed: "THE CURATOR HAS NOT OPENED THIS",
+  reserved: "EMPTY BERTH",
+  unsupported: "THIS TERMINAL CANNOT RUN IT",
+  checking: "READING THE MANIFEST",
+  refused: "THIS TERMINAL COULD NOT READ THE MANIFEST",
 });
 
 const SEAL_COPY = Object.freeze({
-  sealed: "The drill is installed and the signed catalog does not enrol it at this counter. It opens when the curator activates it — not when this page decides to show it.",
-  reserved: "A berth on the rack. No drill is installed here and nothing has been emitted for it, so there is no length and no mechanics to state.",
-  unsupported: "The signed catalog enrols this drill and this terminal has no controller for it. Nothing opens: a browser must never approximate a game it was not given.",
-  checking: "Nothing here is open or closed yet. The signed content epoch is still being authenticated, and until it is, this terminal does not know what the curator enrolled.",
-  refused: "The signed content epoch did not authenticate here, so this terminal cannot say what the curator enrolled or withheld. That is a fault on this side, not a closed drill.",
+  sealed: "The drill is built and sitting here. It is not on the manifest the curator signed, so it stays shut — it opens when the curator opens it, not when this page decides to show it.",
+  reserved: "An empty berth on the rack. Nothing is built for this slot and nothing has been written for it, so there is no length and no shape to put on the card.",
+  unsupported: "The curator has opened this drill and this terminal has no way to run it. Nothing opens: a browser must never approximate a game it was not given.",
+  checking: "Nothing here is open or shut yet. This terminal is still checking the curator's signature on the manifest, and until that is done it does not know what the curator opened.",
+  refused: "The curator's manifest did not check out here, so this terminal cannot say what the curator opened or held back. That is a fault on this side of the glass, not a closed drill.",
 });
 
 /** The presentation records. A new game lands here and in the dispatch table. */
@@ -241,32 +249,58 @@ export function loadRackEntries(entries = GAME_RACK) {
 }
 
 /**
+ * Plain words for the tags the catalog emits, and the tag kept beside them.
+ *
+ * ⚠ BOTH, NEVER ONE. `oracle-only` means something exact and a player cannot read
+ * it; "never named on screen" is readable and is not the emitted token, so it
+ * cannot be matched against the bytes. A tag with no gloss here falls through
+ * VERBATIM rather than being dressed in a nearby sentence — this table teaches
+ * words for tags it has been taught, and says nothing about the rest.
+ */
+const ACTIVATION_COPY = Object.freeze({
+  "detached-signature-required": "a curator signature kept outside the rules, so the rules cannot open themselves",
+});
+const BINDING_COPY = Object.freeze({
+  "per-run-hidden-draw": "drawn fresh for every run",
+});
+const DISCLOSURE_COPY = Object.freeze({
+  "oracle-only": "never named on screen — the table answers, it does not show",
+  "per-run-open": "named to you when the run opens",
+});
+
+function glossed(table, tag) {
+  const key = String(tag ?? "unknown");
+  const words = table[key];
+  return words ? `${words} (${key})` : key;
+}
+
+/**
  * The trust copy, RELOCATED rather than deleted: one fold, the same rows, on
  * every card and every end screen. Every row is READ off the authenticated
  * mission — none of it is authored here, so it cannot drift into flattery.
  */
 export function verificationRows(mission, standing = "ready") {
   if (!mission) {
-    // ⚠ The same trap as the seal copy: "not enrolled at this counter" is a claim
+    // ⚠ The same trap as the seal copy: "the curator has not opened it" is a claim
     // about the CURATOR, and it is only available once a catalog has been read.
     const detail = {
-      pending: "the signed content epoch has not been authenticated yet, so this terminal does not know",
-      refused: "the signed content epoch did not authenticate here, so this terminal cannot say",
-      ready: "not enrolled in the signed catalog at this counter",
+      pending: "not established — this terminal is still checking the curator's manifest",
+      refused: "not established — the curator's manifest did not check out here, so this terminal cannot say",
+      ready: "not on the manifest the curator signed",
     }[standing] ?? "not established";
     return Object.freeze([
-      Object.freeze({ term: "Rules authority", detail }),
-      Object.freeze({ term: "Run status", detail: "nothing can be played, so nothing is scored or settled" }),
+      Object.freeze({ term: "Rules", detail }),
+      Object.freeze({ term: "What a run here is worth", detail: "nothing can be played, so nothing is scored and nothing settles" }),
     ]);
   }
   const short = typeof mission.activatedManifest === "string" ? mission.activatedManifest.slice(7, 23) : "unknown";
   return Object.freeze([
-    Object.freeze({ term: "Rules authority", detail: `POAG1 ${short} · content epoch ${mission.contentEpoch}.${mission.curatorCounter}` }),
-    Object.freeze({ term: "Activation", detail: String(mission.activation?.state ?? "unknown") }),
-    Object.freeze({ term: "Hidden instance", detail: `${mission.instanceBinding} · ${mission.instanceDisclosure}` }),
-    Object.freeze({ term: "Derived by", detail: String(mission.derivationModule ?? "unknown") }),
-    Object.freeze({ term: "Reward class", detail: `${mission.rewardClass} · privacy ${mission.privacyGrade}` }),
-    Object.freeze({ term: "Run status", detail: "a transcript made here is local and unsettled; it grants no score, salvage, rank, or canon" }),
+    Object.freeze({ term: "Rules", detail: `POAG1 ${short} · manifest revision ${mission.contentEpoch}.${mission.curatorCounter}` }),
+    Object.freeze({ term: "Opened by", detail: glossed(ACTIVATION_COPY, mission.activation?.state) }),
+    Object.freeze({ term: "The hidden answer", detail: `${glossed(BINDING_COPY, mission.instanceBinding)} · ${glossed(DISCLOSURE_COPY, mission.instanceDisclosure)}` }),
+    Object.freeze({ term: "Drawn by", detail: String(mission.derivationModule ?? "unknown") }),
+    Object.freeze({ term: "Reward", detail: `${mission.rewardClass} · privacy ${mission.privacyGrade}` }),
+    Object.freeze({ term: "What a run here is worth", detail: "a run played here stays in this browser: no score, no salvage, no rank, and nothing written to the ship" }),
   ]);
 }
 
@@ -289,22 +323,29 @@ export function resultSummary(history) {
     // carrying a bordered panel that says "nothing has been played yet" is seven
     // pieces of furniture built for an absence — and on a first visit that is the
     // whole board. The absence of a record needs no box; a record gets one.
-    return Object.freeze({ headline: "No run recorded in this browser", detail: "Nothing here has been played yet.", scored: false, recorded: false });
+    return Object.freeze({ headline: "Not played here yet", detail: "This browser has no record of a run.", scored: false, recorded: false });
   }
   const last = [...practice, ...judged].reduce((latest, record) => (record.at > latest.at ? record : latest));
   const bestPractice = bestOf(practice);
   const bestJudged = bestOf(judged);
+  // ⚠ THE UNIT IS SAID. "judged best 4" reads as a score of four; the number is
+  // an ACTION COUNT and lower is better, which is the opposite reading.
   const parts = [];
-  if (bestJudged) parts.push(`judged best ${bestJudged.actions}`);
-  if (bestPractice) parts.push(`practice best ${bestPractice.actions}`);
-  const headline = parts.length > 0 ? parts.join(" · ") : "no completed run yet";
-  const outcome = last.outcome === "solved" ? "completed" : last.outcome;
+  if (bestJudged) parts.push(`judged best ${actionCount(bestJudged.actions)}`);
+  if (bestPractice) parts.push(`practice best ${actionCount(bestPractice.actions)}`);
+  const headline = parts.length > 0 ? parts.join(" · ") : "nothing solved yet";
+  const outcome = last.outcome === "solved" ? "solved" : last.outcome;
   return Object.freeze({
     headline,
-    detail: `last: ${last.status} · ${outcome} in ${last.actions} action${last.actions === 1 ? "" : "s"}`,
+    detail: `Last run: ${last.status}, ${outcome} in ${actionCount(last.actions)}.`,
     scored: Boolean(bestJudged),
     recorded: true,
   });
+}
+
+/** `1 action`, never `1 actions`. */
+function actionCount(actions) {
+  return `${actions} action${actions === 1 ? "" : "s"}`;
 }
 
 function cardState(standing, enrolled, installed) {
@@ -357,7 +398,7 @@ export function buildRack({ entries = GAME_RACK, missions = [], installed = [], 
       columns: entry.columns,
       shape: entry.shape,
       session,
-      sessionLabel: session ? `${session.label} ${session.estimate}` : "LENGTH NOT DECLARED",
+      sessionLabel: session ? `${session.label} ${session.estimate}` : "NO LENGTH YET",
       state,
       playable: state === "open",
       missionId: mission?.missionId ?? null,
@@ -450,7 +491,7 @@ function rackGroups(cards) {
   return order
     .map((id) => ({
       id: id ?? "unstated",
-      label: id === null ? "LENGTH NOT DECLARED" : SESSION_LENGTHS[id].label,
+      label: id === null ? "NO LENGTH YET" : SESSION_LENGTHS[id].label,
       estimate: id === null ? null : SESSION_LENGTHS[id].estimate,
       cards: cards.filter((card) => (card.session?.id ?? null) === id),
     }))
@@ -496,8 +537,8 @@ export function mountRackRefusal(root, error) {
   const notice = element("section", "rack-refusal");
   notice.setAttribute("role", "alert");
   notice.append(
-    element("p", "rack-refusal__label", "THE RACK REFUSED TO BUILD"),
-    element("p", "rack-refusal__copy", "No drill is listed because this terminal could not assemble the board, not because the curator closed one. This is a fault in this client."),
+    element("p", "rack-refusal__label", "THIS TERMINAL COULD NOT BUILD THE RACK"),
+    element("p", "rack-refusal__copy", "The board is empty because this terminal could not put it together, not because the curator shut anything. The fault is on this side of the glass, and this is what broke:"),
     element("code", "rack-refusal__code", error?.code ? `${error.code}: ${error.message}` : String(error?.message ?? error)),
   );
   root.replaceChildren(notice);

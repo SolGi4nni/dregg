@@ -9,8 +9,10 @@ test("primary terminal exposes Galley as a seventh keyboard route with an honest
   assert.match(html, /data-route="galley"/);
   assert.match(html, /data-view="galley"/);
   assert.match(html, /id="galley-root"/);
-  assert.match(html, /live journal needs permission to share an active Dregg public key/);
-  assert.match(html, /exact turn postcard to the actual Dregg signer/);
+  // Two claims, kept apart: reading your own shift needs your public key, and
+  // nothing can be CHANGED until the node hands your signer the exact bytes.
+  assert.match(html, /the journal needs to see your Dregg public key/);
+  assert.match(html, /hands your signer the exact card it wants signed/);
 
   const css = await read("../styles.css");
   assert.match(css, /\.rail nav \{[^}]*grid-template-columns:\s*repeat\(7,\s*1fr\)/s);

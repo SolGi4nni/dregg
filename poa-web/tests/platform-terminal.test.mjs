@@ -93,7 +93,7 @@ test("seven platform organs expose separate evidence grades instead of launderin
   const model = buildPlatformModel({ contentAuthority: readyContent, evidence: await realEvidence() });
   assert.deepEqual(model.surfaces.map(({ id }) => id), ["daily", "expedition", "archive", "recorder", "crew", "bazaar", "galley"]);
   assert.deepEqual(model.surfaces.map(({ grade }) => grade.label), [
-    "SIGNED CONTENT",
+    "SIGNED BY THE CURATOR",
     "PINNED PROVENANCE",
     "PINNED PROVENANCE",
     "LINKED REPLAY",
@@ -101,9 +101,13 @@ test("seven platform organs expose separate evidence grades instead of launderin
     "NO SETTLEMENT",
     "VERSIONED NODE",
   ]);
-  assert.match(model.surfaces[0].copy, /4 authenticated drills/);
-  assert.match(model.surfaces[0].grade.detail, /rules, not a played run/);
-  assert.match(model.surfaces[3].grade.detail, /not a finality proof/);
+  assert.match(model.surfaces[0].copy, /4 drills are open/);
+  // The grade vouches for the RULES and says so; it must not read as a verdict
+  // on anything a player did.
+  assert.match(model.surfaces[0].grade.detail, /not for any run you play/);
+  // Linked ≠ final, in whatever words. The refused twin below holds the other
+  // half: a refusal may not sound like a finality claim either.
+  assert.match(model.surfaces[3].grade.detail, /not proof the network settled/);
   assert.deepEqual(model.register.map(({ id }) => id), ["content", "run", "expedition", "archive", "replay"]);
   assert.equal(model.register.find(({ id }) => id === "run").grade.label, "NO RUN RECEIPT");
   assert.equal(Object.isFrozen(model), true);
@@ -112,11 +116,11 @@ test("seven platform organs expose separate evidence grades instead of launderin
 
 test("pending checks remain pending and never appear as red refusals", () => {
   const model = buildPlatformModel({ contentAuthority: { state: "pending" } });
-  assert.equal(model.surfaces[0].grade.label, "AUTHORITY CHECK");
+  assert.equal(model.surfaces[0].grade.label, "CHECKING THE MANIFEST");
   for (const id of ["expedition", "archive", "recorder"]) {
     const item = model.surfaces.find((surface) => surface.id === id);
     assert.equal(item.state, "pending");
-    assert.equal(item.grade.label, "EVIDENCE CHECK");
+    assert.equal(item.grade.label, "STILL READING");
     assert.equal(item.grade.tone, "dim");
   }
 });
@@ -151,7 +155,7 @@ test("a damaged recorder fixture cannot become a linked replay or finality claim
   assert.equal(evidence.recorder.state, "refused");
   const recorder = buildPlatformModel({ contentAuthority: readyContent, evidence }).surfaces.find(({ id }) => id === "recorder");
   assert.equal(recorder.grade.label, "REPLAY REFUSED");
-  assert.doesNotMatch(recorder.grade.detail, /finalized|finality proof/i);
+  assert.doesNotMatch(recorder.grade.detail, /finalized|final|settled/i);
 });
 
 test("refused signed content seals dailies without demoting independent lab evidence", async () => {
@@ -160,7 +164,7 @@ test("refused signed content seals dailies without demoting independent lab evid
     evidence: await realEvidence(),
   });
   assert.equal(model.surfaces[0].state, "refused");
-  assert.equal(model.surfaces[0].grade.label, "CONTENT REFUSED");
+  assert.equal(model.surfaces[0].grade.label, "RULES REFUSED");
   assert.equal(model.surfaces.find(({ id }) => id === "expedition").state, "ready");
   assert.equal(model.surfaces.find(({ id }) => id === "recorder").state, "ready");
 });

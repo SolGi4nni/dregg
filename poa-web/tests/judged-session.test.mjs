@@ -770,7 +770,10 @@ test("slot open + signer installed, node behind: the reason is the DEPLOYMENT, n
   assert.doesNotMatch(panel.detail, /will not sign/, "a fallen wall must not be re-asserted as copy");
   // ⚑ The copy must not claim the platform gates this. It does not, since today.
   assert.doesNotMatch(panel.action.reason, /behind the node's bearer layer/);
-  assert.match(panel.action.reason, /still gates/, "the sentence is about THIS node, not the code");
+  // The subject of the sentence must be THIS NODE, not the platform: "this node
+  // still asks" is a deployment that is behind, "the code gates this" is a wall,
+  // and the two call for opposite actions from whoever reads it.
+  assert.match(panel.action.reason, /This node still asks/, "the sentence is about THIS node, not the code");
   assert.match(panel.action.reason, /redeployed/);
 });
 

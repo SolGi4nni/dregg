@@ -63,7 +63,7 @@ function memoryStorage() {
 const card = {
   gameId: "relay-repair",
   name: "Relay Repair",
-  verification: [{ term: "Rules authority", detail: "POAG1 abcd · content epoch 1.7" }],
+  verification: [{ term: "Rules", detail: "POAG1 abcd · manifest revision 1.7" }],
 };
 
 test("the ladder is exactly practice, submitted, judged, finalized, refused", () => {

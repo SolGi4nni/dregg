@@ -325,24 +325,24 @@ export function parseSignalStatus(value, authorityId) {
  */
 export function compareHeads(replay, status) {
   if (!replay || !status?.head) {
-    return Object.freeze({ state: "unavailable", detail: "The served head was not read, so the rebuilt head was compared against nothing." });
+    return Object.freeze({ state: "unavailable", detail: "The head the network publishes was not read, so the rebuilt head was compared against nothing." });
   }
   const { head } = status;
   if (head.headDigest === replay.rebuiltHeadDigest && head.transitionCount === replay.transitionsReplayed) {
     return Object.freeze({
       state: "agreed",
-      detail: `The records read replayed ${replay.transitionsReplayed} transitions and rebuilt head ${replay.rebuiltHeadDigest.slice(0, 12)}…; the authority publishes the same head at the same count. Two independent computations, one answer.`,
+      detail: `This read replayed ${replay.transitionsReplayed} transition${replay.transitionsReplayed === 1 ? "" : "s"} and rebuilt head ${replay.rebuiltHeadDigest.slice(0, 12)}…; the network publishes the same head at the same count. Two separate computations, one answer.`,
     });
   }
   if (head.transitionCount > replay.transitionsReplayed) {
     return Object.freeze({
       state: "advanced",
-      detail: `The authority is at ${head.transitionCount} transitions and this replay read ${replay.transitionsReplayed}: the node moved between the two requests. Nothing here disagrees, and nothing here is confirmed.`,
+      detail: `The network is at ${head.transitionCount} transition${head.transitionCount === 1 ? "" : "s"} and this replay read ${replay.transitionsReplayed}: the node moved between the two requests. Nothing here disagrees, and nothing here is confirmed.`,
     });
   }
   return Object.freeze({
     state: "disagreed",
-    detail: `The records replay rebuilt head ${replay.rebuiltHeadDigest.slice(0, 12)}… at ${replay.transitionsReplayed} transitions, and the authority publishes ${head.headDigest.slice(0, 12)}… at ${head.transitionCount}. Two reads of one durable history cannot both be right; neither figure on this page should be trusted until they do.`,
+    detail: `This replay rebuilt head ${replay.rebuiltHeadDigest.slice(0, 12)}… at ${replay.transitionsReplayed} transitions, and the network publishes ${head.headDigest.slice(0, 12)}… at ${head.transitionCount}. Two reads of one history cannot both be right, and until they agree no figure on this page should be trusted.`,
   });
 }
 
@@ -417,7 +417,7 @@ export function buildRecordsModel(records) {
     return Object.freeze({
       state: "pending",
       headline: "Reading the field records",
-      standing: "Asking the authority what has landed.",
+      standing: "Asking the network what has landed.",
       sections: Object.freeze([]),
       runs: Object.freeze([]),
       crossCheck: null,
@@ -427,7 +427,7 @@ export function buildRecordsModel(records) {
     const refused = records.state === "refused";
     return Object.freeze({
       state: refused ? "refused" : "sealed",
-      headline: refused ? "The records were refused" : "No records surface answered",
+      headline: refused ? "The records did not check out" : "No records answered",
       standing: refused
         ? `A records document was served and this terminal would not accept it (${records.code}): ${records.reason}. Nothing from it is shown, including the parts that parsed.`
         : `${records.reason} (${records.code}). This page holds no local copy of a world, so there is nothing to fall back to and nothing is claimed.`,
@@ -440,8 +440,8 @@ export function buildRecordsModel(records) {
   if (!view.installed) {
     return Object.freeze({
       state: "uninstalled",
-      headline: "No world is installed on this authority",
-      standing: `The authority answered, and says the Path of Angels genesis ceremony has not run on it. There is no world identity, no mission, and no record to show — not an empty archive, an absent one. ${view.consensusFinality}`,
+      headline: "No world is installed here",
+      standing: `The network answered, and says the Path of Angels founding ceremony has never been run here. There is no world, no mission, and no record to show — not an empty archive, an absent one. ${view.consensusFinality}`,
       sections: Object.freeze([]),
       runs: Object.freeze([]),
       crossCheck: null,
@@ -468,7 +468,7 @@ export function buildRecordsModel(records) {
           Object.freeze(["Content session", short(doc.contentSession)]),
           Object.freeze(["Content root", short(doc.contentRoot)]),
           Object.freeze(["Activation digest", short(doc.activationDigest)]),
-          Object.freeze(["Content epoch", String(doc.contentEpoch)]),
+          Object.freeze(["Manifest revision", String(doc.contentEpoch)]),
           Object.freeze(["Curator key", short(doc.curatorKey)]),
           Object.freeze(["Stage", doc.stage]),
         ]),
@@ -503,7 +503,7 @@ export function buildRecordsModel(records) {
         rows: Object.freeze([
           ...meterRows(doc.reward),
           Object.freeze(["Relics", doc.reward.relics.length === 0 ? "none" : doc.reward.relics.join(", ")]),
-          Object.freeze(["Standing", "an unsettled preview of the emitted contribution; it is not world state and grants nothing"]),
+          Object.freeze(["Standing", "an unsettled preview, read off the signed rules: what one settled run would add. Nothing here has settled, so none of it has been added"]),
         ]),
       }),
       Object.freeze({
@@ -535,7 +535,7 @@ export function buildRecordsModel(records) {
       state: records.crossCheck.state,
       title: Object.freeze({
         agreed: "The rebuilt head matches the one the authority publishes",
-        advanced: "The authority moved between the two reads",
+        advanced: "The network moved between the two reads",
         disagreed: "THE TWO READS DISAGREE",
         unavailable: "The rebuilt head was not cross-checked",
       })[records.crossCheck.state],
@@ -557,7 +557,7 @@ export function mountRecords(root, model) {
   if (!root || typeof root.replaceChildren !== "function") throw new TypeError("a records root is required");
   root.dataset.state = model.state;
   const nodes = [
-    element("p", "panel-label", "FIELD RECORDS // THIS AUTHORITY"),
+    element("p", "panel-label", "FIELD RECORDS // THIS NETWORK"),
     element("h2", "records-live__headline", model.headline),
     element("p", "records-live__standing", model.standing),
   ];

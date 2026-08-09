@@ -11,7 +11,7 @@ import { test } from "node:test";
  * `/artifacts/…` and `/poa-curator-key.json`, because `public/` is overlaid at
  * the web root in the deployed layout. The dev server served only the package
  * directory, so every artifact 404'd, `loadPOAG1` refused with "manifest
- * returned HTTP 404", and the page rendered MISSION AUTHORITY SEALED.
+ * returned HTTP 404", and the page rendered THIS TERMINAL REFUSED THE RULES.
  *
  * The whole suite reads artifacts off disk and never through this server, so it
  * stayed green while the thing a human would actually open was broken. This runs

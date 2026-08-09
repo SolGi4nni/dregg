@@ -200,8 +200,8 @@ export function mountBlackBox(root, descriptor, options = {}) {
     }
     reset.disabled = run.probes.length === 0 && awaiting === null;
     status.textContent = message ?? (
-      run.solved ? `Reconstructed: ${run.settled} of ${requiredPerInstance} positions settled in ${run.probes.length} probes. Local transcript ready for external verification.`
-        : run.exhausted ? `Probe budget spent with ${run.settled} of ${requiredPerInstance} settled. Reset the drill.`
+      run.solved ? `Reconstructed: ${run.settled} of ${requiredPerInstance} positions settled in ${run.probes.length} probe${run.probes.length === 1 ? "" : "s"}. The transcript is written down here and anyone can check it.`
+        : run.exhausted ? `Out of probes with ${run.settled} of ${requiredPerInstance} settled. Reset the drill.`
           : `${run.settled} of ${requiredPerInstance} settled. Probe ${run.probes.length} of ${descriptor.actionLimit}.`
     );
     options.afterRender?.(shell, run, descriptor);

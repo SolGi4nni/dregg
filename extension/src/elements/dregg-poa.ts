@@ -296,7 +296,7 @@ export class DreggPoA extends HTMLElement {
     terminal.appendChild(makeDiv("title", model.title));
     if (model.episode) terminal.appendChild(makeDiv("episode", model.episode));
     if (model.trust === "signed_manifest") {
-      terminal.appendChild(makeDiv("epoch", `content epoch ${model.contentEpoch} · revision ${model.counter}`));
+      terminal.appendChild(makeDiv("epoch", `manifest revision ${model.contentEpoch}.${model.counter}`));
     }
     if (model.dispatch) terminal.appendChild(makeDiv("dispatch", model.dispatch));
 
@@ -451,7 +451,7 @@ export class DreggPoA extends HTMLElement {
       } catch {
         if (!this.isConnected || lifecycle !== this.lifecycle) return;
         facts.replaceChildren();
-        statusLine.textContent = "Live Galley projection unavailable. No local ship state is substituted.";
+        statusLine.textContent = "The live Galley did not answer. Nothing is drawn here in its place.";
         this.addRefreshButton(controls, refresh);
       }
     };
@@ -536,7 +536,7 @@ export class DreggPoA extends HTMLElement {
   ): Promise<void> {
     for (const button of controls.querySelectorAll("button")) button.disabled = true;
     result.hidden = false;
-    result.textContent = "Preparing for the background-owned public identity claim. Cipherclerk will ask who actually signs the exact server-authored turn.";
+    result.textContent = "Getting ready. Cipherclerk will ask you who signs it, and the turn it shows you is the one the server wrote.";
     try {
       const response = await this.galleyTransport.request({ op: "command", binding, actionToken: action.action_token });
       if (!this.isConnected || lifecycle !== this.lifecycle) return;
@@ -568,7 +568,7 @@ export class DreggPoA extends HTMLElement {
       await refresh();
     } catch {
       if (!this.isConnected || lifecycle !== this.lifecycle) return;
-      result.textContent = "Shift transport failed before an exact journal receipt was observed.";
+      result.textContent = "The shift did not get through, and no journal receipt came back. Nothing was recorded.";
       await refresh();
     }
   }
@@ -582,7 +582,7 @@ export class DreggPoA extends HTMLElement {
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
     if (!model.fieldRecord || !this.fieldRecordTransport) {
-      status.textContent = "Receipt-core observation transport is not connected in this extension build. No network receipt or quorum finality is claimed.";
+      status.textContent = "This build of the extension has no way to go and look at the receipt. Nothing here claims the network saw it, or that it is final.";
       panel.appendChild(status);
       return panel;
     }
@@ -599,7 +599,7 @@ export class DreggPoA extends HTMLElement {
       federationId: model.fieldRecord.federationId,
       turnHash: model.fieldRecord.turnHash,
     });
-    status.textContent = "A curator-signed receipt-core coordinate is attached. No node observation or quorum-finality certificate has been verified.";
+    status.textContent = "A curator-signed pointer to the receipt is attached. Nobody has gone and checked that the network holds it, and nothing here says it is final.";
     button.addEventListener("click", async () => {
       button.disabled = true;
       status.textContent = "Checking the node-reported FRC1 receipt core…";
@@ -614,7 +614,7 @@ export class DreggPoA extends HTMLElement {
         status.textContent = `Node-reported FRC1 core ${observation.finalizedReceiptCoreId.slice(0, 10)}…${observation.finalizedReceiptCoreId.slice(-8)} matches the signed coordinates and canonical projection · tau round ${observation.tauRound}. This is a transport observation; quorum finality is not verified by Cipherclerk.`;
       } catch {
         if (!this.isConnected || lifecycle !== this.lifecycle) return;
-        status.textContent = "Receipt-core transport is unavailable. No receipt or finality is claimed.";
+        status.textContent = "Nothing answered when this build went to look for the receipt. No receipt is shown and nothing is claimed to be final.";
       } finally {
         if (this.isConnected && lifecycle === this.lifecycle) button.disabled = false;
       }

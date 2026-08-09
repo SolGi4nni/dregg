@@ -147,8 +147,9 @@ test("the slot tile says practice-only whenever no verified opening exists", asy
   const open = buildTodayBoard({ slot: { state: "open", slot: 42, commitment: "c".repeat(64) }, cards: [] }).tiles.find((tile) => tile.id === "slot");
   assert.equal(open.state, "live");
   assert.match(open.headline, /Slot 42 is open/);
-  // Even an open slot does not claim settlement.
-  assert.match(open.detail, /settles only once a node finalizes it/);
+  // Even an open slot does not claim settlement: a run can be SENT, and what
+  // settles it is a node putting it in a finalized block, later, elsewhere.
+  assert.match(open.detail, /settles only when a node puts it in a finalized block/);
 });
 
 test("the crate tile reads the station the node actually serves, in BOTH directions", async () => {
@@ -206,8 +207,11 @@ test("the crate tile reports the served crate without ever implying a day passed
   assert.equal(installed.state, "sealed");
   assert.equal(installed.headline, "No draw is possible");
   assert.match(installed.detail, /4 loot rows and 14 ticket entries across periods 31–35/);
-  assert.match(installed.detail, /no current-period pointer/i);
-  assert.match(installed.detail, /the whole authored schedule, not one day of it/);
+  // ⚑ THE ABSENCE IS STATED, and it is the sentence this whole tile turns on:
+  // the route carries no pointer to a live period, so the tile must say it is
+  // showing the whole schedule rather than letting a reader take it for today's.
+  assert.match(installed.detail, /never says which period is live/i);
+  assert.match(installed.detail, /the whole schedule/);
 
   // ⚠ The copy law, asserted rather than trusted: no tile may say a day turned
   // over, because the organ carries nothing that could tell it one did.
@@ -236,11 +240,11 @@ test("the ship headline is a live figure or an honest absence, never a filled-in
     .tiles.find((tile) => tile.id === "ship");
   assert.equal(live.state, "live");
   assert.equal(live.headline, "2561 transitions");
-  assert.match(live.detail, /12 of them linked/);
+  assert.match(live.detail, /12 of them are on screen/);
 
   const refused = buildTodayBoard({ recorder: { state: "refused", code: "recorder-status-fetch" }, cards: [] }).tiles.find((tile) => tile.id === "ship");
   assert.equal(refused.state, "refused");
-  assert.match(refused.detail, /No ship figure is asserted/);
+  assert.match(refused.detail, /No ship figure is claimed/);
 
   const pending = buildTodayBoard({ cards: [] }).tiles.find((tile) => tile.id === "ship");
   assert.equal(pending.state, "pending");
@@ -250,11 +254,15 @@ test("the rack tile counts the board it is actually looking at", () => {
   const cards = [{ state: "open" }, { state: "open" }, { state: "sealed" }, { state: "reserved" }];
   const ready = buildTodayBoard({ contentAuthority: { state: "ready" }, cards }).tiles.find((tile) => tile.id === "rack");
   assert.equal(ready.headline, "2 drills open");
-  assert.match(ready.detail, /2 more slots are on the rack and sealed/);
+  assert.match(ready.detail, /2 more cards are on the rack and shut/);
 
   const sealed = buildTodayBoard({ contentAuthority: { state: "refused" }, cards: [] }).tiles.find((tile) => tile.id === "rack");
   assert.equal(sealed.state, "refused");
-  assert.match(sealed.headline, /sealed/);
+  assert.match(sealed.headline, /shut/);
+  // ⚠ A refused rack is THIS TERMINAL failing to read a manifest, never the
+  // curator closing the board — the tile must not put the curator's name on it.
+  assert.match(sealed.detail, /did not check out here/);
+  assert.doesNotMatch(sealed.detail, /the curator (closed|shut|withheld)/i);
 });
 
 test("the today board renders four tiles with one anatomy", () => withFakeDocument(() => {

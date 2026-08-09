@@ -126,7 +126,7 @@ export function mountSalvageLock(root, descriptor, callbacks = {}) {
       };
     },
     presentStatus(view, run, game) {
-      if (view.solved) return `Salvage lock cleared in ${run.steps.length} exposures. Local transcript ready for external verification.`;
+      if (view.solved) return `Salvage lock cleared in ${run.steps.length} exposure${run.steps.length === 1 ? "" : "s"}. The transcript is written down here and anyone can check it.`;
       // ⚠ The slot index is rendered RAW. Every action label the descriptor emits is
       // `Expose plate ${slot}` — 0-based, and pinned by `salvageAction` — so a status
       // line that said `${slot + 1}` named a different plate from the button the
@@ -143,7 +143,7 @@ export function mountSalvageLock(root, descriptor, callbacks = {}) {
       return `Comparison ${spent} of ${Math.floor(game.actionLimit / 2)} — turn ${view.turns} of ${game.actionLimit}. ${exposed} ${ruled}`;
     },
     presentRefusal(reason) {
-      return `Authenticated Salvage table refused this plate: ${reason}.`;
+      return `The signed Salvage table refused this plate: ${reason}.`;
     },
     presentOracleQuery() {
       return "This pair is settled by the sealed board. Waiting for the host to answer.";

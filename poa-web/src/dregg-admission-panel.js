@@ -637,7 +637,7 @@ export function mountDreggAdmissionPanel(root, {
     sessionWallet.textContent = `Wallet ${abbreviated(credential.walletAddress)}`;
     sessionWallet.textContent += ` // officer ${credential.playerPublicKey.slice(0, 8)}…${credential.playerPublicKey.slice(-8)}`;
     sessionExpiry.textContent = `Short-lived access ends ${new Date(credential.expiresAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
-    setStatus("admitted", "Local RPC-attested holder receipt active. No Galley sponsorship or governance authority granted.");
+    setStatus("admitted", "Your holding was checked against a finalized Solana read, and you are admitted. It grants no Galley sponsorship and no say in anything.");
     onAdmissionChange(credential);
     scheduleCredentialExpiry(credential);
     return true;

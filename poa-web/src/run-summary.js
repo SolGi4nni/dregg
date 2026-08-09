@@ -232,7 +232,9 @@ export function buildRunSummary({ card, status, outcome, actions, actionLimit, t
 
   const settled = isSettled(status);
   const scored = isScored(status);
-  const spent = actionLimit === null ? `${actions} actions` : `${actions} of ${actionLimit} actions`;
+  const spent = actionLimit === null
+    ? `${actions} action${actions === 1 ? "" : "s"}`
+    : `${actions} of ${actionLimit} actions`;
   return Object.freeze({
     gameId: card.gameId,
     name: card.name,

@@ -33,12 +33,12 @@ function element(tag, className, text) {
  */
 function boundaryCopy(run) {
   if (run.mode === "practice") {
-    return "PRACTICE — you chose this board yourself and nothing here is scored. " +
-      "No competitive reward, economic reward, or settled RunReceipt.";
+    return "PRACTICE — this browser chose the board itself, so nothing here is scored: " +
+      "no ranking, no reward, and no receipt anybody else can read.";
   }
   return `JUDGED — slot ${run.slot}, commitment ${run.slotCommitment.slice(0, 16)}…. ` +
-    "The board was drawn from a curator-held secret and is opened when the slot closes. " +
-    "This transcript is still local and unsettled until a PoA node validates it.";
+    "The board came out of a secret the curator holds, and it is opened when the slot closes. " +
+    "This transcript is written down here and settles nothing until a node checks it.";
 }
 
 /**

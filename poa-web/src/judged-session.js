@@ -315,35 +315,35 @@ export const SESSION_SIGNER_METHOD = "signSignalSession";
  */
 export const NODE_BEHIND = Object.freeze({
   code: "session-routes-authenticated",
-  what: "This node still gates the judged session routes behind a bearer token.",
+  what: "This node still asks for a token before it will look at a judged run, and this page holds none.",
   detail:
     "`poa_signal_session::routes()` is mounted in `public_routes` as of 2026-08-07 — the bearer was " +
     "never the authorization, since every session write is an Ed25519 signature by the player key over " +
     "a statement the node re-derives. This deployment answered 401/403 anyway, so it is running a build " +
     "from before that move. The signature this page produced is correct and was refused before it was " +
     "ever checked.",
-  needs: "this authority redeployed from a build at or after 2026-08-07",
+  needs: "this node redeployed from a build at or after 2026-08-07",
 });
 
 export const NODE_SILENT = Object.freeze({
   code: "session-routes-unanswered",
-  what: "Nothing on this origin answered the judged session routes.",
+  what: "Nothing answered when this terminal asked about judged play.",
   detail:
-    "Not a refusal and not a wall — no answer at all. A judged run is never begun on an assumption " +
-    "that a route exists, so this page reports the silence rather than enabling a button that would " +
-    "fail on click.",
-  needs: "a reachable PoA authority on this origin",
+    "Not a refusal and not a wall — no answer at all. A judged run is never begun on the assumption " +
+    "that something is listening, so this page reports the silence rather than lighting up a button " +
+    "that would fail the moment you pressed it.",
+  needs: "a node answering on this origin",
 });
 
 export const SIGNER_ABSENT = Object.freeze({
   code: "signer-not-installed",
-  what: `The installed extension exposes no \`${SESSION_SIGNER_METHOD}\`.`,
+  what: "The Cipherclerk you have installed cannot sign a judged run.",
   detail:
-    "Judged play needs a raw Ed25519 signature by the player key over the node's documented session " +
-    "statement. The extension ships a scoped, schema-pinned signer for exactly that " +
-    "(`extension/src/signal-session.ts`), but this install predates it — `window.dregg` here offers " +
-    "only `getActiveIdentity()` and `signTurnV3`, neither of which produces one.",
-  needs: "an extension build carrying the scoped session signer",
+    "Judged play needs your player key to sign one documented statement, and nothing else. Newer " +
+    "builds carry a signer scoped to exactly that (`extension/src/signal-session.ts`, exposed as " +
+    `\`${SESSION_SIGNER_METHOD}\`); this install predates it, and offers only \`getActiveIdentity()\` ` +
+    "and `signTurnV3`, neither of which produces one.",
+  needs: "a newer Cipherclerk build, carrying the scoped session signer",
 });
 
 /**
@@ -469,8 +469,8 @@ export const CUSTODY_BLOCKERS = Object.freeze([
   Object.freeze({
     code: "settle-node-curtained",
     what:
-      "The node the extension is pinned to answers every request with HTTP 401: it is behind the " +
-      "private-beta invitation curtain, and the extension carries no credential for it by design.",
+      "The node your extension talks to turns every request away with HTTP 401. It is behind the " +
+      "private-beta door, and the extension carries no key to that door — deliberately.",
     detail:
       "⚑ THIS IS THE FIRST WALL IN THIS LIST THAT IS NOT ABOUT A LOCAL ARTIFACT. Everything on the browser " +
       "side of the wire now works: the page derives and checks the statement, the extension signs it with " +
@@ -495,9 +495,9 @@ export const CUSTODY_BLOCKERS = Object.freeze([
       "⚠ NOTHING HERE IS WORKED AROUND. This page does not hold the invitation password, must not carry " +
       "one, and will not put a credential on a request to make a button light up.",
     needs:
-      "either the extension's claim path routed through the same-origin `/node/*` tunnel it already " +
-      "reaches the session routes by, or a path carve-out in the beta Caddyfile for the public signal " +
-      "routes, or the curtain lifted — each a deployment/topology decision, not a change to this page",
+      "a change to how the beta is deployed: the extension's claim routed through the same-origin " +
+      "`/node/*` tunnel it already reaches the session routes by, or a carve-out in the beta Caddyfile " +
+      "for the public signal routes, or the curtain lifted. None of the three is a change to this page.",
   }),
 ]);
 
@@ -809,12 +809,13 @@ export const CLAIM_SUBMIT_METHOD = "submitPoaSignalClaim";
 
 export const SETTLER_ABSENT = Object.freeze({
   code: "settler-not-installed",
-  what: `The installed extension exposes no \`${CLAIM_SUBMIT_METHOD}\`.`,
+  what: "The Cipherclerk you have installed has no way to send a claim.",
   detail:
-    "Settling a solved run is a signed turn against the PoA federation, and the carrier is built inside " +
-    "the extension by the shipped wasm. This install predates that method, so there is nothing to submit " +
-    "through — and no page-side builder is a substitute, because the ML-DSA half cannot be produced here.",
-  needs: "an extension build exposing the transcript-carrying claim path",
+    "Settling a solved run is a signed turn against the federation, and the thing that carries it is " +
+    `built inside the extension (\`${CLAIM_SUBMIT_METHOD}\`, backed by the shipped wasm). This install ` +
+    "predates it, so there is nothing to send it through — and this page cannot stand in, because the " +
+    "post-quantum half of the signature cannot be produced here.",
+  needs: "a newer Cipherclerk build, carrying the claim path",
 });
 
 /**
@@ -1100,8 +1101,15 @@ export function buildJudgedPanel({ slot = null, custody = null, session = null, 
           // `{schema, missionId, transcript}` off the document above; the
           // extension builds, prices, paints and signs the carrier.
           enabled: canSettle && !settle,
+          // ⚑ `what` AND `needs`, NEVER `detail`. `detail` is the on-record
+          // diagnosis — measurement dates, proxy headers, file paths — and it is
+          // pinned by `tests/judged-session.test.mjs` so it cannot rot. It is
+          // also 1,500 characters of engineering note, and rendering it into the
+          // one paragraph under a disabled button did not make a player better
+          // informed; it made the sentence that WOULD have informed them
+          // unfindable. The code is on the button's `data-code`.
           reason: !canSettle
-            ? `${settleBlocker.what} ${settleBlocker.detail}`
+            ? `${settleBlocker.what} Needs: ${settleBlocker.needs}.`
             : settle
               ? settleOutcomeDetail(settle)
               : "Submits the transcript the node served back to it, through your extension: it derives your " +
@@ -1131,7 +1139,7 @@ export function buildJudgedPanel({ slot = null, custody = null, session = null, 
           : canSpend
             ? "One of five bursts, signed by your player key and classified against the judged target. " +
               "Nothing is spent on chain until you solve and settle."
-            : `${spendBlocker.what} ${spendBlocker.detail}`,
+            : `${spendBlocker.what} Needs: ${spendBlocker.needs}.`,
         code: !s.open ? "session-budget-exhausted" : canSpend ? "session-guess" : spendBlocker.code,
       }),
       rounds: Object.freeze(rounds), settlement: null,

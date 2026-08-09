@@ -175,8 +175,9 @@ function grade(code, label, detail, tone) {
 }
 
 function evidenceStatus(entry, ready, refusedCopy) {
-  if (!entry) return { state: "pending", status: "checking installed evidence" };
+  if (!entry) return { state: "pending", status: "reading what this build has installed" };
   if (entry.state === "ready") return { state: "ready", status: ready(entry) };
+  // ⚠ The code stays: it is the one part of a refusal that can be searched for.
   return { state: "refused", status: `${refusedCopy}: ${entry.code}` };
 }
 
@@ -187,8 +188,8 @@ function evidenceGrade(status, readyGrade, refusedLabel) {
   }
   return grade(
     "evidence-pending",
-    "EVIDENCE CHECK",
-    "Reading the installed evidence source; no grade is asserted yet.",
+    "STILL READING",
+    "Reading what this build has installed. Nothing is graded until it has been read.",
     "dim",
   );
 }
@@ -197,15 +198,15 @@ function contentGrade(content) {
   if (content.state === "ready") {
     return grade(
       "signed-content",
-      "SIGNED CONTENT",
-      `Curator-authenticated POAG1 epoch ${content.epoch}.${content.counter}; this authenticates rules, not a played run.`,
+      "SIGNED BY THE CURATOR",
+      `The curator's signature on manifest revision ${content.epoch}.${content.counter} checks out. That vouches for the rules, not for any run you play.`,
       "mint",
     );
   }
   if (content.state === "refused") {
-    return grade("content-refused", "CONTENT REFUSED", "Mission controls are sealed; no browser fallback is available.", "red");
+    return grade("content-refused", "RULES REFUSED", "The rules did not check out here, so no drill opens. This page will not make up a game to fill the gap.", "red");
   }
-  return grade("content-pending", "AUTHORITY CHECK", "The signed POAG1 content epoch is still being authenticated.", "dim");
+  return grade("content-pending", "CHECKING THE MANIFEST", "This terminal is still checking the curator's signature. Nothing is claimed until it is done.", "dim");
 }
 
 function surface(id, eyebrow, title, copy, href, cta, state, evidenceGrade) {
@@ -243,8 +244,8 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
       "WATCH CYCLE",
       "Field drills",
       content.state === "ready"
-        ? `${missionCount} authenticated drills are open. Runs remain local and unsettled.`
-        : content.state === "refused" ? "The field board is sealed because its signed content did not authenticate." : "Authenticating today’s field board.",
+        ? `${missionCount} drill${missionCount === 1 ? " is" : "s are"} open, on rules the curator signed. A run stays in this browser and settles nothing.`
+        : content.state === "refused" ? "The board is shut: the rules did not check out here." : "Checking the curator’s signature before anything opens.",
       "#missions",
       "Open daily board",
       content.state,
@@ -255,14 +256,14 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
       "BELOW-DECK LAB",
       "Crew expedition",
       expedition.state === "ready"
-        ? `${expedition.status}. A complete local finite-table demonstrator; no canon or settlement authority.`
+        ? `${expedition.status}. The whole table runs in your browser; it settles nothing and promotes nothing into the record.`
         : expedition.status,
       "./labs/expedition-lab.html",
       "Muster a crew",
       expedition.state,
       evidenceGrade(
         expedition,
-        grade("pinned-provenance", "PINNED PROVENANCE", "Manifest bytes and Lean-emission claims match compiled pins. The full table validates inside the lab.", "amber"),
+        grade("pinned-provenance", "PINNED PROVENANCE", "The bytes on disk match the digests this build was compiled against. The full table is checked inside the lab, not out here.", "amber"),
         "PROVENANCE REFUSED",
       ),
     ),
@@ -271,14 +272,14 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
       "FIELD ARCHIVE",
       "Evidence intake",
       archive.state === "ready"
-        ? `${archive.status}. One beta-only research plan; promotion remains curator-only.`
+        ? `${archive.status}. One research plan, beta only — and only the curator can promote what comes out of it.`
         : archive.status,
       "./labs/archive-lab.html",
       "Open archive lab",
       archive.state,
       evidenceGrade(
         archive,
-        grade("pinned-provenance", "PINNED PROVENANCE", "The archive provenance manifest is byte-pinned; it does not itself settle or promote a record.", "amber"),
+        grade("pinned-provenance", "PINNED PROVENANCE", "The archive’s manifest is pinned byte for byte. That is all it does: it settles nothing and promotes nothing.", "amber"),
         "PROVENANCE REFUSED",
       ),
     ),
@@ -287,14 +288,14 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
       "PUBLIC WAKE",
       "Flight Recorder",
       recorder.state === "ready"
-        ? `${recorder.status}. Digest continuity is checked; consensus finality is explicitly not asserted.`
+        ? `${recorder.status}. Every link is checked against the next. That is not the same as the network agreeing it is final, and this does not claim it is.`
         : recorder.status,
       "./labs/flight-recorder.html",
       "Replay the wake",
       recorder.state,
       evidenceGrade(
         recorder,
-        grade("linked-replay", "LINKED REPLAY", "Every visible predecessor/successor link and the reported head agree. This is not a finality proof.", "blue"),
+        grade("linked-replay", "LINKED REPLAY", "Every link on screen agrees with the next one, and with the head the node reported. That is not proof the network settled any of it.", "blue"),
         "REPLAY REFUSED",
       ),
     ),
@@ -302,37 +303,37 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
       "crew",
       "CREW MUSTER",
       "Expedition roster",
-      "Roles exist inside the expedition demonstrator. No persistent officer profile or crew receipt exists on this surface.",
+      "The roles live inside the expedition lab. Nothing here keeps an officer, and nothing here writes a crew receipt.",
       "#crew",
       "Inspect crew systems",
       "local",
-      grade("no-profile-receipt", "NO PROFILE RECEIPT", "Crew choices remain local to a demonstrator transcript.", "dim"),
+      grade("no-profile-receipt", "NO PROFILE RECEIPT", "A crew choice lives in one local transcript and nowhere else.", "dim"),
     ),
     surface(
       "bazaar",
       "LOWER CONCOURSE",
       "Dark Bazaar",
-      "The market vocabulary is visible. Inventory, sealed orders, clearing, and settlement remain disconnected here.",
+      "You can see what a market here would need. None of the four pieces — inventory, sealed orders, clearing, settlement — is connected yet.",
       "#bazaar",
       "Inspect locked market",
       "locked",
-      grade("settlement-locked", "NO SETTLEMENT", "No DrEX settlement receipt or owned salvage inventory is available to this web build.", "red"),
+      grade("settlement-locked", "NO SETTLEMENT", "Nothing on this build owns salvage, and nothing on it settles a trade.", "red"),
     ),
     surface(
       "galley",
       "DECK 119 COMMONS",
       "The Galley",
-      "The public journal and signed maintenance share one node-authored projection. Actions use opaque expiring tokens, exact turn postcards, and returned receipt evidence.",
+      "The journal anyone can read and the shift you sign come out of one document the node writes. This page draws none of it.",
       "#galley",
       "Enter the Galley",
       "network",
-      grade("versioned-node-required", "VERSIONED NODE", "The Galley fails closed unless its frozen V1 node API supplies every action, projection, event, receipt, and replay summary.", "blue"),
+      grade("versioned-node-required", "VERSIONED NODE", "The Galley stays shut unless its node supplies every part — the actions, the view, the events, the receipt, the replay. A missing piece closes the hatch; it is never filled in here.", "blue"),
     ),
   ];
 
   const register = [
     freeze({ id: "content", name: "Mission rules", state: content.state, grade: contentGrade(content) }),
-    freeze({ id: "run", name: "Browser run", state: "local", grade: grade("no-run-receipt", "NO RUN RECEIPT", "A local transcript grants no score, ship effect, salvage, rank, or canon status.", "dim") }),
+    freeze({ id: "run", name: "Browser run", state: "local", grade: grade("no-run-receipt", "NO RUN RECEIPT", "A run written down in this browser grants nothing: no score, no salvage, no rank, and no change to the ship.", "dim") }),
     freeze({ id: "expedition", name: "Expedition table", state: expedition.state, grade: surfaces[1].grade }),
     freeze({ id: "archive", name: "Archive table", state: archive.state, grade: surfaces[2].grade }),
     freeze({ id: "replay", name: "Event replay", state: recorder.state, grade: surfaces[3].grade }),
@@ -353,7 +354,7 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
   ]);
 
   return freeze({
-    cycle: "NIGHT WATCH // LOCAL BETA // NO AUTHORITATIVE DAILY RESET",
+    cycle: "NIGHT WATCH // BETA // NOTHING RESETS AT MIDNIGHT",
     surfaces,
     register,
     crew,

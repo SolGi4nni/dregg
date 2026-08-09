@@ -108,7 +108,7 @@ test("dregg-poa: opt-in + signed context + closed shadow + engine route + SPA re
     assert.equal(snap.contentEpoch, "1");
     assert.equal(snap.manifestCounter, "1");
     assert.equal(snap.expiresAt, "1800003600");
-    assert.match(snap.epochText, /content epoch 1 · revision 1/i);
+    assert.match(snap.epochText, /manifest revision 1\.1/i);
     assert.match(snap.title, /Field Dispatch 1/);
     assert.match(snap.dispatch, /Deck 401/);
     assert.match(snap.badge, /curator manifest verified/i);
@@ -125,7 +125,7 @@ test("dregg-poa: opt-in + signed context + closed shadow + engine route + SPA re
     [snap] = await page.evaluate(() => window.__poaSnap());
     assert.equal(snap.verified, true, "route-free revocation is itself curator-verified");
     assert.equal(snap.descentSrc, null, "higher route-free revision removes the mounted game");
-    assert.match(snap.epochText, /content epoch 1 · revision 2/i);
+    assert.match(snap.epochText, /manifest revision 1\.2/i);
     assert.match(snap.dispatch, /<img src=x onerror=/, "signed dispatch markup is shown literally");
     assert.equal(snap.unsafeNodeCount, 0, "signed content cannot inject script/image/frame/object DOM");
     assert.equal(await page.evaluate(() => window.__POA_XSS), undefined, "no inline handler executed under CSP/runtime");

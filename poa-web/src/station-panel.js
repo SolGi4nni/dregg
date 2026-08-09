@@ -61,11 +61,11 @@ export const CRATE_OPEN_DOCUMENT_FORMAT = "POA-CRATE-OPEN-OUT-1";
  * copy for a state it has never seen.
  */
 export const CRATE_REFUSALS = Object.freeze({
-  "already-opened-this-period": "You have already opened the crate at this period. One crew key opens it once.",
-  "ineligible-crew": "This crew key is not on the curator's authored roster, so the crate will not open for it.",
+  "already-opened-this-period": "You have already opened the crate for this period. One crew key opens it once.",
+  "ineligible-crew": "This crew key is not on the crew list the curator signed, so the crate will not open for it.",
   "crate-refused": "The crate declined this opening. Nothing was drawn and the ship did not move.",
-  "history-refused": "This node's open log is not one this crate could have produced, so nothing was replayed and nothing was decided.",
-  "panel-refused": "The crate accepted the opening and the ship instrument panel declined the receipt, so nothing was folded.",
+  "history-refused": "This node's log of openings is not one this crate could have produced, so nothing was replayed and nothing was decided.",
+  "panel-refused": "The crate accepted the opening and the ship's panel would not take the receipt, so nothing was added up.",
 });
 
 /**
@@ -452,7 +452,7 @@ export async function openSalvageCrate({ authorityId, opener, baseUrl, fetchImpl
     status = response?.status ?? null;
     body = JSON.parse(await response.text());
   } catch {
-    return Object.freeze({ state: "unreachable", code: "crate-open-fetch", reason: "No authority answered this opening on this origin" });
+    return Object.freeze({ state: "unreachable", code: "crate-open-fetch", reason: "Nothing answered this opening at this address" });
   }
   if (!ok) {
     const refused = typeof body?.refused === "string" ? body.refused : null;
@@ -500,7 +500,7 @@ export function buildStationPanel(station) {
       state: "pending",
       eyebrow: "STATION // COMMUNAL INSTRUMENT",
       headline: "Reading the ship instruments",
-      standing: "Asking the authority for the installed panel.",
+      standing: "Asking the station for the panel it serves.",
       gauges: Object.freeze([]),
       counts: Object.freeze([]),
       crate: Object.freeze([]),
@@ -512,7 +512,7 @@ export function buildStationPanel(station) {
     return Object.freeze({
       state: refused ? "refused" : "sealed",
       eyebrow: "STATION // COMMUNAL INSTRUMENT",
-      headline: refused ? "The station panel was refused" : "No station answered",
+      headline: refused ? "The panel did not check out" : "No station answered",
       standing: refused
         ? `A panel was served and this terminal would not accept it (${station.code}): ${station.reason}. No figure from it is shown.`
         : `${station.reason} (${station.code}). No gauge, schedule, or count is shown, because none was read.`,
@@ -539,7 +539,7 @@ export function buildStationPanel(station) {
     // served `log_rows_folded` is what says so.
     standing: still
       ? `This is the station exactly as installed. Every dial below is a fold of this node's durable open log, and the log is empty: ${doc.gauges.length === 1 ? "the dial reads" : "the dials read"} zero because nobody has opened the salvage crate here, not because opening is impossible. A crew member on the curator's roster can open it.`
-      : `The dials below are the fold of ${view.logRowsFolded} opening${view.logRowsFolded === 1 ? "" : "s"} recorded in this node's durable log, replayed through the crate itself. Every figure is the served reading; none of it is settled by quorum.`,
+      : `The dials below are the fold of ${view.logRowsFolded} opening${view.logRowsFolded === 1 ? "" : "s"} recorded in this node's durable log, replayed through the crate itself. Every figure is what the station served; none of it has been settled by a quorum.`,
     gauges: Object.freeze(doc.gauges.map((gauge) => Object.freeze({
       id: gauge.gauge,
       label: meterLabel(gauge.meter),
@@ -573,7 +573,7 @@ export function buildStationPanel(station) {
         "Your rotation",
         doc.crew === null
           ? "not requested — the communal panel names no crew member, and this terminal binds no crew key to ask the crew route with"
-          : `${doc.crew.rotation.length} authored period${doc.crew.rotation.length === 1 ? "" : "s"} for ${short(doc.crew.key)}; ${doc.crew.eligible ? "on the authored roster" : "not on the authored roster"}`,
+          : `${doc.crew.rotation.length} period${doc.crew.rotation.length === 1 ? "" : "s"} written for ${short(doc.crew.key)}; ${doc.crew.eligible ? "on the crew list" : "not on the crew list"}`,
       ]),
     ]),
     provenance: Object.freeze([
@@ -612,10 +612,10 @@ export function buildStationPanel(station) {
  */
 export function buildCrateOpenAction({ crew = null, open = null } = {}) {
   const label = "Open the Salvage Crate";
-  const base = { id: "crate-open", eyebrow: "SALVAGE CRATE // DAILY RITUAL", label, gauges: Object.freeze([]), prize: null, finalityGap: null };
+  const base = { id: "crate-open", eyebrow: "SALVAGE CRATE // ONE KEY, ONE OPENING", label, gauges: Object.freeze([]), prize: null, finalityGap: null };
 
   if (open && open.state === "pending") {
-    return Object.freeze({ ...base, state: "working", enabled: false, headline: "Opening the crate", standing: "The authority is replaying its open log and asking the crate." });
+    return Object.freeze({ ...base, state: "working", enabled: false, headline: "Opening the crate", standing: "The station is replaying its log of openings and asking the crate." });
   }
 
   if (open && (open.state === "opened" || open.state === "declined")) {
@@ -671,7 +671,7 @@ export function buildCrateOpenAction({ crew = null, open = null } = {}) {
       ...base,
       state: refused ? "refused" : "sealed",
       enabled: false,
-      headline: refused ? "The opening was refused" : "No authority answered",
+      headline: refused ? "The opening was refused" : "Nobody answered",
       standing: refused
         ? `An opening was published and this terminal would not accept it (${open.code}): ${open.reason}. No prize and no gauge is shown, because none was read.`
         : `${open.reason} (${open.code}). Nothing was opened and nothing is claimed.`,
@@ -684,7 +684,7 @@ export function buildCrateOpenAction({ crew = null, open = null } = {}) {
       state: "unavailable",
       enabled: false,
       headline: "No crew key is bound here",
-      standing: "Opening the crate is an authorized act against the curator's authored roster, so it needs a crew key. This terminal binds none, and it will not invent one.",
+      standing: "Opening the crate is something you have to be allowed to do, and the crew list the curator signed is what allows it — so it needs a crew key. This terminal holds none, and it will not invent one.",
     });
   }
   if (crew.eligible === false) {
@@ -693,7 +693,7 @@ export function buildCrateOpenAction({ crew = null, open = null } = {}) {
       state: "unavailable",
       enabled: false,
       headline: "This crew key is not on the roster",
-      standing: `${short(crew.key)} is not one of the crew keys the curator enrolled for this crate, so the crate will not open for it. That is the authored roster, not a penalty.`,
+      standing: `${short(crew.key)} is not on the crew list the curator signed for this crate, so the crate will not open for it. That is the list, not a penalty.`,
     });
   }
   return Object.freeze({
@@ -701,7 +701,7 @@ export function buildCrateOpenAction({ crew = null, open = null } = {}) {
     state: "ready",
     enabled: true,
     headline: "The salvage crate is unopened for this key",
-    standing: `Opening it sends one thing: the crew key ${short(crew.key)}. The period, the draw, the contribution and every gauge are decided by the authority from authored content and its own open log.`,
+    standing: `Opening it sends one thing: the crew key ${short(crew.key)}. Which period it is, what you draw, what it contributes and where every needle lands are all decided by the station, out of the curator\u2019s signed content and its own log.`,
   });
 }
 

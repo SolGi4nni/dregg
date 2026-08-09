@@ -47,12 +47,12 @@ export function mountRelayRepair(root, descriptor, callbacks = {}) {
     },
     presentStatus(view, run, game) {
       const which = `Board ${run.member} of ${game.instance.modulus}`;
-      if (view.solved) return `Route restored in ${run.steps.length} actions. ${which}. Local transcript ready for external verification.`;
+      if (view.solved) return `Route restored in ${run.steps.length} action${run.steps.length === 1 ? "" : "s"}. ${which}. The transcript is written down here and anyone can check it.`;
       if (view.stranded) return `Relay stranded: no route completes within the remaining turns and ${spares(view.spares)}. ${which}. Reset the drill.`;
       return `Turn ${view.turns} of ${game.actionLimit}. ${spares(view.spares)} left in the crate. ${which}.`;
     },
     presentRefusal(reason) {
-      return `Authenticated Relay table refused this link: ${reason}.`;
+      return `The signed Relay table refused this link: ${reason}.`;
     },
     onTranscript: callbacks.onTranscript,
     onRefusal: callbacks.onRefusal,

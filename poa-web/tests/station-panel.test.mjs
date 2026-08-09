@@ -445,7 +445,7 @@ test("an accepted opening shows the prize and the communal ship; a refusal draws
   assert.equal(declined.gauges.length, 0, "a refused opening drew a needle");
   assert.equal(declined.prize, null, "a refused opening showed a prize");
   assert.equal(declined.counts, undefined, "a refused opening published counts");
-  assert.match(declined.standing, /already opened the crate at this period/);
+  assert.match(declined.standing, /already opened the crate for this period/);
   assert.match(declined.standing, /the communal ship is unchanged/);
   assert.equal(declined.finalityGap, CRATE_FINALITY_GAP);
 
@@ -501,12 +501,14 @@ test("the crate action is disabled — never punished — for a crew key that ca
   const unbound = buildCrateOpenAction({});
   assert.equal(unbound.state, "unavailable");
   assert.equal(unbound.enabled, false);
-  assert.match(unbound.standing, /binds none, and it will not invent one/);
+  assert.match(unbound.standing, /holds none, and it will not invent one/);
 
   const stowaway = buildCrateOpenAction({ crew: { key: STOWAWAY_KEY, eligible: false } });
   assert.equal(stowaway.state, "unavailable");
   assert.equal(stowaway.enabled, false);
-  assert.match(stowaway.standing, /the authored roster, not a penalty/);
+  // ⚠ A LIST, NOT A PUNISHMENT. The copy must name the curator's list as the
+  // reason and must not read as a sanction against this key.
+  assert.match(stowaway.standing, /That is the list, not a penalty/);
 
   const ready = buildCrateOpenAction({ crew: { key: OPENER_KEY, eligible: true } });
   assert.equal(ready.state, "ready");
@@ -514,7 +516,7 @@ test("the crate action is disabled — never punished — for a crew key that ca
   assert.equal(ready.label, "Open the Salvage Crate");
   // ⚠ THE BROWSER AUTHORS IDENTITY ONLY, and the copy says so.
   assert.match(ready.standing, /sends one thing: the crew key/);
-  assert.match(ready.standing, /decided by the authority/);
+  assert.match(ready.standing, /decided by the station/);
 
   // Eligibility UNKNOWN is not eligibility FALSE: the node gets to answer.
   assert.equal(buildCrateOpenAction({ crew: { key: OPENER_KEY } }).enabled, true);

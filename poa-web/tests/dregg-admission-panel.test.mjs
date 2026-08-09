@@ -260,7 +260,9 @@ test("exact node wire signs once, sends no balance fields, and stores only walle
   assert.ok(requests.every(({ options }) => options.credentials === "same-origin" && options.redirect === "error"));
   const surface = all(root).map((node) => node.textContent).join("\n");
   assert.doesNotMatch(surface, /raw balance|raw_balance/iu);
-  assert.match(surface, /No Galley sponsorship or governance authority granted/u);
+  // An admitted holder is admitted and nothing more: the surface must still
+  // disclaim Galley sponsorship and any say in how anything is decided.
+  assert.match(surface, /grants no Galley sponsorship and no say in anything/u);
 
   assert.equal(controller.logout(), true);
   assert.equal(controller.getCredential(), null);

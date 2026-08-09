@@ -130,21 +130,21 @@ async function verifyOpening(opening, curatorPublicKey) {
  */
 export async function loadSlotState({ authorityId, curatorPublicKey, baseUrl, fetchImpl = globalThis.fetch, prefix = "/node" } = {}) {
   if (typeof authorityId !== "string" || !HEX_32.test(authorityId)) {
-    return Object.freeze({ state: "unreachable", code: "slot-authority", reason: "This terminal has no authority id to ask about" });
+    return Object.freeze({ state: "unreachable", code: "slot-authority", reason: "This terminal does not know which network to ask" });
   }
   if (typeof fetchImpl !== "function") {
-    return Object.freeze({ state: "unreachable", code: "slot-fetch", reason: "No fetch is available in this environment" });
+    return Object.freeze({ state: "unreachable", code: "slot-fetch", reason: "This browser gave the page no way to make a request" });
   }
   const url = new URL(`${prefix}/api/poa/signal/${authorityId}/slot`, baseUrl ?? globalThis.location?.href ?? "https://invalid.local/");
   let document;
   try {
     const response = await fetchImpl(url, { cache: "no-store", credentials: "same-origin" });
     if (!response?.ok) {
-      return Object.freeze({ state: "unreachable", code: "slot-status", reason: `The authority answered HTTP ${response?.status ?? "nothing"}` });
+      return Object.freeze({ state: "unreachable", code: "slot-status", reason: `The network answered HTTP ${response?.status ?? "nothing"}` });
     }
     document = JSON.parse(await response.text());
   } catch {
-    return Object.freeze({ state: "unreachable", code: "slot-fetch", reason: "No PoA authority answered on this origin" });
+    return Object.freeze({ state: "unreachable", code: "slot-fetch", reason: "Nothing answered at this address" });
   }
   let parsed;
   try {
@@ -201,7 +201,7 @@ export const CRATE_SURFACE = Object.freeze({
 
 function slotTile(slot) {
   if (!slot) {
-    return { id: "slot", eyebrow: "JUDGED SLOT", state: "pending", headline: "Asking the authority", detail: "Reading whether a curator-committed slot is open." };
+    return { id: "slot", eyebrow: "JUDGED SLOT", state: "pending", headline: "Asking the network", detail: "Reading whether the curator has opened a slot for judged play." };
   }
   if (slot.state === "open") {
     return {
@@ -209,7 +209,7 @@ function slotTile(slot) {
       eyebrow: "JUDGED SLOT",
       state: "live",
       headline: `Slot ${slot.slot} is open`,
-      detail: `Commitment ${slot.commitment.slice(0, 16)}…, signed by this deployment's pinned curator key and checked here. A judged run can be submitted; it settles only once a node finalizes it.`,
+      detail: `The curator sealed one answer in advance — ${slot.commitment.slice(0, 16)}… — signed with the key this build is pinned to, checked here. A judged run can be sent; it settles only when a node puts it in a finalized block.`,
     };
   }
   if (slot.state === "closed") {
@@ -218,7 +218,7 @@ function slotTile(slot) {
       eyebrow: "JUDGED SLOT",
       state: "sealed",
       headline: "No slot is open",
-      detail: "The authority publishes no curator-committed opening, so every drill on the rack is practice. That is the ordinary state, not a fault.",
+      detail: "The curator has opened no slot, so every drill on the rack is practice. That is the ordinary state, not a fault.",
     };
   }
   if (slot.state === "refused") {
@@ -226,15 +226,15 @@ function slotTile(slot) {
       id: "slot",
       eyebrow: "JUDGED SLOT",
       state: "refused",
-      headline: "Slot publication refused",
-      detail: `An opening was published and this terminal would not accept it (${slot.code}). Practice only.`,
+      headline: "The opening did not check out",
+      detail: `A slot opening was published and this terminal would not accept it (${slot.code}). Practice only.`,
     };
   }
   return {
     id: "slot",
     eyebrow: "JUDGED SLOT",
     state: "sealed",
-    headline: "No authority answered",
+    headline: "Nobody answered",
     detail: `${slot.reason}. Every drill on the rack is practice.`,
   };
 }
@@ -248,14 +248,14 @@ function slotTile(slot) {
  */
 function crateTile(station) {
   if (!station || station.state === "pending") {
-    return { id: "crate", eyebrow: "SALVAGE CRATE", state: "pending", headline: "Reading the crate", detail: "Asking the station what the authored crate holds." };
+    return { id: "crate", eyebrow: "SALVAGE CRATE", state: "pending", headline: "Reading the crate", detail: "Asking the station what the curator stocked it with." };
   }
   if (station.state === "refused") {
     return {
       id: "crate",
       eyebrow: "SALVAGE CRATE",
       state: "refused",
-      headline: "Station panel refused",
+      headline: "The panel did not check out",
       detail: `A panel was served and this terminal would not accept it (${station.code}). No crate figure is shown.`,
     };
   }
@@ -269,15 +269,15 @@ function crateTile(station) {
     };
   }
   const doc = station.view.station;
-  const schedule = `${doc.tableRows} loot row${doc.tableRows === 1 ? "" : "s"} and ${doc.ticketCount} ticket entries across periods ${doc.opensAt}–${doc.closesAt}`;
-  const noPointer = "There is no current-period pointer on this route, so which period is live is not a question it answers: the rotation is the whole authored schedule, not one day of it.";
+  const schedule = `${doc.tableRows} loot row${doc.tableRows === 1 ? "" : "s"} and ${doc.ticketCount} ticket ${doc.ticketCount === 1 ? "entry" : "entries"} across periods ${doc.opensAt}–${doc.closesAt}`;
+  const noPointer = "The station serves the whole schedule and never says which period is live, so this tile does not say either.";
   if (doc.admitted > 0) {
     return {
       id: "crate",
       eyebrow: "SALVAGE CRATE",
       state: "live",
       headline: `${doc.admitted} opening${doc.admitted === 1 ? "" : "s"} admitted`,
-      detail: `The station reports ${doc.observed} observed and ${doc.admitted} admitted against ${schedule}. ${noPointer}`,
+      detail: `The station has seen ${doc.observed} and let ${doc.admitted} through, against ${schedule}. ${noPointer}`,
     };
   }
   return {
@@ -285,21 +285,21 @@ function crateTile(station) {
     eyebrow: "SALVAGE CRATE",
     state: "sealed",
     headline: "No draw is possible",
-    detail: `The station serves the authored crate — ${schedule} — and no opening has ever been admitted. ${noPointer} That is the ordinary state, not a fault.`,
+    detail: `The station serves the crate the curator stocked — ${schedule} — and nobody has ever got it open. ${noPointer} That is the ordinary state, not a fault.`,
   };
 }
 
 function shipTile(recorder) {
   if (!recorder || recorder.state === "pending") {
-    return { id: "ship", eyebrow: "SHIP WAKE", state: "pending", headline: "Reading the wake", detail: "Loading the installed flight recorder." };
+    return { id: "ship", eyebrow: "SHIP WAKE", state: "pending", headline: "Reading the wake", detail: "Loading whatever flight recorder this build has installed." };
   }
   if (recorder.state === "refused") {
     return {
       id: "ship",
       eyebrow: "SHIP WAKE",
       state: "refused",
-      headline: "Wake unreadable",
-      detail: `The installed recorder was refused (${recorder.code}). No ship figure is asserted.`,
+      headline: "The wake is unreadable",
+      detail: `This terminal would not accept the recorder it was given (${recorder.code}). No ship figure is claimed.`,
     };
   }
   if (recorder.source === "live-api") {
@@ -307,8 +307,8 @@ function shipTile(recorder) {
       id: "ship",
       eyebrow: "SHIP WAKE",
       state: "live",
-      headline: `${recorder.reportedTransitionCount} transitions`,
-      detail: `${recorder.transitions} of them linked and checked in this view. Digest continuity only — consensus finality is ${recorder.consensusFinality}.`,
+      headline: `${recorder.reportedTransitionCount} transition${recorder.reportedTransitionCount === 1 ? "" : "s"}`,
+      detail: `${recorder.transitions} of them are on screen, each link checked against the next. Whether the network calls them final is a separate claim, and it says: ${recorder.consensusFinality}.`,
     };
   }
   return {
@@ -316,7 +316,7 @@ function shipTile(recorder) {
     eyebrow: "SHIP WAKE",
     state: "sealed",
     headline: "No live figure",
-    detail: `The installed recorder is a ${recorder.source} rehearsal, so its ${recorder.transitions} transitions are a demonstration and not the ship. No live number is reachable from this build.`,
+    detail: `The recorder this build installed is a ${recorder.source} rehearsal, so its ${recorder.transitions} transitions are a demonstration and not the ship. No live number is reachable from here.`,
   };
 }
 
@@ -324,24 +324,24 @@ function rackTile(contentAuthority, cards) {
   const open = cards.filter((card) => card.state === "open").length;
   const sealed = cards.length - open;
   if (contentAuthority?.state === "refused") {
-    return { id: "rack", eyebrow: "THE RACK", state: "refused", headline: "The rack is sealed", detail: "The signed content epoch did not authenticate, so no drill opens and no browser fallback exists." };
+    return { id: "rack", eyebrow: "THE RACK", state: "refused", headline: "The rack is shut", detail: "The curator's manifest did not check out here, so no drill opens. This page will not make up a game to fill the gap." };
   }
   if (contentAuthority?.state !== "ready") {
-    return { id: "rack", eyebrow: "THE RACK", state: "pending", headline: "Checking the rack", detail: "Authenticating the signed catalog before anything opens." };
+    return { id: "rack", eyebrow: "THE RACK", state: "pending", headline: "Checking the rack", detail: "Reading the curator's manifest. Nothing opens until the signature checks out." };
   }
   return {
     id: "rack",
     eyebrow: "THE RACK",
     state: "live",
     headline: `${open} drill${open === 1 ? "" : "s"} open`,
-    detail: `${sealed} more ${sealed === 1 ? "slot is" : "slots are"} on the rack and sealed. Runs stay local until a node judges and finalizes them.`,
+    detail: `${sealed} more ${sealed === 1 ? "card is" : "cards are"} on the rack and shut. A run stays in this browser until a node judges it and puts it in a finalized block.`,
   };
 }
 
 /** The four things the front page may claim right now. */
 export function buildTodayBoard({ slot = null, recorder = null, contentAuthority = null, cards = [], station = null } = {}) {
   return Object.freeze({
-    lead: "Night watch. Here is what is true right now.",
+    lead: "Night watch. Four things this terminal can vouch for right now — and where it cannot, it says so instead of guessing.",
     tiles: Object.freeze([
       Object.freeze(rackTile(contentAuthority, cards)),
       Object.freeze(slotTile(slot)),

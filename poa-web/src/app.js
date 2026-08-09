@@ -180,12 +180,12 @@ function localStore() {
 }
 
 const deckCopy = {
-  118: ["DECK 118", "Cartography shell: no signed field record is attached to this hotspot."],
-  119: ["DECK 119", "Cartography shell: no signed field record is attached to this hotspot."],
-  121: ["DECK 121", "Mission presentation location. POAG1 does not currently declare deck placement."],
-  123: ["DECK 123", "Cartography shell: future expeditions may attach exact receipt-backed records here."],
-  125: ["DECK 125", "Unsurveyed display region. No beta artifact is present."],
-  126: ["DECK 126", "Unsurveyed display region. No beta artifact is present."],
+  118: ["DECK 118", "Chart only. No signed field record hangs on this deck."],
+  119: ["DECK 119", "Chart only. No signed field record hangs on this deck."],
+  121: ["DECK 121", "Where the drills are shown. The signed rules do not place any of them on a deck."],
+  123: ["DECK 123", "Chart only. A later expedition may hang a receipt-backed record here."],
+  125: ["DECK 125", "Unsurveyed. Nothing signed has come back from here."],
+  126: ["DECK 126", "Unsurveyed. Nothing signed has come back from here."],
 };
 
 function route() {
@@ -202,7 +202,7 @@ function initializeChrome() {
   route();
   document.querySelectorAll("[data-goto]").forEach((button) => button.addEventListener("click", () => { location.hash = button.dataset.goto; }));
   document.querySelectorAll("[data-deck]").forEach((button) => button.addEventListener("click", () => {
-    const [heading, copy] = deckCopy[button.dataset.deck] ?? ["UNMAPPED", "No record available."];
+    const [heading, copy] = deckCopy[button.dataset.deck] ?? ["OFF THE CHART", "Nothing is recorded for this deck."];
     byId("deck-readout").innerHTML = `<b>${heading}</b><span>${copy}</span>`;
     document.querySelectorAll("[data-deck]").forEach((node) => node.classList.toggle("active", node === button));
   }));
@@ -269,7 +269,7 @@ function initializeGalley() {
     console.error("PoA Galley unavailable", error);
     root.dataset.state = "unavailable";
     const fallback = root.querySelector("p:last-child");
-    if (fallback) fallback.textContent = "The versioned Galley node instrument is unavailable. No browser-authored game fallback was opened.";
+    if (fallback) fallback.textContent = "The Galley's node is not answering this terminal, so the hatch stays shut. This page will not stand in for it.";
   }
 }
 
@@ -286,7 +286,7 @@ function initializeDreggAdmission() {
     root.dataset.state = "unavailable";
     const fallback = root.querySelector("[role='status']");
     if (fallback) fallback.lastElementChild.textContent =
-      "Wallet Standard discovery or the same-origin PoA node is unavailable. No access was granted.";
+      "No wallet answered, or the node on this origin did not. Nothing was admitted, and the drills above are unaffected.";
   }
 }
 
@@ -303,10 +303,10 @@ function renderMeters(meters) {
 function markAuthority(bundle) {
   const short = bundle.manifestDigest.slice(7, 23);
   byId("artifact-lamp").classList.add("ok");
-  byId("artifact-status").textContent = "LEAN AUTHORITY READY";
-  byId("artifact-detail").textContent = "The control below dispatches only transitions present in the pinned Lean-emitted table.";
+  byId("artifact-status").textContent = "MANIFEST CHECKS OUT";
+  byId("artifact-detail").textContent = "Every control below plays a move that is written in the signed rules. There is no other kind of move here.";
   byId("artifact-pin").textContent = `POAG1 / ${short}`;
-  byId("footer-authority").textContent = `POAG1 ${short} // CONTENT EPOCH ${bundle.contentEpoch.contentEpoch}.${bundle.contentEpoch.counter}`;
+  byId("footer-authority").textContent = `POAG1 ${short} // MANIFEST REVISION ${bundle.contentEpoch.contentEpoch}.${bundle.contentEpoch.counter}`;
   byId("rules-authority").textContent = `POAG1 ${short}`;
   byId("curator-artifact").value = bundle.manifestDigest;
   state.contentAuthority = Object.freeze({
@@ -322,14 +322,20 @@ function markAuthority(bundle) {
 function sealAuthority(error) {
   console.error(error);
   byId("artifact-lamp").classList.add("bad");
-  byId("artifact-status").textContent = "MISSION AUTHORITY SEALED";
+  byId("artifact-status").textContent = "MANIFEST REFUSED";
   byId("fatal-artifact").hidden = false;
-  byId("fatal-detail").textContent = error instanceof ArtifactRefusal ? `${error.code}: ${error.message}` : "The mission bundle was refused.";
-  byId("signal-instruction").textContent = "No controls are available: the mission rules did not authenticate.";
-  byId("artifact-detail").textContent = "The game remains sealed. No browser-authored fallback exists.";
+  // ⚠ THE CODE STAYS. A refusal code is the one thing in this banner that can be
+  // searched, quoted in a bug report, or matched against the node — softening it
+  // into "something went wrong" would delete the only useful half. What changes
+  // is that a sentence in front of it says what it MEANS for the person reading.
+  byId("fatal-detail").textContent = error instanceof ArtifactRefusal
+    ? `This terminal would not accept the rules it was served, so nothing on the rack opens. The check that failed: ${error.code} — ${error.message}`
+    : "This terminal would not accept the rules it was served, so nothing on the rack opens.";
+  byId("signal-instruction").textContent = "No controls here: the rules did not check out.";
+  byId("artifact-detail").textContent = "Nothing opens. This page will not make up a game to fill the gap.";
   byId("artifact-pin").textContent = "POAG1 / REFUSED";
   byId("rules-authority").textContent = "refused";
-  byId("footer-authority").textContent = "Mission authority refused";
+  byId("footer-authority").textContent = "Rules refused";
   state.finiteController?.destroy();
   state.finiteController = null;
   byId("finite-game").hidden = true;
@@ -350,8 +356,8 @@ function sealAuthority(error) {
   // With no authenticated catalog there is no federation to ask about, so the
   // station and the records land as sealed views that SAY that, rather than
   // staying on a loading line that will never resolve.
-  state.station = Object.freeze({ state: "unreachable", code: "station-authority", reason: "No authenticated catalog names a federation to ask about" });
-  state.records = Object.freeze({ state: "unreachable", code: "records-authority", reason: "No authenticated catalog names a federation to ask about" });
+  state.station = Object.freeze({ state: "unreachable", code: "station-authority", reason: "No manifest checked out, so this terminal does not know which station to ask" });
+  state.records = Object.freeze({ state: "unreachable", code: "records-authority", reason: "No manifest checked out, so this terminal does not know whose records to ask for" });
   renderStation();
   renderRecords();
 }
@@ -593,7 +599,7 @@ function initializeSignal(descriptor) {
   state.run = createPracticeRun(descriptor);
   state.draft = [];
   byId("turn-limit").textContent = ` / ${descriptor.maxTurns} TRANSMISSIONS`;
-  byId("signal-instruction").textContent = `Assemble ${descriptor.codeLength} carrier bands. Feedback is looked up from the authenticated mission table; the browser does not score it. PRACTICE run: this client picked its own code out of the emitted rulebook, nothing here is scored, and a judged run would learn nothing about its code at all.`;
+  byId("signal-instruction").textContent = `Send ${descriptor.codeLength} carrier bands into the dark and read what comes back. This is a PRACTICE run: this browser picked the code itself out of the signed rulebook and looks the answer up in the same table, so nothing here is scored. A judged run is played against a code this browser never sees.`;
   byId("signal-symbols").replaceChildren(...descriptor.symbols.map((symbol) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -620,7 +626,7 @@ function presentMission(mission, card) {
     node.classList.toggle("active", node.dataset.game === mission.gameId);
   });
   const nonzero = ["intel", "supplies", "cohesion", "influence", "score"].filter((key) => mission.reward[key] !== 0);
-  byId("mission-contribution").textContent = nonzero.length ? `preview: ${nonzero.join(" / ")}` : "preview: none";
+  byId("mission-contribution").textContent = nonzero.length ? `would move ${nonzero.join(", ")} — none of it has moved` : "would move nothing";
   byId("curator-discovery").value = `mission:${mission.betaArtifact.mission_id} artifact:${mission.betaArtifact.artifact_id}`;
   byId("curator-contribution").value = [
     "UNSETTLED LEAN PREVIEW — NOT WORLD STATE",
@@ -633,7 +639,7 @@ function presentMission(mission, card) {
     ["COHESION", mission.reward.cohesion, "#9bd8bf"],
     ["INFLUENCE", mission.reward.influence, "#a9cbd6"],
   ]);
-  byId("world-preview-note").textContent = `Lean-emitted solved-run preview for mission ${mission.missionId}; preview sequence ${mission.previewWorld.sequence}. This is not current ship state and grants nothing.`;
+  byId("world-preview-note").textContent = `What one settled run of ${mission.title} would move, read off the signed rules (preview ${mission.previewWorld.sequence}). It is not the ship's current state, and nothing you play here has moved it.`;
 }
 
 /**
@@ -873,9 +879,10 @@ function renderSignal() {
 function renderTranscript() {
   const node = byId("signal-receipt");
   const canonical = canonicalReplay(state.run);
-  const title = state.run.solved ? "SIGNAL LOCATED" : "FIELD WINDOW CLOSED";
-  const mode = state.run.mode === "practice" ? "PRACTICE TRANSCRIPT — NOT SCORED" : "UNSETTLED JUDGED TRANSCRIPT";
-  node.innerHTML = `<b>${title} // ${mode}</b><br>${state.run.turns.length} transmissions recorded locally against a code this client chose for itself. No authoritative world state, salvage, or ranking changes until a PoA node validates and settles a judged run.<br><code>${escapeHtml(canonical)}</code>`;
+  const title = state.run.solved ? "SIGNAL LOCATED" : "THE WINDOW CLOSED";
+  const mode = state.run.mode === "practice" ? "PRACTICE — NOT SCORED" : "JUDGED — NOT SETTLED";
+  const transmissions = `${state.run.turns.length} transmission${state.run.turns.length === 1 ? "" : "s"}`;
+  node.innerHTML = `<b>${title} // ${mode}</b><br>${transmissions}, written down in this browser, against a code this browser chose for itself. Nothing on the ship moves — no state, no salvage, no ranking — until a node judges a run and settles it.<br><code>${escapeHtml(canonical)}</code>`;
   node.hidden = false;
 }
 
@@ -886,8 +893,10 @@ function escapeHtml(value) {
 async function boot() {
   initializeChrome();
   state.results = readRackResults(localStore());
-  // The rack renders BEFORE anything is authenticated: every slot sealed, which
-  // is true, and a shape a first-time player can read while the bytes load.
+  // The rack renders BEFORE anything is checked: every card `checking`, which is
+  // the true state, and a shape a first-time player can read while the bytes load.
+  // ⚠ Not `sealed` — that would put the curator's name on a page that has not read
+  // a manifest yet. See the standing note in `game-rack.js`.
   renderRack();
   renderStation();
   renderRecords();
