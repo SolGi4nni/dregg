@@ -16,10 +16,14 @@ test("the primary terminal exposes all seven platform routes and exact lab entri
   for (const id of ["platform-terminal", "crew-systems", "evidence-register", "bazaar-gates"]) {
     assert.match(html, new RegExp(`id="${id}"[^>]*aria-live="polite"`));
   }
-  // Four separate green lights, and the page must say none of them upgrades
+  // Five separate green lights, and the page must say none of them upgrades
   // another — laundering one into the rest is the whole failure this guards.
-  assert.match(html, /Four different green lights/);
+  // The count went four → five when the JUDGED run stopped being folded into
+  // the practice run's caveat; those two are the ones most easily laundered
+  // into each other, so the copy names them apart explicitly.
+  assert.match(html, /Five different green lights/);
   assert.match(html, /None of them upgrades another/);
+  assert.match(html, /the last two are not the same light/);
   assert.match(html, /no profile, no owned kit, no progression, no injury record/i);
 });
 

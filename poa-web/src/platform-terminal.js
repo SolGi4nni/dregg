@@ -194,6 +194,99 @@ function evidenceGrade(status, readyGrade, refusedLabel) {
   );
 }
 
+/**
+ * THE REPLAY'S GRADE, WHICH IS NOT ONE GRADE.
+ *
+ * ⚠ This used to be a single `LINKED REPLAY` card reading "…and with the head
+ * the node reported" — emitted identically whether the transitions came off a
+ * live authority or off `labs/flight-recorder-demo.fixture.json`, whose digests
+ * are `aaaa…`/`1111…` and whose head no node has ever reported. The shipped
+ * `labs/flight-recorder.config.json` is `mode: "demo"`, so that sentence was
+ * false on every load of the deployed page: it credited an answer to an organ
+ * that never spoke.
+ *
+ * A pinned rehearsal and a live redacted view are DIFFERENT EVIDENCE, so they
+ * get different labels. Neither is finality, and both say so — the linked-ness
+ * of a digest chain is a property of the chain, not of any quorum.
+ */
+function recorderGrade(entry) {
+  if (entry?.source === "live-api") {
+    return grade(
+      "linked-replay",
+      "LINKED REPLAY",
+      "Every link on screen agrees with the next one, and with the head the authority's node reported. That is not proof the network settled any of it.",
+      "blue",
+    );
+  }
+  const label = typeof entry?.sourceLabel === "string" && entry.sourceLabel.length > 0
+    ? ` (${entry.sourceLabel})`
+    : "";
+  return grade(
+    "linked-rehearsal",
+    "LINKED REHEARSAL",
+    `Every link agrees with the next one inside a byte-pinned rehearsal fixture${label}. No node reported this head and no ship made these transitions, so it is not proof the network settled any of it either.`,
+    "amber",
+  );
+}
+
+/**
+ * THE JUDGED RUN'S OWN GRADE — the one the register was missing.
+ *
+ * A practice run is drawn and scored in this browser and grants nothing; that is
+ * `NO RUN RECEIPT` below and it is true forever. A JUDGED run is a different
+ * object: the node re-derives a curator-committed instance and scores it with
+ * the Lean feedback oracle, and this browser never classifies a guess
+ * (`src/judged-session.js`). Folding both into one "browser run" row hid the
+ * stronger evidence behind the weaker caveat.
+ *
+ * ⚠ EVERY BRANCH IS MEASURED. `custody` is signer-detected and route-answered;
+ * `session` is a document the node served. Nothing here asserts a wall this file
+ * believes in, and with nothing measured yet the row reads as unread rather than
+ * as an absence.
+ */
+function judgedState(judged) {
+  const custody = judged?.custody ?? null;
+  if (!custody) return "pending";
+  if (judged?.session?.state === "ready") return "ready";
+  return custody.canPlay ? "reachable" : "blocked";
+}
+
+function judgedGrade(judged) {
+  const custody = judged?.custody ?? null;
+  if (!custody) {
+    return grade(
+      "judged-unread",
+      "STILL READING",
+      "Nothing has been asked about judged play yet, so nothing is claimed about it in either direction.",
+      "dim",
+    );
+  }
+  const settleCode = custody.settleBlocker?.code ?? "settle-blocked";
+  if (judged?.session?.state === "ready") {
+    return grade(
+      "judged-unsettled",
+      "NODE-JUDGED, UNSETTLED",
+      `The node scored this run against a slot the curator committed to before it opened — this browser classified nothing. It still has not settled, and the reason has a name: ${settleCode}.`,
+      "amber",
+    );
+  }
+  if (custody.canPlay) {
+    return grade(
+      "judged-playable",
+      "JUDGED RUN REACHABLE",
+      `The session route answered this origin and your signer is installed, so a judged run can be opened here and the node will score it. Settling is a separate act and is refused: ${settleCode}.`,
+      "amber",
+    );
+  }
+  const blocker = custody.blocker ?? null;
+  return grade(
+    "judged-unavailable",
+    "NO JUDGED RUN",
+    `${blocker?.what ?? "Judged play is not reachable from this terminal."} (${blocker?.code ?? "judged-unavailable"})`,
+    "dim",
+  );
+}
+
 function contentGrade(content) {
   if (content.state === "ready") {
     return grade(
@@ -213,8 +306,15 @@ function surface(id, eyebrow, title, copy, href, cta, state, evidenceGrade) {
   return freeze({ id, eyebrow, title, copy, href, cta, state, grade: evidenceGrade });
 }
 
-/** Build the one honest platform view from independently graded evidence. */
-export function buildPlatformModel({ contentAuthority, evidence = {} }) {
+/**
+ * Build the one honest platform view from independently graded evidence.
+ *
+ * `judged` is the MEASURED judged-play state (`judgedCustody` + the session
+ * document the node served), or `null` when this page has not asked yet. It is
+ * never defaulted to an absence: "we have not looked" and "there is nothing" are
+ * different answers and the register renders them differently.
+ */
+export function buildPlatformModel({ contentAuthority, evidence = {}, judged = null }) {
   refuse(
     contentAuthority && KNOWN_CONTENT_STATES.has(contentAuthority.state),
     "platform-content",
@@ -243,8 +343,17 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
       "daily",
       "WATCH CYCLE",
       "Field drills",
+      // ⚠ THIS COPY USED TO SAY "A run stays in this browser and settles
+      // nothing", and the first half of that was FALSE. A PRACTICE run stays
+      // here; a JUDGED run is opened on the node, which re-derives the
+      // curator-committed instance and scores it — the best thing on this page,
+      // hidden behind a caveat that described only the weaker branch. Both
+      // clauses below are unconditional facts about what the two modes ARE;
+      // whether judged play is reachable right now is measured, and lives in the
+      // judged panel and the `judged` register row rather than being asserted
+      // here.
       content.state === "ready"
-        ? `${missionCount} drill${missionCount === 1 ? " is" : "s are"} open, on rules the curator signed. A run stays in this browser and settles nothing.`
+        ? `${missionCount} drill${missionCount === 1 ? " is" : "s are"} open, on rules the curator signed. A practice run stays in this browser and settles nothing; a judged run leaves it, and the node scores it against a slot the curator committed to in advance.`
         : content.state === "refused" ? "The board is shut: the rules did not check out here." : "Checking the curator’s signature before anything opens.",
       "#missions",
       "Open daily board",
@@ -293,21 +402,34 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
       "./labs/flight-recorder.html",
       "Replay the wake",
       recorder.state,
-      evidenceGrade(
-        recorder,
-        grade("linked-replay", "LINKED REPLAY", "Every link on screen agrees with the next one, and with the head the node reported. That is not proof the network settled any of it.", "blue"),
-        "REPLAY REFUSED",
-      ),
+      evidenceGrade(recorder, recorderGrade(evidence.recorder), "REPLAY REFUSED"),
     ),
     surface(
       "crew",
       "CREW MUSTER",
       "Expedition roster",
-      "The roles live inside the expedition lab. Nothing here keeps an officer, and nothing here writes a crew receipt.",
+      "The roles live inside the expedition lab. Nothing here keeps an officer, and nothing here writes a crew receipt — which is not the same as this terminal remembering nothing about you.",
       "#crew",
       "Inspect crew systems",
       "local",
-      grade("no-profile-receipt", "NO PROFILE RECEIPT", "A crew choice lives in one local transcript and nowhere else.", "dim"),
+      // ⚠ THE SECOND SENTENCE IS NEW AND IT IS THE HONEST HALF. The first is
+      // true and stays: there is no officer profile and no crew receipt
+      // anywhere outside Lean — `OfficerLogbook.lean` and `CrewFieldMission*`
+      // carry no route, no store and no client. But a player who read only that
+      // would conclude the node holds nothing of theirs, and it holds several
+      // things, all keyed by player key and all durable:
+      // `GalleyMaintenanceDailyRuntime.lean` inserts the actor into
+      // `publicPlayers` and then REFUSES a second shift from that key; the
+      // judged Signal store is keyed `authority_id || slot_be64 || player_key`
+      // (`persist/src/poa_signal_session.rs`) and survives restarts; Canon
+      // carries a per-player counter. Understating what is kept is not a
+      // conservative error — it is the same wrong direction as overstating it.
+      grade(
+        "no-profile-receipt",
+        "NO PROFILE RECEIPT",
+        "A crew choice lives in one local transcript and nowhere else, and no officer profile or crew receipt exists on any surface. What the node does keep is narrower and real: your player key, wherever you have acted — a Galley shift it will not let you take twice, and a judged slot's spent bursts.",
+        "dim",
+      ),
     ),
     surface(
       "bazaar",
@@ -333,7 +455,8 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
 
   const register = [
     freeze({ id: "content", name: "Mission rules", state: content.state, grade: contentGrade(content) }),
-    freeze({ id: "run", name: "Browser run", state: "local", grade: grade("no-run-receipt", "NO RUN RECEIPT", "A run written down in this browser grants nothing: no score, no salvage, no rank, and no change to the ship.", "dim") }),
+    freeze({ id: "run", name: "Practice run", state: "local", grade: grade("no-run-receipt", "NO RUN RECEIPT", "A practice run is drawn and scored by this browser, so it grants nothing: no score, no salvage, no rank, and no change to the ship. That can never change — a page cannot be evidence about itself.", "dim") }),
+    freeze({ id: "judged", name: "Judged run", state: judgedState(judged), grade: judgedGrade(judged) }),
     freeze({ id: "expedition", name: "Expedition table", state: expedition.state, grade: surfaces[1].grade }),
     freeze({ id: "archive", name: "Archive table", state: archive.state, grade: surfaces[2].grade }),
     freeze({ id: "replay", name: "Event replay", state: recorder.state, grade: surfaces[3].grade }),
@@ -344,6 +467,7 @@ export function buildPlatformModel({ contentAuthority, evidence = {} }) {
     profile: "unbound",
     custody: "none",
     persistence: "not exposed",
+    nodeKeeps: "your player key where you have acted",
     sourceState: expedition.state,
   });
   const bazaar = freeze([
@@ -418,7 +542,14 @@ function mountCrew(root, model) {
     return card;
   }));
   const facts = element("dl", "crew-facts");
-  for (const [label, value] of [["Officer profile", model.crew.profile], ["Asset custody", model.crew.custody], ["Persistent roster", model.crew.persistence]]) {
+  for (const [label, value] of [
+    ["Officer profile", model.crew.profile],
+    ["Asset custody", model.crew.custody],
+    ["Persistent roster", model.crew.persistence],
+    // Without this row the three above read as "nothing about you is kept",
+    // which is false everywhere else on this terminal.
+    ["What the node keeps", model.crew.nodeKeeps],
+  ]) {
     const row = element("div");
     row.append(element("dt", "", label), element("dd", "", value));
     facts.append(row);

@@ -366,6 +366,13 @@ function renderPlatform() {
   const model = buildPlatformModel({
     contentAuthority: state.contentAuthority,
     evidence: state.platformEvidence,
+    // ⚑ The evidence register carries a JUDGED RUN row, and it may only ever say
+    // what this page MEASURED. Before `initializeJudgedSession` has run, both of
+    // these are `null` and the row reads "still reading" — not "no judged run",
+    // which would be an absence we had not looked for.
+    judged: state.judgedCustody === null && state.judgedSession === null
+      ? null
+      : { custody: state.judgedCustody, session: state.judgedSession },
   });
   mountPlatformTerminal({
     home: byId("platform-terminal"),
@@ -415,6 +422,11 @@ function renderJudged() {
   if (panel.action.code === "settle-claim" && panel.action.enabled) {
     root.querySelector(".judged-panel__action")?.addEventListener("click", settleJudgedClaim, { once: true });
   }
+  // The evidence register grades the judged run off the same measured state this
+  // panel renders, so it is refreshed HERE rather than at each call site — a
+  // second place that has to remember would eventually be the stale one.
+  // `renderPlatform` mounts only; it cannot re-enter this function.
+  renderPlatform();
 }
 
 /**

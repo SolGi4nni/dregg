@@ -96,7 +96,8 @@ test("seven platform organs expose separate evidence grades instead of launderin
     "SIGNED BY THE CURATOR",
     "PINNED PROVENANCE",
     "PINNED PROVENANCE",
-    "LINKED REPLAY",
+    // The installed recorder is the DEMO fixture, and its grade must say so.
+    "LINKED REHEARSAL",
     "NO PROFILE RECEIPT",
     "NO SETTLEMENT",
     "VERSIONED NODE",
@@ -108,10 +109,82 @@ test("seven platform organs expose separate evidence grades instead of launderin
   // Linked ≠ final, in whatever words. The refused twin below holds the other
   // half: a refusal may not sound like a finality claim either.
   assert.match(model.surfaces[3].grade.detail, /not proof the network settled/);
-  assert.deepEqual(model.register.map(({ id }) => id), ["content", "run", "expedition", "archive", "replay"]);
+  assert.deepEqual(model.register.map(({ id }) => id), ["content", "run", "judged", "expedition", "archive", "replay"]);
   assert.equal(model.register.find(({ id }) => id === "run").grade.label, "NO RUN RECEIPT");
   assert.equal(Object.isFrozen(model), true);
   assert.equal(Object.isFrozen(model.surfaces), true);
+});
+
+test("the daily card does not claim a run stays in this browser, because a judged one does not", async () => {
+  const model = buildPlatformModel({ contentAuthority: readyContent, evidence: await realEvidence() });
+  const daily = model.surfaces.find(({ id }) => id === "daily");
+  // The false half of the retired sentence. `src/judged-session.js` opens a
+  // judged run on the node, which re-derives the committed instance and scores
+  // it; the browser classifies nothing.
+  assert.doesNotMatch(daily.copy, /A run stays in this browser/);
+  assert.match(daily.copy, /practice run stays in this browser and settles nothing/i);
+  assert.match(daily.copy, /judged run leaves it/i);
+  // …and the true half must survive: nothing here settles.
+  assert.match(daily.copy, /settles nothing/);
+});
+
+test("a rehearsal fixture may not be graded as a head some node reported", async () => {
+  const model = buildPlatformModel({ contentAuthority: readyContent, evidence: await realEvidence() });
+  const recorder = model.surfaces.find(({ id }) => id === "recorder");
+  assert.equal(recorder.grade.code, "linked-rehearsal");
+  // The exact wrongness this grade replaced: crediting a node that never spoke.
+  assert.doesNotMatch(recorder.grade.detail, /the head the node reported/);
+  assert.match(recorder.grade.detail, /No node reported this head/);
+  assert.match(recorder.grade.detail, /not proof the network settled/);
+  // The label of the live grade is reserved for a live source, and it is the
+  // ONLY thing that may claim a node reported anything.
+  const live = buildPlatformModel({
+    contentAuthority: readyContent,
+    evidence: { recorder: { id: "recorder", state: "ready", source: "live-api", transitions: 12, reportedTransitionCount: 12 } },
+  }).surfaces.find(({ id }) => id === "recorder");
+  assert.equal(live.grade.label, "LINKED REPLAY");
+  assert.match(live.grade.detail, /the authority’s node reported|the authority's node reported/);
+  assert.match(live.grade.detail, /not proof the network settled/);
+});
+
+test("the judged run keeps a register row of its own, and every branch of it is measured", async () => {
+  const evidence = await realEvidence();
+  const row = (judged) => buildPlatformModel({ contentAuthority: readyContent, evidence, judged })
+    .register.find(({ id }) => id === "judged");
+
+  // Nothing asked yet is NOT an absence.
+  assert.equal(row(null).grade.label, "STILL READING");
+  assert.equal(row(null).state, "pending");
+  assert.doesNotMatch(row(null).grade.detail, /no judged|cannot|unavailable/i);
+
+  const blocked = row({
+    custody: { canPlay: false, blocker: { code: "settle-node-curtained", what: "The node answers 401." }, settleBlocker: { code: "settle-node-curtained" } },
+    session: { state: "unauthenticated" },
+  });
+  assert.equal(blocked.grade.label, "NO JUDGED RUN");
+  assert.match(blocked.grade.detail, /settle-node-curtained/);
+
+  const reachable = row({
+    custody: { canPlay: true, blocker: null, settleBlocker: { code: "settle-node-curtained" } },
+    session: { state: "none" },
+  });
+  assert.equal(reachable.grade.label, "JUDGED RUN REACHABLE");
+  // Reachable to PLAY is never reachable to SETTLE, and the row says which.
+  assert.match(reachable.grade.detail, /Settling is a separate act and is refused: settle-node-curtained/);
+
+  const scored = row({
+    custody: { canPlay: true, blocker: null, settleBlocker: { code: "settle-node-curtained" } },
+    session: { state: "ready" },
+  });
+  assert.equal(scored.grade.label, "NODE-JUDGED, UNSETTLED");
+  assert.match(scored.grade.detail, /this browser classified nothing/);
+  assert.match(scored.grade.detail, /has not settled/);
+
+  // The practice row keeps its own, weaker grade — the two never merge.
+  assert.equal(row(null) === undefined, false);
+  const practice = buildPlatformModel({ contentAuthority: readyContent, evidence }).register.find(({ id }) => id === "run");
+  assert.equal(practice.grade.label, "NO RUN RECEIPT");
+  assert.notEqual(practice.grade.code, scored.grade.code);
 });
 
 test("pending checks remain pending and never appear as red refusals", () => {
@@ -177,6 +250,16 @@ test("crew and bazaar affordances remain visibly non-authoritative", async () =>
     custody: "none",
     persistence: "not exposed",
   });
+  // ⚠ "No officer profile" must not be readable as "nothing about you is kept".
+  // The node keeps several player-keyed, durable things — `publicPlayers` in the
+  // Galley reducer (which then refuses a second shift from that key) and the
+  // judged session store keyed `authority_id || slot_be64 || player_key`. The
+  // crew card names that rather than leaving a false absence behind.
+  assert.equal(model.crew.nodeKeeps, "your player key where you have acted");
+  const crewGrade = model.surfaces.find(({ id }) => id === "crew").grade;
+  assert.match(crewGrade.detail, /no officer profile or crew receipt exists on any surface/i);
+  assert.match(crewGrade.detail, /What the node does keep is narrower and real/);
+
   assert.equal(model.bazaar.length, 4);
   assert.equal(model.bazaar.every(({ ready }) => ready === false), true);
   assert.deepEqual(model.bazaar.map(({ label }) => label), [
@@ -233,7 +316,7 @@ test("mounting creates navigable organs and aria-disabled market gates", async (
       "#bazaar",
       "#galley",
     ]);
-    assert.equal(descendants(roots.register).filter(({ dataset }) => dataset.evidence).length, 5);
+    assert.equal(descendants(roots.register).filter(({ dataset }) => dataset.evidence).length, 6);
     assert.equal(descendants(roots.crew).filter(({ className }) => className === "crew-role").length, 4);
     const bazaarRows = descendants(roots.bazaar).filter(({ className }) => className === "bazaar-gate");
     assert.equal(bazaarRows.length, 4);

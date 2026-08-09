@@ -45,12 +45,19 @@ import { ArtifactRefusal } from "./poag1.js";
  * FALLEN_WALLS not because the path runs but because it named the WRONG
  * obstacle — the page was never supposed to build a carrier.
  *
- * ⚠ THE PATH DOES NOT RUN. One wall further on, `claim-cell-underivable` stands:
- * the extension derives the player cell through `wasm.cell_id_for_pubkey`, and
- * that function has never existed in any build of the wasm. Every claim refuses
- * there, on live beta as much as here. It was MEASURED by driving the seam once
- * the carrier wall fell — it sat behind that one and was unreachable until it
- * went. See `CUSTODY_BLOCKERS`.
+ * ⚠ THE PATH STILL DOES NOT RUN, BUT NOT HERE ANY MORE. This paragraph used to
+ * say `claim-cell-underivable` stands and that `wasm.cell_id_for_pubkey` "has
+ * never existed in any build of the wasm". BOTH HALVES ARE NOW FALSE: that wall
+ * fell on 2026-08-09 (`FALLEN_WALLS`, and the shipped `extension/dregg_wasm.js`
+ * exports the function), and `CUSTODY_BLOCKERS` — which this paragraph pointed
+ * readers at — no longer contains it. A docblock asserting a wall the same file
+ * records as fallen is exactly the rot the `judgedCustody` comment below warns
+ * about: a wall a player meets is a wall someone fixes; a wall a docblock
+ * asserts is one that rots.
+ *
+ * What stands now is ONE wall further on and is the first that is not about a
+ * local artifact at all: `settle-node-curtained`, the private-beta 401. See
+ * `CUSTODY_BLOCKERS`, which holds it and the measurement behind it.
  *
  * So `canPlay` is routinely `true`, `canSettle` follows the provider rather than
  * this file's beliefs, and the refusal a player actually meets is rendered BY
