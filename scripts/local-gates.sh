@@ -124,6 +124,20 @@ GATES=(
   # scan trips the non-vacuity floors. The working tree is never touched.
   "check-guard-discipline|180|python3 scripts/check-guard-discipline.py --rev HEAD"
   "check-guard-discipline-red|60|python3 scripts/check-guard-discipline.py --self-test"
+  # ⚑ ELABORATION COST, ratcheted on DECLARATIONS and SHAPE — never on a stopwatch. The same
+  # modules measured 5-11x apart in-build vs standalone on hbox in one hour (PolishchukSpielman
+  # 565 s vs 51.3 s), because ~50 concurrent `lean` processes each carry a ~2.4 GB working set
+  # from `import Mathlib.Tactic` and the box thrashes. A wall-clock gate there is a coin flip.
+  # So: `maxHeartbeats`/`maxRecDepth` may only fall, whole-`Mathlib` imports may only shrink,
+  # and arm (d) refuses the data-from-gates SHAPE — a module with expensive theorems AND cheap
+  # defs whose importers cite only the defs, which is how `MinaWrapGroupGate` (278.5 s / 4.23 GB)
+  # got built by every consumer that wanted its TYPE. Backlog ledger, shrink-only, 36 rows.
+  # The `-red` row is not optional: the headline is a NEGATIVE assertion and passes just as
+  # happily on a broken reader. The self-test drives all four arms plus the controls that must
+  # STAY green (a theorem-citing importer, a module with no declared raise, a raise mentioned
+  # only in a docstring) on a synthetic tree; the working tree is never touched.
+  "check-elab-cost|300|python3 scripts/check-elab-cost.py"
+  "check-elab-cost-red|60|python3 scripts/check-elab-cost.py --self-test"
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
   # ⚑ `@[implemented_by]` ON THE PURE DEF MAKES ITS OWN DIFFERENTIAL A TAUTOLOGY.

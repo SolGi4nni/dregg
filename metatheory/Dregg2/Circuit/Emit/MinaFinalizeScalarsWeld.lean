@@ -46,7 +46,7 @@ Rooted in `MinaBridgeGuards` (CI), per the 2026-08-08 orphan burn-down.
 -/
 import Dregg2.Circuit.Emit.MinaFinalizeScalars
 import Dregg2.Circuit.Emit.MinaRealBlockGate
-import Dregg2.Circuit.Emit.MinaWrapGroupGate
+import Dregg2.Circuit.Emit.MinaWrapGroupData
 import Dregg2.Bridge.MinaMultiBlockConformance
 
 namespace Dregg2.Circuit.Emit.MinaFinalizeScalarsWeld

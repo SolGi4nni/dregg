@@ -1,4 +1,4 @@
-import Dregg2.Circuit.Emit.MinaWrapAggregationGate
+import Dregg2.Circuit.Emit.MinaWrapAggregationData
 import Dregg2.Circuit.Emit.MinaRealBlockTranscript
 /-!
 # Dregg2.Circuit.Emit.MinaWrapOpeningGate — RUNG 5f: **the rung that OPENS a commitment.**

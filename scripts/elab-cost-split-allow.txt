@@ -1,0 +1,55 @@
+# elab-cost-split-allow.txt — the data-from-gates BACKLOG. It may only SHRINK.
+#
+# Every line is a module that carries BOTH expensive theorems (it declares a raised
+# `maxHeartbeats`/`maxRecDepth`) AND declarations that importers want on their own —
+# and has at least one importer that cites only its `def`s and never a theorem. Each
+# line is therefore a cone that pays for proofs nobody in it reads.
+#
+# ⚑ A line here is a CHOICE TO KEEP PAYING, not an exoneration. Three instances measured
+# on 2026-08-09 were split instead of listed:
+#     MinaWrapGroupGate        278.5 s / 4.23 GB standalone   -> data module 15.9 s / 2.19 GB
+#     MinaWrapAggregationGate  555.4 s / 8.99 GB standalone   -> data module  7.0 s / 2.22 GB
+#     MinaWrapPublicCommGate   159 s / 14.5 GB (its own docblock), split by a sibling lane
+# The recipe is mechanical: MOVE (never COPY — a second literal is the twin this repo
+# forbids) the data into a sibling `...Data` module in the SAME namespace, so no consumer
+# is renamed; the gate imports it and keeps every theorem; data-only importers repoint.
+#
+# Regenerate with `--seed-allow`, which REFUSES to add a row. Removing a row requires
+# actually splitting the module. A row for a module that no longer has the shape is RED
+# (arm d-stale), so fixing one FORCES retiring its line.
+Dregg2.Circuit.Emit.EffectVmEmitRotationV3	# 13 data-only importer(s); hb=6,400,000 decides=28 defs=258 thms=201
+Dregg2.Circuit.Emit.MinaWrapOpeningGate	# 7 data-only importer(s); hb=4,000,000 decides=27 defs=44 thms=35
+Dregg2.Bridge.MinaStateHashDerive	# 6 data-only importer(s); hb=0 decides=2 defs=38 thms=9
+Dregg2.Circuit.Emit.EffectVmEmitRotationWide	# 4 data-only importer(s); hb=12,800,000 decides=0 defs=23 thms=48
+Dregg2.Circuit.Emit.KimchiWrapMainCore	# 4 data-only importer(s); hb=4,000,000 decides=0 defs=506 thms=12
+Dregg2.Circuit.Emit.MinaWrapSgCore	# 4 data-only importer(s); hb=0 decides=10 defs=7 thms=14
+Dregg2.Circuit.Emit.LightClientMinaLinkAir	# 3 data-only importer(s); hb=1,600,000 decides=97 defs=95 thms=71
+Dregg2.Bridge.MinaStateHashPackPrice	# 2 data-only importer(s); hb=0 decides=4 defs=5 thms=8
+Dregg2.Circuit.Emit.LightClientSolanaAir	# 2 data-only importer(s); hb=1,600,000 decides=49 defs=92 thms=63
+Dregg2.Circuit.Emit.MinaWrapXiEndoLift	# 2 data-only importer(s); hb=4,000,000 decides=19 defs=28 thms=24
+Dregg2.Circuit.Emit.PastaCurveScheduled	# 2 data-only importer(s); hb=4,000,000 decides=21 defs=36 thms=26
+Dregg2.Metatheory.TypedLinearPredicateDescriptorIR2	# 2 data-only importer(s); hb=2,000,000 decides=4 defs=88 thms=69
+Dregg2.Bridge.MinaAccountOpening	# 1 data-only importer(s); hb=0 decides=0 defs=37 thms=4
+Dregg2.Bridge.MinaStateHashRealBlock	# 1 data-only importer(s); hb=0 decides=6 defs=3 thms=7
+Dregg2.Circuit.Emit.AutomataflLegCEmit	# 1 data-only importer(s); hb=1,000,000 decides=0 defs=105 thms=23
+Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone	# 1 data-only importer(s); hb=1,600,000 decides=0 defs=19 thms=37
+Dregg2.Circuit.Emit.AutomataflResolveRefine	# 1 data-only importer(s); hb=4,000,000 decides=151 defs=45 thms=92
+Dregg2.Circuit.Emit.AutomataflStepMarksCapstone	# 1 data-only importer(s); hb=1,600,000 decides=2 defs=8 thms=21
+Dregg2.Circuit.Emit.KimchiWrapMainField	# 1 data-only importer(s); hb=0 decides=46 defs=114 thms=37
+Dregg2.Circuit.Emit.LexCompare8Emit	# 1 data-only importer(s); hb=1,600,000 decides=11 defs=53 thms=41
+Dregg2.Circuit.Emit.LightClientAnchorConnectivity	# 1 data-only importer(s); hb=1,600,000 decides=45 defs=11 thms=35
+Dregg2.Circuit.Emit.LightClientMidnightAir	# 1 data-only importer(s); hb=1,600,000 decides=41 defs=69 thms=54
+Dregg2.Circuit.Emit.LightClientMinaAir	# 1 data-only importer(s); hb=1,600,000 decides=42 defs=110 thms=99
+Dregg2.Circuit.Emit.LightClientSolStakeFoldAir	# 1 data-only importer(s); hb=1,600,000 decides=8 defs=48 thms=27
+Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir	# 1 data-only importer(s); hb=3,200,000 decides=20 defs=55 thms=40
+Dregg2.Circuit.Emit.MinaFinalizeScalars	# 1 data-only importer(s); hb=4,000,000,000 decides=24 defs=53 thms=13
+Dregg2.Circuit.Emit.MinaFinalizeScalarsProg	# 1 data-only importer(s); hb=400,000,000 decides=3 defs=96 thms=3
+Dregg2.Circuit.Emit.MinaPhase1Chain	# 1 data-only importer(s); hb=0 decides=7 defs=18 thms=36
+Dregg2.Circuit.Emit.MinaStateBodyHashChain	# 1 data-only importer(s); hb=0 decides=6 defs=18 thms=36
+Dregg2.Circuit.Emit.MinaWrapVerifierAir	# 1 data-only importer(s); hb=8,000,000 decides=49 defs=67 thms=76
+Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm	# 1 data-only importer(s); hb=4,000,000 decides=31 defs=15 thms=23
+Dregg2.Circuit.Emit.MinaWrapXiScalarWeld	# 1 data-only importer(s); hb=4,000,000 decides=11 defs=4 thms=11
+Dregg2.Circuit.Emit.PastaCurveSound	# 1 data-only importer(s); hb=4,000,000 decides=250 defs=66 thms=61
+Dregg2.Games.PathOfAngels.NightWatchCampaign	# 1 data-only importer(s); hb=2,000,000 decides=34 defs=67 thms=24
+Market.PrivateBookBfvButterflyAir	# 1 data-only importer(s); hb=4,000,000 decides=9 defs=158 thms=16
+Market.PrivateBookBfvNttFamily	# 1 data-only importer(s); hb=4,000,000 decides=10 defs=49 thms=15

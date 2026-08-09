@@ -77,7 +77,7 @@ house practice for gates. Import line:
 `import Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm`
 -/
 import Dregg2.Circuit.Emit.PastaMsmBucketed
-import Dregg2.Circuit.Emit.MinaWrapAggregationGate
+import Dregg2.Circuit.Emit.MinaWrapAggregationData
 import Dregg2.Circuit.Emit.PastaFieldSound
 
 namespace Dregg2.Circuit.Emit.MinaWrapXiAggregateMsm
