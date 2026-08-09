@@ -232,8 +232,14 @@ directory before that store has finalized an ordinary turn:
   --content-envelope "$PWD/poa/artifacts/poag1/manifest.sig.json" \
   --curator-key-pin "$PWD/poa/config/curator-key.json" \
   --expected-content-epoch 1 \
-  --expected-activation-counter 2
+  --expected-activation-counter 10
 ```
+
+⚠ The counter is a LIVE value, not a constant of this document. It is
+`poa/artifacts/poag1/manifest.sig.json`'s `counter`, and every ceremony bumps it —
+this line said `2` until 2026-08-09, so an operator running it verbatim got a
+counter refusal and no hint that the doc, rather than their kit, was wrong. Read
+the value out of the envelope you are authenticating before you run this.
 
 The command retains and hashes the exact manifest/genesis bytes it authenticated,
 rederives the hybrid Ed25519+ML-DSA federation id, and verifies the immutable

@@ -2,6 +2,35 @@
 
 **Measured 2026-08-07 at `7497a9dcb166cdbffcbbef068f810dd797f0bab4`.**
 
+> ## ⚑ SUPERSEDED AS A STATUS DOC — READ AS A DATED CENSUS ONLY (banner added 2026-08-09)
+>
+> This is a snapshot pinned to one SHA and it is being read as current state, which it
+> is not. Re-measured 2026-08-09, its headline findings are **inverted**, not merely
+> aged:
+>
+> - **"4 games playable" / "Play four games on the rack" → SEVEN.** All seven are
+>   enrolled in the signed catalog at epoch 1 counter 10.
+> - **"B — AUTHORED, ONE CEREMONY AWAY: none"**, and its three supporting claims —
+>   `artificer-controller.js` imported by nothing, `ventcrawl-controller.js` imported
+>   by nothing, Deck Descent has no client — are all three **false now**. All are
+>   wired in `mission-launcher.js`, and `poa-web/tests/controller-reach.test.mjs`
+>   fails if any controller stops being reached (`9b6aa24b2`).
+> - **"the descriptor publishes all four veins" → EIGHT.** `VentCrawl.lean:227`
+>   `abbrev VEINS : Nat := 8` (`a1422848d`).
+> - **"`descriptor-shape.js` still holds four shapes" → FIVE**;
+>   `poa-web/src/descriptor-shape.js:68` adds `pushYourLuck`.
+> - **"Shipped bundle … exit 0, 4 games, 0 FAIL, 4 baseline WARNs"** — superseded by
+>   the fixed-strategy pass (`4139afbb1`), which measures the tree rather than one
+>   path and reports FAILs on the same unchanged `poag1/` bytes. Read that commit's
+>   recorded verdict, not this line.
+> - `:46` "`/api/poa/galley/v1/session`, `/status`, `POST /command` (all public)" was
+>   **already wrong at the pinned SHA**: all three call `observe()` →
+>   `actor_from_headers` (`node/src/poa_galley_api.rs:378-388`) and refuse
+>   `ActorRequired` without `X-Dregg-Actor`. A doc error, not drift.
+>
+> The body below is left exactly as measured. Correcting a dated census in place would
+> destroy the only thing it is good for.
+
 ⚠ The tree moved twice while this was being written (`5f216e915` → `65c8eaa96` →
 `7497a9dcb`); three PoA commits landed mid-census, including the crew organ's first
 `@[export]`. Every claim below is read at the pinned SHA. Where the working tree

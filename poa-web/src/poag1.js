@@ -11,11 +11,15 @@ export const POAG1_AUTHORITY = "Dregg2.Games.PathOfAngels";
  * path-ascending after the schema and catalog, so `black-box-reconstruction`
  * sorts before `relay-repair`.
  *
- * ⚠ SIX, and the count is refused, not warned about. Black Box's descriptor
- * landed in the curator-signed counter-8 bundle, so it is enrolled here against
- * the bytes that actually shipped. This list is the exact emitted set: widening
+ * ⚠ NINE — two envelope files and all SEVEN games — and the count is REFUSED, not
+ * warned about. Every game is enrolled in the curator-signed epoch-1 counter-10
+ * bundle, so this list is pinned against the bytes that actually shipped. Widening
  * it beyond what the manifest carries would mean this client accepting a shape
  * nothing has produced.
+ *
+ * ⚠ This docblock said SIX / counter-8 until 2026-08-09, while the list beneath it
+ * held nine. A prose count beside a real list is the copy that goes stale first and
+ * is read first; the list is the authority.
  */
 export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
   Object.freeze({ path: "schema.json", mediaType: "application/schema+json" }),
@@ -35,8 +39,10 @@ export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
 /**
  * ⚑ THE FLAG DAY, DECLARED RATHER THAN DISCOVERED.
  *
- * `Emit.lean` renders SEVEN game descriptors; the list above pins the four the
- * curator has signed. That gap is one ceremony, and it used to be held by nothing
+ * `Emit.lean` renders SEVEN game descriptors and the curator has now signed ALL
+ * SEVEN, so this delta is EMPTY — see `POAG1_PENDING_ARTIFACTS` below. The
+ * machinery stays because the next enrolment recreates the gap, and it used to be
+ * held by nothing
  * at all — a game could join `canonicalArtifacts` and this client would simply
  * refuse the next bundle with `POAG1 artifact count does not match the Lean
  * bundle`, at load, in a browser, with no earlier warning anywhere.
@@ -56,8 +62,13 @@ export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
  * or media type other than the pinned list; a pending path buys a game nothing at
  * load time. It is a statement about what the emitter will produce next.
  */
-// Empty at counter 9: all seven games are in the signed bundle. A path lands here only
-// while its descriptor is emitted and NOT yet signed into the manifest.
+// Empty at epoch 1 counter 10: all seven games are in the signed bundle. A path lands
+// here only while its descriptor is emitted and NOT yet signed into the manifest.
+//
+// ⚠ While this is empty, `poa/artifacts/poag1-pending/` on disk is DEAD WEIGHT — its
+// three descriptors predate the draw repair, carry no `symbol_draw`, and no loader
+// accepts them. `tests/game-rack.test.mjs` read three of its seven verdicts out of
+// that directory until 2026-08-09. Nothing reads it now; the ceremony owns deleting it.
 export const POAG1_PENDING_ARTIFACTS = Object.freeze([]);
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;

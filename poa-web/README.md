@@ -45,10 +45,11 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
 
 - `src/poag1.js` validates and pins the envelope; `src/content-epoch.js`
   authenticates its exact bytes and rejects epoch/counter rollback.
-- `src/mission-catalog.js` accepts exactly Signal, Relay, Salvage, and Black Box
-  from one authenticated content epoch, checks their shared four-descriptor
-  content root, manifest-bound beta artifacts, zero-economy policy, and preview
-  shapes.
+- `src/mission-catalog.js` accepts exactly the SEVEN games `GAME_SPECS` teaches it
+  — Signal, Relay, Salvage, Black Box, Deck Descent, Artificer Logic and Vent
+  Crawl — from one authenticated content epoch, checks their shared
+  seven-descriptor content root, manifest-bound beta artifacts, zero-economy
+  policy, and preview shapes.
 - `src/mission-launcher.js` is the exhaustive controller switch, and its
   `INSTALLED_GAME_IDS` is the single list of games this client can play. Unknown
   games and catalog/descriptor mismatches refuse; neither can fall back to
@@ -85,15 +86,19 @@ mv /tmp/poag1-manifest.json public/artifacts/poag1/manifest.json
 - `src/signal-runtime.js` consumes Signal's compact outcome oracle. It does not
   score guesses or select outcomes itself.
 - `src/finite-table-runtime.js` consumes the complete legal-state closure and
-  state × action rows used by Relay Repair and Salvage Lock. Their strict
-  decoders and dormant UI mounts live in `relay-*` / `salvage-*`; none of these
-  files contains the Lean transition functions.
+  state × action rows used by FOUR games — Relay Repair, Salvage Lock, Artificer
+  Logic and Deck Descent. Their strict decoders and UI mounts live in `relay-*` /
+  `salvage-*` / `artificer-*` / `descent-*`; none of these files contains the Lean
+  transition functions. ⚠ NONE of those mounts is dormant, and this line said they
+  were: all four are in the `mission-launcher.js` dispatch table, and
+  `tests/controller-reach.test.mjs` now fails if any controller stops being reached
+  from the page that mounts it.
 - `public/artifacts/poag1/` is generated material copied from `poa/`; never
   hand-edit it here.
 - The curator panel is a preview/inspection surface. Signing and canon
   promotion remain the responsibility of the curator tool and capability.
 
-A drill opens only after the six-file manifest, curator activation, complete
+A drill opens only after the nine-file manifest, curator activation, complete
 catalog, and every descriptor validate; until then its card is a sealed slot. A
 browser transcript is not a RunReceipt and does not grant score, contribution,
 salvage, ranking, or canon status — the end screen's ladder says so on every

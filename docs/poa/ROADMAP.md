@@ -1,7 +1,10 @@
 # Path of Angels: development map
 
-Status: live epoch 1, curator counter 4, plus working design, 2026-08-05. This is a menu and dependency map for
-co-creation with Sentyr, not a promise that every row becomes canon or ships in order.
+Status: live epoch 1, curator **counter 10**, plus working design, header refreshed 2026-08-09. This is a
+menu and dependency map for co-creation with Sentyr, not a promise that every row becomes canon or ships
+in order. The counter is read from `poa/artifacts/poag1/manifest.sig.json` and pinned by
+`POA_EXPECTED_CURATOR_COUNTER` in `poa-web/src/trust-config.js`; this line said 4 until 2026-08-09, which
+is six ceremonies of drift in the first sentence everybody reads.
 
 ## What epoch 1 actually establishes
 
@@ -9,10 +12,14 @@ This document began before the first release. The deployed beta now closes enoug
 distinguish implemented substrate from the option space below:
 
 - `beta.pathofangels.network` serves an authenticated, signed-content station with six connected
-  organs: Field Drills, Expedition, Archive, Recorder, Crew, and Bazaar. Signal Triangulation,
-  Relay Repair, and Salvage Lock are playable finite games; each consumes an exact Lean-emitted
-  table and the browser does not score it. The Expedition and Archive demonstrators also regenerate
-  their complete Lean artifacts during the release gate. Curator counter 4 is live behind Basic
+  organs: Field Drills, Expedition, Archive, Recorder, Crew, and Bazaar. **Seven** games are playable
+  finite games — Signal Triangulation, Relay Repair, Salvage Lock, Black Box Reconstruction, Deck
+  Descent, Artificer Logic and Vent Crawl; each consumes an exact Lean-emitted
+  table and the browser does not score it. ⚠ Three of the seven are signed at descriptors their kernels
+  have since moved away from (Salvage 12 vs `MAX_TURNS` 18, Black Box 15/2-class vs 11/3-class, Descent
+  `shoring: 2` vs `SHORING` 1); the re-emit has not been run, so those three ship an older game than the
+  one that is proved. The Expedition and Archive demonstrators also regenerate
+  their complete Lean artifacts during the release gate. Curator counter 10 is live behind Basic
   Auth, with separate evidence grades so a healthy local instrument cannot launder an unavailable
   network authority path.
 - The PoA federation is distinct from public Dregg: three validators, threshold three, separate
@@ -127,7 +134,8 @@ The first beta should demonstrate the trust spine and a small place worth visiti
   faucet/economy, and a reproducible operator/join kit.
 - Curator-signed Lean-emitted content epochs with rollback protection.
 - Expedition Officer, daily board, deck map, field archive, Bazaar hatch, and Choir hatch.
-- Three complete finite games: Signal Triangulation, Relay Repair, and Salvage Lock.
+- Seven complete finite games: Signal Triangulation, Relay Repair, Salvage Lock, Black Box
+  Reconstruction, Deck Descent, Artificer Logic, and Vent Crawl.
 - Opt-in YouTube extension companion, activated only by a curator-signed routing statement.
 - Local replay first; network submission is enabled only when the runtime verifier consumes the
   same emitted transition artifact and returns a judged receipt.

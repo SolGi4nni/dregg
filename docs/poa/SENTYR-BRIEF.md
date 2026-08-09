@@ -4,11 +4,23 @@ There is a real protected beta now at <https://beta.pathofangels.network> (`poa`
 the beginning of a place aboard the Khovokhi rather than a replacement for the YouTube poll. The
 show still owns the macro scale — where the ship jumps, what its people decide, and what becomes
 canon. The site owns the micro scale: expeditions, instruments, repairs, evidence, rumors, crew work,
-and the mostly uninhabited volume of the ship itself. The current terminal has six connected areas:
-Field Drills, Expedition, Archive, Flight Recorder, Crew, and Bazaar. Three short games are playable
-now, and the Expedition and Archive contain larger demonstrators. The visual treatment is still a
-functional field terminal, not a final art direction, but the deployed bytes are signed, tested, and
-served by a separate three-validator PoA federation.
+and the mostly uninhabited volume of the ship itself. The current terminal serves seven hash views —
+Field Drills, Expedition, Archive, Flight Recorder, Crew, Bazaar, and Choir, with Galley alongside;
+Expedition, Archive and Flight Recorder are labs under Records rather than top-level organs. **Seven**
+short games are playable now (Signal Triangulation, Relay Repair, Salvage Lock, Black Box
+Reconstruction, Deck Descent, Artificer Logic, Vent Crawl), all seven enrolled by the curator at epoch
+1 counter 10, and the Expedition and Archive contain larger demonstrators. The visual treatment is
+still a functional field terminal, not a final art direction, but the deployed bytes are signed and
+tested, and served by a **single-validator** PoA federation — `poa/deployments/epoch-1/poa-devnet.json`
+carries one node at threshold 1. This brief said "three-validator" until 2026-08-09; the fleet was
+collapsed to one on 08-05 and nothing here followed.
+
+⚠ Playable is not the same as finished, and this brief should not be read as saying it is. Three of
+the seven ship a descriptor their own Lean kernel has since moved away from — Salvage Lock is signed at
+a 12-action budget where `SalvageLock.MAX_TURNS` is 18, Black Box at 15 actions and two answer classes
+where the kernel is 11 and three, and Deck Descent at `shoring: 2` where `DeckDescent.SHORING` is 1. The
+re-emit and re-sign that closes that gap has not been run. Until it is, those three are playing an older
+game than the one the kernels prove.
 
 The engine's useful trick is that a game result is an exact object rather than a number the page
 claims happened. We are making activities as Lean state machines wherever practical; the browser

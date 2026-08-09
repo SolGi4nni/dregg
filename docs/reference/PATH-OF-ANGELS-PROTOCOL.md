@@ -55,13 +55,25 @@ JSON with no timestamp or host-dependent fields:
 }
 ```
 
-The canonical v1 artifact set is:
+The canonical v1 artifact set is nine members, PATH-ASCENDING — the order is not
+decoration, because the content root is framed `path_ascending` and a wrongly
+ordered list binds a *different* root rather than raising an error:
 
 - `schema.json`
 - `catalog.json`
+- `games/artificer-logic.json`
+- `games/black-box-reconstruction.json`
+- `games/deck-descent.json`
 - `games/relay-repair.json`
 - `games/salvage-lock.json`
 - `games/signal-triangulation.json`
+- `games/vent-crawl.json`
+
+This list is a claim about `poa/artifacts/poag1/manifest.json` and about
+`POAG1_EXPECTED_ARTIFACTS` in `poa-web/src/poag1.js`, and the two are compared
+against `Emit.POAG1_GAME_PATHS` by `poa-web/tests/bundle-enrolment.test.mjs`. It
+said five until 2026-08-09, which is the interval in which four games were
+enrolled and this file was not touched.
 
 The manifest cryptographically pins every member but does not pin itself.
 Curator signatures and content epochs bind the exact manifest bytes. FNV-1a is
