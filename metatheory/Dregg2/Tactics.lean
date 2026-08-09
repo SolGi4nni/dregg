@@ -64,9 +64,19 @@ open Lean Elab Command in
 ONE command, replacing N verbose `#assert_axioms` lines. Each name is checked by the same
 `Dregg2.assertNameClean` the per-theorem form uses, so it is exactly as strict; the FIRST
 non-clean name throws (with its offending axiom). A typo'd name is an `unknownConstant` error
-— the list cannot silently drop a pin. Logs the count pinned. -/
+— the list cannot silently drop a pin. An EMPTY list is a hard ERROR, not a pass (see below).
+Logs the count pinned. -/
 elab "#assert_all_clean" "[" ids:ident,* "]" : command => do
   let idArr := ids.getElems
+  -- ⚑ NON-VACUITY FLOOR. `ident,*` happily accepts `[]`, and the loop below then never runs:
+  -- the command logs "0 keystones pinned" and SUCCEEDS. A guard that pins nothing always
+  -- passes. This is the same floor `#assert_not_depends_on`/`#assert_depends_on` carry
+  -- (`:EMPTY forbidden list`, `:EMPTY expected list`) — applied here because a refactor that
+  -- empties one of these lists must RED, not go quietly green.
+  if idArr.isEmpty then
+    throwError "#assert_all_clean: EMPTY keystone list — a guard that pins nothing always \
+      passes, so this would certify NOTHING while reading as a pin. Name the theorems this \
+      line is meant to hold kernel-clean, or delete the command; do not leave an empty one."
   let mut n : Nat := 0
   for id in idArr do
     let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
@@ -94,8 +104,9 @@ That last one is the wound. A `#guard` does not avoid trusting the compiler; it 
 cost and makes the trust show up in `#print axioms foo`.
 
 `#assert_compiled foo` is the pin for that class. It passes iff every axiom `foo` rests on is either
-kernel-clean (`Dregg2.cleanAxioms`) or a `native_decide` oracle axiom, AND at least one such oracle
-axiom is present. Both halves are load-bearing:
+kernel-clean (`Dregg2.cleanAxioms`) or a compiled-evaluation oracle **that this command has itself
+re-run and watched return `true`**, AND at least one such oracle is present. All three halves are
+load-bearing:
 
   * a `sorry`/faked-green axiom is still a hard ERROR — this is not a laxer `#assert_axioms`, it
     widens the allow-list by exactly one named class and nothing else;
@@ -103,34 +114,135 @@ axiom is present. Both halves are load-bearing:
     the STRONGER `#assert_axioms`, and quietly accepting it here would let a kernel-clean keystone
     get labelled compiler-trusted and lose its real pin. The command therefore has a red path in
     both directions, and cannot be used to launder a proof downward.
+  * **an oracle axiom is not taken on its word.** See the next note.
+
+⚑ **WHY A NAME CANNOT BE THE TEST (measured 2026-08-09, this command accepted a forgery).** Until
+today `Dregg2.isNativeOracleAxiom` recognised an oracle by NAME PATTERN — "any `Name` with a
+`native_decide` or `_native` component". Names are chosen by whoever writes the declaration, so
+
+```lean
+axiom Evil._native.forged : (1 : Nat) = 1
+theorem rests_on_forged : (1 : Nat) = 1 := Evil._native.forged
+#assert_compiled rests_on_forged      -- passed, silently
+```
+
+The one command whose job is to make compiler trust VISIBLE certified a hand-written axiom, with no
+output at all. `#assert_axioms` would have caught it. Sharpening the pattern does not help: the
+generated name is `<decl>._native.native_decide.ax_<i>_<j>` (`Lean.mkAuxDeclName`, `Lean/CoreM.lean`),
+and `axiom myThm._native.native_decide.ax_1 : decide (1 = 2) = true` is a legal declaration that a
+later `myThm` can then rest on. **Every name test is a test of a string the adversary writes.**
+
+Nor is there provenance to consult. `Lean.Meta.nativeEqTrue` (`Lean/Meta/Native.lean`) adds the axiom
+with a plain `addDecl` and registers it in NO environment extension; the only trace is a declaration
+range, which a source `axiom` command also gets. **There is nothing in the environment that
+distinguishes a generated oracle axiom from a hand-written one.**
+
+So this command stops asking where the axiom came from and asks the only question its own label
+makes a claim about: **is what it says true under the evaluator whose trust I am declaring?** For
+each non-kernel-clean axiom it requires the type shape `nativeEqTrue` emits — `<closed Bool expr> =
+true` — and then RE-RUNS that expression through the same compiled evaluator (`Lean.Meta.evalExpr`,
+the engine behind `native_decide` and `#guard`) and requires `true`. A forged axiom either fails the
+shape (`(1 : Nat) = 1`) or fails the evaluation (`decide (1 = 2) = true`). Anything else — an
+unrunnable claim, a universe-polymorphic one, an axiom missing from the environment — is REFUSED
+rather than accepted.
+
+Two consequences worth stating. (1) The check now costs a second compiled evaluation per pinned
+oracle; that is the price of the certificate being about the FACT rather than about a spelling.
+(2) It also catches DRIFT: an oracle axiom whose claim has since stopped evaluating to `true` — a
+later `@[implemented_by]`, a changed dependency — now reds, where before the stale axiom stayed
+green forever. Note that an `@[implemented_by]` twin IS inside the trust surface this command
+declares, by construction: `native_decide` would have produced the same axiom. That seam is closed
+by moving the attribute onto an alias, not here.
 
 Read the label literally: `#assert_compiled foo` says **"`foo` is true by compiled evaluation, and I
 am saying so out loud."** It is strictly more honest than the `#guard` it replaces and strictly
 weaker than `#assert_axioms`. Never write it under a fact that `decide`/`rfl` closes. -/
 
-/-- A `native_decide` oracle axiom. Lean 4.30 emits a per-declaration axiom named
-`<decl>._native.native_decide.ax_<i>_<j>` rather than the older single `Lean.ofReduceBool`, so BOTH
-shapes are recognised: the legacy global names, and any name containing the `native_decide` marker
-component. (Matching on the component, not a string prefix of the declaration, is what keeps this
-independent of which declaration generated it.) -/
-def Dregg2.isNativeOracleAxiom (a : Lean.Name) : Bool :=
-  a == ``Lean.ofReduceBool || a == ``Lean.ofReduceNat ||
-    a.components.any (fun c => c == `native_decide || c == `_native)
+/-- The two axioms LEAN ITSELF declares for proof-by-compiled-evaluation (`Lean.ofReduceBool`,
+`Lean.ofReduceNat`, both `Init.Core`). Recognising THESE by name is sound in the way a name
+*pattern* never is: both names are already occupied by the prelude, so no other declaration can
+ever bear them and a second one cannot be declared. The equality test is an IDENTITY test, not a
+spelling test. Their claim lives in the proof term (via `Lean.reduceBool`), not in the axiom, so
+there is nothing here to re-run — accepting them IS accepting compiler trust, which is exactly
+what this command's label announces. -/
+def Dregg2.isCoreReduceAxiom (a : Lean.Name) : Bool :=
+  a == ``Lean.ofReduceBool || a == ``Lean.ofReduceNat
+
+/-- The Boolean claim a `native_decide`/`bv_decide` oracle axiom makes, if its type has the shape
+that machinery emits. `Lean.Meta.nativeEqTrue` builds the axiom type as
+`mkApp3 (mkConst ``Eq [1]) (mkConst ``Bool) e (mkConst ``Bool.true)` for a CLOSED `e : Bool` it has
+just watched evaluate to `true`; this returns that `e`.
+
+Returning the CLAIM rather than a yes/no about the name is the whole point: it is what lets the
+caller go and re-run `e` for itself. A type that is not of this shape is not a compiled-evaluation
+claim at all and there is nothing to re-run — which is a refusal, not a pass. -/
+def Dregg2.nativeOracleClaim? (type : Lean.Expr) : Option Lean.Expr :=
+  match type.eq? with
+  | some (α, lhs, rhs) =>
+      if α.isConstOf ``Bool && rhs.isConstOf ``Bool.true then some lhs else none
+  | none => none
 
 open Lean Elab Command in
-/-- `#assert_compiled foo` — see the section note above. Errors if `foo` rests on any axiom that is
-neither kernel-clean nor a `native_decide` oracle, and ALSO errors if `foo` rests on no oracle at
-all (in which case `#assert_axioms` is the correct, stronger pin). -/
+/-- `#assert_compiled foo` — see the section note above. For every axiom `foo` rests on that is not
+kernel-clean, this command requires either (a) one of Lean's own two `reduce*` axioms, whose names
+cannot be forged because they are taken, or (b) an axiom asserting `<closed Bool expr> = true` whose
+expression this command RE-RUNS through the compiled evaluator and watches return `true`. Anything
+else is a hard ERROR. It ALSO errors if `foo` rests on no oracle at all (then `#assert_axioms` is
+the correct, stronger pin). A name is never the test — see the `⚑ WHY A NAME CANNOT BE THE TEST`
+note above, which records the forgery this command used to accept. -/
 elab "#assert_compiled" id:ident : command => do
   let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
   let axs ← Lean.collectAxioms name
-  let bad := axs.filter (fun a =>
-    !Dregg2.cleanAxioms.contains a && !Dregg2.isNativeOracleAxiom a)
-  unless bad.isEmpty do
-    throwError "compiled-pin FAIL: {name} depends on axioms {bad.toList}, which are neither \
-      kernel-clean nor a native_decide oracle (a faked-green axiom cannot hide behind a \
-      compiled-evaluation label)"
-  unless axs.any Dregg2.isNativeOracleAxiom do
+  let env ← getEnv
+  let mut coreOracles : Array Name := #[]
+  let mut candidates : Array (Name × Expr) := #[]
+  let mut refusals : Array MessageData := #[]
+  for a in axs do
+    if Dregg2.cleanAxioms.contains a then continue
+    if Dregg2.isCoreReduceAxiom a then
+      coreOracles := coreOracles.push a
+      continue
+    match env.find? a with
+    | none =>
+      refusals := refusals.push m!"{a} — not present in the environment, so its claim cannot be \
+        re-run"
+    | some info =>
+      match Dregg2.nativeOracleClaim? info.type with
+      | none =>
+        refusals := refusals.push m!"{a} : {info.type} — NOT a compiled-evaluation claim. A \
+          `native_decide`/`bv_decide` oracle has type `<closed Bool expr> = true`; this axiom \
+          asserts something else, so there is nothing to re-run and nothing here is checkable \
+          by compiled evaluation"
+      | some claim =>
+        if info.levelParams.isEmpty then
+          candidates := candidates.push (a, claim)
+        else
+          refusals := refusals.push m!"{a} — universe-polymorphic ({info.levelParams}), so its \
+            claim is not a single closed Boolean this command can re-run"
+  -- ⚑ THE TEST. Not "is it named like an oracle" — "does the evaluator I am declaring trust in
+  -- still say what this axiom says". Same engine `native_decide` and `#guard` run on.
+  unless candidates.isEmpty do
+    let evalRefusals ← liftTermElabM do
+      let mut fails : Array MessageData := #[]
+      for (a, claim) in candidates do
+        let verdict : Option MessageData ←
+          try
+            let b ← unsafe Lean.Meta.evalExpr Bool (Lean.mkConst ``Bool) claim (checkMeta := false)
+            pure <| if b then none else
+              some m!"{a} — the compiled evaluator returns `false` for the claim this axiom \
+                asserts TRUE:{Lean.indentExpr claim}\nThis axiom is either forged or stale; \
+                either way nothing may rest on it"
+          catch ex =>
+            pure <| some m!"{a} — its claim could not be re-run through the compiled evaluator \
+              ({ex.toMessageData}), so the compiled-evaluation label is unsupported"
+        if let some f := verdict then fails := fails.push f
+      pure fails
+    refusals := refusals ++ evalRefusals
+  unless refusals.isEmpty do
+    throwError "compiled-pin FAIL: {name} rests on {refusals.size} axiom(s) this command REFUSES \
+      to certify as compiled evaluation:{Lean.indentD (MessageData.joinSep refusals.toList m!"\n")}\
+      \nA compiled-evaluation pin certifies a FACT re-run through the evaluator, never a name."
+  if coreOracles.isEmpty && candidates.isEmpty then
     throwError "compiled-pin REFUSED: {name} rests on NO compiled-evaluation oracle — it is \
       kernel-clean, so pin it with the STRONGER `#assert_axioms {name}`. Labelling a \
       kernel-clean fact 'compiled' throws away its real pin"
@@ -401,6 +513,20 @@ elab_rules : command
     unless seenExcept.contains e do
       logWarning m!"#assert_namespace_axioms {prefixName}: `except` name {e} matched no \
         pinned theorem in this namespace (retired/renamed? remove it from the allow-out list)"
+  -- ⚑ NON-VACUITY FLOOR. Without this the command logs "0 theorems pinned kernel-clean" and
+  -- PASSES whenever the walk found nothing — a renamed namespace, a typo'd prefix, or (the
+  -- one that actually happens) a declaring module that is not in this pin site's import
+  -- closure, so `env.constants` simply does not contain the theorems. Nothing was walked, so
+  -- the check passed vacuously. Same floor as `#assert_not_depends_on`'s zero-scan error.
+  if checked == 0 then
+    throwError "#assert_namespace_axioms {prefixName}: 0 theorems pinned — NOTHING WAS WALKED, \
+      so this check would pass vacuously.{if skipped > 0 then
+        m!" ({skipped} theorem(s) matched but every one was allow-listed out via `except`, \
+          which pins nothing either.)" else
+        m!" No theorem in the environment has `{prefixName}` as a proper name prefix — either \
+          the namespace was renamed, or the module that declares it is NOT in this file's \
+          import closure (add the import; a pin can only see what is imported)."} \
+      Fix the prefix or the import, or delete the pin; do not leave one that certifies nothing."
   logInfo m!"#assert_namespace_axioms {prefixName}: {checked} theorems pinned kernel-clean\
     {if skipped > 0 then m!", {skipped} skipped via `except`" else m!""}"
 
