@@ -28,6 +28,25 @@ import { SHAPES } from "./descriptor-shape.js";
  * tag or a mechanics-flavoured line for a game nobody has written is not, so a
  * reserved berth carries `session: null` and `shape: null` and the rack renders
  * that absence rather than filling it in.
+ *
+ * ⚑ AND TWO STATES THAT ARE NOT ABOUT THE GAME AT ALL. Those four answer
+ * "enrolled? installed?" — a question with no answer until the signed catalog has
+ * been READ. On 2026-08-09 the live beta could not decode counter 10, and every
+ * card on it said AWAITING CURATOR ACTIVATION: *"the signed catalog does not
+ * enrol it at this counter."* The catalog enrolled all seven. The terminal blamed
+ * the curator for its own decoding failure, in a sentence written to be
+ * reassuring, under a banner that said MISSION AUTHORITY SEALED — and the code
+ * that did it carried the comment "with no authenticated catalog every slot is
+ * sealed, which is the honest picture."
+ *
+ *   checking     the signed catalog has not been read yet. Nothing is open or
+ *                closed; this terminal does not know.
+ *   refused      the catalog was read and refused. Still not a claim about the
+ *                curator: it names the refusal and says the fault is HERE.
+ *
+ * So the rack takes a `standing`, and no card may state a reason the terminal has
+ * not established. An honest absence is a feature; an honest-sounding absence
+ * standing in for a fault is the failure it is easiest to ship.
  */
 
 /** The three session lengths. A fourth is a decision, not a new string. */
@@ -42,18 +61,25 @@ export const RACK_ENTRY_KEYS = Object.freeze([
   "gameId", "name", "flavor", "session", "shape", "eyebrow", "boardLabel", "columns",
 ]);
 
-export const CARD_STATES = Object.freeze(["open", "sealed", "reserved", "unsupported"]);
+export const CARD_STATES = Object.freeze(["open", "sealed", "reserved", "unsupported", "checking", "refused"]);
+
+/** What this terminal knows about the signed catalog. `ready` means it read one. */
+export const CATALOG_STANDINGS = Object.freeze(["pending", "ready", "refused"]);
 
 const SEAL_LABEL = Object.freeze({
   sealed: "AWAITING CURATOR ACTIVATION",
   reserved: "BERTH RESERVED",
   unsupported: "NO CONTROLLER INSTALLED",
+  checking: "READING THE SIGNED CATALOG",
+  refused: "THIS TERMINAL COULD NOT READ THE CATALOG",
 });
 
 const SEAL_COPY = Object.freeze({
   sealed: "The drill is installed and the signed catalog does not enrol it at this counter. It opens when the curator activates it — not when this page decides to show it.",
   reserved: "A berth on the rack. No drill is installed here and nothing has been emitted for it, so there is no length and no mechanics to state.",
   unsupported: "The signed catalog enrols this drill and this terminal has no controller for it. Nothing opens: a browser must never approximate a game it was not given.",
+  checking: "Nothing here is open or closed yet. The signed content epoch is still being authenticated, and until it is, this terminal does not know what the curator enrolled.",
+  refused: "The signed content epoch did not authenticate here, so this terminal cannot say what the curator enrolled or withheld. That is a fault on this side, not a closed drill.",
 });
 
 /** The presentation records. A new game lands here and in the dispatch table. */
@@ -219,10 +245,17 @@ export function loadRackEntries(entries = GAME_RACK) {
  * every card and every end screen. Every row is READ off the authenticated
  * mission — none of it is authored here, so it cannot drift into flattery.
  */
-export function verificationRows(mission) {
+export function verificationRows(mission, standing = "ready") {
   if (!mission) {
+    // ⚠ The same trap as the seal copy: "not enrolled at this counter" is a claim
+    // about the CURATOR, and it is only available once a catalog has been read.
+    const detail = {
+      pending: "the signed content epoch has not been authenticated yet, so this terminal does not know",
+      refused: "the signed content epoch did not authenticate here, so this terminal cannot say",
+      ready: "not enrolled in the signed catalog at this counter",
+    }[standing] ?? "not established";
     return Object.freeze([
-      Object.freeze({ term: "Rules authority", detail: "not enrolled in the signed catalog at this counter" }),
+      Object.freeze({ term: "Rules authority", detail }),
       Object.freeze({ term: "Run status", detail: "nothing can be played, so nothing is scored or settled" }),
     ]);
   }
@@ -252,7 +285,11 @@ export function resultSummary(history) {
   const practice = Array.isArray(history?.practice) ? history.practice : [];
   const judged = Array.isArray(history?.judged) ? history.judged : [];
   if (practice.length === 0 && judged.length === 0) {
-    return Object.freeze({ headline: "No run recorded in this browser", detail: "Nothing here has been played yet.", scored: false });
+    // `recorded: false` is what lets the card DRAW NOTHING here. Seven cards each
+    // carrying a bordered panel that says "nothing has been played yet" is seven
+    // pieces of furniture built for an absence — and on a first visit that is the
+    // whole board. The absence of a record needs no box; a record gets one.
+    return Object.freeze({ headline: "No run recorded in this browser", detail: "Nothing here has been played yet.", scored: false, recorded: false });
   }
   const last = [...practice, ...judged].reduce((latest, record) => (record.at > latest.at ? record : latest));
   const bestPractice = bestOf(practice);
@@ -266,10 +303,14 @@ export function resultSummary(history) {
     headline,
     detail: `last: ${last.status} · ${outcome} in ${last.actions} action${last.actions === 1 ? "" : "s"}`,
     scored: Boolean(bestJudged),
+    recorded: true,
   });
 }
 
-function cardState(enrolled, installed) {
+function cardState(standing, enrolled, installed) {
+  // Enrolment is unknown until a catalog is read, and a card may not guess.
+  if (standing === "pending") return "checking";
+  if (standing === "refused") return "refused";
   if (enrolled && installed) return "open";
   if (enrolled) return "unsupported";
   return installed ? "sealed" : "reserved";
@@ -277,9 +318,11 @@ function cardState(enrolled, installed) {
 
 /**
  * The whole board, in one shape. `missions` is the signed catalog, `installed`
- * is the launcher's dispatch table, `results` is this browser's local history.
+ * is the launcher's dispatch table, `results` is this browser's local history,
+ * and `standing` is whether a catalog has been read at all.
  */
-export function buildRack({ entries = GAME_RACK, missions = [], installed = [], results = {} } = {}) {
+export function buildRack({ entries = GAME_RACK, missions = [], installed = [], results = {}, standing = "ready" } = {}) {
+  refuse(CATALOG_STANDINGS.includes(standing), "rack-standing", `the rack was given an unknown catalog standing: ${standing}`);
   const records = loadRackEntries(entries);
   const installedIds = new Set(installed);
   const byGame = new Map(missions.map((mission) => [mission.gameId, mission]));
@@ -287,10 +330,17 @@ export function buildRack({ entries = GAME_RACK, missions = [], installed = [], 
   for (const gameId of byGame.keys()) {
     refuse(known.has(gameId), "rack-unknown-mission", `the signed catalog enrols ${gameId}, which has no presentation record`);
   }
+  // Missions with no standing to have come from is the two disagreeing, and the
+  // board must not pick one: a caller that has read a catalog says so.
+  refuse(
+    standing === "ready" || byGame.size === 0,
+    "rack-standing",
+    `the rack was handed ${byGame.size} enrolled missions under a "${standing}" catalog`,
+  );
 
   const cards = records.map((entry) => {
     const mission = byGame.get(entry.gameId) ?? null;
-    const state = cardState(Boolean(mission), installedIds.has(entry.gameId));
+    const state = cardState(standing, Boolean(mission), installedIds.has(entry.gameId));
     // Half-taught records may sit on the rack as berths; they may never open.
     refuse(
       state !== "open" || (entry.session !== null && entry.shape !== null),
@@ -313,7 +363,7 @@ export function buildRack({ entries = GAME_RACK, missions = [], installed = [], 
       missionId: mission?.missionId ?? null,
       seal: state === "open" ? null : Object.freeze({ label: SEAL_LABEL[state], copy: SEAL_COPY[state] }),
       result: state === "open" ? resultSummary(results[entry.gameId]) : null,
-      verification: verificationRows(mission),
+      verification: verificationRows(mission, standing),
     });
   });
   return Object.freeze(cards);
@@ -354,19 +404,25 @@ function cardNode(card, onOpen) {
   article.dataset.state = card.state;
 
   const head = element("div", "rack-card__head");
-  head.append(element("p", "rack-card__eyebrow", card.eyebrow), element("span", "rack-card__length", card.sessionLabel));
+  // The group heading above already names the length, so the card badge carries
+  // the ESTIMATE only. A berth has neither, and its badge says so at full length
+  // rather than shrinking the absence into something that scans as a value.
+  head.append(element("p", "rack-card__eyebrow", card.eyebrow), element("span", "rack-card__length", card.session ? card.session.estimate : card.sessionLabel));
   const name = element("h3", "rack-card__name", card.name);
   const flavor = element("p", "rack-card__flavor", card.flavor);
   article.append(head, name, flavor);
 
   if (card.state === "open") {
-    const result = element("p", "rack-card__result");
-    result.append(element("b", "", card.result.headline), element("span", "", card.result.detail));
+    if (card.result.recorded) {
+      const result = element("p", "rack-card__result");
+      result.append(element("b", "", card.result.headline), element("span", "", card.result.detail));
+      article.append(result);
+    }
     const open = element("button", "rack-card__open", `Play ${card.name}`);
     open.type = "button";
     open.dataset.openGame = card.gameId;
     if (typeof onOpen === "function") open.addEventListener("click", () => onOpen(card.gameId));
-    article.append(result, open);
+    article.append(open);
   } else {
     const seal = element("p", "rack-card__seal");
     seal.append(element("b", "", card.seal.label), element("span", "", card.seal.copy));
@@ -376,9 +432,74 @@ function cardNode(card, onOpen) {
   return article;
 }
 
+/**
+ * The rack's ONE ordering axis, and why it is this one.
+ *
+ * Four cards were four equal boxes and that was fine. Seven are not: a board with
+ * no hierarchy makes a player read all seven flavour lines to answer the question
+ * they actually arrived with, which is *how long have I got*. The rack's own
+ * heading already promises that answer — "short drills you can finish standing
+ * up, and longer ones for a quiet watch" — and every record already declares it.
+ *
+ * So the grouping is READ OFF the records, shortest sitting first, and a length
+ * nothing is installed under does not appear. It invents no category, sorts on no
+ * quality judgement, and cannot rank one drill above another.
+ */
+function rackGroups(cards) {
+  const order = [...Object.keys(SESSION_LENGTHS), null];
+  return order
+    .map((id) => ({
+      id: id ?? "unstated",
+      label: id === null ? "LENGTH NOT DECLARED" : SESSION_LENGTHS[id].label,
+      estimate: id === null ? null : SESSION_LENGTHS[id].estimate,
+      cards: cards.filter((card) => (card.session?.id ?? null) === id),
+    }))
+    .filter((group) => group.cards.length > 0);
+}
+
+function groupNode(group, onOpen) {
+  const section = element("section", "rack-group");
+  section.dataset.session = group.id;
+  const heading = element("h2", "rack-group__head");
+  heading.append(element("span", "rack-group__label", group.label));
+  if (group.estimate) heading.append(element("span", "rack-group__estimate", group.estimate));
+  // The count is a fact about this board, and it is what tells a scanning eye
+  // that a short row is the end of a group rather than a card that failed to draw.
+  heading.append(element("span", "rack-group__count", `${group.cards.length}`));
+  // A bare "2" beside a length reads as a number by eye and as nothing by ear.
+  // The label is the visible text expanded, never a different claim.
+  const spoken = [group.label.toLowerCase(), group.estimate, `${group.cards.length} drill${group.cards.length === 1 ? "" : "s"}`];
+  heading.setAttribute("aria-label", spoken.filter(Boolean).join(", "));
+  const grid = element("div", "rack-group__cards");
+  grid.append(...group.cards.map((card) => cardNode(card, onOpen)));
+  section.append(heading, grid);
+  return section;
+}
+
 /** Render the rack. One card shape, sealed slots included. */
 export function mountGameRack(root, cards, { onOpen } = {}) {
   if (!root || typeof root.replaceChildren !== "function") throw new TypeError("a rack root is required");
-  root.replaceChildren(...cards.map((card) => cardNode(card, onOpen)));
+  root.replaceChildren(...rackGroups(cards).map((group) => groupNode(group, onOpen)));
+  return root;
+}
+
+/**
+ * The board could not be built at all.
+ *
+ * ⚠ This exists because the alternative shipped: `buildRack` throwing left an
+ * EMPTY rack mounted and a line in the console, so the entire section of the page
+ * simply was not there and nothing on screen said why. A rack refusal is a defect
+ * in this client — never a curator decision — and it says so in those words.
+ */
+export function mountRackRefusal(root, error) {
+  if (!root || typeof root.replaceChildren !== "function") throw new TypeError("a rack root is required");
+  const notice = element("section", "rack-refusal");
+  notice.setAttribute("role", "alert");
+  notice.append(
+    element("p", "rack-refusal__label", "THE RACK REFUSED TO BUILD"),
+    element("p", "rack-refusal__copy", "No drill is listed because this terminal could not assemble the board, not because the curator closed one. This is a fault in this client."),
+    element("code", "rack-refusal__code", error?.code ? `${error.code}: ${error.message}` : String(error?.message ?? error)),
+  );
+  root.replaceChildren(notice);
   return root;
 }

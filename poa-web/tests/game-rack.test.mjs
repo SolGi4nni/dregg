@@ -262,9 +262,27 @@ test("the rack renders one card shape, and only open cards get a play control", 
     const root = new FakeElement("div");
     const opened = [];
     mountGameRack(root, cards, { onOpen: (gameId) => opened.push(gameId) });
-    assert.equal(root.children.length, cards.length);
 
-    for (const article of root.children) {
+    // The board is GROUPED by sitting length now, so the cards are one level
+    // down. Every card must still appear exactly once, in exactly one group, and
+    // no group may exist without cards — a heading over nothing is the kind of
+    // furniture this board is not allowed to build.
+    const groups = root.children;
+    assert.ok(groups.length > 0);
+    const articles = groups.flatMap((group) => {
+      assert.equal(group.className, "rack-group");
+      const [heading, grid] = group.children;
+      assert.equal(heading.className, "rack-group__head");
+      assert.ok(grid.children.length > 0, "a length group rendered with no drills under it");
+      // The heading's spoken label expands the visible text; a bare count is a
+      // number by eye and nothing by ear.
+      assert.match(heading.attributes.get("aria-label"), /\d+ drills?$/);
+      return grid.children;
+    });
+    assert.equal(articles.length, cards.length);
+    assert.equal(new Set(articles.map((article) => article.dataset.game)).size, cards.length);
+
+    for (const article of articles) {
       const nodes = all(article);
       assert.equal(nodes.filter((node) => node.className === "rack-card__name").length, 1);
       assert.equal(nodes.filter((node) => node.className === "rack-card__flavor").length, 1);
@@ -280,10 +298,38 @@ test("the rack renders one card shape, and only open cards get a play control", 
       assert.ok(summary.attributes.get("aria-label").startsWith(summary.textContent));
     }
 
-    const openCard = root.children.find((article) => article.dataset.state === "open");
+    const openCard = articles.find((article) => article.dataset.state === "open");
     all(openCard).find((node) => node.dataset.openGame !== undefined).dispatch("click");
     assert.deepEqual(opened, [openCard.dataset.game]);
   });
+});
+
+test("a card states only what the terminal has established about the catalog", () => {
+  // ⚑ THE DEFECT THIS HOLDS SHUT, measured on live beta 2026-08-09: the client
+  // could not decode counter 10, `sealAuthority` emptied the mission list, and
+  // all seven cards said AWAITING CURATOR ACTIVATION — "the signed catalog does
+  // not enrol it at this counter" — about a catalog that enrolled all seven.
+  const installed = [...INSTALLED_GAME_IDS];
+  for (const [standing, state, phrase] of [
+    ["pending", "checking", /still being authenticated/],
+    ["refused", "refused", /fault on this side/],
+  ]) {
+    const cards = buildRack({ installed, standing });
+    for (const card of cards) {
+      assert.equal(card.state, state, `${card.gameId} claimed ${card.state} under a ${standing} catalog`);
+      assert.equal(card.playable, false);
+      assert.match(card.seal.copy, phrase);
+      // The words that name a curator decision may not appear.
+      assert.doesNotMatch(card.seal.copy, /curator activates|does not enrol/);
+      assert.doesNotMatch(card.verification[0].detail, /not enrolled in the signed catalog/);
+    }
+  }
+  // And the two cannot disagree: a caller holding missions has read a catalog.
+  assert.throws(
+    () => buildRack({ missions: [mission("relay-repair", 2)], installed, standing: "pending" }),
+    { code: "rack-standing" },
+  );
+  assert.throws(() => buildRack({ installed, standing: "authenticated" }), { code: "rack-standing" });
 });
 
 test("shapes the rack may claim are exactly the shapes the router can decide", () => {

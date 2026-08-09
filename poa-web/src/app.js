@@ -14,7 +14,7 @@ import { loadBlackBoxDescriptor } from "./blackbox-runtime.js";
 import { descentPracticeOracle, loadDeckDescentDescriptor } from "./descent-runtime.js";
 import { loadVentCrawlDescriptor } from "./ventcrawl-runtime.js";
 import { INSTALLED_GAME_IDS, launchCatalogMission } from "./mission-launcher.js";
-import { buildRack, mountGameRack } from "./game-rack.js";
+import { buildRack, mountGameRack, mountRackRefusal } from "./game-rack.js";
 import { buildRunSummary, mountRunSummary, runOutcome } from "./run-summary.js";
 import { readRackResults, recordRackResult } from "./rack-results.js";
 import { buildTodayBoard, loadSlotState, mountTodayBoard } from "./today-board.js";
@@ -339,8 +339,10 @@ function sealAuthority(error) {
     state: "refused",
     reason: error instanceof ArtifactRefusal ? error.code : "mission-authority",
   });
-  // The rack still renders: with no authenticated catalog every slot is sealed,
-  // which is the honest picture. A blank board would have hidden the refusal.
+  // The rack still renders — a blank board would hide the refusal — but it
+  // renders the REFUSAL, not a sealed slot. "Every slot is sealed" was this
+  // comment's previous claim and it put the curator's name on this terminal's
+  // failure to decode a bundle the curator had signed correctly.
   state.missions = Object.freeze([]);
   renderRack();
   renderPlatform();
@@ -634,16 +636,31 @@ function presentMission(mission, card) {
  * browser's own note decides what a card can say about your last run. No card is
  * assembled by hand, so a new game cannot acquire a special one.
  */
+/**
+ * ⚠ THE STANDING IS PASSED, NOT INFERRED FROM AN EMPTY LIST. A rack handed no
+ * missions used to render every card as "the signed catalog does not enrol it at
+ * this counter" — true after a catalog says so, a lie before one has been read
+ * and a lie when one was refused. `state.contentAuthority` already knows which of
+ * the three it is, and the board now asks it instead of guessing.
+ */
 function renderRack() {
+  const standing = state.contentAuthority?.state === "ready" ? "ready"
+    : state.contentAuthority?.state === "refused" ? "refused" : "pending";
   try {
     state.cards = buildRack({
-      missions: state.missions,
+      missions: standing === "ready" ? state.missions : [],
       installed: INSTALLED_GAME_IDS,
       results: state.results,
+      standing,
     });
   } catch (error) {
+    // A rack that refuses used to mount an EMPTY board and log — the whole
+    // section silently vanished and the console was the only witness. It is a
+    // defect in this client either way, so it renders as one.
     console.error("PoA rack refused", error);
     state.cards = Object.freeze([]);
+    mountRackRefusal(byId("mission-rack"), error);
+    return;
   }
   mountGameRack(byId("mission-rack"), state.cards, { onOpen: selectMission });
 }

@@ -7,7 +7,14 @@
   --line-bright: rgba(183, 229, 212, 0.34);
   --text: #dae8df;
   --soft: #93aaa0;
-  --dim: #5f756d;
+  /* ⚠ `--dim` was #5f756d, which is 3.48:1 on a rack card and 3.79:1 on a sealed
+     one — under AA for body text everywhere it is used, and it is used for 56
+     things here including every seal explanation and every verification row.
+     #708980 is the same hue and saturation lifted to 4.56:1 against the LIGHTEST
+     surface it lands on. The honest-absence copy was being whispered in the
+     page's least readable ink, which is a large part of why it read as an error
+     rather than as a decision. */
+  --dim: #708980;
   --mint: #9bd8bf;
   --acid: #d6e779;
   --amber: #dcac62;
@@ -442,29 +449,70 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
    only appears on hover reads as broken to anyone who cannot hover. */
 .judged-panel__reason { margin: 0; color: var(--dim); font-size: 8px; line-height: 1.55; }
 
-/* --- the rack ----------------------------------------------------------- */
-.game-rack { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 11px; margin-bottom: 20px; }
+/* --- the rack -----------------------------------------------------------
+   Seven cards, grouped by sitting length. `game-rack` stacks the groups and each
+   group lays its own cards out on the SAME column track, so a two-card group and
+   a five-card group produce cards of identical width and a short final row reads
+   as the end of a group rather than as a card that failed to draw.
+   `auto-fill` rather than a fixed 3: at 1114px it still gives three, and a wider
+   window gets four instead of stretching three cards to 500px each.            */
+.game-rack { display: grid; gap: 26px; margin-bottom: 20px; }
+.rack-group { display: grid; gap: 10px; }
+.rack-group__head { display: flex; align-items: center; gap: 10px; margin: 0; font: 600 9px/1 var(--mono); letter-spacing: .16em; color: var(--soft); }
+.rack-group__head::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--line); }
+.rack-group__estimate { color: var(--dim); font-weight: 400; letter-spacing: .1em; }
+.rack-group__count { padding: 2px 7px; border: 1px solid var(--line); color: var(--dim); font-weight: 400; }
+.rack-group__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 11px; }
 .rack-card { display: grid; align-content: start; gap: 9px; min-height: 210px; padding: 15px 16px; border: 1px solid var(--line); background: linear-gradient(145deg, rgba(13,31,32,.92), rgba(6,17,19,.86)); }
 .rack-card--open { border-color: rgba(155,216,191,.28); }
 .rack-card--open.active { border-color: var(--acid); box-shadow: inset 0 -2px var(--acid); }
-.rack-card--sealed, .rack-card--reserved { background: linear-gradient(145deg, rgba(9,20,21,.92), rgba(5,13,15,.9)); }
+/* A CLOSED SLOT IS DRAWN AS CLOSED, NOT AS FAILED. The hatched top edge is the
+   one mark that separates "this hatch is sealed" from "this card is broken": it
+   is a deliberate covering, in the page's own ink, and it is the same mark on all
+   four non-open states so a player learns it once. Colour then says WHOSE
+   decision it was — amber for the curator's, slate for a berth, red for a defect
+   here. Opacity is deliberately NOT used: fading a card is how "closed" and
+   "broken" end up looking the same. */
+.rack-card--sealed, .rack-card--reserved, .rack-card--checking, .rack-card--refused {
+  background: linear-gradient(145deg, rgba(9,20,21,.92), rgba(5,13,15,.9));
+}
+.rack-card--sealed, .rack-card--reserved, .rack-card--checking,
+.rack-card--refused, .rack-card--unsupported { position: relative; }
+.rack-card--sealed::before, .rack-card--reserved::before, .rack-card--checking::before,
+.rack-card--refused::before, .rack-card--unsupported::before {
+  content: ""; position: absolute; inset: 0 0 auto; height: 3px;
+  background: repeating-linear-gradient(115deg, var(--seal-ink, #5c7a70) 0 5px, transparent 5px 10px);
+}
+.rack-card--sealed { --seal-ink: var(--amber); }
+.rack-card--checking { --seal-ink: var(--soft); }
+.rack-card--refused, .rack-card--unsupported { --seal-ink: var(--red); }
 .rack-card--unsupported { border-color: rgba(210,120,108,.4); }
+.rack-card--refused { border-color: rgba(210,120,108,.28); }
 .rack-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.rack-card__eyebrow { margin: 0; color: var(--mint); font-size: 7.5px; font-weight: 600; letter-spacing: .14em; }
-.rack-card--sealed .rack-card__eyebrow, .rack-card--reserved .rack-card__eyebrow { color: #56706a; }
-.rack-card__length { flex: 0 0 auto; padding: 3px 6px; color: var(--dim); border: 1px solid var(--line); font-size: 6.5px; letter-spacing: .1em; }
+.rack-card__eyebrow { margin: 0; color: var(--mint); font-size: 8.5px; font-weight: 600; letter-spacing: .14em; }
+/* ⚠ was #56706a — 3.49:1, under AA, on the copy a sealed card leads with. */
+.rack-card--sealed .rack-card__eyebrow, .rack-card--reserved .rack-card__eyebrow,
+.rack-card--checking .rack-card__eyebrow, .rack-card--refused .rack-card__eyebrow { color: var(--dim); }
+.rack-card__length { flex: 0 0 auto; padding: 3px 6px; color: var(--dim); border: 1px solid var(--line); font-size: 8px; letter-spacing: .1em; }
 .rack-card--open .rack-card__length { color: var(--soft); }
 .rack-card__name { margin: 0; font: 400 22px/1.05 var(--serif); }
-.rack-card--sealed .rack-card__name, .rack-card--reserved .rack-card__name { color: var(--soft); }
+.rack-card--sealed .rack-card__name, .rack-card--reserved .rack-card__name,
+.rack-card--checking .rack-card__name, .rack-card--refused .rack-card__name { color: var(--soft); }
 .rack-card__flavor { margin: 0; color: var(--soft); font: 13px/1.4 var(--serif); }
-.rack-card__result, .rack-card__seal { display: grid; gap: 4px; margin: 0; padding: 8px 9px; background: rgba(0,0,0,.16); border-left: 2px solid var(--line-bright); }
-.rack-card__seal { border-left-color: #46584f; }
-.rack-card--unsupported .rack-card__seal { border-left-color: var(--red); }
-.rack-card__result b, .rack-card__seal b { color: var(--soft); font-size: 7.5px; font-weight: 600; letter-spacing: .1em; }
-.rack-card--unsupported .rack-card__seal b { color: var(--red); }
-.rack-card__result span, .rack-card__seal span { color: var(--dim); font-size: 9px; line-height: 1.5; }
+.rack-card__result, .rack-card__seal { display: grid; gap: 4px; margin: 0; padding: 9px 10px; background: rgba(0,0,0,.16); border-left: 2px solid var(--line-bright); }
+.rack-card__seal { border-left-color: var(--seal-ink, #5c7a70); }
+.rack-card__result b, .rack-card__seal b { color: var(--soft); font-size: 8.5px; font-weight: 600; letter-spacing: .1em; }
+.rack-card--sealed .rack-card__seal b { color: var(--amber); }
+.rack-card--unsupported .rack-card__seal b, .rack-card--refused .rack-card__seal b { color: var(--red); }
+.rack-card__result span, .rack-card__seal span { color: var(--dim); font-size: 11px; line-height: 1.55; }
 .rack-card__open { justify-self: start; min-height: 36px; padding: 8px 14px; color: var(--ink); border: 1px solid var(--mint); background: var(--mint); cursor: pointer; font-size: 8.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .rack-card__open:hover { background: var(--acid); border-color: var(--acid); }
+
+/* The board could not be assembled. Loud, and explicitly this client's fault. */
+.rack-refusal { display: grid; gap: 8px; padding: 20px 22px; border: 1px solid rgba(210,120,108,.45); border-left-width: 3px; background: rgba(40,14,12,.28); }
+.rack-refusal__label { margin: 0; color: var(--red); font-size: 9px; font-weight: 600; letter-spacing: .16em; }
+.rack-refusal__copy { margin: 0; max-width: 62ch; color: var(--text); font: 13px/1.5 var(--serif); }
+.rack-refusal__code { color: var(--soft); font-size: 11px; overflow-wrap: anywhere; }
 
 /* --- the one disclosure element ----------------------------------------- */
 .verify-fold { margin-top: 2px; border-top: 1px solid var(--line); }
@@ -585,7 +633,9 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
   .view-heading h1 { font-size: 38px; }
   .watch-copy { margin-top: 15px; }
   .overview-grid, .mission-layout, .records-layout, .choir-grid, .crew-layout { grid-template-columns: 1fr; }
-  .today-board__grid, .game-rack { grid-template-columns: 1fr; }
+  .today-board__grid { grid-template-columns: 1fr; }
+  .rack-group__cards { grid-template-columns: 1fr; }
+  .game-rack { gap: 22px; }
   .stage-head { display: block; }
   .stage-head button { margin-top: 12px; width: 100%; }
   .verify-fold__row { grid-template-columns: 1fr; gap: 2px; }
