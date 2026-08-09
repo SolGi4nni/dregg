@@ -29,6 +29,27 @@
 #   JP_HTTP     base HTTP port                (default 8460)
 #   JP_GOSSIP   base gossip port              (default 9460)
 #   JP_WAIT     seconds to wait for admission (default 180)
+#   JP_CADENCE_MS    committee block cadence   (default 1000)
+#   JP_HEARTBEAT_MS  committee idle heartbeat  (default 2000)
+#
+# ⚑ WHY THE CADENCE IS A KNOB, measured 2026-08-09 on hbox with an idle box.
+# `produce_round_block` holds `lace.write()` across the VERIFIED ES round-advance
+# gate FFI (`blocklace_sync.rs:1391` takes the lock, `:1438` consults the gate),
+# and that gate is super-quadratic in lace size: `RoundAdvanceGate.advanceGateFast`
+# → `mkPastCache` → `causalPastIncl` → `causalPastAux` → `List.filterTR_loop` →
+# `List.elem`, a LINEAR list membership inside a nested walk. It runs inline on a
+# tokio worker with NO `spawn_blocking` and NO budget (unlike the tau-order FFI,
+# which has `verified_order_ffi_timeout`). At `--block-cadence-ms 1000` all four
+# nodes reached `r=11` about 110 s in and every one of them wedged there —
+# `lace.write()` held, 100% CPU each, `/status` timing out, `dag_height` frozen —
+# stacks captured from three of them, identical. A debug-build candidate needs
+# ~216 s just to finish genesis and send its first join request, so at a 1 s
+# cadence the committee is ALREADY past the wall before pole 1 can start. Raising
+# the cadence moves the wall out linearly while the lace grows slower; it does not
+# fix anything and is not a substitute for the gate being cheap.
+#
+# ⚠ SO A PASS HERE IS NOT A CLAIM THAT THE FEDERATION IS HEALTHY. It is a claim
+# about MEMBERSHIP ADMISSION, measured inside the window before the gate wall.
 #
 # HONEST SCOPE: this runs the MARSHAL (un-verified Rust) executor
 # (DREGG_ALLOW_UNVERIFIED_CONSENSUS=1) exactly as `federation-local.sh` does.
@@ -42,6 +63,8 @@ JP_HTTP="${JP_HTTP:-8460}"
 JP_GOSSIP="${JP_GOSSIP:-9460}"
 JP_WAIT="${JP_WAIT:-180}"
 JP_BIN="${JP_BIN:-target/debug/dregg-node}"
+JP_CADENCE_MS="${JP_CADENCE_MS:-1000}"
+JP_HEARTBEAT_MS="${JP_HEARTBEAT_MS:-2000}"
 
 # The candidate and the impostor sit above the committee's port block.
 CAND_IDX=$JP_N
@@ -93,7 +116,7 @@ cmd_genesis() {
 }
 
 launch_committee() {
-  echo "== up: launching $JP_N committee nodes =="
+  echo "== up: launching $JP_N committee nodes (cadence=${JP_CADENCE_MS}ms heartbeat=${JP_HEARTBEAT_MS}ms) =="
   for i in $(seq 0 $((JP_N - 1))); do
     d="$JP_ROOT/node$i"; hp=$(http_port "$i"); gp=$(gossip_port "$i"); peers=""
     for j in $(seq 0 $((JP_N - 1))); do
@@ -105,7 +128,8 @@ launch_committee() {
         --data-dir "$d" --bind 127.0.0.1 --port "$hp" --gossip-port "$gp" \
         --federation-peers "$peers" \
         --federation-mode full --consensus blocklace \
-        --idle-heartbeat-ms 2000 --block-cadence-ms 1000 --min-block-interval-ms 1000 \
+        --idle-heartbeat-ms "$JP_HEARTBEAT_MS" --block-cadence-ms "$JP_CADENCE_MS" \
+        --min-block-interval-ms "$JP_CADENCE_MS" \
         --enable-faucet \
         >"$d/node.log" 2>&1 &
     echo $! >"$d/node.pid"
