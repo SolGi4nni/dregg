@@ -1060,6 +1060,60 @@ theorem sz_exceptional_set_is_small {K : Type*} [CommRing K] [IsDomain K] [Decid
     (exceptionalSet Res).card ≤ Res.natDegree :=
   exceptionalSet_card_le Res
 
+/-! ### §6c′ — ⚑ BOTH POLES, IN LEAN — the tripwire the original defect walked past.
+
+The old revision's theorems pinned counts, degree and plumbing, and NEVER asked whether an honest
+witness satisfies the body — which is exactly what was false. These two theorems make that class of
+defect a build break: the schoolbook's own honest witness (`PastaFieldSound.fpHonest`, offset
+carries and all) makes the residual the ZERO polynomial, so BOTH emitted gates hold at EVERY
+challenge; and the schoolbook's quotient-bump forgery makes it a NONZERO polynomial, so the gates
+refuse it everywhere but the forgery's own ≤ 62-root exceptional set. -/
+
+/-- ⚑ **FIRE: the honest witness's residual IS the zero polynomial.** Derived from the schoolbook's
+`fpHonest_satisfies_gates` (every `coefBody` is exactly zero over ℤ) through `szResidual_eq_coefSum`
+— the same route a satisfying witness for the OLD body provably did not exist through. -/
+theorem fpHonest_szResidual_zero :
+    szResidual fpHonest X_BASE Y_BASE Z_BASE Q_BASE C_BASE pLimb = 0 := by
+  rw [szResidual_eq_coefSum]
+  have hzero : ∀ m, m < NG →
+      coefBody fpHonest X_BASE Y_BASE Z_BASE Q_BASE C_BASE pLimb m = 0 := by
+    intro m hm
+    have hall := List.all_eq_true.mp fpHonest_satisfies_gates m (List.mem_range.mpr hm)
+    exact of_decide_eq_true hall
+  rw [coeffPoly_congr _ (fun _ => (0 : ℤ)) NG hzero]
+  unfold coeffPoly
+  rw [sumR_congr _ _ (fun _ => (0 : Polynomial ℤ)) (fun i _ => by rw [map_zero, zero_mul]),
+      sumR_zero]
+
+/-- **…so both emitted gates hold at EVERY challenge, in every carrier** — the honest polarity of
+the two-point core, as `ChalConstraint.holdsIn` on the exact gates the descriptor carries. -/
+theorem fpHonest_gates_hold_at_every_challenge {K : Type*} [CommRing K]
+    (z : Nat → K) (isLast : Bool) (nxt pub chal : Assignment) :
+    ChalConstraint.holdsIn ⟨fpHonest, nxt, pub, chal⟩ z isLast ⟨szBody pLimb CHAL_Z, false⟩
+      ∧ ChalConstraint.holdsIn ⟨fpHonest, nxt, pub, chal⟩ z isLast
+          ⟨szBody pLimb CHAL_Z2, false⟩ := by
+  constructor <;>
+  · show (szBodyAt pLimb _ X_BASE Y_BASE Z_BASE Q_BASE C_BASE).evalIn
+        (⟨fpHonest, nxt, pub, chal⟩ : VmRowEnv) z = 0
+    rw [szBodyAt_evalIn]
+    rw [show (⟨fpHonest, nxt, pub, chal⟩ : VmRowEnv).loc = fpHonest from rfl,
+        fpHonest_szResidual_zero]
+    simp
+
+/-- ⚑ **BITE: the schoolbook's quotient-bump forgery has a NONZERO residual.** The same one-limb
+bump `fpHonest_quotient_bump_is_caught` refutes gate-by-gate is refused here polynomial-wide: its
+residual's constant coefficient is the schoolbook's nonzero body, so the polynomial is nonzero and
+a drawn challenge accepts it only inside its ≤ 62-root exceptional set — the ledger's ε, not a free
+pass. Together with FIRE above, the pair the old revision lacked: satisfiable for the honest,
+refutable for the forged. -/
+theorem fpHonest_quotient_bump_residual_nonzero :
+    szResidual (fun c => if c = Q_BASE then fpHonest c + 1 else fpHonest c)
+      X_BASE Y_BASE Z_BASE Q_BASE C_BASE pLimb ≠ 0 := by
+  intro h
+  have h0 := congrArg (fun p : Polynomial ℤ => p.coeff 0) h
+  rw [szResidual_coeff _ _ _ _ _ _ _ 0 (by decide)] at h0
+  exact fpHonest_quotient_bump_is_caught (by simpa using h0)
+
 end Soundness
 
 /-! ### §6d — ⚑ THE ε LEDGER, as named theorems.
@@ -1155,6 +1209,9 @@ theorem base_field_challenge_would_be_below_bar :
 #assert_axioms fpSzMulDesc_two_point_forces
 #assert_axioms fqSzMulDesc_two_point_forces
 #assert_axioms fpSzMulDesc_carries_the_gates
+#assert_axioms fpHonest_szResidual_zero
+#assert_axioms fpHonest_gates_hold_at_every_challenge
+#assert_axioms fpHonest_quotient_bump_residual_nonzero
 #assert_axioms SZ_SOUNDNESS_NUMERATOR_eq
 #assert_axioms sz_denominator_bracket
 #assert_axioms sz_eps_single_bracket
