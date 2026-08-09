@@ -118,8 +118,11 @@ fn build_ordering_blocklace(
     // The finality blocklace exposes per-block `get` only, but we can iterate via tips → predecessors.
     // Simpler: rely on the demo's small block set by snapshotting via `to_bytes` round-trip not needed —
     // we use a BFS from tips here.
+    // ⚑ `CreatorTips::iter`, NOT `primary()`: a flagged creator's tips entry is a
+    // pinned incomparable PAIR, and seeding from only the first half would silently
+    // drop one fork's blocks from the walk below.
     let mut frontier: Vec<dregg_blocklace::finality::BlockId> =
-        finality_lace.tips().values().copied().collect();
+        finality_lace.tips().values().flat_map(|t| t.iter()).collect();
     let mut seen = std::collections::HashSet::new();
     while let Some(id) = frontier.pop() {
         if !seen.insert(id) {
