@@ -910,11 +910,13 @@ fn outsider_relay_two_views(n: usize) -> (Node, Node, Vec<[u8; 32]>, Vec<[u8; 32
     // `receive_block_pinned` both go through `insert_checked`, which refuses a block with an
     // unknown predecessor (`MissingPredecessor`), and `merge` refuses the whole delta
     // (`NotCausallyClosed`) — so a node that holds the acking block necessarily holds the relay,
-    // and two GOSSIPING honest nodes cannot differ on it. The reachable route is the RESTART path:
-    // `from_checkpoint_trusted` inserts every persisted block straight into the map with no
-    // signature check, no roster check and NO CLOSURE CHECK, which is exactly what the enrollment
-    // docs in `ordering.rs` and `finality_gate.rs` already say about it. So this is the real
-    // function on the real path, not a hand-built lace.
+    // and two GOSSIPING honest nodes cannot differ on it. This test drives
+    // `from_checkpoint_trusted`, which inserts every persisted block straight into the map with no
+    // signature check, no roster check and NO CLOSURE CHECK. ⚑ Since 2026-08-08 the node's BOOT
+    // path no longer reaches it (`persist::load_blocklace` routes through the authenticating
+    // `from_checkpoint`, which REFUSES a non-closed checkpoint) — the verbatim loader remains the
+    // forensic/analyzer loader, and this test keeps the non-closed view CONSTRUCTIBLE so the
+    // wave-clock property below stays measurable.
     let enrolled_only: Vec<Block> = l1
         .iter()
         .chain(l2.iter())
@@ -1101,9 +1103,10 @@ fn outsider_relay_cannot_shift_the_wave_clock() {
         "anti-vacuity: a block with no dangling ack keeps the SAME projection id in both views"
     );
     // Two consequences, both out of scope for the wave-clock pass and both named:
-    //   * `from_checkpoint_trusted` can produce a lace that is NOT causally closed at all — the
-    //     gossip paths (`insert_checked`, `merge`) both refuse one — which is what puts the two
-    //     views in different states in the first place;
+    //   * `from_checkpoint_trusted` (forensic/analyzer loader; the node's boot path now refuses a
+    //     non-closed checkpoint via `from_checkpoint`) can produce a lace that is NOT causally
+    //     closed at all — the gossip paths (`insert_checked`, `merge`) both refuse one — which is
+    //     what puts the two views in different states in the first place;
     //   * the ordering projection's content address is therefore a function of the VIEW, not of
     //     the block, so `xsort`'s deterministic tie-break is deterministic per node and not across
     //     nodes. Fixing that means keying the projection by the FINALITY block id (a stable

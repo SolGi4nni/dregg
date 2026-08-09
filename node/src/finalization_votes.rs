@@ -249,6 +249,23 @@ fn pair_tag(pair: &AttestedPair) -> String {
 /// the quorum's statement reaches the turn.
 pub type AttestedPair = ([u8; 32], Option<[u8; 32]>);
 
+/// One installed configuration this collector has operated under: the
+/// admissible signer set, its enrolled ML-DSA roster, and the quorum threshold
+/// in force. Snapshotted by [`VoteCollector::reconfigure`] so a block that
+/// crossed quorum under configuration `c` keeps `c`'s bar and `c`'s keys
+/// forever — the per-block quorum PIN of the install discipline
+/// (Lean `Dregg2.Distributed.ConfigBoundary`; reading doc §5.2: "the formula
+/// stays; the binding changes").
+#[derive(Clone, Debug)]
+struct ConfigEntry {
+    /// Admissible signers under this configuration.
+    committee: HashSet<[u8; 32]>,
+    /// The enrolled ML-DSA-65 roster under this configuration.
+    pq_committee: HashMap<[u8; 32], MlDsaPublicKey>,
+    /// `supermajority_threshold(n)` of THIS configuration's roster.
+    quorum_threshold: usize,
+}
+
 /// Collects finalization votes and gates consensus-wide finality on a quorum of
 /// distinct verified signers.
 ///
@@ -259,6 +276,24 @@ pub type AttestedPair = ([u8; 32], Option<[u8; 32]>);
 /// The collector is monotone: once a block crosses the threshold it stays
 /// consensus-attested, and recording the same signer twice for a block is a
 /// no-op (distinct-signer counting). It holds no I/O and is fully unit-testable.
+///
+/// ⚑ CONFIGURATION-PINNED (the install discipline's vote-layer half): the
+/// collector numbers its installed configurations (`config_seq`, one bump per
+/// [`Self::reconfigure`]) and PINS, per block, the configuration under which
+/// the block crossed quorum. A quorum is a fact ABOUT a configuration — a
+/// block that crossed 3-of-4 under `c` does not lose that status when a join
+/// moves the live threshold to 4-of-5 (the measured hazard this closes), and
+/// [`Self::assembled_quorum`] assembles it against `c`'s threshold and `c`'s
+/// enrolled PQ keys, never the live ones.
+///
+/// ⚠ NAMED RESIDUAL (the D0 wire half, not yet built): `config_seq` is a
+/// collector-internal counter — the `FinalizationVote` preimage does not yet
+/// carry the voter's configuration, so vote ADMISSION still gates on the LIVE
+/// committee and a vote cannot yet be refused/buffered by declared
+/// configuration. That flag day (preimage v4 → v5) must land together with the
+/// version-at-block derivation the restart-anchor lane is building, so the
+/// wire value and the derived value can be REFUSED against each other rather
+/// than merely trusted.
 #[derive(Clone, Debug)]
 pub struct VoteCollector {
     /// Admissible signers (committee members). Votes from non-members are dropped.
@@ -270,6 +305,14 @@ pub struct VoteCollector {
     pq_committee: HashMap<[u8; 32], MlDsaPublicKey>,
     /// Quorum threshold (2f+1).
     quorum_threshold: usize,
+    /// The install counter: how many [`Self::reconfigure`] installs this
+    /// collector has applied. The LIVE configuration's number. Blocks crossing
+    /// quorum are pinned to the value current at their crossing.
+    config_seq: u64,
+    /// Every SUPERSEDED configuration, keyed by its `config_seq` — the
+    /// snapshot taken when [`Self::reconfigure`] replaced it. The live
+    /// configuration lives in the flat fields above, never here.
+    installed: HashMap<u64, ConfigEntry>,
     /// Per-block map of distinct member signer → the FIRST verified vote we
     /// recorded from that signer for the block: its `(signature, merkle_root)`.
     ///
@@ -288,7 +331,10 @@ pub struct VoteCollector {
     /// The middle element is the [`AttestedPair`] the voter signed — v4 made it
     /// a pair so agreement covers the receipt stream, not the ledger root alone.
     votes: HashMap<BlockId, HashMap<[u8; 32], (dregg_types::Signature, AttestedPair, Vec<u8>)>>,
-    /// Blocks that have crossed the quorum threshold (consensus-wide Attested).
+    /// Blocks that have crossed the quorum threshold (consensus-wide Attested),
+    /// each PINNED to the `config_seq` that was live when it crossed — the
+    /// configuration whose threshold it met and whose committee's votes carried
+    /// it. The pin is what [`Self::assembled_quorum`] assembles against.
     ///
     /// ⚠ STICKY, and that stickiness is a stated tension: Gauss and Sui Lutris
     /// both require a post-reconfiguration-boundary commit to be DROPPABLE,
@@ -298,8 +344,12 @@ pub struct VoteCollector {
     /// an order floor rather than membership of this set, the set stops being
     /// the thing that makes finality mean something and can become droppable at
     /// the boundary. Until that floor lands, removing entries here would make
-    /// `is_consensus_attested` lie backwards in time.
-    attested: HashSet<BlockId>,
+    /// `is_consensus_attested` lie backwards in time. (The per-config PIN is a
+    /// different object from that floor and from the stickiness: it records
+    /// WHICH configuration's verdict each entry is, which is exactly what makes
+    /// the entry meaningful across a boundary instead of a second source of
+    /// truth under a moving threshold.)
+    attested: HashMap<BlockId, u64>,
     /// Blocks whose VERIFIED vote tally holds conflicting
     /// `(merkle_root, receipt_stream_root)` pairs — i.e. at least two
     /// hybrid-verified committee votes for the block attest DIFFERENT finalized
@@ -353,8 +403,10 @@ impl VoteCollector {
             committee: committee.into_iter().collect(),
             pq_committee,
             quorum_threshold,
+            config_seq: 0,
+            installed: HashMap::new(),
             votes: HashMap::new(),
-            attested: HashSet::new(),
+            attested: HashMap::new(),
             verified_root_splits: HashSet::new(),
             voted_blocks: HashMap::new(),
             max_votes_per_member: MAX_VOTES_PER_MEMBER,
@@ -407,7 +459,7 @@ impl VoteCollector {
             };
             let signers = self.votes.get(&oldest);
             let member_present = signers.is_some_and(|s| s.contains_key(&member));
-            if !member_present || self.attested.contains(&oldest) {
+            if !member_present || self.attested.contains_key(&oldest) {
                 // Stale queue entry (vote already gone) or a consensus-attested
                 // vote — un-track it for eviction; never drop an attested vote.
                 continue;
@@ -443,30 +495,62 @@ impl VoteCollector {
     }
 
     /// LIVE EPOCH TRANSITION: atomically replace BOTH the admissible signer set
-    /// AND the quorum threshold when a validator-set reconfiguration finalizes.
+    /// AND the quorum threshold when a validator-set reconfiguration finalizes —
+    /// this IS the collector's INSTALL point, and it advances `config_seq`.
     ///
     /// A membership change shifts two coupled quantities at once — who may vote
     /// (the committee) and how many distinct votes finalize a block (the
     /// supermajority of the NEW count). Setting them together is what makes the
     /// new validator's votes count *and* the threshold track the new membership
-    /// from the epoch boundary forward, in one step.
+    /// from the install forward, in one step. The OUTGOING configuration is
+    /// snapshotted into `installed` first, so every block pinned to it keeps
+    /// its bar and its keys ([`Self::assembled_quorum`]).
     ///
     /// MONOTONE-SAFE across the boundary: blocks already consensus-attested under
-    /// the old committee STAY attested (the `attested` set is sticky); only future
+    /// the old committee STAY attested, under their PINNED configuration — a
+    /// block that crossed 3-of-4 under `c` is not re-judged against the new
+    /// threshold (the measured lose-quorum-on-join hazard); only future
     /// `record` calls gate on the new committee/threshold. The reconfiguration
     /// itself is authorized by the OLD committee's quorum (the constitution
-    /// `apply_if_passed` gate + tau finality), so there is no instant in which an
-    /// unattested committee holds finalization authority — the epoch-handoff
-    /// no-gap property (`EpochReconfig.lean::epoch_handoff_no_gap`).
+    /// `apply_if_passed` gate + tau finality — super-ratification of the
+    /// finalizing anchor is the old configuration's certificate), so there is
+    /// no instant in which an unattested committee holds finalization
+    /// authority — the epoch-handoff no-gap property
+    /// (`EpochReconfig.lean::epoch_handoff_no_gap`).
     pub fn reconfigure(
         &mut self,
         committee: impl IntoIterator<Item = [u8; 32]>,
         pq_committee: HashMap<[u8; 32], MlDsaPublicKey>,
         quorum_threshold: usize,
     ) {
+        // Snapshot the outgoing configuration under its number; blocks pinned
+        // to it assemble against this snapshot forever.
+        self.installed.insert(
+            self.config_seq,
+            ConfigEntry {
+                committee: std::mem::take(&mut self.committee),
+                pq_committee: std::mem::replace(&mut self.pq_committee, HashMap::new()),
+                quorum_threshold: self.quorum_threshold,
+            },
+        );
+        self.config_seq += 1;
         self.committee = committee.into_iter().collect();
         self.pq_committee = pq_committee;
         self.quorum_threshold = quorum_threshold;
+    }
+
+    /// The collector's install counter: how many reconfigurations it has
+    /// applied (the LIVE configuration's number; 0 = the boot configuration).
+    pub fn config_seq(&self) -> u64 {
+        self.config_seq
+    }
+
+    /// The configuration a consensus-attested block crossed quorum under, if
+    /// it has crossed. `Some(c)` means: `c`'s committee supplied the distinct
+    /// verified signers and `c`'s threshold is the bar the block met — and the
+    /// bar it is still held to by [`Self::assembled_quorum`].
+    pub fn attested_config(&self, block_id: &BlockId) -> Option<u64> {
+        self.attested.get(block_id).copied()
     }
 
     /// The current admissible committee size (number of distinct signer keys).
@@ -519,12 +603,22 @@ impl VoteCollector {
     /// across roots (a fork) with no single root reaching the threshold.
     ///
     /// Each returned signature is HYBRID: it carries BOTH the ed25519 and the
-    /// ML-DSA-65 half, PLUS the voter's ML-DSA-65 public key (looked up from the
-    /// collector's `pq_committee`, option (a)), so the persisted quorum
-    /// re-verifies the full hybrid on restart with no committee PQ-key history. A
-    /// recorded signer whose ML-DSA key is no longer in `pq_committee` (e.g. after
-    /// a reconfigure) is dropped from the assembled quorum — fail-closed: if that
-    /// drops it below threshold, no quorum is produced.
+    /// ML-DSA-65 half, PLUS the voter's ML-DSA-65 public key, so the persisted
+    /// quorum re-verifies the full hybrid on restart with no committee PQ-key
+    /// history. A recorded signer with no ML-DSA key in the governing
+    /// configuration is dropped from the assembled quorum — fail-closed: if
+    /// that drops it below threshold, no quorum is produced.
+    ///
+    /// ⚑ THE GOVERNING CONFIGURATION IS THE BLOCK'S PIN, NOT THE LIVE ONE. A
+    /// block that crossed quorum under configuration `c` assembles against
+    /// `c`'s threshold and `c`'s enrolled PQ keys (`installed[c]`, or the live
+    /// entry if `c` is current). Before this pin, both reads were LIVE: a
+    /// block at 3-of-4 lost its assembled quorum the moment a join moved the
+    /// threshold to 4 — one node held it final in memory while a restarting
+    /// node could not reconstruct that it ever was (the reading doc §5.3
+    /// measured hazard, "a third rule authorised by neither configuration").
+    /// A block that has NOT yet crossed assembles against the live
+    /// configuration — the one whose bar it is still trying to meet.
     ///
     /// Only distinct signers who agree on ONE root count toward that root, so a
     /// genuine >=threshold quorum over the finalized state is required — this
@@ -534,6 +628,17 @@ impl VoteCollector {
         block_id: &BlockId,
     ) -> Option<(AttestedPair, Vec<dregg_persist::QuorumSignature>)> {
         let signers = self.votes.get(block_id)?;
+        // The configuration this block's quorum is a fact about: its pin if it
+        // has crossed, else the live one.
+        let (pq_committee, quorum_threshold) = match self
+            .attested
+            .get(block_id)
+            .filter(|pinned| **pinned != self.config_seq)
+            .and_then(|pinned| self.installed.get(pinned))
+        {
+            Some(entry) => (&entry.pq_committee, entry.quorum_threshold),
+            None => (&self.pq_committee, self.quorum_threshold),
+        };
         // Group distinct signers by the PAIR they attested; pick a pair that a
         // supermajority of distinct signers agreed on.
         let mut by_root: HashMap<AttestedPair, Vec<dregg_persist::QuorumSignature>> =
@@ -541,7 +646,7 @@ impl VoteCollector {
         for (voter, (sig, root, pq_sig)) in signers {
             // The voter's ML-DSA committee key rides ALONGSIDE the signature so
             // the persisted quorum re-verifies its PQ half self-contained.
-            let Some(pq_pk) = self.pq_committee.get(voter) else {
+            let Some(pq_pk) = pq_committee.get(voter) else {
                 continue;
             };
             by_root
@@ -556,19 +661,19 @@ impl VoteCollector {
         }
         let (root, members) = by_root
             .into_iter()
-            .find(|(_, members)| members.len() >= self.quorum_threshold)?;
+            .find(|(_, members)| members.len() >= quorum_threshold)?;
         Some((root, members))
     }
 
     /// Has this block reached consensus-wide Attested (a quorum of distinct
     /// member signers)?
     pub fn is_consensus_attested(&self, block_id: &BlockId) -> bool {
-        self.attested.contains(block_id)
+        self.attested.contains_key(block_id)
     }
 
     /// All blocks that have reached consensus-wide Attested.
     pub fn consensus_attested(&self) -> impl Iterator<Item = &BlockId> {
-        self.attested.iter()
+        self.attested.keys()
     }
 
     /// Does this block's VERIFIED tally hold conflicting attested pairs — two
@@ -667,7 +772,7 @@ impl VoteCollector {
                 );
             }
             let distinct_votes = signers.len();
-            return if self.attested.contains(&vote.block_id) {
+            return if self.attested.contains_key(&vote.block_id) {
                 RecordOutcome::AlreadyQuorum { distinct_votes }
             } else {
                 RecordOutcome::Counted { distinct_votes }
@@ -770,7 +875,7 @@ impl VoteCollector {
         if is_fresh {
             self.enforce_member_cap(vote.voter, vote.block_id);
         }
-        let already = self.attested.contains(&vote.block_id);
+        let already = self.attested.contains_key(&vote.block_id);
 
         if already {
             return RecordOutcome::AlreadyQuorum { distinct_votes };
@@ -785,7 +890,10 @@ impl VoteCollector {
         // (below it no single root can reach threshold), so the verified gate is queried only when a
         // quorum could actually exist — no per-vote FFI below threshold.
         if distinct_votes >= self.quorum_threshold && self.verified_quorum_reached(&vote.block_id) {
-            self.attested.insert(vote.block_id);
+            // PIN the crossing to the LIVE configuration: this quorum is a fact
+            // about config `self.config_seq` — its committee, its threshold —
+            // and stays judged against it across later installs.
+            self.attested.insert(vote.block_id, self.config_seq);
             RecordOutcome::ReachedQuorum { distinct_votes }
         } else {
             RecordOutcome::Counted { distinct_votes }
@@ -1832,6 +1940,107 @@ mod tests {
         assert!(
             col.is_consensus_attested(&blk),
             "a block finalized in the old epoch stays finalized across the boundary"
+        );
+    }
+
+    /// ⚑ THE MEASURED HAZARD, CLOSED — per-block quorum PINNING. A block that
+    /// crossed 3-of-4 under configuration 0 must not LOSE its assembled quorum
+    /// when a join moves the live threshold to 4-of-5 (reading doc §5.3: one
+    /// node held it final in memory while a restarting node, reassembling from
+    /// the same votes against the LIVE threshold, could not reconstruct that it
+    /// ever was). The quorum is a fact about the configuration it crossed
+    /// under, and `assembled_quorum` must keep assembling it against THAT bar.
+    #[test]
+    fn assembled_quorum_is_pinned_to_the_crossing_configuration() {
+        let blk = BlockId([0xA1; 32]);
+        let (c4, pq4) = committee_of(&[1, 2, 3, 4]);
+        let q4 = dregg_blocklace::ordering::supermajority_threshold(4); // = 3
+        let mut col = VoteCollector::new(c4, pq4, q4);
+        assert_eq!(col.config_seq(), 0);
+
+        // The block crosses at 3-of-4 under configuration 0.
+        col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT));
+        col.record(&signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT));
+        assert!(matches!(
+            col.record(&signed_vote(3, blk, FinalityLevel::Ordered, TEST_ROOT)),
+            RecordOutcome::ReachedQuorum { distinct_votes: 3 }
+        ));
+        // MUTATION ASSERTED PRESENT before the boundary: the quorum assembles.
+        let (pair0, sigs0) = col
+            .assembled_quorum(&blk)
+            .expect("the 3-of-4 quorum assembles under its own configuration");
+        assert_eq!(pair0.0, TEST_ROOT);
+        assert_eq!(sigs0.len(), 3);
+        assert_eq!(col.attested_config(&blk), Some(0));
+
+        // INSTALL: a join lands — 5 members, live threshold 4.
+        let (c5, pq5) = committee_of(&[1, 2, 3, 4, 5]);
+        let q5 = dregg_blocklace::ordering::supermajority_threshold(5); // = 4
+        col.reconfigure(c5, pq5, q5);
+        assert_eq!(col.config_seq(), 1);
+        assert_eq!(col.quorum_threshold(), 4);
+
+        // THE POLE: the pinned quorum still assembles — 3 signatures against
+        // configuration 0's bar of 3, NOT the live bar of 4. Before the pin,
+        // this returned None: the restart anchor for an already-final block
+        // silently vanished at the join.
+        let (pair, sigs) = col.assembled_quorum(&blk).expect(
+            "a block that crossed under configuration 0 must keep its assembled \
+             quorum after the live threshold moves (the measured lose-quorum-on-join \
+             hazard)",
+        );
+        assert_eq!(pair.0, TEST_ROOT);
+        assert_eq!(sigs.len(), 3, "the pinned configuration's quorum, intact");
+        assert!(col.is_consensus_attested(&blk));
+        assert_eq!(col.attested_config(&blk), Some(0), "pinned, not re-judged");
+    }
+
+    /// The OTHER pole: the pin never GRANDFATHERS an uncrossed block. A block
+    /// still below the bar when the install lands is judged against the NEW
+    /// configuration's threshold from then on — 3 old-configuration votes do
+    /// not become a quorum under a configuration whose bar is 4, and the block
+    /// pins to the configuration it actually crosses under.
+    #[test]
+    fn uncrossed_block_is_judged_by_the_live_configuration() {
+        let blk = BlockId([0xA2; 32]);
+        let (c4, pq4) = committee_of(&[1, 2, 3, 4]);
+        let q4 = dregg_blocklace::ordering::supermajority_threshold(4); // = 3
+        let mut col = VoteCollector::new(c4, pq4, q4);
+
+        // Only 2 votes before the install — below configuration 0's bar of 3.
+        col.record(&signed_vote(1, blk, FinalityLevel::Ordered, TEST_ROOT));
+        col.record(&signed_vote(2, blk, FinalityLevel::Ordered, TEST_ROOT));
+        assert!(!col.is_consensus_attested(&blk));
+        assert!(col.assembled_quorum(&blk).is_none());
+
+        // INSTALL: 5 members, live threshold 4.
+        let (c5, pq5) = committee_of(&[1, 2, 3, 4, 5]);
+        let q5 = dregg_blocklace::ordering::supermajority_threshold(5); // = 4
+        col.reconfigure(c5, pq5, q5);
+
+        // A 3rd vote arrives: 3 distinct signers — a quorum under the OLD bar,
+        // but the block never crossed under it, so the LIVE bar of 4 governs.
+        assert!(matches!(
+            col.record(&signed_vote(3, blk, FinalityLevel::Ordered, TEST_ROOT)),
+            RecordOutcome::Counted { distinct_votes: 3 }
+        ));
+        assert!(
+            !col.is_consensus_attested(&blk),
+            "an uncrossed block is never grandfathered onto a superseded bar"
+        );
+        assert!(col.assembled_quorum(&blk).is_none());
+
+        // The 4th vote crosses it under configuration 1, and THAT is its pin.
+        assert!(matches!(
+            col.record(&signed_vote(4, blk, FinalityLevel::Ordered, TEST_ROOT)),
+            RecordOutcome::ReachedQuorum { distinct_votes: 4 }
+        ));
+        assert_eq!(col.attested_config(&blk), Some(1));
+        let (_, sigs) = col.assembled_quorum(&blk).expect("crossed under config 1");
+        assert_eq!(
+            sigs.len(),
+            4,
+            "assembled against the configuration it crossed under"
         );
     }
 

@@ -100,7 +100,7 @@ fn differential_join_threshold_recompute() {
         node_key: key(4),
         justification: vec![],
     });
-    assert!(applied);
+    assert!(applied.unwrap());
     assert_eq!(c.participant_count(), 4);
     assert_eq!(c.threshold, 3);
     assert_eq!(c.version, 1);
@@ -111,33 +111,63 @@ fn differential_join_threshold_recompute() {
         node_key: key(2),
         justification: vec![],
     });
-    assert!(!applied2);
+    assert!(!applied2.unwrap());
 
     // n=1 -> n=2: peer joins, threshold rises to 2 (Lean: (applyProposal fed1 (.join 2)).threshold==2).
     let mut c1 = Constitution::new(participants(1), TIMEOUT);
-    c1.apply_proposal(&MembershipProposal::Join {
+    let _ = c1.apply_proposal(&MembershipProposal::Join {
         node_key: key(2),
         justification: vec![],
     });
     assert_eq!(c1.threshold, 2);
 }
 
-/// Leave threshold recompute — Lean
-/// `(applyProposal fed4 (.leave 4)).1.{participants.length, threshold} == {3, 3}` and n=2 -> n=1.
+/// Leave threshold recompute — the COMPOSED rule.
+///
+/// ⚑ FLAG DAY (config-boundary install discipline): `apply_proposal` is now the
+/// `MembershipSafety.lean` transform GATED by the Lean-authored step bound
+/// `Dregg2.Distributed.ConfigBoundary.classifyStep`. The old headline case here —
+/// a 4 → 3 leave APPLYING — is exactly the step the roster floor exists to
+/// refuse (`classifyStep 4 0 1 = .refuseRosterFloor`: shrinking a BFT-capable
+/// roster onto one that tolerates zero faults). The recompute arithmetic is
+/// exercised at 5 → 4 instead, and the 4 → 3 case is pinned as the NAMED
+/// refusal. `MembershipSafety.lean`'s `applyProposal` still models the ungated
+/// transform (the applied branch); the gate's authority is `ConfigBoundary`.
 #[test]
 fn differential_leave_threshold_recompute() {
-    let mut c = Constitution::new(participants(4), TIMEOUT);
+    // 5 -> 4: the leave applies and the threshold recomputes (Lean transform arm).
+    let mut c = Constitution::new(participants(5), TIMEOUT);
     let applied = c.apply_proposal(&MembershipProposal::Leave {
+        node_key: key(5),
+        reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
+    });
+    assert!(applied.unwrap());
+    assert_eq!(c.participant_count(), 4);
+    assert_eq!(c.threshold, 3);
+
+    // 4 -> 3: REFUSED BY NAME (Lean `classifyStep 4 0 1 = .refuseRosterFloor`).
+    // Mutation asserted present before the verdict: the member IS in the roster,
+    // so this is a live leave the gate refuses, not an inert no-op.
+    let mut c4 = Constitution::new(participants(4), TIMEOUT);
+    assert!(c4.is_participant(&key(4)));
+    let refused = c4.apply_proposal(&MembershipProposal::Leave {
         node_key: key(4),
         reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
     });
-    assert!(applied);
-    assert_eq!(c.participant_count(), 3);
-    assert_eq!(c.threshold, 3);
+    assert_eq!(
+        refused,
+        Err(dregg_blocklace::constitution::StepRefusal::RosterFloor {
+            roster: 4,
+            survivors: 3
+        })
+    );
+    assert_eq!(c4.participant_count(), 4, "a refused step mutates NOTHING");
+    assert_eq!(c4.version, 0, "a refused step advances no version");
 
-    // n=2 -> n=1: peer leaves, threshold drops to 1.
+    // n=2 -> n=1: peer leaves, threshold drops to 1 (sub-4 bootstrap regime is
+    // exempt from the floor; Lean `stepAllowed 2 0 1 = true`).
     let mut c2 = Constitution::new(participants(2), 5);
-    c2.apply_proposal(&MembershipProposal::Leave {
+    let _ = c2.apply_proposal(&MembershipProposal::Leave {
         node_key: key(2),
         reason: dregg_blocklace::constitution::LeaveReason::Voluntary,
     });
@@ -151,6 +181,7 @@ fn differential_amend_threshold_guards() {
     let reject = |t: usize| {
         let mut c = Constitution::new(participants(4), TIMEOUT); // threshold 3, n=4
         !c.apply_proposal(&MembershipProposal::AmendThreshold { new_threshold: t })
+            .unwrap()
     };
     assert!(reject(0)); // t = 0 rejected
     assert!(reject(5)); // t > n=4 rejected
@@ -158,7 +189,10 @@ fn differential_amend_threshold_guards() {
 
     // a valid down-amend applies.
     let mut c = Constitution::new(participants(4), TIMEOUT);
-    assert!(c.apply_proposal(&MembershipProposal::AmendThreshold { new_threshold: 2 }));
+    assert!(
+        c.apply_proposal(&MembershipProposal::AmendThreshold { new_threshold: 2 })
+            .unwrap()
+    );
     assert_eq!(c.threshold, 2);
 }
 

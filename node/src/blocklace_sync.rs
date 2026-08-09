@@ -1815,8 +1815,9 @@ impl BlocklaceHandle {
     /// This is the driver that lets a node which fell behind (or whose gossip
     /// dropped intermediate blocks) make forward progress without waiting for a
     /// fresh `PeerJoined` event: the buffered-orphan roots are exactly the missing
-    /// finalized predecessors, and pulling them (with their causal past) drains the
-    /// buffer toward the finalized prefix.
+    /// finalized predecessors, and pulling them (each reply a bounded ancestry
+    /// window, [`MAX_PULL_RESPONSE_BLOCKS`]) drains the buffer toward the
+    /// finalized prefix, one window per sweep for the deepest gaps.
     pub async fn catchup_tick(&self) -> usize {
         let (buffered, roots) = {
             let buf = self.orphans.read().await;
@@ -1842,15 +1843,50 @@ impl BlocklaceHandle {
                     .collect()
             };
             if !due.is_empty() {
-                debug!(
-                    roots = due.len(),
-                    buffered, "catch-up: re-requesting missing predecessors (backoff-gated)"
-                );
-                self.broadcast_gossip_message(&BlocklaceGossipMessage::Pull {
-                    ids: due,
-                    nonce: gossip_send_nonce(),
-                })
-                .await;
+                // ROTATING TARGET (2026-08-08, the retry half of targeted
+                // fetch): the reactive pull already asked the peer that
+                // REVEALED each gap (`handle_push`) — if we are here, that ask
+                // was lost, refused, or the peer does not have the block after
+                // all. Retry against ONE topic peer, advancing round-robin per
+                // sweep, so a withholding/dead peer costs one backoff window
+                // and full peer coverage arrives within n sweeps — Mysticeti's
+                // likely-holder-first-then-rotate, with rotation instead of
+                // random sampling for guaranteed small-n coverage. The old
+                // topic-wide broadcast asked everyone and had EVERY holder
+                // answer with a full history dump.
+                if sync_baseline() {
+                    // ⚠ TEMPORARY MEASUREMENT SCAFFOLD.
+                    self.broadcast_gossip_message(&BlocklaceGossipMessage::Pull {
+                        ids: due,
+                        nonce: gossip_send_nonce(),
+                    })
+                    .await;
+                } else {
+                    let peers = self.gossip.topic_peers(&self.topic).await;
+                    if let Some(target) = {
+                        static ROTATE: std::sync::atomic::AtomicUsize =
+                            std::sync::atomic::AtomicUsize::new(0);
+                        let n = peers.len();
+                        (n > 0).then(|| {
+                            peers[ROTATE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % n]
+                        })
+                    } {
+                        debug!(
+                            roots = due.len(),
+                            buffered,
+                            target = %target,
+                            "catch-up: re-requesting missing predecessors (backoff-gated, rotating target)"
+                        );
+                        self.send_gossip_direct(
+                            target,
+                            &BlocklaceGossipMessage::Pull {
+                                ids: due,
+                                nonce: gossip_send_nonce(),
+                            },
+                        )
+                        .await;
+                    }
+                }
             }
         }
         // If we have an open gap, also announce our frontier so a peer pushes the
@@ -2048,6 +2084,51 @@ impl BlocklaceHandle {
         // finalizes over actually forms on the running node.
         if let Err(e) = self.gossip.publish_eager(&self.topic, &peer_msg).await {
             debug!(error = %e, "failed to publish blocklace message");
+        }
+    }
+
+    /// Send one blocklace gossip message POINT-TO-POINT to `target` — the
+    /// request/response counterpart of [`broadcast_gossip_message`].
+    ///
+    /// ⚑ THE FAN-OUT FIX (2026-08-08, follows Mysticeti's targeted synchronizer
+    /// rather than inventing): `Pull`, `PullResponse`, and the frontier delta
+    /// `Push` are all computed FOR one specific peer, but every one of them
+    /// used to go out via `publish_eager` — full payload to every peer over
+    /// every live link, then re-forwarded by each receiver (Plumtree). One lost
+    /// tip at committee size n therefore cost up to n−1 peers each broadcasting
+    /// a full-causal-past dump to all peers: O(n² · |history|) frames for a
+    /// one-block gap. This is our local shape of the measured uncertified-DAG
+    /// pathology (SH++ §8.3: 1% egress drop on 5/100 nodes ⇒ 10× latency for
+    /// Mysticeti, from replicas "scrambl[ing] to perform critical-path
+    /// synchronization"; MY §VIII names "inefficient synchronization of
+    /// unevenly broadcasted blocks" from production). Mysticeti's remedy is
+    /// targeted fetch — the likely holder first, then rotate — and a reply
+    /// addressed to its requester; `GossipEnvelope::Direct` (never
+    /// re-forwarded) is that primitive on our transport.
+    ///
+    /// `target` may be the ephemeral `from` address of a received message: the
+    /// link map registers inbound connections under exactly that address, so
+    /// the reply rides the live link the request arrived on.
+    async fn send_gossip_direct(&self, target: SocketAddr, msg: &BlocklaceGossipMessage) {
+        let encoded = match postcard::to_stdvec(msg) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                warn!(error = %e, "failed to encode direct blocklace gossip message");
+                return;
+            }
+        };
+        let msg_hash = *blake3::hash(&encoded).as_bytes();
+        let peer_msg = PeerMessage::PublishTurn {
+            turn_hash: msg_hash,
+            turn_data: encoded,
+            causal_deps: vec![],
+        };
+        if let Err(e) = self
+            .gossip
+            .send_direct(&self.topic, target, &peer_msg)
+            .await
+        {
+            debug!(error = %e, target = %target, "failed to send direct blocklace message");
         }
     }
 
@@ -2265,12 +2346,12 @@ impl BlocklaceHandle {
             //     `constitution.current.participants`, which this poll re-reads every time. A
             //     removed validator's NEW blocks keep passing `receive_block_pinned` and land in a
             //     lace this arm then finalizes whole.
-            //   * a RESTART through `blocklace/src/finality.rs::from_checkpoint_trusted` (:2123),
-            //     reached from the boot `store.load_blocklace` via
-            //     `persist/src/blocklace_store.rs:274`. It re-inserts every persisted block by raw
-            //     `Block::from_bytes` + `blocks.insert` with no signature, roster, closure or
-            //     equivocation check, and the lace it builds starts with an EMPTY `pq_roster`.
-            //     Anything that ever landed comes back unverified.
+            //   * a RESTART through `blocklace/src/finality.rs::from_checkpoint` (authenticating
+            //     since 2026-08-08 — it was the verbatim `from_checkpoint_trusted` before that),
+            //     reached from the boot `store.load_blocklace`
+            //     (`persist/src/blocklace_store.rs`). Signatures, closure and equivocation are now
+            //     re-checked on restore, but the lace it builds still starts with an EMPTY
+            //     `pq_roster` — a formerly-enrolled creator's validly-signed blocks come back.
             //
             // ⚑ THE BOOTSTRAP TENSION IS DISSOLVED, NOT TRADED. `c6f00c228` left this open because
             // "the only sound creator key to filter against is the projected hybrid id", so a
@@ -3266,12 +3347,16 @@ impl BlocklaceHandle {
             return;
         }
         match self.propose_membership(state, candidate, true).await {
-            Some(block_id) => info!(
+            Ok(block_id) => info!(
                 candidate = %cand_hex,
                 proposal_block = %block_id,
                 "SPONSORED a join request under this member's key (auto-approve-joins)"
             ),
-            None => warn!(candidate = %cand_hex, "sponsorship of the join request did not land"),
+            Err(reason) => warn!(
+                candidate = %cand_hex,
+                reason = %reason,
+                "sponsorship of the join request did not land"
+            ),
         }
     }
 
@@ -3496,7 +3581,7 @@ impl BlocklaceHandle {
         state: &NodeState,
         node_id: [u8; 32],
         add: bool,
-    ) -> Option<BlockId> {
+    ) -> Result<BlockId, String> {
         let action = if add {
             let ml_dsa = match self.resolve_candidate_pq_key(state, &node_id).await {
                 Some(k) => k,
@@ -3513,7 +3598,15 @@ impl BlocklaceHandle {
                     );
                     metrics::counter!("dregg_join_request_refused_total", "reason" => "operator_add_without_pq_key")
                         .increment(1);
-                    return None;
+                    // ⚑ Each refusal names ITS OWN reason: this one used to be
+                    // reported upstream as "durable persist failed" (the other
+                    // arm's diagnosis) with `success: true` around it.
+                    return Err(
+                        "no ML-DSA-65 public key is known for this candidate — the joiner must \
+                         first publish it over the join channel (`dregg-node join --bootstrap \
+                         <member>:<gossip-port>`); proposal not created"
+                            .to_string(),
+                    );
                 }
             };
             MembershipAction::Join {
@@ -3525,7 +3618,7 @@ impl BlocklaceHandle {
         };
         // Fail-closed (F2): land the proposal durably before broadcast so a
         // persist failure cannot leave a broadcast-but-unpersisted proposal seq
-        // that restart re-authors differently. `None` ⇒ the proposal did not land.
+        // that restart re-authors differently. `Err` ⇒ the proposal did not land.
         let block = self
             .author_add_block_or_rollback(
                 state,
@@ -3533,7 +3626,12 @@ impl BlocklaceHandle {
                     action: action.clone(),
                 },
             )
-            .await?;
+            .await
+            .ok_or_else(|| {
+                "durable persist failed — the proposal was rolled back and NOT broadcast \
+                 (F2 fail-closed); proposal not created"
+                    .to_string()
+            })?;
         let block_id = block.id();
         info!(
             block_id = %block_id,
@@ -3541,7 +3639,7 @@ impl BlocklaceHandle {
             "operator proposed epoch transition (membership change) on running node"
         );
         self.push_new_blocks().await;
-        Some(block_id)
+        Ok(block_id)
     }
 }
 
@@ -5862,53 +5960,152 @@ async fn handle_push(
     }
 
     // If a gap remains (missing predecessors of buffered orphans), request the
-    // catch-up roots so a peer pushes them; their causal past comes along
-    // (handle_pull includes `causal_past`), draining the buffer.
+    // catch-up roots FROM THE PEER THAT REVEALED THE GAP. Targeting is sound by
+    // the closure property (`insert_checked`: a lace holds a block only with
+    // its whole causal past): an honest peer that pushed us a block holds every
+    // predecessor that block cites, transitively — so `from` is a guaranteed
+    // holder of exactly the roots we are missing. This replaces the old
+    // topic-wide broadcast Pull, which asked every peer and had every holder
+    // answer (the O(n²) reply amplification `send_gossip_direct` documents).
+    // If `from` is Byzantine/withholding or the reply is lost, the per-root
+    // backoff expires and `catchup_tick` retries against a ROTATING peer —
+    // Mysticeti's likely-holder-first-then-rotate shape.
+    //
+    // OFF THE FUNNEL (see `spawn_gossip_send`): this send used to run inline on
+    // the single serial inbound consumer — the one of the four handler-ending
+    // sends that was left behind when the other three were spawned off. It is
+    // idempotent anti-entropy with its own nonce like the rest; nothing orders
+    // it against the funnel.
     if !outcome.pull_roots.is_empty() {
         let pull_msg = BlocklaceGossipMessage::Pull {
             ids: outcome.pull_roots,
             nonce: gossip_send_nonce(),
         };
-        handle.broadcast_gossip_message(&pull_msg).await;
+        if sync_baseline() {
+            // ⚠ TEMPORARY MEASUREMENT SCAFFOLD (see SYNC_BASELINE_FOR_MEASUREMENT).
+            handle.broadcast_gossip_message(&pull_msg).await;
+        } else {
+            let sender = handle.clone();
+            spawn_gossip_send(async move {
+                sender.send_gossip_direct(from, &pull_msg).await;
+            });
+        }
     }
 }
 
-/// Handle a Pull request: respond with requested blocks.
+/// ⚠ TEMPORARY MEASUREMENT SCAFFOLD — MUST BE DELETED BEFORE COMMIT (grep
+/// `SYNC_BASELINE`). When set (only ever by the loss-injection measurement
+/// harness, and only in test builds), the sync paths revert to the pre-fix
+/// behavior — topic-broadcast Pull/PullResponse/delta-Push and full-causal-past
+/// pull replies — so the SAME binary can measure before/after without a stash,
+/// a clone, or a second build. `#[cfg(test)]`: the old shape does not exist in
+/// a production binary at all.
+#[cfg(test)]
+pub(crate) static SYNC_BASELINE_FOR_MEASUREMENT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[inline]
+fn sync_baseline() -> bool {
+    #[cfg(test)]
+    {
+        SYNC_BASELINE_FOR_MEASUREMENT.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(test))]
+    {
+        false
+    }
+}
+
+/// Hard cap on blocks in one Pull response (requested blocks + their nearby
+/// ancestry). Two `MAX_BLOCKS_PER_PUSH` chunks: enough to close a typical
+/// loss-induced gap (a few rounds × committee width) in ONE round trip, small
+/// enough that no reply is ever a history dump.
 ///
-/// Uses chunked responses for large pull requests to avoid single oversized messages.
+/// ⚑ WHY BOUNDED AT ALL — the old reply was `causal_past(id)`, i.e. EVERYTHING
+/// from genesis below each requested block, chunked but unbounded, and the lace
+/// never prunes. Under loss, every re-pull of one lost tip therefore shipped
+/// the entire DAG again. The papers' shape (Mysticeti's synchronizer) is the
+/// opposite: a fetch returns the requested blocks; ancestry still missing after
+/// they land is discovered by the receiver's own gap tracking (our
+/// `OrphanBuffer::unmet_roots`) and fetched in the NEXT targeted request —
+/// iterative deepening, one bounded window per round trip. We keep a window
+/// above the bare requested set so the common shallow gap closes in one RTT.
+/// DEEP catch-up (a fresh joiner) is not this path's job and does not regress:
+/// `handle_frontier` computes the full tip-delta for that peer and pushes it
+/// chunked (now point-to-point), which is where from-genesis transfer belongs.
+const MAX_PULL_RESPONSE_BLOCKS: usize = 2 * MAX_BLOCKS_PER_PUSH;
+
+/// Collect the reply for a Pull: each requested block plus nearby ancestry,
+/// nearest-first (BFS through predecessors from the requested ids), capped at
+/// [`MAX_PULL_RESPONSE_BLOCKS`], in causal-friendly order (ascending per-creator
+/// `seq`; the receiver's orphan buffer absorbs any cross-creator reordering).
+///
+/// Pure so the bound and ordering are unit-testable without a transport.
+fn collect_pull_response(
+    lace: &dregg_blocklace::finality::Blocklace,
+    requested: &[BlockId],
+) -> Vec<Block> {
+    let mut collected: Vec<Block> = Vec::new();
+    let mut visited: std::collections::HashSet<BlockId> = std::collections::HashSet::new();
+    let mut frontier: std::collections::VecDeque<BlockId> = requested.iter().copied().collect();
+    while let Some(id) = frontier.pop_front() {
+        if collected.len() >= MAX_PULL_RESPONSE_BLOCKS {
+            break;
+        }
+        if !visited.insert(id) {
+            continue;
+        }
+        let Some(block) = lace.get(&id) else {
+            // We do not hold this id (never had it, or it is beyond our own
+            // view) — skip. The requester's rotating retry asks someone else.
+            continue;
+        };
+        collected.push(block.clone());
+        for pred in &block.predecessors {
+            if !visited.contains(pred) {
+                frontier.push_back(*pred);
+            }
+        }
+    }
+    collected.sort_by(|a, b| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
+    collected
+}
+
+/// Handle a Pull request: reply to the REQUESTER with the requested blocks plus
+/// a bounded ancestry window ([`collect_pull_response`]).
+///
+/// Two 2026-08-08 changes, both fan-out (the message's existence and the
+/// closure discipline are untouched):
+/// * **Bounded reply, not `causal_past`.** See [`MAX_PULL_RESPONSE_BLOCKS`] for
+///   the unit and the paper it follows. Deeper gaps converge by iterative
+///   windows (the requester's orphan roots drive the next targeted pull);
+///   from-genesis transfer is `handle_frontier`'s tip-delta push.
+/// * **Point-to-point, not broadcast.** The reply goes to `from` — the one
+///   peer that asked — via [`BlocklaceHandle::send_gossip_direct`], instead of
+///   `publish_eager`ing every chunk to the whole committee.
 async fn handle_pull(handle: &BlocklaceHandle, from: SocketAddr, missing_ids: Vec<BlockId>) {
     if missing_ids.is_empty() {
         return;
     }
     debug!(from = %from, requested = missing_ids.len(), "handling pull request");
 
-    let lace = handle.lace.read().await;
-
-    // Collect requested blocks. For causal closure, also include their
-    // predecessors that the requester may be missing.
-    let mut to_send: Vec<Block> = Vec::new();
-    let mut sent_ids = std::collections::HashSet::new();
-
-    for block_id in &missing_ids {
-        // Include the causal past of the requested block.
-        let past = lace.causal_past(block_id);
-        for past_id in &past {
-            if !sent_ids.contains(past_id)
-                && let Some(block) = lace.get(past_id)
+    let to_send = {
+        let lace = handle.lace.read().await;
+        if sync_baseline() {
+            // ⚠ TEMPORARY MEASUREMENT SCAFFOLD: the pre-fix reply — the FULL
+            // causal past of every requested id, from genesis, unbounded.
+            #[cfg(test)]
             {
-                to_send.push(block.clone());
-                sent_ids.insert(*past_id);
+                collect_pull_response_baseline_full_past(&lace, &missing_ids)
             }
+            #[cfg(not(test))]
+            {
+                unreachable!("sync_baseline() is constant false outside test builds")
+            }
+        } else {
+            collect_pull_response(&lace, &missing_ids)
         }
-        // Include the block itself.
-        if !sent_ids.contains(block_id)
-            && let Some(block) = lace.get(block_id)
-        {
-            to_send.push(block.clone());
-            sent_ids.insert(*block_id);
-        }
-    }
-    drop(lace);
+    };
 
     if to_send.is_empty() {
         return;
@@ -5921,31 +6118,71 @@ async fn handle_pull(handle: &BlocklaceHandle, from: SocketAddr, missing_ids: Ve
     // the single serial inbound consumer.
     let sender = handle.clone();
     spawn_gossip_send(async move {
+        let baseline = sync_baseline();
         if total <= MAX_BLOCKS_PER_PUSH {
             let response = BlocklaceGossipMessage::PullResponse {
                 blocks: to_send,
                 nonce: gossip_send_nonce(),
             };
-            sender.broadcast_gossip_message(&response).await;
-            debug!(from = %from, blocks = total, "sent pull response");
+            if baseline {
+                sender.broadcast_gossip_message(&response).await;
+            } else {
+                sender.send_gossip_direct(from, &response).await;
+            }
+            debug!(to = %from, blocks = total, "sent pull response");
             return;
         }
-        debug!(from = %from, blocks = total, "sending chunked pull response");
+        debug!(to = %from, blocks = total, "sending chunked pull response");
         let mut sent_so_far = 0usize;
         for chunk in to_send.chunks(MAX_BLOCKS_PER_PUSH) {
             let response = BlocklaceGossipMessage::PullResponse {
                 blocks: chunk.to_vec(),
                 nonce: gossip_send_nonce(),
             };
-            sender.broadcast_gossip_message(&response).await;
+            if baseline {
+                sender.broadcast_gossip_message(&response).await;
+            } else {
+                sender.send_gossip_direct(from, &response).await;
+            }
             sent_so_far += chunk.len();
 
             if sent_so_far < total {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
-        debug!(from = %from, blocks = total, "completed chunked pull response");
+        debug!(to = %from, blocks = total, "completed chunked pull response");
     });
+}
+
+/// ⚠ TEMPORARY MEASUREMENT SCAFFOLD — the pre-2026-08-08 `handle_pull` reply
+/// (verbatim semantics): every requested block plus its ENTIRE causal past.
+/// Exists only so the measurement harness can run the baseline from the same
+/// binary; deleted with `SYNC_BASELINE_FOR_MEASUREMENT`.
+#[cfg(test)]
+fn collect_pull_response_baseline_full_past(
+    lace: &dregg_blocklace::finality::Blocklace,
+    missing_ids: &[BlockId],
+) -> Vec<Block> {
+    let mut to_send: Vec<Block> = Vec::new();
+    let mut sent_ids = std::collections::HashSet::new();
+    for block_id in missing_ids {
+        let past = lace.causal_past(block_id);
+        for past_id in &past {
+            if !sent_ids.contains(past_id)
+                && let Some(block) = lace.get(past_id)
+            {
+                to_send.push(block.clone());
+                sent_ids.insert(*past_id);
+            }
+        }
+        if !sent_ids.contains(block_id)
+            && let Some(block) = lace.get(block_id)
+        {
+            to_send.push(block.clone());
+            sent_ids.insert(*block_id);
+        }
+    }
+    to_send
 }
 
 /// Run one OUTBOUND gossip send off the inbound funnel task.
@@ -6004,8 +6241,11 @@ async fn handle_frontier(
     // fires (the missing tip never arrives to reveal the gap), so the cluster wedges
     // one block short of the round cohort FOREVER and `dag_height` freezes. Pulling
     // every announced per-creator tip we do NOT hold closes that gap deterministically:
-    // a Pull response carries the block's full causal past (`handle_pull`), so any
-    // predecessor gap heals atomically. Backoff-gated (shared with the catch-up
+    // a Pull response carries the tip plus a bounded ancestry window
+    // (`collect_pull_response`), which covers the wedge's whole gap in one round
+    // trip — the wedge shape is by construction at most a round or two of
+    // missing cohort blocks, far inside `MAX_PULL_RESPONSE_BLOCKS`; a deeper gap
+    // iterates via the orphan roots. Backoff-gated (shared with the catch-up
     // pull limiter), so a tip we already requested is not re-hammered and steady
     // state — every announced tip known — stays quiet.
     let (tips_to_pull, held): (Vec<BlockId>, Vec<(u64, u64)>) = {
@@ -6043,15 +6283,25 @@ async fn handle_frontier(
         };
         if !due.is_empty() {
             debug!(from = %from, tips = due.len(), "frontier: pulling announced tips we lack");
+            // TARGETED (2026-08-08): the ANNOUNCER is a guaranteed holder of
+            // its own announced tips (a lace contains only closed blocks), so
+            // the pull goes to `from` alone rather than the whole topic. A
+            // lost reply retries via `catchup_tick`'s rotating pull once the
+            // tip surfaces as an orphan root — or simply via the peer's next
+            // per-tick Frontier re-announcement.
             // OFF THE FUNNEL (see `spawn_gossip_send`).
             let sender = handle.clone();
             spawn_gossip_send(async move {
-                sender
-                    .broadcast_gossip_message(&BlocklaceGossipMessage::Pull {
-                        ids: due,
-                        nonce: gossip_send_nonce(),
-                    })
-                    .await;
+                let msg = BlocklaceGossipMessage::Pull {
+                    ids: due,
+                    nonce: gossip_send_nonce(),
+                };
+                if sync_baseline() {
+                    // ⚠ TEMPORARY MEASUREMENT SCAFFOLD.
+                    sender.broadcast_gossip_message(&msg).await;
+                } else {
+                    sender.send_gossip_direct(from, &msg).await;
+                }
             });
         }
     }
@@ -6120,6 +6370,13 @@ async fn handle_frontier(
     // receive path's service rate a function of the send path's latency: it runs
     // once per inbound frontier, i.e. `peers x cadence-ticks` times a second, and
     // it was measured at 2.4 s average on the one serial consumer.
+    // TARGETED (2026-08-08): the delta below is computed FOR `from` (it is
+    // "what THAT peer's announced tips say it lacks"), so it is sent to `from`
+    // alone. Broadcasting it meant every member that received the same
+    // Frontier pushed the same delta to every peer — the O(n²) shape
+    // `send_gossip_direct` documents, here on the largest payload class
+    // (deep-catch-up deltas). Any OTHER peer that lacks these blocks announces
+    // its own frontier on its own tick and gets its own delta.
     let sender = handle.clone();
     spawn_gossip_send(async move {
         // If the delta fits in one message, send it directly (common case for
@@ -6129,8 +6386,13 @@ async fn handle_frontier(
                 blocks: to_send,
                 nonce: gossip_send_nonce(),
             };
-            sender.broadcast_gossip_message(&msg).await;
-            debug!(from = %from, blocks = total_missing, "pushed delta after frontier exchange");
+            if sync_baseline() {
+                // ⚠ TEMPORARY MEASUREMENT SCAFFOLD.
+                sender.broadcast_gossip_message(&msg).await;
+            } else {
+                sender.send_gossip_direct(from, &msg).await;
+            }
+            debug!(to = %from, blocks = total_missing, "pushed delta after frontier exchange");
             return;
         }
 
@@ -6150,7 +6412,12 @@ async fn handle_frontier(
                 blocks: chunk.to_vec(),
                 nonce: gossip_send_nonce(),
             };
-            sender.broadcast_gossip_message(&msg).await;
+            if sync_baseline() {
+                // ⚠ TEMPORARY MEASUREMENT SCAFFOLD.
+                sender.broadcast_gossip_message(&msg).await;
+            } else {
+                sender.send_gossip_direct(from, &msg).await;
+            }
 
             sent_so_far += chunk.len();
             info!(
@@ -16555,7 +16822,6 @@ mod tests {
         signing_key: ed25519_dalek::SigningKey,
         participants: Vec<[u8; 32]>,
     ) -> BlocklaceHandle {
-        use dregg_blocklace::constitution::{Constitution, ConstitutionManager};
         let (sk, _pk) = dregg_types::generate_keypair();
         let node_id: NodeId = *blake3::hash(&self_key).as_bytes();
         let peer_node = PeerNode::new(PeerNodeConfig::default()).await.unwrap();
@@ -16566,6 +16832,20 @@ mod tests {
             HashMap::new(),
         ));
         let topic = gossip.join_topic(TOPIC_BLOCKLACE, &[]).await.unwrap();
+        test_handle_with_transport(self_key, signing_key, participants, gossip, topic).await
+    }
+
+    /// Like [`test_handle_inner`] but over a CALLER-SUPPLIED transport (an
+    /// already-meshed [`GossipNetwork`] + joined topic), so a multi-node test
+    /// can build a real federation of handles without duplicating this literal.
+    async fn test_handle_with_transport(
+        self_key: [u8; 32],
+        signing_key: ed25519_dalek::SigningKey,
+        participants: Vec<[u8; 32]>,
+        gossip: Arc<GossipNetwork>,
+        topic: TopicHandle,
+    ) -> BlocklaceHandle {
+        use dregg_blocklace::constitution::{Constitution, ConstitutionManager};
         let quorum = dregg_blocklace::supermajority_threshold(participants.len());
         let blocklace = dregg_blocklace::finality::Blocklace::new(signing_key.clone(), quorum);
         let constitution =
@@ -17200,9 +17480,10 @@ mod tests {
     ///     `apply_passed_proposal` shrinks `constitution.current.participants` and this poll
     ///     re-reads it every time. A removed validator's NEW blocks keep passing
     ///     `receive_block_pinned` into the lace this arm then finalizes whole.
-    ///   * a RESTART through `finality.rs::from_checkpoint_trusted` (see the companion test below),
-    ///     which re-inserts every persisted block with no signature, roster, closure or
-    ///     equivocation check and an EMPTY `pq_roster`.
+    ///   * a RESTART through the authenticating `finality.rs::from_checkpoint` (see the companion
+    ///     test below, which drives the verbatim `from_checkpoint_trusted` shape to keep the
+    ///     hazard constructible): signatures/closure/equivocation are re-checked on restore since
+    ///     2026-08-08, but the restored lace still has an EMPTY `pq_roster` — no roster check.
     ///
     /// ⚑ **THE COMMITTED ROSTER IS EMPTY** — `NodeState::new(tmp, vec![])`, no
     /// `set_federation_keys_hybrid`. This is the GENUINE COLD START, and it is the guard that makes
@@ -17328,23 +17609,24 @@ mod tests {
         );
     }
 
-    /// ⚑ **THE RESTART PATH, DRIVEN — `from_checkpoint_trusted` is where the unenrolled blocks
+    /// ⚑ **THE RESTART SHAPE, DRIVEN — a restored lace is where unenrolled blocks
     /// come back, and the solo arm is what used to finalize them.**
     ///
-    /// `blocklace/src/finality.rs::from_checkpoint_trusted` (reached from the boot
-    /// `store.load_blocklace` via `persist/src/blocklace_store.rs:274`) rebuilds the lace by raw
-    /// `Block::from_bytes` + `blocks.insert`: no signature check, no roster check, no causal-closure
-    /// check, no equivocation re-detection, and the restored lace's `pq_roster` is EMPTY (it is a
-    /// fresh `Blocklace::new`). So everything that ever landed comes back unverified — including a
-    /// creator that has since been rotated out, or was never enrolled at all.
+    /// Since 2026-08-08 the boot path (`store.load_blocklace`,
+    /// `persist/src/blocklace_store.rs`) routes through the AUTHENTICATING
+    /// `finality.rs::from_checkpoint` — signature, closure and equivocation are re-checked on
+    /// restore. What NO restore does is a roster check, and the restored lace's `pq_roster` is
+    /// EMPTY either way (a fresh `Blocklace::new`): a creator that was rotated out — or never
+    /// enrolled, if its blocks are validly signed — comes back. This test drives the verbatim
+    /// `from_checkpoint_trusted` deliberately, because it CONSTRUCTS the worst restored shape
+    /// (the stranger's block re-admitted with no checks at all) and proves the FINALITY arm
+    /// refuses it even then; the authenticating restore only shrinks what reaches this gate.
     ///
     /// THE ANSWER TO "does closing the solo arm without closing the restart accomplish anything":
     /// YES, and this test is the measurement. The restart is the SUPPLIER of unenrolled blocks; the
-    /// solo arm was the CONSUMER that fed them to the executor. With the restore left exactly as it
-    /// is — every block re-admitted, `pq_roster` empty, asserted below — the poll now refuses the
-    /// stranger and still finalizes the node's own restored blocks. The restore's own trust
-    /// contract (LOCAL DISK ONLY; peer-supplied checkpoints route through the authenticating
-    /// `from_checkpoint`) is untouched and is not what this closes.
+    /// solo arm was the CONSUMER that fed them to the executor. With the restore at its weakest —
+    /// every block re-admitted, `pq_roster` empty, asserted below — the poll refuses the
+    /// stranger and still finalizes the node's own restored blocks.
     #[tokio::test]
     async fn restored_trusted_checkpoint_does_not_resurrect_an_unenrolled_creator() {
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -18442,6 +18724,609 @@ mod tests {
              above is unconditional and proves nothing"
         );
     }
+
+    // ─── Bounded pull responses (the fan-out fix, 2026-08-08) ────────────────
+
+    /// A lace with one enrolled creator and a `depth`-block chain; returns
+    /// (holder lace, creator key, blocks in causal order).
+    fn deep_chain_lace(depth: usize) -> (Blocklace, ed25519_dalek::SigningKey, Vec<Block>) {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x51u8; 32]);
+        let mut lace = dregg_blocklace::finality::Blocklace::new_simple(sk.clone());
+        let mut blocks = Vec::with_capacity(depth);
+        for _ in 0..depth {
+            blocks.push(lace.add_block(Payload::Ack));
+        }
+        (lace, sk, blocks)
+    }
+
+    /// The reply to a Pull is BOUNDED and NEAREST-FIRST: requesting the tip of a
+    /// chain much deeper than the cap returns exactly
+    /// [`MAX_PULL_RESPONSE_BLOCKS`] blocks — the tip plus its nearest ancestry —
+    /// never the from-genesis dump the pre-fix reply shipped.
+    #[test]
+    fn pull_response_is_bounded_and_nearest_first() {
+        let depth = MAX_PULL_RESPONSE_BLOCKS + 300;
+        let (lace, _sk, blocks) = deep_chain_lace(depth);
+        let tip = blocks.last().unwrap().id();
+
+        let reply = collect_pull_response(&lace, &[tip]);
+        assert_eq!(
+            reply.len(),
+            MAX_PULL_RESPONSE_BLOCKS,
+            "a deep-history pull reply must be exactly the cap, not the whole DAG"
+        );
+        assert!(
+            reply.iter().any(|b| b.id() == tip),
+            "the requested block itself is always in the reply"
+        );
+        // Nearest-first: the window is the TOP of the chain (highest seqs).
+        let min_seq = reply.iter().map(|b| b.seq).min().unwrap();
+        let max_seq = reply.iter().map(|b| b.seq).max().unwrap();
+        let tip_seq = blocks.last().unwrap().seq;
+        assert_eq!(max_seq, tip_seq, "window ends at the requested tip");
+        assert_eq!(
+            (max_seq - min_seq) as usize + 1,
+            MAX_PULL_RESPONSE_BLOCKS,
+            "window is contiguous nearest ancestry of the requested tip"
+        );
+        // Causal-friendly order (ascending seq for a single creator).
+        assert!(
+            reply.windows(2).all(|w| w[0].seq <= w[1].seq),
+            "reply is sorted parents-before-children"
+        );
+
+        // An id we do not hold yields nothing (the requester's rotating retry
+        // asks someone else) — never an error, never a stall.
+        let unknown = BlockId([0xEE; 32]);
+        assert!(collect_pull_response(&lace, &[unknown]).is_empty());
+    }
+
+    /// LIVENESS FALSIFIER for the bound: a joiner that is ARBITRARILY far behind
+    /// still converges through repeated bounded windows — each reply advances the
+    /// orphan buffer's unmet roots strictly downward, and ceil(depth/window)
+    /// round trips reconstruct the whole chain. This is the property that makes
+    /// bounding the reply safe (Mysticeti-style iterative fetch), and it is the
+    /// test that would go red if the window could strand a deep gap.
+    #[test]
+    fn bounded_pull_windows_converge_a_deep_joiner() {
+        let depth = 3 * MAX_PULL_RESPONSE_BLOCKS + 57; // several windows + remainder
+        let (holder, sk, blocks) = deep_chain_lace(depth);
+        let tip = blocks.last().unwrap().id();
+
+        let mut joiner = dregg_blocklace::finality::Blocklace::new_simple(
+            ed25519_dalek::SigningKey::from_bytes(&[0x52u8; 32]),
+        );
+        joiner.enroll_pq(Block::hybrid_id(&sk), Block::pq_public_key(&sk));
+        let mut buf = crate::catchup::OrphanBuffer::new();
+
+        // Round 1 requests the tip (as the reactive path would); every later
+        // round requests exactly the still-unmet roots (as `catchup_tick` does).
+        let mut request: Vec<BlockId> = vec![tip];
+        let mut rounds = 0usize;
+        loop {
+            rounds += 1;
+            assert!(
+                rounds <= depth / MAX_PULL_RESPONSE_BLOCKS + 2,
+                "iterative windows must converge in ~depth/window round trips"
+            );
+            let reply = collect_pull_response(&holder, &request);
+            assert!(
+                reply.len() <= MAX_PULL_RESPONSE_BLOCKS,
+                "every reply respects the bound"
+            );
+            let outcome = crate::catchup::apply_with_buffering(&mut joiner, &mut buf, reply);
+            if outcome.pull_roots.is_empty() {
+                break;
+            }
+            request = outcome.pull_roots;
+        }
+        assert!(buf.is_empty(), "no orphan remains once the gap closes");
+        let holder_ids: std::collections::HashSet<BlockId> =
+            holder.iter().map(|(id, _)| *id).collect();
+        let joiner_ids: std::collections::HashSet<BlockId> =
+            joiner.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            holder_ids, joiner_ids,
+            "the joiner reconstructs the holder's exact keyset through bounded windows"
+        );
+    }
+
+    // ─── Loss-injection measurement harness (SH++ §8.3 scenario, ours) ───────
+    //
+    // The measurement that had never existed: OUR dissemination + catch-up
+    // stack, over real QUIC loopback gossip, with egress message drops injected
+    // on one committee member (`GossipNetwork::set_egress_drop_permille`) — the
+    // Shoal++ §8.3 shape (they drop 1% of egress on 5/100 nodes at the network
+    // layer; we drop whole gossip frames on 1/4 nodes, because QUIC retransmits
+    // packet-level loss, so the frame is our smallest droppable egress unit).
+    //
+    // Everything on the receive path is the PRODUCTION code: the real
+    // `drain_and_schedule_blocklace_batch` funnel scheduler, the real
+    // `handle_push`/`handle_pull`/`handle_frontier`, the real orphan buffer and
+    // backoffs, and the real periodic drivers (`send_frontier`, `catchup_tick`)
+    // at production-shaped cadences. The harness supplies only what sits ABOVE
+    // the layer under test: block production (one `Payload::Ack` block per node
+    // per tick, exactly the `Push` shape `push_new_blocks` broadcasts) and the
+    // metric samplers.
+    //
+    // Run explicitly (ignored by default; ~90 s per scenario):
+    //   DREGG_MEASURE_BASELINE=1 cargo test -p dregg-node --release \
+    //     loss_sync_measurement -- --ignored --nocapture   # pre-fix behavior
+    //   cargo test -p dregg-node --release \
+    //     loss_sync_measurement -- --ignored --nocapture   # fixed behavior
+    // Optional: DREGG_MEASURE_DROP_PERMILLE (default 100 = 10%),
+    //           DREGG_MEASURE_PRODUCE_SECS (default 45).
+
+    struct WireCounts {
+        push_msgs: std::sync::atomic::AtomicUsize,
+        pull_msgs: std::sync::atomic::AtomicUsize,
+        pullresp_msgs: std::sync::atomic::AtomicUsize,
+        frontier_msgs: std::sync::atomic::AtomicUsize,
+        blocks_rx: std::sync::atomic::AtomicUsize,
+        dup_blocks_rx: std::sync::atomic::AtomicUsize,
+    }
+
+    impl WireCounts {
+        fn new() -> Self {
+            use std::sync::atomic::AtomicUsize;
+            Self {
+                push_msgs: AtomicUsize::new(0),
+                pull_msgs: AtomicUsize::new(0),
+                pullresp_msgs: AtomicUsize::new(0),
+                frontier_msgs: AtomicUsize::new(0),
+                blocks_rx: AtomicUsize::new(0),
+                dup_blocks_rx: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    struct MeasuredNode {
+        handle: BlocklaceHandle,
+        state: NodeState,
+        counts: Arc<WireCounts>,
+        _tmp: tempfile::TempDir,
+    }
+
+    /// Boot an n-node federation over real QUIC loopback: meshed gossip with
+    /// registered envelope keys, enrolled hybrid rosters, production funnel +
+    /// periodic drivers. Returns the nodes; every spawned task lives until the
+    /// test process ends (tests are one process per #[tokio::test]).
+    async fn boot_measurement_committee(
+        n: usize,
+        member_keys: &[ed25519_dalek::SigningKey],
+    ) -> Vec<MeasuredNode> {
+        use std::sync::atomic::Ordering;
+
+        // Gossip transport identities (envelope signing) — one per node, all
+        // registered in every node's peer_keys, as the production boot builds
+        // from `known_federation_keys`.
+        let mut gossip_keys = Vec::new();
+        let mut peer_keys: HashMap<NodeId, dregg_types::PublicKey> = HashMap::new();
+        for _ in 0..n {
+            let (sk, pk) = dregg_types::generate_keypair();
+            peer_keys.insert(*blake3::hash(pk.as_bytes()).as_bytes(), pk);
+            gossip_keys.push((sk, pk));
+        }
+
+        // Endpoints first (all addresses known before any join dials).
+        let mut peer_nodes = Vec::new();
+        for _ in 0..n {
+            peer_nodes.push(PeerNode::new(PeerNodeConfig::default()).await.unwrap());
+        }
+        let addrs: Vec<SocketAddr> = peer_nodes.iter().map(|p| p.local_addr()).collect();
+
+        let participants: Vec<[u8; 32]> = member_keys.iter().map(Block::hybrid_id).collect();
+
+        let mut out = Vec::new();
+        for i in 0..n {
+            let (gsk, gpk) = &gossip_keys[i];
+            let node_id: NodeId = *blake3::hash(gpk.as_bytes()).as_bytes();
+            let gossip = Arc::new(GossipNetwork::new(
+                peer_nodes[i].endpoint().clone(),
+                node_id,
+                gsk.clone(),
+                peer_keys.clone(),
+            ));
+            let others: Vec<SocketAddr> = addrs
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, a)| *a)
+                .collect();
+            let topic = gossip.join_topic(TOPIC_BLOCKLACE, &others).await.unwrap();
+            let mut stream = gossip.subscribe(&topic).await.unwrap();
+
+            let handle = test_handle_with_transport(
+                member_keys[i].verifying_key().to_bytes(),
+                member_keys[i].clone(),
+                participants.clone(),
+                gossip,
+                topic,
+            )
+            .await;
+            // Enroll the whole committee's ML-DSA keys so the pinned wire
+            // ingest accepts every member's hybrid-signed blocks.
+            {
+                let mut lace = handle.lace.write().await;
+                for k in member_keys {
+                    lace.enroll_pq(Block::hybrid_id(k), Block::pq_public_key(k));
+                }
+            }
+            let (tmp, state) = committed_state_for(member_keys).await;
+            let counts = Arc::new(WireCounts::new());
+
+            // The funnel: the production drain-and-schedule loop, verbatim in
+            // shape (recv → drain backlog → schedule), with a metrics pass over
+            // the borrowed batch before dispatch.
+            {
+                let h = handle.clone();
+                let st = state.clone();
+                let c = counts.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let Some(first) = stream.recv().await else {
+                            break;
+                        };
+                        match first {
+                            GossipEvent::Message { .. } => {
+                                let mut batch = vec![first];
+                                while batch.len() < MAX_GOSSIP_DRAIN_BATCH {
+                                    match stream.try_recv() {
+                                        Some(ev) => batch.push(ev),
+                                        None => break,
+                                    }
+                                }
+                                for ev in &batch {
+                                    let GossipEvent::Message { message, .. } = ev else {
+                                        continue;
+                                    };
+                                    let PeerMessage::PublishTurn { turn_data, .. } = message else {
+                                        continue;
+                                    };
+                                    let Ok(m) =
+                                        postcard::from_bytes::<BlocklaceGossipMessage>(turn_data)
+                                    else {
+                                        continue;
+                                    };
+                                    let counted_blocks = match &m {
+                                        BlocklaceGossipMessage::Push { blocks, .. } => {
+                                            c.push_msgs.fetch_add(1, Ordering::Relaxed);
+                                            Some(blocks)
+                                        }
+                                        BlocklaceGossipMessage::PullResponse { blocks, .. } => {
+                                            c.pullresp_msgs.fetch_add(1, Ordering::Relaxed);
+                                            Some(blocks)
+                                        }
+                                        BlocklaceGossipMessage::Pull { .. } => {
+                                            c.pull_msgs.fetch_add(1, Ordering::Relaxed);
+                                            None
+                                        }
+                                        BlocklaceGossipMessage::Frontier { .. } => {
+                                            c.frontier_msgs.fetch_add(1, Ordering::Relaxed);
+                                            None
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(blocks) = counted_blocks {
+                                        c.blocks_rx.fetch_add(blocks.len(), Ordering::Relaxed);
+                                        let lace = h.lace.read().await;
+                                        let dups = blocks
+                                            .iter()
+                                            .filter(|b| lace.contains(&b.id()))
+                                            .count();
+                                        c.dup_blocks_rx.fetch_add(dups, Ordering::Relaxed);
+                                    }
+                                }
+                                drain_and_schedule_blocklace_batch(&h, &st, batch).await;
+                            }
+                            GossipEvent::PeerJoined(_) => {
+                                h.send_frontier().await;
+                            }
+                            GossipEvent::PeerLeft(_) => {}
+                        }
+                    }
+                });
+            }
+            // Periodic drivers at production-shaped cadences: a frontier per
+            // second (the cadence tick announces one per tick in production)
+            // and a catch-up sweep every 2 s (the production floor).
+            {
+                let h = handle.clone();
+                tokio::spawn(async move {
+                    let mut t = tokio::time::interval(Duration::from_millis(1_000));
+                    t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    loop {
+                        t.tick().await;
+                        h.send_frontier().await;
+                    }
+                });
+                let h = handle.clone();
+                tokio::spawn(async move {
+                    let mut t = tokio::time::interval(Duration::from_millis(2_000));
+                    t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    loop {
+                        t.tick().await;
+                        h.catchup_tick().await;
+                    }
+                });
+            }
+
+            out.push(MeasuredNode {
+                handle,
+                state,
+                counts,
+                _tmp: tmp,
+            });
+        }
+        out
+    }
+
+    fn percentile(sorted_ms: &[u128], p: f64) -> u128 {
+        if sorted_ms.is_empty() {
+            return 0;
+        }
+        let idx = ((sorted_ms.len() as f64 - 1.0) * p).round() as usize;
+        sorted_ms[idx]
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[ignore = "measurement harness — run explicitly with --ignored --nocapture (~90 s)"]
+    async fn loss_sync_measurement() {
+        use std::sync::atomic::Ordering;
+
+        let baseline = std::env::var_os("DREGG_MEASURE_BASELINE").is_some();
+        SYNC_BASELINE_FOR_MEASUREMENT.store(baseline, Ordering::Relaxed);
+        let drop_permille: u16 = std::env::var("DREGG_MEASURE_DROP_PERMILLE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100);
+        let produce_secs: u64 = std::env::var("DREGG_MEASURE_PRODUCE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(45);
+
+        const N: usize = 4;
+        const PRODUCE_EVERY: Duration = Duration::from_millis(400);
+        let member_keys: Vec<ed25519_dalek::SigningKey> = (0..N as u8)
+            .map(|i| ed25519_dalek::SigningKey::from_bytes(&[0x40 + i; 32]))
+            .collect();
+        let nodes = boot_measurement_committee(N, &member_keys).await;
+
+        // produced block id -> (produced_at, seen_at per node)
+        type SeenMap = HashMap<BlockId, (Instant, [Option<Instant>; N])>;
+        let produced: Arc<std::sync::Mutex<SeenMap>> =
+            Arc::new(std::sync::Mutex::new(HashMap::new()));
+
+        // Sampler: 25 ms resolution on "node j holds block b".
+        {
+            let produced = produced.clone();
+            let laces: Vec<_> = nodes.iter().map(|n| n.handle.lace.clone()).collect();
+            tokio::spawn(async move {
+                let mut t = tokio::time::interval(Duration::from_millis(25));
+                t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    t.tick().await;
+                    let pending: Vec<(BlockId, [bool; N])> = {
+                        let m = produced.lock().unwrap();
+                        m.iter()
+                            .filter(|(_, (_, seen))| seen.iter().any(Option::is_none))
+                            .map(|(id, (_, seen))| {
+                                let mut mask = [false; N];
+                                for (j, s) in seen.iter().enumerate() {
+                                    mask[j] = s.is_none();
+                                }
+                                (*id, mask)
+                            })
+                            .collect()
+                    };
+                    if pending.is_empty() {
+                        continue;
+                    }
+                    let now = Instant::now();
+                    for j in 0..N {
+                        let ids: Vec<BlockId> = pending
+                            .iter()
+                            .filter(|(_, mask)| mask[j])
+                            .map(|(id, _)| *id)
+                            .collect();
+                        if ids.is_empty() {
+                            continue;
+                        }
+                        let lace = laces[j].read().await;
+                        let held: Vec<BlockId> =
+                            ids.into_iter().filter(|id| lace.contains(id)).collect();
+                        drop(lace);
+                        if held.is_empty() {
+                            continue;
+                        }
+                        let mut m = produced.lock().unwrap();
+                        for id in held {
+                            if let Some((_, seen)) = m.get_mut(&id) {
+                                seen[j] = Some(now);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ─── Phase 1: 5 s warmup, no loss (mesh + first blocks) ──────────────
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        for (i, node) in nodes.iter().enumerate() {
+            let h = node.handle.clone();
+            let produced = produced.clone();
+            let stop = stop.clone();
+            tokio::spawn(async move {
+                let mut t = tokio::time::interval(PRODUCE_EVERY);
+                t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    t.tick().await;
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let block = {
+                        let mut lace = h.lace.write().await;
+                        lace.add_block(Payload::Ack)
+                    };
+                    {
+                        let mut m = produced.lock().unwrap();
+                        let mut seen = [None; N];
+                        seen[i] = Some(Instant::now());
+                        m.insert(block.id(), (Instant::now(), seen));
+                    }
+                    // Exactly the eager one-hop Push `push_new_blocks` sends.
+                    h.broadcast_gossip_message(&BlocklaceGossipMessage::Push {
+                        blocks: vec![block],
+                        nonce: gossip_send_nonce(),
+                    })
+                    .await;
+                }
+            });
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        // ─── Phase 2: loss on node 0's egress; produce under loss ────────────
+        nodes[0]
+            .handle
+            .gossip
+            .set_egress_drop_permille(drop_permille)
+            .await;
+        let loss_started = Instant::now();
+
+        // POLE PROBE at +10 s: a signed block from an enrolled creator citing a
+        // predecessor NOBODY holds — the "peer that cannot supply a block"
+        // case. It must be staged (not admitted), must trigger no stall, and
+        // its fetches must fail quietly against every rotating target.
+        let fabricated = Block::new(
+            &member_keys[2],
+            9_999,
+            Payload::Data(b"unresolvable-orphan".to_vec()),
+            vec![BlockId([0xFA; 32])],
+        );
+        let fabricated_id = fabricated.id();
+        {
+            let h = nodes[1].handle.clone();
+            let st = nodes[1].state.clone();
+            let fab = fabricated.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let from: SocketAddr = "127.0.0.1:9".parse().unwrap();
+                handle_push(&h, &st, from, vec![fab]).await;
+            });
+        }
+
+        tokio::time::sleep(Duration::from_secs(produce_secs)).await;
+        stop.store(true, Ordering::Relaxed);
+
+        // ─── Phase 3: drain (loss still on — recovery must work under it) ────
+        tokio::time::sleep(Duration::from_secs(25)).await;
+
+        // ─── Verdicts ────────────────────────────────────────────────────────
+        let produced_final = produced.lock().unwrap().clone();
+        let mut all_ms: Vec<u128> = Vec::new(); // produced -> held by ALL nodes
+        let mut node0_ms: Vec<u128> = Vec::new(); // produced -> held by the LOSSY node
+        let mut unconverged = 0usize;
+        for (_, (t0, seen)) in produced_final.iter() {
+            match seen.iter().copied().collect::<Option<Vec<Instant>>>() {
+                Some(times) => {
+                    let last = times.iter().max().unwrap();
+                    all_ms.push(last.duration_since(*t0).as_millis());
+                }
+                None => unconverged += 1,
+            }
+            if let Some(t) = seen[0] {
+                node0_ms.push(t.duration_since(*t0).as_millis());
+            }
+        }
+        all_ms.sort_unstable();
+        node0_ms.sort_unstable();
+
+        println!("\n══ loss_sync_measurement ══");
+        println!(
+            "config: mode={} n={} drop=node0 egress {}‰ produce={}s cadence={}ms loss_phase={}s",
+            if baseline {
+                "BASELINE(pre-fix)"
+            } else {
+                "FIXED"
+            },
+            N,
+            drop_permille,
+            produce_secs,
+            PRODUCE_EVERY.as_millis(),
+            loss_started.elapsed().as_secs(),
+        );
+        println!(
+            "blocks produced: {} | unconverged after {}s drain: {}",
+            produced_final.len(),
+            25,
+            unconverged
+        );
+        println!(
+            "dissemination latency ms (all 4 hold): p50={} p95={} max={}",
+            percentile(&all_ms, 0.50),
+            percentile(&all_ms, 0.95),
+            percentile(&all_ms, 1.0),
+        );
+        println!(
+            "lossy-node catch-up latency ms (node0 holds): p50={} p95={} max={}",
+            percentile(&node0_ms, 0.50),
+            percentile(&node0_ms, 0.95),
+            percentile(&node0_ms, 1.0),
+        );
+        for (j, node) in nodes.iter().enumerate() {
+            let c = &node.counts;
+            println!(
+                "node{j} rx: push={} pull={} pullresp={} frontier={} blocks={} dup_blocks={}",
+                c.push_msgs.load(Ordering::Relaxed),
+                c.pull_msgs.load(Ordering::Relaxed),
+                c.pullresp_msgs.load(Ordering::Relaxed),
+                c.frontier_msgs.load(Ordering::Relaxed),
+                c.blocks_rx.load(Ordering::Relaxed),
+                c.dup_blocks_rx.load(Ordering::Relaxed),
+            );
+        }
+
+        // POLE 2 (no unclosed admission, no stall): the fabricated orphan is in
+        // NO lace, node 1 stayed live (its blocks converged), and the orphan is
+        // still merely staged.
+        for (j, node) in nodes.iter().enumerate() {
+            let lace = node.handle.lace.read().await;
+            assert!(
+                !lace.contains(&fabricated_id),
+                "node{j} must never admit a block whose predecessor nobody can supply"
+            );
+        }
+        assert!(
+            nodes[1]
+                .handle
+                .orphans
+                .read()
+                .await
+                .contains(&fabricated_id),
+            "the unresolvable orphan is STAGED at its receiver (bounded, TTL-swept later) — \
+             not admitted, not dropped-silently"
+        );
+
+        // CONVERGENCE: every produced block reached every node despite the loss.
+        assert_eq!(
+            unconverged, 0,
+            "all produced blocks must converge to all nodes within the drain window"
+        );
+        let key0: std::collections::HashSet<BlockId> = {
+            let lace = nodes[0].handle.lace.read().await;
+            lace.iter().map(|(id, _)| *id).collect()
+        };
+        for (j, node) in nodes.iter().enumerate().skip(1) {
+            let keys: std::collections::HashSet<BlockId> = {
+                let lace = node.handle.lace.read().await;
+                lace.iter().map(|(id, _)| *id).collect()
+            };
+            assert_eq!(
+                key0, keys,
+                "node0 and node{j} keysets must be identical after drain"
+            );
+        }
+    }
 }
 
 // ─── Periodic Ledger Checkpointing ─────────────────────────────────────────
@@ -19122,16 +20007,43 @@ async fn execute_finalized_membership(
 ///
 /// Amends the constitution AND advances the LIVE consensus committee so the
 /// validator-set reconfiguration is an on-chain, chain-continuing operation
-/// rather than a disruptive genesis re-roll. The new participant list takes
-/// effect at the NEXT wave boundary (the current wave's ordering uses the old
-/// set); the finalization-vote committee and the gossip mesh are advanced here.
+/// rather than a disruptive genesis re-roll.
+///
+/// ⚑ THE INSTALL POINT, stated at its real resolution (the old docstring
+/// claimed "takes effect at the NEXT wave boundary", which was aspiration, not
+/// code). The install happens HERE, at the RATIFYING BLOCK'S POSITION in the
+/// committed order: this function is only reached from the sequential
+/// finalized-execution walk (`execute_finalized_membership`), so the ratifying
+/// vote block is already in the causal past of a SUPER-RATIFIED final leader —
+/// that super-ratification is the OLD configuration's certificate over the
+/// install (Rondo §IV's `2t+1`-of-old rule, discharged by an object τ already
+/// computes) — and every honest node executes the same committed order, so
+/// every honest node installs at the same committed position (the Lean
+/// `ConfigBoundary.install_position_immutable` shape). The vote collector's
+/// `reconfigure` advances its `config_seq` at exactly this point and pins
+/// already-crossed quorums to their configuration.
+///
+/// ⚠ NAMED RESIDUAL (not closed here): τ itself still reads the LIVE roster
+/// for every wave's leader schedule (`ordering.rs::wave_leader` over
+/// `constitution.current`), not the roster-as-of-each-wave — the τ
+/// re-anchoring prerequisite (CONSENSUS-FROM-SOURCE §0). Until that lands, the
+/// wave-boundary refinement of this install point (D6 Answer 1's "the next
+/// wave runs under c+1") cannot be expressed, because no per-wave roster
+/// exists to express it against.
 async fn apply_passed_proposal(
     state: &NodeState,
     handle: &BlocklaceHandle,
     proposal_block: &BlockId,
 ) {
     let mut constitution = handle.constitution.write().await;
-    if constitution.apply_if_passed(proposal_block) {
+    // `Err` = the configuration step bound REFUSED the change BY NAME (the
+    // Lean-authored `ConfigBoundary.classifyStep`; logged at the constitution
+    // choke point). A refused step installs nothing — distinct from Ok(false),
+    // a proposal that has not (yet) passed.
+    if constitution
+        .apply_if_passed(proposal_block)
+        .unwrap_or(false)
+    {
         let new_participants: Vec<[u8; 32]> = constitution.current.participants.clone();
         let new_count = constitution.current.participant_count();
         let new_version = constitution.version();

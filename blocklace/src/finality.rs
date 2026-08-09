@@ -2311,11 +2311,20 @@ impl Blocklace {
     ///
     /// This trusts the checkpoint data verbatim (blocks are NOT re-verified
     /// against signatures, closure is NOT enforced, tips/equivocators are copied
-    /// as-is). Use ONLY for a checkpoint whose provenance is already established
-    /// to be honest — e.g. one this node itself wrote to local disk and whose
-    /// integrity is covered by the persistence layer. NEVER call this on a
-    /// peer-supplied / network-fetched checkpoint: route those through
-    /// [`Self::from_checkpoint`], which authenticates every block.
+    /// as-is — a caller-supplied `equivocators` list can even UN-flag a creator
+    /// whose evidence is in the blocks).
+    ///
+    /// ⚑ **NOT a restart loader. Zero production callers (2026-08-08).** The
+    /// node's own restart path (`persist::blocklace_store::load_blocklace`)
+    /// routes through the authenticating [`Self::from_checkpoint`]: "it came
+    /// from our own local disk" is not provenance — the NODE-1 recovery anchor
+    /// exists precisely because an offline attacker can write that disk, and a
+    /// restart that trusts what the running path verifies is where node-local
+    /// state quietly diverges from committed state (the `auto_evict` reversion
+    /// precedent). This verbatim loader remains ONLY for forensic tooling
+    /// (`dregg-analyzer` deliberately loads possibly-invalid captures to
+    /// analyze them) and for tests that need to CONSTRUCT the untrusted-input
+    /// shape. Never wire it into a node boot or a peer sync.
     pub fn from_checkpoint_trusted(
         checkpoint: &CheckpointData,
         self_key: SigningKey,

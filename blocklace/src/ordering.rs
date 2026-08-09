@@ -396,8 +396,9 @@ fn ratifies(
 /// honest validator and pushes a leader over the finality threshold the enrolled committee did not
 /// reach — and in the limit a wave anchors with ZERO enrolled ratifiers. No attacker is required:
 /// `finality.rs::enroll_pq` is INSERT-ONLY while `constitution.current.participants` SHRINKS on a
-/// passed membership proposal, so a rotated-out validator keeps its ratifying power; and
-/// `from_checkpoint_trusted` reloads the persisted DAG with no roster check at all.
+/// passed membership proposal, so a rotated-out validator keeps its ratifying power; and the
+/// restart restore (`from_checkpoint`, authenticating since 2026-08-08) reloads the persisted DAG
+/// with signatures/closure checked but still no roster check.
 ///
 /// Applied at BOTH sites that map a wave-end block to a decision — `is_super_ratified` (does the
 /// wave anchor?) and `tau_with_config`'s coverage loop (what does the anchor order?) — because an
@@ -1142,8 +1143,9 @@ fn compute_rounds_filtered(
 /// What DID change (the enrollment repairs, in two rounds): `tau`'s docstring used to carry
 /// "assumes all blocks belong to participants" as an unchecked PRECONDITION, and the live path
 /// cannot honour it — the pinned-ingest roster is insert-only while the constitution's participant
-/// set shrinks, and `finality.rs::from_checkpoint_trusted` reloads the persisted DAG with no check
-/// at all. So `tau` enforces items (4) and (5) below for itself:
+/// set shrinks, and the restart restore (`finality.rs::from_checkpoint`, authenticating since
+/// 2026-08-08) reloads the persisted DAG with no ROSTER check. So `tau` enforces items (4) and (5)
+/// below for itself:
 ///   * (5), the OUTPUT filter, closed by `enrolledId` / the `participant_set` filter in
 ///     `tau_with_config` — an unenrolled creator's state transition cannot reach the executor;
 ///   * (4), the RATIFIER filter, closed by [`ratifies_enrolled`] (HORIZONLOG B6) — an unenrolled
@@ -2015,8 +2017,9 @@ mod tests {
     ///
     /// This is not an attacker-only shape. `finality.rs::enroll_pq` is INSERT-ONLY while
     /// `constitution.current.participants` shrinks on a passed membership proposal, so a
-    /// ROTATED-OUT validator keeps producing exactly these blocks; and
-    /// `finality.rs::from_checkpoint_trusted` reloads the persisted DAG with no roster check.
+    /// ROTATED-OUT validator keeps producing exactly these blocks; and the restart restore
+    /// (`finality.rs::from_checkpoint`, authenticating since 2026-08-08) reloads the persisted
+    /// DAG with no roster check.
     ///
     /// BOTH POLES, because a rule that anchors nothing is not a fix:
     ///   * the Sybil cannot substitute for the silent validator — `tau` finalizes NOTHING; and

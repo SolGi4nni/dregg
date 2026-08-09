@@ -80,6 +80,15 @@ pub const ORPHAN_TTL: Duration = Duration::from_secs(120);
 /// buffered orphans on the next batch ([`OrphanBuffer::unmet_roots`]).
 pub const MAX_PULL_ROOTS: usize = 8192;
 
+/// Cap on blocks held awaiting acknowledgment (the BC §5.3 buffer — see
+/// [`OrphanBuffer::hold_for_ack`]). Same drop-oldest discipline as [`MAX_ORPHANS`]:
+/// a dropped held block is re-pullable and will be re-evaluated on re-arrival, so
+/// the cap bounds an adversarial flood without ever permanently losing an honest
+/// block. This cap is also the per-batch factor of the finite-harm bound: an
+/// admitted batch is `⌊head⌋ ∩ D`, so no single license can admit more than the
+/// buffer holds.
+pub const MAX_ACK_HELD: usize = 4096;
+
 /// The not-yet-known predecessors of `block` relative to a replica that holds
 /// `present` (the blocklace keyset) and has `buffered` orphans staged.
 ///
@@ -132,6 +141,18 @@ pub struct OrphanBuffer {
     inserted_at: HashMap<BlockId, (u64, Instant)>,
     /// Monotonic insertion counter feeding `order` keys.
     next_seq: u64,
+    /// THE ACKNOWLEDGE-BEFORE-ADMIT HOLD (blocklace paper §5.3; the verified rule
+    /// is `Dregg2.Distributed.AckBeforeAdmit`, consulted via `dregg_ack_admit`).
+    /// Blocks whose predecessors are present (or satisfiable in-box) but which the
+    /// verified gate refuses to admit — a known equivocator's continued stream, or
+    /// a peer's blocks that do not yet acknowledge a known fork. Distinct from
+    /// `orphans`: an orphan waits on MISSING HISTORY and is drained by arrivals; an
+    /// ack-held block waits on an ACKNOWLEDGING HEAD and is drained by a license.
+    /// Same cap/TTL discipline (`MAX_ACK_HELD` / [`Self::sweep_expired_ack`]).
+    ack_held: HashMap<BlockId, Block>,
+    /// Age bookkeeping for `ack_held`, mirroring `order`/`inserted_at`.
+    ack_age: BTreeMap<u64, BlockId>,
+    ack_at: HashMap<BlockId, (u64, Instant)>,
 }
 
 impl OrphanBuffer {
@@ -233,12 +254,114 @@ impl OrphanBuffer {
         let mut roots: HashSet<BlockId> = HashSet::new();
         for waits in self.waits.values() {
             for pred in waits {
-                if !self.orphans.contains_key(pred) {
+                // An ack-HELD pred is on-box (waiting on a license, not on the
+                // network) — pulling it again is pure waste.
+                if !self.orphans.contains_key(pred) && !self.ack_held.contains_key(pred) {
                     roots.insert(*pred);
                 }
             }
         }
         roots.into_iter().collect()
+    }
+
+    /// Stage `block` in the acknowledge-before-admit hold (BC §5.3): its
+    /// predecessors are satisfiable but the verified gate refused admission (no
+    /// first-evidence license, no acknowledging head yet). Idempotent. Drop-oldest
+    /// at [`MAX_ACK_HELD`]; a dropped block is re-pullable and re-evaluated on
+    /// re-arrival.
+    pub fn hold_for_ack(&mut self, block: Block) {
+        let id = block.id();
+        if self.ack_held.contains_key(&id) {
+            return;
+        }
+        while self.ack_held.len() >= MAX_ACK_HELD {
+            let Some((_, oldest)) = self.ack_age.iter().next().map(|(s, id)| (*s, *id)) else {
+                break;
+            };
+            self.drop_ack_held(&oldest);
+        }
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.ack_age.insert(seq, id);
+        self.ack_at.insert(id, (seq, Instant::now()));
+        self.ack_held.insert(id, block);
+    }
+
+    /// True if `id` is currently held awaiting acknowledgment.
+    pub fn is_ack_held(&self, id: &BlockId) -> bool {
+        self.ack_held.contains_key(id)
+    }
+
+    pub fn ack_held_is_empty(&self) -> bool {
+        self.ack_held.is_empty()
+    }
+
+    /// Number of blocks currently held awaiting acknowledgment.
+    pub fn ack_held_len(&self) -> usize {
+        self.ack_held.len()
+    }
+
+    /// Clones of the ack-held blocks (the `D` the verified gate evaluates over,
+    /// together with the orphans and the arriving candidate).
+    pub fn ack_held_blocks(&self) -> Vec<Block> {
+        self.ack_held.values().cloned().collect()
+    }
+
+    /// Clones of the orphan-buffered blocks (they complete `D`: a licensing head
+    /// may sit in the orphan buffer waiting on an ack-held predecessor).
+    pub fn orphan_blocks(&self) -> Vec<Block> {
+        self.orphans.values().cloned().collect()
+    }
+
+    /// Remove a block from the ack hold (admitted under a license, or landed via
+    /// another path).
+    pub fn drop_ack_held(&mut self, id: &BlockId) {
+        if let Some((seq, _)) = self.ack_at.remove(id) {
+            self.ack_age.remove(&seq);
+        }
+        self.ack_held.remove(id);
+    }
+
+    /// Drain the whole ack hold (the retry epoch: fresh inserts may have changed
+    /// the evidence, so every held block gets re-offered to the gate once).
+    pub fn take_all_ack_held(&mut self) -> Vec<Block> {
+        let out: Vec<Block> = self.ack_held.values().cloned().collect();
+        self.ack_held.clear();
+        self.ack_age.clear();
+        self.ack_at.clear();
+        out
+    }
+
+    /// Orphans whose ENTIRE wait-set is in-box (ack-held or itself orphaned, per
+    /// `in_box`): these are gate HEAD candidates — their batch closure is
+    /// satisfiable from the buffers, so only a license separates them from the
+    /// lace. The retry epoch re-offers them (a licensing head that arrived BEFORE
+    /// its backlog sits here, and nothing else would ever re-consult it).
+    pub fn closable_orphan_ids(&self, in_box: &HashSet<BlockId>) -> Vec<BlockId> {
+        self.waits
+            .iter()
+            .filter(|(_, waits)| waits.iter().all(|w| in_box.contains(w)))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// TTL sweep for the ack hold, mirroring [`Self::sweep_expired`]. A swept
+    /// block is re-pullable; a colluder-fed stream therefore occupies at most
+    /// `MAX_ACK_HELD` slots for at most `ttl` each — memory stays bounded no
+    /// matter how long the colluder feeds.
+    pub fn sweep_expired_ack(&mut self, ttl: Duration) -> Vec<BlockId> {
+        let now = Instant::now();
+        let mut expired: Vec<BlockId> = Vec::new();
+        for (_, id) in self.ack_age.iter() {
+            match self.ack_at.get(id) {
+                Some((_, at)) if now.duration_since(*at) >= ttl => expired.push(*id),
+                _ => break,
+            }
+        }
+        for id in &expired {
+            self.drop_ack_held(id);
+        }
+        expired
     }
 
     /// Record that block `landed` is now present in the lace, and return the
@@ -325,6 +448,12 @@ pub struct ApplyOutcome {
     pub pull_roots: Vec<BlockId>,
     /// Equivocation proofs encountered (creator should be evicted).
     pub equivocations: Vec<dregg_blocklace::finality::EquivocationProof>,
+    /// Blocks HELD by the verified acknowledge-before-admit gate (BC §5.3): their
+    /// predecessors were satisfiable but no license (first evidence / acknowledging
+    /// head) admitted them. They stay in [`OrphanBuffer`]'s ack hold and are
+    /// re-offered when new evidence lands; a colluder-fed stream sits here forever
+    /// (bounded by `MAX_ACK_HELD` + TTL) — which IS the finite-harm bound working.
+    pub held_for_ack: Vec<BlockId>,
     /// Blocks REFUSED on a deterministic policy/signature ground and dropped
     /// permanently — `(block_id, reason)`. These are neither inserted nor buffered
     /// nor re-pulled, which at `supermajority_threshold(n) == n` (n ≤ 3) halts the
@@ -337,6 +466,164 @@ pub struct ApplyOutcome {
 /// producing node's own log line without dumping the whole hash.
 fn hex4(bytes: &[u8; 32]) -> String {
     bytes[..4].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// =============================================================================
+// The acknowledge-before-admit gate (BC §5.3) — Lean decides, Rust marshals.
+// =============================================================================
+//
+// THE SUBSTRATE, SAID OUT LOUD: the admission RULE is authored in Lean
+// (`metatheory/Dregg2/Distributed/AckBeforeAdmit.lean`, `@[export] dregg_ack_admit`,
+// verdict proved equal to the verified `admitBatch` by `ack_admit_eq_gate`). This
+// Rust code only (a) encodes the query wire, (b) calls the exported artifact, and
+// (c) applies the verdict. Nothing here evaluates an admission clause.
+//
+// ⚠ ENCODER NOTE. This encoder interns `(lace ∪ D)` — the finality gate's
+// `build_wire` cannot be reused as-is because (1) it interns lace blocks only (the
+// gate needs the buffered set `D` and the head on the wire) and (2) it FILTERS
+// absent predecessors, which would vacuously satisfy the Lean closure check; here
+// an unresolved pred id is interned WITHOUT a block so the Lean `batchClosed`
+// genuinely fails on it. Grammar and BLOCKW encoding are byte-compatible with
+// `FinalityGate`'s (`AckBeforeAdmit.encodeAckWire` mirrors this). When
+// `finality_gate.rs` is free of live lanes, fold this into `build_wire` behind an
+// extra-blocks parameter so there is one lace encoder again.
+
+/// The verified gate's verdict on a head candidate.
+enum AckVerdict {
+    /// Admit exactly these blocks (the head's licensed batch), in insertion order.
+    Admit(Vec<Block>),
+    /// Hold: no license. Fail-closed.
+    Hold,
+    /// The gate could not answer (archive without the export, wire error). The
+    /// caller FAILS CLOSED — absence never admits.
+    Unavailable(String),
+}
+
+/// Encode the `(head, D, lace)` query for `dregg_ack_admit` and consult the
+/// verified rule. `d_blocks` must contain the head.
+fn consult_ack_gate(lace: &Blocklace, d_blocks: &[Block], head: &BlockId) -> AckVerdict {
+    if !dregg_lean_ffi::ack_admit_available() {
+        return AckVerdict::Unavailable(
+            "dregg_ack_admit not exported by the linked archive".into(),
+        );
+    }
+
+    // ── Intern ids and creators over lace ∪ D (+ unresolved preds), deterministically.
+    let mut lace_blocks: Vec<(&BlockId, &Block)> = lace.iter().collect();
+    lace_blocks.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
+    let mut d_sorted: Vec<&Block> = d_blocks.iter().collect();
+    d_sorted.sort_by(|a, b| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
+
+    let mut id_of: HashMap<BlockId, u64> = HashMap::new();
+    let mut block_of: HashMap<u64, BlockId> = HashMap::new();
+    let mut next_id: u64 = 0;
+    let mut intern = |id: BlockId,
+                      id_of: &mut HashMap<BlockId, u64>,
+                      block_of: &mut HashMap<u64, BlockId>,
+                      next_id: &mut u64|
+     -> u64 {
+        *id_of.entry(id).or_insert_with(|| {
+            let v = *next_id;
+            *next_id += 1;
+            block_of.insert(v, id);
+            v
+        })
+    };
+    for (id, _) in &lace_blocks {
+        intern(**id, &mut id_of, &mut block_of, &mut next_id);
+    }
+    for b in &d_sorted {
+        intern(b.id(), &mut id_of, &mut block_of, &mut next_id);
+    }
+    // Unresolved predecessor ids get interned WITHOUT a block: the Lean closure
+    // check must be able to fail on them (never encode a vacuously-closed graph).
+    let all_pred_ids: Vec<BlockId> = lace_blocks
+        .iter()
+        .flat_map(|(_, b)| b.predecessors.iter().copied())
+        .chain(d_sorted.iter().flat_map(|b| b.predecessors.iter().copied()))
+        .collect();
+    for p in all_pred_ids {
+        intern(p, &mut id_of, &mut block_of, &mut next_id);
+    }
+
+    let mut creator_of: HashMap<[u8; 32], u64> = HashMap::new();
+    let mut next_creator: u64 = 0;
+    let mut creator =
+        |c: [u8; 32], creator_of: &mut HashMap<[u8; 32], u64>, next_creator: &mut u64| -> u64 {
+            *creator_of.entry(c).or_insert_with(|| {
+                let v = *next_creator;
+                *next_creator += 1;
+                v
+            })
+        };
+
+    let encode_block = |b: &Block,
+                        id_of: &HashMap<BlockId, u64>,
+                        creator_of: &mut HashMap<[u8; 32], u64>,
+                        next_creator: &mut u64|
+     -> String {
+        let preds: Vec<String> = b
+            .predecessors
+            .iter()
+            .map(|p| id_of.get(p).expect("interned above").to_string())
+            .collect();
+        format!(
+            "{}:{}:{}:{}",
+            id_of.get(&b.id()).expect("interned above"),
+            creator(b.creator, creator_of, next_creator),
+            b.seq,
+            preds.join(".")
+        )
+    };
+
+    let d_wire: Vec<String> = d_sorted
+        .iter()
+        .map(|b| encode_block(b, &id_of, &mut creator_of, &mut next_creator))
+        .collect();
+    let b_wire: Vec<String> = lace_blocks
+        .iter()
+        .map(|(_, b)| encode_block(b, &id_of, &mut creator_of, &mut next_creator))
+        .collect();
+    let Some(head_id) = id_of.get(head) else {
+        return AckVerdict::Unavailable("head not interned (not in D?)".into());
+    };
+    let wire = format!(
+        "h={};D={};w=0;P=;B={}",
+        head_id,
+        d_wire.join("|"),
+        b_wire.join("|")
+    );
+
+    // ── The verified rule decides.
+    let reply = match dregg_lean_ffi::shadow_ack_admit(&wire) {
+        Ok(r) => r,
+        Err(e) => return AckVerdict::Unavailable(e),
+    };
+    if reply == "0" {
+        return AckVerdict::Hold;
+    }
+    let Some(ids) = reply.strip_prefix("1:") else {
+        // "ERR" or anything unexpected: fail closed.
+        return AckVerdict::Unavailable(format!("gate replied {reply:?}"));
+    };
+    let mut batch: Vec<Block> = Vec::new();
+    let by_id: HashMap<BlockId, &Block> = d_blocks.iter().map(|b| (b.id(), b)).collect();
+    for tok in ids.split(',').filter(|t| !t.is_empty()) {
+        let Ok(n) = tok.parse::<u64>() else {
+            return AckVerdict::Unavailable(format!("unparseable batch id {tok:?}"));
+        };
+        let Some(real) = block_of.get(&n) else {
+            return AckVerdict::Unavailable(format!("batch id {n} never interned"));
+        };
+        // The verified batch is `⌊head⌋ ∩ D` — every member is a D block.
+        if let Some(b) = by_id.get(real) {
+            batch.push((*b).clone());
+        }
+    }
+    if batch.is_empty() {
+        return AckVerdict::Unavailable("gate admitted an empty batch".into());
+    }
+    AckVerdict::Admit(batch)
 }
 
 /// Insert `blocks` into `lace`, staging orphans in `buffer`, cascading releases.
@@ -354,13 +641,16 @@ pub fn apply_with_buffering(
     // THEME-2 #4: opportunistically sweep stale orphans (predecessors that never
     // landed within the TTL) on every apply batch. Cheap — stops at the first
     // still-fresh orphan — and needs no separate timer task; orphans only matter
-    // while blocks are flowing, which is exactly when this runs.
+    // while blocks are flowing, which is exactly when this runs. The ack hold is
+    // swept on the same cadence.
     let _swept = buffer.sweep_expired(ORPHAN_TTL);
+    let _swept_ack = buffer.sweep_expired_ack(ORPHAN_TTL);
 
     let mut inserted: Vec<Block> = Vec::new();
     let mut pull_roots: HashSet<BlockId> = HashSet::new();
     let mut equivocations = Vec::new();
     let mut refused: Vec<(BlockId, String)> = Vec::new();
+    let mut held_for_ack: Vec<BlockId> = Vec::new();
 
     // The lace keyset, seeded ONCE and maintained incrementally: every accepted
     // block (Ok or Equivocation-evidence) is inserted below, so `present` always
@@ -368,103 +658,236 @@ pub fn apply_with_buffering(
     // block on the sync path.
     let mut present: HashSet<BlockId> = lace.iter().map(|(id, _)| *id).collect();
 
-    // Process the incoming batch, then drain any cascades.
+    // Blocks the verified gate has already licensed this call: they bypass the
+    // gate consult (their admission IS the gate's verdict) and go straight to the
+    // signature/pin arms below.
+    let mut licensed: HashSet<BlockId> = HashSet::new();
+    // Epoch machinery. A drained queue re-offers the gate candidates (ack-held
+    // blocks + orphans whose closure is satisfiable in-box) whenever the call
+    // state CHANGED since the last epoch: an insert (fresh evidence can license
+    // what was refused) or a FIRST-TIME hold (a newly held block can complete the
+    // in-box closure of a licensing head that arrived before its backlog — that
+    // head sits in the orphan buffer and nothing else re-consults it). Re-holds of
+    // already-seen ids do not set the flag, so an epoch that makes no progress is
+    // the last: the loop terminates after at most (inserts + distinct holds)
+    // epochs.
+    let mut epoch_dirty = false;
+    let mut seen_holds: HashSet<BlockId> = HashSet::new();
+
+    // Process the incoming batch, then drain any cascades, then retry epochs.
     let mut queue: VecDeque<Block> = blocks.into_iter().collect();
-    while let Some(block) = queue.pop_front() {
-        let block_id = block.id();
-        if lace.contains(&block_id) {
-            continue;
-        }
-        let block_clone = block.clone();
-        // LIVE WIRE INGEST (GAP #1b): PIN each incoming consensus block's
-        // post-quantum half to its creator's ENROLLED ML-DSA-65 key
-        // (`receive_block_pinned`), NOT the ed25519-only `receive_block`. Fails
-        // closed (`BlockError::UnenrolledCreator`) on a creator absent from the
-        // roster, so a quantum adversary who forges only the classical half
-        // cannot inject a block under an enrolled member's identity. The roster
-        // is enrolled from the committee in `blocklace_sync::run_blocklace_sync`
-        // (and re-enrolled on every committee rotation) before any ingest runs.
-        match lace.receive_block_pinned(block) {
-            Ok(()) => {
-                inserted.push(block_clone);
-                present.insert(block_id);
-                // A buffered duplicate of this id is now satisfied/irrelevant.
-                buffer.drop_orphan(&block_id);
-                // Cascade: release orphans this block unblocks, in causal order.
-                let released = buffer.ready_after(block_id);
-                for r in released {
-                    queue.push_back(r);
-                }
+    loop {
+        while let Some(block) = queue.pop_front() {
+            let block_id = block.id();
+            if lace.contains(&block_id) {
+                buffer.drop_ack_held(&block_id);
+                continue;
             }
-            Err(BlockError::MissingPredecessor { .. }) => {
-                // WAIT-SET: every predecessor not yet in the LACE — these are what the
-                // orphan must wait on before it can be applied (a pred that is itself
-                // a buffered orphan still gates this block until it lands). Computed
-                // with an EMPTY `buffered` arg so buffered preds are NOT excluded.
-                let wait_on = missing_predecessors(&block_clone, &present, &HashSet::new());
-                if wait_on.is_empty() {
-                    // Genuine race: all predecessors are in the lace now (they landed
-                    // between the error and this recheck) — retry the insert. This
-                    // branch is bounded: `wait_on` empty means every pred is present,
-                    // so the retry succeeds (it cannot loop, unlike a buffered-pred).
-                    queue.push_front(block_clone);
+
+            // ── THE ACKNOWLEDGE-BEFORE-ADMIT GATE (BC §5.3; the verified rule is
+            // `Dregg2.Distributed.AckBeforeAdmit.admitBatch`, called through the
+            // `dregg_ack_admit` export). Consulted only in FORK CONTEXT — a known
+            // equivocator or a non-empty ack hold. The fork-free fast path below
+            // is the gate's own verdict by the named Lean theorems: with
+            // `byzOf B = []` and a singleton batch, `no_byz_no_hold` admits every
+            // clean block and `firstEvidence` admits the fork-completing one (the
+            // `Equivocation` arm) — so skipping the FFI here decides nothing.
+            let fork_context = !lace.equivocators().is_empty() || !buffer.ack_held_is_empty();
+            if fork_context && !licensed.contains(&block_id) {
+                let wait_on = missing_predecessors(&block, &present, &HashSet::new());
+                let satisfiable_in_box = wait_on
+                    .iter()
+                    .all(|m| buffer.contains(m) || buffer.is_ack_held(m));
+                if !wait_on.is_empty() && !satisfiable_in_box {
+                    // Genuinely missing history: the CLOSURE gate (orphan + pull),
+                    // exactly as ever — the ack gate never relaxes it.
+                    let buffered = buffer.buffered_ids();
+                    for m in &wait_on {
+                        if !buffered.contains(m) && !buffer.is_ack_held(m) {
+                            pull_roots.insert(*m);
+                        }
+                    }
+                    buffer.buffer(block, wait_on);
                     continue;
                 }
-                // PULL-SET: of the waited-on preds, request only those we are NOT
-                // already buffering (a buffered pred will arrive via its own pull /
-                // cascade — re-requesting it is wasted bandwidth).
-                let buffered = buffer.buffered_ids();
-                for m in &wait_on {
-                    if !buffered.contains(m) {
-                        pull_roots.insert(*m);
+                // Closed (or closable from the buffers): the verified rule decides.
+                // D = ack-held ∪ orphans ∪ {candidate}: orphans complete D because a
+                // licensing head may be orphan-buffered waiting on an ack-held pred.
+                let mut d_blocks: Vec<Block> = buffer.ack_held_blocks();
+                d_blocks.extend(buffer.orphan_blocks());
+                d_blocks.push(block.clone());
+                match consult_ack_gate(lace, &d_blocks, &block_id) {
+                    AckVerdict::Admit(batch) => {
+                        // Feed the licensed batch through the signature/pin arms in
+                        // the verified insertion order. The license does NOT bypass
+                        // the pin: a forged batch member is still refused below and
+                        // its dependents re-orphan.
+                        for b in &batch {
+                            let id = b.id();
+                            licensed.insert(id);
+                            buffer.drop_ack_held(&id);
+                            buffer.drop_orphan(&id);
+                        }
+                        for b in batch.into_iter().rev() {
+                            queue.push_front(b);
+                        }
+                        continue;
+                    }
+                    AckVerdict::Hold => {
+                        if wait_on.is_empty() {
+                            buffer.hold_for_ack(block);
+                            held_for_ack.push(block_id);
+                        } else {
+                            // Waits on in-box (held/orphaned) preds; the cascade
+                            // re-offers it if they ever land.
+                            buffer.buffer(block, wait_on);
+                        }
+                        continue;
+                    }
+                    AckVerdict::Unavailable(why) => {
+                        // ⚑ FAIL CLOSED, LOUDLY. Without the verified gate there is
+                        // no finite-harm bound at all (READING-BLOCKLACE §0.4), so
+                        // absence HOLDS the block — it never admits. Fork-free
+                        // ingest (the deployed n=1 path) is unaffected.
+                        tracing::warn!(
+                            block = %hex4(&block_id.0),
+                            creator = %hex4(&block.creator),
+                            why = %why,
+                            "ack-before-admit gate UNAVAILABLE in fork context — \
+                             HOLDING block (fail-closed; rebuild the Lean archive \
+                             to restore verified admission)"
+                        );
+                        if wait_on.is_empty() {
+                            buffer.hold_for_ack(block);
+                            held_for_ack.push(block_id);
+                        } else {
+                            buffer.buffer(block, wait_on);
+                        }
+                        continue;
                     }
                 }
-                buffer.buffer(block_clone, wait_on);
             }
-            Err(BlockError::Equivocation { proof, .. }) => {
-                // receive_block still inserted the block (evidence). Record it.
-                inserted.push(block_clone);
-                present.insert(block_id);
-                equivocations.push(proof);
-                buffer.drop_orphan(&block_id);
-                let released = buffer.ready_after(block_id);
-                for r in released {
-                    queue.push_back(r);
+
+            let block_clone = block.clone();
+            // LIVE WIRE INGEST (GAP #1b): PIN each incoming consensus block's
+            // post-quantum half to its creator's ENROLLED ML-DSA-65 key
+            // (`receive_block_pinned`), NOT the ed25519-only `receive_block`. Fails
+            // closed (`BlockError::UnenrolledCreator`) on a creator absent from the
+            // roster, so a quantum adversary who forges only the classical half
+            // cannot inject a block under an enrolled member's identity. The roster
+            // is enrolled from the committee in `blocklace_sync::run_blocklace_sync`
+            // (and re-enrolled on every committee rotation) before any ingest runs.
+            match lace.receive_block_pinned(block) {
+                Ok(()) => {
+                    inserted.push(block_clone);
+                    present.insert(block_id);
+                    retry_ack = true;
+                    // A buffered duplicate of this id is now satisfied/irrelevant.
+                    buffer.drop_orphan(&block_id);
+                    buffer.drop_ack_held(&block_id);
+                    // Cascade: release orphans this block unblocks, in causal order.
+                    let released = buffer.ready_after(block_id);
+                    for r in released {
+                        queue.push_back(r);
+                    }
+                }
+                Err(BlockError::MissingPredecessor { .. }) => {
+                    // WAIT-SET: every predecessor not yet in the LACE — these are what the
+                    // orphan must wait on before it can be applied (a pred that is itself
+                    // a buffered orphan still gates this block until it lands). Computed
+                    // with an EMPTY `buffered` arg so buffered preds are NOT excluded.
+                    let wait_on = missing_predecessors(&block_clone, &present, &HashSet::new());
+                    if wait_on.is_empty() {
+                        // Genuine race: all predecessors are in the lace now (they landed
+                        // between the error and this recheck) — retry the insert. This
+                        // branch is bounded: `wait_on` empty means every pred is present,
+                        // so the retry succeeds (it cannot loop, unlike a buffered-pred).
+                        queue.push_front(block_clone);
+                        continue;
+                    }
+                    // PULL-SET: of the waited-on preds, request only those we are NOT
+                    // already buffering (a buffered pred will arrive via its own pull /
+                    // cascade — re-requesting it is wasted bandwidth).
+                    let buffered = buffer.buffered_ids();
+                    for m in &wait_on {
+                        if !buffered.contains(m) && !buffer.is_ack_held(m) {
+                            pull_roots.insert(*m);
+                        }
+                    }
+                    buffer.buffer(block_clone, wait_on);
+                }
+                Err(BlockError::Equivocation { proof, .. }) => {
+                    // receive_block still inserted the block (evidence — FIRST
+                    // evidence on the fast path; in fork context the gate's
+                    // clause-1 license got it here). Record it.
+                    inserted.push(block_clone);
+                    present.insert(block_id);
+                    retry_ack = true;
+                    equivocations.push(proof);
+                    buffer.drop_orphan(&block_id);
+                    buffer.drop_ack_held(&block_id);
+                    let released = buffer.ready_after(block_id);
+                    for r in released {
+                        queue.push_back(r);
+                    }
+                }
+                Err(other) => {
+                    // Drop forged / unpinnable blocks (A1 + GAP #1b: BOTH signature
+                    // halves are the gate). A bad ed25519 half, a missing/forged
+                    // post-quantum half, or a creator with no enrolled ML-DSA key
+                    // fails CLOSED here — never inserted, never buffered, never
+                    // pulled. A quantum adversary who forges only the classical half
+                    // cannot inject a block under an enrolled member's identity.
+                    // Consensus-time failures are likewise deterministic invalid
+                    // payload/policy observations, never missing-history retries;
+                    // buffering or pulling them would turn a stable refusal into a
+                    // hot operational loop.
+                    //
+                    // ⚑ SAY IT OUT LOUD. This arm used to be a bare `{}` — a silent,
+                    // permanent, unlogged drop of a consensus block, and it is the one
+                    // place on the ingest path where a block can vanish with no trace.
+                    // It cost a full day of the n=3 committee-wedge investigation: with
+                    // nothing emitted here, "the peer never sent it", "the wire dropped
+                    // it" and "we refused it" are indistinguishable from the outside.
+                    // `warn!`, not `debug!`: at n=3 a single refused block halts the
+                    // committee forever, because `supermajority_threshold(3) == 3` means
+                    // the round cohort can never complete without it.
+                    tracing::warn!(
+                        creator = %hex4(&block_clone.creator),
+                        seq = block_clone.seq,
+                        block = %hex4(&block_id.0),
+                        error = %other,
+                        "consensus block REFUSED on ingest and dropped permanently \
+                         (deterministic policy/signature refusal — never buffered, never re-pulled)"
+                    );
+                    refused.push((block_id, other.to_string()));
                 }
             }
-            Err(other) => {
-                // Drop forged / unpinnable blocks (A1 + GAP #1b: BOTH signature
-                // halves are the gate). A bad ed25519 half, a missing/forged
-                // post-quantum half, or a creator with no enrolled ML-DSA key
-                // fails CLOSED here — never inserted, never buffered, never
-                // pulled. A quantum adversary who forges only the classical half
-                // cannot inject a block under an enrolled member's identity.
-                // Consensus-time failures are likewise deterministic invalid
-                // payload/policy observations, never missing-history retries;
-                // buffering or pulling them would turn a stable refusal into a
-                // hot operational loop.
-                //
-                // ⚑ SAY IT OUT LOUD. This arm used to be a bare `{}` — a silent,
-                // permanent, unlogged drop of a consensus block, and it is the one
-                // place on the ingest path where a block can vanish with no trace.
-                // It cost a full day of the n=3 committee-wedge investigation: with
-                // nothing emitted here, "the peer never sent it", "the wire dropped
-                // it" and "we refused it" are indistinguishable from the outside.
-                // `warn!`, not `debug!`: at n=3 a single refused block halts the
-                // committee forever, because `supermajority_threshold(3) == 3` means
-                // the round cohort can never complete without it.
-                tracing::warn!(
-                    creator = %hex4(&block_clone.creator),
-                    seq = block_clone.seq,
-                    block = %hex4(&block_id.0),
-                    error = %other,
-                    "consensus block REFUSED on ingest and dropped permanently \
-                     (deterministic policy/signature refusal — never buffered, never re-pulled)"
-                );
-                refused.push((block_id, other.to_string()));
-            }
         }
+
+        // Queue drained. One ack-RETRY EPOCH: if anything was inserted since the
+        // last epoch and blocks are still held, re-offer them to the gate — fresh
+        // evidence (a fork-completing insert, an acknowledging head) may license
+        // what was refused a moment ago. Held-again blocks simply return to the
+        // hold; no insert since the last epoch means no verdict can have changed,
+        // so the loop exits.
+        if retry_ack && !buffer.ack_held_is_empty() {
+            retry_ack = false;
+            for b in buffer.take_all_ack_held() {
+                queue.push_back(b);
+            }
+            continue;
+        }
+        break;
     }
+
+    // A block can be held, retried, and held again within one call; report each id
+    // once.
+    held_for_ack.sort();
+    held_for_ack.dedup();
+    // Only blocks still actually in the hold at exit count as held (a later epoch
+    // may have admitted them).
+    held_for_ack.retain(|id| buffer.is_ack_held(id));
 
     // Any predecessors still buffered-waiting are catch-up roots too (a follow-up
     // pull should fetch them even if they weren't in this batch's direct misses).
@@ -491,6 +914,7 @@ pub fn apply_with_buffering(
         pull_roots,
         equivocations,
         refused,
+        held_for_ack,
     }
 }
 

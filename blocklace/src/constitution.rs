@@ -121,46 +121,61 @@ impl Constitution {
     /// Apply a membership proposal to the constitution.
     ///
     /// This mutates the participant set, recomputes the threshold (for
-    /// join/leave), increments the version, and returns true if the change
-    /// was actually applied (e.g., false if trying to add an existing member).
-    pub fn apply_proposal(&mut self, proposal: &MembershipProposal) -> bool {
+    /// join/leave), and increments the version. `Ok(true)` = applied,
+    /// `Ok(false)` = inert no-op (already a member / not a member / unchanged
+    /// threshold), `Err` = the step is REFUSED BY NAME by the configuration
+    /// step bound ([`config_step_allowed`], the Lean-authored
+    /// `ConfigBoundary.classifyStep`) and NOTHING was mutated.
+    ///
+    /// Each ratified proposal is one configuration step of a single change
+    /// (`j=1,l=0` for Join, `j=0,l=1` for Leave) — batched steps only arrive
+    /// when the DBRB merge rule (D2) lands, and the bound is already stated
+    /// over the general `(joins, leaves)` shape for it.
+    pub fn apply_proposal(&mut self, proposal: &MembershipProposal) -> Result<bool, StepRefusal> {
         match proposal {
             MembershipProposal::Join {
                 node_key,
                 justification: _,
             } => {
                 if self.participants.contains(node_key) {
-                    return false; // Already a member
+                    return Ok(false); // Already a member
                 }
+                config_step_allowed(self.participants.len(), 1, 0)?;
                 self.participants.push(*node_key);
                 self.participants.sort();
                 self.threshold = compute_threshold(self.participants.len());
                 self.version += 1;
-                true
+                Ok(true)
             }
             MembershipProposal::Leave {
                 node_key,
                 reason: _,
             } => {
-                let before = self.participants.len();
-                self.participants.retain(|k| k != node_key);
-                if self.participants.len() == before {
-                    return false; // Not a member
+                if !self.participants.contains(node_key) {
+                    return Ok(false); // Not a member
                 }
+                config_step_allowed(self.participants.len(), 0, 1)?;
+                self.participants.retain(|k| k != node_key);
                 self.threshold = compute_threshold(self.participants.len());
                 self.version += 1;
-                true
+                Ok(true)
             }
             MembershipProposal::AmendThreshold { new_threshold } => {
+                // ⚠ LOADED GUN, named: this variant decouples the threshold
+                // from the roster, which the install discipline pins together
+                // (`T(c)` a function of the configuration). It is dead from the
+                // wire (FEDERATION-DESIGN-GAPS §2.12) and should be DELETED —
+                // deletion drags `MembershipSafety.lean`'s H-rule model with it
+                // and is its own pass.
                 if *new_threshold == self.threshold {
-                    return false; // No change
+                    return Ok(false); // No change
                 }
                 if *new_threshold == 0 || *new_threshold > self.participants.len() {
-                    return false; // Invalid threshold
+                    return Ok(false); // Invalid threshold
                 }
                 self.threshold = *new_threshold;
                 self.version += 1;
-                true
+                Ok(true)
             }
             MembershipProposal::AmendRoutes {
                 new_routes_commitment,
@@ -169,7 +184,7 @@ impl Constitution {
                 // Update the routes commitment. Applied immediately (no grace period).
                 self.routes_commitment = Some(*new_routes_commitment);
                 self.version += 1;
-                true
+                Ok(true)
             }
         }
     }
@@ -493,15 +508,24 @@ impl ConstitutionManager {
     /// Apply a proposal that has passed AND been confirmed via finality.
     ///
     /// This is called when the proposal is in the causal past of a finalized
-    /// leader (Cordial Miners finality). Returns true if successfully applied.
-    pub fn apply_if_passed(&mut self, proposal_block: &BlockId) -> bool {
+    /// leader (Cordial Miners finality) — super-ratification of that leader IS
+    /// the old configuration's certificate over the install, and the position
+    /// of this block in the committed order IS the install point (identical on
+    /// every honest node; Lean `ConfigBoundary.install_position_immutable`).
+    ///
+    /// `Ok(true)` = applied; `Ok(false)` = not passed / no proposal / inert;
+    /// `Err` = the step bound REFUSED the change BY NAME and nothing mutated —
+    /// distinct from `Ok(false)` so a refused proposal can never be mistaken
+    /// for one still gathering votes. The refusal is also logged here (the one
+    /// choke point every caller shares).
+    pub fn apply_if_passed(&mut self, proposal_block: &BlockId) -> Result<bool, StepRefusal> {
         if !self.votes.has_passed(proposal_block, &self.current) {
-            return false;
+            return Ok(false);
         }
 
         let proposal = match self.votes.get_proposal(proposal_block) {
             Some(p) => p.clone(),
-            None => return false,
+            None => return Ok(false),
         };
 
         // Track the joining node for grace period enforcement.
@@ -510,22 +534,32 @@ impl ConstitutionManager {
             _ => None,
         };
 
-        if self.current.apply_proposal(&proposal) {
-            self.votes.mark_applied(proposal_block);
-            self.history.push(self.current.clone());
+        match self.current.apply_proposal(&proposal) {
+            Ok(true) => {
+                self.votes.mark_applied(proposal_block);
+                self.history.push(self.current.clone());
 
-            // Record join time for newly added members (for min_membership_duration
-            // and rejoin_grace_waves enforcement).
-            if let Some(node_key) = joining_node {
-                self.joined_at_wave.insert(node_key, self.current_wave);
-                // Initialize their last_active_wave so they get a full timeout
-                // window from their join time, not from wave 0.
-                self.last_active_wave.insert(node_key, self.current_wave);
+                // Record join time for newly added members (for min_membership_duration
+                // and rejoin_grace_waves enforcement).
+                if let Some(node_key) = joining_node {
+                    self.joined_at_wave.insert(node_key, self.current_wave);
+                    // Initialize their last_active_wave so they get a full timeout
+                    // window from their join time, not from wave 0.
+                    self.last_active_wave.insert(node_key, self.current_wave);
+                }
+
+                Ok(true)
             }
-
-            true
-        } else {
-            false
+            Ok(false) => Ok(false),
+            Err(refusal) => {
+                tracing::warn!(
+                    proposal_block = %proposal_block,
+                    refusal = %refusal,
+                    "configuration step REFUSED BY NAME: the ratified proposal does not \
+                     install (roster unchanged); re-propose after the roster moves"
+                );
+                Err(refusal)
+            }
         }
     }
 
@@ -746,6 +780,141 @@ impl ConstitutionManager {
 /// threshold of 0 that an empty vote set would satisfy.
 pub fn compute_threshold(n: usize) -> usize {
     crate::ordering::supermajority_threshold(n)
+}
+
+// ─── The configuration step bound (the install discipline's refusal gate) ─────
+//
+// SUBSTRATE: this is a byte-for-byte transcription of the AUTHORED consensus
+// rule `Dregg2.Distributed.ConfigBoundary.classifyStep` (metatheory), the same
+// pairing `supermajority_threshold` has with `QuorumThreshold.lean`. The Lean
+// side carries the soundness theorem (`stepAllowed_quorums_share_honest`): an
+// allowed step keeps cross-configuration quorum intersection strictly above the
+// Byzantine budget of the smaller roster — DZ (Duan & Zhang, *Foundations of
+// Dynamic BFT*) Lemma C.8's counting argument, quantified over all n. Change
+// NOTHING here without changing the Lean first.
+
+/// The Byzantine budget `f(n) = ⌊(n−1)/3⌋` (Lean `ConfigBoundary.faultBudget`;
+/// `supermajority_threshold n = n − f(n)` for `n ≥ 1`). Below 4 members the
+/// budget is ZERO — such a roster tolerates nothing, which is what the roster
+/// floor refuses to land on.
+pub fn fault_budget(n: usize) -> usize {
+    n.saturating_sub(1) / 3
+}
+
+/// A configuration step REFUSED BY NAME. Mirrors the refusal constructors of
+/// the Lean `ConfigBoundary.StepVerdict` one-for-one. A refused step mutates
+/// NOTHING — refusal is the enforcement, and the name is the diagnosis.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StepRefusal {
+    /// More leaves than the roster has members (Lean `refuseLeavesExceedRoster`).
+    LeavesExceedRoster { roster: usize, leaves: usize },
+    /// The step would leave an EMPTY roster, which could never certify anything
+    /// again (Lean `refuseEmptySurvivors`).
+    EmptySurvivors {
+        roster: usize,
+        joins: usize,
+        leaves: usize,
+    },
+    /// The step breaks cross-configuration quorum intersection: the old and new
+    /// rosters' supermajority quorums could fail to share an honest member, so
+    /// a Byzantine member could equivocate across the boundary (Lean
+    /// `refuseIntersectionBound`, DZ Lemma C.8). Concretely refused: 3 joins
+    /// from n=4 (the 4→7 step), 3 leaves from n=7, and ⚑ one join + one leave
+    /// at n=4 in a single step (the mixed-step sharpening the flat "≤2 changes"
+    /// rule misses — `churnStepOk_breaks_at_one_one_from_four`).
+    IntersectionBound {
+        roster: usize,
+        joins: usize,
+        leaves: usize,
+    },
+    /// The step would shrink a BFT-capable roster (`n ≥ 4`) below 4 members —
+    /// onto a roster whose fault budget is zero. This is the teeth for the
+    /// NON-CONTIGUOUS leave trap (Lean `leaveStepOk_vacuous_at_four_from_seven`:
+    /// at n=7, 4 leaves pass the counting bound VACUOUSLY while 3 fail it).
+    /// Sub-4 bootstrap rosters are exempt: their safety is vacuous everywhere
+    /// and named so, not manufactured.
+    RosterFloor { roster: usize, survivors: usize },
+}
+
+impl std::fmt::Display for StepRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StepRefusal::LeavesExceedRoster { roster, leaves } => write!(
+                f,
+                "REFUSED ConfigStep::LeavesExceedRoster: {leaves} leave(s) from a \
+                 {roster}-member roster"
+            ),
+            StepRefusal::EmptySurvivors {
+                roster,
+                joins,
+                leaves,
+            } => write!(
+                f,
+                "REFUSED ConfigStep::EmptySurvivors: {joins} join(s) / {leaves} leave(s) \
+                 from a {roster}-member roster would leave nobody"
+            ),
+            StepRefusal::IntersectionBound {
+                roster,
+                joins,
+                leaves,
+            } => write!(
+                f,
+                "REFUSED ConfigStep::IntersectionBound: {joins} join(s) / {leaves} \
+                 leave(s) from a {roster}-member roster breaks cross-configuration \
+                 quorum intersection (DZ C.8; Lean ConfigBoundary.churnStepOk)"
+            ),
+            StepRefusal::RosterFloor { roster, survivors } => write!(
+                f,
+                "REFUSED ConfigStep::RosterFloor: shrinking a {roster}-member roster to \
+                 {survivors} (< 4) lands on a roster that tolerates zero faults"
+            ),
+        }
+    }
+}
+
+/// **The configuration step rule** — byte-for-byte the Lean
+/// `ConfigBoundary.classifyStep`: a step of `joins` joins and `leaves` leaves
+/// from an `n`-member roster either installs (returning the survivor count
+/// `n + joins − leaves`) or is refused by the FIRST failing check's name.
+/// Checks, in order: leaves only remove existing members; survivors nonempty;
+/// the intersection bound; the roster floor.
+///
+/// The bound counts JOINS as untrusted (a joiner substitutes for an old-roster
+/// member in the new quorum). D4's learner phase — state transfer from a quorum
+/// of the old roster, with the temporary member provably unable to act — is
+/// what would lift the join ceiling; it is NOT built, so joins stay counted.
+/// Leaves are bounded permanently: no state transfer can substitute for a
+/// departed member's vote (DZ Case (2) is pure counting).
+pub fn config_step_allowed(n: usize, joins: usize, leaves: usize) -> Result<usize, StepRefusal> {
+    if leaves > n {
+        return Err(StepRefusal::LeavesExceedRoster { roster: n, leaves });
+    }
+    let survivors = n + joins - leaves;
+    if survivors < 1 {
+        return Err(StepRefusal::EmptySurvivors {
+            roster: n,
+            joins,
+            leaves,
+        });
+    }
+    let smaller = n.min(survivors);
+    if crate::ordering::supermajority_threshold(n)
+        + crate::ordering::supermajority_threshold(survivors)
+        < n + joins + fault_budget(smaller) + 1
+    {
+        return Err(StepRefusal::IntersectionBound {
+            roster: n,
+            joins,
+            leaves,
+        });
+    }
+    if n >= 4 && survivors < 4 {
+        return Err(StepRefusal::RosterFloor {
+            roster: n,
+            survivors,
+        });
+    }
+    Ok(survivors)
 }
 
 // ─── Phase 3: Governance as a Lens ────────────────────────────────────────────
@@ -1147,7 +1316,7 @@ mod tests {
         assert_eq!(result, Some(proposal_block));
 
         // Apply (simulating finality confirmation)
-        assert!(mgr.apply_if_passed(&proposal_block));
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
         assert!(mgr.current.is_participant(&new_node));
         assert_eq!(mgr.current.participant_count(), 4);
         assert_eq!(mgr.current.version, 1);
@@ -1184,7 +1353,7 @@ mod tests {
         let result = mgr.submit_vote(&vote, make_node_key(3));
         assert_eq!(result, Some(proposal_block));
 
-        assert!(mgr.apply_if_passed(&proposal_block));
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
         assert!(!mgr.current.is_participant(&leaving_node));
         assert_eq!(mgr.current.participant_count(), 3);
         assert_eq!(mgr.current.version, 1);
@@ -1223,7 +1392,7 @@ mod tests {
         let result = mgr.submit_vote(&vote, make_node_key(3));
         assert_eq!(result, Some(proposal_block));
 
-        assert!(mgr.apply_if_passed(&proposal_block));
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
         assert_eq!(mgr.current.threshold, 3);
         assert_eq!(mgr.current.version, 1);
     }
@@ -1253,8 +1422,164 @@ mod tests {
         let result = mgr.submit_vote(&vote, make_node_key(3));
         assert_eq!(result, Some(proposal_block));
 
-        assert!(mgr.apply_if_passed(&proposal_block));
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
         assert_eq!(mgr.current.threshold, 2);
+    }
+
+    // ─── The configuration step bound (ConfigBoundary transcription) ────────
+
+    /// The TRANSCRIPTION DIFFERENTIAL: `config_step_allowed` pins the exact
+    /// golden verdicts of the Lean-authored rule (the named `example` rows of
+    /// `Dregg2.Distributed.ConfigBoundary`). The Lean carries the soundness
+    /// theorem (`stepAllowed_quorums_share_honest`); this pins the Rust
+    /// transcription to it, both polarities, refusals BY NAME.
+    #[test]
+    fn config_step_allowed_matches_lean_goldens() {
+        use super::StepRefusal as R;
+        // Allowed steps (Lean `stepAllowed … = true`).
+        assert_eq!(config_step_allowed(4, 1, 0), Ok(5)); // 4→5 join
+        assert_eq!(config_step_allowed(4, 2, 0), Ok(6)); // 4→6 join (tight)
+        assert_eq!(config_step_allowed(7, 2, 0), Ok(9)); // 7→9 join (tight)
+        assert_eq!(config_step_allowed(6, 4, 0), Ok(10)); // 3∣n admits MORE than 2
+        assert_eq!(config_step_allowed(5, 0, 1), Ok(4)); // 5→4 leave
+        assert_eq!(config_step_allowed(1, 1, 0), Ok(2)); // solo growth
+        assert_eq!(config_step_allowed(1, 2, 0), Ok(3));
+        assert_eq!(config_step_allowed(3, 2, 0), Ok(5)); // bootstrap 3→5
+        assert_eq!(config_step_allowed(0, 1, 0), Ok(1)); // genesis from empty
+
+        // Refused steps, BY NAME (Lean `classifyStep … = .refuse…`).
+        assert_eq!(
+            config_step_allowed(4, 3, 0), // 4→7: DZ's own broken example
+            Err(R::IntersectionBound {
+                roster: 4,
+                joins: 3,
+                leaves: 0
+            })
+        );
+        assert_eq!(
+            config_step_allowed(7, 3, 0), // 7→10
+            Err(R::IntersectionBound {
+                roster: 7,
+                joins: 3,
+                leaves: 0
+            })
+        );
+        assert_eq!(
+            config_step_allowed(7, 0, 3), // the NON-CONTIGUOUS leave failure
+            Err(R::IntersectionBound {
+                roster: 7,
+                joins: 0,
+                leaves: 3
+            })
+        );
+        assert_eq!(
+            config_step_allowed(7, 0, 4), // vacuously-"safe" endpoint: floor refuses
+            Err(R::RosterFloor {
+                roster: 7,
+                survivors: 3
+            })
+        );
+        assert_eq!(
+            config_step_allowed(4, 0, 1), // 4→3: the floor's headline case
+            Err(R::RosterFloor {
+                roster: 4,
+                survivors: 3
+            })
+        );
+        assert_eq!(
+            // ⚑ the MIXED-step sharpening: one join + one leave at n=4 — "two
+            // changes" — breaks intersection (churnStepOk_breaks_at_one_one_from_four).
+            config_step_allowed(4, 1, 1),
+            Err(R::IntersectionBound {
+                roster: 4,
+                joins: 1,
+                leaves: 1
+            })
+        );
+        assert_eq!(
+            config_step_allowed(1, 0, 1), // solo leaving itself
+            Err(R::EmptySurvivors {
+                roster: 1,
+                joins: 0,
+                leaves: 1
+            })
+        );
+        assert_eq!(
+            config_step_allowed(2, 0, 3),
+            Err(R::LeavesExceedRoster {
+                roster: 2,
+                leaves: 3
+            })
+        );
+    }
+
+    /// Refusal at the APPLY level, both poles, mutation asserted present: a
+    /// ratified Leave from n=4 gathers a real quorum (the mutation is live —
+    /// the same votes at n=5 would install), and the roster floor refuses it
+    /// by name with NOTHING mutated; `Err` is distinct from the not-passed
+    /// `Ok(false)`, so a refused proposal can never read as "still pending".
+    #[test]
+    fn ratified_leave_from_four_is_refused_by_name_and_mutates_nothing() {
+        let participants = make_participants(4);
+        let mut mgr =
+            ConstitutionManager::from_participants(participants.clone(), TEST_TIMEOUT_WAVES);
+        assert_eq!(mgr.threshold(), 3);
+
+        let leave = MembershipProposal::Leave {
+            node_key: make_node_key(4),
+            reason: LeaveReason::Voluntary,
+        };
+        let proposal_block = BlockId([0xB4; 32]);
+        mgr.submit_proposal(proposal_block, leave);
+        let vote = MembershipVote {
+            proposal_block,
+            approve: true,
+        };
+        mgr.submit_vote(&vote, make_node_key(1));
+        mgr.submit_vote(&vote, make_node_key(2));
+        let passed = mgr.submit_vote(&vote, make_node_key(3));
+        // MUTATION PRESENT: the proposal genuinely passed its vote.
+        assert_eq!(passed, Some(proposal_block), "the leave IS ratified");
+
+        // THE REFUSAL POLE: named, and nothing moves.
+        assert_eq!(
+            mgr.apply_if_passed(&proposal_block),
+            Err(StepRefusal::RosterFloor {
+                roster: 4,
+                survivors: 3
+            })
+        );
+        assert_eq!(mgr.participants().len(), 4, "refusal mutates nothing");
+        assert_eq!(mgr.version(), 0, "no version advance on refusal");
+        assert!(mgr.current.is_participant(&make_node_key(4)));
+
+        // THE INSTALL POLE (the same shape, one step wider): admit a 5th
+        // member first, and the identical leave now installs — join-then-leave
+        // is the replacement flow the floor forces.
+        let join = MembershipProposal::Join {
+            node_key: make_node_key(5),
+            justification: vec![],
+        };
+        let join_block = BlockId([0xB5; 32]);
+        mgr.submit_proposal(join_block, join);
+        let jvote = MembershipVote {
+            proposal_block: join_block,
+            approve: true,
+        };
+        mgr.submit_vote(&jvote, make_node_key(1));
+        mgr.submit_vote(&jvote, make_node_key(2));
+        mgr.submit_vote(&jvote, make_node_key(3));
+        assert!(
+            mgr.apply_if_passed(&join_block).unwrap(),
+            "the join installs"
+        );
+        assert_eq!(mgr.participants().len(), 5);
+
+        // The refused leave is still ratified in the tracker; at n=5 the same
+        // apply now clears the floor and installs.
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
+        assert_eq!(mgr.participants().len(), 4);
+        assert!(!mgr.current.is_participant(&make_node_key(4)));
     }
 
     // ─── Constitution versioning ────────────────────────────────────────────
@@ -1286,7 +1611,7 @@ mod tests {
         mgr.submit_vote(&vote, make_node_key(1));
         mgr.submit_vote(&vote, make_node_key(2));
         mgr.submit_vote(&vote, make_node_key(3));
-        mgr.apply_if_passed(&proposal_block);
+        let _ = mgr.apply_if_passed(&proposal_block);
 
         // Version 1: 4 participants
         assert_eq!(mgr.version(), 1);
@@ -1345,11 +1670,11 @@ mod tests {
         mgr.submit_vote(&vote, make_node_key(3));
 
         // First application succeeds.
-        assert!(mgr.apply_if_passed(&proposal_block));
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
         assert_eq!(mgr.current.participant_count(), 4);
 
         // Second application fails (already applied).
-        assert!(!mgr.apply_if_passed(&proposal_block));
+        assert!(!mgr.apply_if_passed(&proposal_block).unwrap());
         assert_eq!(mgr.current.participant_count(), 4); // unchanged
     }
 
@@ -1408,7 +1733,7 @@ mod tests {
         mgr.submit_vote(&vote, make_node_key(1));
         mgr.submit_vote(&vote, make_node_key(2));
         mgr.submit_vote(&vote, make_node_key(3));
-        mgr.apply_if_passed(&proposal_block);
+        let _ = mgr.apply_if_passed(&proposal_block);
 
         // Now ordering should use 4 participants
         assert_eq!(mgr.participants().len(), 4);
@@ -1461,7 +1786,7 @@ mod tests {
         let result = mgr.submit_vote(&vote, make_node_key(1));
         assert_eq!(result, Some(proposal_block));
 
-        assert!(mgr.apply_if_passed(&proposal_block));
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
         assert_eq!(mgr.participants().len(), 2);
         // threshold for 2 = floor(2*2/3) + 1 = 2
         assert_eq!(mgr.threshold(), 2);
@@ -1515,7 +1840,7 @@ mod tests {
         mgr.submit_vote(&vote, make_node_key(1));
         mgr.submit_vote(&vote, make_node_key(2)); // even the timed-out node can vote
 
-        assert!(mgr.apply_if_passed(&proposal_block));
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
         assert_eq!(mgr.participants().len(), 1);
         // Back to threshold=1
         assert_eq!(mgr.threshold(), 1);
@@ -1562,7 +1887,7 @@ mod tests {
         };
         mgr.submit_vote(&vote, make_node_key(1));
         mgr.submit_vote(&vote, make_node_key(2));
-        mgr.apply_if_passed(&leave_block);
+        let _ = mgr.apply_if_passed(&leave_block);
 
         assert_eq!(mgr.participants().len(), 1);
         assert!(!mgr.current.is_participant(&make_node_key(2)));
@@ -1583,7 +1908,7 @@ mod tests {
         let result = mgr.submit_vote(&vote2, make_node_key(1));
         assert_eq!(result, Some(rejoin_block));
 
-        assert!(mgr.apply_if_passed(&rejoin_block));
+        assert!(mgr.apply_if_passed(&rejoin_block).unwrap());
         assert_eq!(mgr.participants().len(), 2);
         assert!(mgr.current.is_participant(&make_node_key(2)));
     }
@@ -1666,7 +1991,7 @@ mod tests {
         assert_eq!(result, Some(proposal_block));
 
         // Apply
-        assert!(mgr.apply_if_passed(&proposal_block));
+        assert!(mgr.apply_if_passed(&proposal_block).unwrap());
     }
 
     #[test]
@@ -1693,7 +2018,7 @@ mod tests {
         mgr.submit_vote(&vote, make_node_key(1));
         mgr.submit_vote(&vote, make_node_key(2));
         mgr.submit_vote(&vote, make_node_key(3));
-        mgr.apply_if_passed(&proposal_block);
+        let _ = mgr.apply_if_passed(&proposal_block);
 
         // Routes commitment updated
         assert_eq!(mgr.routes_commitment(), Some(new_routes));
@@ -1727,7 +2052,7 @@ mod tests {
         mgr.submit_vote(&vote, make_node_key(1));
         mgr.submit_vote(&vote, make_node_key(2));
         mgr.submit_vote(&vote, make_node_key(3));
-        mgr.apply_if_passed(&proposal_block);
+        let _ = mgr.apply_if_passed(&proposal_block);
 
         // Version 1: routes set
         assert_eq!(mgr.version(), 1);
@@ -1754,7 +2079,7 @@ mod tests {
         mgr.submit_vote(&vote2, make_node_key(1));
         mgr.submit_vote(&vote2, make_node_key(2));
         mgr.submit_vote(&vote2, make_node_key(3));
-        mgr.apply_if_passed(&proposal_block2);
+        let _ = mgr.apply_if_passed(&proposal_block2);
 
         assert_eq!(mgr.version(), 2);
         let v2 = mgr.constitution_at_version(2).unwrap();
@@ -1793,7 +2118,7 @@ mod tests {
         mgr.submit_vote(&vote, make_node_key(1));
         mgr.submit_vote(&vote, make_node_key(2));
         mgr.submit_vote(&vote, make_node_key(3));
-        mgr.apply_if_passed(&proposal_block);
+        let _ = mgr.apply_if_passed(&proposal_block);
 
         // Now verify returns true for the correct commitment
         assert!(mgr.verify_routes_commitment(&commitment));
