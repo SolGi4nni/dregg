@@ -586,10 +586,18 @@ extern lean_object *dregg_poa_night_watch_campaign_judge(lean_object *input);
  * signature pattern is publicly computable — an export taking a seal would be "anyone
  * completes any seat". `CrewFieldMissionAdmission` MINTS the seal from admitted bytes
  * instead, and refuses the fixture suite INSIDE the mint, before the world is consulted. */
-#ifdef DREGG_POA_CREW_FIELD_STEP
+#if defined(DREGG_POA_CREW_FIELD_STEP) || defined(DREGG_POA_CREW_FIELD_SEAT_PREIMAGE)
 extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_CrewFieldMissionAdmission(uint8_t builtin);
+#endif
+#ifdef DREGG_POA_CREW_FIELD_STEP
 #define DREGG_POA_CREW_FIELD_STEP_WIRE_MAX_BYTES ((size_t)4194304u)
 extern lean_object *dregg_poa_crew_field_step(lean_object *input);
+#endif
+/* The ENTRY POINT. Same 4 MiB ceiling as the step envelope and for the same reason:
+ * the seat envelope carries a manifest, bounded by Lean's own ENVELOPE_BYTE_LIMIT. */
+#ifdef DREGG_POA_CREW_FIELD_SEAT_PREIMAGE
+#define DREGG_POA_CREW_FIELD_SEAT_PREIMAGE_WIRE_MAX_BYTES ((size_t)4194304u)
+extern lean_object *dregg_poa_crew_field_seat_preimage(lean_object *input);
 #endif
 
 /* Post-finality, multi-stream EventBatch planner. The native host constructs the duplicated
@@ -1610,7 +1618,7 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(nightwatchres);
 #endif
-#ifdef DREGG_POA_CREW_FIELD_STEP
+#if defined(DREGG_POA_CREW_FIELD_STEP) || defined(DREGG_POA_CREW_FIELD_SEAT_PREIMAGE)
     lean_object *crewfieldres =
         initialize_Dregg2_Dregg2_Games_PathOfAngels_CrewFieldMissionAdmission(1);
     if (!lean_io_result_is_ok(crewfieldres)) {
@@ -1914,6 +1922,33 @@ size_t dregg_poa_crew_field_step_str(const char *in_utf8, char *out, size_t out_
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_CREW_FIELD_STEP_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_CREW_FIELD_SEAT_PREIMAGE
+size_t dregg_poa_crew_field_seat_preimage_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_CREW_FIELD_SEAT_PREIMAGE_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_crew_field_seat_preimage(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_CREW_FIELD_SEAT_PREIMAGE_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;

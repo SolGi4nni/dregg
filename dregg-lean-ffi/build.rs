@@ -328,6 +328,18 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          so a seal-taking export would be `anyone completes any seat`",
     ),
     (
+        "dregg_poa_crew_field_seat_preimage",
+        "the Path of Angels CREW FIELD MISSION ENTRY POINT compiles out: the canonical \
+         POA-CREW-SEAT-SIGNING-1 preimage bytes a seat's ML-DSA-65 key must sign to be \
+         admitted have no answer source, so no seat can take a seat and the handoff \
+         surface beside it is unreachable by construction. There is no Rust twin and \
+         there must never be one: a Rust re-encoding of the seat-admission body is the \
+         same twin the step surface refuses to let a client build, one move earlier in \
+         the run. ⚠ This export ANSWERS A QUESTION and admits nobody — SeatCapability.mk \
+         is private and authenticateSeat? still demands a signature this surface cannot \
+         produce.",
+    ),
+    (
         "dregg_poa_network_genesis",
         "the Path of Angels Signal NETWORK GENESIS ceremony compiles out: Lean cannot bind the \
          externally verified deployment/content tuple to the exact zero-head config and Canon \
@@ -2818,6 +2830,8 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_galley_daily_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_night_watch_campaign_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_crew_field_step_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_crew_field_seat_preimage_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_plan_present)");
     println!(
         "cargo::rustc-check-cfg=cfg(dregg_poa_event_batch_runtime_initial_heads_digest_present)"
@@ -3925,6 +3939,37 @@ fn main() {
     } else {
         absent_export_warn("dregg_poa_night_watch_campaign_judge");
     }
+
+    // PATH OF ANGELS CREW FIELD MISSION. ⚑ 2026-08-09: these probes did not exist, so
+    // `#ifdef DREGG_POA_CREW_FIELD_STEP` was false in EVERY build and the bridge that
+    // landed in 7497a9dcb was never compiled. The manifest row makes a MISSING archive
+    // symbol fail the build; it never made the bridge REACHABLE. Gating defaults to silence.
+    let poa_crew_field_step_in_archive =
+        archive_exports(&build_archive, "dregg_poa_crew_field_step");
+    let poa_crew_field_step_present =
+        poa_crew_field_step_in_archive && shim_defines_bridge("dregg_poa_crew_field_step");
+    if poa_crew_field_step_present {
+        println!("cargo:rustc-cfg=dregg_poa_crew_field_step_present");
+    } else if poa_crew_field_step_in_archive {
+        println!(
+            "cargo:warning=dregg-lean-ffi: dregg_poa_crew_field_step IS in the archive but \
+             src/lean_init.c defines no dregg_poa_crew_field_step_str bridge, so no caller can \
+             reach it. Crew handoffs refuse."
+        );
+    }
+    let poa_crew_field_seat_preimage_in_archive =
+        archive_exports(&build_archive, "dregg_poa_crew_field_seat_preimage");
+    let poa_crew_field_seat_preimage_present = poa_crew_field_seat_preimage_in_archive
+        && shim_defines_bridge("dregg_poa_crew_field_seat_preimage");
+    if poa_crew_field_seat_preimage_present {
+        println!("cargo:rustc-cfg=dregg_poa_crew_field_seat_preimage_present");
+    } else if poa_crew_field_seat_preimage_in_archive {
+        println!(
+            "cargo:warning=dregg-lean-ffi: dregg_poa_crew_field_seat_preimage IS in the archive \
+             but src/lean_init.c defines no dregg_poa_crew_field_seat_preimage_str bridge, so no \
+             seat can be admitted and the crew organ has no entry point."
+        );
+    }
     let poa_event_batch_runtime_plan_present =
         archive_exports(&build_archive, "dregg_poa_event_batch_runtime_plan");
     if poa_event_batch_runtime_plan_present {
@@ -4420,6 +4465,12 @@ fn main() {
     }
     if poa_night_watch_campaign_judge_present {
         shim.define("DREGG_POA_NIGHT_WATCH_CAMPAIGN_JUDGE", None);
+    }
+    if poa_crew_field_step_present {
+        shim.define("DREGG_POA_CREW_FIELD_STEP", None);
+    }
+    if poa_crew_field_seat_preimage_present {
+        shim.define("DREGG_POA_CREW_FIELD_SEAT_PREIMAGE", None);
     }
     if poa_event_batch_runtime_plan_present {
         shim.define("DREGG_POA_EVENT_BATCH_RUNTIME_PLAN", None);
