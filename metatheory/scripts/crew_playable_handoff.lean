@@ -27,6 +27,22 @@ demands `SHAKE256(publicKey, 32) = playerKey`, so it minted, was admitted, and r
 step.  That is fixed at the source now — the admitted roster is four real ML-DSA-65 keys — so
 this script drives the real fixture instead of a twin of it beside the real fixture.
 
+## Measured 2026-08-09 on the ADMITTED crew, after the roster fix (77eeed7fd)
+
+```
+[emit ] seat 0..3 admission preimage : 6202 bytes each, answer 6959 bytes each
+        the four answers are pairwise DISTINCT (sha256 prefixes 183f6fd1 / 5171c359
+        / e430866e / d41e99b5) — the entry point is not one blob under four names
+[sign ] fips204 0.4.6, POA-CREW-SEAT-MLDSA65-1, envelope = pk 1952 ‖ sig 3309 = 5261
+[step ] envelope 34690 bytes -> answer 13770 bytes
+        seat 0 handoff preimage: 12343 bytes
+```
+
+⚑ The `[step ]` line is the two-source result that matters: `stepWire` answered, which
+means `authenticateSeat?` — the production `verifyEnvelope`, SHAKE-256 key pin plus
+executable FIPS 204 verify — ACCEPTED a `fips204` signature over the bytes the NEW export
+emitted.  The entry point is checked against the gate it feeds, not merely against itself.
+
 ## Running it
 
 ```
