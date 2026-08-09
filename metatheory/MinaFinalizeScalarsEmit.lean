@@ -1,36 +1,39 @@
 /-
-# `mina_finalize_scalars_emit` — the `dregg-mina-finalize-scalars::v1` artifacts.
+# `mina_finalize_scalars_emit` — the `dregg-mina-finalize-scalars::v2` artifacts.
 
 Renders, from the Lean objects and nothing else:
 
   * the DESCRIPTOR — `MinaFinalizeScalars.finalizeDesc`, serialized by `emitVmJson2`;
   * the HONEST trace + PI vector — Mina devnet block 539508's own Wrap-side wire
     (`MinaRealBlockGate.EVZ/EVZW`'s 47-entry es columns, its raw β/γ and mapped α/ζ/ξ/r, the
-    block's `combined_inner_product` and o1-labs' own `perm_scalars` value
-    `MinaWrapGroupGate.PERM_SCALAR` as the two claims, and the witnessed inverse computed by
-    Fermat's ladder, checked in-trace by the `den·DINV = 1` gate);
+    block's `combined_inner_product`, o1-labs' own `perm_scalars` value AND the block's own
+    linearization constant term `MinaRealBlockGate.LCT` as the three claims, and the witnessed
+    inverse computed by Fermat's ladder);
   * three FORGED traces, each an honest trace of a perturbed environment:
       - `forged-eval`  — one eval input bumped by 1 (inside the 8-bit limb width), claims kept:
-        the cip equality gate must refuse, and nothing else moves;
+        the cip equality gate must refuse (at v2 the same bump also moves the stage-11
+        derivation off the kept `LCT` claim, so the lct equality is a second refusing family);
       - `forged-perm`  — the perm claim bumped by 1: the perm equality gate must refuse;
-      - `lct-shift`    — ⚑ the PORT EXHIBIT: `LCT` bumped and the cip claim RECOMPUTED to match.
-        This trace PROVES AND VERIFIES — the measured demonstration that the `LCT` port admits a
-        one-parameter family of accepting claims until the gate-linearization leaf closes it.
-        Emitted so the Rust suite can assert the acceptance rather than prose it.
+      - `lct-shift`    — ⚑⚑ `LCT` bumped and the cip claim RECOMPUTED to match. **At v1 this
+        trace PROVED AND VERIFIED — the port's one-parameter family of accepting claims. At v2
+        the stage-11 eq gate compares the bumped claim against the trace's own `gateLinConst`
+        derivation and REFUSES.** Emitted so the Rust suite can assert the refusal by name
+        rather than prose it.
 
-⚑ The cell values come from a MEMOIZED array evaluator (`valsOf`, one pass over the 301 ops);
-before writing anything the driver REFUSES unless that evaluator agrees with the AIR file's own
-`progEval` at the two output indices AND both meet the block's `combined_inner_product` and
-o1-labs' `perm_scalars` — so a drift between the renderer and the specified denotation, or
-between the program and the block, kills the emit rather than the fixtures.
+⚑ The cell values come from a MEMOIZED array evaluator (`valsOf`, one pass over the 1046 ops);
+before writing anything the driver REFUSES unless that evaluator agrees with the Prog file's own
+`progEval` at the three output indices AND all three meet the block's `combined_inner_product`,
+o1-labs' `perm_scalars` and the block's `LCT` — so a drift between the renderer and the
+specified denotation, or between the program and the block, kills the emit rather than the
+fixtures.
 
 This file only RENDERS; it authors nothing. House Law #1.
 
     lake build mina_finalize_scalars_emit
     ./.lake/build/bin/mina_finalize_scalars_emit ../circuit/tests/fixtures
 
-The descriptor JSON and the PI vectors are small and TRACKED; the four traces are 512×4461
-(~9 MB each) and are NOT tracked — the Rust test names this command when they are absent.
+The PI vectors are small and TRACKED; the descriptor and the four traces are 2048×WIDTH
+(tens of MB each) and are NOT tracked — the Rust test names this command when they are absent.
 -/
 import Dregg2.Circuit.Emit.MinaFinalizeScalarsWeld
 import Dregg2.Circuit.Emit.MinaWrapConjunctionAir
@@ -48,11 +51,11 @@ namespace FsEmit
 abbrev Fq := ZMod qN
 
 open Dregg2.Circuit.Emit.MinaFinalizeScalarsWeld
-  (env0Real cipResultV permResultV bump)
+  (env0Real cipResultV permResultV lctResultV bump)
 
 /-! ## The memoized evaluator and the trace generator. -/
 
-/-- All 301 computed values, one pass, array-memoized. -/
+/-- All computed values, one pass, array-memoized. -/
 def valsOf (env0 : Nat → Fq) : Array Fq :=
   finalizeProg.foldl (fun (arr : Array Fq) o =>
     let get := fun v => if v < NIN_VALS then env0 v else arr.getD (v - NIN_VALS) 0
@@ -134,7 +137,9 @@ def envForgedEval : Nat → Fq := bump env0Real (vEZ 5) 1
 /-- forged-perm: the perm claim bumped; wire untouched. -/
 def envForgedPerm : Nat → Fq := bump env0Real vPERMCL 1
 
-/-- lct-shift: the port moved AND the cip claim recomputed — the accepting forgery family. -/
+/-- lct-shift: the `LCT` claim moved AND the cip claim recomputed — the family that ACCEPTED at
+v1 and is REFUSED by the stage-11 eq gate at v2 (the derivation reads only the welded evals, so
+it stays put while the claim moves). -/
 def envLctShift : Nat → Fq :=
   let e1 := bump env0Real vLCT 1
   let cipNew := mkEnv e1 cipResultV
@@ -150,21 +155,28 @@ def main (args : List String) : IO UInt32 := do
   unless invOk den (env0Real vDINV) do
     IO.eprintln "REFUSED: the witnessed inverse does not invert the real block's denominator"
     return 1
-  -- REFUSAL 2: the memoized renderer agrees with the AIR file's own denotation.
+  -- REFUSAL 2: the memoized renderer agrees with the Prog file's own denotation.
   let env := mkEnv env0Real
   let spec := progEval env0Real
-  unless env cipResultV == spec cipResultV && env permResultV == spec permResultV do
+  unless env cipResultV == spec cipResultV && env permResultV == spec permResultV
+      && env lctResultV == spec lctResultV do
     IO.eprintln "REFUSED: the memoized evaluator drifts from `progEval` — renderer bug"
     return 1
-  -- REFUSAL 3: the honest environment satisfies the block's own two claims.
+  -- REFUSAL 3: the honest environment satisfies the block's own three claims.
   unless env cipResultV == env0Real vCIPCL do
     IO.eprintln "REFUSED: the program's cip does not meet the block's combined_inner_product"
     return 1
   unless env permResultV == env0Real vPERMCL do
     IO.eprintln "REFUSED: the program's perm does not meet o1-labs' perm_scalars value"
     return 1
+  -- REFUSAL 4 (v2): the stage-11 derivation meets the block's own linearization constant term,
+  -- so the honest trace SATISFIES the closing eq gate and the lct-shift trace VIOLATES it.
+  unless env lctResultV == env0Real vLCT do
+    IO.eprintln "REFUSED: the stage-11 gateLinConst derivation does not meet the block's LCT"
+    return 1
   IO.println s!"cip  = {(env cipResultV).val}"
   IO.println s!"perm = {(env permResultV).val}"
+  IO.println s!"lct  = {(env lctResultV).val}"
   IO.FS.writeFile (p "mina-finalize-scalars.json") (emitVmJson2 finalizeDesc)
   IO.println "descriptor written"
   writePis (p "mina-finalize-scalars-pis.txt") env0Real

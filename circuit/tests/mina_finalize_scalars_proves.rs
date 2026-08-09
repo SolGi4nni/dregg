@@ -1,39 +1,41 @@
-//! # `dregg-mina-finalize-scalars::v1` — Pickles' finalize conjuncts 3 and 4, in-AIR, both polarities.
+//! # `dregg-mina-finalize-scalars::v2` — Pickles' finalize conjuncts 3 and 4, in-AIR, both
+//! polarities — and the `lct-shift` falsifier REFUSED.
 //!
 //! ## What this descriptor is
 //!
 //! The Wrap-side `ft_eval0` (C5: ζ-power ladder, `zkPolyR`, the witnessed inverse forced by a
 //! `den·DINV = 1` gate, the two permutation folds), the FULL 47-entry `combined_inner_product`
-//! ξ-fold (C8, with the in-AIR `ft_eval0` in slot 3), and `perm_scalars` (the `plonk_checks`
-//! comparison list is `[perm]`) — 301 sound field ops at the Pallas-scalar prime, one op per row,
-//! on the scheduled substrate (one-hot phase register, allocator-assigned value slots, complement
-//! -masked carries). Lean-authored end to end (`MinaFinalizeScalars.lean`); this file parses,
-//! proves and refuses. It authors nothing.
+//! ξ-fold (C8, with the in-AIR `ft_eval0` in slot 3), `perm_scalars` (the `plonk_checks`
+//! comparison list is `[perm]`) — **and, new at v2, `gateLinConst`'s six transcribed gate
+//! bodies, whose closing eq gate forces the `LCT` claim block against the trace's own
+//! derivation** — 1046 sound field ops at the Pallas-scalar prime, one op per row, on the
+//! scheduled substrate. Lean-authored end to end (`MinaFinalizeScalarsProg.lean` +
+//! `MinaFinalizeScalars.lean`); this file parses, proves and refuses. It authors nothing.
 //!
 //! ## ⚑ WHERE EACH FORCING LIVES — the table this suite measures
 //!
-//! * conjunct 3 (`cipCorrect`): IN-AIR here — the final eq gates compare the claimed cip against
-//!   the trace's own ξ-fold. §3 is its refusal.
+//! * conjunct 3 (`cipCorrect`): IN-AIR here, WHOLE — the final eq gates compare the claimed cip
+//!   against the trace's own ξ-fold, whose `ft_eval0` slot is computed in-AIR and whose `LCT`
+//!   subtraction is forced by the stage-11 gate-linearization eq. §3 and §5 are its refusals.
 //! * conjunct 4 (`plonkChecksPassed`): IN-AIR here — the perm eq gates. §4 is its refusal.
 //! * the 89 eval/challenge/prefix input blocks: AT THE FOLD (phase-2 chain / phase-1 chain /
 //!   endo-lift instances / conjunction instances) — not this file's subject.
-//! * ⚑⚑ the `LCT` port (the gate-linearization constant term): **WELDED TO NOTHING YET.** §5 is
-//!   the measured exhibit — an adversarial trace that moves `LCT` and recomputes the cip claim
-//!   PROVES AND VERIFIES. `cipActualOf` is affine in `LCT`, so until the gate-linearization leaf
-//!   lands, the in-AIR cip check narrows the claim's SHAPE (a fold of the block's own welded
-//!   evals at a ported constant) and does not bind its VALUE. Conjunct 3 must be reported with
-//!   this sentence attached.
+//! * ⚑⚑ the `LCT` claim: **FORCED IN-AIR by stage 11.** Through `d09e89817` (v1) the `lct-shift`
+//!   trace — `LCT` bumped, cip claim recomputed — PROVED AND VERIFIED, the port's one-parameter
+//!   family of accepting claims. §5 now measures that exact family REFUSED, falsifier integrity
+//!   asserted before the verdict.
 //!
 //! ## The fixture is the real block
 //!
 //! Mina devnet block 539508's own Wrap wire: the 47-entry es columns at ζ and ζω, its raw β/γ,
-//! mapped α/ζ/ξ/r, `combined_inner_product` from `proof.oracles(…)`, and o1-labs' own
-//! `perm_scalars` value. The two claim decimals are pinned below against the Lean fixtures'
-//! numbers (`MinaRealBlockGate.CIP`, `MinaWrapGroupGate.PERM_SCALAR`) — two sources, one value.
+//! mapped α/ζ/ξ/r, `combined_inner_product` from `proof.oracles(…)`, o1-labs' own
+//! `perm_scalars` value, and the block's own linearization constant term. The three claim
+//! decimals are pinned below against the Lean fixtures' numbers (`MinaRealBlockGate.CIP`,
+//! `MinaWrapGroupGate.PERM_SCALAR`, `MinaRealBlockGate.LCT`) — two sources, one value each.
 //!
 //! ## Prerequisite — the witnesses
 //!
-//! The four 512×4461 traces (~9 MB each) are NOT tracked. Emit them (compiled):
+//! The four 2048×WIDTH traces (tens of MB each) are NOT tracked. Emit them (compiled):
 //!
 //! ```text
 //! cd metatheory && lake build mina_finalize_scalars_emit
@@ -55,14 +57,14 @@ use dregg_circuit::refusal::assert_violated_constraint_not_bus;
 
 /// The Lean-emitted layout, pinned. `MinaFinalizeScalars.fs_width_eq` / `fs_pi_count_eq` /
 /// `fs_constraint_count` are the same numbers from the authoring side.
-const NAME: &str = "dregg-mina-finalize-scalars::v1";
-const WIDTH: usize = 4461;
-const ROWS: usize = 512;
+const NAME: &str = "dregg-mina-finalize-scalars::v2";
+const WIDTH: usize = 5750;
+const ROWS: usize = 2048;
 const PI_COUNT: usize = 3296;
-const CONSTRAINTS: usize = 27319;
+const CONSTRAINTS: usize = 64324;
 const SK: usize = 32;
 
-/// PI block indices (value order — `MinaFinalizeScalars` §1).
+/// PI block indices (value order — `MinaFinalizeScalarsProg` §1).
 const V_EZ5: usize = 5;
 const V_CIPCL: usize = 99;
 const V_PERMCL: usize = 100;
@@ -74,6 +76,10 @@ const CIP_DEC: &str =
 /// `MinaWrapGroupGate.PERM_SCALAR` — o1-labs' own `perm_scalars` value on the same block.
 const PERM_DEC: &str =
     "20751602151633737401462851548350130147491954693090596112024602804092692290009";
+/// `MinaRealBlockGate.LCT` — the block's own `PolishToken::evaluate(constant_term)`, the value
+/// stage 11's eq gate forces the `LCT` claim to be.
+const LCT_DEC: &str =
+    "7793608285860009894060515823405052926352109106930816519423248903121210044125";
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -163,7 +169,7 @@ fn prove_and_verify_adversarial(
 }
 
 // ============================================================================
-// §0 — SHAPE, and the two claim decimals against their Lean sources.
+// §0 — SHAPE, and the three claim decimals against their Lean sources.
 // ============================================================================
 
 #[test]
@@ -193,7 +199,15 @@ fn the_honest_claims_are_the_blocks_own_numbers() {
         PERM_DEC,
         "the perm claim block must recompose to o1-labs' own perm_scalars value"
     );
-    println!("§0b the two claim blocks ARE proof.oracles' cip and perm_scalars, limb-recomposed.");
+    assert_eq!(
+        block_decimal(&p, V_LCT),
+        LCT_DEC,
+        "the LCT claim block must recompose to the block's own linearization constant term"
+    );
+    println!(
+        "§0b the three claim blocks ARE proof.oracles' cip, perm_scalars and the block's LCT, \
+         limb-recomposed."
+    );
 }
 
 // ============================================================================
@@ -220,8 +234,10 @@ fn the_eval_falsifier_moves_the_wire_and_keeps_the_claims() {
     // …and the claims are untouched.
     assert_eq!(block_decimal(&fp, V_CIPCL), CIP_DEC);
     assert_eq!(block_decimal(&fp, V_PERMCL), PERM_DEC);
+    assert_eq!(block_decimal(&fp, V_LCT), LCT_DEC);
 
-    // The trace delta is real and in-width: the bumped input propagates through the fold.
+    // The trace delta is real and in-width: the bumped input propagates through the fold and
+    // (at v2) through the gate-linearization bodies.
     let mut moved_cells = 0usize;
     for (hr, fr) in honest.iter().zip(forged.iter()) {
         for (hc, fc) in hr.iter().zip(fr.iter()) {
@@ -265,7 +281,8 @@ fn the_honest_trace_proves_and_verifies() {
         .expect("the real block's finalize scalars prove");
     verify_vm_descriptor2(&d, &proof, &p).expect("and verify");
     println!(
-        "\n§2 ⚑ conjuncts 3 and 4 PROVE on block 539508's own wire ({} ms).",
+        "\n§2 ⚑ conjuncts 3 and 4 PROVE on block 539508's own wire, gate-linearization included \
+         ({} ms).",
         t0.elapsed().as_millis()
     );
 }
@@ -275,12 +292,12 @@ fn the_honest_trace_proves_and_verifies() {
 // ============================================================================
 
 #[test]
-fn a_moved_eval_is_refused_by_the_cip_equality() {
+fn a_moved_eval_is_refused() {
     let d = descriptor();
     let t = trace("mina-finalize-scalars-forged-eval-trace.txt");
     let p = pis("mina-finalize-scalars-forged-eval-pis.txt");
     let err = prove_and_verify_adversarial(&d, &t, &p)
-        .expect_err("a moved eval with the original cip claim must be refused");
+        .expect_err("a moved eval with the original claims must be refused");
     assert_violated_constraint_not_bus("finalize-scalars eval forgery", &err);
     println!("§3 refusal: {err}");
 }
@@ -297,35 +314,40 @@ fn a_moved_perm_claim_is_refused_by_the_perm_equality() {
 }
 
 // ============================================================================
-// §5 — ⚑⚑ THE PORT EXHIBIT: the LCT family PROVES. Labeled, measured, not hidden.
+// §5 — ⚑⚑ THE `lct-shift` FALSIFIER, REFUSED. The v1 accepting family is closed.
 // ============================================================================
 
-/// ⚑ An adversarial trace that bumps `LCT` and RECOMPUTES the cip claim to match is ACCEPTED —
-/// two verifying proofs of this descriptor whose cip claims differ. That is the `LCT` port's
-/// one-parameter family, exhibited the way `the_transcript_ordered_chain_and_its_shift_both_prove`
-/// exhibits the `delta` orbit. The closure is the gate-linearization leaf (`gateLinConst` over
-/// the same welded eval blocks); until it lands, no report may call conjunct 3 "closed" without
-/// naming this family.
+/// ⚑⚑ Through v1 (`d09e89817`) THIS EXACT TRACE FAMILY PROVED AND VERIFIED: `LCT` bumped, the
+/// cip claim recomputed to match — two verifying proofs whose cip claims differed, the `LCT`
+/// port's one-parameter family. Stage 11 (the gate-linearization leaf) eq-forces the `LCT`
+/// claim against the trace's own `gateLinConst` derivation, so the same generator now produces
+/// a trace the AIR REFUSES. Falsifier integrity is asserted BEFORE the verdict: the `LCT`
+/// block moved, the cip claim moved WITH it (the family genuinely re-aims the cip equality),
+/// and the refusal is a constraint's, not a bus's.
 #[test]
-fn the_lct_port_admits_a_shifted_accepting_claim() {
+fn the_lct_shift_forgery_is_refused_by_the_gate_linearization() {
     let d = descriptor();
     let t = trace("mina-finalize-scalars-lct-shift-trace.txt");
     let p = pis("mina-finalize-scalars-lct-shift-pis.txt");
-    // The exhibit's integrity: the LCT block moved, the cip claim moved WITH it.
+    // Falsifier integrity, before any verdict: the LCT block moved, the cip claim moved WITH
+    // it — this is the exact shape that ACCEPTED at v1.
     let hp = pis("mina-finalize-scalars-pis.txt");
     assert_ne!(
         block_decimal(&p, V_LCT),
         block_decimal(&hp, V_LCT),
-        "the exhibit must actually move the port"
+        "the falsifier must actually move the LCT claim"
     );
     assert_ne!(
         block_decimal(&p, V_CIPCL),
         CIP_DEC,
-        "the shifted family's cip claim must differ from the block's"
+        "the shifted family's cip claim must differ from the block's (the cip equality is \
+         re-aimed, so what refuses is the LCT weld, not the cip check)"
     );
-    prove_and_verify_adversarial(&d, &t, &p)
-        .expect("⚑ the shifted-LCT trace PROVES — the port is open until the linearization leaf");
+    let err = prove_and_verify_adversarial(&d, &t, &p)
+        .expect_err("⚑ the lct-shift trace must now be REFUSED — the port is closed");
+    assert_violated_constraint_not_bus("finalize-scalars lct-shift forgery", &err);
     println!(
-        "\n§5 ⚑⚑ THE PORT, MEASURED: two accepting cip claims, one block, differing only in LCT."
+        "\n§5 ⚑⚑ THE `lct-shift` FAMILY, REFUSED: {err}\n    (at v1 this exact generator's trace \
+         proved and verified)"
     );
 }
