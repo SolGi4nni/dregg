@@ -95,6 +95,23 @@ copied** into `MinaWrapPublicCommData` (a second `LAGRANGE` is the twin this rep
 namespace so no consumer is renamed. ⚑ A sibling lane generalised the same finding into
 `scripts/check-elab-cost.py` the same hour (`f004a163e`).
 
+### ⚑ THE SAME PATTERN, MEASURED A FOURTH TIME — and why it was NOT fixed here
+
+`MinaWrapOpeningGate` measured live during this pass at **8.3 GB RSS / 59 minutes** as a child of a
+`KimchiStepMainPins19d` build. `Dregg2/Bridge/MinaStepPrevCommitments.lean` imports it — the same
+module that carried `MinaWrapPublicCommGate` — and takes **eight names, every one a literal**:
+`DELTA`, `IPA_PRECHALS`, `LR_L`, `LR_R`, `SG`, `SRS_H`, `Z1`, `Z2`. `MinaStepPrevCommitments` is in
+`KimchiStepMainCore`'s closure, so **that 8.3 GB is on the step emitter's hot path too**, and a
+two-line edit to the gate by any lane re-imposes the whole hour downstream — which is exactly what
+happened here (`f004a163e` touched it, and every step-pins build since has been re-paying it).
+
+⚠ **AND IT WAS DELIBERATELY NOT SPLIT IN THIS PASS, for a reason that is not "later".** Splitting it
+would NOT unblock what it is blocking: `…Pins19d` also needs `U_BASE`, which is **COMPUTED** in the
+gate (`:565`, `potentialXs …`), not a literal — so `Pins19d` keeps the gate either way and the split
+buys the emitter, not the verification. Doing it now costs another full rebuild on a box already at
+98% swap and duplicates the sibling ratchet (`scripts/check-elab-cost.py`, `f004a163e`) that landed
+for exactly this class thirty minutes earlier. **Route it through that ratchet, not by hand.**
+
 ### ⚠ TWO THINGS FOUND THAT PREDATE THIS PASS
 
 * **The tracked smoke fixtures were already stale by 366 rows** — last committed 08-07 against three
