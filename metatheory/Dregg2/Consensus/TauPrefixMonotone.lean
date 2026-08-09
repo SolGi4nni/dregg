@@ -336,8 +336,12 @@ theorem causalPastAux_has (B : Lace) :
       · exact expandPreds_has B (a :: rest) y (List.mem_filter.mp h2).1
 
 theorem causalPastIncl_has (B : Lace) {bid : BlockId} (hb : B.has bid = true) :
-    ∀ x ∈ causalPastIncl B bid, B.has x = true :=
-  causalPastAux_has B B.length [bid] [bid] (by intro x hx; simpa [List.mem_singleton.mp hx] using hb)
+    ∀ x ∈ causalPastIncl B bid, B.has x = true := by
+  -- `causalPastIncl` runs the frontier-deduped BFS; `causalPastIncl_eq_spec` is the proof that it
+  -- returns the spec's list, so every lemma stated about `causalPastAux` still applies verbatim.
+  rw [causalPastIncl_eq_spec]
+  exact causalPastAux_has B B.length [bid] [bid]
+    (by intro x hx; simpa [List.mem_singleton.mp hx] using hb)
 
 /-- **`causalPastIncl_stable` — THE LEMMA THE WHOLE RESULT RESTS ON.** For a closed extension, the
 inclusive causal past of a held block is EXACTLY the same list. CM Def. 19's `[b]` cannot move,
@@ -355,8 +359,8 @@ theorem causalPastIncl_stable {B B' : Lace} (h : ClosedExtension B B') {bid : Bl
   have hd1 : ([bid] : List BlockId).dedup = [bid] := by simp
   have hbound : B.length ≤ ([bid] : List BlockId).dedup.length + B.length := by
     rw [hd1]; omega
-  unfold causalPastIncl
-  rw [causalPastAux_stable h B'.length [bid] [bid] hacc, hlen]
+  rw [causalPastIncl_eq_spec, causalPastIncl_eq_spec,
+      causalPastAux_stable h B'.length [bid] [bid] hacc, hlen]
   exact (causalPastAux_fuel_irrelevant hndB new.length B.length [bid] [bid] hacc hbound).symm
 
 /-- **`closureLace_stable`** — CM's `[b]` AS A LACE does not move either. The new blocks are

@@ -195,6 +195,9 @@ theorem causalPastAux_sound (B : Lace) (h : BlockId) :
 precede the observer (or IS it). This is the id-level → `Prop`-level crossing, once. -/
 theorem causalPastIncl_sound {B : Lace} {h x : BlockId} (hx : x ∈ causalPastIncl B h) :
     PastWitness B h x := by
+  -- `causalPastIncl` runs the frontier-deduped BFS; `causalPastIncl_eq_spec` says it returns the
+  -- spec's list, so the soundness lemma about `causalPastAux` applies to the membership unchanged.
+  rw [causalPastIncl_eq_spec] at hx
   refine causalPastAux_sound B h B.length [h] [h] ?_ ?_ x hx <;>
     · intro z hz; simp only [List.mem_singleton] at hz; exact Or.inl hz
 

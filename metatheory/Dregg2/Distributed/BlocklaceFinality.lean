@@ -235,7 +235,27 @@ def expandPreds (B : Lace) (frontier : List BlockId) : List BlockId :=
 
 /-- Fuel-bounded transitive closure of `expandPreds` starting from `[h]`. `fuel = B.length` is
 sufficient for any finite acyclic lace (each layer adds at least one strictly-smaller-depth block).
-Returns the accumulated id set (deduped), INCLUSIVE of `h` (`causal_past_inclusive`). -/
+Returns the accumulated id set (deduped), INCLUSIVE of `h` (`causal_past_inclusive`).
+
+⚑ **THIS IS THE SPECIFICATION, NOT THE PATH ANYTHING RUNS — it is EXPONENTIAL, and that is a
+measurement, not an estimate.** The layer `nxt` is `expandPreds`'s `flatMap` output filtered against
+`acc` ONLY; the filter tests every duplicate against the SAME `acc`, so it cannot remove duplicates
+*within* a layer. On a round-synchronous lace where each block acks all `d` blocks of the previous
+round, layer `k` therefore has **`d^k` elements** — measured directly, `[4, 16, 64, 256, 1024, 4096,
+16384, 65536, 262144, …]` for `d = 4`. `acc` reaches `(d^(k+1)-1)/(d-1)` cells and `acc.contains` is
+`List.elem`, so one `causalPastIncl` of a round-`R` tip costs ~`d^(2R)/(d-1)` list-cell probes:
+**390 billion at `R = 11`, and `mkPastCache` pays it per block (1.7 × 10¹²).**
+
+That is the consensus wedge, and the shape of the curve names the round: `n=4` costs ~6.5 s at
+`R = 9`, ~104 s at `R = 10`, ~28 min at `R = 11` — 16× per round. Four wedged nodes were sampled
+under `gdb` at 100% CPU on an idle box, all in `List.filterTR_loop`/`List.elem` under
+`causalPastAux ← causalPastIncl ← mkPastCache ← advanceGateFast`. **Indexing the lace does not
+touch this**: `d^k` is a LIST LENGTH, not a lookup cost, so an O(1) `Lace.lookup` would have bought
+a constant factor and left the exponential standing.
+
+`causalPastIncl` runs `causalPastAuxFast` below, which is this function with the layer `dedup`ed and
+is proved to return **the identical list** (`causalPastAuxFast_eq`). Keep this def as the spec: every
+theorem and differential in this file is stated about it. -/
 def causalPastAux (B : Lace) : Nat → List BlockId → List BlockId → List BlockId
   | 0,        _,        acc => acc.dedup
   | _,        [],       acc => acc.dedup
@@ -243,11 +263,138 @@ def causalPastAux (B : Lace) : Nat → List BlockId → List BlockId → List Bl
       let nxt := (expandPreds B frontier).filter (fun p => ¬ acc.contains p)
       causalPastAux B fuel nxt (acc ++ nxt)
 
+/-! ### The frontier-dedup repair, and the four lemmas that make it VALUE-PRESERVING.
+
+The fix is one `.dedup` on the layer. What has to be proved is that it changes NOTHING: the BFS
+carries the deduped layer forward, so every later `expandPreds` sees a different *list* — and the
+final answer must still be equal, element for element, in order. That is `causalPastAuxFast_eq`,
+and it rests on one real fact about `List.dedup` (`dedup_flatMap_dedup`): **duplicated `flatMap`
+sources cannot survive a `dedup`.**
+
+⚠ `List.dedup` keeps the **LAST** occurrence (`[1,2,1,3,2].dedup = [1,3,2]` — evaluated, not
+recalled). Every lemma here is stated to respect that; a "keep the first" reading of the same code
+is what put a divergent twin on the live τ path (§6c). -/
+
+/-- `l₁ ⊆ l₂ → l₁ ∪ l₂ = l₂`. -/
+theorem union_eq_right_of_subset {α} [DecidableEq α] :
+    ∀ {l₁ l₂ : List α}, l₁ ⊆ l₂ → l₁ ∪ l₂ = l₂
+  | [], _, _ => by simp
+  | a :: t, l₂, h => by
+      rw [List.cons_union, union_eq_right_of_subset (fun _ hx => h (List.mem_cons_of_mem a hx))]
+      exact List.insert_of_mem (h (List.mem_cons_self ..))
+
+/-- A `∪`'s LEFT argument only matters up to `dedup`. -/
+theorem union_dedup_left {α} [DecidableEq α] :
+    ∀ (l X : List α), l ∪ X = l.dedup ∪ X
+  | [], _ => rfl
+  | a :: t, X => by
+      by_cases hm : a ∈ t
+      · rw [List.dedup_cons_of_mem hm, List.cons_union, union_dedup_left t X]
+        exact List.insert_of_mem (List.mem_union_iff.mpr (Or.inl (List.mem_dedup.mpr hm)))
+      · rw [List.dedup_cons_of_notMem hm, List.cons_union, List.cons_union, union_dedup_left t X]
+
+/-- `dedup`-equality is a congruence for `++`. -/
+theorem dedup_append_congr {α} [DecidableEq α] {a₁ a₂ b₁ b₂ : List α}
+    (ha : a₁.dedup = a₂.dedup) (hb : b₁.dedup = b₂.dedup) :
+    (a₁ ++ b₁).dedup = (a₂ ++ b₂).dedup := by
+  rw [List.dedup_append, List.dedup_append, hb, union_dedup_left a₁, union_dedup_left a₂, ha]
+
+/-- **The engine: duplicated `flatMap` SOURCES cannot survive a `dedup`.** Expanding `l` and
+expanding `l.dedup` give lists of wildly different length (this is the whole exponential), but the
+same `dedup`. Because `dedup` keeps LAST occurrences, the source block that contributes a value's
+final copy is exactly the source that survives `l.dedup`, at the same relative position. -/
+theorem dedup_flatMap_dedup {α β} [DecidableEq α] [DecidableEq β] (g : α → List β) :
+    ∀ l : List α, (l.flatMap g).dedup = (l.dedup.flatMap g).dedup
+  | [] => rfl
+  | a :: t => by
+      by_cases hm : a ∈ t
+      · rw [List.dedup_cons_of_mem hm, List.flatMap_cons, List.dedup_append,
+            dedup_flatMap_dedup g t]
+        exact union_eq_right_of_subset (fun x hx => List.mem_dedup.mpr
+          (List.mem_flatMap.mpr ⟨a, List.mem_dedup.mpr hm, hx⟩))
+      · rw [List.dedup_cons_of_notMem hm, List.flatMap_cons, List.flatMap_cons,
+            List.dedup_append, List.dedup_append, dedup_flatMap_dedup g t]
+
+/-- `dedup`-equal frontiers expand to `dedup`-equal layers. -/
+theorem dedup_flatMap_congr {α β} [DecidableEq α] [DecidableEq β] (g : α → List β)
+    {l₁ l₂ : List α} (h : l₁.dedup = l₂.dedup) :
+    (l₁.flatMap g).dedup = (l₂.flatMap g).dedup := by
+  rw [dedup_flatMap_dedup g l₁, dedup_flatMap_dedup g l₂, h]
+
+/-- **`causalPastAuxFast`** — `causalPastAux` with the layer `dedup`ed before it is carried forward.
+That single `.dedup` is what collapses `d^k` to `≤ |B|`: a deduped frontier cannot re-expand the
+same source twice, so the BFS visits each block once per layer instead of once per PATH. -/
+def causalPastAuxFast (B : Lace) : Nat → List BlockId → List BlockId → List BlockId
+  | 0,        _,        acc => acc.dedup
+  | _,        [],       acc => acc.dedup
+  | fuel + 1, frontier, acc =>
+      let nxt := ((expandPreds B frontier).filter (fun p => ¬ acc.contains p)).dedup
+      causalPastAuxFast B fuel nxt (acc ++ nxt)
+
+/-- **The BFS depends on its frontier and accumulator ONLY up to `dedup`.** The induction that
+carries the repair: a deduped layer expands to a `dedup`-equal layer (`dedup_flatMap_congr`), a
+`dedup`-equal accumulator induces the SAME membership filter, and `++` preserves both. -/
+theorem causalPastAux_dedup_congr (B : Lace) (fuel : Nat) :
+    ∀ (f₁ f₂ acc₁ acc₂ : List BlockId),
+      f₁.dedup = f₂.dedup → acc₁.dedup = acc₂.dedup →
+      causalPastAux B fuel f₁ acc₁ = causalPastAux B fuel f₂ acc₂ := by
+  induction fuel with
+  | zero => intro _ _ _ _ _ ha; simpa [causalPastAux] using ha
+  | succ n ih =>
+    intro f₁ f₂ acc₁ acc₂ hf ha
+    have hmem : ∀ p, p ∈ acc₁ ↔ p ∈ acc₂ := fun p => by
+      rw [← List.mem_dedup (l := acc₁), ha, List.mem_dedup]
+    have hc : ∀ p, acc₁.contains p = acc₂.contains p := fun p => by
+      rw [Bool.eq_iff_iff, List.contains_iff_mem, List.contains_iff_mem]; exact hmem p
+    match f₁, f₂ with
+    | [], [] => simpa [causalPastAux] using ha
+    | [], _ :: _ => simp at hf
+    | _ :: _, [] => simp at hf
+    | a :: t, b :: u =>
+      show causalPastAux B n _ _ = causalPastAux B n _ _
+      have hQ : (fun p => decide ¬(acc₁.contains p = true))
+              = (fun p => decide ¬(acc₂.contains p = true)) := by
+        funext p; simp only [hc p]
+      have hnxt : ((expandPreds B (a :: t)).filter (fun p => decide ¬(acc₁.contains p = true))).dedup
+                = ((expandPreds B (b :: u)).filter (fun p => decide ¬(acc₂.contains p = true))).dedup := by
+        rw [← hQ]
+        unfold expandPreds
+        rw [List.filter_flatMap, List.filter_flatMap]
+        exact dedup_flatMap_congr _ hf
+      exact ih _ _ _ _ hnxt (dedup_append_congr ha hnxt)
+
+/-- **`causalPastAuxFast_eq` — THE ORDER IS UNCHANGED.** Not "the same set", not "a permutation":
+the fast BFS returns the IDENTICAL LIST as the spec, for every lace, fuel, frontier and accumulator.
+So every theorem, `#guard` and differential stated about `causalPastAux` transfers with no
+re-proving, and nothing downstream — `closureLace`, `hasEquivInPast`, `ratifies`, `anchorSegment`'s
+`xsortBy`, `tauOrder`, `advanceGate` — can observe the repair. -/
+theorem causalPastAuxFast_eq (B : Lace) (fuel : Nat) :
+    ∀ (f acc : List BlockId), causalPastAuxFast B fuel f acc = causalPastAux B fuel f acc := by
+  induction fuel with
+  | zero => intro f acc; rfl
+  | succ n ih =>
+    intro f acc
+    match f with
+    | [] => rfl
+    | a :: t =>
+      show causalPastAuxFast B n _ _ = causalPastAux B n _ _
+      rw [ih]
+      exact causalPastAux_dedup_congr B n _ _ _ _ List.dedup_idem
+        (dedup_append_congr rfl List.dedup_idem)
+
 /-- **`causalPastIncl B h`** — the inclusive causal past of `h` (`h` itself + everything it
 observes), fuel = `B.length`. (`ordering.rs::causal_past_inclusive`.) This is CM Def. 19's
-closure `[h] := {b′ ∈ B : h ⪰ b′}`, as an id list. -/
+closure `[h] := {b′ ∈ B : h ⪰ b′}`, as an id list.
+
+Runs the frontier-deduped BFS; `causalPastIncl_eq_spec` is the proof that this is the same list the
+spec `causalPastAux` returns. -/
 def causalPastIncl (B : Lace) (h : BlockId) : List BlockId :=
-  causalPastAux B B.length [h] [h]
+  causalPastAuxFast B B.length [h] [h]
+
+/-- **`causalPastIncl_eq_spec`** — the deployed causal past IS the specified one, as a list. -/
+theorem causalPastIncl_eq_spec (B : Lace) (h : BlockId) :
+    causalPastIncl B h = causalPastAux B B.length [h] [h] :=
+  causalPastAuxFast_eq B B.length [h] [h]
 
 /-- **`closureLace B h`** — CM Def. 19's `[h]` AS A LACE: the sub-lace induced by `h`'s inclusive
 causal past.
@@ -1025,23 +1172,45 @@ PURE def). Two disciplines make it safe:
      multi-wave n=4 DAG (`traceMW4`). -/
 
 /-- BFS layer expansion with a `Std.HashSet` frontier-dedup — the runtime twin of `causalPastAux`.
-Produces the IDENTICAL id list as `causalPastAux B B.length [h] [h]`: BFS order preserved (frontier
-processed left-to-right, each block's `preds` in order), first-occurrence dedup (a pred already
-`seen` is skipped, exactly as `acc.dedup` keeps the first). O(1) `HashSet` membership replaces the
-pure def's O(n) `List.contains`/`.dedup`. Terminates because `seen` grows and is bounded by `|B|`. -/
+O(1) `HashSet` membership replaces the pure def's O(n) `List.contains`/`.dedup`. Terminates because
+`seen` grows and is bounded by `|B|`.
+
+⚑ **CORRECTED — this twin used to DIVERGE from the def it is trusted to implement.** It kept the
+FIRST occurrence within a layer (a pred already `seen` is skipped), justified by a docstring claim
+that `acc.dedup` "keeps the first". **`List.dedup` keeps the LAST** — `[1,2,1,3,2].dedup = [1,3,2]`,
+evaluated. The divergence needs only one layer whose expansion repeats an id around another, i.e.
+two frontier blocks with overlapping-but-unequal pred sets, and is exhibited on a FIVE-block lace by
+`fast_twin_matches_the_spec_on_the_uneven_pred_lace` in §9: `p,q` at round 1, `b1` acking `[p,q]`,
+`b2` acking `[p]`, `hd` acking `[b1,b2]` — the layer expands to `[p,q,p]`, the pure def returns
+`[hd,b1,b2,q,p]` and the old twin returned `[hd,b1,b2,p,q]`.
+
+`@[implemented_by]` is TRUSTED — the kernel checks nothing — so that was a silent order divergence on
+the live `dregg_tau_order` path, invisible to every theorem (all of which are about the pure def) and
+missed by the §9 `#guard`s because a fully cross-linked trace gives every block in a layer the
+IDENTICAL pred list, the one shape where first and last coincide. The `traceMW4`/equivocation traces
+share that shape.
+
+The layer is now deduped LAST-occurrence-wise — built with a right fold, which meets each id's final
+copy first and prepends, reproducing `List.dedup`'s output order exactly. -/
 partial def fastCausalPastAux (B : Lace) (seen : Std.HashSet BlockId) (acc : Array BlockId)
     (frontier : List BlockId) : Array BlockId :=
   match frontier with
   | [] => acc
   | _ =>
-    let (seen, acc, nxt) := frontier.foldl (init := (seen, acc, ([] : List BlockId)))
-      (fun st hid =>
+    -- the raw layer, in `expandPreds` order, filtered against PREVIOUS layers only (= the pure
+    -- def's `filter (¬ acc.contains ·)`, which likewise cannot see intra-layer duplicates).
+    let raw : List BlockId :=
+      frontier.flatMap (fun hid =>
         match B.lookup hid with
-        | some b =>
-          b.preds.foldl (init := st) (fun st p =>
-            let (s, a, n) := st
-            if B.has p && !s.contains p then (s.insert p, a.push p, n ++ [p]) else (s, a, n))
-        | none => st)
+        | some b => b.preds.filter (fun p => B.has p && !seen.contains p)
+        | none   => [])
+    -- keep the LAST occurrence of each id, in first-appearance order of those survivors — exactly
+    -- `List.dedup`. A right fold sees each id's LAST copy first; prepending restores the order.
+    let nxt : List BlockId :=
+      (raw.foldr (init := ((∅ : Std.HashSet BlockId), ([] : List BlockId)))
+        (fun p st => if st.1.contains p then st else (st.1.insert p, p :: st.2))).2
+    let seen := nxt.foldl (fun s p => s.insert p) seen
+    let acc := nxt.foldl (fun a p => a.push p) acc
     fastCausalPastAux B seen acc nxt
 
 /-- Runtime twin of `causalPastIncl` (HashSet-backed BFS). Value-identical; §9 differential-guarded. -/
@@ -2197,6 +2366,49 @@ that the TRUSTED fast path (which no theorem constrains) equals the verified rul
 #guard trace6.all (fun b => fastCausalPastIncl trace6 b.id == causalPastIncl trace6 b.id)
 #guard traceOrderFork8.all (fun b => fastCausalPastIncl traceOrderFork8 b.id
                                        == causalPastIncl traceOrderFork8 b.id)
+
+/-! #### ⚑ The lace the five `#guard`s above could not see
+
+Every trace above is round-synchronous and fully cross-linked, so every block in a BFS layer has the
+IDENTICAL pred list — the one shape where "keep the first duplicate" and "keep the last" agree. The
+twin kept the FIRST and the pure `acc.dedup` keeps the LAST, and for as long as those were the only
+laces on the bench the differential was GREEN over a divergence that was live on `dregg_tau_order`.
+
+`laceUnevenPreds` is the smallest lace that separates them: `b1` acks `[p, q]` and `b2` acks `[p]`,
+so the layer under `hd` expands to `[p, q, p]` — a duplicate with another id *between* its copies,
+which is precisely what a uniform pred list can never produce. Named, not `#guard`ed, so the fact is
+a term with an axiom record. -/
+
+/-- Round 1: `p`, `q`. Round 2: `b1 → {p,q}`, `b2 → {p}` — UNEVEN pred sets, the separating shape.
+Round 3: `hd → {b1,b2}`. -/
+def laceUnevenPreds : Lace :=
+  [ { id := 1, creator := 0, seq := 1, preds := [] },
+    { id := 2, creator := 1, seq := 1, preds := [] },
+    { id := 3, creator := 0, seq := 2, preds := [1, 2] },
+    { id := 4, creator := 1, seq := 2, preds := [1] },
+    { id := 5, creator := 0, seq := 3, preds := [3, 4] } ]
+
+/-- The layer really does repeat an id around another one — the premise of the whole exhibit. If a
+future edit makes this list uniform, the theorem below stops being a falsifier and this goes red
+first, rather than silently passing on a lace that cannot separate the two dedup conventions. -/
+theorem laceUnevenPreds_layer_repeats_an_id :
+    expandPreds laceUnevenPreds [3, 4] = [1, 2, 1] := by native_decide
+
+/-- **The trusted twin computes the specified list on the lace that separates the conventions.**
+Before the §6c repair this was `[5,3,4,1,2]` against the spec's `[5,3,4,2,1]`. -/
+theorem fast_twin_matches_the_spec_on_the_uneven_pred_lace :
+    laceUnevenPreds.all (fun b => fastCausalPastIncl laceUnevenPreds b.id
+                                    == causalPastIncl laceUnevenPreds b.id) = true := by
+  native_decide
+
+/-- And the order the τ rule finalizes over that lace agrees, twin against pure. -/
+theorem fast_tau_matches_the_spec_on_the_uneven_pred_lace :
+    tauOrderFast laceUnevenPreds [0, 1] 2 = tauOrder laceUnevenPreds [0, 1] 2 := by
+  native_decide
+
+#assert_compiled laceUnevenPreds_layer_repeats_an_id
+#assert_compiled fast_twin_matches_the_spec_on_the_uneven_pred_lace
+#assert_compiled fast_tau_matches_the_spec_on_the_uneven_pred_lace
 -- ⚑ and the runtime twin on the DEEP laces, where the order is 10 and 13 blocks rather than 1 —
 --   a `@[implemented_by]` differential over a one-element list constrains almost nothing.
 #guard tauOrderFast trace6 trace3Participants 3 == tauOrder trace6 trace3Participants 3

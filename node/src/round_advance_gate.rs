@@ -325,6 +325,65 @@ mod tests {
         }
     }
 
+    /// **THE DEPTH SWEEP — the measurement the good-case latency above CANNOT make.**
+    ///
+    /// `leader_present_advances_promptly_and_costs_little` consults at **round 1**, and round 1 is
+    /// the single depth at which a cost exponential *in round depth* is invisible: the BFS under
+    /// `mkPastCache` does one layer. That instrument reported a healthy 23–36 µs for as long as the
+    /// gate took **half an hour per consult at round 11** — four nodes at 100% CPU on an idle box,
+    /// `/status` timing out, `dag_height` frozen. The instrument was not wrong; it was pointed at
+    /// the one place the wound could not appear.
+    ///
+    /// So this sweeps the completing round and prints cost against lace size. It asserts nothing
+    /// about wall-clock (that prices the box); it is `#[ignore]`d and read as a table. What it makes
+    /// impossible is a repeat of the blind spot — the curve is now on the bench at the depth the
+    /// federation actually runs at.
+    ///
+    /// ```text
+    /// cargo test -p dregg-node --lib -- --ignored --nocapture es_gate_cost_against_round_depth
+    /// ```
+    #[test]
+    #[ignore = "measurement instrument, not a gate — run explicitly on a quiet box"]
+    fn es_gate_cost_against_round_depth() {
+        if !dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::round_advance_available(),
+            "the Lean round-advance export (round_advance_available()==false)",
+        ) {
+            return;
+        }
+        let n = 4usize; // the observed federation
+        let keys: Vec<SigningKey> = (1..=n as u8).map(key).collect();
+        let participants: Vec<[u8; 32]> = keys.iter().map(Block::hybrid_id).collect();
+
+        eprintln!("ES-GATE COST vs ROUND DEPTH (n={n}) — rounds, lace blocks, median µs of 5");
+        for rounds in [1u64, 4, 8, 10, 11, 12, 16, 24, 32, 48] {
+            let lace = cross_linked_lace(&keys, rounds);
+            let blocks = lace.iter().count();
+            let mut samples: Vec<u128> = (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    let v = consult(&lace, &participants, rounds, false);
+                    // A gate ERROR would make the timing meaningless — never read a cost off a
+                    // call that did not actually decide.
+                    assert!(
+                        matches!(v, EsAdvanceConsult::Advance | EsAdvanceConsult::Hold),
+                        "rounds={rounds}: the gate did not decide ({v:?}) — the timing below would \
+                         be priced off a failed call"
+                    );
+                    t.elapsed().as_micros()
+                })
+                .collect();
+            samples.sort_unstable();
+            eprintln!(
+                "  rounds={rounds:<3} lace={blocks:<4} median={:>10} µs",
+                samples[samples.len() / 2]
+            );
+        }
+        eprintln!(
+            "⚠ absolute µs price the box and its load; the SHAPE of the curve is the result."
+        );
+    }
+
     /// **POLE 2 (no early advance + timeout escape).** n=4, round 1 filled by creators 2..4 —
     /// cordial (3 ≥ supermajority(4) = 3) with the wave-0 leader ABSENT: the verified gate HOLDS
     /// on a mere creator supermajority, and the SAME lace advances once the timeout bit fires.
