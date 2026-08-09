@@ -16,7 +16,7 @@ import { loadHiddenInstanceDeclaration, loadSlotOpening, refuseNamedInstance } f
  *     The commitment is what stops the host choosing the board afterwards.
  *
  *   ONE MACHINE WITH ORACLE ROWS (`verdict: "resolve"`) — Salvage ships one
- *     632-state table in which some rows do not have one successor. Such a row
+ *     1016-state table in which some rows do not have one successor. Such a row
  *     carries `on_match` and `on_mismatch`, and WHICH of the two is taken
  *     depends on the hidden board. The client cannot know, so it asks and
  *     applies the answer. Its disclosure is `oracle-only`: the board is never
@@ -636,6 +636,43 @@ export function replayFiniteTable(descriptor, session, steps) {
     const [action, resolution] = typeof step === "string" ? [step, null] : [step.action, step.resolution ?? null];
     return submitFiniteTableAction(descriptor, run, action, resolution);
   }, createFiniteTableRun(descriptor, session));
+}
+
+/**
+ * The per-step trajectory of a run: for each step, the view it was taken FROM,
+ * the row's verdict, the oracle answer it was given, and the view it landed in.
+ *
+ * ⚑ THIS IS `validateRun`'s OWN WALK, RETURNED INSTEAD OF DISCARDED. It reads
+ * emitted rows and recorded answers and nothing else — it derives no predicate,
+ * decides no move, and knows no rule the table does not state. What it is for is
+ * the class of fact a presenter IS entitled to: *what this client's own
+ * transcript already contains*. `blackbox-controller.js` established the
+ * boundary (`repeated-probe`, fd23cbd4b); Salvage needs the same thing and could
+ * not have it, because a finite-table step is only `{action, resolution}` and the
+ * plate that was face up when a `mismatch` came back is not in the step. It is in
+ * the row's `from` view, which is here.
+ *
+ * ⚠ It is still not a licence to close a control. A presenter may RENDER what the
+ * transcript says; whether a move is open is the table's decision and only the
+ * table's — see the `disabled` note in `finite-table-controller.js`.
+ */
+export function tableRunTrail(descriptor, run) {
+  const member = validateRun(descriptor, run);
+  let stateId = member.initialState;
+  return Object.freeze(run.steps.map((step) => {
+    const from = stateById(member, stateId);
+    const row = member.transitions.find((candidate) => candidate.state === stateId && candidate.action === step.action);
+    stateId = row.verdict === "resolve"
+      ? (step.resolution === "match" ? row.on_match : row.on_mismatch)
+      : row.next;
+    return Object.freeze({
+      action: step.action,
+      resolution: step.resolution,
+      verdict: row.verdict,
+      from: from.view,
+      to: stateById(member, stateId).view,
+    });
+  }));
 }
 
 export function tableRunView(descriptor, run) {

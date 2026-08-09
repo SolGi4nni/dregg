@@ -14,7 +14,7 @@ const canonical = new URL("../../poa/artifacts/poag1/", import.meta.url);
  * The REAL Lean-emitted descriptors, loaded through the real loaders.
  *
  * Controller tests use these rather than a hand-written fixture on purpose: the
- * Salvage loader pins its emitted 632-state closure, and a fixture that could
+ * Salvage loader pins its emitted 1016-state closure, and a fixture that could
  * satisfy that pin would be a second copy of the table maintained by hand — the
  * exact mirror this repo keeps paying for. Signature checking is out of scope
  * here (poag1.test covers it); the bytes are the committed ones.

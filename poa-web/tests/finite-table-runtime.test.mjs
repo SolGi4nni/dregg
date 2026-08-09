@@ -29,7 +29,7 @@ function loadRelay(game = relayFixture(), authority = fixtureAuthority("per-run-
 
 /**
  * The parametric-shape fixture is loaded through the SHARED loader with a local
- * spec, because the Salvage loader pins its emitted 632-state closure and a
+ * spec, because the Salvage loader pins its emitted 1016-state closure and a
  * hand-written fixture cannot honestly carry one. The Salvage-specific pins are
  * exercised against the real Lean bytes in canonical-finite-tables.test.mjs.
  */

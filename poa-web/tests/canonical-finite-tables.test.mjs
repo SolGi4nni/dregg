@@ -119,7 +119,7 @@ test("canonical Lean-emitted Relay and Salvage bytes match the strict web consum
   assert.equal(salvage.disclosure, "oracle-only");
   assert.equal(salvage.memberKeys.length, 1);
   const machine = salvage.members[0];
-  assert.deepEqual([machine.states.length, salvage.actions.length, machine.transitions.length], [632, 6, 3792]);
+  assert.deepEqual([machine.states.length, salvage.actions.length, machine.transitions.length], [1016, 6, 6096]);
   assert.equal(salvage.initialState, "salvage:0:none:0");
   assert.equal(salvage.instance.practice.boards.length, 90);
   const verdicts = machine.transitions.reduce((tally, row) => ({ ...tally, [row.verdict]: (tally[row.verdict] ?? 0) + 1 }), {});

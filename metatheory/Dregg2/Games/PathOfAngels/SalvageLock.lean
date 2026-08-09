@@ -45,6 +45,73 @@ client fetches determines the board.
 
 This kernel did not change.  `Config.seed_eq` still binds the played board to
 `mission.runSeed`; what changed is that the seed is no longer published.
+
+## ⛑ The budget: 18, and it was 12 because nobody solved the hidden game
+
+`MAX_TURNS` was 12 from before the board left the wire, and it stayed 12 after.  That
+is the whole defect: 12 was sized against a game in which the plates showed their
+glyphs, and the game that shipped hands the player ONE BIT per comparison — did these
+two match — and no glyph at all.
+
+Exhaustively solved (uniform over the 15 perfect matchings; a comparison is two
+exposures; the player learns only match/mismatch and remembers everything):
+
+| exposures | comparisons | perfect play | memoryless | skill band |
+| --------- | ----------- | ------------ | ---------- | ---------- |
+|  6 |  3 |   1/15 =  6.67% |  6.67% |  0.00 pts |
+|  8 |  4 |   3/15 = 20.00% | 16.44% |  3.56 pts |
+| 10 |  5 |   6/15 = 40.00% | 27.23% | 12.77 pts |
+| **12** |  6 |   **9/15 = 60.00%** | 37.83% | 22.17 pts |
+| 14 |  7 |  12/15 = 80.00% | 47.63% | 32.37 pts |
+| 16 |  8 |  14/15 = 93.33% | 56.35% | 36.98 pts |
+| **18** |  9 |  **15/15 = 100.0%** | **63.91%** | **36.09 pts** |
+| 20 | 10 |          100.0% | 70.35% | 29.65 pts |
+
+⚑ **At 12 a player who plays perfectly loses two runs in five.**  Not through a
+mistake — the budget sat exactly at the mean of optimal play, so the game punished
+correct play and had no way to say so.
+
+**Why 18:**
+
+1. **It is the exact adversarial worst case of the game that actually ships.**  An
+   adversary answering any way still consistent with some board forces nine
+   comparisons and no more.  So the budget is spent to its LAST EXPOSURE in the worst
+   case and is never one short of it: tight, and never cheating.
+2. **Correct play is never punished.**  15 of 15.  That was the whole complaint —
+   "a player who plays perfectly and loses is right to feel cheated" — and only 18
+   answers it.
+3. **The skill band costs almost nothing to get there.**  36.09 points against the
+   36.98 maximum at 16: 0.89 points, for the property that a perfect player never
+   loses.  ⚠ 16 is the band's argmax and it is the WRONG number, because the band
+   is a tiebreaker and not the criterion — `scripts/poa-design-gate.py` FAILS a budget
+   that refuses more than one perfect run in twenty (`budget-refuses-optimal-play`,
+   threshold 95%) and 16 sits at 93.3%, BELOW the repo's own bar.  A first draft of
+   this section argued for 16 by quoting the band maximum and not the bar it failed.
+
+**Why an EVEN number.**  A comparison is two exposures and nothing else buys
+information, so an odd budget spends its last exposure on a plate whose pair can never
+be turned — `a_lone_last_exposure_clears_nothing` is that, proved.  17 and 19 are 16
+and 18 with a dead button on the end.
+
+⚠ **The skill band above is a MEASUREMENT, not a theorem in this file.**  It is an
+exhaustive backward induction over the belief state (sets of candidate matchings),
+which memoizes to nothing in a scripting language and does not fit a Lean structural
+recursion without an explicitly tabulated state enumeration — that table is undone
+work and is named here rather than dressed up.  The perfect-play column IS
+independently checked: `poa-design-gate.py`'s `skill-band-is-real` recomputes it from
+the EMITTED rows and agrees (84/90 at 16 — and that agreement is what moved this
+number, because the same pass FAILED 16).
+
+⚠ **And one gate measure here is computed on the WRONG GAME.**
+`hidden_pairing_worst_case` partitions candidate boards by WHICH previously-seen plate
+an exposure matches, which hands the player a glyph identity the emitted rows never
+give.  That is the pre-split face-up game; it returns 10 exposures where the one-bit
+game's real worst case is 18, and it is why `hidden-board-floor` reports slack on a
+budget that is exactly tight.  The gate flags the contradiction itself inside
+`budget-refuses-optimal-play`; fixing it belongs to whoever owns the gate.
+
+What this file pins is the SHAPE of the budget — `the_budget_is_nine_comparisons`
+and `a_lone_last_exposure_clears_nothing`.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
@@ -54,7 +121,9 @@ namespace Dregg2.Games.PathOfAngels.SalvageLock
 
 open Dregg2.Games.PathOfAngels
 
-abbrev MAX_TURNS : Nat := 12
+/-- Exposures a run may spend.  ⚑ 18, not 12 — see the budget section of the header
+for the solve.  A comparison is two exposures, so this is nine comparisons. -/
+abbrev MAX_TURNS : Nat := 18
 
 /-- How many distinct boards a seed can name: 6! / (2! * 2! * 2!) = 90 rows of six
 plates carrying two copies of each of three glyphs. -/
@@ -452,6 +521,30 @@ theorem exhausted_refuses (cfg : Config) (s : State) (a : Action)
     (h : MAX_TURNS ≤ s.turns) : step cfg s a = none := by
   cases a <;> simp [step, openB, Nat.not_lt.mpr h]
 
+/-- ⚑ **The budget is nine COMPARISONS.**  Named so the unit is in the file and not
+only in the header: a player never spends an exposure, they spend a pair of them. -/
+theorem the_budget_is_nine_comparisons : MAX_TURNS = 2 * 9 := by decide
+
+/-- ⚑ **AND THEREFORE AN ODD BUDGET WOULD BUY NOTHING.**  A first exposure clears no
+plate and settles no question; it only turns a plate face up.  So a run that spends its
+LAST exposure with nothing already face up ends holding one exposed plate, no new
+cleared pair, and no legal move — the exposure is a button that cannot be answered.
+
+This is why `MAX_TURNS` is even, and it is the whole argument: 15 and 17 are 14 and 16
+with a dead press on the end. -/
+theorem a_lone_last_exposure_clears_nothing (cfg : Config) (s : State) (slot : Fin 6)
+    (hnone : s.exposed = none) (hlast : s.turns + 1 = MAX_TURNS) {s' : State}
+    (h : step cfg s (.expose slot) = some s') :
+    s'.cleared = s.cleared ∧ ∀ a : Action, step cfg s' a = none := by
+  simp only [step, hnone] at h
+  split at h
+  · simp only [Option.some.injEq] at h
+    subst s'
+    refine ⟨rfl, fun a => exhausted_refuses cfg _ a ?_⟩
+    simp only []
+    omega
+  · exact absurd h (by simp)
+
 theorem replay_append (cfg : Config) (s : State) (xs ys : List Action) :
     replay cfg s (xs ++ ys) = (replay cfg s xs).bind (fun s' => replay cfg s' ys) := by
   induction xs generalizing s with
@@ -541,6 +634,8 @@ theorem judge_receipt_binds_transcript (cfg : Config) (before : WorldState) (ctx
 #assert_axioms cleared_slot_refused
 #assert_axioms solved_refuses
 #assert_axioms exhausted_refuses
+#assert_axioms the_budget_is_nine_comparisons
+#assert_axioms a_lone_last_exposure_clears_nothing
 #assert_axioms replay_append
 #assert_axioms refused_prefix_refuses_replay
 #assert_axioms terminalOutput_is_mission_accepted

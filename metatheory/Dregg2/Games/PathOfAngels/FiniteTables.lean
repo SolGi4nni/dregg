@@ -404,8 +404,8 @@ the wire carries. (Pinned `= true` in `FiniteTablesFixtures`.) -/
 def check_salvage_machine_shape_is_seed_independent : Bool :=
   salvagePairingRepresentatives.length == 15 &&
     (salvagePairingRepresentatives.all (fun seed =>
-      (salvageStates seed).length == 164 &&
-      (salvageTransitions seed).length == 984 &&
+      (salvageStates seed).length == 260 &&
+      (salvageTransitions seed).length == 1560 &&
       salvageStatesNodupB seed &&
       salvageTableClosedB seed &&
       salvageStateIdsUniqueB seed salvageStateId &&
@@ -544,18 +544,20 @@ def check_salvage_parametric_table_is_well_formed : Bool :=
   salvageParametricClosedB && salvageParametricStatesNodupB &&
     salvageParametricStateIdsUniqueB
 
-/-- The emitted parametric closure has exactly 632 states.
+/-- The emitted parametric closure has exactly 1016 states (632 before the budget
+grew from 12 exposures to 18 — the closure carries `turns`, so a bigger budget is a
+bigger table).
 (Pinned `= true` in `FiniteTablesFixtures`.) -/
 def check_salvageParametricStates_count : Bool :=
-  decide (salvageParametricStates.length = 632)
+  decide (salvageParametricStates.length = 1016)
 
-/-- The emitted parametric table has exactly 3792 rows.
+/-- The emitted parametric table has exactly 6096 rows (3792 before the budget grew).
 (Pinned `= true` in `FiniteTablesFixtures`.) -/
 def check_salvageParametricTransitions_count : Bool :=
-  decide (salvageParametricTransitions.length = 3792)
+  decide (salvageParametricTransitions.length = 6096)
 
 /-- The parametric closure strictly contains every single board's reachable set:
-a client that fetched a 164-state table could ask which board has 164 reachable
+a client that fetched a 260-state table could ask which board has 260 reachable
 states, and this one cannot be asked that.
 (Pinned `= true` in `FiniteTablesFixtures`.) -/
 def check_parametric_closure_covers_every_board : Bool :=

@@ -14,7 +14,7 @@ import { ArtifactRefusal } from "./poag1.js";
  * by the shared loader. They named the glyph sealed under each plate, which is
  * the entire board — the game was face-up and called concealed.
  *
- * What ships instead is ONE 632-state machine whose rows do not all have one
+ * What ships instead is ONE 1016-state machine whose rows do not all have one
  * successor. A row that turns over a second plate cannot know whether it pairs
  * until the board is known, so it carries `on_match` and `on_mismatch` and a
  * verdict of `resolve`. The client walks the table and, at those rows, asks.
@@ -117,10 +117,22 @@ export function loadSalvageLockDescriptor(game, authority) {
     ruleset: "salvage-v2",
     disclosure: "oracle-only",
     engineModule: "Dregg2.Games.PathOfAngels.SalvageLock",
-    actionLimit: 12,
-    maxActionLimit: 12,
-    stateCount: 632,
-    maxStates: 632,
+    // ⚑ THE BUDGET IS 18 EXPOSURES (nine comparisons), not 12, and these four
+    // numbers are the flag day. `SalvageLock.MAX_TURNS` went 12 -> 18 because 12
+    // sat exactly at the mean of optimal play — a perfect player cleared the hatch
+    // 60% of the time and had no way to know they had been beaten by the budget
+    // rather than by the board. 18 is the exact adversarial worst case of the
+    // one-bit game, so perfect play NEVER loses to the clock and the budget is
+    // still spent to its last exposure. The parametric closure carries `turns`, so
+    // a bigger budget is a bigger table: 632 states / 3792 rows became 1016 / 6096.
+    //
+    // ⚠ These pins REFUSE the previously signed bundle, deliberately. Until the
+    // ceremony re-emits and re-signs `poa/artifacts/poag1/`, Salvage will not load
+    // — which is the flag day being loud instead of two shapes quietly disagreeing.
+    actionLimit: 18,
+    maxActionLimit: 18,
+    stateCount: 1016,
+    maxStates: 1016,
     maxActions: SLOT_COUNT,
     allowsResolve: true,
     extraKeys: ["practice"],
@@ -144,7 +156,7 @@ export function loadSalvageLockDescriptor(game, authority) {
   // for an oracle-only game means it published one.
   //
   // ⚠ This is a BACKSTOP, not the working gate, and it is worth saying which.
-  // On the emitted 632-state closure the mismatch branches are the only way into
+  // On the emitted 1016-state closure the mismatch branches are the only way into
   // a large part of the table, so collapsing the oracle rows strands those
   // states and `table-state-closure` refuses first — measured, in
   // canonical-finite-tables.test.mjs. This line catches only a table that never

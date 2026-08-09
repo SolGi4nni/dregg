@@ -361,6 +361,15 @@ globs = [
   "Dregg2.Games.PathOfAngels.VentCrawl",
   "Dregg2.Games.PathOfAngels.VentCrawlEmit",
   "Dregg2.Games.PathOfAngels.VentCrawlEmitMain",
+  # ⚑ 2026-08-09 (fair-and-two lane) — VENT CRAWL, TWO SLINGS. Shared shaft, shared
+  # tape, independent banking: the rack's first kernel that a second person changes
+  # the optimal play of. Rooted here ON ARRIVAL rather than becoming the next orphan
+  # this list exists to catch. 15 `#assert_axioms` in the kernel; the 7
+  # `#assert_compiled` measured-design pins are in `VentCrawlPairFixtures` below,
+  # and the heaviest of them is a fifteen-state backward induction, so budget ~5 s.
+  # ⚠ No emitter yet, so `scripts/poa-design-gate.py` cannot see this game — the
+  # measurement is Lean-side only and is NOT gate-corroborated.
+  "Dregg2.Games.PathOfAngels.VentCrawlPair",
   # ⚑ 2026-08-05 — THE GALLEY BOUNDARY TEETH RAN NOWHERE. This block asked for
   # `Dregg2.Games.PathOfAngels.GalleyCommonsBoundary` and
   # `Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary`, crediting them with "33
@@ -579,6 +588,7 @@ globs = [
   "Dregg2.Games.PathOfAngels.StationDailyRuntimeFixtures",
   "Dregg2.Games.PathOfAngels.VentCrawlEmitFixtures",
   "Dregg2.Games.PathOfAngels.VentCrawlFixtures",
+  "Dregg2.Games.PathOfAngels.VentCrawlPairFixtures",
   "Dregg2.Games.PathOfAngels.WorldActivationFixtures",
 ]
 
@@ -600,3 +610,15 @@ globs = [
   "Dregg2.Games.MultiwayTugFixtures",
   "Dregg2.Games.MultiwayTugFFIFixtures",
 ]
+
+# mina_wrap_opening_sched_emit — `dregg-mina-wrap-opening-sched::v1`: the IPA opening relation
+# (B) of Mina devnet block 539508 as a 35-addend scheduled chain with the `sg` slot PINNED —
+# descriptor, honest trace/PIs, the solved-`sg` forgery trace (closes the group equation, refused
+# by the manifest pins) and the corrupted-fold trace (refused by the op gates). COMPILED, as the
+# other chain emitters are. NOT a default target.
+#
+#     lake build mina_wrap_opening_sched_emit
+#     ./.lake/build/bin/mina_wrap_opening_sched_emit ../circuit/tests/fixtures
+[[lean_exe]]
+name = "mina_wrap_opening_sched_emit"
+root = "MinaWrapOpeningSchedEmit"

@@ -156,6 +156,52 @@ test("a Salvage practice session answers itself and says PRACTICE on screen", as
   });
 });
 
+test("Salvage renders the pairs its own transcript has ruled out, and refuses none of them", async () => {
+  const { salvage } = await canonicalDescriptors();
+  withFakeDocument(() => {
+    const root = new FakeElement("div");
+    const controller = mountSalvageLock(root, salvage, {
+      session: { mode: "practice", member: 0, oracle: salvagePracticeOracle(salvage, 0) },
+    });
+    const buttons = () => all(root).filter((node) => node.tagName === "BUTTON" && node.dataset.action);
+    const live = () => all(root).find((node) => node.attributes.get("role") === "status");
+
+    assert.match(live().textContent, /Nothing ruled out yet/);
+
+    // Board 0 is [0,0,1,1,2,2], so 0 against 2 is a MISMATCH — one bit, and the
+    // only thing this game ever pays a player.
+    buttons()[0].dispatch("click");
+    buttons()[2].dispatch("click");
+    assert.deepEqual(controller.getRun().steps.map((step) => step.resolution), [null, "mismatch"]);
+
+    // ⚑ THE BIT IS ON THE BOARD NOW. Before this the six plates went back to
+    // identical "sealed" and the two exposures bought nothing a player could see.
+    assert.match(buttons()[0].attributes.get("aria-label"), /ruled out against 1 plate: 2 \(C\)/);
+    assert.match(buttons()[2].attributes.get("aria-label"), /ruled out against 1 plate: 0 \(A\)/);
+    assert.match(buttons()[0].textContent + buttons()[0].children.map((n) => n.textContent).join(" "), /not 2 \(C\)/);
+    assert.match(live().textContent, /1 pair ruled out/);
+    // A plate that was not in the comparison learned nothing.
+    assert.doesNotMatch(buttons()[4].attributes.get("aria-label"), /ruled out/);
+
+    // ⚠ AND NOTHING IS GREYED. `already-compared` is not in Salvage's emitted
+    // refusal vocabulary, so re-testing a settled pair is a BAD move and a LEGAL
+    // one. A face that disabled it would be authoring a rule the kernel does not
+    // have — the opposite error from the one this test's neighbours catch.
+    assert.equal(buttons()[0].disabled, false);
+    assert.equal(buttons()[2].disabled, false);
+
+    // A second mismatch accumulates rather than replacing.
+    buttons()[0].dispatch("click");
+    buttons()[4].dispatch("click");
+    assert.match(buttons()[0].attributes.get("aria-label"), /ruled out against 2 plates: 2 \(C\), 4 \(E\)/);
+    assert.match(live().textContent, /2 pairs ruled out/);
+
+    // The status counts COMPARISONS, which is the unit the budget is denominated
+    // in: 18 exposures is nine of them.
+    assert.match(live().textContent, /Comparison 2 of 9/);
+  });
+});
+
 /**
  * ⚑ A CONTROL IS ENABLED EXACTLY WHEN THE TABLE WILL TAKE IT.
  *
