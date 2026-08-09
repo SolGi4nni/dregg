@@ -743,6 +743,16 @@ pub struct PendingJoinRequest {
 /// operator-scale event; this only has to be larger than any real committee.
 const MAX_PENDING_JOIN_REQUESTS: usize = 64;
 
+/// Depth of the queue between join ADMISSION (the narrow-channel receiver) and
+/// join SPONSORSHIP (the task that authors the `Join` proposal).
+///
+/// One slot per admissible candidate: a candidate that cannot be held in
+/// `pending_joins` at all can never be queued here, so a deeper queue would only
+/// buffer duplicates of candidates already waiting. Bounded on purpose — the
+/// receiver `try_send`s and moves on, so a full queue delays a sponsorship by
+/// one 15 s candidate retry and delays no validation at all.
+const SPONSOR_QUEUE_CAPACITY: usize = MAX_PENDING_JOIN_REQUESTS;
+
 /// What this node's OWN join attempt has achieved, for `/status`.
 ///
 /// ⚑ THIS EXISTS BECAUSE A WEDGED JOINER REPORTED `"healthy": true`. `/status`'s
@@ -3228,12 +3238,42 @@ impl BlocklaceHandle {
     ///
     /// Everything the gossip layer proved is carried in `candidate`: the sender
     /// holds that ed25519 key. Everything else is checked here, fail-closed.
+    ///
+    /// ⚑ ADMISSION ONLY — THE AUTHORING IS SOMEBODY ELSE'S TASK, AND THAT SPLIT
+    /// IS THE FIX. The narrow-join-channel receiver is a SINGLE-CONSUMER loop
+    /// (`while let Some(req) = join_rx.recv().await { handle_join_request(…).await }`),
+    /// and this function used to `await` the whole sponsorship inline:
+    /// `propose_membership` → `author_persist_or_rollback` → `lace.write()` +
+    /// a durable persist + a gossip broadcast. So for as long as one
+    /// sponsorship took, NOTHING ELSE ON THE JOIN CHANNEL WAS EVEN LOOKED AT.
+    ///
+    /// Measured on a live 4-node federation on hbox (2026-08-09, run
+    /// `/tank/dregg-build/fedpole3`): node0 accepted a candidate at
+    /// `11:29:46.959` and its `lace.write()` was not granted until
+    /// `11:38:20.487` — **513 seconds** inside this function. During that window
+    /// the gossip layer went on admitting join requests every 15 s (the
+    /// candidate's own retries plus ~15 from an impostor naming a DIFFERENT
+    /// federation) and not one of them was validated: the impostor's first
+    /// `join request refused: it names a different federation` is stamped
+    /// `11:38:22.929`, **4 m 38 s** after its first request was admitted, and
+    /// they then drained in one burst. The security pole read the committee's
+    /// logs during that gap and recorded `no refusal line found — THIS IS A
+    /// FAILURE`, because the refusal genuinely had not happened yet.
+    ///
+    /// That is the property the narrow channel was built to have, inverted: an
+    /// unregistered key may send exactly one kind of message and is supposed to
+    /// GAIN NOTHING BY IT — but one such message, from one candidate, held the
+    /// committee's entire join-admission path for eight and a half minutes.
+    /// Validation is cheap and fail-closed and belongs on the receiver;
+    /// authoring contends for the lace with every other writer and belongs on
+    /// [`Self::sponsor_pending_join`], behind a bounded queue.
     pub async fn handle_join_request(
         &self,
         state: &NodeState,
         from: SocketAddr,
         candidate: [u8; 32],
         body: &[u8],
+        sponsor: &tokio::sync::mpsc::Sender<[u8; 32]>,
     ) {
         let cand_hex: String = candidate[..4].iter().map(|b| format!("{b:02x}")).collect();
         let Ok(req) = postcard::from_bytes::<JoinRequestBody>(body) else {
@@ -3294,12 +3334,36 @@ impl BlocklaceHandle {
         let mut pending = self.pending_joins.write().await;
         if let Some(existing) = pending.get(&candidate) {
             // A re-send is expected (the candidate retries until ratified) and
-            // must not open a second proposal.
+            // must not open a second proposal. What stops the second proposal is
+            // `proposed`, NOT the mere presence of this entry — and that
+            // distinction is what makes the retry USEFUL rather than ignored.
+            //
+            // ⚑ `proposed` WAS A DEAD FIELD: declared, documented as "so a
+            // re-sent request does not open a second proposal", written exactly
+            // once as `None` at insert, and never read or set anywhere in the
+            // workspace. The dedupe it claimed to perform was actually being
+            // done by this early `return`, which is a strictly WORSE rule — it
+            // drops a re-send whether or not anything was ever authored. With
+            // sponsorship on a bounded queue there are now real ways for the
+            // first attempt to produce nothing (queue full; this node not yet a
+            // participant; a durable-persist rollback), and under the old rule
+            // every one of them was PERMANENT: the candidate stayed admitted,
+            // kept retrying every 15 s forever, and no retry could ever reach
+            // the authoring path again. The candidate's own retry is the
+            // natural place to close that, so it re-enqueues while `proposed`
+            // is unset and the sponsor makes it idempotent.
+            let already = existing.proposed;
+            let waiting = existing.first_seen.elapsed().as_secs();
+            drop(pending);
             debug!(
                 candidate = %cand_hex,
-                waiting_secs = existing.first_seen.elapsed().as_secs(),
+                waiting_secs = waiting,
+                proposed = ?already,
                 "join request re-sent by a candidate we are already holding"
             );
+            if already.is_none() && self.auto_approve_joins {
+                self.enqueue_sponsorship(sponsor, candidate);
+            }
             return;
         }
         if pending.len() >= MAX_PENDING_JOIN_REQUESTS {
@@ -3333,29 +3397,143 @@ impl BlocklaceHandle {
              member (automatic under auto-approve-joins; otherwise `propose-epoch-transition --add`)"
         );
 
-        // Sponsorship. Only a CURRENT participant can author a proposal that
-        // counts, so a non-member that somehow received a request holds it and
-        // does nothing.
+        // Sponsorship: HANDED OFF, never performed here. The authority checks
+        // (are we a participant, is the candidate already one) are re-read at
+        // AUTHORING time in `sponsor_pending_join`, because the constitution can
+        // change while a candidate sits in the queue and the answer that matters
+        // is the one true when the block is signed — not the one true when the
+        // datagram arrived.
         if !self.auto_approve_joins {
             return;
         }
-        let we_are_participant = {
-            let c = self.constitution.read().await;
-            c.current.is_participant(&self.self_key)
-        };
-        if !we_are_participant {
-            return;
+        self.enqueue_sponsorship(sponsor, candidate);
+    }
+
+    /// Hand a validated candidate to the serial sponsor task.
+    ///
+    /// `try_send` and NOT `send`: the whole value of the split is that the
+    /// narrow-channel receiver never waits. A full queue costs THIS candidate a
+    /// 15-second retry (which re-enqueues — see the re-send arm of
+    /// [`Self::handle_join_request`]); a blocking send would cost the committee
+    /// its refusals, which is the failure being repaired.
+    fn enqueue_sponsorship(
+        &self,
+        sponsor: &tokio::sync::mpsc::Sender<[u8; 32]>,
+        candidate: [u8; 32],
+    ) {
+        let cand_hex: String = candidate[..4].iter().map(|b| format!("{b:02x}")).collect();
+        match sponsor.try_send(candidate) {
+            Ok(()) => debug!(candidate = %cand_hex, "queued for sponsorship"),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                warn!(
+                    candidate = %cand_hex,
+                    capacity = SPONSOR_QUEUE_CAPACITY,
+                    "sponsorship queue is full — this candidate is admitted but not yet queued; \
+                     its next re-send re-enqueues it. Join admission itself is UNAFFECTED."
+                );
+                metrics::counter!("dregg_join_sponsor_enqueue_dropped_total", "reason" => "full")
+                    .increment(1);
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                warn!(
+                    candidate = %cand_hex,
+                    "sponsorship task is gone — no member on this node will author a Join for \
+                     this candidate"
+                );
+                metrics::counter!("dregg_join_sponsor_enqueue_dropped_total", "reason" => "closed")
+                    .increment(1);
+            }
         }
+    }
+
+    /// Author the `Join` proposal for ONE already-validated candidate.
+    ///
+    /// Runs on the dedicated sponsor task (see `run_blocklace_sync_with_policy`),
+    /// one candidate at a time, so the `lace.write()` this ultimately needs
+    /// contends with the block producer and the gossip funnel WITHOUT holding
+    /// the narrow join channel while it does. Nothing about the security
+    /// argument moves: every fail-closed check — federation binding, ML-DSA
+    /// proof of possession, already-a-participant, capacity — has already run in
+    /// [`Self::handle_join_request`] before a candidate can reach this queue,
+    /// and the proposal is still authored under THIS MEMBER's key by the same
+    /// `propose_membership`, which still refuses an add whose PQ half it cannot
+    /// resolve.
+    pub async fn sponsor_pending_join(&self, state: &NodeState, candidate: [u8; 32]) {
+        let cand_hex: String = candidate[..4].iter().map(|b| format!("{b:02x}")).collect();
+
+        // AUTHORITY, RE-READ AT AUTHORING TIME.
+        {
+            let c = self.constitution.read().await;
+            if c.current.is_participant(&candidate) {
+                debug!(
+                    candidate = %cand_hex,
+                    "candidate became a participant while queued — nothing to sponsor"
+                );
+                return;
+            }
+            // Only a CURRENT participant can author a proposal that counts, so a
+            // non-member that somehow received a request holds it and does nothing.
+            if !c.current.is_participant(&self.self_key) {
+                debug!(
+                    candidate = %cand_hex,
+                    "this node is not a current participant — its proposal would not count \
+                     toward quorum; holding the candidate without sponsoring"
+                );
+                return;
+            }
+        }
+
+        // ONE proposal per candidate. The read guard is released before
+        // `propose_membership`, which takes `pending_joins.read()` itself in
+        // `resolve_candidate_pq_key` — and tokio's RwLock is FAIR, so a writer
+        // queued between the two would deadlock a re-entrant read.
+        let held = {
+            let pending = self.pending_joins.read().await;
+            match pending.get(&candidate) {
+                Some(p) => Some(p.proposed),
+                None => None,
+            }
+        };
+        match held {
+            None => {
+                warn!(
+                    candidate = %cand_hex,
+                    "sponsorship queued for a candidate this node is not holding — dropped \
+                     (it is never this queue that decides a candidate is legitimate)"
+                );
+                return;
+            }
+            Some(Some(block)) => {
+                debug!(
+                    candidate = %cand_hex,
+                    proposal_block = %block,
+                    "already sponsored by this node — the retry is idempotent"
+                );
+                return;
+            }
+            Some(None) => {}
+        }
+
         match self.propose_membership(state, candidate, true).await {
-            Ok(block_id) => info!(
-                candidate = %cand_hex,
-                proposal_block = %block_id,
-                "SPONSORED a join request under this member's key (auto-approve-joins)"
-            ),
+            Ok(block_id) => {
+                // Record it BEFORE the log line: `proposed` is what makes every
+                // subsequent re-send a no-op, and a crash between the two would
+                // only cost a duplicate proposal, never a missing one.
+                if let Some(p) = self.pending_joins.write().await.get_mut(&candidate) {
+                    p.proposed = Some(block_id);
+                }
+                metrics::counter!("dregg_join_sponsored_total").increment(1);
+                info!(
+                    candidate = %cand_hex,
+                    proposal_block = %block_id,
+                    "SPONSORED a join request under this member's key (auto-approve-joins)"
+                );
+            }
             Err(reason) => warn!(
                 candidate = %cand_hex,
                 reason = %reason,
-                "sponsorship of the join request did not land"
+                "sponsorship of the join request did not land — the candidate stays admitted \
+                 and its next re-send retries this"
             ),
         }
     }
@@ -5044,12 +5222,38 @@ pub(crate) async fn run_blocklace_sync_with_membership_policy(
     // the PQ key it names, is it already a member, do we sponsor it) is decided
     // here, in the layer that knows what a committee is.
     if let Some(mut join_rx) = gossip.take_join_requests() {
+        // TWO TASKS, AND THE SPLIT IS LOAD-BEARING. Validation is cheap,
+        // fail-closed and must never be behind anything; authoring needs
+        // `lace.write()` and a durable persist and can therefore be behind
+        // EVERYTHING. Running both on the receiver meant one candidate's
+        // sponsorship froze the committee's whole join-admission path — 513 s
+        // measured, with an impostor's wrong-federation refusals sitting
+        // unvalidated in the channel for 4 m 38 s of it. See
+        // `BlocklaceHandle::handle_join_request`.
+        let (sponsor_tx, mut sponsor_rx) =
+            tokio::sync::mpsc::channel::<[u8; 32]>(SPONSOR_QUEUE_CAPACITY);
+        let sp_handle = handle.clone();
+        let sp_state = state.clone();
+        tokio::spawn(async move {
+            // Serial by construction: at most one Join proposal is authored at a
+            // time, so sponsorship cannot itself become a source of lace-write
+            // contention.
+            while let Some(candidate) = sponsor_rx.recv().await {
+                sp_handle.sponsor_pending_join(&sp_state, candidate).await;
+            }
+        });
         let jr_handle = handle.clone();
         let jr_state = state.clone();
         tokio::spawn(async move {
             while let Some(req) = join_rx.recv().await {
                 jr_handle
-                    .handle_join_request(&jr_state, req.from, req.candidate_public_key.0, &req.body)
+                    .handle_join_request(
+                        &jr_state,
+                        req.from,
+                        req.candidate_public_key.0,
+                        &req.body,
+                        &sponsor_tx,
+                    )
                     .await;
             }
         });
