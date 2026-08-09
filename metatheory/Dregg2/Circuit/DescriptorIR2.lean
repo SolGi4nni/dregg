@@ -682,17 +682,23 @@ that carries it.
 so **every entry of `permutation_randomness()` is sampled after the main-trace commitment**. A
 prover therefore fixes its witness before it learns the challenge, which is exactly the hypothesis
 Schwartz–Zippel needs. The values are `SC::Challenge = BinomialExtensionField<BabyBear, 4>`,
-`|K| = p⁴ ≈ 2^124.0`, so a degree-`d` residual survives a random draw with probability `≤ d/2^124`
-(`ChalSchwartzZippel.chalGate_forces_polynomial`, and the concrete numerator is the residual's
-degree in the challenge, not in the trace).
+`|K| = p⁴ = 2^123.63` (say the real bound, not the rounded-up one), so a degree-`d` residual
+survives a random draw with probability `≤ d/|K|` —
+`Dregg2.Circuit.ChalSchwartzZippel.chalGate_forces_polynomial`, whose `chalDeg` is the concrete
+numerator (the residual's degree in the challenge, not in the trace) and whose exceptional set is
+named, not assumed away.
 
 ⚠ **The challenges are the LogUp α/β of this instance's lookup contexts, re-read.** They are
 uniform and independent of the committed trace, which is all Schwartz–Zippel asks; the two
-arguments compose by a union bound. Two consequences a caller must respect and that
-`chalIndicesDistinctOk` makes checkable: global-bus challenges are SHARED BY BUS NAME across
-instances, so two entries of the slice may be EQUAL, and the index→bus correspondence is not
-stable under descriptor edits. A gate that needs `k` INDEPENDENT challenges may not assume
-`chal i ≠ chal j`; a gate that needs one uniform value may use any index.
+arguments compose by a union bound. MEASURED at `batch-stark/src/transcript.rs:74-102` (pinned rev
+`82cfad7`), the slice is a `flat_map` over this instance's lookup contexts of the per-context
+`(α, β)` pair, where a context on a global bus seen EARLIER in the batch reuses the identical pair
+and a new bus (or a local context) samples fresh. Two consequences, and `chalIndicesDistinctOk`
+(§9¾ below) is the DECIDABLE REFUSAL built on them: entries `2k` and `2k+1` are one context's
+`(α, β)` — always two DISTINCT post-commitment draws — while entries of DIFFERENT contexts may be
+EQUAL values (bus sharing), and the index→bus correspondence is not stable under descriptor edits.
+A gate that needs `k` INDEPENDENT challenges may not assume `chal i ≠ chal j` across contexts; a
+gate that needs one uniform value may use any index.
 
 ⚠ **Degree: a challenge is DEGREE ZERO.** `p3-air/src/symbolic/variable.rs:67-72` gives
 `ExtEntry::Challenge` `degree_multiple() = 0` — a challenge is a constant for quotient sizing. So a
@@ -2438,6 +2444,55 @@ theorem challengeCount_eq_zero_of_no_chalGate (d : EffectVmDescriptor2)
         · exact absurd rfl (ha _)
   exact this d.constraints 0 h
 
+/-! ### §9¾ — ⚑ `chalIndicesDistinctOk`: the challenge-INDEPENDENCE refusal (2026-08-09).
+
+The §2.6 docblock promised this verdict by name for four days before it existed — the third of the
+three phantom citations the Schwartz–Zippel cone carried. It is real now, and its criterion is the
+MEASURED one, not the guessed one.
+
+## What was measured, and why "distinct bus" is the WRONG criterion here
+
+`batch-stark/src/transcript.rs:74-102` (pinned rev `82cfad7`): the per-instance
+`permutation_randomness()` slice is `flat_map` over the instance's lookup contexts of a per-context
+`(α, β)` pair; a context on a global bus ALREADY SEEN in the batch reuses the identical pair, a new
+bus samples two fresh challenges. And the deployed realization of a range lookup
+(`descriptor_ir2.rs::eval_decomp`) puts EVERY nibble limb on the ONE global byte bus — so for a
+descriptor whose lookups are all range lookups (the Pasta multiply cores), **every context in the
+instance rides the same bus and a distinct-bus criterion is UNSATISFIABLE**: it would refuse the
+two-challenge gate the criterion exists to license. What IS guaranteed, for every context `k` and
+under every descriptor edit: entries `2k` and `2k+1` are that context's `α` and `β` — **two
+distinct samples of one `sample_n_challenges(2)` call**, both drawn after `observe_main`.
+Cross-context entries may be EQUAL (same slot of two same-bus contexts) and the index→bus map is
+layout-dependent (chip groups, then narrow, state16, exact-public, then the range decompositions,
+then the mem/map/umem sends) — so cross-context independence is REFUSED rather than modeled.
+
+## The supply half
+
+A true verdict must also mean the indices EXIST in the slice: the deployed evaluator fail-closes
+(`assert_zero(1)`) on a short slice, and `check_descriptor2` refuses a declaration above
+`2 · (bus-bearing constraints)` — a sound lower bound on the context count, since every bus-bearing
+constraint emits at least one interaction. `busConstraintCount` mirrors that bound here, so the
+verdict is checkable one stage upstream of the bytes. -/
+
+/-- The bus-bearing constraints of a descriptor — each guarantees at least one LogUp lookup
+context, hence two `permutation_randomness()` entries. The Rust twin is `check_descriptor2`'s
+`bus_constraints` filter. -/
+def busConstraintCount (d : EffectVmDescriptor2) : Nat :=
+  (d.constraints.filter fun c => match c with
+    | .lookup _ | .memOp _ | .mapOp _ | .umemOp _ => true
+    | _ => false).length
+
+/-- ⚑ **`chalIndicesDistinctOk` — challenge indices `i` and `j` denote GUARANTEED-INDEPENDENT
+draws.** True exactly when the two indices are the `α` and `β` of ONE lookup context
+(`i / 2 = j / 2`, `i % 2 ≠ j % 2`), both are declared, and the declaration is within the supply
+`check_descriptor2` guarantees. Everything else — same index, same slot of different contexts
+(possibly the SAME value under bus sharing), an undeclared index, a declaration past the supply —
+is REFUSED. Fail-closed: a `true` verdict is a licence, a `false` verdict is the default. -/
+def chalIndicesDistinctOk (d : EffectVmDescriptor2) (i j : Nat) : Bool :=
+  (i / 2 == j / 2) && (i % 2 != j % 2)
+    && (max i j < challengeCount d)
+    && (challengeCount d ≤ 2 * busConstraintCount d)
+
 /-- **`emitVmJson2`** — the canonical v2 wire string: versioned (`"ir":2`), tables declared,
 constraints in v2 grammar, v1 hash-site/range carriers preserved. -/
 def emitVmJson2 (d : EffectVmDescriptor2) : String :=
@@ -2563,6 +2618,44 @@ theorem demoChal_exceptional_point_accepts :
         , nxt := fun _ => 0, pub := fun _ => 0 }
         (fun _ => 2) false demoChalGate := by
   constructor <;> simp [ChalConstraint.holdsIn, demoChalGate, ChalExpr.evalIn]
+
+/-! ### §10a‴ — ⚑ `chalIndicesDistinctOk`: both poles, on a two-gate demo.
+
+`demoChal2` declares three challenges (its second gate reads `chal 2`) over two range lookups —
+supply `2 · 2 = 4 ≥ 3`, so every declared index exists in the slice. The poles below are the four
+ways the verdict answers, and the RED cross-context pole is the hazard the refusal exists for: its
+two lookups ride the SAME `.range` bus, so `chal 0` and `chal 2` (the α-slots of contexts 0 and 1)
+are the IDENTICAL value at the deployed sampler — a "two-point" gate pair built on them would be
+one point wearing two names. -/
+
+/-- Two challenge gates (indices `0` and `2`) over two same-bus range lookups. -/
+def demoChal2 : EffectVmDescriptor2 :=
+  { name := "demo-chal2", traceWidth := 4, piCount := 0
+  , tables := [mainTableDef 4, rangeTableDef 8]
+  , constraints :=
+      [ .chalGate demoChalGate
+      , .chalGate ⟨.mul (.chal 2) (.add (.loc 0) (.mul (.const (-1)) (.loc 2))), false⟩
+      , .lookup ⟨.range, [.var 0]⟩
+      , .lookup ⟨.range, [.var 1]⟩ ]
+  , hashSites := [], ranges := [] }
+
+/-- **THE LICENCE** — `(0, 1)` are the α and β of ONE context: two distinct post-commitment draws,
+whatever bus that context rides. Symmetric, as independence is. -/
+theorem demoChal2_licenses_one_contexts_pair :
+    chalIndicesDistinctOk demoChal2 0 1 = true
+      ∧ chalIndicesDistinctOk demoChal2 1 0 = true := by decide
+
+/-- ⚑ **THE REFUSALS, each for its own reason.** `(0, 2)`: same slot of two contexts — and here the
+two contexts share the `.range` bus, so the values are IDENTICAL, not merely unguaranteed. `(1, 1)`:
+one draw is not two. `demoChal (0, 1)`: the index `1` is not declared — a licence may not outrun the
+declaration `check_descriptor2` refuses against. -/
+theorem chalIndicesDistinct_refusals :
+    chalIndicesDistinctOk demoChal2 0 2 = false
+      ∧ chalIndicesDistinctOk demoChal2 1 1 = false
+      ∧ chalIndicesDistinctOk demoChal 0 1 = false := by decide
+
+#assert_axioms demoChal2_licenses_one_contexts_pair
+#assert_axioms chalIndicesDistinct_refusals
 
 /-! ### §10a′ — exact-public LogUp contents: emitted identity + both-polarity replay. -/
 

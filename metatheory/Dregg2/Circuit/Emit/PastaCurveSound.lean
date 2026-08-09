@@ -61,21 +61,29 @@ modulus is a SINGLE column, not a 32-limb block, so the core is add/sub-shaped (
 carries) and not multiply-shaped (63 gates, 62 carries). That assumption was an over-estimate of
 **93 constraints and 62 columns per constant-multiply**, and §6 measures the corrected figure.
 
-## ⚑ WHY THE SCHOOLBOOK AND NOT SCHWARTZ–ZIPPEL
+## ⚑ WHY THE SCHOOLBOOK AND NOT SCHWARTZ–ZIPPEL — updated 2026-08-09: the hole is CLOSED, the
+adoption is now a real (and separate) pass
 
-`PastaSzMul` collapses a multiply's 63 algebraic gates to 1 and would take this row's 12 multiplies
-to 12 gates (or, batched, to one). It is not what this file builds on, and the reason is a MISSING
-THEOREM rather than a preference: `PastaSzMul.lean:82` credits itself with
+`PastaSzMul` collapses a multiply's 63 algebraic gates to 2 (its two-point form; batched, to one
+gate for `N` multiplies) at identical columns and lookups. When this file was written it could not
+build on it, for a reason that was a MISSING THEOREM rather than a preference: `PastaSzMul` credited
+itself with the polynomial-identity ⟹ integer-congruence step (`szPoly_forces_congruence`) and
+`git grep` found exactly one occurrence — the credit. **That phantom is closed**: as of 2026-08-09
+`PastaSzMul.szPoly_forces_congruence` exists, is stated base- and modulus-parametric on the
+faithful carrier (`ChalExpr.evalIn` / `ChalConstraint.holdsIn`, the deployed `assert_zero_ext`
+reading), discharges into the same `felt_gates_force_congruence` this file's cores use as their
+terminal lemma, and is `#assert_axioms`-clean — together with the emitted-gate welds
+(`szBodyAt_evalIn`, `fpSzMulDesc_carries_the_gates`) and the ε ledger (`2^−117.7` per check,
+`2^−98.5` single-gate wrap-union — below the bar, hence two gates — `2^−197.0` two-point).
 
-> *"the polynomial-identity ⟹ integer-congruence step under bounded limbs
-> (`szPoly_forces_congruence`)"*
-
-and **`szPoly_forces_congruence` does not exist** — not in that file, not anywhere in the tree
-(`git grep` finds exactly the one occurrence, in that sentence). What the file proves is the generic
-Schwartz–Zippel step over a domain (`sz_nonexceptional_forces_poly`) and the counts; the link from
-`szBody`'s vanishing to `M ∣ x·y − z` is not there. Building the curve row on it would inherit a
-hole where `felt_gates_force_congruence` is complete and axiom-clean. §7 prices the SZ row anyway,
-so the lever is measured and not merely named.
+So the reason THIS file still carries schoolbook multiply cores is no longer a hole; it is
+sequencing. Adopting sz here means swapping each multiply core's 63 gate legs for two relocated
+challenge gates (`szBodyAt` at the core's bases) and restating the composed `_forces` theorems with
+`holdsIn`-at-a-draw hypotheses plus a per-row non-exceptionality disjunction — a statement-shape
+change for the whole row, not a leg splice, and it rides `DescriptorIR2.chalIndicesDistinctOk` for
+the two draws. `felt_gates_force_congruence` stays the terminal lemma either way, so the adoption
+is a swap of which certified body feeds it. §7 prices the SZ row; the swap is the named follow-on,
+now unblocked.
 
 ## What is proved here
 
