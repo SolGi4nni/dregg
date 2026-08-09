@@ -2,8 +2,10 @@
 //!
 //! ## What this file is the other side of
 //!
-//! `MinaWrapConjunctionAir` conjoins finalize's `xiCorrect` and `bCorrect`, the challenge/inverse
-//! reciprocity weld and the opening residual's non-free coefficients over SHARED columns. Its first
+//! `MinaWrapConjunctionAir` conjoins finalize's `bCorrect`, the challenge/inverse reciprocity weld
+//! and the opening residual's non-free coefficients over SHARED columns — and COMPARES `xiCorrect`
+//! without forcing it (both ξ blocks are free columns there; the 32 `cb.connect`s of
+//! `fold_endo_into_finalize` are what bind them, which is a consumer's constraint, not this AIR's). Its first
 //! cut was ROW-LOCAL — the b-polynomial's 118 operations at both evaluation points side by side —
 //! and measured **22 184 columns, 30 607 constraints, a 24 MB artifact**, ten times the largest
 //! descriptor in the tree. `EmitByName.lean` WITHHELD the routing row rather than check in that

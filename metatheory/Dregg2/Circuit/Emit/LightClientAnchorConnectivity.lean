@@ -39,8 +39,10 @@ polynomial of arity ≥ 2); the DECLARATION reading survives as `declaredCols`, 
 says what it counts. Where a bullet below describes a seam "joining" its commitment, read it
 through that split: the vk half is emitted polynomials; the commit half is a DECLARED PORT whose
 forcing is a named off-row weld — covered for the verify rung's anchor, tip and chainlink blocks
-(`MinaSeams`: the `headTipSeam` object; REFUSAL 4), ⚑ UNCOVERED for its conjunction block (REFUSAL
-15 is defined and CALLED BY NOTHING) and for the link rung's body columns.
+(`MinaSeams`: the `headTipSeam` object; REFUSAL 4), and ⚑ since 2026-08-08 for its conjunction
+block (REFUSAL 15, `check_conjunction_binding` — DEAD CODE for the two days before, wired the day
+this census counted it) and for the link rung's body columns (REFUSAL 16,
+`check_body_chain_binding` — the seventeen-slot executor weld against the body chain's root).
 
 Seven served descriptors. **Three of them relate their published values to anything, and only one of
 those two relates them to something the prover did not choose.**
@@ -114,9 +116,10 @@ commitment the prover can afford, and derive the anchor instead of publishing it
   ⚑ The three commit blocks are DECLARED PORTS: the tip covered elementwise against the link
   sub-proof (REFUSAL 13, called and both-polarity tested, now also the emitted `headTipSeam`
   object), the chainlink commitment by digest recompute (REFUSAL 4, `check_transcript_binding`,
-  called and tested) — ⚑⚑⚑ and the conjunction commitment by NOTHING: `check_conjunction_binding`
-  (REFUSAL 15) is defined and never called, the wire carries no conjunction sub-proof, no test
-  exists (`MinaSeams.the_conjunction_commitment_port_has_no_live_weld`).
+  called and tested) — and, since 2026-08-08, the conjunction commitment by the SAME shape
+  (REFUSAL 15, `check_conjunction_binding`, called and tested). ⚑ That weld was DEAD CODE for the
+  two days before — defined, never called, no wire field, no test — counted while it stood by
+  `MinaSeams.the_conjunction_commitment_port_has_no_live_weld = 1`.
   ⚠ And the caveat that governs is the one `minaLink_decorative_anchors` already carries: the bound
   sub-proof chains WITNESSED lane values. The tip is the last element of a committed chain whose
   SHAPE is gated; its HASH derivation rides sibling sub-proofs no node yet requires.
@@ -161,13 +164,16 @@ commitment the prover can afford, and derive the anchor instead of publishing it
   the absorb sub-proofs the declaration names, welded today by tests, required by no node. Every
   lane pair is still its own island for the CHAINING gates — lane `j` chains to lane `j` and never
   crosses.
-  ⚠ **AND THAT IS STILL NOT A BINDING TO MINA.** `BODYHASH` is now PUBLISHED (PI 20..28, with the
-  chain's 8-lane accumulator at 29..36) so a fold can reach it — and none does: no fold
-  `cb.connect`s these seventeen slots to `MinaStateBodyHashChain`'s root claim and no executor
-  compares them (`turn`'s `LINK_PI_BODYHASH_BASE`/`LINK_PI_BODY_ACC_BASE` are consts with no
-  reader). `minaLink_decorative_anchors` counts the seventeen;
-  `MinaSeams.the_link_body_ports_have_no_registered_cover` is the term that shrinks when the weld
-  lands. **Connectivity is co-occurrence, not derivation — and a declaration is neither.**
+  ⚠ **AND THE BINDING TO MINA IS AN EXECUTOR WELD, NOT A CONSTRAINT.** `BODYHASH` is PUBLISHED
+  (PI 20..28, with the chain's 8-lane accumulator at 29..36) so a fold can reach it — and none
+  does; what reads the seventeen since 2026-08-08 is `turn`'s `check_body_chain_binding`
+  (REFUSAL 16): `BODY_ACC` elementwise against `MinaStateBodyHashChain`'s root `transcript_acc`,
+  `BODYHASH` against the `Faithful9` re-limbing of its squeezed lane 0, the chain head against
+  the `MinaProtoStateBody` salt, under a second operator-pinned recursion anchor.
+  `minaLink_decorative_anchors` still counts the seventeen — an executor weld adds no emitted
+  polynomial — and `MinaSeams.the_link_body_ports_are_weld_covered` names the cover (it stood as
+  `…_have_no_registered_cover = 2` until the weld landed). **Connectivity is co-occurrence, not
+  derivation — and a declaration is neither.**
 
 ## ⚑ WHY THESE ARE THEOREMS AND NOT A COMMENT — they are meant to go RED
 
@@ -506,13 +512,14 @@ The history, kept because the sequence is the lesson:
 ⚠ **THIRTY-SIX DECORATIVE ANCHORS IS NOT THIRTY-SIX WOUNDS — BUT IT IS NINE MORE THAN THE COVERS
 CLAIMED, AND SAYING WHICH IS THE POINT.** These blocks are the seams' PORT SURFACES, declared in
 `MinaSeams` §8b: the anchor and tip ports are covered by the emitted head↔link seam (`headTipSeam`
-— the executor's REFUSAL 13/14 as an object, both polarities tested), and the chainlink-commitment
-port by the named, CALLED, tested weld `check_transcript_binding` (REFUSAL 4). ⚑⚑⚑ **The
-conjunction-commitment port's weld is DEAD CODE**: `check_conjunction_binding` (REFUSAL 15) is
-defined, documented — and called by nothing; the head wire carries no conjunction sub-proof to call
-it with, and no test exists. So `CONJ_PI` is published, forced to the statement by its pins, and
-compared to NOTHING any node runs — counted by
-`MinaSeams.the_conjunction_commitment_port_has_no_live_weld`, the "constructed zero times" class.
+— the executor's REFUSAL 13/14 as an object, both polarities tested), the chainlink-commitment
+port by the named, CALLED, tested weld `check_transcript_binding` (REFUSAL 4), and ⚑ since
+2026-08-08 the conjunction-commitment port by `check_conjunction_binding` (REFUSAL 15) — which was
+DEAD CODE for the two days before: defined, documented, called by nothing, no wire field, no test,
+the "constructed zero times" class, counted while it stood by
+`MinaSeams.the_conjunction_commitment_port_has_no_live_weld = 1` and retired by the wiring
+(`MinaSeams.conjPiWeld`; wire fields REQUIRED so old blobs refuse to decode; both polarities in
+`turn`'s REFUSAL-15 suite).
 This literal reds the day any of the four blocks enters an emitted polynomial, at which point the
 honest move is to shrink it and retire the corresponding port. -/
 theorem minaVerify_decorative_anchors :
@@ -683,13 +690,16 @@ appear in no emitted polynomial beside another column.** Both seams that name th
 `bound := none` and a `.const 1` guard, so their emitted content is nine one-column vk forcings
 each; the commit vectors are declarations.
 
-⚑⚑ **AND THESE SEVENTEEN ARE THE ONE PORT SURFACE IN THIS FILE WITH NO PRODUCTION COVER.** The
-verify rung's three commitment blocks have named welds the node RUNS (REFUSAL 4/13/15). These
-seventeen have `turn`'s slot constants (`LINK_PI_BODYHASH_BASE`, `LINK_PI_BODY_ACC_BASE`), a folded
-body-hash chain (`mina_body_hash_chain_fold.rs`) — and NO comparison between the two that any node
-performs. `MinaSeams.the_link_body_ports_have_no_registered_cover` counts exactly that, as a term
-that shrinks the day the weld lands. Until it does, this literal is the loud version of "publication
-buys reachability, not the weld". -/
+⚑⚑ **AND SINCE 2026-08-08 THESE SEVENTEEN HAVE THEIR PRODUCTION COVER.** They stood as the one
+port surface in this file with none — slot constants, a folded body-hash chain, and NO comparison
+between the two that any node performed
+(`MinaSeams.the_link_body_ports_have_no_registered_cover = 2`, the loud version of "publication
+buys reachability, not the weld"). The weld is `turn`'s `check_body_chain_binding` (REFUSAL 16,
+both polarities tested; the wire REQUIRES the body-chain root so an old blob refuses to decode),
+censused as `MinaSeams.bodyHashWeld`/`bodyAccWeld` with
+`the_link_body_ports_are_weld_covered = []`. ⚠ This literal does NOT shrink for it: an executor
+weld adds no emitted polynomial, and the day a fold `cb.connect`s these slots in-circuit is the
+day this literal moves. -/
 theorem minaLink_decorative_anchors :
     decorativeAnchors LightClientMinaLinkAir.minaLinkDesc
       = [22, 23, 24, 25, 26, 27, 28, 29, 30, 40, 41, 42, 43, 44, 45, 46, 47] := by
@@ -749,12 +759,14 @@ slots 29..36), and both nonets are named by the body-chain `proofBind` whose `vk
 `dregg-pasta-fp-chainlink::v1`'s fingerprint. A recursion fold reads `air_public_targets`, so the
 weld to the chain's root is now REACHABLE — which is precisely what the unpublished shape forbade.
 
-⚠ **AND WHAT IS STILL OWED, in the same breath — re-measured 2026-08-08 with the instrument
+⚠ **AND WHAT THE WELD IS, in the same breath — re-measured 2026-08-08 with the instrument
 fixed.** This theorem asserted `isRelated = true` off the seam's DECLARATION; the emission relates
 none of these columns (`bound := none`, guard `.const 1`). Publication is reachability, not the
-weld, and there is no weld: no fold `cb.connect`s these 17 slots to the chain root's claim lanes
-and no executor compares them. The port surface is measured decorative until one exists
-(`minaLink_decorative_anchors`, `MinaSeams.the_link_body_ports_have_no_registered_cover`). -/
+weld — and the weld that exists since the same day is the EXECUTOR's, not a fold's: no
+`cb.connect` touches these 17 slots; `turn`'s `check_body_chain_binding` (REFUSAL 16) compares
+them against the chain root's claim. The port surface stays measured decorative — an executor
+weld adds no emitted polynomial (`minaLink_decorative_anchors`,
+`MinaSeams.the_link_body_ports_are_weld_covered`). -/
 theorem minaLink_body_hash_is_published_and_declared_not_joined :
     ∀ col ∈ [22, 23, 24, 25, 26, 27, 28, 29, 30],
       isRead LightClientMinaLinkAir.minaLinkDesc col = true ∧
@@ -890,9 +902,10 @@ seams emit no polynomial over those lanes — declarations quoted as gate covera
 the tip, the two sub-proof-commitment blocks and the link's seventeen body columns return to the
 decorative set, WHERE THEY BELONG: they are PORT SURFACES. Mina-verify's thirty-six split as
 covered ports (anchor + tip: the emitted `headTipSeam`; the chainlink block: REFUSAL 4, called and
-tested) plus one UNCOVERED (the conjunction block — REFUSAL 15 is dead code,
-`MinaSeams.the_conjunction_commitment_port_has_no_live_weld`); the link's seventeen are the other
-uncovered surface, counted by `MinaSeams.the_link_body_ports_have_no_registered_cover`.
+tested; the conjunction block: REFUSAL 15 — dead code when this was first measured, wired the
+same day, `MinaSeams.conjPiWeld`); the link's seventeen carry the REFUSAL-16 executor weld
+(`MinaSeams.bodyHashWeld`/`bodyAccWeld`, `the_link_body_ports_are_weld_covered = []`, having
+stood at `= 2` uncovered).
 
 ⚠ Anyone tightening this gate should count BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the decorative
 SHARE, not columns — and must never again let a count of DECLARATIONS stand in for a count of

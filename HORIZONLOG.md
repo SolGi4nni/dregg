@@ -140,18 +140,28 @@ The August-8 ports entry below counted three wounds; this entry is their burn-do
   stand). `PinsTiedCensus` re-measured with the fixed walker: **95 pass / 16 fail on 183 pins**
   (was 97/14/157); the two new rows are the Mina pair, classified FAITHFUL-BY-HOST-WELD with
   their welds named; `the_tied_neighbours_pass` no longer claims them.
+- ⚑⚑ **AND ONE LAYER DEEPER THAN THE BRIEF: THE CONJUNCTION DESCRIPTOR WAS PINNED AND SERVED BY
+  NOTHING.** REFUSAL 15's own positive-polarity test, first time it ever ran, panicked at
+  `descriptor_by_name("dregg-mina-wrap-conjunction::v1") = None`: the JSON was emitted, checked
+  in, and pinned by the head's guard-58 bind — and absent from the dispatch table, invisible
+  precisely because the refusal that would have asked for it was dead code. Had the wiring
+  landed without the row, every head would have been refused fail-closed with the honest path
+  unreachable. Row added (`descriptor_by_name.rs`, beside the chainlink row, with the finding in
+  its comment); after it, `cargo test -p dregg-turn --lib mina_head_verifier` = **52/52**.
 - **FLAG DAYS, exactly:** `MinaHeadProofWire` — every previously produced blob FAILS TO DECODE
   (three REQUIRED fields; postcard EOF, refusal at the codec). `MinaChainRootBackend` — trait
   gains a method with no default; all three impls updated (`P3MinaChainRootBackend` now
   requires BOTH `DREGG_MINA_CHAIN_ROOT_VK` and ⚑ NEW `DREGG_MINA_BODY_ROOT_VK` or installs
-  nothing = refusal 0). **No descriptor re-emits, no VK rotates, nothing re-genesises**: the
-  head/link descriptor bytes are `rfl`-unchanged under the demotion, `mina_head_predicate_vk`
-  is a function of the unchanged descriptor NAME, and the seams/ports JSON is untouched (weld
-  covers are Lean census objects, deliberately not `ports.json` rows — `seam_specs.rs` gate 3
-  stays a hard invariant). Stale `turn` layout asserts (20/30-era) moved to 37/39 with the
-  wiring. ⚠ `PROVENANCE.json` was NOT stamped: a clean stamp would cover the unchanged
-  descriptor set only after the full local gates run; nothing in this change moves descriptor
-  bytes, so there is nothing new to stamp — the ceremony stays the operator's.
+  nothing = refusal 0). `descriptor_by_name` — ⚑ serves ONE NEW NAME
+  (`dregg-mina-wrap-conjunction::v1`); no existing name moves. **No descriptor re-emits, no VK
+  rotates, nothing re-genesises**: the head/link descriptor bytes are `rfl`-unchanged under the
+  demotion, `mina_head_predicate_vk` is a function of the unchanged descriptor NAME, and the
+  seams/ports JSON is untouched (weld covers are Lean census objects, deliberately not
+  `ports.json` rows — `seam_specs.rs` gate 3 stays a hard invariant). Stale `turn` layout
+  asserts (20/30-era) moved to 37/39 with the wiring. ⚠ `PROVENANCE.json` was NOT stamped: a
+  clean stamp would cover the unchanged descriptor set only after the full local gates run;
+  nothing in this change moves descriptor bytes, so there is nothing new to stamp — the
+  ceremony stays the operator's.
 
 ## ⛑⛑⛑⛑ AUGUST 8 (SEAMS EMIT OR PORT) — every `bound := none` `proofBind` is now a DECLARED PORT with a named cover or a COUNTED wound; the connectivity census counts CONSTRAINTS, not declarations
 

@@ -20,6 +20,12 @@ one rail down — the source's `AirLeg.readCols` and the emitted `relatedCols` a
   * **97 of 111 pass unchanged.**
   * **14 fail, on 157 pins between them.**
 
+⚑⚑ **RE-MEASURED 2026-08-08 — 95 pass / 16 fail on 183 pins.** The walker's `.bind`/`.proofBind`
+arm was complicit (it read declarations, not emitted polynomials); the two rows the fix moved are
+both Mina light-client rungs, classified in §2's dated confession below. The 2026-08-06 numbers
+above are kept as what THAT instrument measured; they refuse to reproduce because the code
+producing them is deleted.
+
 ⚠ And the STRICTER reading (`pinsJoined` / `decorativeAnchors`, which additionally demands the
 reading constraint name a SECOND column) fails **22 descriptors on 420 pins** — the gap between the
 two is the unary-thread class of `EffectLowerCertified` §7a. This file is about the 14.
@@ -139,7 +145,9 @@ A decorative pin is cheap to find once you look. A doc-comment that says it is b
 
 `TiedAir` was **not weakened** to admit any of the 14 — no descriptor here carries the certified
 lowering, and the six FAITHFUL ones stay outside it until the door is expressed as something the
-verdict can see. The discriminator that would admit them honestly is not "read by a constraint" but
+verdict can see. (⚑ 2026-08-08: the two Mina rows the emission-faithful walker added DID carry
+`lowerTiedAir`; they were demoted to `lowerAirCertified` — identical bytes, refinement kept, tie
+verdict honestly dropped — rather than the verdict being widened to keep them.) The discriminator that would admit them honestly is not "read by a constraint" but
 "declared as an externally-welded ABI lane", which the tree already names in prose
 (`ParamComposeEmit.lean:554-555`) and could carry as a FIELD on the descriptor. That is a design
 fork, not a repair, and it is left standing rather than guessed at.
@@ -194,12 +202,49 @@ theorem solLcVerifyAir_untied : LightClientSolanaAir.solLcVerifyAir.pinsTied = f
 theorem presentationFreshnessAir_untied :
     PresentationEmit.presentationFreshnessAir.pinsTied = false := by decide
 
-/-- …and the three that DO carry `TiedAir` from the same neighbourhood pass, so the verdict above is
-a discrimination and not a constant. -/
+/-! ### ⚑⚑ 2026-08-08 — TWO ROWS MOVED FROM THE PASS COLUMN TO THE FAIL COLUMN, WITH NO
+DESCRIPTOR BYTE HAVING CHANGED: THE INSTRUMENT CONFESSED, NOT THE DESCRIPTORS.
+
+`the_tied_neighbours_pass` stood here asserting `minaHeadAir.pinsTied = true ∧
+minaLinkAir.pinsTied = true ∧ solStakeFoldAir.pinsTied = true`. The first two were true only
+because `AirLeg.readCols` returned a `.bind` leg's whole DECLARATION — guard ∪ commit ∪ vk ∪
+bound — while `descriptor_ir2.rs` emits polynomials over `commit` only under a `bound` and over
+`vk` only under a `vkPin`, and every served Mina seam is `bound := none`. So the two Mina airs'
+commitment/body pins were scored as tied by the very seam declarations whose forcing was the
+question. Emission-faithful (`EffectLowerCertified` §1a, same day as
+`LightClientAnchorConnectivity.relatedCols`' identical confession one rail down), both go FALSE;
+the old theorem's numbers refuse to reproduce because the code producing them is deleted. The
+header's 2026-08-06 measurement (97 pass / 14 fail on 157 pins) was taken at the emitted rail
+with the then-complicit walker; emission-faithful the census is **95 pass / 16 fail on 183
+pins** — the two rows below are the delta, each with its classification:
+
+15. **`dregg-mina-lightclient-verify::v1`** — 18/39 untied (cols 40..48 `SUB_PI`, 68..76
+    `CONJ_PI`). FAITHFUL-BY-HOST-WELD: digest-shaped ports whose forcing is the executor's
+    REFUSAL 4 (`check_transcript_binding`) and REFUSAL 15 (`check_conjunction_binding` — wired
+    2026-08-08, dead code the two days before), censused as `MinaSeams.subPiWeld`/`conjPiWeld`,
+    both-polarity tested in `mina_head_verifier.rs`.
+16. **`dregg-mina-lightclient-link::v1`** — 8/37 untied (cols 40..47 `BODY_ACC`). Same class:
+    the forcing is REFUSAL 16 (`check_body_chain_binding`, landed 2026-08-08 — these eight lanes
+    had NO reader of any kind before it), censused as `MinaSeams.bodyAccWeld`. ⚠ No in-AIR width
+    lookup exists or is owed: a BabyBear digest lane fills its column, and a 29-bit table would
+    refuse honest witnesses — a full-width lookup would be decoration.
+
+Their `TiedAir`s are DEMOTED to `lowerAirCertified` at identical bytes (the refinement
+certificate survives; the tie verdict is no longer claimed); the per-file reds are
+`minaHeadAir_pinsTied_is_false` / `the_untied_pins_are_exactly_the_commitment_blocks` and
+`minaLinkAir_pinsTied_is_false` / `the_untied_pins_are_exactly_the_body_acc`. -/
+
+/-- ⚑ The Mina head verify AIR now REFUSES the tie verdict — see the dated section above. -/
+theorem minaHeadAir_untied : LightClientMinaAir.minaHeadAir.pinsTied = false := by decide
+
+/-- ⚑ The Mina link AIR now REFUSES it too. -/
+theorem minaLinkAir_untied : LightClientMinaLinkAir.minaLinkAir.pinsTied = false := by decide
+
+/-- …and the neighbour that still carries `TiedAir` passes, so the verdicts above are a
+discrimination and not a constant. (Until 2026-08-08 this theorem asserted the two Mina airs pass;
+that assertion is the one the confession above retires.) -/
 theorem the_tied_neighbours_pass :
-    LightClientMinaAir.minaHeadAir.pinsTied = true
-      ∧ LightClientMinaLinkAir.minaLinkAir.pinsTied = true
-      ∧ LightClientSolStakeFoldAir.solStakeFoldAir.pinsTied = true := by decide
+    LightClientSolStakeFoldAir.solStakeFoldAir.pinsTied = true := by decide
 
 /-! ## §3 — the emitted census, per descriptor, pinned to its exact literal.
 
@@ -244,6 +289,21 @@ cross-row tie and the two published roots are independent free felts. -/
 theorem temporalPredicate_untied_pins :
     untiedPins TemporalPredicateEmit.temporalPredicateDesc = [37] := by decide
 
+/-- **Mina head verify: eighteen of thirty-nine** — the two digest-shaped commitment ports
+(`SUB_PI` 40..48, `CONJ_PI` 68..76), row 15 of the dated confession. Forced by executor welds
+(REFUSAL 4/15), not by any emitted polynomial; the anchor and tip nonets stay READ (lane
+lookups), so they are absent here while present in `decorativeAnchors`' 36. -/
+theorem minaVerify_untied_pins :
+    untiedPins LightClientMinaAir.minaLcVerifyDesc
+      = [40, 41, 42, 43, 44, 45, 46, 47, 48, 68, 69, 70, 71, 72, 73, 74, 75, 76] := by decide
+
+/-- **Mina link: eight of thirty-seven** — the `BODY_ACC` island (cols 40..47), row 16 of the
+dated confession. The eight lanes NO constraint of any kind reads; forced by REFUSAL 16's
+executor weld since 2026-08-08 and by nothing before it. -/
+theorem minaLink_untied_pins :
+    untiedPins LightClientMinaLinkAir.minaLinkDesc
+      = [40, 41, 42, 43, 44, 45, 46, 47] := by decide
+
 /-! ⚠ **`dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1` is classified above but NOT
 pinned here.** Its module chain (`GuardedHidingSpanEmit` → `BlindedMembershipWideEmit`) was mid-flag-day
 on 2026-08-06 — a sibling's `GateExpr` collapse had `bitBinaryBody_eq` unresolved — and importing a
@@ -271,7 +331,11 @@ theorem presentationFreshness_notAfter_is_read_but_unpinned :
 #assert_axioms ethHeadAir_untied
 #assert_axioms solLcVerifyAir_untied
 #assert_axioms presentationFreshnessAir_untied
+#assert_axioms minaHeadAir_untied
+#assert_axioms minaLinkAir_untied
 #assert_axioms the_tied_neighbours_pass
+#assert_axioms minaVerify_untied_pins
+#assert_axioms minaLink_untied_pins
 #assert_axioms eth_untied_pins
 #assert_axioms tm_untied_pins
 #assert_axioms mid_untied_pins

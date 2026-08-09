@@ -136,8 +136,10 @@ out of the residue, none of which is a bit:
   * `FINALIZE_XI_B_PROVED` — ⚑⚑⚑ **NEW 2026-08-06 (§1d, §2d), and NOT a bit.** The guard of a
     nine-lane `proofBind` pinning `dregg-mina-wrap-conjunction::v1` and PI-publishing that
     sub-proof's commitment. What it carries is **TWO of `finalize_other_proof`'s FOUR conjuncts** —
-    `xiCorrect` and `bCorrect` against `PastaIPA.bEval` itself — plus the per-round
-    challenge/inverse reciprocity weld and the opening residual's non-free coefficients.
+    `bCorrect` against `PastaIPA.bEval` itself, FORCED by the sub-AIR's own gates, and `xiCorrect`,
+    which that AIR only COMPARES (both ξ blocks are free there) and which the recursion fold's 32
+    `cb.connect`s are what force — plus the per-round challenge/inverse reciprocity weld and the
+    opening residual's non-free coefficients.
     ⚠ **NOT "finalize proved" and NOT "Pickles verified".** Read §1d before quoting it, including
     what the bind does NOT buy: ξ is a FREE column in the conjunction AIR.
   * `CANON_OK`   — ⚑ **DERIVED, for the two `Fp` elements this descriptor publishes.** Eighteen
@@ -227,16 +229,22 @@ ARE DIFFERENT:**
      to a 32-byte value. The lane-vector ↔ head equality is enforced by the CONSUMER
      (`turn/src/executor/mina_head_verifier.rs::check_head_binding`, which refuses the turn), not
      in-circuit. That is a real refusal, and it is an executor check.
-  2. ✅ **CLOSED for the TIP, by §2c.** This read: *"`TIP_STATE` is not arithmetically tied to the
-     `LINK_OK` fold's terminal digest inside this AIR either … until it lands, the equality is the
-     witness generator's, not a gate's."* It has landed, though NOT as a digest tie — the segment
-     bind's `commit` vector IS the nine `TIP_STATE` columns, so an emitted constraint names them
-     beside the guard and nine pinned program lanes, and the sub-proof they are the commitment of is
+  2. ⚠ **NARROWED for the TIP, by §2c — NOT closed, and this entry said CLOSED until 2026-08-08.**
+     It read: *"`TIP_STATE` is not arithmetically tied to the `LINK_OK` fold's terminal digest
+     inside this AIR either … until it lands, the equality is the witness generator's, not a
+     gate's."* What landed is a DECLARATION, not a gate: the segment bind's `commit` vector is the
+     nine `TIP_STATE` columns, but the leg carries `bound := none`, and `descriptor_ir2.rs`'s
+     `proofBind` arm emits polynomials over `commit` only inside `if let Some(b) = &p.bound`. **So
+     those nine columns enter NO emitted constraint** — the arm emits `guard·(guard−1)` and the nine
+     `vk_pin` lanes and nothing else. The refusal is the CONSUMER's
+     (`mina_head_verifier.rs`, refusals 11–14), same standing as residual 1 above. What the bind
+     genuinely buys is that the sub-proof they are the commitment of is
      one the consumer verifies. Nine `Faithful9` lanes, 256 bits, elementwise, no digest and
      therefore no birthday bound.
      ⚠ **AND THE ANCHOR HALF IS UNMOVED.** `ANCHOR_STATE`'s nine lanes are still PI-bound, still
      read by one arity-1 lookup each, and still joined to nothing
-     (`LightClientAnchorConnectivity.minaVerify_anchor_lanes_are_read_but_never_joined`). A second
+     (`LightClientAnchorConnectivity.minaVerify_state_lanes_are_read_but_never_joined` — since the
+     2026-08-08 instrument fix that theorem covers the tip half too, at emission resolution). A second
      bind could not fix that: `ProofBind`'s `commit` is the ONLY vector that names off-row evidence
      and there is one `piCommit` per engine, so two binds against one program with DIFFERENT
      commitments are incoherent, not merely redundant. The anchor's nine lanes are refused against
@@ -461,8 +469,9 @@ worse than this bit: it would read as a check. The missing two are LOCATED — t
 chain — not hand-waved.
 
 ⚠ **AND WHAT IS NO LONGER IN THIS BIT, so the name is not read too wide.** Two of upstream
-`finalize_other_proof`'s four conjuncts — `xiCorrect` and `bCorrect` against `PastaIPA.bEval`
-itself — left this column on 2026-08-06 and became §2d's `FINALIZE_XI_B_PROVED`, whose `= 1` is
+`finalize_other_proof`'s four conjuncts — `bCorrect` against `PastaIPA.bEval` itself (forced by the
+sub-AIR) and `xiCorrect` (compared there, forced by the recursion fold's connects) — left this
+column on 2026-08-06 and became §2d's `FINALIZE_XI_B_PROVED`, whose `= 1` is
 unsatisfiable unless the row names a verifying dregg STARK over `dregg-mina-wrap-conjunction::v1`.
 Nothing in this descriptor computes a Pickles verification and nothing ever will at this
 construction — §1b prices it at ≈10⁹ BabyBear constraints. -/
@@ -531,11 +540,15 @@ register, `2 536` columns FLAT in the round count — which, as of 2026-08-06, p
 inputs**: ξ, ζ, ζω, the evalscale `r`, and the claimed `b0`, five 32-limb blocks (`CJ_PI_COUNT`,
 §9b). A verifying STARK over it establishes this and **NOTHING WIDER**:
 
-> **Two of Pickles' `finalize_other_proof` FOUR conjuncts — `xiCorrect` (`op.xiSqueeze = dv.xi`) and
-> `bCorrect` against `PastaIPA.bEval` ITSELF (`dv.b ≡ bEval ζ chals + r · bEval ζω chals (mod q)`,
+> **`bCorrect` against `PastaIPA.bEval` ITSELF (`dv.b ≡ bEval ζ chals + r · bEval ζω chals (mod q)`,
 > where `chals` is the vector the trace's own rows supplied) — plus the per-round challenge/inverse
 > reciprocity weld (`chal · chalinv ≡ 1`) and the opening residual's non-free coefficients
-> (`c·cip − z1·b0`, `−z1`, `−z2`, `c·chal`, `c·chalinv`), each computed by a sound core.**
+> (`c·cip − z1·b0`, `−z1`, `−z2`, `c·chal`, `c·chalinv`), each computed by a sound core. ⚠ A SECOND
+> conjunct, `xiCorrect` (`op.xiSqueeze = dv.xi`), is COMPARED by that AIR and forced by NOTHING in
+> it — both ξ blocks are free columns
+> (`MinaWrapConjunctionAir.no_arithmetic_call_names_an_xi_block`). It is forced, if at all, by the
+> 32 `cb.connect`s of `mina_wrap_finalize_fold::fold_endo_into_finalize` — a CONSUMER's constraint
+> on a box, inheriting the FRI/STARK floor, not this descriptor's gate.**
 
 ⚠ **UPSTREAM'S CONJUNCTION IS A FOUR-WAY AND WITH THE OPENING; THIS IS A TWO-WAY AND.**
 `cipCorrect` and `plonkChecksPassed` are **ABSENT BY CONSTRUCTION, NOT STUBBED**, and the reason is
@@ -901,9 +914,28 @@ the emitted `dregg-mina-lightclient-verify-v1.json` pinned
 `[172082222, 381973190, …]` — **the bind named a program no descriptor in this tree has.** The test
 said so and nothing else did, so `MinaAnchoredHeadStarkVerifier::verify` now recomputes the
 dispatched sub-proof's fingerprint and REFUSES the head on a mismatch. A pin whose only reader is a
-test is a pin a node can drift past. -/
+test is a pin a node can drift past.
+
+⚑⚑ **AND IT WENT RED A SECOND TIME, ON THE SAME DESCRIPTOR FAMILY, AND SAT THERE.**
+`pasta-fq-chainlink.json` was re-emitted and landed; this literal did not follow. Measured
+2026-08-08 with every by-name descriptor byte-identical to HEAD (so this is a HEAD red, not a
+working-tree artifact): the served bytes fingerprint to `[158847877, 496723774, …]` while this
+literal said `[40589529, 494773874, …]`.
+⚠ `circuit/tests/mina_transcript_carrier_binding.rs`'s own docblock had recorded the divergence as
+a *sibling lane's uncommitted re-emit* — *"against a WORKING TREE that has picked up that batch this
+test is RED, and against HEAD it is GREEN … it is not this file's to chase"*. That reading expired
+the moment the batch landed, and nothing re-asked the question. **A dated verdict about a working
+tree outlives the tree it was measured on.**
+
+⚠ The nine digits below are RECOMPUTED FROM THE EMITTED BYTES:
+
+    cargo run -p dregg-circuit --example conj_fingerprint -- \
+      circuit/descriptors/by-name/pasta-fq-chainlink.json
+    → fp=85d377c9e76cb31fb31885773e3c7436f28ca8588b2db482e31fb5e4e40abf23
+      lanes=[158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576,
+             480024227, 2342666] -/
 def CHAINLINK_VK_LANES : List ℤ :=
-  [40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485]
+  [158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666]
 
 /-- The `i`-th pinned program lane, as the `vkPin` literal the leg carries. -/
 def chainlinkVkLane (i : Nat) : ℤ := CHAINLINK_VK_LANES.getD i 0
@@ -1026,14 +1058,32 @@ def LINK_VK_LANES : List ℤ :=
   --   circuit/descriptors/by-name/dregg-mina-lightclient-link-v1.json`, never transcribed
   -- from a docblock. THIS descriptor re-emits and re-VKs with it; every previously produced
   -- `MinaHeadProofWire` fails to verify.
-  [485689086, 477622751, 46091945, 410308945, 235143973, 391260395, 78649260, 413048609, 30212]
+  --
+  -- ⚑ MOVED AGAIN 2026-08-08, SAME DAY, for the ABSORB pin repair: `LightClientMinaLinkAir.
+  -- ABSORB_VK_LANES` had gone stale against a re-emitted `pasta-fp-absorb.json` (its own docblock
+  -- has the measurement), so fixing it re-emits the link — geometry UNCHANGED at 57/37/99, exactly
+  -- one `vk_pin` moved — and the link's fingerprint moves with it. Recomputed from the NEW bytes,
+  -- same command:
+  --   fp=9b5310dfefcd5ec053dd842c62adba89a6d50623f21fe2348b971efb85fa3125
+  [521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626]
 
 /-- The `i`-th pinned segment-program lane, as the `vkPin` literal the leg carries. -/
 def linkVkLane (i : Nat) : ℤ := LINK_VK_LANES.getD i 0
 
-/-- ⚑⚑ **THE SEGMENT-BIND LEG — the one that gives `TIP_STATE` an in-circuit edge.** Guard
-`LINK_OK`; the declared commitment is the row's own nine PUBLISHED tip lanes; the attested program is
-the nine `LINK_VK` columns, pinned to the link descriptor's fingerprint.
+/-- ⚑⚑ **THE SEGMENT-BIND LEG — the one that DECLARES `TIP_STATE` as a sub-proof's commitment.**
+Guard `LINK_OK`; the declared commitment is the row's own nine PUBLISHED tip lanes; the attested
+program is the nine `LINK_VK` columns, pinned to the link descriptor's fingerprint.
+
+⚠ **CLOSURE KIND — this docblock said "gives `TIP_STATE` an in-circuit edge" until 2026-08-08 and
+that is stronger than the mechanism.** `bound := none` here, and `circuit/src/descriptor_ir2.rs`'s
+`proofBind` arm reaches the `commit` lanes only under `if let Some(b) = &p.bound`. With `bound`
+absent the arm emits the guard's booleanity and the nine `vk_pin` equalities — **the nine
+`TIP_STATE` columns appear in no emitted polynomial.** The file's argument that `bound := none` is
+the STRONGER choice is about what `bound` would have compared them TO, and it is sound; it does not
+produce an edge, it removes the only polynomial that would have carried one. What refuses a wrong
+tip is the consumer. ⚠ `LightClientAnchorConnectivity` unions `guard ++ commit ++ vk ++ bound` into
+one component unconditionally, so the decorative-anchor census counts this DECLARATION as a join;
+read that census as measuring an IR field, not a gate.
 
 ⚑ `bound := none` and it is the STRONGER choice, for exactly the reason §2b gives for the chainlink
 seam: `bound` forces the `commit` expression to equal a row-local expression, and here `commit` is
@@ -1323,33 +1373,61 @@ theorem mina_lane_widths_are_wrap_free :
   refine ⟨?_, ?_⟩ <;>
     rw [Dregg2.Circuit.RangeFieldContainment.wrap_free_iff_le_29] <;> decide
 
-/-- ⚑ **THE TIED SOURCE** — `minaHeadAir` carrying its two decidable verdicts in its TYPE:
-`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
-leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
-decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
-def minaHeadTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := minaHeadAir
+/-! ### ⚑⚑ THE TIE VERDICT WENT RED HERE ON 2026-08-08, AND THE RED IS KEPT, NOT SOFTENED.
+
+`minaHeadTiedAir` stood here, and its `pinsTied` was TRUE only because `AirLeg.readCols` scored
+the §2b/§2d seams' DECLARED commit lanes (`SUB_PI`, `CONJ_PI`) as reads while `bound := none`
+emits no polynomial over them. Emission-faithful (`EffectLowerCertified` §1a, same day), the
+verdict says what is true: **the eighteen commitment-port columns are published and read by
+NOTHING in this AIR** — which is what a digest-shaped PORT is
+(`LightClientAnchorConnectivity.minaVerify_decorative_anchors` already listed all thirty-six at
+the emitted rail). Their forcing is the executor welds REFUSAL 4 (`check_transcript_binding`) and
+REFUSAL 15 (`check_conjunction_binding`, wired the same day), censused as `MinaSeams.subPiWeld` /
+`conjPiWeld`. The `TiedAir` is DEMOTED to `lowerAirCertified` (identical bytes, `rfl`; the
+refinement certificate survives; only the tie verdict is no longer claimed), and the red is the
+two named theorems below. `PinsTiedCensus` carries the classification. -/
+
+/-- ⚑ **THE RED, STATED.** Went false when `readCols` became emission-faithful. -/
+theorem minaHeadAir_pinsTied_is_false : minaHeadAir.pinsTied = false := by decide
+
+/-- ⚑ …and the untied set is EXACTLY the eighteen commitment-port columns — `SUB_PI` (40..48)
+then `CONJ_PI` (68..76). The anchor and tip nonets stay tied (limbs/lookup canonicality legs);
+the heights, depth and carrier bits stay tied (gates). The wound has a literal, not a mood.
+(Stated over COLUMN indices: `AirLeg` deliberately carries no `DecidableEq`, so the leg-list form
+is not decidable — same constraint `MinaSeams`' S1 memberships note.) -/
+theorem the_untied_pins_are_exactly_the_commitment_blocks :
+    (minaHeadAir.legs.filterMap fun l =>
+      match l with
+      | .pin p =>
+          if minaHeadAir.legs.any (fun m => p.col ∈ m.readCols) then none else some p.col
+      | _      => none)
+      = [40, 41, 42, 43, 44, 45, 46, 47, 48, 68, 69, 70, 71, 72, 73, 74, 75, 76] := by decide
 
 /-- **`minaLcVerifyDesc` — COMPILER OUTPUT.** The Mina anchored-head light-client verify decision as
 an IR-v2 AIR. Not modelled beside a hand-written twin; there is no twin.
+
+⚑ Via `lowerAirCertified` since 2026-08-08 (see the section above): the tie verdict is red and
+SAID to be red, not carried by a stale walker.
 
 ⚠ `lowerAir`, not `lowerEffect`: this descriptor is not a full-state effect and has no digest wires,
 so the framework's `PIBindsDigests` surface would emit a descriptor nobody deployed. The two entry
 points share the normalizer, the leg lowerings and the emission order and differ ONLY in that
 surface. -/
 def minaLcVerifyDesc : EffectVmDescriptor2 :=
-  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
-    "dregg-mina-lightclient-verify::v1" MINA_LC_WIDTH MINA_PI_COUNT [] minaHeadTiedAir).val
+  (Dregg2.Circuit.Emit.EffectLower.lowerAirCertified
+    "dregg-mina-lightclient-verify::v1" MINA_LC_WIDTH MINA_PI_COUNT [] minaHeadAir
+    minaHeadAir_mainRailOk).val
 
 /-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
 descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
 SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
 
-**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+**Zero bytes move**: `lowerAirCertified … |>.val` is `lowerAir …` by `rfl`. -/
 theorem minaLcVerifyDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines minaLcVerifyDesc [] minaHeadAir :=
-  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
-    "dregg-mina-lightclient-verify::v1" MINA_LC_WIDTH MINA_PI_COUNT [] minaHeadTiedAir).property
+  (Dregg2.Circuit.Emit.EffectLower.lowerAirCertified
+    "dregg-mina-lightclient-verify::v1" MINA_LC_WIDTH MINA_PI_COUNT [] minaHeadAir
+    minaHeadAir_mainRailOk).property
 
 /-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
 the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.
@@ -1454,9 +1532,10 @@ theorem minaLcVerifyDesc_conj_bind :
 /-- ⚑⚑ **AND THE TIP LANES ARE THE COMMITMENT — the statement the connectivity census reads.**
 Every published tip column appears in the segment bind's `commit` vector, so the emitted constraint
 NAMES all nine of them beside the guard and the nine pinned program lanes. This is the object
-`LightClientAnchorConnectivity.minaVerify_tip_lanes_are_published_and_joined` measures from the other
-side; stating it here too means a re-point that quietly moved the commitment off `TIP_STATE` reds in
-the file that authored it, not only in the census. -/
+`LightClientAnchorConnectivity.minaVerify_tip_lanes_are_published_and_declared` measures from the
+other side (⚠ renamed 2026-08-08: with `bound := none` the naming is a DECLARATION, not an emitted
+polynomial — the census now says which); stating it here too means a re-point that quietly moved
+the commitment off `TIP_STATE` reds in the file that authored it, not only in the census. -/
 theorem mina_link_bind_commits_the_tip_lanes :
     ((Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).getD 1
         ⟨.const 0, [], [], none, none⟩).commit
@@ -2608,7 +2687,7 @@ before 2026-08-05. -/
 
 /-- The forged program lanes: the real fingerprint with lane 0 bumped by one. -/
 def FORGED_VK_LANES : List ℤ :=
-  [40589530, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485]
+  [158847878, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT PROGRAM.** -/
 def forgedProgramRow : Assignment :=
@@ -2682,7 +2761,7 @@ def FORGED_LINK_VK_LANES : List ℤ :=
   -- ⚑ FOLLOWS `LINK_VK_LANES`, 2026-08-08: lane 0 + 1, tail identical. The 08-06 note above is
   -- exactly this maintenance, and `the_forged_link_lane_moves_a_real_value` went RED when the
   -- literal moved and this one did not — the falsifier caught its own staleness.
-  [485689087, 477622751, 46091945, 410308945, 235143973, 391260395, 78649260, 413048609, 30212]
+  [521163676, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT SEGMENT PROGRAM.** -/
 def forgedLinkProgramRow : Assignment :=

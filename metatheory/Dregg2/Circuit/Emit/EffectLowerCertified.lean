@@ -165,7 +165,21 @@ def chalCols : ChalExpr → List Nat
 /-- ⚑ **The columns a LEG relates — and `pin` contributes `[]`, on purpose.** A pin ties a column
 to a PUBLIC INPUT, not to another column: it publishes, it does not derive. That asymmetry is the
 defect being measured, so it is written into the IR rather than discovered by a census afterwards
-(`LightClientAnchorConnectivity.relatedCols` is the same choice, one rail down). -/
+(`LightClientAnchorConnectivity.relatedCols` is the same choice, one rail down).
+
+⚑⚑ **`.bind` IS ANSWERED AT THE EMISSION, NOT AT THE DECLARATION (2026-08-08).** This arm used to
+return a bind leg's whole IR surface — guard, `commit`, `vk`, `bound` — while the deployed
+evaluator (`descriptor_ir2.rs`, `VmConstraint2::ProofBind`) emits polynomials over `vk` only under
+a `vkPin` and over `commit` only under a `bound`. Every served Mina light-client seam is
+`bound := none`, so `pinsTied` scored their commit lanes as READ by their own DECLARATION — the
+verdict passed THROUGH the object it was supposed to judge, and `minaLinkTiedAir` carried a "tied"
+`BODY_ACC` block that appeared in NO emitted polynomial. Same reading, same day, as
+`Seam.legJoinsAcross`'s `.bind` arm and `LightClientAnchorConnectivity.relatedCols`' `.proofBind`
+arm (whose confession moved mina-verify decorative 9 → 36, mina-link 0 → 17, census 53 → 80): one
+entry per emitted polynomial. ⚠ THE RED WAS TAKEN, NOT SOFTENED: `minaHeadAir` and `minaLinkAir`
+now FAIL `pinsTied` (their commitment/body ports are published-but-underived, which is the truth —
+their forcing is the executor welds `MinaSeams` censuses), their `TiedAir`s are demoted to
+`lowerAirCertified` at identical bytes, and `PinsTiedCensus` counts them with the reason. -/
 def AirLeg.readCols : AirLeg → List Nat
   | .gate c   => exprCols c.lhs ++ exprCols c.rhs
   | .pin _    => []
@@ -173,8 +187,14 @@ def AirLeg.readCols : AirLeg → List Nat
   | .limbs l  => l.cols
   | .window w => windowCols w.body
   | .chal c   => chalCols c.body
-  | .bind b   => exprCols b.guard ++ b.commit.flatMap exprCols ++ b.vk.flatMap exprCols
-                   ++ (b.bound.getD []).flatMap exprCols
+  | .bind b   =>
+      -- guard·(guard−1) is always emitted; guard·(vkᵢ−pinᵢ) only under a `vkPin`;
+      -- guard·(commitᵢ−boundᵢ) only under a `bound`. A declared-but-unemitted vector reads nothing.
+      exprCols b.guard
+        ++ (if b.vkPin.isSome then b.vk.flatMap exprCols else [])
+        ++ (match b.bound with
+            | none => []
+            | some bs => b.commit.flatMap exprCols ++ bs.flatMap exprCols)
 
 /-- ⚑ **A leg JOINS iff it relates at least two distinct columns.** An arity-1 range lookup and a
 one-column forcing gate both fail this, and both should: neither ties its column to anything. -/
@@ -571,6 +591,10 @@ Measured on the emitted corpus 2026-08-06 (`circuit/descriptors/by-name/*.json`,
 would pass `pinsTied` unchanged**. Under the stricter joins-≥-2-columns reading
 (`LightClientAnchorConnectivity.decorativeAnchors`, whose armed baseline is 417) the count is
 larger and the largest single row is 192 of 219 published felts.
+⚑ **RE-MEASURED 2026-08-08 with the emission-faithful `.bind` arm above: 95 pass / 16 fail on
+183 pins** — the 2026-08-06 numbers were taken by a walker that read seam DECLARATIONS as reads;
+the two rows the fix moved are the Mina light-client pair, classified with their host welds in
+`PinsTiedCensus`'s dated confession.
 
 So the answer is not a better refinement lemma. It is a SECOND decidable verdict, in the same shape
 as `mainRailOk`, on the SOURCE — where a pin can still be refused before any byte exists. -/

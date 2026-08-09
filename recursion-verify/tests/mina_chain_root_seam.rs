@@ -88,6 +88,13 @@ impl MinaChainRootBackend for TestRootBackend {
         self.pinned.0
     }
 
+    // This suite exercises the PHASE-2 seam only; the body-fold anchor is deliberately unset
+    // (all-zero), so any accidental body-root dispatch through this backend is REFUSED at
+    // `check_body_chain_binding` 16a rather than silently accepted against a test pin.
+    fn pinned_body_root_vk(&self) -> [u8; 32] {
+        [0u8; 32]
+    }
+
     fn verify_chain_root(
         &self,
         proof_bytes: &[u8],

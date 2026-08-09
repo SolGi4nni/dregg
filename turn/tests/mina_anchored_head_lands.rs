@@ -116,14 +116,14 @@ const LINK_VK_0: usize = 49;
 /// descriptor's own bytes by `circuit/tests/mina_transcript_carrier_binding.rs` and by `dregg-turn`
 /// at verify time (`check_subproof_program_pin` at `HEAD_LINK_GUARD_COL`).
 const LINK_VK_LANES: [u32; 9] = [
-    233430738, 4032640, 246608840, 175841926, 90073704, 22259745, 113829679, 206352694, 3987074,
+    521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626,
 ];
 /// The nine `Faithful9` lanes of `dregg-pasta-fq-chainlink::v1`'s semantic fingerprint — the value
 /// the descriptor's `vk_pin` forces under `WRAP_FS_PROVED = 1`. Recomputed from that descriptor's
 /// own bytes by `circuit/tests/mina_transcript_carrier_binding.rs`, and by `dregg-turn` itself at
 /// verify time (`check_subproof_program_pin`); a literal here so a drift is a red, not a silence.
 const CHAINLINK_VK_LANES: [u32; 9] = [
-    40589529, 494773874, 527776693, 373808410, 118028044, 372824034, 512521559, 25478361, 4577485,
+    158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666,
 ];
 /// The nine lanes of the digest of that sub-proof's 256 public inputs on the block-539508 instance's
 /// 46th and last link — PI-bound at slots 20..28.

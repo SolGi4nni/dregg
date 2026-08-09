@@ -343,6 +343,22 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-pasta-fq-chainlink::v1",
         MINA_CHAINLINK_TRANSCRIPT_JSON,
     ),
+    // ⚑⚑ 2026-08-08 — THE FINALIZE-CONJUNCTION SUB-PROOF the head's third `proof_bind`
+    // (`FINALIZE_XI_B_PROVED`, guard col 58) pins. Served because `mina_head_verifier::verify`
+    // VERIFIES a STARK over it before accepting a head (REFUSAL 15): a dispatch miss is a
+    // REJECTION of the turn, exactly as for the chainlink row above.
+    //
+    // ⚠ **FOUND ABSENT BY REFUSAL 15's OWN POSITIVE-POLARITY TEST, the day the refusal was
+    // wired.** From 2026-08-06 to 2026-08-08 this descriptor was emitted, checked in, pinned by
+    // the head's bind — and dispatched by NOTHING: `check_conjunction_binding` was dead code, so
+    // no consumer ever asked for the name and the miss was invisible. Had the refusal been wired
+    // without this row, every head would have been refused fail-closed — honest, but the honest
+    // PATH would have been unreachable. The same wound the wraplink note above records, in the
+    // other direction: a pinned descriptor no registry serves.
+    (
+        "dregg-mina-wrap-conjunction::v1",
+        MINA_WRAP_CONJUNCTION_JSON,
+    ),
     // ⚑⚑ 2026-08-05 — THE PHASE-1 (Fp) HALF OF THE SAME CHAIN, served so the weld is REACHABLE and
     // not merely proved. The phase-2 chain above absorbs `fq_digest` as tape element 0 and NOTHING
     // derived it; `MinaPhase1Chain` does, and its link 26's OUTGOING LANE 1 is that element. A
@@ -632,11 +648,11 @@ const MIDNIGHT_LIGHTCLIENT_VERIFY_JSON: &str =
 /// * ⚑⚑ `FINALIZE_XI_B_PROVED` — **not a bit.** Its `= 1` guards a nine-lane `proof_bind` pinning
 ///   `dregg-mina-wrap-conjunction::v1` (`MinaWrapConjunctionAir.conjunctionDesc`), a Lean-authored
 ///   16-row threaded AIR that as of 2026-08-06 publishes ξ, ζ, ζω, the evalscale `r` and the claimed
-///   `b0` as 160 public inputs. A verifying STARK over it forces **TWO of Pickles'
-///   `finalize_other_proof` FOUR conjuncts** — `xiCorrect`, and `bCorrect` against `PastaIPA.bEval`
-///   itself — plus the per-round challenge/inverse reciprocity weld and the opening residual's
-///   non-free coefficients, each computed by a sound core, on Mina devnet block 539508's own opening
-///   argument.
+///   `b0` as 160 public inputs. A verifying STARK over it forces **ONE of Pickles'
+///   `finalize_other_proof` FOUR conjuncts** — `bCorrect` against `PastaIPA.bEval` itself — plus the
+///   per-round challenge/inverse reciprocity weld and the opening residual's non-free coefficients,
+///   each computed by a sound core, on Mina devnet block 539508's own opening argument. A SECOND
+///   conjunct, `xiCorrect`, is CARRIED but not forced here: see the ⚠ below.
 ///
 /// ⚠ **DO NOT READ THAT AS "finalize passed".** Upstream's conjunction is a FOUR-way AND with the
 /// opening; `cipCorrect` and `plonkChecksPassed` are ABSENT BY CONSTRUCTION, because a gate
@@ -714,6 +730,17 @@ const MINA_LIGHTCLIENT_LINK_JSON: &str =
 /// is a function of the HEAD descriptor's NAME), so cell programs keep their pinned vk.
 const MINA_CHAINLINK_TRANSCRIPT_JSON: &str =
     include_str!("../descriptors/by-name/pasta-fq-chainlink.json");
+
+/// ⚑⚑ `dregg-mina-wrap-conjunction::v1` — **THE FINALIZE-CONJUNCTION SUB-PROOF**, served from
+/// 2026-08-08 with REFUSAL 15's wiring. Lean-authored
+/// (`Dregg2.Circuit.Emit.MinaWrapConjunctionAir.conjunctionDesc`), 2 536 columns, 160 public
+/// inputs (ξ ‖ ζ ‖ ζω ‖ r ‖ b0, 32 limbs each), 4 317 constraints. The head's
+/// `FINALIZE_XI_B_PROVED`-guarded bind pins this program's fingerprint lane by lane
+/// (`LightClientMinaAir.CONJ_VK_LANES`), and `turn`'s verify dispatches this name fail-closed
+/// before accepting a head. It was emitted and pinned but served by NOTHING for the two days the
+/// refusal was dead code — see the table row's note.
+const MINA_WRAP_CONJUNCTION_JSON: &str =
+    include_str!("../descriptors/by-name/mina-wrap-conjunction.json");
 
 /// ⚑⚑ `dregg-pasta-fp-chainlink::v1` — **THE PHASE-1 LINK THAT DERIVES `fq_digest`**, served from
 /// 2026-08-05. Lean-authored (`Dregg2.Circuit.Emit.MinaPhase1Chain.chainDesc`).

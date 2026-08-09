@@ -109,6 +109,25 @@
 //!    values, so this node recomputes it and `link_seg_len_counts_the_real_rows` then makes the
 //!    segment proof pay for it in COMMITTED ROWS. ⚠ These eleven are an EXECUTOR check, not a
 //!    constraint. Say it that way.
+//! 15. ⚑⚑ **THE FINALIZE-CONJUNCTION SUB-PROOF IS VERIFIED AND BOUND — wired 2026-08-08.**
+//!    `descriptor_by_name(MINA_CONJUNCTION_DESCRIPTOR)` (fail-closed `None`) → the program pin by
+//!    guard column [`HEAD_CONJ_GUARD_COL`] → `verify_vm_descriptor2` over its 160 public inputs →
+//!    [`check_conjunction_binding`], the digest-recompute weld of head PI 30..38.
+//!    ⚠ **This refusal was DEAD CODE from 2026-08-06 to 2026-08-08** — defined, documented,
+//!    called by nothing, with no wire field to call it with: the `EffectsHashMismatch` class this
+//!    repo's doctrine opens with, counted while it stood by
+//!    `MinaSeams.the_conjunction_commitment_port_has_no_live_weld`. What wiring it buys is that
+//!    `FINALIZE_XI_B_PROVED = 1` now costs a verifying conjunction STARK at THIS consumer; what
+//!    it does NOT buy is the ξ weld — see the caveat on [`check_conjunction_binding`] itself.
+//! 16. ⚑⚑⚑ **THE SEVENTEEN BODY SLOTS ARE WELDED TO THE BODY-HASH CHAIN'S ROOT — new
+//!    2026-08-08.** The backend verifies the wire's second recursion root and
+//!    [`check_body_chain_binding`] refuses: an unset or mismatched body-fold fingerprint (16a/b),
+//!    a chain head that is not the `MinaProtoStateBody` salt (16c), and the seventeen-slot weld
+//!    itself (16d) — `BODY_ACC` elementwise against the root's `transcript_acc`, `BODYHASH`
+//!    against the `Faithful9` re-limbing of the root's squeezed `state_body_hash`. Until this
+//!    landed the link's body ports had NO reader anywhere
+//!    (`MinaSeams.the_link_body_ports_have_no_registered_cover = 2`). ⚠ An EXECUTOR check, not a
+//!    constraint. Say it that way.
 //! 6. **The STARK.** `descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR)` (fail-closed `None` on a miss)
 //!    → `verify_vm_descriptor2` over all 30 public inputs. The descriptor's own gates then force
 //!    `BLOCK_LEN = ANCHOR_H + SEG_LEN` and `WIT_DEPTH + SUBMIT_H = BLOCK_LEN` — the published
@@ -136,8 +155,8 @@
 //!   refusal 15.
 //!   ⚠ **AND THE ≈10⁹ FIGURE THAT STOOD HERE IS RETIRED TOO.** Re-derived 2026-08-06 on the sound
 //!   rows that now exist (`MinaWrapVerifierAir` §5b, named theorems): one in-AIR Wrap verification,
-//!   excluding the SRS-base leg, is **205 756 rows and 144 751 608 committed cells** — `2^17.65`
-//!   rows, four powers of two UNDER the measured `lb = 2` ceiling, against ≈`2.25·10⁸`
+//!   excluding the SRS-base leg, is **279 016 rows and 161 308 368 committed cells** — `2^18.09`
+//!   rows, nearly seven powers of two UNDER the measured `lb = 2` ceiling, against ≈`2.25·10⁸`
 //!   constraint-instances. The old estimate was wrong about which resource binds, not only about
 //!   size: it assumed ~100 constraints per row and therefore `10⁷` rows. It is still a recursion
 //!   problem, and it is a few hours on one box, not a wall.
@@ -293,11 +312,19 @@ pub const MINA_CHAINLINK_DESCRIPTOR: &str = "dregg-pasta-fq-chainlink::v1";
 /// ⚑⚑ **THE FINALIZE-CONJUNCTION SUB-PROGRAM** (`LightClientMinaAir` §1d, new 2026-08-06) — the
 /// third program this descriptor binds, and the one that retires `PICKLES_WITNESSED`.
 ///
-/// A verifying STARK over it establishes **two of Pickles' `finalize_other_proof` four conjuncts**
-/// and nothing wider: `xiCorrect` (`op.xiSqueeze = dv.xi`) and `bCorrect` against `PastaIPA.bEval`
-/// ITSELF — `dv.b ≡ bEval ζ chals + r·bEval ζω chals (mod q)` for the fifteen IPA challenges the
-/// trace's own rows supplied — plus the per-round challenge/inverse reciprocity weld and the opening
-/// residual's non-free coefficients, each computed by a sound core.
+/// A verifying STARK over it establishes **one of Pickles' `finalize_other_proof` four conjuncts**
+/// and nothing wider: `bCorrect` against `PastaIPA.bEval` ITSELF — `dv.b ≡ bEval ζ chals + r·bEval
+/// ζω chals (mod q)` for the fifteen IPA challenges the trace's own rows supplied — plus the
+/// per-round challenge/inverse reciprocity weld and the opening residual's non-free coefficients,
+/// each computed by a sound core.
+///
+/// ⚠ **A SECOND CONJUNCT, `xiCorrect` (`op.xiSqueeze = dv.xi`), IS COMPARED THERE AND FORCED
+/// ELSEWHERE.** Both ξ blocks are free columns of that AIR
+/// (`MinaWrapConjunctionAir.no_arithmetic_call_names_an_xi_block`), so the comparison alone says
+/// "two columns the prover chose agree". What forces them is the 32 `cb.connect`s of
+/// `mina_wrap_finalize_fold::fold_endo_into_finalize` — a CONSUMER's constraint that proves on a
+/// box and inherits the undischarged FRI/STARK floor. `:936` states the same thing; this docblock
+/// used to say "two conjuncts" flatly and is the one that got quoted.
 ///
 /// ⚠ **`cipCorrect` and `plonkChecksPassed` are ABSENT BY CONSTRUCTION, not stubbed.** A gate
 /// comparing `cip` against a ξ-fold with a FREE `ft_eval0` column forces nothing at all, and that
@@ -415,8 +442,45 @@ pub const PI_CONJ_COMMIT_BASE: usize = 3 * MINA_STATE_LANES + 3;
 pub const MINA_LINK_DESCRIPTOR: &str = "dregg-mina-lightclient-link::v1";
 
 /// Public-input arity of [`MINA_LINK_DESCRIPTOR`] (`LightClientMinaLinkAir.MINA_LINK_PI_COUNT`):
-/// nine anchor lanes, nine tip lanes, the anchor height, the segment length.
-pub const MINA_LINK_PI_COUNT: usize = 2 * MINA_STATE_LANES + 2;
+/// nine anchor lanes, nine tip lanes, the anchor height, the segment length, the nine PUBLISHED
+/// `state_body_hash` lanes, and the body-hash chain's eight-lane ordered transcript accumulator.
+///
+/// ⚑ **20 → 37 on 2026-08-08** — the publication flag day. `BODYHASH` and the chain accumulator
+/// were columns nothing published, and a `proofBind`'s `commit`/`vk` may only name PUBLISHED
+/// values, so the body-chain seam could not be `cb.connect`ed by a fold at all. Publishing them
+/// buys the weld's REACHABILITY, not the weld.
+///
+/// ⚠ **THE OLD SHAPE REFUSES RATHER THAN REINTERPRETS.** A 20-PI vector now fails the arity check
+/// in [`check_segment_binding`] below with the count in the message, and a 40-wide trace fails the
+/// prover's `base row width … must equal descriptor trace_width` (40 → 57). Both, not either — so
+/// a stale segment proof cannot be read at the right offsets by accident. Every previously
+/// produced `MinaHeadProofWire` fails to verify; nothing re-genesises
+/// (`mina_head_predicate_vk()` is blake3 over the descriptor NAME, which did not move).
+///
+/// The four slot constants below are UNMOVED: the new blocks are APPENDED at 20..36, so every
+/// offset this module reads is exactly where it was.
+pub const MINA_LINK_PI_COUNT: usize = 3 * MINA_STATE_LANES + 10;
+
+/// PI slot of the segment proof's PUBLISHED `state_body_hash` lane `i`
+/// (`LightClientMinaLinkAir.PI_BODYHASH`), slots 20..28.
+///
+/// ⚑ **READ since 2026-08-08 by [`check_body_chain_binding`]** (REFUSAL 16d), which refuses these
+/// nine lanes against the `Faithful9` re-limbing of the body-chain root's squeezed
+/// `state_body_hash`. ⚠ That is an EXECUTOR comparison; a fold `cb.connect` of these slots is
+/// still unbuilt (and cannot be elementwise — nine 29-bit lanes against thirty-two 8-bit limbs is
+/// a re-limbing, outside `SeamSpec`'s pin vocabulary), which is exactly why the cover is a
+/// `MinaSeams.WeldCover` and not a `SeamSpec`.
+pub const LINK_PI_BODYHASH_BASE: usize = 2 * MINA_STATE_LANES + 2;
+/// PI slot of the body-hash chain's ordered transcript-accumulator lane `i`
+/// (`LightClientMinaLinkAir.PI_BODY_ACC`), slots 29..36 — the 8-lane `seg_poseidon_commit` fold the
+/// 25-leaf recursion publishes as its root claim's `transcript_acc`.
+///
+/// ⚑ **READ since 2026-08-08 by [`check_body_chain_binding`]** (REFUSAL 16d), elementwise against
+/// the root claim's `transcript_acc` — same BabyBear encoding both sides. Same standing as the
+/// block above: an executor weld, declared as `MinaSeams.bodyAccWeld`.
+pub const LINK_PI_BODY_ACC_BASE: usize = 3 * MINA_STATE_LANES + 2;
+/// Lane count of the body-hash chain's transcript accumulator (a BabyBear Poseidon2 digest).
+pub const LINK_BODY_ACC_LANES: usize = 8;
 
 /// PI slot of the segment proof's anchor lane `i` (`LightClientMinaLinkAir.PI_ANCHOR`), slots 0..8 —
 /// pinned from the FIRST row's `PARENT` columns.
@@ -439,6 +503,39 @@ pub const LINK_PI_SEG_LEN: usize = 2 * MINA_STATE_LANES + 1;
 pub const HEAD_WRAP_GUARD_COL: usize = 30;
 /// ⚑ The head descriptor's guard COLUMN for the SEGMENT bind (`LightClientMinaAir.LINK_OK`).
 pub const HEAD_LINK_GUARD_COL: usize = 8;
+/// ⚑ The head descriptor's guard COLUMN for the FINALIZE-CONJUNCTION bind
+/// (`LightClientMinaAir.FINALIZE_XI_B_PROVED`). The head carries THREE `proof_bind`s since
+/// 2026-08-06; this key resolves the third the same way the two above resolve theirs.
+pub const HEAD_CONJ_GUARD_COL: usize = 58;
+
+/// ⚑ **THE `MinaProtoStateBody` SALT, AS THE 96 EIGHT-BIT LIMBS THE BODY CHAIN'S ROOT CLAIM
+/// CARRIES** — three Pasta `Fp` sponge lanes, 32 base-`2^8` limbs each, low limb first
+/// (`MinaStateBodyHashChain.the_body_chain_head_is_the_salt`; ultimately openmina's own regression
+/// constants, `poseidon/tests/test_hash_params.rs`).
+///
+/// ⚑ **THIS IS THE LOAD-BEARING HALF OF THE BODY-CHAIN WELD.** `perm` is a permutation: from a
+/// FREE head, 25 links reach every field element, so a body-chain root whose `in_state` is not
+/// THIS salt proves a sentence about some other hash function and refuses nothing. A LITERAL and
+/// not a computed value because `dregg-turn` has no Pasta arithmetic; the unit test
+/// `the_body_salt_limbs_are_the_fixtures` regates it against the tracked fixture
+/// (`circuit/tests/fixtures/pasta-fp-bodyhash-pis.txt`, link 0's incoming block), which is itself
+/// pinned in Lean against `saltProtoStateBody`.
+pub const MINA_BODY_SALT_LIMBS: [u32; 96] = [
+    235, 58, 146, 154, 83, 140, 170, 44, 105, 31, 155, 21, 205, 93, 172, 162, 140, 46, 94, 196,
+    65, 8, 101, 162, 181, 165, 100, 86, 45, 104, 216, 7, //
+    135, 25, 160, 148, 17, 164, 216, 238, 43, 241, 99, 247, 210, 162, 126, 57, 93, 207, 94, 58,
+    77, 210, 218, 93, 23, 219, 29, 232, 210, 241, 75, 0, //
+    111, 142, 253, 87, 153, 215, 147, 46, 16, 33, 203, 94, 36, 154, 252, 173, 54, 130, 132, 125,
+    92, 23, 211, 77, 196, 12, 235, 92, 108, 239, 206, 41,
+];
+
+/// Offset of the squeezed lane — sponge lane 0, the `state_body_hash` — inside the body-chain
+/// root claim's 96-limb `out_state`. The outgoing lane order is `(r4, r5, r0)` = sponge lanes
+/// `(0, 1, 2)` (`MinaPhase2Chain.the_outgoing_lanes_are_registers_4_5_0`), so lane 0 is limbs
+/// `0..32` (`MinaStateBodyHashChain.the_body_wire_outgoing_lane0`).
+pub const BODY_OUT_LANE0_LO: usize = 0;
+/// Limb width of one sponge lane in a chain claim.
+pub const BODY_OUT_LANE0_WIDTH: usize = PASTA_LIMBS;
 
 /// Domain separation for the WEAK-SUBJECTIVITY ANCHOR commitment — see [`mina_anchor_commitment`].
 pub const MINA_ANCHOR_COMMITMENT_CONTEXT: &str = "dregg.mina-lightclient.anchor-commitment.v1";
@@ -549,6 +646,11 @@ pub fn mina_head_predicate_vk() -> [u8; 32] {
 /// ⚑ **FLAG DAY 2026-08-05: THIS WIRE CARRIES TWO PROOFS.** The transcript fields are REQUIRED, so a
 /// pre-2026-08-05 blob fails to decode rather than being reinterpreted as "no sub-proof supplied" —
 /// the refusal is at the codec, which is the only place it cannot be forgotten.
+/// ⚑⚑ **FLAG DAY 2026-08-08: FOUR PROOFS AND TWO RECURSION ROOTS.** The conjunction sub-proof
+/// (REFUSAL 15's missing operand) and the body-hash chain root (the seventeen body slots' missing
+/// reader) are REQUIRED. Every previously produced blob fails to decode. Nothing else moves: no
+/// descriptor re-emits, no VK rotates ([`mina_head_predicate_vk`] is a function of the descriptor
+/// NAME), nothing re-genesises — the wire is the only shape that changed, and it refuses.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct MinaHeadProofWire {
     /// The thirty public inputs, in descriptor order.
@@ -592,6 +694,31 @@ pub struct MinaHeadProofWire {
     /// column; the head descriptor now guards a nine-lane `proof_bind` with it whose declared
     /// commitment IS the head's published tip block, and this is the proof that commitment is of.
     pub link_proof: Ir2BatchProof<DreggStarkConfig>,
+    /// ⚑⚑ **THE FINALIZE-CONJUNCTION SUB-PROOF'S 160 PUBLIC INPUTS**, in
+    /// [`MINA_CONJUNCTION_DESCRIPTOR`] order: ξ ‖ ζ ‖ ζω ‖ r ‖ b0, 32 limbs each. REQUIRED, so a
+    /// pre-2026-08-08 blob fails to DECODE rather than being reinterpreted as "no conjunction
+    /// proof supplied" — the refusal is at the codec, the one place it cannot be forgotten.
+    ///
+    /// ⚑ **NEW 2026-08-08 — the flag day that makes REFUSAL 15 live.** `check_conjunction_binding`
+    /// was defined on 2026-08-06 and called by NOTHING: the wire carried no field to call it with,
+    /// so `FINALIZE_XI_B_PROVED = 1` bought the in-AIR program pin and a published commitment that
+    /// no node compared to anything (`MinaSeams.the_conjunction_commitment_port_has_no_live_weld`
+    /// counted it). This field and the next are what it is called WITH.
+    pub conjunction_public_inputs: Vec<u32>,
+    /// ⚑⚑ **THE IR-v2 BATCH PROOF OVER [`MINA_CONJUNCTION_DESCRIPTOR`]. This node verifies it.**
+    /// REQUIRED, same codec reasoning as above.
+    pub conjunction_proof: Ir2BatchProof<DreggStarkConfig>,
+    /// ⚑⚑⚑ **THE RECURSION ROOT OF THE 25-LINK `state_body_hash` CHAIN**
+    /// (`MinaStateBodyHashChain` / `mina_body_hash_chain_fold`), postcard-serialised
+    /// `BatchStarkProof<DreggRecursionConfig>` bytes — same type discipline as
+    /// [`Self::chain_root_proof`] and for the same reason.
+    ///
+    /// ⚑ **NEW 2026-08-08 — the field that gives the seventeen body slots a reader.** The link
+    /// descriptor publishes `BODYHASH` (PI 20..28) and `BODY_ACC` (PI 29..36) and derives neither;
+    /// until this field existed, no fold `cb.connect`ed them and no executor compared them, so a
+    /// prover chose all seventeen (`MinaSeams.the_link_body_ports_have_no_registered_cover = 2`).
+    /// [`check_body_chain_binding`] is the weld; this is the proof it welds against.
+    pub body_chain_root_proof: Vec<u8>,
 }
 
 /// ⚑⚑ **THE CLAIM A MINA PHASE-2 CHAIN-FOLD ROOT PUBLISHES**, as canonical `u32` lanes.
@@ -847,9 +974,20 @@ pub trait MinaChainRootBackend: Send + Sync + std::fmt::Debug {
     /// unset anchor.
     fn pinned_root_vk(&self) -> [u8; 32];
 
+    /// ⚑ The `recursion_vk_fingerprint` pinned for the **`state_body_hash` fold**
+    /// (`mina_body_hash_chain_fold`'s 25-leaf tower). **New 2026-08-08**, with REFUSAL 16: the
+    /// two towers publish the IDENTICAL `in(96) ‖ out(96) ‖ acc(8)` claim shape, so the
+    /// fingerprint is the ONLY thing telling a phase-2 root from a body root — one pin cannot
+    /// anchor both. Same discipline as [`Self::pinned_root_vk`]: all-zero is REFUSED as unset.
+    /// Deliberately no default — a host that has not decided its body anchor must not compile.
+    fn pinned_body_root_vk(&self) -> [u8; 32];
+
     /// Verify the root and report `(measured recursion_vk_fingerprint, claim)`.
     ///
     /// MUST verify the STARK. MUST NOT decide whether the fingerprint is acceptable — report it.
+    /// ⚑ Deliberately chain-agnostic: the SAME method verifies the phase-2 root and the body root
+    /// (identical claim layout); WHICH circuit a root proves is the fingerprint's to say and the
+    /// CONSUMER's to refuse ([`check_chain_root_binding`] 8, [`check_body_chain_binding`] 16b).
     fn verify_chain_root(
         &self,
         proof_bytes: &[u8],
@@ -929,6 +1067,13 @@ pub fn conjunction_pi_commitment(pis: &[u32]) -> [u8; 32] {
 /// `CONJ_VK` columns to `LightClientMinaAir.CONJ_VK_LANES` — the semantic fingerprint of
 /// [`MINA_CONJUNCTION_DESCRIPTOR`] — and PI-binds the commitment lanes. What no row-local polynomial
 /// can do is check that a sub-proof with THAT commitment exists. This is that check.
+///
+/// ⚑ **CALLED IN THE DISPATCH PATH SINCE 2026-08-08** — after the conjunction STARK verifies,
+/// exactly where [`check_transcript_binding`] sits for the chainlink seam. From 2026-08-06 to
+/// 2026-08-08 this function was defined and called by NOTHING (the wire carried no conjunction
+/// fields), which its own docblock did not say and the census did:
+/// `MinaSeams.the_conjunction_commitment_port_has_no_live_weld`. That count is now zero;
+/// `MinaSeams.conjPiWeld` names this function as the port's cover.
 ///
 /// ⚠ **AND SAY WHAT IT STILL DOES NOT BUY.** Nothing here relates the conjunction sub-proof's ξ to
 /// the block whose head this is. The conjunction AIR reads ξ in `eqBlock XI_SQ XI_CL`, in its thread
@@ -1122,6 +1267,148 @@ pub fn check_chain_root_binding(
                 "recursion-root outgoing limb {i} is {got}, but the Fq-transcript sub-proof pins \
                  {want}: the root does not LAND ON the sub-proof this head presents — the two are \
                  about different transcripts"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// ⚑⚑⚑ **REFUSAL 16 — THE SEVENTEEN BODY SLOTS ARE WELDED TO THE BODY-HASH CHAIN'S ROOT.**
+///
+/// # What this closes, with the measurement
+///
+/// The link descriptor publishes `BODYHASH` (PI 20..28) and `BODY_ACC` (PI 29..36) and derives
+/// neither — they are ports, free witness columns whose meaning was owed to an external forcing
+/// that, until 2026-08-08, did not exist: no fold `cb.connect`ed them and no executor compared
+/// them (`MinaSeams.the_link_body_ports_have_no_registered_cover` counted the two;
+/// [`LINK_PI_BODYHASH_BASE`]/[`LINK_PI_BODY_ACC_BASE`] had no reader in the tree). So a prover
+/// chose all seventeen, and the link's per-row `salt ‖ BODYHASH ‖ acc` seam committed to a stream
+/// nothing grounded. This function is the weld — the executor comparison the Lean docblocks named
+/// as the owed object — declared as `MinaSeams.bodyHashWeld`/`bodyAccWeld`.
+///
+/// Four refusals, mirroring [`check_chain_root_binding`]'s 7-10 shape:
+///
+/// * **16a — the body anchor is set.** All-zero pinned vk refused.
+/// * **16b — the root is a proof of the PINNED body-fold circuit.** `measured == pinned`. The
+///   claim layout (`in(96) ‖ out(96) ‖ acc(8)`) is IDENTICAL between the Fq phase-2 tower and the
+///   Fp body tower — the `recursion_vk_fingerprint` is the ONLY discriminator, which is why the
+///   backend carries two pins and this function must never be handed the other one's.
+/// * **16c ⚑ — the chain's head IS the `MinaProtoStateBody` salt.** [`MINA_BODY_SALT_LIMBS`],
+///   limb for limb. `perm` is a permutation: from a free head 25 links reach every field element,
+///   so without this pin the weld below would relate the link's body nonet to a value the prover
+///   still chose. The refusal-9 analogue, with a salt where the transcript chain has zeros.
+/// * **16d ⚑⚑ — THE SEVENTEEN-SLOT WELD.**
+///   * the 8 `BODY_ACC` lanes equal the root claim's `transcript_acc`, elementwise — same
+///     BabyBear encoding both sides, no digest, no re-limbing;
+///   * the 9 `BODYHASH` lanes are the `Faithful9` key lanes of the root's squeezed lane 0
+///     (`out_state[0..32]`, 32 eight-bit limbs re-limbed to bytes — the executor re-limbing
+///     `MinaStateBodyHashChain.bodyHashNonet`'s docblock names; each limb is refused above 255,
+///     and the lane comparison is against the CANONICAL image, so a non-canonical nonet cannot
+///     alias in).
+///
+/// ⚠ **What this still does not buy, said plainly.** The tie is an EXECUTOR comparison, not a
+/// fold `cb.connect` — the turn dies, but a proof consumed by any other route would not make it.
+/// And the root grounds ONE body: the link's FIRST row's (`PI_BODYHASH` is pinned from
+/// `VmRow.first`). The remaining rows' `BODYHASH` columns stay per-row seam commitments whose
+/// stream this weld grounds only through `BODY_ACC`. What a prover chooses moved from "all
+/// seventeen slots" to "nothing below the chain's own 2 381-bit preimage residual"
+/// (`MinaBodyPreimageBitsAir`'s named residual), which is the next rung, not this one.
+pub fn check_body_chain_binding(
+    pinned: &[u8; 32],
+    measured: &[u8; 32],
+    claim: &MinaChainRootClaim,
+    link_pis: &[u32],
+) -> Result<(), String> {
+    // ── REFUSAL 16a: the body anchor is set.
+    if pinned == &[0u8; 32] {
+        return Err(
+            "the body-chain root trust anchor is all-zero: this node has no pinned \
+             `recursion_vk_fingerprint` for the `state_body_hash` fold and therefore cannot tell \
+             which circuit the body root proves"
+                .into(),
+        );
+    }
+
+    // ── REFUSAL 16b: the root is a proof of THAT circuit.
+    if measured != pinned {
+        return Err(format!(
+            "body-chain root VK fingerprint is {}, but this consumer's pinned body anchor is {}: \
+             the root is a proof of a DIFFERENT circuit",
+            hex::encode(measured),
+            hex::encode(pinned)
+        ));
+    }
+
+    if claim.in_state.len() != CHAIN_STATE_WIDTH || claim.out_state.len() != CHAIN_STATE_WIDTH {
+        return Err(format!(
+            "the body-chain root's claim carries {}/{} state limbs; a chain claim is \
+             {CHAIN_STATE_WIDTH} each side",
+            claim.in_state.len(),
+            claim.out_state.len()
+        ));
+    }
+    if claim.transcript_acc.len() != LINK_BODY_ACC_LANES {
+        return Err(format!(
+            "the body-chain root's claim carries {} transcript-accumulator lanes; the ordered \
+             stream digest is {LINK_BODY_ACC_LANES}",
+            claim.transcript_acc.len()
+        ));
+    }
+    if link_pis.len() != MINA_LINK_PI_COUNT {
+        return Err(format!(
+            "the segment sub-proof publishes {} inputs; {MINA_LINK_DESCRIPTOR} declares \
+             {MINA_LINK_PI_COUNT}. Refusing rather than reading the body block off the wrong \
+             offsets",
+            link_pis.len()
+        ));
+    }
+
+    // ── ⚑ REFUSAL 16c: the chain's head IS the MinaProtoStateBody salt.
+    for (i, want) in MINA_BODY_SALT_LIMBS.iter().enumerate() {
+        let got = claim.in_state[i];
+        if got != *want {
+            return Err(format!(
+                "body-chain incoming limb {i} is {got}, not the `MinaProtoStateBody` salt's \
+                 {want}: the chain did not start from Mina's body-hash domain separator, so it \
+                 derives some other hash function's image"
+            ));
+        }
+    }
+
+    // ── ⚑⚑ REFUSAL 16d, first half: the ordered stream accumulator, elementwise.
+    for i in 0..LINK_BODY_ACC_LANES {
+        let link = link_pis[LINK_PI_BODY_ACC_BASE + i];
+        let root = claim.transcript_acc[i];
+        if link != root {
+            return Err(format!(
+                "body-stream accumulator lane {i} is {link} in the segment proof and {root} in \
+                 the body-chain root: the link's per-row `salt ‖ BODYHASH ‖ acc` seam commits to \
+                 a stream that is not the one the chain absorbed"
+            ));
+        }
+    }
+
+    // ── ⚑⚑ REFUSAL 16d, second half: the squeezed body hash, re-limbed and compared canonically.
+    let lane0 = &claim.out_state[BODY_OUT_LANE0_LO..][..BODY_OUT_LANE0_WIDTH];
+    let mut bytes = [0u8; 32];
+    for (i, limb) in lane0.iter().enumerate() {
+        if *limb > 0xFF {
+            return Err(format!(
+                "body-chain outgoing limb {i} is {limb}, above the eight-bit limb range the chain \
+                 layout declares: refusing to re-limb a non-canonical state"
+            ));
+        }
+        bytes[i] = *limb as u8;
+    }
+    let expected = key_lanes_u32(&bytes);
+    for (i, want) in expected.iter().enumerate() {
+        let got = link_pis[LINK_PI_BODYHASH_BASE + i];
+        if got != *want {
+            return Err(format!(
+                "body-hash lane {i} is {got} in the segment proof, but the body-chain root's \
+                 squeezed `state_body_hash` re-limbs to {want}: the first block's published body \
+                 is not the body the chain derived"
             ));
         }
     }
@@ -1443,6 +1730,87 @@ impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
         // ── ⚑⚑⚑ REFUSALS 13-14: the nine-lane seam and the eleven public inputs it does not cover.
         check_segment_binding(&wire.public_inputs, &wire.link_public_inputs).map_err(reject)?;
 
+        // ── ⚑⚑ REFUSAL 15: **THE FINALIZE-CONJUNCTION SUB-PROOF.** Defined 2026-08-06, called by
+        // NOTHING until 2026-08-08 — the `EffectsHashMismatch` class this repo's doctrine opens
+        // with: a refusal that is formatted, documented and constructed zero times. Same order
+        // discipline as refusals 11-14: the program pin before the STARK (a head naming a program
+        // this node does not dispatch is refused without spending a verification), the commitment
+        // weld after it (comparing public inputs of an unverified proof is comparing numbers to
+        // numbers).
+        let conjunction_pis: Vec<BabyBear> = wire
+            .conjunction_public_inputs
+            .iter()
+            .map(|v| BabyBear::new(*v))
+            .collect();
+        let conj_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let desc = descriptor_by_name(MINA_CONJUNCTION_DESCRIPTOR).ok_or_else(|| {
+                format!(
+                    "no descriptor dispatches for {MINA_CONJUNCTION_DESCRIPTOR:?} (fail-closed): \
+                     this node cannot check the finalize conjunction and therefore refuses the \
+                     head"
+                )
+            })?;
+            if desc.public_input_count != MINA_CONJUNCTION_PI_COUNT {
+                return Err(format!(
+                    "the descriptor served for {MINA_CONJUNCTION_DESCRIPTOR:?} declares {} public \
+                     inputs; this consumer's layout is {MINA_CONJUNCTION_PI_COUNT}. Refusing an \
+                     ambiguous layout rather than reading the five blocks off the wrong offsets",
+                    desc.public_input_count
+                ));
+            }
+            let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).ok_or_else(|| {
+                format!(
+                    "no descriptor dispatches for {MINA_LC_VERIFY_DESCRIPTOR:?} (fail-closed): \
+                     this node cannot check a Mina anchored head and therefore refuses one"
+                )
+            })?;
+            check_subproof_program_pin(
+                &head,
+                &desc,
+                HEAD_CONJ_GUARD_COL,
+                MINA_CONJUNCTION_DESCRIPTOR,
+            )?;
+            verify_vm_descriptor2(&desc, &wire.conjunction_proof, &conjunction_pis)
+        }));
+        match conj_result {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => {
+                return Err(reject(format!(
+                    "the Mina finalize-conjunction sub-proof rejected: {reason}"
+                )));
+            }
+            Err(_) => {
+                return Err(reject(
+                    "Mina finalize-conjunction sub-proof decode/verify panicked (treated as \
+                     rejection)"
+                        .into(),
+                ));
+            }
+        }
+        // The commitment weld itself — the digest recompute the head's PI 30..38 are refused
+        // against.
+        check_conjunction_binding(&wire.public_inputs, &wire.conjunction_public_inputs)
+            .map_err(reject)?;
+
+        // ── ⚑⚑⚑ REFUSAL 16: **THE BODY-HASH CHAIN ROOT — the seventeen body slots get their
+        // reader.** The backend was required at refusal 0; the fingerprint comparison is NOT the
+        // backend's to make (same split as refusals 7-10, same reason).
+        let (body_measured_vk, body_claim) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                backend.verify_chain_root(&wire.body_chain_root_proof)
+            }))
+            .map_err(|_| {
+                reject("Mina body-chain root verify panicked (treated as rejection)".into())
+            })?
+            .map_err(|reason| reject(format!("the Mina body-chain root rejected: {reason}")))?;
+        check_body_chain_binding(
+            &backend.pinned_body_root_vk(),
+            &body_measured_vk,
+            &body_claim,
+            &wire.link_public_inputs,
+        )
+        .map_err(reject)?;
+
         // ── REFUSAL 6: the STARK over the Lean-compiled descriptor. Its own gates then force the
         // published `blockchain_length` to be the pinned anchor plus the EXHIBITED segment, the
         // witnessed depth to be measured to that derived tip, the three ranged slack teeth and the
@@ -1737,20 +2105,27 @@ mod tests {
         let short = &link[..link.len() - 1];
         let e = check_segment_binding(&head, short).expect_err("must be REFUSED");
         assert!(
-            e.contains("the segment sub-proof publishes 19 inputs"),
+            e.contains("the segment sub-proof publishes 36 inputs"),
             "got: {e}"
         );
     }
 
     /// The PI slot layout of the SEGMENT descriptor, pinned to the Lean `def`s so a re-index of
     /// `LightClientMinaLinkAir` cannot silently move what this consumer compares.
+    ///
+    /// ⚑ 37, not 20, since the 2026-08-08 publication flag day (`BODYHASH` PI 20..28, `BODY_ACC`
+    /// PI 29..36). The literals are deliberately literals — the SECOND source, checked against
+    /// Lean `LightClientMinaLinkAir.MINA_LINK_PI_COUNT` and the served descriptor's own count.
     #[test]
     fn segment_pi_layout_matches_the_lean_descriptor() {
         assert_eq!(LINK_PI_ANCHOR_BASE, 0);
         assert_eq!(LINK_PI_TIP_BASE, 9);
         assert_eq!(LINK_PI_ANCHOR_H, 18);
         assert_eq!(LINK_PI_SEG_LEN, 19);
-        assert_eq!(MINA_LINK_PI_COUNT, 20);
+        assert_eq!(LINK_PI_BODYHASH_BASE, 20);
+        assert_eq!(LINK_PI_BODY_ACC_BASE, 29);
+        assert_eq!(LINK_BODY_ACC_LANES, 8);
+        assert_eq!(MINA_LINK_PI_COUNT, 37);
         let d = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
         assert_eq!(d.public_input_count, MINA_LINK_PI_COUNT);
     }
@@ -1775,14 +2150,18 @@ mod tests {
         assert_eq!(PI_BLOCK_LEN, 18);
         assert_eq!(PI_REQ_DEPTH, 19);
         assert_eq!(PI_SUB_COMMIT_BASE, 20);
-        // ⚑ 30, not 29, since `ANCHOR_H` became a published PI on 2026-08-05. The literals here
-        // are deliberately literals: they are the SECOND source, and a pin written as
-        // `assert_eq!(MINA_LC_PI_COUNT, MINA_LC_PI_COUNT)` would be decoration. Checked against
-        // Lean `LightClientMinaAir.MINA_PI_COUNT` (`3 * STATE_LIMBS + 3`, with
-        // `minaVerify_layout_facts` proving it `= 30`) and against the emitted
-        // `dregg-mina-lightclient-verify-v1.json`, whose `public_input_count` is 30.
+        // ⚑ 39, not 30, since the conjunction commitment block was APPENDED at PI 30..38 on
+        // 2026-08-06. The literals here are deliberately literals: they are the SECOND source,
+        // and a pin written as `assert_eq!(MINA_LC_PI_COUNT, MINA_LC_PI_COUNT)` would be
+        // decoration. Checked against Lean `LightClientMinaAir.MINA_PI_COUNT` and against the
+        // emitted `dregg-mina-lightclient-verify-v1.json`, whose `public_input_count` is 39.
+        // (This assert sat at 30 for two days after the flip — a red nobody ran — and was moved
+        // WITH the refusal-15 wiring, which is the change these slots exist for.)
         assert_eq!(PI_ANCHOR_H, 29);
-        assert_eq!(MINA_LC_PI_COUNT, 30);
+        assert_eq!(PI_CONJ_COMMIT_BASE, 30);
+        assert_eq!(MINA_LC_PI_COUNT, 39);
+        let d = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("served");
+        assert_eq!(d.public_input_count, MINA_LC_PI_COUNT);
     }
 
     /// ⚑⚑ POSITIVE POLARITY FOR THE SUB-PROOF BINDING: a head proof that publishes the digest of
@@ -1957,6 +2336,7 @@ mod tests {
         let v =
             MinaAnchoredHeadStarkVerifier::with_chain_root_backend(Arc::new(ScriptedRootBackend {
                 pinned: [9u8; 32],
+                body_pinned: [9u8; 32],
                 measured: [9u8; 32],
                 claim: honest_root_claim(),
             }));
@@ -1981,6 +2361,7 @@ mod tests {
     #[derive(Debug)]
     struct ScriptedRootBackend {
         pinned: [u8; 32],
+        body_pinned: [u8; 32],
         measured: [u8; 32],
         claim: MinaChainRootClaim,
     }
@@ -1988,6 +2369,9 @@ mod tests {
     impl MinaChainRootBackend for ScriptedRootBackend {
         fn pinned_root_vk(&self) -> [u8; 32] {
             self.pinned
+        }
+        fn pinned_body_root_vk(&self) -> [u8; 32] {
+            self.body_pinned
         }
         fn verify_chain_root(
             &self,
@@ -2127,6 +2511,7 @@ mod tests {
             &mut reg,
             Arc::new(ScriptedRootBackend {
                 pinned: [9u8; 32],
+                body_pinned: [9u8; 32],
                 measured: [9u8; 32],
                 claim: honest_root_claim(),
             }),
@@ -2155,5 +2540,271 @@ mod tests {
             err,
             WitnessedPredicateError::InputShapeMismatch { .. }
         ));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // ⚑⚑ REFUSAL 15 — THE CONJUNCTION SEAM, BOTH POLARITIES. This suite did not exist while the
+    // refusal was dead code; it lands WITH the wiring, in the shape refusal 4's suite already has.
+    // ════════════════════════════════════════════════════════════════════════════════════════
+
+    /// ⚑⚑ **REFUSAL 15's PROGRAM PIN, POLARITY ONE** — the head descriptor's
+    /// `FINALIZE_XI_B_PROVED`-guarded bind names the conjunction descriptor this node dispatches.
+    /// Both objects come from `descriptor_by_name`, so this is the exact pair a node holds at
+    /// verify time.
+    #[test]
+    fn the_head_descriptors_conjunction_pin_is_the_served_conjunction_descriptors_fingerprint() {
+        let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
+        let conj =
+            descriptor_by_name(MINA_CONJUNCTION_DESCRIPTOR).expect("conjunction descriptor served");
+        assert_eq!(conj.public_input_count, MINA_CONJUNCTION_PI_COUNT);
+        check_subproof_program_pin(&head, &conj, HEAD_CONJ_GUARD_COL, MINA_CONJUNCTION_DESCRIPTOR)
+            .expect("the head's conjunction bind must name the sub-proof this node dispatches");
+    }
+
+    /// ⚑⚑ **…AND THE CONJUNCTION GUARD DOES NOT ACCEPT A SIBLING PROGRAM.** The head carries
+    /// THREE binds; a resolution that read the wrong one would be invisible to the positive test.
+    #[test]
+    fn the_conjunction_seam_is_not_interchangeable_with_its_siblings() {
+        let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
+        let chain = descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).expect("served");
+        let link = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
+        let e =
+            check_subproof_program_pin(&head, &chain, HEAD_CONJ_GUARD_COL, MINA_CHAINLINK_DESCRIPTOR)
+                .expect_err("the conjunction guard must not accept the chainlink program");
+        assert!(e.contains("names a DIFFERENT program"), "got: {e}");
+        let e = check_subproof_program_pin(&head, &link, HEAD_CONJ_GUARD_COL, MINA_LINK_DESCRIPTOR)
+            .expect_err("the conjunction guard must not accept the segment program");
+        assert!(e.contains("names a DIFFERENT program"), "got: {e}");
+    }
+
+    /// The honest head PI vector with the CONJUNCTION commitment lanes filled from `conj`.
+    fn pis_with_conj(anchor: &[u8; 32], tip: &[u8; 32], k: u32, conj: &[u32]) -> Vec<u32> {
+        let mut pis = pis_for(anchor, tip, k);
+        for (i, v) in key_lanes_u32(&conjunction_pi_commitment(conj))
+            .iter()
+            .enumerate()
+        {
+            pis[PI_CONJ_COMMIT_BASE + i] = *v;
+        }
+        pis
+    }
+
+    /// ⚑⚑ POSITIVE POLARITY: a head that publishes the digest of the conjunction sub-proof it
+    /// presents BINDS. Without this the refusals below would be satisfied by a check that refuses
+    /// everything.
+    #[test]
+    fn a_head_declaring_the_conjunction_it_presents_is_accepted() {
+        let conj: Vec<u32> = (0..MINA_CONJUNCTION_PI_COUNT as u32).collect();
+        let pis = pis_with_conj(&[7u8; 32], &[3u8; 32], 290, &conj);
+        check_conjunction_binding(&pis, &conj)
+            .expect("the declared conjunction sub-proof IS the presented one");
+    }
+
+    /// ⚑⚑ REFUSED: a head that names conjunction sub-proof A and hands over sub-proof B. The
+    /// falsifier moves a NON-ZERO value inside the declared eight-bit limb width, so the refusal
+    /// is not staged against a value nothing could produce.
+    #[test]
+    fn a_head_presenting_a_different_conjunction_is_refused() {
+        let declared: Vec<u32> = (0..MINA_CONJUNCTION_PI_COUNT as u32).collect();
+        let pis = pis_with_conj(&[7u8; 32], &[3u8; 32], 290, &declared);
+        let mut other = declared.clone();
+        let before = other[5];
+        other[5] += 1;
+        assert_ne!(other[5], before, "the tamper must move a value");
+        assert_ne!(before, 0, "and it must move a NON-ZERO limb");
+        assert!(other[5] < 256, "and stay inside the declared 8-bit limb width");
+        let err = check_conjunction_binding(&pis, &other).unwrap_err();
+        assert!(
+            err.contains("DIFFERENT"),
+            "the refusal must name the substitution: {err}"
+        );
+    }
+
+    /// ⚑ REFUSED: a conjunction sub-proof of the wrong arity — the commitment absorbs the arity
+    /// first, so a truncation is never a prefix collision, and the arity check refuses before any
+    /// digest is compared.
+    #[test]
+    fn a_conjunction_of_the_wrong_arity_is_refused() {
+        let declared: Vec<u32> = (0..MINA_CONJUNCTION_PI_COUNT as u32).collect();
+        let pis = pis_with_conj(&[7u8; 32], &[3u8; 32], 290, &declared);
+        let err = check_conjunction_binding(&pis, &declared[..32]).unwrap_err();
+        assert!(err.contains("binds exactly"), "{err}");
+    }
+
+    /// ⚑ And the two commitment contexts are genuinely domain-separated: the SAME PI vector
+    /// digests to different lanes under the transcript and conjunction contexts, so a transcript
+    /// sub-proof can never be presented where a conjunction sub-proof is required.
+    #[test]
+    fn the_conjunction_commitment_context_is_not_the_transcript_context() {
+        let pis: Vec<u32> = (0..160).collect();
+        assert_ne!(chainlink_pi_commitment(&pis), conjunction_pi_commitment(&pis));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // ⚑⚑⚑ REFUSAL 16 — THE BODY-CHAIN WELD, BOTH POLARITIES. Until 2026-08-08 the seventeen body
+    // slots had NO reader anywhere in the tree; every test here is about the reader they gained.
+    // ════════════════════════════════════════════════════════════════════════════════════════
+
+    /// An honest (root claim, link PI vector) pair: salt head, a body hash whose 32 eight-bit
+    /// limbs and nine `Faithful9` lanes encode the SAME 32 bytes, and one shared accumulator.
+    fn honest_body_pair() -> (MinaChainRootClaim, Vec<u32>) {
+        let body_bytes: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(7).max(1));
+        let acc: [u32; 8] = [3, 1, 4, 1, 5, 9, 2, 6];
+        let mut out_state = vec![0u32; CHAIN_STATE_WIDTH];
+        for (i, b) in body_bytes.iter().enumerate() {
+            out_state[BODY_OUT_LANE0_LO + i] = *b as u32;
+        }
+        // The other two lanes: arbitrary in-range limbs, so nothing is refused for a reason other
+        // than the one under test.
+        for i in PASTA_LIMBS..CHAIN_STATE_WIDTH {
+            out_state[i] = (i as u32 * 5) % 251;
+        }
+        let claim = MinaChainRootClaim {
+            in_state: MINA_BODY_SALT_LIMBS.to_vec(),
+            out_state,
+            transcript_acc: acc.to_vec(),
+        };
+        let mut link = vec![0u32; MINA_LINK_PI_COUNT];
+        for (i, v) in key_lanes_u32(&body_bytes).iter().enumerate() {
+            link[LINK_PI_BODYHASH_BASE + i] = *v;
+        }
+        for i in 0..LINK_BODY_ACC_LANES {
+            link[LINK_PI_BODY_ACC_BASE + i] = acc[i];
+        }
+        (claim, link)
+    }
+
+    /// ⚑⚑ POSITIVE POLARITY: an honest pair — pinned body anchor set and matched, salt head,
+    /// matching accumulator, matching re-limbed body hash — BINDS.
+    #[test]
+    fn an_honest_body_chain_pair_binds() {
+        let (claim, link) = honest_body_pair();
+        check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link)
+            .expect("an honest body-chain pair must bind");
+    }
+
+    /// ⚑ REFUSED (16a): an all-zero body anchor — a node that never pinned the body-fold
+    /// fingerprint cannot tell which circuit the root proves.
+    #[test]
+    fn an_unset_body_anchor_is_refused() {
+        let (claim, link) = honest_body_pair();
+        let err = check_body_chain_binding(&[0u8; 32], &[0u8; 32], &claim, &link).unwrap_err();
+        assert!(err.contains("all-zero"), "{err}");
+    }
+
+    /// ⚑⚑ REFUSED (16b): a body root of a DIFFERENT circuit. The two towers publish the identical
+    /// claim shape — the fingerprint is the ONLY discriminator, so this refusal is the one that
+    /// stops a phase-2 root from standing in for a body root.
+    #[test]
+    fn a_body_root_of_a_different_circuit_is_refused() {
+        let (claim, link) = honest_body_pair();
+        let mut other = [5u8; 32];
+        other[0] ^= 1;
+        let err = check_body_chain_binding(&[5u8; 32], &other, &claim, &link).unwrap_err();
+        assert!(err.contains("DIFFERENT circuit"), "{err}");
+    }
+
+    /// ⚑⚑ REFUSED (16c): a chain whose head is not the `MinaProtoStateBody` salt. `perm` is a
+    /// permutation — from a free head, 25 links reach every field element — so a wrong-salt root
+    /// derives some other hash function's image and every gate of the fold still holds on it.
+    /// The falsifier moves a NON-ZERO limb (the salt's limb 0 is 235).
+    #[test]
+    fn a_body_chain_from_a_different_salt_is_refused() {
+        let (mut claim, link) = honest_body_pair();
+        let before = claim.in_state[0];
+        assert_ne!(before, 0, "the mutated limb must be non-zero to begin with");
+        claim.in_state[0] = before - 1;
+        let err = check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link).unwrap_err();
+        assert!(err.contains("MinaProtoStateBody"), "{err}");
+    }
+
+    /// ⚑⚑ REFUSED (16d, accumulator half): a link whose published stream accumulator is not the
+    /// chain's. The tamper moves a non-zero lane inside the BabyBear width.
+    #[test]
+    fn a_link_stream_that_is_not_the_chains_is_refused() {
+        let (claim, mut link) = honest_body_pair();
+        let before = link[LINK_PI_BODY_ACC_BASE + 2];
+        assert_ne!(before, 0);
+        link[LINK_PI_BODY_ACC_BASE + 2] += 1;
+        let err = check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link).unwrap_err();
+        assert!(err.contains("body-stream accumulator lane 2"), "{err}");
+    }
+
+    /// ⚑⚑ REFUSED (16d, body-hash half): a link whose published first-block body is not the body
+    /// the chain derived. Lane 0 and the top lane both exhibited, so the refusal is not an
+    /// artifact of one lane.
+    #[test]
+    fn a_link_body_that_is_not_the_chains_is_refused() {
+        let (claim, mut link) = honest_body_pair();
+        let before = link[LINK_PI_BODYHASH_BASE];
+        assert_ne!(before, 0);
+        link[LINK_PI_BODYHASH_BASE] += 1;
+        let err = check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link).unwrap_err();
+        assert!(err.contains("body-hash lane 0"), "{err}");
+
+        let (claim, mut link) = honest_body_pair();
+        link[LINK_PI_BODYHASH_BASE + 8] += 1;
+        let err = check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link).unwrap_err();
+        assert!(err.contains("body-hash lane 8"), "{err}");
+    }
+
+    /// ⚑ REFUSED: a claim whose outgoing limb is above the eight-bit range — re-limbing a
+    /// non-canonical state would let two states alias one byte string.
+    #[test]
+    fn a_non_canonical_body_limb_is_refused() {
+        let (mut claim, link) = honest_body_pair();
+        claim.out_state[BODY_OUT_LANE0_LO + 3] = 256;
+        let err = check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link).unwrap_err();
+        assert!(err.contains("eight-bit limb range"), "{err}");
+    }
+
+    /// ⚑ REFUSED: wrong shapes — a truncated claim, a truncated accumulator, a truncated link PI
+    /// vector — each before any offset is read.
+    #[test]
+    fn a_body_claim_of_the_wrong_shape_is_refused() {
+        let (mut claim, link) = honest_body_pair();
+        claim.out_state.pop();
+        let err = check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link).unwrap_err();
+        assert!(err.contains("state limbs"), "{err}");
+
+        let (mut claim, link) = honest_body_pair();
+        claim.transcript_acc.pop();
+        let err = check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link).unwrap_err();
+        assert!(err.contains("transcript-accumulator lanes"), "{err}");
+
+        let (claim, link) = honest_body_pair();
+        let err =
+            check_body_chain_binding(&[5u8; 32], &[5u8; 32], &claim, &link[..36]).unwrap_err();
+        assert!(err.contains("publishes 36 inputs"), "{err}");
+    }
+
+    /// ⚑⚑ **THE SALT LITERAL IS THE FIXTURE'S — the gate that keeps [`MINA_BODY_SALT_LIMBS`] from
+    /// drifting.** The tracked PI fixture's link 0 incoming block is pinned in Lean against
+    /// `saltProtoStateBody` (`MinaStateBodyHashChain.the_body_chain_head_is_the_salt`), which is
+    /// itself pinned against openmina's regression constants; this test closes the loop to the
+    /// Rust literal. A missing fixture is a FAILURE, not a skip — a gate that cannot go red is
+    /// not a gate.
+    #[test]
+    fn the_body_salt_limbs_are_the_fixtures() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../circuit/tests/fixtures/pasta-fp-bodyhash-pis.txt"
+        );
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("the tracked body-chain PI fixture must be readable: {e}"));
+        let first: Vec<u32> = text
+            .lines()
+            .next()
+            .expect("fixture has a first line")
+            .split_whitespace()
+            .take(96)
+            .map(|v| v.parse().expect("fixture limbs parse"))
+            .collect();
+        assert_eq!(first.len(), 96, "the fixture's first link carries a whole incoming state");
+        assert_eq!(
+            first,
+            MINA_BODY_SALT_LIMBS.to_vec(),
+            "MINA_BODY_SALT_LIMBS drifted from the fixture's salt head"
+        );
     }
 }

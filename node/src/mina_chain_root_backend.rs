@@ -27,6 +27,12 @@
 //! fold) and by `recursion-verify/tests/mina_chain_root_seam.rs` §2, and its reproducibility is
 //! the shipped property `circuit-prove/tests/recursion_vk_determinism.rs` exists to defend.
 //!
+//! ⚑ **AND SINCE 2026-08-08 THERE ARE TWO ANCHORS.** `DREGG_MINA_BODY_ROOT_VK=<64 hex chars>`
+//! pins the `state_body_hash` fold (`mina_body_hash_chain_fold`'s 25-leaf tower), which the wire
+//! now REQUIRES (`dregg-turn` REFUSAL 16). Both towers publish the identical claim shape, so the
+//! fingerprint is the only discriminator; a node pinned for only one refuses every head, loudly,
+//! at install time rather than at the first head.
+//!
 //! ⚑⚑ **IT ROTATED ON 2026-08-08 AND IT WILL ROTATE AGAIN.** The phase-2 chain tower was switched
 //! to the two-engine shape every other recursion tower already ran at: a leaf now VERIFIES its
 //! IR-v2 child at the descriptor engine and MINTS at the recursion engine (`log_blowup 3, 38
@@ -48,48 +54,69 @@ use dregg_turn::executor::{MinaChainRootBackend, MinaChainRootClaim};
 /// The operator's pin for the trusted `recursion_vk_fingerprint`, as 64 lowercase hex chars.
 pub const CHAIN_ROOT_VK_ENV: &str = "DREGG_MINA_CHAIN_ROOT_VK";
 
+/// ⚑ The operator's pin for the **`state_body_hash` fold's** `recursion_vk_fingerprint` — the
+/// 25-leaf tower of `mina_body_hash_chain_fold`. **New 2026-08-08**, with `dregg-turn`'s
+/// REFUSAL 16: the two towers publish the IDENTICAL claim shape, so the fingerprint is the only
+/// thing telling a phase-2 root from a body root, and one env var cannot anchor both. The value
+/// is printed by `circuit-prove/tests/mina_body_hash_chain_fold.rs`'s root section, same
+/// extraction ceremony as [`CHAIN_ROOT_VK_ENV`]'s.
+pub const BODY_ROOT_VK_ENV: &str = "DREGG_MINA_BODY_ROOT_VK";
+
 /// The real backend: decode → fingerprint → verify → read claim.
 ///
 /// ⚑ It does **not** decide whether the fingerprint is acceptable. It reports what it measured,
-/// and `dregg-turn`'s [`dregg_turn::executor::check_chain_root_binding`] requires it to equal
-/// [`Self::pinned`]. A backend that forgot to compare therefore cannot fail open — the
-/// comparison is structurally out of its hands.
+/// and `dregg-turn`'s [`dregg_turn::executor::check_chain_root_binding`] /
+/// `check_body_chain_binding` require it to equal the matching pin. A backend that forgot to
+/// compare therefore cannot fail open — the comparison is structurally out of its hands.
 #[derive(Debug, Clone, Copy)]
 pub struct P3MinaChainRootBackend {
     pinned: RecursionVk,
+    body_pinned: RecursionVk,
 }
 
 impl P3MinaChainRootBackend {
-    /// Build a backend pinned to `vk`.
-    pub fn new(pinned: RecursionVk) -> Self {
-        Self { pinned }
+    /// Build a backend pinned to the phase-2 fold's `vk` and the body fold's `body_vk`.
+    pub fn new(pinned: RecursionVk, body_pinned: RecursionVk) -> Self {
+        Self {
+            pinned,
+            body_pinned,
+        }
     }
 
-    /// Read the operator's pinned anchor from [`CHAIN_ROOT_VK_ENV`].
+    /// Read the operator's pinned anchors from [`CHAIN_ROOT_VK_ENV`] and [`BODY_ROOT_VK_ENV`].
     ///
-    /// `None` when unset, and `None` — **not a zero anchor** — when malformed: an operator typo
-    /// must widen nothing. The caller installs no backend in either case, so the head stays
-    /// refused.
+    /// `None` unless BOTH are set and well-formed — **never a zero anchor** for either: an
+    /// operator typo must widen nothing, and since the 2026-08-08 wire flag day a head cannot
+    /// verify without a body root, so a node pinned for only one tower can only refuse anyway
+    /// and says so here rather than at the first head.
     pub fn from_env() -> Option<Self> {
-        let raw = std::env::var(CHAIN_ROOT_VK_ENV).ok()?;
-        let trimmed = raw.trim();
-        match RecursionVk::from_hex(trimmed) {
-            Some(vk) => Some(Self::new(vk)),
-            None => {
-                tracing::error!(
-                    env = CHAIN_ROOT_VK_ENV,
-                    "recursion-root trust anchor is not 64 hex characters; installing NO \
-                     recursion-root backend — every Mina anchored head will be REFUSED"
-                );
-                None
+        let read = |env: &'static str| -> Option<RecursionVk> {
+            let raw = std::env::var(env).ok()?;
+            match RecursionVk::from_hex(raw.trim()) {
+                Some(vk) => Some(vk),
+                None => {
+                    tracing::error!(
+                        env,
+                        "recursion-root trust anchor is not 64 hex characters; installing NO \
+                         recursion-root backend — every Mina anchored head will be REFUSED"
+                    );
+                    None
+                }
             }
-        }
+        };
+        let pinned = read(CHAIN_ROOT_VK_ENV)?;
+        let body_pinned = read(BODY_ROOT_VK_ENV)?;
+        Some(Self::new(pinned, body_pinned))
     }
 }
 
 impl MinaChainRootBackend for P3MinaChainRootBackend {
     fn pinned_root_vk(&self) -> [u8; 32] {
         self.pinned.0
+    }
+
+    fn pinned_body_root_vk(&self) -> [u8; 32] {
+        self.body_pinned.0
     }
 
     fn verify_chain_root(
@@ -131,16 +158,18 @@ pub fn install_mina_chain_root_backend(
 ) -> bool {
     let Some(backend) = P3MinaChainRootBackend::from_env() else {
         tracing::info!(
-            env = CHAIN_ROOT_VK_ENV,
-            "no recursion-root trust anchor pinned; Mina anchored-head predicates will be \
-             REFUSED (fail-closed)"
+            chain_env = CHAIN_ROOT_VK_ENV,
+            body_env = BODY_ROOT_VK_ENV,
+            "recursion-root trust anchors not (both) pinned; Mina anchored-head predicates will \
+             be REFUSED (fail-closed)"
         );
         return false;
     };
     tracing::info!(
         anchor = %backend.pinned.to_hex(),
-        "recursion-root backend installed; Mina anchored heads will be checked against this \
-         RecursionVk fingerprint"
+        body_anchor = %backend.body_pinned.to_hex(),
+        "recursion-root backend installed; Mina anchored heads will be checked against these \
+         RecursionVk fingerprints"
     );
     dregg_turn::executor::register_mina_head_verifier_with_chain_root(registry, Arc::new(backend));
     true
@@ -186,7 +215,10 @@ mod tests {
         let mut reg = dregg_turn::executor::registry_with_real_verifiers();
         dregg_turn::executor::register_mina_head_verifier_with_chain_root(
             &mut reg,
-            Arc::new(P3MinaChainRootBackend::new(RecursionVk([9u8; 32]))),
+            Arc::new(P3MinaChainRootBackend::new(
+                RecursionVk([9u8; 32]),
+                RecursionVk([8u8; 32]),
+            )),
         );
         let v = reg
             .get(WitnessedPredicateKind::Custom {

@@ -36,9 +36,10 @@ def rows : List (String × String) :=
   -- ⚠ `ports.json` carries only the SEAM-covered ports: `seam_specs.rs`'s gate 3 demands a
   -- registered `SeamSpec` cover every row, which is what makes the file a hard invariant. The
   -- head's two digest-shaped commitment ports (weld-covered, REFUSAL 4/15) and the link's two
-  -- UNCOVERED body ports are censused in Lean (`the_head_commitment_ports_are_weld_covered`,
-  -- `the_link_body_ports_have_no_registered_cover`) — putting an uncoverable row here would
-  -- either red the gate permanently or force the gate to accept weld strings it cannot check.
+  -- body ports (weld-covered, REFUSAL 16, since 2026-08-08) are censused in Lean
+  -- (`the_head_commitment_ports_are_weld_covered`, `the_link_body_ports_are_weld_covered`) —
+  -- putting a seam-uncoverable row here would either red the gate permanently or force the gate
+  -- to accept weld strings it cannot check.
   , ("ports.json",
       "[" ++ portSetJson "dregg-mina-wrap-conjunction::v1"
               Dregg2.Circuit.Emit.MinaWrapConjunctionAir.CJ_PI_COUNT

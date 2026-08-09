@@ -23,9 +23,17 @@ derives the SEGMENT LENGTH besides.
 
 ⚑⚑ **AND SINCE 2026-08-06 IT DERIVES (iii) TOO — by RECURSION, not by a bigger circuit.** Every row
 carries a `proofBind` whose commitment is `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH`, fifty-four
-`Faithful9` lanes, against the pinned fingerprint of `dregg-pasta-fp-absorb::v1`. `OWNHASH` is the
-IMAGE of its row, at the recursion boundary every `proofBind` in this tree stands at
-(`seam_derives_the_own_hash`, §6). The predicate `linkShapeAccepts` keeps its name because what a
+`Faithful9` lanes, against the pinned fingerprint of `dregg-pasta-fp-absorb::v1`. `OWNHASH` is
+CO-COMMITTED with its row and DERIVED in the sibling `fp-absorb` sub-proof, at the recursion
+boundary every `proofBind` in this tree stands at (`seam_derives_the_own_hash`, §6).
+
+⚠ **CLOSURE KIND, CORRECTED 2026-08-08. This read "`OWNHASH` is the IMAGE of its row", which is an
+in-AIR functional relation and is not the mechanism.** The bind declares `bound := none`, and
+`circuit/src/descriptor_ir2.rs`'s `proofBind` arm emits polynomials over `commit` only under
+`if let Some(b) = &p.bound` — so the fifty-four lanes appear in NO emitted constraint. What derives
+the hash is the sibling STARK a consumer verifies, and `seam_derives_the_own_hash` takes
+`StateHashEngine` as a NAMED HYPOTHESIS rather than discharging it. Connectivity here is
+co-occurrence plus a consumer refusal. The predicate `linkShapeAccepts` keeps its name because what a
 ROW-LOCAL predicate can see of a seam is still only its shape.
 
 ## ⚑ Why (iii) was called a wall, and what re-deriving the price found — 2026-08-06
@@ -580,9 +588,31 @@ so this literal is a TRANSCRIPTION, and a transcription is only a gate if someth
 
 ⚠ **FLAG DAY COUPLING:** re-emitting `pasta-fp-absorb.json` moves this literal and therefore
 re-emits and re-VKs `dregg-mina-lightclient-link::v1`, which in turn moves
-`LightClientMinaAir.LINK_VK_LANES` and re-VKs the head. Three descriptors, one chain. -/
+`LightClientMinaAir.LINK_VK_LANES` and re-VKs the head. Three descriptors, one chain.
+
+⚑⚑ **AND THAT COUPLING WAS BROKEN — THE PARAGRAPH ABOVE DESCRIBED A DISCIPLINE NOBODY RAN.**
+`067f63780` re-emitted `pasta-fp-absorb.json` and this literal did not follow, so from that commit
+until 2026-08-08 the state-hash seam named **a program no descriptor in this tree had** — the exact
+wraplink defect `LightClientMinaAir.CHAINLINK_VK_LANES`'s own docblock records, repeated one rung
+down. `circuit/tests/mina_statehash_seam_proves.rs::the_seam_pins_the_real_absorb_program` was RED
+at HEAD on precisely this comparison and stayed red; the gate worked and the repair did not follow
+it.
+
+⚠ The nine digits below are **RECOMPUTED FROM THE EMITTED BYTES**, never transcribed from a
+docblock or copied to make a check agree:
+
+    cargo run -p dregg-circuit --example conj_fingerprint -- \
+      circuit/descriptors/by-name/pasta-fp-absorb.json
+    → fp=d6ffe0dc44ed069d679b303924ee546ca521e43516dd7a62411ebf37735c9570
+      lanes=[484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387,
+             241629155, 7378268]
+
+Second source, independently: `MinaWrapClosingAir.ABSORB_VK_LANES` carries the same nine, and
+`circuit/tests/mina_wrap_closing_air_proves.rs::the_weld_pins_the_real_absorb_program_and_names_its_pi_vector`
+recomputes them from the same bytes and PASSES. That file deliberately refused to copy the stale
+number in order to agree with this one; this is the half that owed the move. -/
 def ABSORB_VK_LANES : List ℤ :=
-  [446814635, 83884421, 374082988, 139195248, 519518863, 422740375, 389354132, 515631608, 9097818]
+  [484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268]
 
 /-- The nine `Faithful9` lanes of a row's PARENT nonet, as commit expressions. -/
 def parentCommitLanes : List Expr :=
@@ -794,27 +824,55 @@ theorem minaLinkAir_limbs_shape :
       ∧ minaLinkAir.maxLimbedCapacityBits = 261 := by
   refine ⟨?_, ?_, ?_⟩ <;> rfl
 
-/-- ⚑ **THE TIED SOURCE** — `minaLinkAir` carrying its two decidable verdicts in its TYPE:
-`mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
-leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
-decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
-def minaLinkTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := minaLinkAir
+/-! ### ⚑⚑ THE TIE VERDICT WENT RED HERE ON 2026-08-08, AND THE RED IS KEPT, NOT SOFTENED.
 
-/-- **`minaLinkDesc` — COMPILER OUTPUT.** The exhibited Mina segment as a multi-row IR-v2 AIR. -/
+`minaLinkTiedAir` stood here — `minaLinkAir` carrying `mainRailOk` and `pinsTied` in its type —
+and its `pinsTied` was TRUE only because `AirLeg.readCols` scored the §2c seam's DECLARED commit
+lanes as reads while `bound := none` emits no polynomial over them. Emission-faithful
+(`EffectLowerCertified` §1a, same day), the verdict says what is true: **the eight `BODY_ACC`
+columns are published and read by NOTHING in this AIR — not even a width lookup** (a BabyBear
+digest lane fills its column; a 29-bit table would refuse honest witnesses, so there is no honest
+lookup to add). Their forcing is the EXECUTOR weld `check_body_chain_binding` (REFUSAL 16,
+censused as `MinaSeams.bodyAccWeld`) — a HOST refusal, which is exactly what `pinsTied` exists to
+distinguish from an AIR derivation. So the `TiedAir` is DEMOTED to `lowerAirCertified` (identical
+bytes, `rfl`; the refinement certificate survives; only the tie verdict is no longer claimed) and
+the red is stated as the two named theorems below. `PinsTiedCensus` carries the classification. -/
+
+/-- ⚑ **THE RED, STATED.** Went false when `readCols` became emission-faithful; goes true again
+only if the body columns gain a real in-AIR reader. -/
+theorem minaLinkAir_pinsTied_is_false : minaLinkAir.pinsTied = false := by decide
+
+/-- ⚑ …and the untied set is EXACTLY the eight `BODY_ACC` columns (40..47) — the wound has a
+literal, not a mood. `BODYHASH` stays tied (its nine columns carry `.limbs`/lookup canonicality
+legs); every other published column is derived by a window, gate, or limbs leg. (Stated over
+COLUMN indices: `AirLeg` deliberately carries no `DecidableEq`, so a leg-list equality is not
+decidable — same constraint `MinaSeams`' S1 memberships note.) -/
+theorem the_untied_pins_are_exactly_the_body_acc :
+    (minaLinkAir.legs.filterMap fun l =>
+      match l with
+      | .pin p =>
+          if minaLinkAir.legs.any (fun m => p.col ∈ m.readCols) then none else some p.col
+      | _      => none)
+      = [40, 41, 42, 43, 44, 45, 46, 47] := by decide
+
+/-- **`minaLinkDesc` — COMPILER OUTPUT.** The exhibited Mina segment as a multi-row IR-v2 AIR.
+⚑ Via `lowerAirCertified` since 2026-08-08 (see the section above): the tie verdict is red and
+SAID to be red, not carried by a stale walker. -/
 def minaLinkDesc : EffectVmDescriptor2 :=
-  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
-    "dregg-mina-lightclient-link::v1" MINA_LINK_WIDTH MINA_LINK_PI_COUNT [] minaLinkTiedAir).val
+  (Dregg2.Circuit.Emit.EffectLower.lowerAirCertified
+    "dregg-mina-lightclient-link::v1" MINA_LINK_WIDTH MINA_LINK_PI_COUNT [] minaLinkAir
+    minaLinkAir_mainRailOk).val
 
 /-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source is FORCED by the emitted
 descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in the
 SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. Not re-derived here.
 
-**Zero bytes move**: `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+**Zero bytes move**: `lowerAirCertified … |>.val` is `lowerAir …` by `rfl`. -/
 theorem minaLinkDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines minaLinkDesc [] minaLinkAir :=
-  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
-    "dregg-mina-lightclient-link::v1" MINA_LINK_WIDTH MINA_LINK_PI_COUNT [] minaLinkTiedAir).property
+  (Dregg2.Circuit.Emit.EffectLower.lowerAirCertified
+    "dregg-mina-lightclient-link::v1" MINA_LINK_WIDTH MINA_LINK_PI_COUNT [] minaLinkAir
+    minaLinkAir_mainRailOk).property
 
 /-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
 the migration changed what this definition PROVES, not what it PRODUCES. No re-emit, no VK rotation.

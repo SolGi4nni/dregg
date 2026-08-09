@@ -946,18 +946,28 @@ exactly the ports the mechanism exists for).
   * `minaHeadAir` §2b (chainlink): commit = the nine PI-bound `SUB_PI` columns — a blake3 DIGEST
     of the sub-proof's PI vector, not slot-for-slot weldable. **Covered by the named weld
     `check_transcript_binding` (REFUSAL 4)**, declared as a `WeldCover`.
-  * `minaHeadAir` §2d (conjunction): same shape at `CONJ_PI` — and ⚑⚑⚑ **its weld is DEAD
-    CODE**: `check_conjunction_binding` (REFUSAL 15) is defined and called by NOTHING, the wire
-    carries no conjunction sub-proof, and no test exists. Counted UNCOVERED
-    (`the_conjunction_commitment_port_has_no_live_weld`), beside the link's two.
+  * `minaHeadAir` §2d (conjunction): same shape at `CONJ_PI`. ⚑⚑ **Covered by the named weld
+    `check_conjunction_binding` (REFUSAL 15) since 2026-08-08** — which, from 2026-08-06 to that
+    day, was DEAD CODE: defined, documented, called by NOTHING, no wire field to call it with, no
+    test. This census found it while declaring the cover; the wiring (wire fields REQUIRED so old
+    blobs refuse to decode, the dispatch call after a conjunction-STARK verify + program pin by
+    guard column 58, both polarities) landed with `conjPiWeld` below. The historical count
+    (`the_conjunction_commitment_port_has_no_live_weld = 1`) is retired by
+    `the_head_commitment_ports_are_weld_covered = 0`.
   * `minaLinkAir` §2b (state hash) and §2c (body chain): commit = salt CONSTANTS plus row columns.
     The PI-visible surface is `BODYHASH` (20..28) and `BODY_ACC` (29..36) — declared as ports
-    below, and ⚑⚑ **NO REGISTERED SEAM AND NO EXECUTOR WELD COVERS THEM.**
-    `the_link_body_ports_have_no_registered_cover` counts the two; the owed object is a weld of
-    these seventeen slots against `MinaStateBodyHashChain`'s root claim (fold `cb.connect` or an
-    executor comparison — `turn`'s `LINK_PI_BODYHASH_BASE`/`LINK_PI_BODY_ACC_BASE` consts have no
-    reader today). ⚠ The per-row halves (mid-row `PARENT`/`BODYHASH`/`OWNHASH` triples the
-    unconditional guards declare) are not PI slots at all; their forcing is
+    below. ⚑⚑ **Covered by the named weld `check_body_chain_binding` (REFUSAL 16) since
+    2026-08-08** — the seventeen-slot executor comparison against `MinaStateBodyHashChain`'s root
+    claim this docblock used to name as the owed object: `BODY_ACC` elementwise against the root's
+    `transcript_acc`, `BODYHASH` against the `Faithful9` re-limbing of its squeezed lane 0, the
+    chain head refused against the `MinaProtoStateBody` salt, under a second operator-pinned
+    recursion-vk anchor (the two towers' claim shapes are identical; the fingerprint is the only
+    discriminator). `the_link_body_ports_have_no_registered_cover = 2` is retired by
+    `the_link_body_ports_are_weld_covered = 0`. ⚠ Still an EXECUTOR comparison, not a fold
+    `cb.connect` — and the `BODYHASH` half CANNOT be a `SeamSpec` (nine 29-bit lanes against
+    thirty-two 8-bit limbs is a re-limbing, outside the pin vocabulary), which is why the cover is
+    a `WeldCover` and not a seam. ⚠ The per-row halves (mid-row `PARENT`/`BODYHASH`/`OWNHASH`
+    triples the unconditional guards declare) are not PI slots at all; their forcing is
     `Satisfied2Custom.proofBound`'s per-row existential, discharged today only by test-side
     absorb-proof verification (`mina_statehash_seam_proves.rs`) — that residual is the seams' own
     docblocks' and is not restated as covered here.
@@ -1244,22 +1254,35 @@ def subPiWeld : WeldCover :=
   , welder := "dregg_turn::executor::mina_head_verifier::check_transcript_binding"
   , subProgram := CHAINLINK_VK_LANES }
 
-/-! ⚑⚑⚑ **THE CONJUNCTION-COMMITMENT PORT HAS NO LIVE WELD — `check_conjunction_binding` is the
-"constructed zero times" class, found while declaring its cover (2026-08-08).**
+/-! ⚑⚑ **THE CONJUNCTION-COMMITMENT PORT'S WELD — dead code from 2026-08-06 to 2026-08-08, wired
+the day this census counted it.**
 
-`mina_head_verifier.rs` DEFINES REFUSAL 15 (`check_conjunction_binding`, a full digest-recompute
-weld with its own domain-separation context) and its docblock describes the check — and **nothing
-calls it**: it is absent from the `verify` dispatch, `MinaAnchoredHeadWire` carries no
-`conjunction_public_inputs`/`conjunction_proof` fields to call it WITH, and it has zero tests. The
-same audit found REFUSAL 4 called and tested, and REFUSAL 13/14 called and tested — this is the one
-dead limb. In-AIR, `FINALIZE_XI_B_PROVED = 1` (forced) makes the nine `CONJ_VK` columns equal the
-conjunction descriptor's fingerprint; the nine published `CONJ_PI` lanes are compared to NOTHING
-the node runs.
+The finding, kept in full because it is the class this repo's doctrine opens with:
+`mina_head_verifier.rs` DEFINED REFUSAL 15 (`check_conjunction_binding`, a full digest-recompute
+weld with its own domain-separation context), its docblock described the check — and **nothing
+called it**: absent from the `verify` dispatch, no wire fields to call it WITH, zero tests. The
+same audit found REFUSAL 4 called and tested, and REFUSAL 13/14 called and tested — this was the
+one dead limb, and `the_conjunction_commitment_port_has_no_live_weld = 1` counted it while it
+stood. A `WeldCover` naming an uncalled function would have been a declaration wearing a cover, so
+none was built until the owed object landed — which it did, 2026-08-08, in exactly the shape the
+count demanded: `conjunction_public_inputs`/`conjunction_proof` REQUIRED on the wire (an old blob
+refuses to decode), the dispatch call after a conjunction-STARK verify + a program pin resolved by
+guard column `FINALIZE_XI_B_PROVED` (58), and both polarities in `mina_head_verifier.rs`'s
+REFUSAL-15 suite (`a_head_declaring_the_conjunction_it_presents_is_accepted` /
+`a_head_presenting_a_different_conjunction_is_refused`, falsifier checked non-zero and in-width).
 
-So this port is declared and counted UNCOVERED, beside the link's two — a `WeldCover` naming an
-uncalled function would be a declaration wearing a cover. The owed object: wire fields (REQUIRED,
-so an old blob refuses to decode), the dispatch call after a conjunction-STARK verify + program
-pin, and both polarities — the exact shape REFUSAL 4 already has one block up. -/
+⚠ What the weld does NOT buy is unchanged and stays said: nothing relates the conjunction
+sub-proof's ξ to the block whose head this is — that is `fold_endo_into_finalize`'s 32 connects
+(the ξ seam above), whose root this executor still does not consume. -/
+
+/-- ⚑ The conjunction-commitment port's cover: the executor weld that RECOMPUTES the digest of the
+conjunction sub-proof's PI vector and refuses the nine lanes against it — REFUSAL 15,
+`check_conjunction_binding`, CALLED in the dispatch (`verify`, after the conjunction STARK) and
+both-polarity tested since 2026-08-08. Digest-shaped, so no `SeamSpec` can express it. -/
+def conjPiWeld : WeldCover :=
+  { descName := "dregg-mina-lightclient-verify::v1", port := conjPiPort
+  , welder := "dregg_turn::executor::mina_head_verifier::check_conjunction_binding"
+  , subProgram := CONJ_VK_LANES }
 
 /-- The deployed seam registry. -/
 def minaSeamRegistry : List SeamSpec := [xiSeam, vPrimeSeam, freshSpongeSeam, headTipSeam]
@@ -1271,9 +1294,10 @@ def xiPortCovered : CoveredPort :=
 
 /-- Every SEAM-coverable declared port is covered by a registered seam. Goes red the day such a
 port is declared without one. ⚑ Extended 2026-08-08 with the head's anchor and tip ports (covered
-by `headTipSeam`); the head's two DIGEST-shaped ports are weld-covered and censused separately
-below, and the link's two are counted UNCOVERED below — deliberately outside this theorem, so this
-one can stay a hard invariant while that one is a wound with a number. -/
+by `headTipSeam`); the head's two DIGEST-shaped ports and the link's two body ports are
+weld-covered and censused separately below (`the_head_commitment_ports_are_weld_covered`,
+`the_link_body_ports_are_weld_covered` — both `= []` since the same day, having stood at 1 and 2
+as counted wounds). -/
 theorem every_declared_port_is_covered_by_a_named_seam :
     ([("dregg-mina-wrap-conjunction::v1", conjunctionPortSet),
       ("dregg-mina-lightclient-verify::v1", [anchorPort, tipPort])].all fun ps =>
@@ -1296,34 +1320,62 @@ theorem the_subproof_commitment_port_is_weld_covered :
       ∧ subPiWeld.descName = "dregg-mina-lightclient-verify::v1" :=
   ⟨rfl, rfl, rfl⟩
 
-/-- ⚑⚑⚑ **THE VERIFY-SIDE UNCOVERED COUNT — exactly ONE of the head's four declared ports has
-neither a registered seam nor a live weld: the conjunction commitment.** The section docblock above
-has the finding in full (`check_conjunction_binding`: defined, uncalled, untested, no wire field —
-the "constructed zero times" class). This number must SHRINK when REFUSAL 15 is wired; it must
-never be narrated away. -/
-theorem the_conjunction_commitment_port_has_no_live_weld :
+/-- ⚑ **THE CONJUNCTION WELD-COVER, censused like its sibling** — named, CALLED, tested welder
+(REFUSAL 15's suite), and the nine fingerprint lanes ARE the seam's own `vkPin` literal (one
+source, not a transcription). -/
+theorem the_conjunction_commitment_port_is_weld_covered :
+    conjPiWeld.port = conjPiPort
+      ∧ conjPiWeld.subProgram = CONJ_VK_LANES
+      ∧ conjPiWeld.descName = "dregg-mina-lightclient-verify::v1" :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- ⚑⚑⚑ **THE VERIFY-SIDE UNCOVERED COUNT IS ZERO — every one of the head's four declared ports
+has a registered seam or a live weld.** From 2026-08-06 to 2026-08-08 this stood at `= 1` with
+literal `[conjPiPort]` (`the_conjunction_commitment_port_has_no_live_weld` — the section docblock
+above keeps the finding); REFUSAL 15's wiring retired it. Refutable by construction: a fifth port
+declared without a cover moves the count, and this theorem must MOVE with it, never be narrated
+around. -/
+theorem the_head_commitment_ports_are_weld_covered :
     (headPortSet.filter fun p =>
       !(minaSeamRegistry.any fun s =>
           seamCoversPort s "dregg-mina-lightclient-verify::v1" p)
-      && !([subPiWeld].any fun w => w.port == p)).length = 1
-    ∧ (headPortSet.filter fun p =>
-        !(minaSeamRegistry.any fun s =>
-            seamCoversPort s "dregg-mina-lightclient-verify::v1" p)
-        && !([subPiWeld].any fun w => w.port == p)) = [conjPiPort] := by
-  refine ⟨by decide, by decide⟩
+      && !([subPiWeld, conjPiWeld].any fun w => w.port == p)) = [] := by
+  decide
 
-/-- ⚑⚑⚑ **THE UNCOVERED COUNT — the link's two body ports have NO registered cover, and this
-theorem is the number that must SHRINK, not a caveat that may age.** No seam in the registry
-covers them (decided) and no executor weld is declared for them (there is none to declare:
-`turn`'s `LINK_PI_BODYHASH_BASE`/`LINK_PI_BODY_ACC_BASE` slot constants have no reader, and the
-folded body-hash chain — `mina_body_hash_chain_fold.rs` — is `cb.connect`ed to nothing of the
-link's). The owed object is a seventeen-slot weld of these ports against `MinaStateBodyHashChain`'s
-root claim; the day it lands, cover it (a `SeamSpec` or a `WeldCover`), move the two ports into the
-covered censuses above, and take this to `= 0`. -/
-theorem the_link_body_ports_have_no_registered_cover :
+/-- ⚑ The body-hash port's cover: `check_body_chain_binding`'s second half (REFUSAL 16d), the
+`Faithful9` re-limbing of the body-chain root's squeezed `state_body_hash` against the link's
+published nonet. NOT expressible as a `SeamSpec`: nine 29-bit lanes against thirty-two 8-bit limbs
+is a re-limbing, not an elementwise pin list — which is exactly the port shape `WeldCover` exists
+for. `subProgram` is the body chain's program (`dregg-pasta-fp-chainlink::v1`), THE seam's own
+`vkPin` literal (one source). -/
+def bodyHashWeld : WeldCover :=
+  { descName := "dregg-mina-lightclient-link::v1", port := bodyHashPort
+  , welder := "dregg_turn::executor::mina_head_verifier::check_body_chain_binding"
+  , subProgram := LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES }
+
+/-- ⚑ The body-accumulator port's cover: the same welder's first half — the 8 `BODY_ACC` lanes
+elementwise against the root claim's `transcript_acc` (same BabyBear encoding both sides). An
+elementwise weld ACROSS a recursion-root claim rather than a sub-proof PI vector, so still a
+`WeldCover`: `SeamSpec` ends are descriptor-keyed and a fold root has no descriptor, only an
+operator-pinned `recursion_vk_fingerprint` (REFUSAL 16a/b). -/
+def bodyAccWeld : WeldCover :=
+  { descName := "dregg-mina-lightclient-link::v1", port := bodyAccPort
+  , welder := "dregg_turn::executor::mina_head_verifier::check_body_chain_binding"
+  , subProgram := LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES }
+
+/-- ⚑⚑⚑ **THE LINK-SIDE UNCOVERED COUNT IS ZERO — the seventeen-slot weld landed 2026-08-08.**
+This stood as `the_link_body_ports_have_no_registered_cover = 2` from the day the ports were
+declared: no fold `cb.connect`ed them, no executor compared them, `turn`'s
+`LINK_PI_BODYHASH_BASE`/`LINK_PI_BODY_ACC_BASE` had no reader. `check_body_chain_binding`
+(REFUSAL 16, both polarities tested, wire field REQUIRED so an old blob refuses to decode) is the
+owed seventeen-slot weld against `MinaStateBodyHashChain`'s root claim, and these two `WeldCover`s
+are its census objects. Same refutability as the head's: a new link port without a cover moves
+this literal. -/
+theorem the_link_body_ports_are_weld_covered :
     (linkPortSet.filter fun p =>
       !(minaSeamRegistry.any fun s =>
-          seamCoversPort s "dregg-mina-lightclient-link::v1" p)).length = 2 := by
+          seamCoversPort s "dregg-mina-lightclient-link::v1" p)
+      && !([bodyHashWeld, bodyAccWeld].any fun w => w.port == p)) = [] := by
   decide
 
 /-! ## §9 — axiom hygiene. Kernel-clean except the marked compiled facts. -/
@@ -1350,8 +1402,9 @@ theorem the_link_body_ports_have_no_registered_cover :
 #assert_axioms head_tip_seam_pins_are_the_nineteen
 #assert_axioms the_head_tip_seam_welds_published_slots
 #assert_axioms the_subproof_commitment_port_is_weld_covered
-#assert_axioms the_conjunction_commitment_port_has_no_live_weld
-#assert_axioms the_link_body_ports_have_no_registered_cover
+#assert_axioms the_conjunction_commitment_port_is_weld_covered
+#assert_axioms the_head_commitment_ports_are_weld_covered
+#assert_axioms the_link_body_ports_are_weld_covered
 
 #assert_compiled chain_out_is_canonical
 #assert_compiled realChain_says

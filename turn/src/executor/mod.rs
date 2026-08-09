@@ -816,8 +816,9 @@ pub use membership_verifier::{
 pub mod mina_head_verifier;
 pub use mina_head_verifier::{
     MINA_LC_VERIFY_DESCRIPTOR, MINA_MIN_CONFIRMATION_DEPTH, MinaAnchoredHeadStarkVerifier,
-    MinaChainRootBackend, MinaChainRootClaim, MinaHeadProofWire, check_chain_root_binding,
-    mina_head_predicate_vk, mina_head_verifier, register_mina_head_verifier_with_chain_root,
+    MinaChainRootBackend, MinaChainRootClaim, MinaHeadProofWire, check_body_chain_binding,
+    check_chain_root_binding, check_conjunction_binding, mina_head_predicate_vk,
+    mina_head_verifier, register_mina_head_verifier_with_chain_root,
 };
 
 /// ⚑ THE SOLANA→DREGG LANDING: the consumer that makes the Solana mint path spend a STARK over the
