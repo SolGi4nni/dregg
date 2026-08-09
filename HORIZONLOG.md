@@ -1,5 +1,175 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 9 — R4's ROWS are upstream's fold now; `G` is still `solveG`'s, and the residue stopped being a shape
+
+**SUBSTRATE: Lean.** `KimchiStepMainCore` §7/§19d is the authored AIR and the emitter runs it. No
+Rust AIR, no new `#guard`. Commit `0047cb876`.
+
+**THE TWO QUESTIONS, ANSWERED FIRST — and the second one is NOT measured, which is itself the answer
+to how much this closed.**
+
+1. **Does segment D have a real `G`? NO, and deliberately so.** `mkStepAtAdvice` still sets
+   `gA := solveG …`; nothing here staples `SG_XY`. The fold's SHAPE is upstream's now, but what
+   refuses `equal_g` at the block's `sg` is **three INSTANCES**, and the third was not in the brief:
+   (i) ξ's — §8g chain 0 runs over a fr-sponge fed FIXTURE evaluations; (ii) **`ft_comm`'s** — round
+   `FTC_ROUND`'s base is §6b's own MSM at R6's deferred scalars, not `COMBINE_XY[3]`; (iii) the
+   fused advice cell. Publishing `SG_XY` over that refusal is the stapled slot §19b declined.
+2. **Slot 12's cell count: NOT MEASURED, and the number in the brief is not supported.**
+   `segd_slot12_probe` REFUSED to run — its freshness assert fired because the step statement's
+   published word 54 **moved**, `3396651593…` → `1053080512…`. That is the rewiring propagating
+   exactly as §17(d) says it must (`lhs` moves → the solved `G` moves → segment D's squeeze moves),
+   and re-snapshotting `SEGD_WORDS` is the next lane's first item. What IS known: the referee's
+   slot 12 is Mina's `5075616743…`, unchanged, and the emitted side is now `1053080512…` — still a
+   MISS. The `[Gx; Gy]` pair did **not** close, so "58 → 60" is not a number anyone may quote yet.
+
+### WHAT THE ROWS DO — three named functions carry the whole wiring
+
+* **`ipaLadderBase r`** — combine round `a`: the RUNNING ACCUMULATOR `qSum (a−1)`, seeded at the LAST
+  commitment `qT (nCombine−1)` (`combine_split_commitments`' `List.rev … init`, `pcs_batch.ml:71-84`);
+  `bullet_reduce` L half: the WITNESSED `endo_inv` point `qEndoInv j`; R half: the commitment.
+* **`ipaLadderCounter r`** — the ladder's SCALAR cell, which is what an `EndoMul` chain's terminal
+  counter IS, so this one line is the fold's keying. Combine: §8g chain 0's `vDN 0 emsRows`
+  (`unfinalized.deferred_values.xi`), ONE ξ across all 46. Bullet: `vN (bulletChal j)`, the pair's
+  OWN squeeze, for BOTH halves (`step_verifier.ml:203-206`).
+* **`ipaAddOperands a`** — combine: `qT (nCombine−2−a) + endo(acc, ξ)`, `scale_and_add`'s own shape,
+  `qInit = sg_old[0] = COMBINE_XY[0]` at the last step. Bullet pair `j`: L slot = the pair TERM
+  `res_j + endo(R_j, pre_j)`, R slot = the running total.
+
+`StepShape.ipaChal` is **DELETED** (§21's `msmChal` precedent). It survives only in
+`…Pins19d.foldPresRoundRobin`, and `roundRobinCombine` reconstructs the retired VALUE — a control
+that quietly becomes the object it refutes is a falsifier that stopped falsifying.
+
+### ⚑ MEASURED — the delta IS the design
+
+Committed-shape artifact **10715 → 10753 rows**. Gate census, tracked vs new:
+
+    Zero 2138/2138   Poseidon 2277/2277   CompleteAdd 317/317   VarBaseMul 1390/1390
+    EndoMul 2464/2464   EndoMulScalar 409/409   Generic 1720/1758
+
+`EndoMul` and `CompleteAdd` **identical** — 77 ladders and 76 adds, rewired but not re-counted, which
+is the brief's "counts do not change" as a measurement. The whole **+38** is Generic: **23** rows of
+new `assert_on_curve` halves (`nOnC` 58 → 73) plus the **15** `endo_inv` assert rows.
+
+**AND IT PROVES.** `pickles_kimchi_marshal` produced a step proof over the rewired 10753-row circuit.
+Smoke harness in release: `r1_transcript` polarities (1)(2)(3)(4) green; `r8_finalize` (3765 rows)
+**(1) verify()==true** and **(2) 107/107** sigma-only probes reject a col-0 desync, with (3)
+accepting the same flips on the unwired control.
+
+### ⚠ THE FLAG DAY — what re-emitted, what refused
+
+* **`installed_gate` REFUSED the stale twins and that is the refusal to point at.**
+  `PROOF_MARSHAL_RESULT=RED (2 failures)`: `KimchiStepWrapChainFixture.lean` and
+  `KimchiStepWrapChainKey.lean` "THE TRACKED MODULE IS NOT WHAT THIS RUN EMITS". After installing
+  both: **`PROOF_MARSHAL_RESULT=GREEN`, all three generated modules byte-identical.**
+* **`segd_slot12_probe` REFUSED** on its own snapshot (above). Two independent refusals, no
+  reinterpretation.
+* **`WRAP_PUBLIC_INPUT_MEASURED` re-baked** from this run's `wrap-public-input.json`: **28 of 40
+  slots moved** (0–11 and 13–28); **slot 12 did not**.
+* Re-emitted and installed: the four tracked smoke rungs + their unwired controls, and
+  `stepmain_step_r8_finalize{,_unwired}.json`.
+
+### ⚠ NOT DONE — named, not implied
+
+* **`KimchiStepMainPins19d` did not finish elaborating**, so
+  `the_emitted_rows_are_the_rebuilt_fold` — the new theorem that the EMITTED `runIpa`, at the block's
+  ξ′ and `ft_comm`, lands on `COMBINED_GOLD` and `lhsRealOpening` — is **CLAIMED AND UNVERIFIED**.
+  It carries `native_decide` + `#assert_compiled`; it has never gone green. Do not cite it.
+* **The 30 wrap fixtures are NOT re-emitted** and the wrapmain polarities (including `w10_finalize`,
+  `w12_close`, `w10_combine`, `w11_finsponge`) are **NOT covered**. The agreement number at
+  `shapeWrap` is therefore **not re-measured**; the last one (39/40) was graded against a referee
+  that has since moved at 28 slots and must not be quoted forward.
+* Smoke `r8_finalize` polarities (3)(4)(5) were **OOM-killed mid-(3)**, not observed.
+* ⚑ **The box OOM-killed three jobs at once** (swap 61/63 GB), all of it sibling-lane Lean:
+  `MinaWrapOpeningGate` 7.8 GB, `MlKemFips203FullDim` 5.1 GB, `MinaWrapVerifierProgram`,
+  `MinaWrapOpeningSched`. Concurrency on this box is destructive; run these serially.
+
+### ⚑ A REDUCTION BOMB LEFT THE EMITTERS' HOT PATH
+
+`MinaWrapPublicCommGate` proves by kernel `decide` over a 40-term Pallas MSM at a self-documented
+**159 s / 14.5 GB peak RSS**. FOUR modules imported it and **not one cited a theorem from it**:
+`MinaStepPrevCommitments` (`LAGRANGE`), `KimchiWrapMainCore` and `PublicEvalWeld` (`PUBLIC_INPUT`)
+read literals; `MinaWrapCommitStages` mentions `tamper_blinder_dropped` only in a docblock. Because
+`MinaStepPrevCommitments` sits in `KimchiStepMainCore`'s closure, **every cold step-emitter build paid
+it** — measured here at 27+ minutes still climbing through 3.9 of 14.5 GB. The data is **MOVED, not
+copied** into `MinaWrapPublicCommData` (a second `LAGRANGE` is the twin this repo forbids), same
+namespace so no consumer is renamed. ⚑ A sibling lane generalised the same finding into
+`scripts/check-elab-cost.py` the same hour (`f004a163e`).
+
+### ⚠ TWO THINGS FOUND THAT PREDATE THIS PASS
+
+* **The tracked smoke fixtures were already stale by 366 rows** — last committed 08-07 against three
+  later `KimchiStepMainCore` commits. The step and wrap fixtures are "copied in BY HAND (no route to
+  grade)" (`check-emitter-routing.sh` says so), so the old shape there neither refuses NOR
+  reinterprets; the harness had been proving a two-day-old circuit. Those +366 rows are in `absRows`
+  and are not this pass's.
+* `git commit --only` on `metatheory/Dregg2.lean` would have swept two sibling hunks; the
+  `check-dangling-imports` hook caught it. The root was staged as HEAD-plus-my-one-line instead.
+
+## ⛑⛑⛑⛑ AUGUST 9 — THE BLOCK BODY: the 38 whole field elements get a gate, the preimage gets a seam family, and what a prover still chooses is stated at the size it actually is
+
+**SUBSTRATE: Lean-authored AIR.** `Dregg2/Circuit/Emit/MinaBodyPreimageBitsAir.lean` is the source;
+`bodyBitsDesc = EffectLower.lowerTiedAir …`. No hand-written `VmConstraint2`, no Rust-authored
+constraint. `Dregg2/Circuit/Emit/MinaBodyPreimageSeams.lean` is a `SeamSpec` family — recursion
+wiring with S1/S2 attached, NOT AIR, and it says so.
+
+- ⛑⛑ **THE 38 WHOLE FIELD ELEMENTS ARE BOUND.** The 08-08 rung gated 819 chunks and left the other
+  half of the preimage with no column at all. They have one now: `SK = 32` base-256 limb columns
+  each and ONE `.limbs` leg at `bits := 8` (`fieldLimbsLeg`) — the felt-level gate `minaLcVerifyDesc`
+  already spends eighteen range lookups on. `the_field_gate_bounds_every_whole_element_limb` is what
+  it buys: a row this descriptor accepts publishes 38 values below `2^256`, which is exactly
+  `Seam.Renders`' canonicality hypothesis and exactly what `Seam.limb_inj` needs for an elementwise
+  32-limb weld to carry a whole value with no digest.
+- ⛑ **AND THE PRICE, SAID RATHER THAN ABSORBED.** The 08-08 headline was *"2 683 declared, 2 683
+  committed, 1.00×"*. **RETIRED.** `the_lookup_bill_is_exactly_the_field_gate`: `NFIELD × SK = 1 216`
+  eight-bit range lookups, the descriptor's ENTIRE lookup bill (the 819 chunks still cost zero), at
+  `decomp_cols(8) = 2` committed aux columns each. Declared `3 899`, committed `3 899 + 2 432 =
+  6 331`, **1.62×**. The alternative that keeps 1.00× is gating the 38 felts as BITS — 9 728 more
+  boolean columns and a 5× leg count — and it was rejected on elaboration cost, which is a
+  MEASUREMENT of this tree, not a claim about the design.
+- ⛑⛑ **THE FIRST TIE HAS AN OBJECT: 25 SEAMS.** `bodyPreimageSeam j` welds the preimage claim's
+  1 518 published limb slots onto the 25 chain links' absorbed blocks — 1 518 pins, 82 zero-pins
+  (`32 − ⌈W_e/8⌉` per packed element **plus the odd tail's 32**, which nothing in the tree forced
+  before). S1 is memberships in the deployed AIRs' leg lists; S2 (`bodyPreimageSeamCertifies`) is
+  kernel-clean; `body_preimage_seam_S2_needs_the_seam` proves the seam-dropped implication **FALSE**,
+  not merely unproved. Honest pole: `SeamEq` holds at the real block's own claims at all 25 links,
+  and `the_real_welds_carry_non_zero_values` refuses the all-zero degeneracy.
+- ⚠ **AND IT IS NOT APPLIED — that is item 0 of §7, not a footnote.** Both ends are
+  `air_public_targets.first()` (raw descriptor PI vectors), because the chain leaf's `expose_claim`
+  is 200 lanes carrying `in ‖ out ‖ seg_poseidon_commit(absorbed)` and **the 64 absorbed limbs are
+  not among them** — a seam against the fold ROOT structurally cannot reach the stream. No fold
+  today has both PI vectors in scope, so the owed object is a leaf adapter verifying both STARKs in
+  one circuit. Until it lands the tie is **authored and proved but not applied**, and the executor
+  comparison is still what runs. Not rounded up.
+- ⚠ **THE SECOND TIE IS NOT A `SeamSpec`, AND THE REASON IS ARITHMETIC.** The chain publishes
+  thirty-two 8-bit limbs; the link publishes nine 29-bit `Faithful9` lanes; a 256-bit recomposition
+  has coefficients to `2^248` against a modulus below `2^31`, so it **is not a BabyBear linear
+  gate**. The transmutable fix is named: a bit-level re-limbing descriptor (256 boolean columns, 32
+  byte gates with coefficients ≤ `2^7`, 9 lane gates with coefficients ≤ `2^28` — all in-field, all
+  lookup-free, this cone's own trick), which turns that tie into TWO descriptor-ended seams. **Undone
+  work, not a theorem of the model.**
+- ⚠ **A TRIPWIRE AIMED AT THE WRONG EVENT, NAMED.** `minaLink_decorative_anchors`' docblock says
+  *"the day a fold `cb.connect`s these slots in-circuit is the day this literal moves."* It is
+  **FALSE**: a `cb.connect` emits no polynomial into `minaLinkDesc`, so a fold weld leaves every
+  literal there unchanged — the same class as the 08-07 re-aiming. Recorded in
+  `MinaBodyPreimageSeams` §7.1.
+- ⚑ **FLAG DAY.** `dregg-mina-body-preimage-bits::v1` changes shape: `trace_width` **2 683 → 3 899**,
+  `piCount` **302 → 1 518**, `tables` `[] → [range_w8]` (`.custom 72`), constraints **2 985 → 5 417**,
+  legs **2 985 → 4 239**. The PI vector is now the **ABSORB ORDER** — `[0, 1216)` the 38 whole field
+  elements, `[1216, 1518)` the packed ones — so **`PI_PLIMB` MOVED by +1216** and a consumer reading
+  the old base reads field element 38. RE-EMITS: the by-name JSON, its `PROVENANCE.json`
+  `by_name_sha256` row, the tracked witness row (`MinaBodyBitsEmit.lean`), and five literals in
+  `circuit/tests/mina_body_preimage_bits_proves.rs`. The old shape **refuses to load** —
+  `prove_vm_descriptor2` rejects both a 2 683-wide trace and a 302-slot PI vector against the new
+  descriptor. Nothing else re-VKs: the descriptor has no consumer, no `proof_bind` names it, and
+  `descriptor_by_name` has no row for it.
+- ⚠ **WHAT A PROVER STILL CHOOSES — the choice moved twice and has not disappeared.** 08-07:
+  `BODYHASH`, one felt → its 49-element preimage. 08-08: → 49 elements whose last eleven are the
+  packing of 819 width-declared chunks. 08-09: → the published limbs can no longer disagree with the
+  chain's absorbed stream, and the whole-field half is bounded. **What remains is the entire
+  `Protocol_state.Body`**: 2 381 bits and 38 felts, constrained in SHAPE and in AGREEMENT, not in
+  CONTENT. Nothing says the epoch ledger hash is one, that the VRF output verifies, or that the
+  global slot is consistent. `PICKLES_OPENING_WITNESSED` is a witness carrier, not a check.
+
 ## ⛑⛑⛑⛑ AUGUST 9 — LEAVING: the drain rule lands as an obligation on the SURVIVORS, and it closes a straddling quorum the join-direction fix did not reach
 
 **SUBSTRATE: Lean.** `metatheory/Dregg2/Distributed/LeaveDrain.lean` is the AUTHORED consensus
