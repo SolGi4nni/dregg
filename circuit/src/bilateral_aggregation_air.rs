@@ -1101,6 +1101,224 @@ mod tests {
         );
     }
 
+    /// ⚑ **THE `canonical_32_to_felts_4` CENSUS FOR THIS AIR — MEASURED ON THE EMITTED BYTES, AND
+    /// THE DETECTOR THAT KEEPS IT MEASURED.**
+    ///
+    /// `2fd097812` closed a live soundness hole whose root cause was a census that *asserted*
+    /// instead of measuring: `6441705e8` rewrote `dregg_commit::typed::canonical_32_to_felts_4`
+    /// and reasoned in its own commit body that the fold was "off-AIR — measured, not assumed",
+    /// missing `TurnExecutor::pubkey_to_witness_key_commit`, which IS that function and IS on-AIR.
+    /// `turn/src/bilateral_schedule.rs` calls the same fold in eight places feeding THIS AIR, and
+    /// the closing lane named that as an unchased residual. This test is the measurement.
+    ///
+    /// **Frame: the descriptor's column indices ARE the authoring `Sched.*`/`AggC.*` frame.**
+    /// Lean's `Agg.schCol off = Agg.SCHED_BASE + off` with `SCHED_BASE = 0`, so `sch_col` is the
+    /// identity — there is no compaction offset here, unlike the sovereign VM descriptor whose
+    /// emitted key-commit columns are `BEFORE_BASE + B_PUBKEY_OCTET − 90` rather than the
+    /// authoring frame. Every number below is a raw column of `dregg-bilateral-aggregation-v3`.
+    ///
+    /// **The measurement (bytes at `PROVENANCE.json` sha
+    /// `a7feccb16138895df5e05a967c0caa7d3f97a07a138914bbc780a37bf8051ec7`):** the descriptor
+    /// declares **zero tables** and carries **zero `Lookup` constraints**, so it has no Poseidon2
+    /// chip and cannot recompute any fold in-circuit. Its 48 constraints read exactly the columns
+    /// `0..=12` (the turn-identity slots — 27 `pi_binding`s + 13 identity-carry `window_gate`s) and
+    /// `48..=51` (the agent bool + the three accumulators). **Columns 13..=47 — the seven
+    /// `Sched::COUNTS` and the seven 4-felt `Sched::ROOTS`, which is where every
+    /// `canonical_32_to_felts_4` output on this path lands — are read by NO constraint at all.**
+    ///
+    /// So the answer to "recompute or consume?" is neither: the AIR does not even *read* the
+    /// fold's image. Producer/verifier agreement is therefore the whole closure, and it holds by
+    /// construction — both halves are the same function
+    /// (`ExpectedBilateral::roots_for`, one implementation, one `dregg_commit::typed` import): the
+    /// producer at `bilateral_schedule::schedule_block_for_cell`, the verifier at
+    /// `TurnExecutor::verify_bilateral_bundle_with_schedule`. There is no second spelling to drift.
+    ///
+    /// ⚑ **This test is the detector, not the note.** It fails on any constraint kind other than
+    /// the four this AIR uses, so landing a chip lookup that recomputes the fold in-circuit makes
+    /// it RED and forces the next lane to re-derive the census rather than inherit a stale
+    /// "off-AIR" claim. A documented wound is not a detected one.
+    /// Collect every trace column read by any constraint of a parsed descriptor. Returns
+    /// `Err(kind)` on a constraint kind this AIR does not carry today — a `Lookup` (an in-circuit
+    /// Poseidon2), a `MemOp`, a `ChalGate`, anything. The caller treats that as the census going
+    /// stale, because it IS: the shape of an in-circuit recompute arriving.
+    fn columns_read_by(
+        d: &crate::descriptor_ir2::EffectVmDescriptor2,
+    ) -> Result<Vec<usize>, String> {
+        use crate::descriptor_ir2::{VmConstraint2, WindowExpr};
+        use crate::lean_descriptor_air::{LeanExpr, VmConstraint};
+
+        fn lean_cols(e: &LeanExpr, out: &mut Vec<usize>) {
+            match e {
+                LeanExpr::Var(c) => out.push(*c),
+                LeanExpr::Const(_) => {}
+                LeanExpr::Add(l, r) | LeanExpr::Mul(l, r) => {
+                    lean_cols(l, out);
+                    lean_cols(r, out);
+                }
+            }
+        }
+        fn window_cols(e: &WindowExpr, out: &mut Vec<usize>) {
+            match e {
+                WindowExpr::Loc(c) | WindowExpr::Nxt(c) => out.push(*c),
+                WindowExpr::Const(_) => {}
+                WindowExpr::Add(l, r) | WindowExpr::Mul(l, r) => {
+                    window_cols(l, out);
+                    window_cols(r, out);
+                }
+            }
+        }
+
+        let mut read: Vec<usize> = Vec::new();
+        for c in &d.constraints {
+            match c {
+                VmConstraint2::Base(VmConstraint::Gate(body))
+                | VmConstraint2::Base(VmConstraint::Boundary { body, .. }) => {
+                    lean_cols(body, &mut read)
+                }
+                VmConstraint2::Base(VmConstraint::PiBinding { col, .. }) => read.push(*col),
+                VmConstraint2::Base(VmConstraint::Transition { hi, lo }) => {
+                    read.push(*hi);
+                    read.push(*lo);
+                }
+                VmConstraint2::WindowGate(w) => window_cols(&w.body, &mut read),
+                other => return Err(format!("{other:?}")),
+            }
+        }
+        read.sort_unstable();
+        read.dedup();
+        Ok(read)
+    }
+
+    #[test]
+    fn bilateral_descriptor_reads_no_counts_or_roots_column_so_the_fold_is_off_air() {
+        let d = bilateral_aggregation_descriptor();
+
+        // No chip, no table: the AIR has no means to hash in-circuit at all.
+        assert!(
+            d.tables.is_empty(),
+            "a declared table is the shape an in-circuit Poseidon2 recompute would arrive in — \
+             re-derive the fold census before changing this"
+        );
+
+        let read = columns_read_by(&d).unwrap_or_else(|kind| {
+            panic!(
+                "dregg-bilateral-aggregation-v3 grew a constraint kind it did not have when the \
+                 `canonical_32_to_felts_4` fold was measured OFF-AIR for this member ({kind}). A \
+                 `Lookup` here is an in-circuit hash: the in-circuit recipe would then be a FOURTH \
+                 spelling of a denotation that already cost one live soundness hole \
+                 (`2fd097812`). Re-derive the census against the producer \
+                 (`bilateral_schedule::roots_for`) and the verifier \
+                 (`verify_bilateral_bundle_with_schedule`) before relaxing this."
+            )
+        });
+
+        let expected: Vec<usize> = (0..sched::COUNTS_BASE)
+            .chain(sched::IS_AGENT_CELL..agg::WIDTH)
+            .collect();
+        assert_eq!(
+            read, expected,
+            "the emitted constraints must read ONLY the 13 turn-identity slots and the agent \
+             bool + 3 accumulators"
+        );
+
+        // The load-bearing half, stated as its own assertion so the failure names the wound:
+        // every `canonical_32_to_felts_4` image on this path lands in [COUNTS_BASE, IS_AGENT_CELL).
+        for col in sched::COUNTS_BASE..sched::IS_AGENT_CELL {
+            assert!(
+                !read.contains(&col),
+                "column {col} carries a `Sched` count/root — the image of \
+                 `dregg_commit::typed::canonical_32_to_felts_4` folded through \
+                 `bilateral_schedule::fold_entry`. A constraint reading it makes the fold ON-AIR \
+                 for this member, and the in-circuit recipe must then be checked against the \
+                 producer and the verifier."
+            );
+        }
+        assert_eq!(
+            sched::IS_AGENT_CELL - sched::COUNTS_BASE,
+            sched::COUNTS_LEN + sched::ROOTS_LEN,
+            "the unread window is exactly counts ++ roots"
+        );
+    }
+
+    /// ⚑ **THE CENSUS ABOVE, PROVED REFUTABLE** — the floor must be satisfiable and refutable but
+    /// not provable. `2fd097812`'s sibling lesson (`minted-a-falsifier-that-stopped-falsifying`) is
+    /// that an adversary built by string surgery can quietly become a no-op while the gate stays
+    /// green, so this mutation is asserted to have HAPPENED before its verdict is read: the
+    /// mutated descriptor must parse, must carry exactly one more constraint, and only then is its
+    /// column census required to differ.
+    ///
+    /// The mutation is the minimal shape an in-circuit recompute would take on the way in: one
+    /// extra gate reading `Sched::ROOTS_BASE` — the first felt of `outgoing_transfer_root`, an
+    /// image of `canonical_32_to_felts_4` via `fold_entry`. Note this runs entirely on a STRING
+    /// built in-test; the checked-in descriptor bytes are never touched, so no concurrent lane can
+    /// compile through a mutated tree (the red-proof-scaffold hazard).
+    #[test]
+    fn the_counts_and_roots_census_goes_red_when_a_constraint_reads_a_root_column() {
+        let honest = bilateral_aggregation_descriptor();
+        let honest_read = columns_read_by(&honest).expect("the honest descriptor censuses cleanly");
+        assert!(
+            !honest_read.contains(&sched::ROOTS_BASE),
+            "precondition: the honest descriptor does not read the first root column"
+        );
+
+        // Splice one extra gate reading col ROOTS_BASE into the emitted constraint list.
+        let injected = format!(
+            r#",{{"t":"gate","body":{{"t":"var","v":{}}}}}],"hash_sites""#,
+            sched::ROOTS_BASE
+        );
+        let mutated_json = BILATERAL_AGGREGATION_DESCRIPTOR_JSON.replace(
+            r#"],"hash_sites""#,
+            &injected,
+        );
+        assert_ne!(
+            mutated_json, BILATERAL_AGGREGATION_DESCRIPTOR_JSON,
+            "the mutation must actually have been applied — a `replace` of a pattern that has left \
+             the emitted bytes is how a falsifier stops falsifying"
+        );
+
+        let mutated = crate::descriptor_ir2::parse_vm_descriptor2(&mutated_json)
+            .expect("the mutated descriptor must still PARSE, or the adversary is a parse error");
+        assert_eq!(
+            mutated.constraints.len(),
+            honest.constraints.len() + 1,
+            "the mutation must add exactly one constraint"
+        );
+
+        let mutated_read =
+            columns_read_by(&mutated).expect("the injected gate is a kind the census walks");
+        assert!(
+            mutated_read.contains(&sched::ROOTS_BASE),
+            "THE CENSUS IS BLIND: a gate reading the first root column did not show up in the \
+             column census, so the off-AIR verdict for `canonical_32_to_felts_4` rests on a check \
+             that cannot go red"
+        );
+        assert_ne!(
+            mutated_read, honest_read,
+            "the honest and mutated censuses must differ, or the detector pins nothing"
+        );
+    }
+
+    /// The same detector, exercised against the shape an in-circuit Poseidon2 ACTUALLY arrives in:
+    /// a `Lookup` constraint. `columns_read_by` must REFUSE (not silently skip) — a census that
+    /// walked past an unknown kind would report "no root column read" while the fold was being
+    /// recomputed in-circuit beside it. The cross-side descriptor is the in-tree witness that this
+    /// kind is real and reachable: it carries two chip lookups today.
+    #[test]
+    fn the_census_refuses_a_lookup_rather_than_walking_past_it() {
+        let with_chip = cross_side_existence_descriptor();
+        assert!(
+            with_chip
+                .constraints
+                .iter()
+                .any(|c| matches!(c, crate::descriptor_ir2::VmConstraint2::Lookup(_))),
+            "precondition: the cross-side descriptor really does carry a chip lookup"
+        );
+        assert!(
+            columns_read_by(&with_chip).is_err(),
+            "the census must REFUSE a descriptor carrying an in-circuit hash, never walk past it"
+        );
+    }
+
     /// The cross-side-existence (CG-5) descriptor parses with the Lean-pinned shape
     /// (`EffectVmEmitCrossSide.lean` `#guard`s): width 10, 2 PI (commit seed + edge commitment),
     /// ONE Poseidon2 chip table, 11 constraints, EXACTLY two window gates (balance + commit

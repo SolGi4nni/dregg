@@ -37,8 +37,54 @@
 //!
 //! where `peer` is the peer cell-id projected via `canonical_32_to_felts_4`.
 //! Two absorbs per entry: one for the id, one for the peer-cell encoding.
-//! This is the form the future AIR will materialize as aux columns. The
-//! starting state is `[BabyBear::ZERO; 4]` (sentinel-equivalent).
+//! The starting state is `[BabyBear::ZERO; 4]` (sentinel-equivalent).
+//!
+//! ## ⚑ `canonical_32_to_felts_4` IS OFF-AIR ON THIS PATH — measured on the emitted bytes
+//!
+//! This module calls `dregg_commit::typed::canonical_32_to_felts_4` in eight places: once inside
+//! `poseidon2_id_from_bytes`, which every id derivation routes through; six times for the `peer`
+//! projections in [`ExpectedBilateral::roots_for`]; and once for the unilateral `data_block` in
+//! [`ExpectedBilateral::unilateral_root_for`] — that eighth one reaches this AIR not at all, since
+//! [`schedule_block_for_cell`] writes only the seven BILATERAL roots into `Sched::ROOTS`
+//! (`ROOTS_LEN = 28 = 7 × 4`) and the unilateral root lives outside the 49-felt window.
+//! `6441705e8` rewrote that function from four arity-4 octet folds into one arity-16 nonet absorb
+//! and its census concluded "off-AIR — measured, not assumed". **That census missed an on-AIR
+//! consumer** (`TurnExecutor::pubkey_to_witness_key_commit`), and the resulting three-spellings-of-
+//! one-denotation was a live soundness hole — a sovereign key and its negation produced the same
+//! commit teeth, closed by `2fd097812`. This module's eight call sites were named there as an
+//! unchased residual of the same class. **They have now been chased, on the bytes:**
+//!
+//! - Everything folded here that reaches the AIR at all does so through the 49-felt `Sched.*`
+//!   block: the seven counts
+//!   at `Sched::COUNTS_BASE = 13` and the seven 4-felt roots at `Sched::ROOTS_BASE = 20` — trace
+//!   columns 13..=47 of `circuit/descriptors/dregg-bilateral-aggregation-v3.json`. The frame is
+//!   the authoring frame: Lean's `Agg.schCol off = SCHED_BASE + off` with `SCHED_BASE = 0`, so
+//!   these are raw column indices, not compacted ones.
+//! - That descriptor declares **zero tables** and carries **zero `Lookup` constraints** — no
+//!   Poseidon2 chip, hence no means to recompute any fold in-circuit — and its 48 constraints read
+//!   only columns `0..=12` (turn identity) and `48..=51` (agent bool + three accumulators).
+//!   **Columns 13..=47 are read by no constraint at all.** The AIR does not recompute the fold and
+//!   does not even consume its image.
+//! - So there is no in-circuit spelling to drift from, and producer/verifier agreement is the whole
+//!   closure. It holds by construction rather than by coincidence: both halves call the single
+//!   [`ExpectedBilateral::roots_for`] below — the producer via [`schedule_block_for_cell`], the
+//!   verifier via `TurnExecutor::verify_bilateral_bundle_with_schedule`
+//!   (`turn/src/executor/proof_verify.rs`), which re-derives the schedule from the canonical Turn
+//!   and compares every count and root. One function, one `dregg_commit::typed` import.
+//!
+//! ⚠ Two other spellings of this fold exist — `dregg_storage::commitment::canonical_32_to_felts_4`
+//! and `dregg_circuit::effect_vm::canonical_id_to_felts_4`. Neither is on this path (the `use`
+//! below names `dregg_commit::typed`), and both AGREE with it today: the storage one is the same nonet
+//! absorb projected to four lanes, and the circuit one is held by the differential
+//! `f2_packer_twins_agree_on_the_four_felt_fold_in_circuit_trace`
+//! (`commit/tests/key_octet_f2_twins_and_the_hole.rs`). Stated as measured, not as a worry: three
+//! spellings that agree today is precisely the configuration `6441705e8` started from.
+//!
+//! The detector that keeps this measured rather than asserted is
+//! `bilateral_descriptor_reads_no_counts_or_roots_column_so_the_fold_is_off_air` in
+//! `circuit/src/bilateral_aggregation_air.rs`: it goes RED if the descriptor ever grows a
+//! constraint kind it does not have today, so an in-circuit recompute cannot land while this note
+//! silently stays behind.
 
 use crate::action::Effect;
 use crate::forest::CallTree;
@@ -109,6 +155,14 @@ fn poseidon2_id_from_bytes(domain: &[u8], payload: &[u8]) -> [BabyBear; 4] {
     // preimage, then project into 4 BabyBear felts via canonical_32_to_felts_4.
     // This matches the existing 4-felt commitment scheme used for TURN_HASH,
     // PREVIOUS_RECEIPT_HASH, etc. (`compute_turn_identity_pi`).
+    //
+    // ⚑ OFF-AIR, and this one is MEASURED (module header): every id derived here reaches the
+    // aggregation only inside a `Sched::ROOTS` felt, and `dregg-bilateral-aggregation-v3` reads no
+    // roots column — zero tables, zero lookups, constraints touching only cols 0..=12 and 48..=51.
+    // So a change to `canonical_32_to_felts_4`'s recipe moves committed VALUES (a re-genesis) and
+    // nothing in this descriptor's shape. Do NOT inherit that sentence for a different consumer:
+    // it is exactly the reasoning that missed `pubkey_to_witness_key_commit` at `6441705e8`.
+    // Re-measure per call site.
     let mut hasher = blake3::Hasher::new();
     hasher.update(domain);
     hasher.update(payload);
@@ -542,6 +596,17 @@ impl ExpectedBilateral {
     /// root absorbs the bilateral entries in trace-row order, restricted to
     /// the rows in which `cell` plays the corresponding role. Sentinel:
     /// `[BabyBear::ZERO; 4]` when no entries of that role exist.
+    ///
+    /// ⚑ **THIS IS BOTH HALVES.** The producer (`schedule_block_for_cell`, and the aggregation
+    /// prover's `build_inner_rows_v2`) and the verifier
+    /// (`TurnExecutor::verify_bilateral_bundle_with_schedule`) both call THIS function — so the
+    /// six `canonical_32_to_felts_4` peer projections below cannot drift between them the way the
+    /// sovereign key teeth did at `6441705e8`, where a producer rider, an executor and a Lean AIR
+    /// held three spellings of one denotation. There is no third spelling here: the aggregation
+    /// AIR reads no roots column (module header carries the byte-level census, and
+    /// `circuit/src/bilateral_aggregation_air.rs`'s
+    /// `bilateral_descriptor_reads_no_counts_or_roots_column_so_the_fold_is_off_air` is the
+    /// detector). **Keep it that way: a second fold written beside this one re-opens the class.**
     pub fn roots_for(&self, cell: &CellId, actor_nonce: u64) -> BilateralRoots {
         let mut roots = BilateralRoots::default();
         // Transfers in DFS order; route to outbound/inbound by direction.
@@ -724,9 +789,19 @@ pub fn extract_from_pi(pi: &[BabyBear]) -> (BilateralCounts, BilateralRoots) {
 /// [`dregg_circuit::bilateral_aggregation_air::schedule_block_from_inner_pi`] would project from a
 /// fully-populated v1 PI, because the two share the same field order (turn-id 13 · counts 7 ·
 /// roots 28 · is_agent 1) — the only coupling between the v1 PI window `[25, 74)` and the decoupled
-/// `sched` block. The aggregator's `build_inner_rows_v2` consumes this block and pairs it with the
-/// canonical-turn `expected_*` projection; CG-3 in-circuit then rejects any block that diverges
-/// from the canonical schedule, so this honest construction carries no tampering vector.
+/// `sched` block. The aggregator's `build_inner_rows_v2` consumes this block.
+///
+/// ⚠ **This docblock used to say "CG-3 in-circuit then rejects any block that diverges from the
+/// canonical schedule, so this honest construction carries no tampering vector." CG-3 DOES NOT
+/// EXIST.** It was deleted in the v3 compaction (`b15b30972`): v2's 35 `sched[13+k] ==
+/// expected[49+k]` gates were prover-filled on BOTH sides — a tautology any trace satisfied by
+/// copying — so the gates and their 35 `expected_*` columns were removed, and the emitted
+/// `dregg-bilateral-aggregation-v3` reads no counts/roots column at all (see this module's header
+/// census). A comment citing a check that is not made is the class that produced `2fd097812`.
+///
+/// The real closure is OFF-AIR and is genuine: `TurnExecutor::verify_bilateral_bundle_with_schedule`
+/// re-derives `counts_for`/`roots_for` from the canonical Turn and refuses on any mismatch. It is a
+/// Rust equality, not a constraint — say it at that resolution.
 ///
 /// UNGATED, like `schedule_block_from_inner_pi` and the whole `bilateral_aggregation_air`
 /// module (unconditional in `dregg-circuit` — the verify floor). This previously carried
