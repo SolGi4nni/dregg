@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+# measure — the conditions-gated measurement runner. A number it emits is trustworthy,
+# loudly qualified, or refused; it never silently returns a contended figure.
+#
+# ═══ WHY THIS EXISTS ════════════════════════════════════════════════════════════════════
+# In one week, four lanes could not answer a performance question because the measurement
+# did not exist — and one brief fabricated a number by attributing another system's
+# benchmark to ours (Mysticeti's 10x loss-amplification figure, quoted as "our DAG's
+# measured cost"). Separately, a week of figures taken on a loaded laptop were up to ~30x
+# their uncontended values: load 78–213, `cargo nextest` "timeouts" that were pure
+# contention (a test making NO FFI call also "timed out"), a probe printing 225.32 µs/call
+# against a quiet figure ~30x smaller, a Lean module at 28 min against a usual 100 s.
+#
+# A measurement without its conditions is not a result, and a tool that silently returns
+# a contended figure is the same defect class as a gate that cannot go red.
+#
+# So this wrapper does four things around an EXISTING instrument (it authors none):
+#   1. RECORDS the conditions with the number — host, load, concurrent build processes,
+#      code identity, profile, toolchain — in the same dated file as the output.
+#   2. REFUSES to run above a load threshold. MEASURE_ALLOW_CONTENDED=1 overrides, and
+#      the record is then stamped CONTENDED at the top — loud, never silent.
+#   3. RUNS A CONTROL — a fixed CPU workload (sha256 over 256 MiB of zeros, one thread,
+#      python3 hashlib) — BEFORE and AFTER the instrument, compared against this box's
+#      baseline in docs/measurements/controls.tsv. A bad environment is visible IN the
+#      output, and contention arriving mid-run flips the verdict to POLLUTED.
+#   4. WRITES a dated record under docs/measurements/ so a later reader can tell a
+#      measurement from a memory.
+#
+# VERDICTS (stamped at the top of every record):
+#   TRUSTED              quiet before and after; control within tolerance of baseline
+#   TRUSTED-UNBASELINED  quiet, but no baseline row for this box yet (post-vs-pre guarded)
+#   CONTENDED            ran under MEASURE_ALLOW_CONTENDED=1 on a box the gate refused
+#   POLLUTED             environment degraded DURING the run (post-control blew tolerance)
+#   REFUSED              the gate refused; no instrument was run
+#   ABORTED-BUILD        the build failed; no measurement was attempted
+# EXIT: the instrument's exit code when TRUSTED*; 2 REFUSED; 3 CONTENDED; 4 POLLUTED.
+#
+# ═══ INSTRUMENTS — all pre-existing in-tree; this script only routes to them ════════════
+#   tau-curve           verified Lean τ-order FFI cost vs lace size, beside the Rust twin
+#                       (node/tests/verified_order_budget.rs, the #[ignore]d curve).
+#                       Knobs: ORDER_BUDGET_N, ORDER_BUDGET_ROUNDS, ORDER_BUDGET_CEILING_MS
+#   tau-agreement       the order-agreement gate in the same file (Lean vs Rust SEQUENCE)
+#   es-gate-cost        good-case latency of the verified ES round-advance gate
+#                       (node/src/round_advance_gate.rs::leader_present_advances_promptly…)
+#   ffi-admission       per-call FFI admission cost probe
+#                       (dregg-lean-ffi/tests/deployed_constraint_probe.rs::perf_ffi_admission_cost)
+#   dark-clearing       dark clearing wall-clock + WireCost across a real 3-process
+#                       committee (fhegg-fhe/tests/distributed_committee_lifecycle.rs).
+#                       The ~221-round figure is a FORMULA; this is the measurement.
+#   dark-standup        committee stand-up cost + WireCost against the roster (same file)
+#   dark-relin          the distributed relinearization ceremony, priced (same file)
+#   consensus-soak      real-process kill-liveness soak, 4–5 Lean-linked nodes
+#                       (node/tests/consensus_under_failure.rs)
+#   sustained-finality  3 real nodes committing faucet turns in a row, per-turn commit
+#                       witness (node/tests/sustained_finality.rs)
+#   control-only        conditions preflight + control alone (baseline establishment)
+#
+#   Loss amplification (Pull/PullResponse whole-topic broadcast, net/src/gossip.rs) has
+#   NO instrument anywhere in the tree. Do not quote a number for it; there is none.
+#
+# ═══ KNOBS ══════════════════════════════════════════════════════════════════════════════
+#   MEASURE_PROFILE=release|debug   default release — the deployed profile. A debug run is
+#                                   recorded as such; do not quote debug ms against a
+#                                   deployed budget.
+#   MEASURE_MAX_LOAD_FRAC=0.25      refuse when load1/ncpu exceeds this
+#   MEASURE_CONTROL_TOL=1.30        control-vs-baseline ratio above this = contended
+#   MEASURE_ALLOW_CONTENDED=1       run anyway; verdict CONTENDED, never TRUSTED
+#   MEASURE_OUT_DIR                 default <repo>/docs/measurements
+#   MEASURE_CODE_IDENT              code identity when the tree has no .git (rsynced lane);
+#                                   pass the sha from the shipping side
+#   MEASURE_NOTE                    free-form condition worth recording (e.g. "under
+#                                   swarm-build: taskset 0-15 nice 15 MemoryMax=96G")
+#
+# Typical hbox run (sync a HEAD-clean worktree with scripts/hbuild first):
+#   ssh hbox 'cd /tank/dregg-build/<lane> && nohup swarm-build \
+#     env MEASURE_PROFILE=release MEASURE_CODE_IDENT=<sha> \
+#     scripts/measure tau-curve > .measure.log 2>&1 &'
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+usage() { sed -n '2,86p' "${BASH_SOURCE[0]}" | grep -E '^#( |$)' | sed 's/^# \{0,1\}//'; }
+
+INSTR="${1:-}"
+[ -n "$INSTR" ] || { usage; exit 2; }
+case "$INSTR" in -h|--help|help) usage; exit 0;; esac
+
+# ── instrument table ────────────────────────────────────────────────────────────────────
+PKG=""; TARGET=(); FILTER=""; RUNARGS=(); REQUIRE_LEAN=0; DESC=""
+case "$INSTR" in
+  tau-curve)
+    PKG=dregg-node; TARGET=(--test verified_order_budget)
+    FILTER=verified_order_cost_curve; RUNARGS=(--ignored --nocapture); REQUIRE_LEAN=1
+    DESC="verified Lean tau-order FFI cost vs lace size (node/tests/verified_order_budget.rs)";;
+  tau-agreement)
+    PKG=dregg-node; TARGET=(--test verified_order_budget)
+    FILTER=the_two_orders_the_node_swaps_between_agree_exactly; RUNARGS=(--nocapture); REQUIRE_LEAN=1
+    DESC="Lean vs Rust tau order SEQUENCE agreement gate (node/tests/verified_order_budget.rs)";;
+  es-gate-cost)
+    PKG=dregg-node; TARGET=(--lib)
+    FILTER=leader_present_advances_promptly_and_costs_little; RUNARGS=(--nocapture); REQUIRE_LEAN=1
+    DESC="ES round-advance gate good-case latency (node/src/round_advance_gate.rs)";;
+  ffi-admission)
+    PKG=dregg-lean-ffi; TARGET=(--test deployed_constraint_probe)
+    FILTER=perf_ffi_admission_cost; RUNARGS=(--nocapture); REQUIRE_LEAN=1
+    DESC="per-call FFI admission cost (dregg-lean-ffi/tests/deployed_constraint_probe.rs)";;
+  dark-clearing)
+    PKG=fhegg-fhe; TARGET=(--test distributed_committee_lifecycle)
+    FILTER=a_dark_clearing_completes_across_the_distributed_committee; RUNARGS=(--ignored --nocapture)
+    DESC="dark clearing wall-clock + WireCost, real 3-process committee (fhegg-fhe/tests/distributed_committee_lifecycle.rs)";;
+  dark-standup)
+    PKG=fhegg-fhe; TARGET=(--test distributed_committee_lifecycle)
+    FILTER=the_stand_up_cost_measured_against_the_roster; RUNARGS=(--ignored --nocapture)
+    DESC="committee stand-up cost + WireCost vs roster (fhegg-fhe/tests/distributed_committee_lifecycle.rs)";;
+  dark-relin)
+    PKG=fhegg-fhe; TARGET=(--test distributed_committee_lifecycle)
+    FILTER=the_distributed_relinearization_ceremony_priced; RUNARGS=(--ignored --nocapture)
+    DESC="distributed relinearization ceremony, priced (fhegg-fhe/tests/distributed_committee_lifecycle.rs)";;
+  consensus-soak)
+    PKG=dregg-node; TARGET=(--test consensus_under_failure)
+    FILTER=""; RUNARGS=(--ignored --nocapture)
+    DESC="real-process kill-liveness soak (node/tests/consensus_under_failure.rs)";;
+  sustained-finality)
+    PKG=dregg-node; TARGET=(--test sustained_finality)
+    FILTER=""; RUNARGS=(--nocapture)
+    DESC="3 real nodes committing turns in a row (node/tests/sustained_finality.rs)";;
+  control-only)
+    DESC="conditions preflight + control only (no instrument)";;
+  *) echo "measure: unknown instrument '$INSTR'" >&2; usage; exit 2;;
+esac
+
+PROFILE="${MEASURE_PROFILE:-release}"
+case "$PROFILE" in release|debug) ;; *) echo "measure: MEASURE_PROFILE must be release or debug" >&2; exit 2;; esac
+PROFILE_FLAG=(); [ "$PROFILE" = release ] && PROFILE_FLAG=(--release)
+MAX_LOAD_FRAC="${MEASURE_MAX_LOAD_FRAC:-0.25}"
+CONTROL_TOL="${MEASURE_CONTROL_TOL:-1.30}"
+ALLOW_CONTENDED="${MEASURE_ALLOW_CONTENDED:-0}"
+OUT_DIR="${MEASURE_OUT_DIR:-$ROOT/docs/measurements}"
+CONTROLS_TSV="$ROOT/docs/measurements/controls.tsv"
+WORKLOAD="sha256-256MiB-py3"
+HOST_S="$(hostname -s 2>/dev/null || echo unknown-host)"
+UTS="$(uname -sm 2>/dev/null || echo unknown)"
+STAMP="$(date -u +%FT%H:%M:%SZ)"
+mkdir -p "$OUT_DIR"
+REC="$OUT_DIR/$(date -u +%F)-${INSTR}-${HOST_S}.md"
+[ -e "$REC" ] && REC="$OUT_DIR/$(date -u +%F)-${INSTR}-${HOST_S}-$(date -u +%H%M%S).md"
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/measure.XXXXXX")"
+
+emit() { printf '%s\n' "$@" >> "$REC"; printf '%s\n' "$@" >&2; }
+
+ncpu() { nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1; }
+load1() {
+  if [ -r /proc/loadavg ]; then cut -d' ' -f1 /proc/loadavg
+  else sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{print $1}'; fi
+}
+loads() {
+  if [ -r /proc/loadavg ]; then cut -d' ' -f1-3 /proc/loadavg
+  else sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | sed 's/^ *//;s/ *$//'; fi
+}
+proc_counts() {
+  local out="" p n
+  for p in cargo rustc lean lake leanc poly dregg-node; do
+    n="$(pgrep -c -x "$p" 2>/dev/null || true)"; [ -n "$n" ] || n=0
+    out+="$p=$n "
+  done
+  printf '%s' "$out"
+}
+# CPU-busy process count: things actually consuming a core right now (>50% pcpu),
+# which separates 25 idle lake servers from one live build.
+busy_count() { ps -Aro pcpu= 2>/dev/null | awk '$1>50{c++} END{print c+0}'; }
+
+control_run() { # -> "t1 t2 t3 min" (seconds, %.3f) or "UNAVAILABLE"
+  command -v python3 >/dev/null 2>&1 || { echo UNAVAILABLE; return; }
+  python3 - <<'PY' 2>/dev/null || echo UNAVAILABLE
+import hashlib, time
+z = bytes(1024 * 1024)
+times = []
+for _ in range(3):
+    h = hashlib.sha256()
+    t = time.perf_counter()
+    for _ in range(256):
+        h.update(z)
+    times.append(time.perf_counter() - t)
+print(" ".join(f"{t:.3f}" for t in times), f"{min(times):.3f}")
+PY
+}
+
+baseline_for() {
+  [ -r "$CONTROLS_TSV" ] || return 0
+  awk -F'\t' -v h="$HOST_S" -v w="$WORKLOAD" '$1==h && $2==w {print $3; exit}' "$CONTROLS_TSV"
+}
+
+fgt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !((a+0)>(b+0))}'; } # float a > b
+
+NCPU="$(ncpu)"
+LOAD_BEFORE="$(loads)"; L1_BEFORE="$(load1)"
+LOAD_LIMIT="$(awk -v n="$NCPU" -v f="$MAX_LOAD_FRAC" 'BEGIN{printf "%.2f", n*f}')"
+PROCS_BEFORE="$(proc_counts)"; BUSY_BEFORE="$(busy_count)"
+
+# code identity
+if [ -n "${MEASURE_CODE_IDENT:-}" ]; then
+  CODE="$MEASURE_CODE_IDENT"
+elif SHA="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null)"; then
+  DIRTY="$(git -C "$ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  CODE="$SHA (+$DIRTY dirty paths in tree)"
+else
+  CODE="UNKNOWN — no .git here (rsynced lane?) and MEASURE_CODE_IDENT unset. A number without a code identity is weak evidence."
+fi
+
+ENV_QUALIFIERS="$(env | grep -E '^(DREGG|ORDER_BUDGET|MEASURE)_' | sort | tr '\n' ' ')"
+
+# ── record header ───────────────────────────────────────────────────────────────────────
+emit "# measurement: $INSTR" \
+     "" \
+     "VERDICT: PENDING" \
+     "" \
+     "- what: $DESC" \
+     "- date: $STAMP (UTC)" \
+     "- host: $HOST_S ($UTS, $NCPU cpu)" \
+     "- code: $CODE" \
+     "- profile: $PROFILE" \
+     "- harness: scripts/measure (load gate ${MAX_LOAD_FRAC}·ncpu = $LOAD_LIMIT; control $WORKLOAD, tol ${CONTROL_TOL}x)" \
+     "${MEASURE_NOTE:+- note: $MEASURE_NOTE}" \
+     "" \
+     "## conditions" \
+     "" \
+     "- load before: $LOAD_BEFORE (1/5/15 min; ncpu=$NCPU)" \
+     "- processes before: $PROCS_BEFORE cpu-busy(>50%)=$BUSY_BEFORE" \
+     "- toolchain: $(rustc --version 2>/dev/null || echo 'rustc unavailable')" \
+     "- env: ${ENV_QUALIFIERS:-'(no DREGG_/ORDER_BUDGET_/MEASURE_ vars set)'}"
+
+# ── the load gate ───────────────────────────────────────────────────────────────────────
+VERDICT_FLOOR=""   # empty = clean so far; else CONTENDED
+refuse() { # $1 = reason
+  if [ "$ALLOW_CONTENDED" = 1 ]; then
+    VERDICT_FLOOR="CONTENDED"
+    emit "- GATE: would refuse ($1) — MEASURE_ALLOW_CONTENDED=1 set, verdict capped at CONTENDED"
+  else
+    emit "" "REFUSED: $1" \
+         "No instrument was run. A number measured here now would price the box, not the code." \
+         "Re-run on a quiet box (hbox is the intended home), or set MEASURE_ALLOW_CONTENDED=1" \
+         "to force a loudly-qualified run."
+    sed -i.bak "s/^VERDICT: PENDING/VERDICT: REFUSED/" "$REC" && rm -f "$REC.bak"
+    echo "measure: REFUSED — $1 (record: $REC)" >&2
+    exit 2
+  fi
+}
+
+if fgt "$L1_BEFORE" "$LOAD_LIMIT"; then
+  refuse "load1 $L1_BEFORE > $LOAD_LIMIT (${MAX_LOAD_FRAC}·$NCPU cores)"
+fi
+
+# ── control, before ─────────────────────────────────────────────────────────────────────
+CTRL_BEFORE="$(control_run)"
+BASELINE="$(baseline_for)"
+if [ "$CTRL_BEFORE" = UNAVAILABLE ]; then
+  emit "- control before: UNAVAILABLE (python3 missing)"
+  refuse "control workload unavailable — cannot certify the environment"
+  CTRL_PRE_MIN=""
+else
+  CTRL_PRE_MIN="${CTRL_BEFORE##* }"
+  if [ -n "$BASELINE" ]; then
+    PRE_RATIO="$(awk -v a="$CTRL_PRE_MIN" -v b="$BASELINE" 'BEGIN{printf "%.2f", a/b}')"
+    emit "- control before: $CTRL_BEFORE s (reps + min; baseline $BASELINE s, ratio ${PRE_RATIO}x)"
+    if fgt "$PRE_RATIO" "$CONTROL_TOL"; then
+      refuse "control ${PRE_RATIO}x its quiet baseline (tol ${CONTROL_TOL}x)"
+    fi
+  else
+    emit "- control before: $CTRL_BEFORE s (reps + min; NO BASELINE for $HOST_S/$WORKLOAD in docs/measurements/controls.tsv — add one from a verified-quiet run)"
+  fi
+fi
+
+if [ "$INSTR" = control-only ]; then
+  V="${VERDICT_FLOOR:-$([ -n "$BASELINE" ] && echo TRUSTED || echo TRUSTED-UNBASELINED)}"
+  emit "" "## result" "" "control-only run; suggested baseline row (TAB-separated):" "" \
+       "    $HOST_S	$WORKLOAD	$CTRL_PRE_MIN	$(date -u +%F)	load=$LOAD_BEFORE" ""
+  sed -i.bak "s/^VERDICT: PENDING/VERDICT: $V/" "$REC" && rm -f "$REC.bak"
+  echo "measure: $V (record: $REC)" >&2
+  [ "$V" = CONTENDED ] && exit 3 || exit 0
+fi
+
+# ── build (unmeasured, precedes the control-adjacent window) ────────────────────────────
+BUILD_LOG="$SCRATCH/build.log"
+BUILD_CMD=(cargo test -p "$PKG" "${TARGET[@]}" "${PROFILE_FLAG[@]}" --no-run)
+emit "" "## build (not part of the measurement)" "" '```' "\$ ${BUILD_CMD[*]}"
+T_B0=$(date +%s)
+"${BUILD_CMD[@]}" > "$BUILD_LOG" 2>&1
+BUILD_RC=$?
+T_B1=$(date +%s)
+tail -n 12 "$BUILD_LOG" >> "$REC"
+emit "(build exit $BUILD_RC in $((T_B1 - T_B0)) s; full log was $BUILD_LOG)" '```'
+if [ "$BUILD_RC" -ne 0 ]; then
+  emit "" "ABORTED: build failed (exit $BUILD_RC) — no measurement was attempted."
+  sed -i.bak "s/^VERDICT: PENDING/VERDICT: ABORTED-BUILD/" "$REC" && rm -f "$REC.bak"
+  echo "measure: ABORTED-BUILD (record: $REC)" >&2
+  exit 1
+fi
+
+# re-check load right before the measured window (the build itself raises load1)
+L1_MID="$(load1)"
+emit "" "- load entering measured window: $(loads) (own build just finished; load1 decays slowly — control is the gate here)"
+
+# ── the instrument ──────────────────────────────────────────────────────────────────────
+RUN_CMD=(cargo test -p "$PKG" "${TARGET[@]}" "${PROFILE_FLAG[@]}" --)
+[ -n "$FILTER" ] && RUN_CMD+=("$FILTER")
+RUN_CMD+=("${RUNARGS[@]}")
+RUN_ENV=()
+[ "$REQUIRE_LEAN" = 1 ] && RUN_ENV+=(DREGG_TEST_REQUIRE_LEAN=1)
+
+emit "" "## instrument output (verbatim)" "" '```' "\$ ${RUN_ENV[*]} ${RUN_CMD[*]}"
+T0=$(date +%s)
+env "${RUN_ENV[@]}" "${RUN_CMD[@]}" >> "$REC" 2>&1
+INSTR_RC=$?
+T1=$(date +%s)
+emit '```' "" "- instrument exit: $INSTR_RC; wall: $((T1 - T0)) s"
+
+# ── control, after ──────────────────────────────────────────────────────────────────────
+LOAD_AFTER="$(loads)"
+PROCS_AFTER="$(proc_counts)"; BUSY_AFTER="$(busy_count)"
+CTRL_AFTER="$(control_run)"
+POLLUTED=""
+if [ "$CTRL_AFTER" = UNAVAILABLE ]; then
+  emit "- control after: UNAVAILABLE"
+  POLLUTED="control unavailable post-run"
+else
+  CTRL_POST_MIN="${CTRL_AFTER##* }"
+  POST_VS_PRE="$(awk -v a="$CTRL_POST_MIN" -v b="$CTRL_PRE_MIN" 'BEGIN{printf "%.2f", a/b}')"
+  LINE="- control after: $CTRL_AFTER s (post/pre ${POST_VS_PRE}x"
+  if [ -n "$BASELINE" ]; then
+    POST_RATIO="$(awk -v a="$CTRL_POST_MIN" -v b="$BASELINE" 'BEGIN{printf "%.2f", a/b}')"
+    LINE+="; vs baseline ${POST_RATIO}x"
+    fgt "$POST_RATIO" "$CONTROL_TOL" && POLLUTED="post-control ${POST_RATIO}x baseline"
+  fi
+  emit "$LINE)"
+  fgt "$POST_VS_PRE" "$CONTROL_TOL" && POLLUTED="post-control ${POST_VS_PRE}x its own pre-run figure"
+fi
+emit "- load after: $LOAD_AFTER" "- processes after: $PROCS_AFTER cpu-busy(>50%)=$BUSY_AFTER"
+
+# ── verdict ─────────────────────────────────────────────────────────────────────────────
+if [ -n "$POLLUTED" ]; then
+  V="POLLUTED"
+  emit "" "POLLUTED: $POLLUTED — the environment degraded during the run." \
+       "The numbers above are recorded for forensics but MUST NOT be quoted as measurements."
+elif [ -n "$VERDICT_FLOOR" ]; then
+  V="$VERDICT_FLOOR"
+  emit "" "CONTENDED: this run was forced on a box the gate refused." \
+       "The numbers above price the box and its load, not the code. Do not quote them."
+elif [ -z "$BASELINE" ]; then
+  V="TRUSTED-UNBASELINED"
+  emit "" "TRUSTED-UNBASELINED: quiet by load and post/pre control, but no baseline row" \
+       "exists for $HOST_S. Add one to docs/measurements/controls.tsv from this run's control."
+else
+  V="TRUSTED"
+fi
+sed -i.bak "s/^VERDICT: PENDING/VERDICT: $V/" "$REC" && rm -f "$REC.bak"
+echo "measure: $V — instrument exit $INSTR_RC (record: $REC)" >&2
+case "$V" in
+  CONTENDED) exit 3;;
+  POLLUTED)  exit 4;;
+  *)         exit "$INSTR_RC";;
+esac
