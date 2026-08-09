@@ -137,7 +137,8 @@ export function mountArtificerLogic(root, descriptor, callbacks = {}) {
         ? "still reachable on skill"
         : "no longer reachable on skill — from here a naming is a wager";
       return (
-        `${view.remaining} laws still fit, ${view.chargesLeft} charges left. ` +
+        `${view.remaining} laws still fit, ${view.chargesLeft} ` +
+        `${view.chargesLeft === 1 ? "charge" : "charges"} left. ` +
         `Certainty is ${skill}.`
       );
     },

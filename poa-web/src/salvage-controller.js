@@ -41,7 +41,12 @@ export function mountSalvageLock(root, descriptor, callbacks = {}) {
     },
     presentStatus(view, run, game) {
       if (view.solved) return `Salvage lock cleared in ${run.steps.length} exposures. Local transcript ready for external verification.`;
-      const exposed = view.exposed === null ? "No plate is exposed." : `Plate ${view.exposed + 1} is exposed.`;
+      // ⚠ The slot index is rendered RAW. Every action label the descriptor emits is
+      // `Expose plate ${slot}` — 0-based, and pinned by `salvageAction` — so a status
+      // line that said `${slot + 1}` named a different plate from the button the
+      // player had just pressed. In a game whose whole content is remembering which
+      // indices you have already compared, that disagreement is not cosmetic.
+      const exposed = view.exposed === null ? "No plate is exposed." : `Plate ${view.exposed} is exposed.`;
       return `Turn ${view.turns} of ${game.actionLimit}. ${exposed}`;
     },
     presentRefusal(reason) {

@@ -121,9 +121,15 @@ export function mountDeckDescent(root, descriptor, callbacks = {}) {
     eyebrow: "LOWER SPINE",
     title: "Deck Descent",
     brief:
+      // ⚠ "shoring costs supply INSTEAD" was wrong and contradicted this brief's own
+      // first clause: `air_per_action` is 1 for every verb, so shoring spends an
+      // action of air AND one of the two shorings. Measured: 9 air before the shore,
+      // 8 after. A player who budgeted on "instead" planned a route one action longer
+      // than the air pays for.
       `${shaft.air} actions of air, and every one of them costs the same whether you spend it ` +
       `walking or looking. Each passage is sound or flooded and you are told neither: reading one ` +
-      `costs air, shoring one costs supply instead and you have ${shaft.shoring}. A flooded ` +
+      `buys the answer, shoring one spends a supply on top of the air and makes the crossing safe ` +
+      `without answering anything — you have ${shaft.shoring}. A flooded ` +
       `crossing takes a body — it costs you room in the sling, not a life. Come back through the ` +
       `hatch with ${shaft.bankTarget} relics.`,
     boardLabel: `Nine verbs over the ${shaft.chambers.length}-chamber shaft`,

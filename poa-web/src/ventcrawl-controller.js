@@ -127,10 +127,18 @@ export function mountVentCrawl(root, descriptor, callbacks = {}) {
       const paying = descriptor.veins
         .filter((v) => state.stillPossible.includes(v.id))
         .map((v) => v.yields[rung - 1]);
-      const low = Math.min(...paying);
-      const high = Math.max(...paying);
+      // ⚠ A drowned run zeroes the sling, and no emitted ladder pays 0, so the
+      // consistent-vein set goes EMPTY — the state this face is in for most of the
+      // runs a player will ever see. `Math.min()`/`Math.max()` of nothing are
+      // `Infinity`/`-Infinity`, and every rung rendered `+Infinity–-Infinity`.
+      // `renderDay` already blanks itself on the same condition; this agrees with it
+      // rather than printing a range no shaft could pay.
       item.append(el("span", "vent-crawl__rung-pay",
-        low === high ? `+${low}` : `+${low}–${high}`));
+        paying.length === 0
+          ? "—"
+          : (Math.min(...paying) === Math.max(...paying)
+            ? `+${Math.min(...paying)}`
+            : `+${Math.min(...paying)}–${Math.max(...paying)}`)));
       shaft.append(item);
     }
   }

@@ -44,11 +44,17 @@ function boundaryCopy(run, descriptor) {
  * Mount Black Box Reconstruction: a slot-by-fragment probe grid over the emitted
  * oracle. The controller renders answers and never derives one.
  *
- * ⚠ It does not grey out probes the real rules would refuse — `settled-slot` and
- * friends are declared as a vocabulary but no emitted row says when they fire,
- * and inventing that predicate here would be authoring the game in JavaScript.
- * In a judged run the host refuses and `onRefusal` reports it. See the runtime's
- * header for what should be re-emitted to close this properly.
+ * ⚠ It does not grey out probes the real rules would refuse for a reason it cannot
+ * see — `settled-slot` and `settled-fragment` are declared as a vocabulary but no
+ * emitted row says when they fire, and inventing that predicate here would be
+ * authoring the game in JavaScript. In a judged run the host refuses and
+ * `onRefusal` reports it. See the runtime's header for what should be re-emitted to
+ * close this properly.
+ *
+ * The one exception is `repeated-probe`, and it is an exception on purpose: whether
+ * this client already sent a given probe is a fact about its own transcript, not a
+ * rule of the game, so declining to send it twice reads no predicate this face is
+ * not entitled to. See the `disabled` line in `render`.
  */
 export function mountBlackBox(root, descriptor, options = {}) {
   if (!root || typeof root.replaceChildren !== "function") throw new TypeError("a mount root is required");
@@ -123,10 +129,15 @@ export function mountBlackBox(root, descriptor, options = {}) {
     board.append(cell);
   }
   headerCell("");
-  for (let fragment = 0; fragment < fragmentCount; fragment += 1) headerCell(`f${fragment + 1}`);
+  // ⚠ 0-based, because the emitted probe labels are: `Ask whether fragment 0 belongs
+  // at position 0` is what the descriptor says and what the aria-label reads out. A
+  // 1-based grid meant the cell a sighted player called `1·1` was the cell a screen
+  // reader called fragment 0 / position 0 — two coordinate systems for one board, so
+  // two people at one screen could not name the same square.
+  for (let fragment = 0; fragment < fragmentCount; fragment += 1) headerCell(`f${fragment}`);
 
   const buttons = probes.map((probe, index) => {
-    if (probe.fragment === 0) headerCell(`p${probe.slot + 1}`);
+    if (probe.fragment === 0) headerCell(`p${probe.slot}`);
     const button = element("button", "poa-minigame__action");
     button.type = "button";
     button.dataset.probe = probe.id;
@@ -163,11 +174,23 @@ export function mountBlackBox(root, descriptor, options = {}) {
       const refused = history.find((entry) => entry.refused);
       const state = settling ? "settled" : excluded ? "excluded" : refused ? "refused" : "open";
       button.replaceChildren(
-        element("span", "poa-minigame__action-name", `${probe.slot + 1}·${probe.fragment + 1}`),
+        element("span", "poa-minigame__action-name", `${probe.slot}·${probe.fragment}`),
         element("span", "poa-minigame__action-detail", state === "open" ? "unasked" : state),
       );
       button.className = `poa-minigame__action poa-minigame__action--${state}`;
-      button.disabled = Boolean(run.solved || run.exhausted || awaiting !== null);
+      // ⚠ `history.length > 0` is NOT one of the emitted refusal predicates and is not
+      // pretending to be. `settled-slot` and `settled-fragment` need a rule this face
+      // does not have and must not invent — but "this client already sent this exact
+      // probe" is a fact about THIS CLIENT'S OWN TRANSCRIPT, which `answered()` above
+      // already reads. Measured before this line existed: an already-`excluded` cell
+      // stayed live, and re-pressing it spent a probe and changed nothing, so a
+      // rehearsal could burn 12 of its 15 probes re-asking one dead question with no
+      // refusal, no message, and no visible difference from an unasked cell.
+      // `repeated-probe` is declared in the emitted refusal vocabulary: the real rules
+      // reject this, and only the rehearsal was charging for it.
+      button.disabled = Boolean(
+        run.solved || run.exhausted || awaiting !== null || history.length > 0,
+      );
       button.setAttribute("aria-label", `${probe.label}. ${state === "open" ? "Not yet asked" : state}.`);
       button.setAttribute("aria-pressed", String(state !== "open"));
     });
