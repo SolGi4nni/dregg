@@ -103,6 +103,93 @@ test("every controller module is reached from the page that mounts it", async ()
   assert.deepEqual(orphans, []);
 });
 
+/**
+ * ⚑ THE GENERALIZATION THE TEST ABOVE ASKED FOR AND DID NOT MAKE.
+ *
+ * Its own header says the defect class "is not specific to controllers: an entry
+ * point is the only thing that makes a module part of the product" — and then it
+ * filters to `*-controller.js`. So a census run against this tree found an orphan
+ * the controller gate is structurally unable to see:
+ * `src/dregg-wallet-verification.js`, 98 lines, in the directory that IS the
+ * browser bundle, reached from no page, its only importer its own test.
+ *
+ * The pairing with `module-graph.test.mjs` is what makes that invisible rather
+ * than merely unnoticed: that test enumerates `src/` by `readdir`, so an orphan
+ * is IMPORTED, CHECKED and COUNTED toward its `files.length > 10` guard. It emits
+ * a green tick for a module nothing runs.
+ *
+ * This is exact-set, not an allowlist. Every module in `src/` and `labs/` is
+ * either reached from a page or named below, and a name below that becomes
+ * reachable ALSO fails — so an entry cannot outlive the condition it describes,
+ * and the list cannot quietly grow.
+ */
+const DECLARED_ORPHANS = Object.freeze({
+  "src/dregg-wallet-verification.js":
+    "SUPERSEDED TWIN, delete-or-implement owed. `buildDreggServerVerificationPlan` " +
+    "describes the server-side checks for `poa-dregg-proof-v1` — a protocol NO server " +
+    "implements in any language. The live admission path is v2: the reached " +
+    "`dregg-admission-panel.js` posts `poa-dregg-holding-challenge-v2` to " +
+    "`/api/poa/holding/{challenge,verify}`, served by `node/src/poa_holding_api.rs` over " +
+    "`poa-solana-gate`. Its 200 lines of test read as coverage of a feature that does not " +
+    "exist. Cutting it also strands the v1 surface it is the sole non-test consumer of " +
+    "(`DREGG_PROOF_PROTOCOL`, `DREGG_CHALLENGE_DOMAIN`, `normalizeDreggChallenge`, " +
+    "`formatDreggChallenge`) in `dregg-wallet.js`, which is why it is one deliberate cut " +
+    "rather than a drive-by deletion. `DREGG_OWNER_BIND_DOMAIN` is NOT part of that cut: " +
+    "`dregg-holding-weight-bind-v1` is live in `dregg-governance/src/holding_weight.rs` " +
+    "and cross-wired by `dregg-cross-wire.test.mjs`.",
+});
+
+test("every module in src/ and labs/ is reached from a page, or is a declared orphan", async () => {
+  const entries = ["src/app.js"];
+  for (const file of await readdir(new URL("labs/", web))) {
+    if (file.endsWith(".html")) entries.push(`labs/${file.replace(".html", ".js")}`);
+  }
+  assert.ok(entries.length >= 4, "the page census should not have shrunk silently");
+
+  const reached = new Set();
+  for (const entry of entries) for (const module of await reachableFrom(entry)) reached.add(module);
+
+  const authored = [];
+  for (const dir of ["src", "labs"]) {
+    for (const file of await readdir(new URL(`${dir}/`, web))) {
+      if (file.endsWith(".js")) authored.push(`${dir}/${file}`);
+    }
+  }
+  assert.ok(authored.length > 40, "the module census should not have shrunk silently");
+
+  const unreached = authored.filter((module) => !reached.has(module)).sort();
+  assert.deepEqual(
+    unreached,
+    Object.keys(DECLARED_ORPHANS).sort(),
+    "a module in the browser bundle is reached from no page and is not declared, or a " +
+      "declared orphan is now reached and its entry must go. Add a DECLARED_ORPHANS entry " +
+      "saying why it is unreachable and what closes it — or wire it, or delete it.",
+  );
+  for (const reason of Object.values(DECLARED_ORPHANS)) {
+    assert.ok(reason.length > 80, "a declared orphan must carry a reason, not a shrug");
+  }
+});
+
+test("the module census actually fails when a reached module is unwired", async () => {
+  // ⚠ The REAL walk over a REAL unwiring, so the falsifier cannot become a no-op.
+  // `records-view.js` is imported by `app.js` and by nothing else in the tree, so
+  // removing that one line is the whole path to it — the exact state
+  // `dregg-wallet-verification.js` is in permanently. A module with a second
+  // importer would make this mutation a no-op and the falsifier decoration, so if
+  // the import moves, re-point this at another single-importer module rather than
+  // deleting the test.
+  const entry = "src/app.js";
+  const source = await readFile(new URL(entry, web), "utf8");
+  const broken = source.replace(/^import \{[^}]*\} from "\.\/records-view\.js";\n/m, "");
+  assert.notEqual(broken, source, "the mutation must actually change app.js source; if the import moved, update this, do not delete it");
+  assert.ok(!broken.includes("./records-view.js"), "the mutation must remove the only path to records-view.js");
+
+  const reached = await reachableFrom(entry, new Map([[entry, broken]]));
+  assert.equal(reached.has("src/records-view.js"), false, "the unwired module must fall out of the closure");
+  // …and the unmutated graph reaches it, so the census is not simply always red.
+  assert.equal((await reachableFrom(entry)).has("src/records-view.js"), true);
+});
+
 test("the reach checker actually fails when a controller is unwired", async () => {
   // ⚠ The REAL checker over the REAL defect: `mission-launcher.js` with the
   // artificer import and its dispatch row taken back out, which is exactly the

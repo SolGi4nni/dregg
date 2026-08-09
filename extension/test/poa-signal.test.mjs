@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   POA_SIGNAL_BETA_ORIGIN,
   POA_SIGNAL_FEDERATION_HEX,
@@ -21,6 +24,67 @@ const good = () => ({
   transcript: [[0, 0, 0], [3, 3, 3], [2, 4, 1]],
 });
 
+const DEPLOYMENTS = new URL("../../poa/deployments/", import.meta.url);
+
+/**
+ * The one checked-in deployment manifest, or a refusal that says what to do.
+ *
+ * ⚑ THE EPOCH IS DISCOVERED, NOT SPELLED. This used to open
+ * `poa/deployments/epoch-1/poa-devnet.json` by a hard-coded path, which made the
+ * tripwire fail OPEN at exactly the moment it exists for. `REGENESIS-RUNBOOK-
+ * 2026-08-08.md` §10 requires the old root to be RETAINED until the ceremony is
+ * signed off — so a re-genesis to epoch-2 leaves `epoch-1/` in place, this test
+ * goes on comparing the extension constant against the RETIRED federation, and
+ * passes green while every claim the extension signs is refused by the live node.
+ * That is the same wound the pin was written to close, one level up.
+ *
+ * So: enumerate. Zero manifests and two manifests are both refusals with their
+ * own message, because during a ceremony the constant genuinely IS ambiguous and
+ * the only safe verdict is to make a human say which epoch the extension ships
+ * against.
+ */
+function soleDeployment(root = DEPLOYMENTS) {
+  const epochs = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => {
+      try {
+        readFileSync(new URL(`${name}/poa-devnet.json`, root));
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .sort();
+  assert.notEqual(
+    epochs.length,
+    0,
+    `no poa/deployments/*/poa-devnet.json exists, so POA_SIGNAL_FEDERATION_HEX is pinned ` +
+      `against nothing. Re-genesis moved or removed the deployment kit: point ` +
+      `extension/src/poa-signal.ts at the new manifest and update this test's path root.`,
+  );
+  assert.equal(
+    epochs.length,
+    1,
+    `poa/deployments/ holds ${epochs.length} deployment manifests (${epochs.join(", ")}), so ` +
+      `"the checked-in federation" no longer names one value. A re-genesis is in flight and ` +
+      `the runbook retains the old root until sign-off — decide which epoch the extension ` +
+      `ships against, re-point POA_SIGNAL_FEDERATION_HEX in extension/src/poa-signal.ts, and ` +
+      `delete the retired root. Do NOT relax this check to "the newest one": that is how the ` +
+      `extension came to sign 4ea83e8e… claims against a 70b7fa4c… node.`,
+  );
+  const path = `${epochs[0]}/poa-devnet.json`;
+  const manifest = JSON.parse(readFileSync(new URL(path, root), "utf8"));
+  assert.match(
+    manifest.federation_id ?? "",
+    /^[0-9a-f]{64}$/,
+    `poa/deployments/${path} has no 64-hex federation_id, so this pin would compare the ` +
+      `extension constant against undefined and any value would look wrong for the wrong ` +
+      `reason. The deployment manifest schema changed; fix the reader, not the constant.`,
+  );
+  return manifest;
+}
+
 test("PoA Signal deployment pins are exact and contain no Basic Auth credential", () => {
   assert.equal(POA_SIGNAL_BETA_ORIGIN, "https://beta.pathofangels.network");
   assert.equal(POA_SIGNAL_NODE_URL, "https://node.pathofangels.network");
@@ -32,12 +96,7 @@ test("PoA Signal deployment pins are exact and contain no Basic Auth credential"
   // under 4ea83e8e…, a federation the live node answers 400 for. Two
   // INDEPENDENT sources that must agree is a gate; one source quoted twice is
   // decoration.
-  const deployment = JSON.parse(
-    readFileSync(
-      new URL("../../poa/deployments/epoch-1/poa-devnet.json", import.meta.url),
-      "utf8",
-    ),
-  );
+  const deployment = soleDeployment();
   assert.equal(
     POA_SIGNAL_FEDERATION_HEX,
     deployment.federation_id,
@@ -51,6 +110,40 @@ test("PoA Signal deployment pins are exact and contain no Basic Auth credential"
     POA_SIGNAL_FEDERATION_HEX,
   });
   assert.doesNotMatch(exported, /eden|basic|authorization/i);
+});
+
+test("the deployment pin actually refuses a retained-old-root re-genesis", () => {
+  // ⚠ THE REAL READER OVER THE REAL SHAPE, in a scratch tree, because the failure
+  // this guards is a state the repo is not in yet and a check nobody has watched
+  // go red is a check nobody has. Each case is asserted to have been CONSTRUCTED
+  // before its verdict is read, so the falsifier cannot quietly become a no-op.
+  const root = mkdtempSync(join(tmpdir(), "poa-deployments-")) + "/";
+  const rootUrl = pathToFileURL(root);
+  const write = (epoch, body) => {
+    mkdirSync(join(root, epoch), { recursive: true });
+    writeFileSync(join(root, epoch, "poa-devnet.json"), JSON.stringify(body));
+  };
+  const live = { federation_id: "70b7fa4c".padEnd(64, "0") };
+
+  // Zero.
+  assert.deepEqual(readdirSync(root), [], "the empty case must actually be empty");
+  assert.throws(() => soleDeployment(rootUrl), /pinned against nothing/);
+
+  // One — the state the repo is in, and the only one that may pass.
+  write("epoch-1", live);
+  assert.equal(soleDeployment(rootUrl).federation_id, live.federation_id);
+
+  // Two: the ceremony retains the old root. This is the fail-open that was here.
+  write("epoch-2", { federation_id: "aa".repeat(32) });
+  assert.equal(readdirSync(root).length, 2, "the retained-root mutation must actually add a root");
+  assert.throws(() => soleDeployment(rootUrl), /holds 2 deployment manifests \(epoch-1, epoch-2\)/);
+
+  // A manifest whose schema moved must not be compared against `undefined`.
+  rmSync(join(root, "epoch-2"), { recursive: true });
+  write("epoch-1", { federation: live.federation_id });
+  assert.throws(() => soleDeployment(rootUrl), /no 64-hex federation_id/);
+
+  rmSync(root, { recursive: true });
 });
 
 test("claim accepts and copies only schema + mission 1 + a played transcript", () => {

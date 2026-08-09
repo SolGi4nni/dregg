@@ -14,6 +14,7 @@ import {
 } from "../src/game-rack.js";
 import { INSTALLED_GAME_IDS } from "../src/mission-launcher.js";
 import { SHAPES, descriptorShape } from "../src/descriptor-shape.js";
+import { POAG1_EXPECTED_ARTIFACTS, POAG1_PENDING_ARTIFACTS } from "../src/poag1.js";
 import { canonicalDescriptors } from "./canonical-descriptors.mjs";
 
 class FakeElement {
@@ -111,24 +112,35 @@ test("every installed controller has a fully taught presentation record", () => 
 });
 
 test("the shape a record claims is the shape the emitted descriptor actually has", async () => {
+  // ⚑ ONE SOURCE OF BYTES, AND IT IS THE PINNED LIST — not a hand-typed roster.
+  // This test used to name four games out of `poa/artifacts/poag1/` and three out
+  // of `poa/artifacts/poag1-pending/`, from the interval when artificer-logic,
+  // vent-crawl and deck-descent were emitted but unsigned. Counter 10 enrolled all
+  // seven, and the three pending files stayed on disk and went stale: they predate
+  // the draw repair, so their `instance` has no `symbol_draw` and NO LOADER
+  // ACCEPTS THEM. `descriptorShape` still agreed, so this test kept passing while
+  // three of its seven verdicts were read off bytes the browser can never load.
+  // The roster is now `POAG1_EXPECTED_ARTIFACTS ∪ POAG1_PENDING_ARTIFACTS`, which
+  // is the list the client actually pins, so the next enrolment moves one line in
+  // `poag1.js` and this test follows it instead of being rewritten.
   const games = new URL("../../poa/artifacts/poag1/games/", import.meta.url);
-  const byGame = new Map(GAME_RACK.map((entry) => [entry.gameId, entry]));
-  const emitted = [
-    ["signal-triangulation", JSON.parse(await readFile(new URL("signal-triangulation.json", games), "utf8"))],
-    ["relay-repair", JSON.parse(await readFile(new URL("relay-repair.json", games), "utf8"))],
-    ["salvage-lock", JSON.parse(await readFile(new URL("salvage-lock.json", games), "utf8"))],
-    ["black-box-reconstruction", JSON.parse(await readFile(new URL("black-box-reconstruction.json", games), "utf8"))],
-  ];
-  // ⚠ The three games whose descriptors are EMITTED but not yet signed are checked
-  // against their real bytes too, out of `poa/artifacts/poag1-pending/`. A card
-  // that claimed a shape its descriptor did not have would otherwise go unnoticed
-  // until the ceremony, which is the worst possible moment to find out.
   const pending = new URL("../../poa/artifacts/poag1-pending/games/", import.meta.url);
-  for (const gameId of ["artificer-logic", "vent-crawl", "deck-descent"]) {
-    const doc = JSON.parse(await readFile(new URL(`${gameId}.json`, pending), "utf8"));
-    emitted.push([gameId, doc]);
+  const byGame = new Map(GAME_RACK.map((entry) => [entry.gameId, entry]));
+  const roster = [
+    ...POAG1_EXPECTED_ARTIFACTS.map((pin) => ({ path: pin.path, dir: games })),
+    // A genuinely pending game is not in the signed bundle yet, so its only real
+    // bytes are the emitter's staging copy. That branch is live again the moment
+    // `POAG1_PENDING_ARTIFACTS` is non-empty, and empty until then.
+    ...POAG1_PENDING_ARTIFACTS.map((pin) => ({ path: pin.path, dir: pending })),
+  ].filter((pin) => pin.path.startsWith("games/"));
+
+  const emitted = [];
+  for (const { path, dir } of roster) {
+    const gameId = path.slice("games/".length, -".json".length);
+    emitted.push([gameId, JSON.parse(await readFile(new URL(path.slice("games/".length), dir), "utf8"))]);
   }
   for (const [gameId, doc] of emitted) {
+    assert.ok(byGame.get(gameId), `${gameId} is a pinned descriptor with no presentation record`);
     assert.equal(byGame.get(gameId).shape, descriptorShape(doc), `${gameId}'s card claims a shape its descriptor does not have`);
   }
   assert.equal(emitted.length, GAME_RACK.length, "every record on the rack must be checked against real emitted bytes");
@@ -166,7 +178,7 @@ test("the signed catalog decides what is open; a presentation record cannot enro
     const sealed = withheld.find((card) => card.gameId === gameId);
     assert.equal(sealed.state, "sealed", `${gameId} is installed, so it cannot be a berth`);
     assert.equal(sealed.playable, false);
-    assert.match(sealed.seal.label, /AWAITING CURATOR ACTIVATION/);
+    assert.match(sealed.seal.label, /THE CURATOR HAS NOT OPENED THIS/);
     // ⚠ A sealed card MAY state its length and shape, because a client that can
     // play the game is not guessing about it. Only a berth must not.
     assert.notEqual(sealed.session, null);
@@ -219,20 +231,26 @@ test("a half-taught record can never reach the open state, even fully installed"
 test("the verification fold is derived from the mission, never authored per game", () => {
   const rows = verificationRows(mission("relay-repair", 2));
   const terms = rows.map((row) => row.term);
-  assert.deepEqual(terms, ["Rules authority", "Activation", "Hidden instance", "Derived by", "Reward class", "Run status"]);
-  assert.match(rows[0].detail, /content epoch 1\.7/);
+  assert.deepEqual(terms, ["Rules", "Opened by", "The hidden answer", "Drawn by", "Reward", "What a run here is worth"]);
+  assert.match(rows[0].detail, /manifest revision 1\.7/);
+  // ⚑ THE EMITTED TAG SURVIVES THE GLOSS. Each row reads as English AND still
+  // carries the exact token the catalog emitted, so a row can be matched against
+  // the bytes. A gloss that REPLACED its tag would be this page paraphrasing the
+  // wire, which is how "oracle-only" quietly becomes whatever sounded close.
   assert.match(rows[1].detail, /detached-signature-required/);
-  assert.match(rows[2].detail, /per-run-hidden-draw · oracle-only/);
-  assert.match(rows.at(-1).detail, /local and unsettled/);
+  assert.match(rows[2].detail, /per-run-hidden-draw/);
+  assert.match(rows[2].detail, /oracle-only/);
+  assert.match(rows.at(-1).detail, /stays in this browser/);
   // ⚠ The forbidding copy was RELOCATED, not deleted: the activation state a
   // first-time player used to meet before any game still exists, one fold away.
   const sealed = verificationRows(null);
-  assert.match(sealed[0].detail, /not enrolled in the signed catalog/);
+  assert.match(sealed[0].detail, /not on the manifest the curator signed/);
 });
 
 test("a practice best is never merged into, or displayed as, a judged best", () => {
   const empty = resultSummary(undefined);
-  assert.match(empty.headline, /No run recorded/);
+  assert.match(empty.headline, /Not played here yet/);
+  assert.equal(empty.recorded, false);
   assert.equal(empty.scored, false);
 
   const practiceOnly = resultSummary({
@@ -242,16 +260,18 @@ test("a practice best is never merged into, or displayed as, a judged best", () 
     ],
     judged: [],
   });
-  assert.equal(practiceOnly.headline, "practice best 6");
+  // ⚠ THE UNIT IS ON THE NUMBER. "practice best 6" reads as a score of six; the
+  // six is an action count and LOWER IS BETTER, which is the opposite reading.
+  assert.equal(practiceOnly.headline, "practice best 6 actions");
   assert.equal(practiceOnly.scored, false);
-  assert.match(practiceOnly.detail, /last: practice/);
+  assert.match(practiceOnly.detail, /Last run: practice/);
 
   const both = resultSummary({
     practice: [{ status: "practice", outcome: "solved", actions: 3, at: 10 }],
     judged: [{ status: "finalized", outcome: "solved", actions: 9, at: 20 }],
   });
   // The practice 3 is better and is still NOT the judged number.
-  assert.equal(both.headline, "judged best 9 · practice best 3");
+  assert.equal(both.headline, "judged best 9 actions · practice best 3 actions");
   assert.equal(both.scored, true);
 });
 
@@ -310,8 +330,11 @@ test("a card states only what the terminal has established about the catalog", (
   // all seven cards said AWAITING CURATOR ACTIVATION — "the signed catalog does
   // not enrol it at this counter" — about a catalog that enrolled all seven.
   const installed = [...INSTALLED_GAME_IDS];
+  // The words that name a CURATOR DECISION. Held in one place so the positive
+  // control below and the prohibition above cannot drift onto two spellings.
+  const curatorDecided = /not on the manifest|the curator opens it/;
   for (const [standing, state, phrase] of [
-    ["pending", "checking", /still being authenticated/],
+    ["pending", "checking", /still checking the curator's signature/],
     ["refused", "refused", /fault on this side/],
   ]) {
     const cards = buildRack({ installed, standing });
@@ -320,10 +343,18 @@ test("a card states only what the terminal has established about the catalog", (
       assert.equal(card.playable, false);
       assert.match(card.seal.copy, phrase);
       // The words that name a curator decision may not appear.
-      assert.doesNotMatch(card.seal.copy, /curator activates|does not enrol/);
-      assert.doesNotMatch(card.verification[0].detail, /not enrolled in the signed catalog/);
+      assert.doesNotMatch(card.seal.copy, curatorDecided);
+      assert.doesNotMatch(card.verification[0].detail, /not on the manifest/);
     }
   }
+  // ⚑ AND THE PROHIBITION HAS A POSITIVE CONTROL, so a rewrite that dropped the
+  // curator from the vocabulary entirely would not pass by saying nothing. A card
+  // that IS a curator decision must still say so, in the words forbidden above.
+  const trulySealed = buildRack({ installed, standing: "ready" })
+    .find((card) => card.state === "sealed");
+  assert.ok(trulySealed, "no card is sealed, so the prohibition above cannot be falsified");
+  assert.match(trulySealed.seal.copy, curatorDecided);
+  assert.match(trulySealed.verification[0].detail, /not on the manifest/);
   // And the two cannot disagree: a caller holding missions has read a catalog.
   assert.throws(
     () => buildRack({ missions: [mission("relay-repair", 2)], installed, standing: "pending" }),

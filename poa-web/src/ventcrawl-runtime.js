@@ -241,7 +241,7 @@ export function loadVentCrawlDescriptor(game, mission, contentEpoch) {
       ["state", "action", "verdict", "reason", "next", "flood_below", "on_flood", "hauls"],
       "Vent Crawl transition");
     refuse(states.has(t.state), "vent-row", `a row names an undeclared state ${t.state}`);
-    const key = `${t.state} ${t.action}`;
+    const key = `${t.state}\u0000${t.action}`;
     refuse(!rows.has(key), "vent-row", `${t.state}/${t.action} has two rows`);
     if (t.verdict === "refuse") {
       refuse(vocabulary.has(t.reason), "vent-row",
@@ -289,7 +289,7 @@ export function loadVentCrawlDescriptor(game, mission, contentEpoch) {
   const crawlAction = actions.find((a) =>
     [...rows.values()].some((r) => r.verdict === "wager") &&
     [...rows.entries()].some(([k, r]) =>
-      r.verdict === "wager" && k.endsWith(` ${a.id}`)));
+      r.verdict === "wager" && k.endsWith(`\u0000${a.id}`)));
   refuse(crawlAction !== undefined, "vent-row",
     "no verb wagers, so the hidden table cannot affect play");
   const bankAction = actions.find((a) => a.id !== crawlAction.id);
@@ -337,7 +337,7 @@ export function rungOdds(descriptor, state) {
  * that shows only the first has shown half the decision.
  */
 export function nextRungHauls(descriptor, state) {
-  const row = descriptor.rows.get(`${state.id} ${descriptor.crawlAction}`);
+  const row = descriptor.rows.get(`${state.id}\u0000${descriptor.crawlAction}`);
   if (!row || row.verdict !== "wager") return [];
   return row.hauls.map((haul) => Object.freeze({
     vein: haul.vein,
@@ -388,7 +388,7 @@ export function currentState(descriptor, run) {
 }
 
 export function rowFor(descriptor, run, actionId) {
-  return descriptor.rows.get(`${run.stateId} ${actionId}`);
+  return descriptor.rows.get(`${run.stateId}\u0000${actionId}`);
 }
 
 /**
