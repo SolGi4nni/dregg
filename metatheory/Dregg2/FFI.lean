@@ -11,6 +11,7 @@ import Dregg2.Circuit.CrossCellConserveDecision
 import Dregg2.Distributed.FinalityGate
 import Dregg2.Distributed.StrandAdmission
 import Dregg2.Distributed.RoundAdvanceGate
+import Dregg2.Distributed.AckBeforeAdmit -- THE ACKNOWLEDGE-BEFORE-ADMIT BUFFER (blocklace paper §5.3). Prop. 5.5 (Finite Harm) — "a Byzantine node may harm only a finite prefix of the computation" — was NOT available to us: its entire content is this buffer, and ours buffered on MISSING PREDECESSORS only. Without it a COLLUDER (which the paper proves can never be exposed in finite time) feeds equivocator blocks without bound, so the buffer is not an optimisation over detection — it is the only thing bounding the damage. Rooted here because `dregg_ack_admit` is in `REQUIRED_DECISION_EXPORTS` (build.rs:197) and a listed-but-absent symbol PANICS every release build in the workspace — which took the whole Rust test surface down four times on 2026-08-08, presenting indistinguishably from cargo-lock contention.
 import Dregg2.Deos.FlowRefine
 import Dregg2.Grain.R3Verify
 import Dregg2.Storage.Deployed

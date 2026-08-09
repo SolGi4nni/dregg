@@ -361,6 +361,80 @@ mod ffi_advance {
     }
 }
 
+// =============================================================================
+// dregg_ack_admit — the VERIFIED ACKNOWLEDGE-BEFORE-ADMIT gate (consensus side)
+// =============================================================================
+
+/// Whether the linked archive exports the verified acknowledge-before-admit gate
+/// (`dregg_ack_admit`, `Dregg2.Distributed.AckBeforeAdmit.ackWireGate` — blocklace paper §5.3:
+/// once a fork is known, a block enters the lace only inside a first-evidence batch or under an
+/// acknowledging head, with the `R_q` freshness tooth). When false the node's ingest cannot
+/// Lean-gate fork-context admission and FAILS CLOSED (`node::catchup` HOLDS the block and warns
+/// loudly — absence never admits). Probed independently (`dregg_ack_admit_present`): a stale
+/// archive can carry every other consensus export and lack this one.
+pub fn ack_admit_available() -> bool {
+    ffi_ack::ack_admit_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED acknowledge-before-admit gate `@[export] dregg_ack_admit` (the PROVED
+/// `AckBeforeAdmit.admitBatch`, carried by `ack_admit_eq_gate`) over a wire-encoded
+/// `(head, buffered-set, wavelength, participants, lace)` and return the raw verdict wire
+/// (`"1:<ids>"` admit the listed batch in order / `"0"` hold / `"ERR"` fail-closed — the caller
+/// HOLDS on anything but `"1:…"`). Requires [`ack_admit_available`]; returns `Err` when the
+/// archive did not export it.
+///
+/// Wire grammar (mirrors `AckBeforeAdmit.encodeAckWire` byte-for-byte):
+/// `"h=<head>;D=<blocks>;w=<W>;P=<participants>;B=<blocks>"` — the tail is the finality gate's
+/// lace grammar; `D` uses the same `BLOCKW` block encoding as `B`.
+pub fn shadow_ack_admit(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_ack::lean_ack_admit(wire)
+}
+
+#[cfg(all(lean_lib_present, dregg_ack_admit_present))]
+mod ffi_ack {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_ack_admit_str(in_utf8: *const c_char, out: *mut c_char, out_cap: usize) -> usize;
+    }
+
+    pub fn ack_admit_present() -> bool {
+        true
+    }
+
+    pub fn lean_ack_admit(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = wire.len() * 2 + 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full =
+                unsafe { dregg_ack_admit_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap) };
+            if full == usize::MAX {
+                return Err("dregg_ack_admit_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_ack_admit_present)))]
+mod ffi_ack {
+    pub fn ack_admit_present() -> bool {
+        false
+    }
+
+    pub fn lean_ack_admit(_wire: &str) -> Result<String, String> {
+        Err("dregg_ack_admit not exported by the linked archive (rebuild to enable)".into())
+    }
+}
+
 // The raw total-order export (`dregg_tau_order`) is gated INDEPENDENTLY on the finality-gate cfg
 // (`dregg_finalize_gate_present`) — it lives in the same Lean module as `dregg_blocklace_finalize`,
 // so build.rs sets the same cfg for it. Kept as a SEPARATE ffi sub-module so the strand-admit and

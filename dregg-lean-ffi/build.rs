@@ -194,6 +194,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          (READING-DAG-BFT-2026-08-08 §5.3)",
     ),
     (
+        "dregg_ack_admit",
+        "the acknowledge-before-admit gate compiles out and fork-context ingest FAILS CLOSED \
+         (holds every post-fork block) — with it absent there is NO finite-harm bound at all: \
+         a colluder feeds equivocator blocks without bound (blocklace paper §5.1/§5.3, \
+         READING-BLOCKLACE-2026-08-08 §0.4)",
+    ),
+    (
         "dregg_captp_validate_handoff",
         "SIX verified gates go at once (CapTP handoff/GC-drop/pipeline + coord 2PC/causal/\
          shared-budget); the 2PC decider silently reverts on the live coordinator path",
@@ -2762,6 +2769,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_finalize_gate_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_strand_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_round_advance_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_ack_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_distributed_exports_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_decide_refines_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_direct_present)");
@@ -3271,6 +3279,20 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_round_advance_present");
     } else {
         absent_export_warn("dregg_round_advance");
+    }
+
+    // The verified ACKNOWLEDGE-BEFORE-ADMIT GATE export (`dregg_ack_admit`, blocklace paper
+    // §5.3 — the buffer discipline that IS Prop. 5.5's finite-harm bound) lives in
+    // `Dregg2.Distributed.AckBeforeAdmit`, also OUTSIDE the FFI module's import closure. Same
+    // splice/probe discipline: once the module is `lake build`-t its object is spliced in (the
+    // self-linking closure follows the C shim's `initialize_…_AckBeforeAdmit` ref) and this
+    // symbol appears; until then we compile the bridge out and the node's ingest FAILS CLOSED on
+    // fork-context admissions (`node::catchup` holds and warns loudly — never admits unverified).
+    let ack_admit_present = archive_exports(&build_archive, "dregg_ack_admit");
+    if ack_admit_present {
+        println!("cargo:rustc-cfg=dregg_ack_admit_present");
+    } else {
+        absent_export_warn("dregg_ack_admit");
     }
 
     // The verified CapTP+coord DISTRIBUTED-EXPORTS module (`dregg_captp_validate_handoff` and its five
@@ -4280,6 +4302,9 @@ fn main() {
     }
     if round_advance_present {
         shim.define("DREGG_ROUND_ADVANCE", None);
+    }
+    if ack_admit_present {
+        shim.define("DREGG_ACK_ADMIT", None);
     }
     if distributed_exports_present {
         shim.define("DREGG_DISTRIBUTED_EXPORTS", None);

@@ -90,6 +90,9 @@ lean_object *initialize_Dregg2_Dregg2_Distributed_StrandAdmission(uint8_t builti
 #ifdef DREGG_ROUND_ADVANCE
 lean_object *initialize_Dregg2_Dregg2_Distributed_RoundAdvanceGate(uint8_t builtin);
 #endif
+#ifdef DREGG_ACK_ADMIT
+lean_object *initialize_Dregg2_Dregg2_Distributed_AckBeforeAdmit(uint8_t builtin);
+#endif
 #ifdef DREGG_DISTRIBUTED_EXPORTS
 lean_object *initialize_Dregg2_Dregg2_Exec_DistributedExports(uint8_t builtin);
 #endif
@@ -211,6 +214,13 @@ extern "C" int dregg_ffi_init_st(void) {
         lean_object *rres = initialize_Dregg2_Dregg2_Distributed_RoundAdvanceGate(1);
         if (!lean_io_result_is_ok(rres)) { lean_io_result_show_error(rres); lean_dec_ref(rres); return 1; }
         lean_dec_ref(rres);
+    }
+#endif
+#ifdef DREGG_ACK_ADMIT
+    {
+        lean_object *kres = initialize_Dregg2_Dregg2_Distributed_AckBeforeAdmit(1);
+        if (!lean_io_result_is_ok(kres)) { lean_io_result_show_error(kres); lean_dec_ref(kres); return 1; }
+        lean_dec_ref(kres);
     }
 #endif
 #ifdef DREGG_DISTRIBUTED_EXPORTS

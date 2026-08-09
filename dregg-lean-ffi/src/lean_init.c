@@ -108,6 +108,24 @@ extern lean_object *initialize_Dregg2_Dregg2_Distributed_RoundAdvanceGate(uint8_
 extern lean_object *dregg_round_advance(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED ACKNOWLEDGE-BEFORE-ADMIT GATE
+ * (`Dregg2.Distributed.AckBeforeAdmit.ackWireGate`, blocklace paper s5.3): decodes a
+ * wire-encoded `(head, buffered-set, wavelength, participants, lace)` query
+ * (`"h=<head>;D=<blocks>;w=<W>;P=<participants>;B=<blocks>"` — the tail is the finality gate's
+ * lace grammar), runs the VERIFIED batch-admission predicate (first-evidence OR acknowledged
+ * head with the R_q freshness tooth — the discipline whose absence voids Prop. 5.5's finite
+ * harm), and returns `"1:<ids>"` (admit, insertion order) / `"0"` (hold) / `"ERR"` (fail-closed
+ * — the node HOLDS). The ingest path calls this before any fork-context insert.
+ *
+ * GATED on DREGG_ACK_ADMIT: like the finality/strand/round-advance gates, this export lives in
+ * a module OUTSIDE the FFI module's import closure, so (a) build.rs probes the archive and only
+ * `#define`s DREGG_ACK_ADMIT when the symbol is present, and (b) `dregg_ffi_init` must ALSO run
+ * the module's own initializer. */
+#ifdef DREGG_ACK_ADMIT
+extern lean_object *initialize_Dregg2_Dregg2_Distributed_AckBeforeAdmit(uint8_t builtin);
+extern lean_object *dregg_ack_admit(lean_object *input);
+#endif
+
 /* The @[export]ed Lean `String -> String` VERIFIED CapTP + COORDINATION decision gates
  * (`Dregg2.Exec.DistributedExports`): six wire-in/wire-out exports the captp/coord runtime invokes
  * so it computes its verdict FROM the verified Lean rule itself (dreggrs Rust → differential):
@@ -1196,6 +1214,19 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(ragres);
+#endif
+#ifdef DREGG_ACK_ADMIT
+    /* The acknowledge-before-admit module is also OUTSIDE the FFI closure; initialize it
+     * explicitly so `dregg_ack_admit` is callable. Its dependency closure
+     * (BlocklaceFinality/FinalityGate) is re-entrant-safe under Lean's init guards (shared with
+     * the gates above). */
+    lean_object *ackres = initialize_Dregg2_Dregg2_Distributed_AckBeforeAdmit(1);
+    if (!lean_io_result_is_ok(ackres)) {
+        lean_io_result_show_error(ackres);
+        lean_dec_ref(ackres);
+        return 1;
+    }
+    lean_dec_ref(ackres);
 #endif
 #ifdef DREGG_DISTRIBUTED_EXPORTS
     /* The CapTP+coord distributed-exports module is also OUTSIDE the FFI closure; initialize it
@@ -3306,6 +3337,30 @@ size_t dregg_round_advance_str(const char *in_utf8, char *out, size_t out_cap) {
     return full;
 }
 #endif /* DREGG_ROUND_ADVANCE */
+
+/* dregg_ack_admit_str — the C string bridge over the Lean `String -> String` VERIFIED
+ * ACKNOWLEDGE-BEFORE-ADMIT GATE export. Identical marshalling discipline as the bridges above;
+ * it drives `dregg_ack_admit`, whose input wire is
+ * `"h=<head>;D=<blocks>;w=<W>;P=<participants>;B=<blocks>"` and whose output is `"1:<ids>"`
+ * (admit the batch, insertion order) / `"0"` (hold) / `"ERR"` (fail-closed on a malformed wire
+ * - the node HOLDS). Same return contract (full byte length; (size_t)-1 only on an unusable
+ * buffer). */
+#ifdef DREGG_ACK_ADMIT
+size_t dregg_ack_admit_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_ack_admit(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif /* DREGG_ACK_ADMIT */
 
 /* dregg_decide_refines_str — the C string bridge over the Lean `String -> String` VERIFIED
  * FLOW-REFINEMENT DECISION GATE export. Identical marshalling discipline as the bridges above; it
