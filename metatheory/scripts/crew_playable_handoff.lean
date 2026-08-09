@@ -36,7 +36,16 @@ this script drives the real fixture instead of a twin of it beside the real fixt
 [sign ] fips204 0.4.6, POA-CREW-SEAT-MLDSA65-1, envelope = pk 1952 ‖ sig 3309 = 5261
 [step ] envelope 34690 bytes -> answer 13770 bytes
         seat 0 handoff preimage: 12343 bytes
+[sign ] fips204 0.4.6, POA-CREW-HANDOFF-MLDSA65-1, over those 12343 bytes
+[step2] transcript = [seat 0's signed handoff] -> answer 51553 bytes
+        sequence 1, next_seat 1, next_previous_counter 20, next_counter 21, budget 12
+        the pre_root seat 1 must sign carries seat 0's trace, and seat 0's counter
+        has moved 10 -> 11 inside it
 ```
+
+⚑ That is the handoff, on the organ's own demonstration crew: one seat's signed action
+becoming the next seat's starting state, with every byte either emitted or judged by Lean
+and nothing re-encoded by the client.
 
 ⚑ The `[step ]` line is the two-source result that matters: `stepWire` answered, which
 means `authenticateSeat?` — the production `verifyEnvelope`, SHAKE-256 key pin plus
@@ -74,12 +83,16 @@ let mut env = pk.into_bytes().to_vec(); env.extend_from_slice(&sig);
 std::fs::write(outpath, hex(&env)).unwrap();
 ```
 
-⚠ This is a GENERATOR, not a proof.  It runs the real exports over real signatures and prints
-what comes back; it pins nothing.  The accepting poles that a GATE checks are the
-`native_decide` pins in `CrewFieldMissionAdmissionFixtures.lean`
-(`the_entry_point_answers_for_every_admitted_seat` and its siblings).  ⚑ STILL OWED: the three
-signature envelopes this produces, pinned as vectors beside `CrewSigningVectors`, so that the
-HANDOFF itself — not just the preimage emission — is a named theorem rather than a run I did.
+⚠ This is a GENERATOR, not a proof: it runs the real exports over real signatures and prints
+what comes back.  It is how the vectors are MADE, not what checks them.
+
+⚑ The three signature envelopes this produces are now PINNED, and the run above is a named
+theorem rather than something somebody did once — `the_pinned_opening_admits_seat_zero_and_only_seat_zero`
+and `the_pinned_handoff_advances_the_run_to_seat_one` in
+`CrewFieldMissionAdmissionFixtures.lean`, beside the vectors themselves.  Those pins carry the
+falsifiers too, including the FIPS 204 context swap.  **Re-emitting the admitted crew
+invalidates all three vectors and reds all three pins**; this script is the regeneration
+recipe when that happens.
 -/
 import Dregg2.Games.PathOfAngels.CrewFieldMissionAdmission
 
