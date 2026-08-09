@@ -1016,4 +1016,44 @@ def sdPreZetaBent : Nat :=
 the digest lane is UPSTREAM of it and must not move. This is the same object `spCip` bends. -/
 def sdPostZetaBent : Nat := digestBeforeEvalsVal shapeSmoke spCip
 
+-- ── §19c — the assembly at the BLOCK'S OWN advice pair ─────────────────────────────────────────
+
+/-- `Shifted_value.Type2.of_field` over the TOCK scalar field — `x − 2^255 (mod q)`, the value a
+`scale_fast2` cell must hold for `bpK` to recover `x`. ⚠ NOT Core's `unshiftT2`/`shiftT1`, which
+are the `Fp` maps of R8's OWN deferred words; this is the map of the WRAP-opening advice, whose
+scalars live in `Fq`. Keeping the two apart is half of §19c's finding. -/
+def shiftTockOf (v : Nat) : Nat :=
+  (v + Dregg2.Circuit.Emit.PastaField.qN - 2 ^ 255 % Dregg2.Circuit.Emit.PastaField.qN)
+    % Dregg2.Circuit.Emit.PastaField.qN
+
+/-- Block 539508's opening scalars in the SHIFTED representation §19's ladders consume
+(`bpK` undoes the shift; the tie is a conjunct of
+`…Pins19.the_blocks_own_scalars_close_the_blocks_own_lhs`). -/
+def B0_SHIFTED : Nat := shiftTockOf Dregg2.Circuit.Emit.MinaWrapOpeningGate.B0
+def Z1_SHIFTED : Nat := shiftTockOf Dregg2.Circuit.Emit.MinaWrapOpeningGate.Z1
+def Z2_SHIFTED : Nat := shiftTockOf Dregg2.Circuit.Emit.MinaWrapOpeningGate.Z2
+
+/-- ⚑ **THE COMMITTED ASSEMBLY AT THE BLOCK'S OWN ADVICE** — `mkStepWith`'s second pass
+(`mkStepAtAdvice`) with the absorbed pair set to `absorb_fr`'s real stream
+`(CIP_SHIFTED/2, CIP_SHIFTED%2)` and the ladder scalar to the full `CIP_SHIFTED`. VALUE LAYER
+ONLY: at this pair the fused `vCipShift` cell cannot satisfy the §12c tie row (its absorbed value
+is not R5's Horner) — that impossibility is §19c's subject, not an oversight, and no row emitter
+runs over this instance. -/
+def tRealAdvice : StepData :=
+  mkStepAtAdvice shapeStep (stepBases shapeStep)
+    (Dregg2.Circuit.Emit.MinaWrapOpeningGate.CIP_SHIFTED / 2,
+     Dregg2.Circuit.Emit.MinaWrapOpeningGate.CIP_SHIFTED % 2)
+    Dregg2.Circuit.Emit.MinaWrapOpeningGate.CIP_SHIFTED
+
+/-- The block's own `lhs` — `z₁·(sg + b₀·u) + z₂·H` at the block's scalars, affine: the point the
+closing equation holds AT. `MinaWrapOpeningGate.opening_relation_holds` is what says the block's
+`c·Q + delta` IS this point (the 34-ladder residual vanishes in the kernel); here it is computed
+through `bpRhs` — §19's own algebra — so the two code paths meet at one point. -/
+def lhsRealOpening : Nat × Nat :=
+  jAffOf (bpRhs
+    ((Dregg2.Circuit.Emit.MinaWrapOpeningGate.U_BASE).1,
+     (Dregg2.Circuit.Emit.MinaWrapOpeningGate.U_BASE).2.1)
+    GENERATORS_H (jOf Dregg2.Bridge.MinaStepPrevCommitments.SG_XY)
+    B0_SHIFTED Z1_SHIFTED Z2_SHIFTED)
+
 end Dregg2.Circuit.Emit.KimchiStepMain

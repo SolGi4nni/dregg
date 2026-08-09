@@ -58,6 +58,39 @@ published words (`step_statement_prechallenges`, the tie slot 11 rests on). For 
 `SG_XY` the step circuit's published bulletproof challenges would have to BE block 539508's fifteen.
 Which is the transcript again. **Every route to slot 12 terminates at the same place**, and the last
 theorem here is the arity fact that decides which of them is even expressible.
+
+# ⚑⚑ §19c (2026-08-09) — THE TRANSCRIPT HALF CLOSES; WHAT REMAINS IS NOT A TRANSCRIPT
+
+Measured on the assembly's own generator (`mkStepAtAdvice`, `mkStepWith`'s second pass at a
+supplied advice pair), against the same block:
+
+  * Feed the sponge the ONE absorbed pair that was not already the block's — `absorb_fr`'s real
+    stream `(CIP_SHIFTED/2, CIP_SHIFTED%2)` in the `oCip` slot — and the assembly's own run
+    squeezes the block's ENTIRE opening transcript: `t = T_FQ`, `group_map t = U_BASE`, all
+    fifteen prechallenges `= IPA_PRECHALS`, `c′ = C_PRE`. The other 115 absorbed words were
+    already the block's; the SCHEDULE needed no repair, only the fused advice value did. (d)
+
+  * The block's `(sg, z₁, z₂, b₀)`, in the shifted representation §19's ladders consume, CLOSE the
+    block's own `lhs` under this assembly's `bpCloses` — and a moved `sg`, `z₁` or `b` refuses.
+    The predicate, the shift conventions and the algebra are exact. (e)
+
+  * AND STILL `bpCloses` refuses on the assembly's OWN `lhs` at that corrected transcript. The
+    residue is measured on the shape, not conjectured: R4 keys its 46 combine rounds on 23
+    round-robin transcript cells and SUMS independent endo-scalings, where upstream Horner-nests
+    ONE ξ taken from `unfinalized.deferred_values` (`scale_and_add`, `step_verifier.ml:270-299`;
+    `pcs_batch.ml combine_split_commitments`); 28 of the 30 `bullet_reduce` rounds are keyed off a
+    cell that is not their own round's squeeze, and the L-halves lack `endo_inv`
+    (`step_verifier.ml:203-206`: the round term is `endo_inv l pre + endo r pre`); and the advice
+    cells are FUSED — `vCipShift`/`vBShift` each serve the absorbed Wrap advice, R8's deferred
+    word and §19's ladder scalar at once, three objects upstream keeps apart
+    (`{ xi; combined_inner_product; b } = unfinalized.deferred_values`, `:1253-1255`). (f)
+
+So the diagnosis this module opened with — "what is missing is a transcript" — was half right and
+is now retired in BOTH directions: the transcript's half is CLOSED, and the remaining obstruction
+is an R4 rebuild (ξ-Horner + `endo_inv` + per-round prechallenge keying) plus an advice-cell
+split, not a value anyone can swap. `G` therefore STAYS `solveG`'s output in segment D's preimage —
+swapping it alone would leave `equal_g = 0` under the emitted rows, a stapled slot in place of a
+closed one — and `solveG`'s docblock carries the same flag.
 -/
 import Dregg2.Circuit.Emit.KimchiStepMainFixture
 
@@ -65,7 +98,8 @@ namespace Dregg2.Circuit.Emit.KimchiStepMain
 
 open Dregg2.Circuit.Emit.KimchiComposeStepFragment (jOf onCurveA)
 open Dregg2.Bridge.MinaStepPrevCommitments (SG_XY SRS_H_XY DELTA_XY Z1 Z2 IPA_PRECHALS)
-open Dregg2.Circuit.Emit.MinaWrapOpeningGate (T_FQ B0 U_BASE)
+open Dregg2.Circuit.Emit.MinaWrapOpeningGate (T_FQ B0 U_BASE CIP_SHIFTED C_PRE)
+open Dregg2.Circuit.Emit.PastaField (pN qN)
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -173,5 +207,115 @@ theorem the_published_statement_carries_fifteen_of_segment_ds_sixteen :
   native_decide
 
 #assert_compiled the_published_statement_carries_fifteen_of_segment_ds_sixteen
+
+/-- ⚑⚑ **(d) THE TRANSCRIPT HALF CLOSES: ONE REAL ABSORBED PAIR, AND THE ASSEMBLY'S OWN SPONGE
+SQUEEZES THE BLOCK'S ENTIRE OPENING TRANSCRIPT.**
+
+`tRealAdvice` is `mkStepWith`'s own second pass (`mkStepAtAdvice`) with the `oCip` absorb set to
+`absorb_fr`'s real stream — `(CIP_SHIFTED/2, CIP_SHIFTED%2)`, the split `Other_field` pair
+(`sponge.rs:221-252`; `MinaWrapOpeningGate.absorbFr`) — and NOTHING else changed. That this
+suffices for `t`, `u`, all fifteen prechallenges AND `c′` is the measurement that retires
+"the modeled sponge's absorb list is fixture data": the other 115 absorbed words and the whole
+schedule were already the block's, and (b)'s three-cell miss was, on the sponge side, ONE fused
+value.
+
+⚑ `t` FALLS OUT of the assembly's own sponge run over the corrected absorb data — `uSqueezeVal` on
+`tRealAdvice.sp`, the same accessor every other pin reads — not out of a constant substituted into
+the squeeze slot. The two bend conjuncts are what say the pair is load-bearing in BOTH halves, and
+the last conjunct keeps (a)/(b)'s contrast alive: the assembly's OWN emitted pair (R5's Horner
+through the fused cell) does NOT reach `T_FQ`. -/
+theorem the_transcript_half_closes_at_the_blocks_own_advice_pair :
+    (-- the u-squeeze IS the block's `t`…
+     uSqueezeVal shapeStep tRealAdvice.sp == T_FQ
+     -- …and `u = group_map t` IS the block's `u_base`…
+     && bpUOf tRealAdvice == U_BASE_A
+     -- …and the fifteen `bullet_reduce` squeezes are the block's prechallenges, in order…
+     && (List.range 15).all (fun k =>
+          chalOf shapeStep tRealAdvice.sp (shapeStep.bulletChal k) == IPA_PRECHALS.getD k 0)
+     -- …and the closing squeeze is the block's `c′`…
+     && chalOf shapeStep tRealAdvice.sp shapeStep.cChal == C_PRE
+     -- …and the pair is load-bearing in its FIELD half…
+     && uSqueezeVal shapeStep
+          (runSponge shapeStep (stepBases shapeStep)
+            (CIP_SHIFTED / 2 + 1, CIP_SHIFTED % 2)) != T_FQ
+     -- …and in its BIT half…
+     && uSqueezeVal shapeStep
+          (runSponge shapeStep (stepBases shapeStep)
+            (CIP_SHIFTED / 2, 1 - CIP_SHIFTED % 2)) != T_FQ
+     -- …and the assembly's own emitted pair is NOT it — the (a)/(b) miss, as the contrast.
+     && uSqueezeVal shapeStep tStep.sp != T_FQ) = true := by
+  native_decide
+
+#assert_compiled the_transcript_half_closes_at_the_blocks_own_advice_pair
+
+/-- ⚑⚑ **(e) THE BLOCK'S OWN SCALARS CLOSE THE BLOCK'S OWN `lhs` UNDER THIS ASSEMBLY'S ALGEBRA —
+AND A MOVED `sg`, `z₁` OR `b` REFUSES.**
+
+`lhsRealOpening` is `z₁·(sg + b₀·u) + z₂·H` at the block's scalars through `bpRhs` — §19's own
+ladder algebra — and `MinaWrapOpeningGate.opening_relation_holds` (the 34-ladder kernel residual)
+is what says the block's `c·Q + delta` IS that point, so the closing conjunct is two independent
+code paths meeting, not one definition read twice. The unshift ties pin the representation:
+`bpK` (add `2^255` mod `q`) really recovers `B0`, `Z1`, `Z2` from the shifted cells, and each
+shifted cell fits below `pN` — the single-cell form §19's ladders read. The three refusal
+conjuncts are the anti-vacuity: the predicate discriminates AT the real point. -/
+theorem the_blocks_own_scalars_close_the_blocks_own_lhs :
+    (-- the closure, at the block's own `(sg, b₀, z₁, z₂)` in shifted form…
+     bpCloses U_BASE_A GENERATORS_H lhsRealOpening (jOf SG_XY) B0_SHIFTED Z1_SHIFTED Z2_SHIFTED
+     -- …the three unshift ties…
+     && (2 ^ 255 + B0_SHIFTED) % qN == B0
+     && (2 ^ 255 + Z1_SHIFTED) % qN == Z1
+     && (2 ^ 255 + Z2_SHIFTED) % qN == Z2
+     -- …the cells are single-`Fp`-cell representable…
+     && decide (B0_SHIFTED < pN) && decide (Z1_SHIFTED < pN) && decide (Z2_SHIFTED < pN)
+     && onCurveA lhsRealOpening
+     -- …and a moved `sg` / `z₁` / `b` refuses, so the predicate discriminates here.
+     && bpCloses U_BASE_A GENERATORS_H lhsRealOpening (jOf sgAlt)
+          B0_SHIFTED Z1_SHIFTED Z2_SHIFTED == false
+     && bpCloses U_BASE_A GENERATORS_H lhsRealOpening (jOf SG_XY)
+          B0_SHIFTED ((Z1_SHIFTED + 1) % qN) Z2_SHIFTED == false
+     && bpCloses U_BASE_A GENERATORS_H lhsRealOpening (jOf SG_XY)
+          ((B0_SHIFTED + 1) % qN) Z1_SHIFTED Z2_SHIFTED == false) = true := by
+  native_decide
+
+#assert_compiled the_blocks_own_scalars_close_the_blocks_own_lhs
+
+/-- ⚑⚑ **(f) AND STILL IT REFUSES — THE RESIDUE AFTER THE TRANSCRIPT IS THE FOLD, MEASURED ON THE
+SHAPE.**
+
+At the corrected transcript ((d)'s premise, restated as this theorem's first leg), the assembly's
+own fold output is NOT the block's `lhs`, and `bpCloses` at the block's `(sg, z₁, z₂, b₀)` still
+refuses on it. The two count conjuncts LOCATE the cause in R4's wiring rather than conjecture it:
+the 46 combine rounds consume 23 distinct round-robin transcript cells (`StepShape.ipaChal`) where
+upstream Horner-nests ONE ξ from `unfinalized.deferred_values` (`scale_and_add`,
+`step_verifier.ml:270-299`; `pcs_batch.ml`), and only 2 of the 30 `bullet_reduce` rounds land by
+round-robin accident on their own round's squeeze — upstream keys BOTH halves of pair `j` on
+prechallenge `j`, with `endo_inv` on the L half (`:203-206`). The `b` conjuncts add the fused-cell
+half: even at the block's transcript, R8's `Fp` fold (`bpBOf`, what the fused `vBShift` cell must
+carry) is neither the block's `b₀` nor its shifted form — the advice cell has to SPLIT from R8's
+word before any transcript can fill it.
+
+⚠ What this theorem does NOT license: swapping `G := SG_XY` in segment D while this refusal stands
+would publish the real accumulator over `equal_g = 0` — a stapled slot. `G` stays `solveG`'s
+output until R4 is rebuilt and the advice cells are split; `solveG`'s docblock carries the same
+flag, dated. -/
+theorem the_corrected_transcript_still_refuses_and_the_residue_is_the_fold :
+    (-- (d)'s premise, restated on this theorem's own subject…
+     uSqueezeVal shapeStep tRealAdvice.sp == T_FQ
+     -- …the fold's output at that transcript is NOT the block's lhs…
+     && bpLhsOf tRealAdvice != lhsRealOpening
+     -- …and the block's own scalars are still refused on it…
+     && bpCloses (bpUOf tRealAdvice) GENERATORS_H (bpLhsOf tRealAdvice) (jOf SG_XY)
+          B0_SHIFTED Z1_SHIFTED Z2_SHIFTED == false
+     -- …because: 28 of 30 bullet rounds are keyed off a foreign cell…
+     && ((List.range 30).filter (fun j =>
+          shapeStep.ipaChal (46 + j) == shapeStep.bulletChal (j / 2))).length == 2
+     -- …and the 46 combine rounds consume 23 distinct cells where upstream consumes one ξ…
+     && ((List.range 46).map (fun r => shapeStep.ipaChal r)).eraseDups.length == 23
+     -- …and the fused `b` cell cannot say the block's `b₀` at ANY transcript.
+     && bpBOf tRealAdvice != B0_SHIFTED
+     && bpBOf tRealAdvice != B0) = true := by
+  native_decide
+
+#assert_compiled the_corrected_transcript_still_refuses_and_the_residue_is_the_fold
 
 end Dregg2.Circuit.Emit.KimchiStepMain

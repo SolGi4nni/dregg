@@ -5417,12 +5417,126 @@ at exactly three cells — `t = challenge_fq()`, `u = group_map t`, and `b` —
 with `H`, the fold's bases and `delta` all agreeing. Naming the obstruction as an absent datum sent
 one lane looking for a file that was already imported; naming it as three cells is a target.
 
+⚑ **MEASURED 2026-08-09 — THE THREE-CELL TARGET WAS THE SPONGE'S HALF, AND THAT HALF IS CLOSED;
+WHAT REMAINS IS NOT A TRANSCRIPT.** Feed the sponge the block's own advice pair
+`(CIP_SHIFTED/2, CIP_SHIFTED%2)` — the ONE absorbed word-pair of the 117 that was not already the
+block's — and the assembly's own run squeezes `t = T_FQ`, `group_map t = U_BASE`, all fifteen
+prechallenges and `c′` (`KimchiStepMainPins19.the_transcript_half_closes_at_the_blocks_own_advice_pair`,
+via `mkStepAtAdvice`). What still refuses `bpCloses` at (`SG_XY`, `Z1`, `Z2`) is measured at
+`…the_corrected_transcript_still_refuses_and_the_residue_is_the_fold`: (i) R4 keys its 46 combine
+rounds on 23 round-robin transcript cells (`StepShape.ipaChal`) and SUMS independent
+endo-scalings, where upstream Horner-nests ONE ξ from `unfinalized.deferred_values`
+(`scale_and_add`, `step_verifier.ml:270-299`; `pcs_batch.ml combine_split_commitments`); (ii) 28 of
+the 30 `bullet_reduce` rounds are keyed off a cell that is not their own round's squeeze, and the
+L-halves lack `endo_inv` (`step_verifier.ml:203-206`: `endo_inv l pre + endo r pre`); (iii) the
+advice cells are FUSED — `vCipShift`/`vBShift` each serve the absorbed Wrap advice, R8's deferred
+word and §19's ladder scalar at once, three objects upstream keeps apart
+(`{ xi; combined_inner_product; b } = unfinalized.deferred_values`, `:1253-1255`) — so a satisfying
+witness cannot absorb the real pair while the §12c tie pins the same cell to R5's Horner. Closing
+slot 12 is therefore an R4 REBUILD plus an advice-cell split, not a value swap; `G` stays this
+solve until then, and this paragraph is the flag on it.
+
 ⚠ It is also why `G` is data-dependent now: it is a function of `lhs`, hence of the transcript, hence
 of every commitment the fold consumed. A bent commitment moves `lhs`, moves the solved `G`, and moves
 segment D's public word — which is §17(d), now true of the emitted witness rather than of an
 exhibit. -/
 def solveG (u : Nat × Nat) (lhs : Nat × Nat) (bAdv z1 z2 : Nat) : Nat × Nat :=
   jAffOf (bpSolveG u GENERATORS_H lhs bAdv z1 z2)
+
+/-! ## ⚑⚑ §19d — **UPSTREAM'S `check_bulletproof` FOLD, IN THIS ASSEMBLY'S OWN ALGEBRA** (2026-08-09)
+
+⚠ **SAY THE SUBSTRATE OUT LOUD.** Every definition here is Lean-authored and runs on the assembly's
+OWN gadgets — `runEndo` (R4's emitted `EndoMul` ladder), `addA` (`Ops.add_fast`) — over the
+assembly's OWN bases. Nothing is re-implemented in Rust and nothing here is a second arithmetic.
+
+**WHY IT EXISTS.** `…Pins19.the_corrected_transcript_still_refuses_and_the_residue_is_the_fold`
+measured that after the transcript half closes (ONE corrected absorb pair makes `t`, `u`, the
+fifteen prechallenges and `c′` the block's own) the emitted R4 fold is still not upstream's:
+
+  * R4 keys its 46 combine rounds on **23 round-robin transcript cells** (`StepShape.ipaChal`) and
+    SUMS independent endo-scalings, where `combine_split_commitments` (`pcs_batch.ml:71-84`)
+    reverses the flat list, seeds the accumulator with its LAST element, and Horner-nests **ONE ξ**
+    on the ACCUMULATOR (`scale_and_add`, `step_verifier.ml:270-299`);
+  * 28 of the 30 `bullet_reduce` halves are keyed off a cell that is not their pair's own squeeze,
+    and the L halves lack `endo_inv` (`step_verifier.ml:203-206`: `endo_inv l pre + endo r pre`).
+
+⚑ **THIS IS THE FOLD R4's ROWS MUST BE REWIRED TO, AND IT IS NOT A TWIN OF THEM.** `runIpa` still
+emits the round-robin sum; these definitions are what it becomes, and the rewiring is specified by
+them exactly: for combine step `a`, the LADDER's base is the running accumulator (`qSum s (a−1)`,
+seeded at `qT s 45 = COMBINE_XY[46]`) and the complete-add's other operand is the commitment
+`qT s (44−a)` (`qInit = COMBINE_XY[0]` at `a = 45`); for `bullet_reduce` pair `j` both halves take
+prechallenge `bulletChal j`, and the L half's ladder base is a witnessed `endo_inv` point whose
+ladder OUTPUT is asserted equal to the absorbed commitment. The commitment variables, their
+`Inner_curve.constant` pins, their `assert_on_curve` rows and `sponge_after_index`'s reads of them
+are all UNCHANGED by that rewiring; what moves is which operand of which row they are.
+`…Pins19d` is where both polarities are stated. -/
+
+/-- One `Scalar_challenge.endo` ladder's OUTPUT — the value a fold consumes, taken off `runEndo`,
+which is the very ladder R4's `EndoMul` rows emit. -/
+def endoOutOf (s : StepShape) (T : Nat × Nat) (v : Nat) : Nat × Nat :=
+  (runEndo s T v).1.getLastD (0, 0)
+
+/-- ⚑ **`ScalarChallenge::to_field` IN THE PALLAS SCALAR FIELD** — the scalar one `runEndo` ladder
+multiplies its base by, i.e. `endoMap λ_Pallas` at `ZMod qN`.
+
+⚠ **NOT `liftVal`, AND THE DIFFERENCE IS THE CLASSIC PASTA CONFUSION.** `liftVal` is the same fold
+at `ENDO_R = λ_Vesta` in **`Fp`** — §8g's DEFERRED word, the multiplier the C8 *scalar* fold reads.
+The *curve* ladder's scalar is `λ_Pallas` in **`Fq`**. Both are "the endo scalar"; they are
+different numbers in different fields, and reading one for the other is a fold that is
+self-consistent and wrong. `…Pins19d.the_ladder_is_multiplication_by_the_pallas_lift` is what
+makes this a measured bridge instead of a comment. -/
+def endoScalarQ (chal : Nat) : Nat :=
+  (Dregg2.Circuit.Emit.KimchiVerify.endoMap
+    ((Dregg2.Circuit.Emit.PastaCurve.lambdaPallas : ZMod Dregg2.Circuit.Emit.PastaField.qN))
+    chal).val
+
+/-- ⚑⚑ **`combine_split_commitments`** (`pcs_batch.ml:71-84`), read at source:
+
+    match List.rev flat with
+    | init :: comms -> List.fold_left comms ~init:(i init) ~f:(fun acc p -> scale_and_add ~acc ~xi p)
+
+with `scale_and_add ~acc ~xi p = p + Scalar_challenge.endo acc xi` (`step_verifier.ml:270-299`).
+The accumulator is seeded with the LAST commitment and every remaining one is folded in against a
+ladder run on the ACCUMULATOR — so the value is `Σ_i ξ^i · flat[i]`, at ONE ξ. -/
+def combineSplit (s : StepShape) (flat : List (Nat × Nat)) (xiPre : Nat) : Nat × Nat :=
+  let n := flat.length
+  (List.range (n - 1)).foldl
+    (fun acc k => addA (flat.getD (n - 2 - k) (0, 0)) (endoOutOf s acc xiPre))
+    (flat.getD (n - 1) (0, 0))
+
+/-- ⚑ **`Scalar_challenge.endo_inv g chal`** (`scalar_challenge.ml:343-354`): a WITNESSED point
+`res`, constrained by `let x, y = endo res chal in Field.Assert.(equal gx x; equal gy y)`. Its
+value is `to_field(chal)⁻¹ · g` in the Pallas scalar field — one inverse and one ladder, and the
+ASSERT is what binds it. In R4's rewiring `res` is the ladder's base variable and `g` is the
+absorbed commitment. -/
+def endoInvOf (g : Nat × Nat) (chal : Nat) : Nat × Nat :=
+  jAffOf ((scMulM pN (qInv (endoScalarQ chal)) (jOf g)).getD (0, 0, 0))
+
+/-- ⚑ **`bullet_reduce`'s term for pair `j`** — `endo_inv l pre_j + endo r pre_j`
+(`step_verifier.ml:203-206`). BOTH halves take the pair's OWN prechallenge, and only the R half is
+a forward ladder. `gam` is the thirty interleaved `L0 R0 L1 R1 …`. -/
+def bulletTerm (s : StepShape) (gam : List (Nat × Nat)) (pres : List Nat) (j : Nat) : Nat × Nat :=
+  let pre := pres.getD j 0
+  addA (endoInvOf (gam.getD (2 * j) (0, 0)) pre) (endoOutOf s (gam.getD (2 * j + 1) (0, 0)) pre)
+
+/-- `lr_prod` — `Array.reduce_exn terms ~f:Inner_curve.( + )` over the fifteen pair terms. -/
+def bulletProd (s : StepShape) (gam : List (Nat × Nat)) (pres : List Nat) : Nat × Nat :=
+  (List.range (pres.length - 1)).foldl
+    (fun acc j => addA acc (bulletTerm s gam pres (j + 1))) (bulletTerm s gam pres 0)
+
+/-- ⚑⚑ **`check_bulletproof`'s `lhs`, REBUILT** (`step_verifier.ml:300-327`):
+
+    p_prime = combined_polynomial + uc ;  q = p_prime + lr_prod
+    absorb sponge PC delta ; c = squeeze_scalar sponge
+    lhs = Scalar_challenge.endo q c + delta
+
+`uc = scale_fast2 u advice.combined_inner_product` is passed in, because §19's `group_map` half
+already computes it (`runUc`) and recomputing it here would be a second copy of a value the rows
+emit. -/
+def foldLhs (s : StepShape) (flat gam : List (Nat × Nat)) (xiPre : Nat) (pres : List Nat)
+    (uc dl : Nat × Nat) (cPre : Nat) : Nat × Nat :=
+  let q := addA (addA (combineSplit s flat xiPre) uc) (bulletProd s gam pres)
+  addA (endoOutOf s q cPre) dl
 
 /-- **§19, evaluated.** `t` is the FULL squeeze, `cip`/`bAdv` the two statement words, `z1`/`z2` the
 two free witnesses, `G` the previous proof's `challenge_polynomial_commitment`. -/
@@ -5719,18 +5833,31 @@ def msmScalars (s : StepShape) (ch : Nat → Nat) (sd : Nat) (ft : FtData) (fin 
   else if i == 39 then STMT_LOOKUP_VAL
   else ch (i % s.chals)
 
-/-- ⚑ THE DEPENDENCY ORDER, and why the fr-sponge now runs BEFORE the fold. Since §8g the C8 fold's
-own multipliers are `to_field_checked` of the fr-sponge's two squeezes, so segment B is evaluated
-first and `runDef` is fed from it. Nothing the fr-sponge absorbs depends on `combined_inner_product`
-(segment B absorbs the digest of segment A, `ft_eval1`, the two public-poly evaluations and the 43
-columns — R6's and R5's fixtures), so the order is a chain and not a cycle. -/
-def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
-  -- ⚑⚑ **PASS 1 — the transcript through ζ.** `absorb sponge Scalar advice.combined_inner_product`
-  -- (`step_verifier.ml:256`) comes AFTER `let zeta = sample_scalar ()` (`:568`), so blocks 0 …
-  -- `sqBlock zetaChal` do not depend on it and β/γ/α/ζ are already exact in this pass. §12i pins
-  -- that as an EQUALITY over the four, which is the machine-checked form of "upstream has no cycle".
-  let sp0 := runSponge s bs (0, 0)
-  let ft0 := runFt s sp0
+/-- ⚑ §19c — **THE SECOND PASS, AT A SUPPLIED `advice.combined_inner_product`.** Upstream's
+`check_bulletproof` takes `~advice:{ b; combined_inner_product }` and `~xi` from
+`unfinalized.deferred_values` (`step_verifier.ml:1253-1262`) — witnesses of THIS proof, checked by
+the NEXT Wrap — while `mkStepWith` below computes the absorbed pair from R5's own Horner, because
+this assembly fuses the advice cell with R8's deferred word (`vCipShift`, the §12c tie). This
+constructor is `mkStepWith`'s second pass at an arbitrary pair, so §19c can measure the assembly's
+transcript at the BLOCK'S OWN advice instead of hand-mirroring the pipeline.
+
+⚑ TWO parameters, not one, because upstream keeps two objects the fused cell collapses: `cipAbs`
+is the `Other_field.t` PAIR the sponge swallows at `oCip` — upstream that is `(x/2, x%2)` of the
+Type2-shifted `Fq` value, `absorb_fr`'s own split stream (`sponge.rs:221-252`;
+`MinaWrapOpeningGate.absorbFr`) — and `cipSc` is the full shifted scalar the `scale_fast2` ladders
+consume (`bpK cipSc` is the multiplier). `mkStepWith` passes `(cipV, cipV % 2)` and `cipV`, which
+keeps its emitted value layer EXACTLY what it was — and is itself the infidelity §19c measures: a
+Type1/`Fp` finalize word standing in a Type2/`Fq` advice slot, absorbed UNSPLIT where Mina absorbs
+the half. `KimchiStepMainPins19.the_transcript_half_closes_at_the_blocks_own_advice_pair` is the
+measurement that `(CIP_SHIFTED/2, CIP_SHIFTED%2)` — and not the fused word — is what the block's
+own transcript absorbed.
+
+⚠ VALUE LAYER ONLY at any other pair: the absorbed word and R8's statement word are ONE cell in
+this assembly, so a `StepData` built at the block's pair does not induce a satisfying witness of
+the emitted rows (the §12c tie row cannot hold). §19c states that instead of hiding it, and no row
+emitter runs over such an instance. -/
+def mkStepAtAdvice (s : StepShape) (bs : List (Nat × Nat)) (cipAbs : Nat × Nat) (cipSc : Nat) :
+    StepData :=
   -- ⚑ segment A reads `prev_challenges` and NOT the transcript, so nothing below depends on a
   -- squeeze taken after ζ. That is the other half of why two passes suffice.
   let specA := optSpec s
@@ -5738,26 +5865,8 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let dg : PVar × Nat :=
     (sgSt (baseSegA s) (nbA s) 1 specA.blocks 0,
      (segA.states.getLastD []).getD 0 0)
-  -- ⚑ §22 — THE SEED. `step_main.ml:41-46`: the sponge `finalize_other_proof` is handed already
-  -- carries `proof_state.sponge_digest_before_evaluations`. Read off THIS pass's transcript rather
-  -- than shared with pass 2 — the two agree (ζ's squeeze precedes the `cip` absorb) and §22 pins
-  -- that as an equality instead of assuming it here.
-  let specB0 := frSpec s (digestBeforeEvalsVar s, digestBeforeEvalsVal s sp0) dg ft0.out
-  let defc0 := runDefc (runSeg specB0) specB0
-  -- ⚑ the SHIFTED value, because that is what `:257-259` unwraps and absorbs
-  -- (`Shifted_value.Type2.Shifted_value x -> x`) and it is exactly `vCipShift`, the statement word
-  -- R8's `combined_inner_product_correct` ties back to this same Horner output.
-  -- ⚑ §8i's four `E_c` ladders ride in `runDef` and read `prevChalVal` — a witness vector, NOT the
-  -- transcript — so PASS 1 computes the same `E_c` PASS 2 does and the fold stays a chain. (ζ is
-  -- identical across the two passes: `cip` is absorbed after ζ is squeezed, §12i.)
-  -- ⚑ …and `combine`'s mux rides in it too, at `MASK_BITS` — the SAME two `branch_data` bits the
-  -- opt-sponge and segment C take, so the transcript's `cip` word is the masked fold from pass 1 on.
-  let cipV := shiftT1 ((runDef s sp0 ft0.out (defc0.lift s 0) (defc0.lift s 1)
-                          FT_OMEGA prevChalVal MASK_BITS).ca.getLastD 0)
-  -- **PASS 2 — the real transcript**, carrying `(combined_inner_product, its `Boolean.var`)` — and
-  -- ⚑ since 2026-08-03 the second item is the PARITY of the first, because it is §19 ladder 0's
-  -- `s_odd` and the split row `2·s_div_2 + s_odd = cip` forces it. Not a constant, not a witness.
-  let sp := runSponge s bs (cipV, cipV % 2)
+  -- **the transcript**, carrying the supplied `(combined_inner_product, its `Boolean.var`)` pair.
+  let sp := runSponge s bs cipAbs
   -- ⚑ R6 next: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds — and since §6b
   -- its `perm` / `ζ^n` slots are also `Common.ft_comm`'s scalars, so R6 runs BEFORE the fold. That
   -- is a chain and not a cycle: `runFt` reads only β/γ/α/ζ, and fold round
@@ -5770,7 +5879,7 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   -- The chain is `group_map → uc → q → lhs → G → rhs → equal_g`; every arrow is a dependency and
   -- none of them closes a cycle, which is why two passes still suffice.
   let tSq := uSqueezeVal s sp
-  let uc := runUc tSq cipV
+  let uc := runUc tSq cipSc
   let ipa := runIpa s bs sp ftc.out uc.res
   let ftv := ft.out
   let specB := frSpec s (digestBeforeEvalsVar s, digestBeforeEvalsVal s sp) dg ftv
@@ -5783,7 +5892,7 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let bSh := shiftT1 (bActualOf s sp df (defc.lift s 1))
   let lhsPt : Nat × Nat := (ipa.lhsAdd.getD 4 0, ipa.lhsAdd.getD 5 0)
   let gA := solveG (gmOut tSq) lhsPt bSh BP_Z1_VAL BP_Z2_VAL
-  let bp := runBp tSq cipV bSh BP_Z1_VAL BP_Z2_VAL gA lhsPt
+  let bp := runBp tSq cipSc bSh BP_Z1_VAL BP_Z2_VAL gA lhsPt
   let ver : Nat := bp.ver
   let specC := hmSpec s ipa
   -- ⚑ segment D runs its OWN `sponge_after_index` over the instance's own wrap key
@@ -5806,6 +5915,47 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   , fin := fin
   , segA := segA, segB := segB, segC := segC, segD := runSeg specD
   , specA := specA, specB := specB, specC := specC, specD := specD }
+
+/-- ⚑ THE DEPENDENCY ORDER, and why the fr-sponge now runs BEFORE the fold. Since §8g the C8 fold's
+own multipliers are `to_field_checked` of the fr-sponge's two squeezes, so segment B is evaluated
+first and `runDef` is fed from it. Nothing the fr-sponge absorbs depends on `combined_inner_product`
+(segment B absorbs the digest of segment A, `ft_eval1`, the two public-poly evaluations and the 43
+columns — R6's and R5's fixtures), so the order is a chain and not a cycle. -/
+def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
+  -- ⚑⚑ **PASS 1 — the transcript through ζ.** `absorb sponge Scalar advice.combined_inner_product`
+  -- (`step_verifier.ml:256`) comes AFTER `let zeta = sample_scalar ()` (`:568`), so blocks 0 …
+  -- `sqBlock zetaChal` do not depend on it and β/γ/α/ζ are already exact in this pass. §12i pins
+  -- that as an EQUALITY over the four, which is the machine-checked form of "upstream has no cycle".
+  let sp0 := runSponge s bs (0, 0)
+  let ft0 := runFt s sp0
+  let specA := optSpec s
+  let segA := runSeg specA
+  let dg : PVar × Nat :=
+    (sgSt (baseSegA s) (nbA s) 1 specA.blocks 0,
+     (segA.states.getLastD []).getD 0 0)
+  -- ⚑ §22 — THE SEED. `step_main.ml:41-46`: the sponge `finalize_other_proof` is handed already
+  -- carries `proof_state.sponge_digest_before_evaluations`. Read off THIS pass's transcript rather
+  -- than shared with pass 2 — the two agree (ζ's squeeze precedes the `cip` absorb) and §22 pins
+  -- that as an equality instead of assuming it here.
+  let specB0 := frSpec s (digestBeforeEvalsVar s, digestBeforeEvalsVal s sp0) dg ft0.out
+  let defc0 := runDefc (runSeg specB0) specB0
+  -- ⚑ the SHIFTED value, because that is what `:257-259` unwraps and absorbs
+  -- (`Shifted_value.Type2.Shifted_value x -> x`) and it is exactly `vCipShift`, the statement word
+  -- R8's `combined_inner_product_correct` ties back to this same Horner output.
+  -- ⚑ §8i's four `E_c` ladders ride in `runDef` and read `prevChalVal` — a witness vector, NOT the
+  -- transcript — so PASS 1 computes the same `E_c` PASS 2 does and the fold stays a chain. (ζ is
+  -- identical across the two passes: `cip` is absorbed after ζ is squeezed, §12i.)
+  -- ⚑ …and `combine`'s mux rides in it too, at `MASK_BITS` — the SAME two `branch_data` bits the
+  -- opt-sponge and segment C take, so the transcript's `cip` word is the masked fold from pass 1 on.
+  let cipV := shiftT1 ((runDef s sp0 ft0.out (defc0.lift s 0) (defc0.lift s 1)
+                          FT_OMEGA prevChalVal MASK_BITS).ca.getLastD 0)
+  -- **PASS 2 — the real transcript** — `mkStepAtAdvice` at this assembly's OWN pair: the absorbed
+  -- second item is the PARITY of the first (since 2026-08-03), because it is §19 ladder 0's `s_odd`
+  -- and the split row `2·s_div_2 + s_odd = cip` forces it. Not a constant, not a witness.
+  -- ⚠ §19c measured what this pair is NOT: `absorb_fr`'s real stream is `(x/2, x%2)` of the
+  -- Type2-shifted `Fq` advice, so the fused word here diverges from the block's own transcript at
+  -- exactly this absorb — see `mkStepAtAdvice`'s docblock for the anatomy.
+  mkStepAtAdvice s bs (cipV, cipV % 2) cipV
 
 /-- The assembly on the HONEST supplied commitments — block 539508's own. -/
 def mkStep (s : StepShape) : StepData := mkStepWith s (stepBases s)
