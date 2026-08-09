@@ -26,6 +26,22 @@ import { ArtifactRefusal } from "./poag1.js";
 const DISCLOSURES = Object.freeze(["oracle-only", "per-run-open"]);
 const HEX_32 = /^[0-9a-f]{64}$/;
 
+/**
+ * The two draw methods `EmitJson.symbolDrawJson` can emit, and what each one
+ * costs. A byte stream is uniform; a SYMBOL below `bound` drawn out of it is not
+ * automatically so, and which of the two you did is the whole difference between
+ * a fair hidden target and a biased one.
+ *
+ *   rejection  `SeedDraw.drawBelow?` — bytes at or above `256 - 256 % bound` are
+ *              DISCARDED, so every symbol has exactly `256 / bound` preimages for
+ *              any bound. Uniform always; may run out of stream and refuse.
+ *   modulo     bare `byte % bound`. Total, never refuses, and uniform ONLY when
+ *              `bound` divides 256. Otherwise the low `256 % bound` symbols are
+ *              over-represented — the defect a curator counter shipped once.
+ */
+const DRAW_METHODS = Object.freeze(["rejection", "modulo"]);
+const SEED_DRAW_MODULE = "Dregg2.Games.PathOfAngels.SeedDraw";
+
 function refuse(condition, code, message) {
   if (!condition) throw new ArtifactRefusal(code, message);
 }
@@ -73,6 +89,69 @@ export function refuseNamedInstance(value, at) {
 }
 
 /**
+ * Parse the `symbol_draw` block, RECOMPUTING every derived field.
+ *
+ * ⚠ This is the one block in the declaration whose fields are not independent
+ * facts: `byte_ceilings`, `consumes_rejected_bytes`, `on_exhausted` and
+ * `refuses` are all FUNCTIONS of `method` and `bounds`, and the emitter computes
+ * them (`EmitJson.symbolDrawJson`). A client that reads them is believing an
+ * arithmetic claim it is perfectly able to check, which is the same shrug that
+ * `station-panel.js` refuses for its gauges. So this recomputes all four and
+ * refuses on disagreement rather than rendering the artifact's own figure back.
+ *
+ * It deliberately does NOT decide whether a biased draw is allowed — that is the
+ * emitter's and the design gate's call, not a browser's. It reports the bias
+ * (`uniform`) so the verification fold can say it out loud.
+ */
+export function loadSymbolDraw(block, at) {
+  keys(block, [
+    "method", "module", "function", "bounds", "byte_ceilings",
+    "consumes_rejected_bytes", "on_exhausted", "refuses",
+  ], `${at} symbol draw`);
+  const method = block.method;
+  refuse(DRAW_METHODS.includes(method), "instance-draw-method", `${at} symbol draw declares an unknown method`);
+  const rejection = method === "rejection";
+  refuse(
+    Array.isArray(block.bounds) && block.bounds.length > 0 && block.bounds.every((bound) => integer(bound, 2, 256)),
+    "instance-draw-bounds",
+    `${at} symbol draw declares no usable bounds`,
+  );
+  // A rejection draw names the Lean function that performs it; a modulo draw has
+  // none to name, and may not borrow the name of the one that would have been safe.
+  refuse(
+    rejection
+      ? block.module === SEED_DRAW_MODULE && block.function === "drawBelow?"
+      : block.module === null && block.function === null,
+    "instance-draw-module",
+    `${at} symbol draw does not name the function its method actually uses`,
+  );
+  const ceilings = block.bounds.map((bound) => (rejection ? 256 - (256 % bound) : 256));
+  refuse(
+    Array.isArray(block.byte_ceilings) && block.byte_ceilings.length === ceilings.length &&
+      block.byte_ceilings.every((value, index) => value === ceilings[index]),
+    "instance-draw-ceilings",
+    `${at} symbol draw states byte ceilings its own method and bounds do not produce`,
+  );
+  const refuses = rejection && block.bounds.some((bound) => 256 % bound !== 0);
+  refuse(block.consumes_rejected_bytes === rejection, "instance-draw-rejects", `${at} symbol draw disagrees with its own method about discarding bytes`);
+  refuse(block.refuses === refuses, "instance-draw-exhaustion", `${at} symbol draw states an exhaustion behaviour its bounds do not produce`);
+  refuse(
+    block.on_exhausted === (refuses ? "refuse" : "unreachable"),
+    "instance-draw-exhaustion",
+    `${at} symbol draw states an exhaustion behaviour its bounds do not produce`,
+  );
+  // Uniformity is the fact a player would actually want, and it is NOT stated in
+  // the artifact — it is derived here from the two fields that decide it.
+  const uniform = rejection || block.bounds.every((bound) => 256 % bound === 0);
+  return Object.freeze({
+    method,
+    bounds: Object.freeze([...block.bounds]),
+    uniform,
+    mayRunOut: refuses,
+  });
+}
+
+/**
  * Parse a `per-run-hidden-draw` declaration. `expectedDisclosure` comes from the
  * signed catalog, so a descriptor cannot quietly downgrade `oracle-only` to
  * `per-run-open` and start handing the board out.
@@ -80,8 +159,8 @@ export function refuseNamedInstance(value, at) {
 export function loadHiddenInstanceDeclaration(block, expectedDisclosure, at) {
   refuse(DISCLOSURES.includes(expectedDisclosure), "instance-disclosure", `${at} expects an unknown disclosure`);
   keys(block, [
-    "kind", "derivation_module", "disclosure", "commitment", "draw", "sponge",
-    "practice", "operator_knows_instance",
+    "kind", "derivation_module", "disclosure", "symbol_draw", "commitment", "draw",
+    "sponge", "practice", "operator_knows_instance",
   ], at);
   refuse(block.kind === "per-run-hidden-draw", "instance-kind", `${at} is not a per-run hidden draw`);
   refuse(block.disclosure === expectedDisclosure, "instance-disclosure", `${at} disclosure is not ${expectedDisclosure}`);
@@ -91,6 +170,8 @@ export function loadHiddenInstanceDeclaration(block, expectedDisclosure, at) {
   refuse(block.commitment.published_in === "slot-opening", "instance-commitment", `${at} does not publish its commitment in the slot opening`);
   refuse(block.commitment.opened_after === "slot-close", "instance-commitment", `${at} does not open its commitment at slot close`);
   refuse(integer(block.commitment.binding_bits, 100, 512), "instance-commitment", `${at} declares an implausible commitment binding`);
+
+  const symbolDraw = loadSymbolDraw(block.symbol_draw, at);
 
   keys(block.draw, ["domain", "preimage", "purposes"], `${at} draw`);
   keys(block.draw.purposes, ["judged", "practice"], `${at} draw purposes`);
@@ -113,6 +194,7 @@ export function loadHiddenInstanceDeclaration(block, expectedDisclosure, at) {
   return Object.freeze({
     disclosure: block.disclosure,
     derivationModule: block.derivation_module,
+    symbolDraw,
     bindingBits: block.commitment.binding_bits,
     practicePurpose: block.draw.purposes.practice,
     judgedPurpose: block.draw.purposes.judged,

@@ -39,12 +39,33 @@ const security = (disclosure) => ({
 
 const output = () => ({ requires: "terminal", contribution: "mission_reward", artifact: "mission_artifact" });
 
+/**
+ * The exact `symbol_draw` block `EmitJson.symbolDrawJson` produces for a set of
+ * bounds. It is COMPUTED here, not transcribed, for the same reason the client
+ * recomputes it: a fixture that hand-writes `byte_ceilings` is a fixture that
+ * can agree with a decoder while both disagree with Lean.
+ */
+export function symbolDraw(method, bounds) {
+  const rejection = method === "rejection";
+  return {
+    method,
+    module: rejection ? "Dregg2.Games.PathOfAngels.SeedDraw" : null,
+    function: rejection ? "drawBelow?" : null,
+    bounds: [...bounds],
+    byte_ceilings: bounds.map((bound) => (rejection ? 256 - (256 % bound) : 256)),
+    consumes_rejected_bytes: rejection,
+    on_exhausted: rejection && bounds.some((bound) => 256 % bound !== 0) ? "refuse" : "unreachable",
+    refuses: rejection && bounds.some((bound) => 256 % bound !== 0),
+  };
+}
+
 /** The shared hidden-instance declaration, byte-for-byte the Lean-emitted shape. */
-export function instanceDeclaration(disclosure) {
+export function instanceDeclaration(disclosure, draw = symbolDraw("rejection", [4])) {
   return {
     kind: "per-run-hidden-draw",
     derivation_module: "Dregg2.Games.PathOfAngels.HiddenInstance",
     disclosure,
+    symbol_draw: draw,
     commitment: {
       published_in: "slot-opening",
       domain: "POAC",

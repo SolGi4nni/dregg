@@ -54,33 +54,49 @@ async function canonicalDescriptors() {
   };
 }
 
-test("the exact unsigned candidate catalog is ready for four-game activation", async () => {
-  const missions = await loadMissionCatalog(await canonicalUnsignedBundle());
-  assert.deepEqual(missions.map((mission) => mission.gameId), ["signal-triangulation", "relay-repair", "salvage-lock", "black-box-reconstruction"]);
+test("every enrolled mission is a zero-economy per-run hidden draw, and the manifest carries its descriptor", async () => {
+  // ⚑ NOT A LIST OF GAME IDS. This assertion named four ids and their four
+  // disclosures; counter 10 enrols seven and turned it red with nothing wrong.
+  // What the catalog must satisfy is a PROPERTY of every mission it carries, and
+  // that property does not change when the curator activates one more drill.
+  const bundle = await canonicalUnsignedBundle();
+  const missions = await loadMissionCatalog(bundle);
+  assert.ok(missions.length > 0, "the candidate catalog enrols no mission at all");
   assert.ok(missions.every((mission) => mission.rewardClass === "non-economic-demo" && mission.ballotRegime === "none"));
   // ⚠ Every mission binds a per-run hidden draw. Before counter 7 each carried a
   // `run_seed` in this same unauthenticated-readable file, which named the live
   // instance of every game in the bundle.
   assert.ok(missions.every((mission) => mission.instanceBinding === "per-run-hidden-draw"));
-  assert.deepEqual(missions.map((mission) => mission.instanceDisclosure), ["oracle-only", "per-run-open", "oracle-only", "oracle-only"]);
-  const catalog = (await canonicalUnsignedBundle()).payloads["catalog.json"].json;
+  assert.ok(missions.every((mission) => ["oracle-only", "per-run-open"].includes(mission.instanceDisclosure)));
+  // The disclosure is not free-floating copy: the descriptor's own security block
+  // has to say the same word, or one of the two is describing a different game.
+  for (const mission of missions) {
+    const descriptor = bundle.payloads[mission.descriptorPath];
+    assert.ok(descriptor, `${mission.gameId} is enrolled with no descriptor in the manifest`);
+    assert.equal(descriptor.json.security.instance_visibility, mission.instanceDisclosure, `${mission.gameId} disclosure disagrees with its descriptor`);
+  }
+  const catalog = bundle.payloads["catalog.json"].json;
   assert.ok(catalog.missions.every((mission) => !("run_seed" in mission)));
   assert.ok(catalog.fixtures.every((fixture) => !("run_seed" in fixture)));
 });
 
-test("the pre-Black-Box three-mission catalog is refused, not accepted as a subset", async () => {
+test("a catalog short one mission is refused, not accepted as a subset", async () => {
+  // Dropping ANY single mission must refuse. The old test dropped mission 4 by
+  // number and asserted a three-mission remainder, which stopped meaning anything
+  // the moment mission 4 stopped being the last one.
   const bundle = await canonicalUnsignedBundle();
-  const catalog = structuredClone(bundle.payloads["catalog.json"].json);
-  // The old shape: signal, relay, salvage and their three fixtures, without the
-  // fourth mission. The count pin now demands four, so this must refuse.
-  catalog.missions = catalog.missions.filter((mission) => mission.mission_id !== 4);
-  catalog.fixtures = catalog.fixtures.filter((fixture) => fixture.mission_id !== 4);
-  assert.equal(catalog.missions.length, 3);
-  const altered = {
-    ...bundle,
-    payloads: { ...bundle.payloads, "catalog.json": { ...bundle.payloads["catalog.json"], json: catalog } },
-  };
-  await assert.rejects(loadMissionCatalog(altered), { code: "catalog-missions" });
+  const full = bundle.payloads["catalog.json"].json;
+  for (const dropped of full.missions.map((mission) => mission.mission_id)) {
+    const catalog = structuredClone(full);
+    catalog.missions = catalog.missions.filter((mission) => mission.mission_id !== dropped);
+    catalog.fixtures = catalog.fixtures.filter((fixture) => fixture.mission_id !== dropped);
+    assert.equal(catalog.missions.length, full.missions.length - 1);
+    const altered = {
+      ...bundle,
+      payloads: { ...bundle.payloads, "catalog.json": { ...bundle.payloads["catalog.json"], json: catalog } },
+    };
+    await assert.rejects(loadMissionCatalog(altered), { code: "catalog-missions" }, `dropping mission ${dropped} was accepted`);
+  }
 });
 
 test("canonical Lean-emitted Relay and Salvage bytes match the strict web consumers", async () => {

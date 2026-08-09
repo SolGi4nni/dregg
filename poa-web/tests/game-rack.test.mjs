@@ -141,25 +141,29 @@ test("the signed catalog decides what is open; a presentation record cannot enro
   assert.equal(cards.length, GAME_RACK.length);
   for (const card of cards) assert.ok(CARD_STATES.includes(card.state));
 
-  for (const gameId of ["signal-triangulation", "relay-repair", "salvage-lock", "black-box-reconstruction"]) {
-    assert.equal(byGame.get(gameId).state, "open");
-    assert.equal(byGame.get(gameId).playable, true);
-    assert.equal(byGame.get(gameId).seal, null);
+  // ⚑ READ OFF THE CATALOG, NEVER LISTED HERE. This assertion used to name four
+  // open games and three sealed ones, and counter 10 — which enrols all seven —
+  // turned it red without a single defect behind it. A test that hardcodes the
+  // curator's current decision has to be rewritten every ceremony, and the thing
+  // it is supposed to establish is precisely that the CATALOG decides.
+  const enrolled = new Set(missions.map((mission) => mission.gameId));
+  assert.ok(enrolled.size > 0, "the signed bundle enrols no mission at all");
+  for (const card of cards) {
+    const shouldOpen = enrolled.has(card.gameId) && INSTALLED_GAME_IDS.includes(card.gameId);
+    assert.equal(card.state === "open", shouldOpen, `${card.gameId} is ${card.state} against the signed catalog`);
+    assert.equal(card.playable, shouldOpen);
+    assert.equal(card.seal === null, shouldOpen);
   }
-  // Black Box is now enrolled by the signed counter-8 catalog and installed, so
-  // it opens like the rest. The honest sealed slot — installed but NOT enrolled —
-  // is still a real state, checked directly against a catalog that withholds it:
-  // a presentation record still cannot enrol its own game.
-  const withheld = buildRack({ missions: missions.filter((mission) => mission.gameId !== "black-box-reconstruction"), installed: INSTALLED_GAME_IDS });
-  const sealedBlackBox = withheld.find((card) => card.gameId === "black-box-reconstruction");
-  assert.equal(sealedBlackBox.state, "sealed");
-  assert.match(sealedBlackBox.seal.label, /AWAITING CURATOR ACTIVATION/);
-  // Installed and NOT enrolled: Artificer Logic, Vent Crawl and Deck Descent have
-  // controllers and no mission in this counter's signed catalog, which is the
-  // sealed slot in its natural habitat rather than a synthesised one. `Emit.lean`
-  // enrols all three; the counter that carries their descriptors is unsigned.
-  for (const gameId of ["artificer-logic", "vent-crawl", "deck-descent"]) {
-    const sealed = byGame.get(gameId);
+
+  // The honest sealed slot — installed but NOT enrolled — is checked by
+  // WITHHOLDING each mission in turn, so it stays a live state no matter how many
+  // games the curator has activated. A presentation record cannot enrol itself.
+  for (const gameId of INSTALLED_GAME_IDS) {
+    const withheld = buildRack({
+      missions: missions.filter((mission) => mission.gameId !== gameId),
+      installed: INSTALLED_GAME_IDS,
+    });
+    const sealed = withheld.find((card) => card.gameId === gameId);
     assert.equal(sealed.state, "sealed", `${gameId} is installed, so it cannot be a berth`);
     assert.equal(sealed.playable, false);
     assert.match(sealed.seal.label, /AWAITING CURATOR ACTIVATION/);

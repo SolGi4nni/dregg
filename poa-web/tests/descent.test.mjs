@@ -11,27 +11,26 @@ import {
 import {
   chamberStanding, descentPracticeOracle, distanceHome, loadDeckDescentDescriptor, rowFor, targetOf,
 } from "../src/descent-runtime.js";
-import { pendingAuthority, pendingDescent, pendingPayload } from "./pending-descriptors.mjs";
+import { canonicalAuthority, canonicalDescriptors, canonicalPayload } from "./canonical-descriptors.mjs";
 
 /**
  * THE REAL LEAN-EMITTED DESCENT DESCRIPTOR, THROUGH THE REAL LOADER.
  *
- * ⚠ It comes from `poa/artifacts/poag1-pending/`, not from the signed bundle,
- * because the curator has not signed the counter that carries it. That is the
- * ONLY difference: these are the exact bytes `DeckDescentEmitMain` writes and the
- * exact bytes the ceremony will sign, so what this file establishes is that the
- * client accepts what the emitter produces — which is the half of the flag day a
- * test can hold. When the ceremony lands, `pending-descriptors.mjs` folds into
- * `canonical-descriptors.mjs` and nothing here changes but the import.
+ * ⚑ IT COMES FROM THE SIGNED BUNDLE NOW. Until counter 10 these bytes sat in
+ * `poa/artifacts/poag1-pending/` under a hand-assembled authority envelope,
+ * because no signed catalog named the mission. The curator has signed one that
+ * does, so the fold-in this docblock promised has happened: the envelope is the
+ * real `finiteTableAuthority` off the real catalog, and nothing is hand-written
+ * on either side of the loader any more.
  *
  * A hand-written fixture is deliberately NOT used: the loader pins the emitted
  * 1924-state closure and 17316 rows, and a fixture that could satisfy that pin
  * would be a second copy of the table maintained by hand.
  */
-const AUTHORITY = pendingAuthority(5);
+const AUTHORITY = await canonicalAuthority("deck-descent");
 
 async function descent() {
-  return { json: await pendingPayload("deck-descent"), descriptor: await pendingDescent() };
+  return { json: await canonicalPayload("deck-descent"), descriptor: (await canonicalDescriptors()).descent };
 }
 
 test("the emitted descent descriptor loads through the shared finite-table engine", async () => {

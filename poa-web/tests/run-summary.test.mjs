@@ -25,7 +25,6 @@ import {
 import { salvagePracticeOracle } from "../src/salvage-runtime.js";
 import { artificerPracticeOracle } from "../src/artificer-runtime.js";
 import { canonicalDescriptors } from "./canonical-descriptors.mjs";
-import { pendingArtificer } from "./pending-descriptors.mjs";
 
 class FakeElement {
   constructor(tagName) {
@@ -261,7 +260,7 @@ test("a run the table has stopped is LOST, and it is not `solved` and not `unsol
   // screen never appeared at all — and if the clock had been allowed to run out it
   // would then have printed `Cleared it.`, because `run.terminal` was being read as
   // "solved". Both of those are checked here, on the bytes, not on a stub.
-  const artificer = await pendingArtificer();
+  const artificer = (await canonicalDescriptors()).artificer;
   const member = 0;
   const oracle = artificerPracticeOracle(artificer, member);
   const drawn = artificer.instance.manual.rules[member];

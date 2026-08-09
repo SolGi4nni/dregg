@@ -17,6 +17,19 @@ import { loadHiddenInstanceDeclaration, loadSlotOpening, refuseNamedInstance } f
  * saying when each fires. The machine shapes (Relay, Salvage) emit a total table
  * and a client dispatches rows out of it; here there is nothing to dispatch.
  *
+ * ⚠ WHAT THE WITNESSES DID AND DID NOT CLOSE. The descriptor now also ships
+ * `refusal_precedence` and one `refusal_witnesses` entry per reason: an instance,
+ * a legal prefix, one further probe, and the reason the kernel reports there.
+ * Those are EXAMPLES, not a predicate. Five witnessed states do not tell a client
+ * when `settled-slot` fires in the 2^25 states nobody wrote down, so the gap
+ * below is NARROWER and still open — and a client that generalised five examples
+ * into a rule would have authored the rule out of thin air, which is worse than
+ * not having it. What the witnesses buy is a CHECK: two of the five reasons are
+ * defined by emitted numbers (`required_per_instance`, `action_limit`), so their
+ * witnesses are replayed through the oracle and refused if they do not land where
+ * they claim. The other three are checked for shape only, and `loadOracle`
+ * reports which is which rather than implying it checked all five.
+ *
  * So this client does NOT enforce those refusals, and must not: writing "a probe
  * whose slot is already settled is refused" in JavaScript is authoring a rule,
  * which is the drift this repo pays for over and over. What it does instead:
@@ -164,13 +177,85 @@ function loadOracle(block, actionLimit, at) {
   });
 }
 
+/**
+ * The two reasons the descriptor DEFINES with a number of its own, and can
+ * therefore be replayed for. `solved` is `required_per_instance` settling probes;
+ * `turn-limit` is `action_limit` probes spent without reaching that. The other
+ * three name a condition no emitted field pins down, so they are checked for
+ * shape and left alone.
+ */
+const REPLAYABLE_REASONS = Object.freeze(["solved", "turn-limit"]);
+
+/**
+ * Decode the refusal witnesses. Each one is a state the kernel says it refuses
+ * at, and the two that emitted numbers define are REPLAYED against the oracle
+ * rather than believed.
+ */
+function loadRefusalWitnesses(witnesses, oracle, actionLimit, vocabulary, at) {
+  refuse(
+    Array.isArray(witnesses) && witnesses.length === vocabulary.length,
+    "blackbox-witness",
+    `${at} must carry one witness per declared refusal reason`,
+  );
+  const byId = new Map(oracle.probes.map((probe) => [probe.id, probe]));
+  const seen = new Set();
+  const loaded = witnesses.map((witness, index) => {
+    exactKeys(witness, ["reason", "instance", "history", "probe"], `${at}[${index}]`);
+    refuse(vocabulary.includes(witness.reason), "blackbox-witness", `${at}[${index}] names a reason outside the declared vocabulary`);
+    refuse(!seen.has(witness.reason), "blackbox-witness", `${at} witnesses ${witness.reason} twice and leaves another reason unwitnessed`);
+    seen.add(witness.reason);
+    refuse(integer(witness.instance, 0, oracle.instanceSpace - 1), "blackbox-witness", `${at}[${index}] names an instance outside the emitted space`);
+    refuse(
+      Array.isArray(witness.history) && witness.history.length <= actionLimit &&
+        witness.history.every((id) => byId.has(id)) && new Set(witness.history).size === witness.history.length,
+      "blackbox-witness",
+      `${at}[${index}] history is not a legal prefix of distinct declared probes`,
+    );
+    const probe = byId.get(witness.probe);
+    refuse(probe !== undefined, "blackbox-witness", `${at}[${index}] probes something the oracle does not declare`);
+
+    // Replay the prefix through the emitted row. This is a LOOKUP, not a rule:
+    // the row is the descriptor's own answer for that instance.
+    const row = oracle.table[witness.instance];
+    const settled = witness.history.reduce(
+      (count, id) => count + (row[byId.get(id).index] === oracle.solvingClassId ? 1 : 0),
+      0,
+    );
+    if (witness.reason === "solved") {
+      refuse(
+        settled === oracle.requiredPerInstance,
+        "blackbox-witness",
+        `${at} claims a solved refusal at a prefix the emitted oracle settles ${settled} of ${oracle.requiredPerInstance} times`,
+      );
+    } else if (witness.reason === "turn-limit") {
+      refuse(
+        witness.history.length === actionLimit && settled < oracle.requiredPerInstance,
+        "blackbox-witness",
+        `${at} claims a turn-limit refusal at a prefix that is not ${actionLimit} unsettled probes`,
+      );
+    }
+    return Object.freeze({
+      reason: witness.reason,
+      instance: witness.instance,
+      history: Object.freeze([...witness.history]),
+      probe: witness.probe,
+      settled,
+      // Said out loud per witness, so nothing downstream can read a shape check
+      // as evidence that this client verified the reason fires here.
+      replayed: REPLAYABLE_REASONS.includes(witness.reason),
+    });
+  });
+  return Object.freeze(loaded);
+}
+
 /** Decode Black Box Reconstruction's authenticated Lean-emitted oracle. */
 export function loadBlackBoxDescriptor(game, mission) {
   refuseNamedInstance(game, "Black Box descriptor");
   refuseNamedInstance(game.instance, "Black Box descriptor instance");
   exactKeys(game, [
     "format", "schema_version", "game_id", "ruleset", "engine_module", "action_limit",
-    "security", "instance", "oracle", "refusals", "output",
+    "security", "instance", "oracle", "refusals", "refusal_precedence",
+    "refusal_witnesses", "output",
   ], "Black Box descriptor");
   refuse(game.format === FORMAT && game.schema_version === 1, "blackbox-format", "unsupported Black Box descriptor");
   refuse(
@@ -201,6 +286,17 @@ export function loadBlackBoxDescriptor(game, mission) {
   );
 
   const oracle = loadOracle(game.oracle, game.action_limit, "Black Box oracle");
+  // ⚠ Precedence is pinned, not read. `refusals` is an ORDERED vocabulary and
+  // every witness's reason is the FIRST applicable one at its state; under any
+  // other precedence the same five witnesses would attest different claims.
+  refuse(
+    game.refusal_precedence === "first-applicable-in-declared-order",
+    "blackbox-precedence",
+    "Black Box declares a refusal precedence this client cannot read its witnesses under",
+  );
+  const witnesses = loadRefusalWitnesses(
+    game.refusal_witnesses, oracle, game.action_limit, REFUSALS, "Black Box refusal witnesses",
+  );
   return Object.freeze({
     gameId: game.game_id,
     ruleset: game.ruleset,
@@ -211,6 +307,8 @@ export function loadBlackBoxDescriptor(game, mission) {
     instance: declaration,
     oracle,
     refusals: Object.freeze([...game.refusals]),
+    refusalPrecedence: game.refusal_precedence,
+    refusalWitnesses: witnesses,
     security: Object.freeze({
       classification: game.security.classification,
       instanceVisibility: game.security.instance_visibility,
