@@ -19073,6 +19073,10 @@ mod tests {
     #[ignore = "measurement harness — run explicitly with --ignored --nocapture (~90 s)"]
     async fn loss_sync_measurement() {
         use std::sync::atomic::Ordering;
+        // ⚠ `0eccd772d` left this harness naming `Instant` with no `Instant` in
+        // scope, so `dregg-node`'s ENTIRE lib-test binary failed to compile —
+        // every unit test in the crate, for every lane, not just this one.
+        use std::time::Instant;
 
         let baseline = std::env::var_os("DREGG_MEASURE_BASELINE").is_some();
         SYNC_BASELINE_FOR_MEASUREMENT.store(baseline, Ordering::Relaxed);

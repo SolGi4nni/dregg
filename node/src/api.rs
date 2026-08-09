@@ -69,6 +69,21 @@ pub struct StatusResponse {
     /// three original conjuncts was TRUE, and none of them was about the other
     /// members. `healthy` now also requires `quorum_reachable` and
     /// `!finality_stalled` — see those fields.
+    ///
+    /// ⚑ 2026-08-09 — A SIXTH, because the partition conjuncts still could not
+    /// go false for the JOINER. Measured on port 8465: 345 s of refused join
+    /// requests, never a committee member, `healthy: true` throughout. A
+    /// non-member runs on its OWN single-key constitution, so its threshold is
+    /// 1 — `quorum_reachable` is trivially true (it counts toward its own
+    /// quorum) and `finality_stalled` is deliberately inert below threshold 2.
+    /// Both partition legs are structurally blind to it. `healthy` now also
+    /// requires `join_member || !ever_asked_to_join`: a node that has proposed
+    /// and heard nothing says so. See the `join_*` fields.
+    ///
+    /// This means a legitimately-joining node reports `healthy: false` for the
+    /// whole interval between its first join request and admission. That is the
+    /// honest reading, not a regression — until the committee ratifies it, it
+    /// finalizes nothing.
     pub healthy: bool,
     /// CONFIGURED peers: the length of the `--federation-peers` list this
     /// process was launched with. It is a constant of the deployment and says
@@ -111,6 +126,41 @@ pub struct StatusResponse {
     /// which has no cross-node quorum to lose.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finality_stalled: Option<bool>,
+    // ─── The JOINER's own admission state (`blocklace_sync::JoinProgress`) ───
+    //
+    // Present ONLY on a node that has actually run the join path — it asked to
+    // join, or it is a member that came in through a join. All five are absent
+    // on a genesis member, whose `JoinProgress` is `default()` and would
+    // otherwise publish a meaningless `join_member: false`.
+    //
+    // ⚑ These were populated on `BlocklaceHandle` and read by NOTHING. The
+    // struct's own doc said "for `/status`" and the handle field's said
+    // "surfaced by `/status`", for a value `api.rs` never mentioned; the wedged
+    // joiner that motivated the type went on reporting `healthy: true`.
+    /// True once this node's key is a constitutional participant. `false` here
+    /// (with `join_requests_sent > 0`) is the wedged joiner, and it is the
+    /// conjunct that now drives `healthy` false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_member: Option<bool>,
+    /// How many join requests this node has sent over the narrow join channel.
+    /// `> 0` with `join_member: false` = "I have asked and I am not in".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_requests_sent: Option<u64>,
+    /// How many live gossip peers the LAST join request actually reached. `0`
+    /// distinguishes "shouting into a void" (no transport to any peer) from
+    /// "delivered, awaiting sponsorship".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_last_request_peers: Option<usize>,
+    /// Seconds since this node first asked to join, while still not a member.
+    /// The 345 that the measured joiner had no way to report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_waiting_secs: Option<u64>,
+    /// True once a `Join` proposal for OUR key has been seen in the
+    /// constitution — proof the request demonstrably reached a member. This is
+    /// the difference between "waiting for approval" (proposal open, needs
+    /// votes) and "heard nothing at all" (nobody sponsored it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_proposal_seen: Option<bool>,
     /// Blocks whose VERIFIED finalization-vote tally holds conflicting
     /// `(merkle_root, receipt_stream_root)` pairs — hybrid-verified committee
     /// members really attested different finalized states
@@ -2825,6 +2875,77 @@ fn status_exposes_private_counts() -> bool {
         .unwrap_or(false)
 }
 
+/// Everything `/status`'s `healthy` verdict is allowed to depend on, gathered
+/// as plain values so the verdict itself is a pure function that can be
+/// exhibited at BOTH poles without a network, a clock, or a node.
+///
+/// The `Option`s mean "no consensus handle is attached" — there is no committee
+/// to be reachable from and no join path to have run — not "unknown".
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct HealthFacts {
+    /// The store answered `latest_attested_root()`.
+    pub store_ok: bool,
+    /// A blocklace consensus handle is attached.
+    pub consensus_live: bool,
+    /// Blocks in the local DAG (a genesis block counts).
+    pub block_count: usize,
+    /// `FederationLivenessSnapshot::quorum_reachable` — can a quorum be
+    /// assembled from the members currently reaching us?
+    pub quorum_reachable: Option<bool>,
+    /// `FederationLivenessSnapshot::finality_stalled`.
+    pub finality_stalled: Option<bool>,
+    /// This node ran the join path at all (`JoinProgress` is non-default):
+    /// it has sent a join request, or it is a member that came in through one.
+    pub ever_asked_to_join: bool,
+    /// This node's key is a constitutional participant.
+    pub join_member: bool,
+}
+
+/// The `/status` health verdict.
+///
+/// Six conjuncts, three generations of them, and each generation exists because
+/// the previous set could not go false for a failure that had already happened
+/// in production:
+///
+///   1. `store_ok && consensus_live && block_count > 0` — this process is up.
+///      All three are about THIS process alone, which is why they all held for
+///      210 s of a quorum-losing 2-of-4 partition.
+///   2. `quorum_reachable && !finality_stalled` — the committee is still there.
+///      Both are read against the vote collector's live threshold, so on a
+///      non-member's own single-key constitution (threshold 1) they are
+///      trivially satisfied: it counts toward its own quorum and the stall leg
+///      is deliberately inert below threshold 2.
+///   3. `join_member || !ever_asked_to_join` — THIS node got in. The only
+///      conjunct that can go false for the wedged joiner measured on port 8465:
+///      345 s of refused join requests, member of nothing, `healthy: true`.
+///
+/// A node with no consensus handle fails at conjunct 2 of generation 1
+/// (`consensus_live`), so the absent liveness/join facts are not permitted to
+/// make the verdict TRUE on their own — they default to the non-accusing value
+/// and `consensus_live` carries the refusal.
+/// Whether this node's [`JoinProgress`](crate::blocklace_sync::JoinProgress) is
+/// something `/status` should publish at all.
+///
+/// `Some` exactly when the join path RAN: the node has sent at least one join
+/// request, or it is a member that came in through one. A genesis member never
+/// enters the loop, so its progress is `default()` — and publishing that
+/// verbatim would put `join_member: false` on the wire for a node that is a
+/// full participant and was never a candidate. Absent is the honest answer
+/// there; the five fields say something only where there is something to say.
+pub(crate) fn reportable_join_progress(
+    progress: &crate::blocklace_sync::JoinProgress,
+) -> Option<crate::blocklace_sync::JoinProgress> {
+    (progress.member || progress.requests_sent > 0).then(|| progress.clone())
+}
+
+pub(crate) fn status_healthy(facts: HealthFacts) -> bool {
+    let up = facts.store_ok && facts.consensus_live && facts.block_count > 0;
+    let can_finalize =
+        facts.quorum_reachable.unwrap_or(true) && !facts.finality_stalled.unwrap_or(false);
+    let admitted = facts.join_member || !facts.ever_asked_to_join;
+    up && can_finalize && admitted
+}
+
 async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     // Read the real blocklace DAG state first (separate lock).
     let blocklace = state.blocklace().await;
@@ -2850,6 +2971,17 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     let turns_in_flight = blocklace
         .as_ref()
         .map(|handle| handle.in_flight_turns.len());
+    // DID THIS NODE EVER GET IN? The partition legs above are read against the
+    // vote collector's LIVE threshold, and a non-member's threshold is 1 (its
+    // own single-key constitution), so neither of them can go false for a
+    // joiner that reached no one. This is the fact that can. Reported ONLY when
+    // the join path actually ran — a genesis member's `JoinProgress` is
+    // `default()` and publishing `join_member: false` for it would be a lie of
+    // a different shape.
+    let join = match &blocklace {
+        Some(handle) => reportable_join_progress(&*handle.join_progress.read().await),
+        None => None,
+    };
 
     let s = state.read().await;
 
@@ -2891,19 +3023,19 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     // least one real block. block_count > 0 (rather than dag_height > 0) so a
     // single genesis block at seq 0 still counts as "producing".
     //
-    // ⚑ AND — since 2026-08-08 — the node must still be able to FINALIZE. All
-    // three conjuncts above are about this process alone, so all three stayed
-    // true for the entire 210 s of a quorum-losing 2-of-4 partition: the store
-    // was readable, the consensus task was attached, and the DAG kept growing on
-    // this node's own heartbeat blocks while not one height was agreed. A health
-    // signal that cannot go false for a total loss of finality is not a health
-    // signal. `quorum_reachable` is the "I have lost the committee" leg;
-    // `finality_stalled` is the "I have proposed and heard nothing" leg (inert on
-    // a threshold-1 deployment, which has no cross-node quorum to lose).
-    let can_finalize = liveness
-        .map(|l| l.quorum_reachable && !l.finality_stalled)
-        .unwrap_or(true);
-    let healthy = store_ok && consensus_live && block_count > 0 && can_finalize;
+    // ⚑ AND — since 2026-08-08 — the node must still be able to FINALIZE, and
+    // — since 2026-08-09 — it must actually be IN the committee it is claiming
+    // health on behalf of. The verdict is a pure function of these facts so
+    // both poles are exhibitable without a federation; see `status_healthy`.
+    let healthy = status_healthy(HealthFacts {
+        store_ok,
+        consensus_live,
+        block_count,
+        quorum_reachable: liveness.map(|l| l.quorum_reachable),
+        finality_stalled: liveness.map(|l| l.finality_stalled),
+        ever_asked_to_join: join.is_some(),
+        join_member: join.as_ref().is_some_and(|p| p.member),
+    });
 
     let lean_producer = s.lean_producer_enabled;
     let full_turn_proving = s.full_turn_proving_enabled;
@@ -2927,6 +3059,11 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
         ever_reached_quorum: liveness.map(|l| l.ever_reached_quorum),
         seconds_since_quorum: liveness.map(|l| l.seconds_since_quorum),
         finality_stalled: liveness.map(|l| l.finality_stalled),
+        join_member: join.as_ref().map(|p| p.member),
+        join_requests_sent: join.as_ref().map(|p| p.requests_sent),
+        join_last_request_peers: join.as_ref().map(|p| p.last_request_peers),
+        join_waiting_secs: join.as_ref().map(|p| p.waiting_secs),
+        join_proposal_seen: join.as_ref().map(|p| p.proposal_seen),
         verified_root_splits,
         turns_in_flight,
         latest_height,
@@ -10821,6 +10958,141 @@ struct QueueAtomicTxResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⚑ THE JOINER POLE OF `/status`. Measured 2026-08-09 on port 8465: a node
+    /// that asked to join and was refused for 345 s reported `"healthy": true`
+    /// the whole time.
+    ///
+    /// The 2026-08-08 partition conjuncts could not catch it and were never
+    /// going to: they are read against the vote collector's LIVE threshold, and
+    /// a non-member runs on its own single-key constitution, so
+    /// `quorum_reachable` is trivially true (it counts toward its own quorum of
+    /// 1) and `finality_stalled` is deliberately inert below threshold 2. This
+    /// test pins BOTH poles — the honest "healthy" and the honest refusal — and
+    /// asserts the pre-fix verdict on the same facts, so it cannot quietly
+    /// become a test of nothing.
+    #[test]
+    fn a_joiner_that_has_proposed_and_heard_nothing_is_not_healthy() {
+        // Exactly the wedged joiner: store fine, consensus task attached, its
+        // own genesis block in the DAG, threshold 1 so both partition legs are
+        // satisfied — and a member of nothing after 345 s of asking.
+        let wedged = HealthFacts {
+            store_ok: true,
+            consensus_live: true,
+            block_count: 1,
+            quorum_reachable: Some(true),
+            finality_stalled: Some(false),
+            ever_asked_to_join: true,
+            join_member: false,
+        };
+
+        // THE MUTATION IS PRESENT: the five-conjunct verdict this replaces says
+        // `true` about these very facts. If this line ever stops holding, the
+        // case below has stopped being the failure it was named for.
+        let pre_fix = wedged.store_ok
+            && wedged.consensus_live
+            && wedged.block_count > 0
+            && wedged.quorum_reachable.unwrap_or(true)
+            && !wedged.finality_stalled.unwrap_or(false);
+        assert!(
+            pre_fix,
+            "the wedged joiner must satisfy every pre-2026-08-09 conjunct, or this test is \
+             exhibiting some other failure"
+        );
+        assert!(
+            !status_healthy(wedged),
+            "a node that has asked to join and is not a member must not report healthy"
+        );
+
+        // POLE 2 — the same node ONCE ADMITTED is healthy. The conjunct refuses
+        // the wedge, not the joiner.
+        assert!(status_healthy(HealthFacts {
+            join_member: true,
+            ..wedged
+        }));
+
+        // POLE 3 — a genesis member never ran the join path and is unaffected.
+        assert!(status_healthy(HealthFacts {
+            ever_asked_to_join: false,
+            join_member: false,
+            ..wedged
+        }));
+
+        // The 2026-08-08 legs still bite, on a node that IS a member: the
+        // minority side of a quorum-losing partition, and a real stall.
+        let member = HealthFacts {
+            ever_asked_to_join: true,
+            join_member: true,
+            ..wedged
+        };
+        assert!(!status_healthy(HealthFacts {
+            quorum_reachable: Some(false),
+            ..member
+        }));
+        assert!(!status_healthy(HealthFacts {
+            finality_stalled: Some(true),
+            ..member
+        }));
+
+        // And the generation-1 legs: no store, no consensus handle, no blocks.
+        assert!(!status_healthy(HealthFacts {
+            store_ok: false,
+            ..member
+        }));
+        assert!(!status_healthy(HealthFacts {
+            consensus_live: false,
+            ..member
+        }));
+        assert!(!status_healthy(HealthFacts {
+            block_count: 0,
+            ..member
+        }));
+        // A node with no consensus handle has no liveness and no join facts.
+        // Those absences must not be able to CARRY the verdict — `consensus_live`
+        // refuses it.
+        assert!(!status_healthy(HealthFacts {
+            store_ok: true,
+            consensus_live: false,
+            block_count: 1,
+            ..HealthFacts::default()
+        }));
+    }
+
+    /// A genesis member publishes NO join fields — `JoinProgress::default()` on
+    /// the wire would say `join_member: false` about a full participant, which
+    /// is a lie of a different shape. `Some` exactly when the join path ran.
+    #[test]
+    fn only_a_node_that_ran_the_join_path_publishes_join_fields() {
+        use crate::blocklace_sync::JoinProgress;
+
+        assert!(
+            reportable_join_progress(&JoinProgress::default()).is_none(),
+            "a genesis member has no join state to report"
+        );
+
+        let asked = JoinProgress {
+            requests_sent: 23,
+            last_request_peers: 4,
+            waiting_secs: 345,
+            ..JoinProgress::default()
+        };
+        let reported = reportable_join_progress(&asked).expect("a node that asked must report");
+        assert!(!reported.member);
+        assert_eq!(reported.waiting_secs, 345);
+        assert!(
+            !reported.proposal_seen,
+            "no proposal for our key was ever opened — 'heard nothing', not 'awaiting votes'"
+        );
+
+        // A member that came in through a join keeps reporting, now with the
+        // answer: it got in.
+        let admitted = JoinProgress {
+            member: true,
+            requests_sent: 0,
+            ..JoinProgress::default()
+        };
+        assert!(reportable_join_progress(&admitted).is_some_and(|p| p.member));
+    }
 
     /// ⚑ THE UNAUTHENTICATED SURFACE IS PINNED HERE, AND THIS TEST IS WHY.
     ///

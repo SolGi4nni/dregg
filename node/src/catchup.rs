@@ -671,7 +671,21 @@ pub fn apply_with_buffering(
     // already-seen ids do not set the flag, so an epoch that makes no progress is
     // the last: the loop terminates after at most (inserts + distinct holds)
     // epochs.
-    let mut epoch_dirty = false;
+    //
+    // ⚠ THE PARAGRAPH ABOVE DESCRIBES A MACHINE THAT IS NOT BUILT YET. `0eccd772d`
+    // landed its DECLARATIONS (`epoch_dirty`, `seen_holds`) without its body: the
+    // loop below still sets only the insert flag and still re-offers only the ack
+    // hold, so `epoch_dirty` had no assignments and the four `retry_ack` uses had
+    // no binding — `dregg-node` did not compile at that commit, for every lane in
+    // the tree. This restores the name the BODY uses; it does not implement the
+    // redesign. What is still missing, exactly: a FIRST-TIME hold must dirty the
+    // epoch (that is what `seen_holds` is for), and an epoch must re-offer orphans
+    // whose closure is satisfiable in-box, not just ack-held blocks.
+    //
+    // `seen_holds` is deliberately left in place, unused: its warning is the only
+    // live marker that the second half is outstanding. Delete it when you build
+    // the machine, not to quiet the build.
+    let mut retry_ack = false;
     let mut seen_holds: HashSet<BlockId> = HashSet::new();
 
     // Process the incoming batch, then drain any cascades, then retry epochs.
