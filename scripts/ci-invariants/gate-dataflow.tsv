@@ -90,6 +90,16 @@ node/src/finalization_votes.rs	verified_quorum_reached	verified_finalization_quo
 # blocking FFI thread).
 node/src/blocklace_sync.rs	finality_belt_disposition	belt_gate\b	belt_gate_bypass_allowed	twin#8b no verified finality projection => FinalityAdvanceRefusal::FinalityGateUnavailable, the poll finalizes NOTHING; the un-gated Rust ordering::tau never reaches the executor
 
+# ── the ES ROUND-ADVANCE gate (CM Alg. 4:67-75) — the round producer consults the verified
+# `dregg_round_advance` before honoring a `RoundPlan::Advance`. The Err arm (export absent) maps to
+# `EsAdvanceConsult::ExportUnavailable` — a refusal-class value: `blocklace_sync::es_advance_hold`
+# HOLDS on it (produces NO block) unless `es_gate_bypass_allowed` (archive-less build /
+# DREGG_ALLOW_UNVERIFIED_CONSENSUS=1, both revoked by DREGG_REQUIRE_LEAN=1) declares the bypass
+# back to the cordiality-only advance. That two-stage disposition (enum here, bypass in the
+# caller) is beyond this checker's region shapes, so the row pins the CONSULT's Err-arm refusal;
+# the bypass predicate mirrors `belt_gate_bypass_allowed` line-for-line.
+node/src/round_advance_gate.rs	consult	shadow_round_advance\(	-	ES round-advance: no dregg_round_advance export => EsAdvanceConsult::ExportUnavailable, the producer HOLDS the round (no block this tick) unless the declared bypass in es_advance_hold
+
 # ── twin#3b the NODE-LEVEL 2PC DECISION gate — THE THIRD CONFIRMED MEMBER OF THE CLASS ────────
 # Twin#3's row above covers `coord/src/atomic.rs::evaluate_votes`. This is the OTHER 2PC decision
 # site: `node/src/coord_gate.rs::authoritative_decision`, which api.rs::atomic_vote and
