@@ -422,7 +422,7 @@ test("each custody blocker is a checkable fact about the node", async () => {
   // was hiding behind the wasm one, and it was found by DRIVING, not by reading.
   assert.deepEqual(
     CUSTODY_BLOCKERS.map((blocker) => blocker.code),
-    ["claim-cell-underivable"],
+    ["settle-node-curtained"],
   );
   assert.deepEqual(
     FALLEN_WALLS.map((wall) => wall.code),
@@ -431,11 +431,12 @@ test("each custody blocker is a checkable fact about the node", async () => {
       "claim-carrier-unbuildable",
       "wasm-carrier-absent",
       "session-routes-authenticated",
+      "claim-cell-underivable",
     ],
   );
   for (const wall of FALLEN_WALLS) {
     assert.ok(wall.was.length > 0 && wall.landed.length > 0, `${wall.code} must say what it was and what landed`);
-    assert.equal(wall.fell, "2026-08-07");
+    assert.match(wall.fell, /^2026-08-(07|09)$/);
   }
   for (const blocker of [...CUSTODY_BLOCKERS, SIGNER_ABSENT, NODE_BEHIND, NODE_SILENT]) {
     assert.ok(blocker.needs.length > 0, `${blocker.code} must name what would unblock it`);
@@ -501,46 +502,57 @@ test("each custody blocker is a checkable fact about the node", async () => {
   // would need to build a carrier, and the page does not build carriers — the
   // extension does, from `{schema, missionId, transcript}`.
   //
-  // What stands is one step further in. `background.ts` derives the player cell
-  // through `wasm.cell_id_for_pubkey`, and that function has never existed: not
-  // in `wasm/src/lib.rs`, not in the shipped glue, not in any commit. So every
-  // claim refuses at "Could not derive the active player's canonical cell",
-  // before the node is ever asked — on live beta too.
+  // ⚑ INVERTED 2026-08-09, in place, with the same both-directions discipline.
+  // This block used to assert that the shipped glue did NOT export
+  // `cell_id_for_pubkey` — the artifact fact `claim-cell-underivable` stood on.
+  // The bundle was rebuilt against the binding, so it now asserts the OPPOSITE:
+  // if a stale glue is ever shipped again, this reds and the copy that tells a
+  // player "settling stops at the cell" has to come back.
   const background = await readFile(new URL("../../extension/src/background.ts", import.meta.url), "utf8");
   assert.match(background, /w\.cell_id_for_pubkey === "function"/,
-    "the cell derivation moved; re-anchor this wall against what background.ts now calls");
-  assert.match(background, /Could not derive the active player's canonical cell/,
-    "the refusal this wall is named for left background.ts");
+    "the cell derivation moved; re-anchor this against what background.ts now calls");
 
-  // ⚑ SOURCE AND ARTIFACT ARE ASKED SEPARATELY, and that separation IS the
+  // ⚑ SOURCE AND ARTIFACT ARE STILL ASKED SEPARATELY, and that separation IS the
   // lesson of `84907fcf4`: the question to ask a gate is not "is this check
-  // correct" but "is it looking at the artifact a user receives". The binding is
-  // in the source; the bundle a player loads does not carry it; the wall stands
-  // on the ARTIFACT, because that is what refuses their claim.
+  // correct" but "is it looking at the artifact a user receives". A player runs
+  // the bundle, not the source, so the binding existing is NOT the fix — the
+  // bundle carrying it is.
   const wasmSource = await readFile(new URL("../../wasm/src/lib.rs", import.meta.url), "utf8");
   assert.match(wasmSource, /pub fn cell_id_for_pubkey/,
-    "the cell binding left wasm/src/lib.rs — this wall's fix regressed");
+    "the cell binding left wasm/src/lib.rs — this wall's fix regressed at the source");
   const glue = await readFile(new URL("../../extension/dregg_wasm.js", import.meta.url), "utf8");
-  assert.ok(!glue.includes("cell_id_for_pubkey"),
-    "the shipped glue exports cell_id_for_pubkey now — claim-cell-underivable has FALLEN, move it to FALLEN_WALLS");
+  assert.ok(glue.includes("cell_id_for_pubkey"),
+    "the SHIPPED glue lost cell_id_for_pubkey — claim-cell-underivable is STANDING again, "
+    + "move it back out of FALLEN_WALLS and rebuild (`cd extension && ./build.sh wasm`)");
 
-  // ⚠ THE GUARD MUST BE ABLE TO GO RED. The assertion above is negative, and a
-  // negative over a file that failed to load passes vacuously forever. The
-  // carrier the bundle gained today (`wasm-carrier-absent`, in FALLEN_WALLS) is
-  // the positive control: the same read has to FIND something.
+  // ⚠ AND THE GUARD MUST STILL BE ABLE TO GO RED — the positive control stays,
+  // because a read over a file that failed to load would pass every `includes`
+  // above just as vacuously as it passed the negatives they replaced.
   assert.ok(glue.includes("build_poa_signal_claim_turn"),
     "the shipped glue did not load, or the carrier is missing again");
   assert.match(wasmSource, /pub fn build_poa_signal_claim_turn/,
-    "wasm/src/lib.rs did not load — the negative above is vacuous");
+    "wasm/src/lib.rs did not load — the assertions above are vacuous");
 
-  // And the wall says WHICH of the two it stands on, so nobody reads "the fix is
-  // in the source" as "the path works".
-  assert.match(CUSTODY_BLOCKERS[0].what, /SHIPPED/);
-  assert.match(CUSTODY_BLOCKERS[0].detail, /THE ARTIFACT DOES NOT CARRY IT/);
+  // ⚑ AND THE WALL THAT ACTUALLY BITES IS NOW A NODE FACT, not an artifact one.
+  // It must say it was MEASURED and name the proxy rather than the node's bearer
+  // layer — reading a curtain 401 as a stale deployment is the misdiagnosis this
+  // entry exists to prevent.
+  assert.match(CUSTODY_BLOCKERS[0].detail, /MEASURED 2026-08-09/);
+  assert.match(CUSTODY_BLOCKERS[0].detail, /www-authenticate/);
+  assert.match(CUSTODY_BLOCKERS[0].detail, /NOT the node's bearer layer/);
+  // It must keep the asymmetry that makes the copy actionable: playing works,
+  // settling does not, and the reason is which origin each one talks to.
+  assert.match(CUSTODY_BLOCKERS[0].detail, /THE PAGE IS NOT BLOCKED BY IT AND THE EXTENSION IS/);
+  // And it must not offer a workaround this page would be wrong to take.
+  assert.match(CUSTODY_BLOCKERS[0].detail, /NOTHING HERE IS WORKED AROUND/);
 
-  // And the wall says so about itself, rather than repeating a dead reason.
-  assert.match(CUSTODY_BLOCKERS[0].detail, /HAD NEVER EXISTED/);
-  assert.match(CUSTODY_BLOCKERS[0].detail, /MEASURED BY DRIVING/);
+  // The fallen cell wall must say what landed, and must NOT claim settling works.
+  const cell = FALLEN_WALLS.find((wall) => wall.code === "claim-cell-underivable");
+  assert.match(cell.landed, /IT DID NOT FALL BECAUSE SETTLING WORKS/);
+  assert.match(cell.landed, /A wall that fell is not a leg that runs/);
+  // ⚠ The probe that hid it is still silent, and the entry has to say so — the
+  // instance is closed, the CLASS is not.
+  assert.match(cell.landed, /THE PROBE IS STILL SILENT/);
   // The fallen carrier wall must say WHY it fell, and it must not claim the path
   // now works — the distinction the whole FALLEN_WALLS list exists to keep.
   const carrier = FALLEN_WALLS.find((wall) => wall.code === "claim-carrier-unbuildable");

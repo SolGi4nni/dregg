@@ -61,19 +61,43 @@
  * below drives THAT — the shipped page function, served off disk — rather than
  * `window.dregg` directly.
  *
- * # The two walls that STAND, and what each one actually is
+ * # WALL A FELL on 2026-08-09, and what stands is no longer on this side of the wire
  *
- * WALL A — **the extension cannot derive the player's cell.** THIS IS THE ONE THE
- *   CHAIN HITS. `background.ts::clientCellIdHex` calls
+ * FELL — **the extension can derive the player's cell now.** This was the one the
+ *   chain hit. `background.ts::clientCellIdHex` calls
  *   `wasm.cell_id_for_pubkey(pubkeyHex, "default")` behind a `typeof …` probe
  *   that falls through to `return null`, and that function had never existed in
- *   any build — not in `wasm/src/lib.rs`, not in the glue, not in any commit. So
- *   every claim ever submitted refused at `Could not derive the active player's
- *   canonical cell`, on live beta too, and nothing said a function had been
- *   looked for and not found. It was INVISIBLE until the carrier wall fell,
- *   because it sits behind it. The binding is in `wasm/src/lib.rs` now; the
- *   BUNDLE has not been rebuilt against it, and a player runs the bundle. Both
- *   poles are asserted below, source and artifact separately.
+ *   any SHIPPED bundle. So every claim ever submitted refused at `Could not
+ *   derive the active player's canonical cell`, on live beta too, and nothing
+ *   said a function had been looked for and not found. It was INVISIBLE until
+ *   the carrier wall fell, because it sits behind it. The binding landed in
+ *   `wasm/src/lib.rs` in `c71edfbe2`; the bundle was rebuilt against it
+ *   (`cd extension && ./build.sh wasm`, provenance `git 29951ddba`), and
+ *   `check-wasm-freshness.sh` is GREEN. The artifact pole below generalized with
+ *   the fix rather than going green on one name: it now sweeps EVERY function
+ *   the background probes for and requires the shipped glue to carry it.
+ *
+ * ⚑ WHAT STOPS THE CHAIN TODAY IS THE NODE HOP, and it is TWO walls, not one.
+ *
+ * WALL B0 — **the private-beta Basic-auth curtain.** MEASURED 2026-08-09: every
+ *   path on `node.pathofangels.network` answers `HTTP 401` with
+ *   `www-authenticate: Basic realm="restricted"` and `server: Caddy` — `/`,
+ *   `/status`, `/health`, all of them. `dregg-infra`'s
+ *   `edge/anchor/Caddyfile` puts `basic_auth` at site-block top level with NO
+ *   path matcher, so the node's `public_routes` never get to answer; the same
+ *   curtain covers `beta.pathofangels.network`. It has been there since
+ *   2026-08-02 and is NOT the re-genesis — it is the standing private-beta
+ *   posture, asserted deliberately in three places and pinned by a test in that
+ *   repo. `background.ts` carries no Basic credential BY DESIGN. THIS IS WHAT
+ *   THE SEAM REPORTS NOW, and it refuses before WALL B is reached.
+ *
+ *   ⚑ The PAGE is not blocked by this and the EXTENSION is, which is the whole
+ *   asymmetry: `judged-session.js` fetches `"/node" + path` with
+ *   `credentials: "same-origin"` through Caddy's `handle_path /node/*` tunnel on
+ *   the beta origin, so a player already past the curtain carries it for free.
+ *   `POA_SIGNAL_NODE_URL` is the DIRECT host, a different origin, with no
+ *   credential. Opening and playing a judged run from the page is reachable for
+ *   an invited player; SETTLING through the extension is not.
  *
  * WALL B — **the node hop is pinned to the live deployment.** `POA_SIGNAL_
  *   FEDERATION_HEX` (`extension/src/poa-signal.ts`) is the live federation id and
@@ -82,7 +106,7 @@
  *   cannot swap. A locally genesised federation derives a different id from its
  *   own committee, so it can never satisfy the pin. The origin half of the same
  *   policy IS reachable, and is driven: see `refuses a claim off the beta origin`.
- *   ⚠ Not reached today — WALL A refuses first, four steps earlier.
+ *   ⚠ Still not reached today — WALL B0 refuses at the proxy, one step earlier.
  *
  * ⚠ STILL NOT DRIVEN AND STILL NOT FAKED: the node hop. There is no judged node
  * in this run. A hand-written JS "node" that classified LOCKED/DRIFT would be a
@@ -543,19 +567,41 @@ test.describe('the settle leg: both refusal poles, by name', () => {
       'installed dregg WASM does not include the PoA Signal carrier',
     );
 
-    // ⚑ AND THE WALL BEHIND IT, WHICH ONLY DRIVING COULD REACH. The claim now
-    // passes the origin gate, the parse, the wasm-carrier check and the custody
-    // unlock, and dies three steps further in: `clientCellIdHex` calls
-    // `wasm.cell_id_for_pubkey`, a function that had never existed in any build,
-    // behind a probe that returns `null` instead of saying so. Every claim ever
-    // submitted refused here — on live beta too.
-    expect(String(claim.error), JSON.stringify(claim)).toContain(
+    // ⚑ AND THE CELL WALL IS GONE TOO, 2026-08-09. `clientCellIdHex` calls
+    // `wasm.cell_id_for_pubkey` behind a probe that returned `null` instead of
+    // saying so, and that function had never existed in any SHIPPED bundle — so
+    // every claim ever submitted refused here, on live beta too. The binding
+    // landed in `wasm/src/lib.rs` in `c71edfbe2` and the bundle was rebuilt
+    // against it; the artifact pole above is what keeps that true.
+    //
+    // Same discipline as the line above: asserted as the INVARIANT, so a
+    // regression to a stale bundle reds here rather than deleting a test.
+    expect(String(claim.error), JSON.stringify(claim)).not.toContain(
       "Could not derive the active player's canonical cell",
     );
+
+    // ⚑ AND THE STOP IS NOW THE NODE HOP, four steps further in — the first stop
+    // this file has ever reached that is not a fact about a local artifact.
+    //
+    // MEASURED 2026-08-09: the refusal is `PoA Signal authority is unreachable:
+    // HTTP 401:`. That 401 is NOT the node and NOT WALL B's federation pin — it
+    // is the private-beta Basic-auth curtain in `dregg-infra`'s Caddyfile, which
+    // wraps `node.pathofangels.network` with no path matcher, so every path 401s
+    // including `/` and `/status`. `background.ts` carries no Basic credential
+    // BY DESIGN ("There is intentionally no Basic-Auth credential or shared beta
+    // password here"), so the pin is never even reached.
+    //
+    // The assertion is deliberately NOT `toContain("HTTP 401")`: that would pin
+    // this test to today's curtain and go falsely red the day the deployment
+    // changes. What must stay true is the DIRECTION — whatever refuses now is a
+    // fact about the NODE, not about a local artifact.
+    if (claim.error !== undefined) {
+      expect(String(claim.error), JSON.stringify(claim)).toContain('PoA Signal authority');
+    }
     await page.close();
   });
 
-  test('WALL 2, read off the artifact itself — the carrier SHIPS, and the cell derivation does not', async () => {
+  test('WALL 2/A, off the artifact — EVERY wasm function the background probes for SHIPS in the glue', async () => {
     const glue = readFileSync(
       path.resolve(__dirname, '..', '..', 'dregg_wasm.js'),
       'utf8',
@@ -564,21 +610,46 @@ test.describe('the settle leg: both refusal poles, by name', () => {
       path.resolve(__dirname, '..', '..', '..', 'wasm', 'src', 'lib.rs'),
       'utf8',
     );
+    const background = readFileSync(
+      path.resolve(__dirname, '..', '..', 'src', 'background.ts'),
+      'utf8',
+    );
 
-    // The behavioural pole above says the extension no longer refuses for want of
-    // a carrier; this says WHY, in the artifact, so a regression to a stale
-    // bundle reds both and neither can go green while the other is red.
+    // ⚑ THE INVARIANT, NOT THE INSTANCE — and the generalization is the point.
+    // `cell_id_for_pubkey` was absent from every bundle that has ever shipped and
+    // NOTHING SAID SO, because each call site probes with `typeof … === "function"`
+    // and falls through to a `null` that reads as an ordinary negative result. A
+    // test pinning that one name would go green on the rebuild and never catch the
+    // next silent probe. So the question asked here is the class: is every function
+    // the background PROBES FOR actually present in the artifact a player receives?
+    const probed = [
+      ...new Set(
+        [...background.matchAll(/typeof\s+w\.([A-Za-z0-9_]+)\s*[!=]==\s*"function"/g)].map(
+          (m) => m[1],
+        ),
+      ),
+    ].sort();
+    expect(probed.length, 'the `typeof w.…` probe pattern moved; re-anchor this test')
+      .toBeGreaterThanOrEqual(3);
+    expect(probed, 'the cell derivation is probed this way and must stay in the sweep')
+      .toContain('cell_id_for_pubkey');
+
+    const missingFromGlue = probed.filter((fn) => !glue.includes(fn));
+    expect(
+      missingFromGlue,
+      'the background probes for these wasm functions behind a SILENT `typeof` guard and the ' +
+        'SHIPPED glue does not export them — the probe falls through to null and the refusal ' +
+        'a player sees names something else entirely',
+    ).toEqual([]);
+
+    // And SOURCE and ARTIFACT are asked SEPARATELY, which is the whole lesson of
+    // the commit that fixed the carrier: the question is never "is the check
+    // correct" but "is it looking at the artifact a user receives". A player runs
+    // the bundle, not the source.
+    expect(source).toContain('pub fn cell_id_for_pubkey');
+    expect(source).toContain('pub fn build_poa_signal_claim_turn');
     expect(glue).toContain('build_poa_signal_claim_turn');
     expect(glue).toContain('inspect_poa_signal_claim_turn');
-    expect(source).toContain('pub fn build_poa_signal_claim_turn');
-
-    // ⚑ AND THE ONE THAT STANDS, asked of SOURCE and ARTIFACT SEPARATELY —
-    // which is the whole lesson of the commit that fixed the carrier: the
-    // question is not "is the check correct" but "is it looking at the artifact
-    // a user receives". The binding is in the source; the bundle a player loads
-    // does not carry it; a player runs the bundle.
-    expect(source).toContain('pub fn cell_id_for_pubkey');
-    expect(glue).not.toContain('cell_id_for_pubkey');
   });
 });
 
@@ -662,13 +733,25 @@ test.describe('the settle leg, driven through the real poa-web caller', () => {
     // The WHOLE run in order, not the solving code alone.
     expect(sent.transcript).toEqual([[0, 1, 2], [3, 3, 3]]);
 
-    // ⚑ AND THE EXACT STOP. The claim reached the extension, passed the origin
-    // gate, the parse, the wasm carrier and custody — and died at the cell
-    // derivation. This is a PAGE → EXTENSION run that gets three steps further
-    // than any previous one; the node was never asked, and this file does not
-    // pretend it was.
+    // ⚑ AND THE EXACT STOP, 2026-08-09. The claim reached the extension, passed
+    // the origin gate, the parse, the wasm carrier, custody AND THE CELL
+    // DERIVATION — the wall this test used to end on — and now dies asking the
+    // pinned node. That is a PAGE → EXTENSION run that goes as far as a browser
+    // can take it: everything on this side of the network works.
+    //
+    // The node was still never asked to SETTLE anything, and this file does not
+    // pretend it was. `PoA Signal authority is unreachable: HTTP 401:` is the
+    // beta curtain refusing at the reverse proxy, measured today.
     expect(settle.state, JSON.stringify(settle)).toBe('refused');
-    expect(String(settle.reason)).toContain("Could not derive the active player's canonical cell");
+    expect(String(settle.reason), JSON.stringify(settle)).not.toContain(
+      "Could not derive the active player's canonical cell",
+    );
+    expect(String(settle.reason), JSON.stringify(settle)).not.toContain(
+      'installed dregg WASM does not include the PoA Signal carrier',
+    );
+    // The refusal a player sees names a NODE fact. Same reasoning as the pole
+    // above: the exact HTTP code is today's deployment and is not pinned here.
+    expect(String(settle.reason), JSON.stringify(settle)).toContain('PoA Signal authority');
     await page.close();
   });
 

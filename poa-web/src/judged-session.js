@@ -413,6 +413,30 @@ export const FALLEN_WALLS = Object.freeze([
       "The read-back is public too, which is what makes a lost response recoverable instead of a lost " +
       "burst.",
   }),
+  Object.freeze({
+    code: "claim-cell-underivable",
+    fell: "2026-08-09",
+    was:
+      "The SHIPPED extension could not derive the player's canonical cell, so every claim refused before " +
+      "the node was asked. `background.ts::clientCellIdHex` called `wasm.cell_id_for_pubkey(pubkeyHex, " +
+      "\"default\")` behind a `typeof … === \"function\"` probe that fell through to `return null`, and no " +
+      "bundle that ever shipped carried that export — so `submitPoaSignalClaim` refused at `Could not " +
+      "derive the active player's canonical cell` on EVERY call, live beta as much as locally, and " +
+      "`queryBalance` failed the same way one function up.",
+    landed:
+      "The binding (`c71edfbe2`, `CellId::derive_raw(pk, blake3(domain))` — exactly `Cipherclerk::cell_id`, " +
+      "and at `\"default\"` exactly `poa_signal::signal_player_cell`) plus THE REBUILD, which is the half " +
+      "that actually reaches a player: `cd extension && ./build.sh wasm`, `check-wasm-freshness.sh` GREEN, " +
+      "and the shipped glue exports it now. The blocked-rebuild note this entry used to carry — that the " +
+      "wasm32 workspace would not compile for want of an `Effect::Deshield` match arm — is DEAD: the " +
+      "workspace compiled in 4m21s.\n\n" +
+      "⚠ IT DID NOT FALL BECAUSE SETTLING WORKS. Driving the seam now refuses one wall further on, at the " +
+      "node hop, and that wall is `settle-node-curtained` below. A wall that fell is not a leg that runs.\n\n" +
+      "⚑ AND THE PROBE IS STILL SILENT. The binding closes this instance; `clientCellIdHex` still returns " +
+      "`null` rather than throwing when a lookup fails, so the NEXT absent export will hide exactly as " +
+      "well. What catches that class now is a test rather than the code: the e2e artifact pole sweeps " +
+      "every `typeof w.…` probe in `background.ts` and requires the shipped glue to carry each name.",
+  }),
 ]);
 
 /**
@@ -420,48 +444,60 @@ export const FALLEN_WALLS = Object.freeze([
  * about the node, NOT a policy choice made here — and each names the thing that
  * would have to land for the surface below to light up unchanged.
  *
- * ⚑ TWO WALLS FELL AND ONE REMAINS. Both fallen ones are in [`FALLEN_WALLS`]
- * above, by name. What is left is not about PLAYING at all: a browser can now
- * open a judged run, spend all five bursts and read its own transcript back. It
- * cannot build the SETTLING CARRIER, and that is a different act.
+ * ⚑ FIVE WALLS HAVE FALLEN AND ONE REMAINS, and on 2026-08-09 the remaining one
+ * CHANGED KIND. Every wall this list has ever held was a fact about an artifact
+ * on this side of the wire — a missing signer, a missing carrier, a missing
+ * export. All five are in [`FALLEN_WALLS`] above, by name, with what landed.
+ *
+ * What is left is the first one that is NOT: the node the extension is pinned to
+ * is behind the private-beta invitation curtain and answers 401 to everything.
+ * That is a deployment posture, not a defect, and no change to this page or the
+ * extension's logic reaches it.
+ *
+ * So the honest summary a player is owed: a browser can open a judged run, spend
+ * all five bursts and read its own transcript back — that works, through the
+ * same-origin `/node/*` tunnel the curtain already covers. It cannot SETTLE,
+ * because settling goes through the extension to the direct node host, where the
+ * curtain refuses it.
  *
  * The one below is not worked around. Generating a keypair in page memory would
  * be a player key with no cell, no funds and no ML-DSA half, i.e. inventing
- * custody to make a button clickable.
+ * custody to make a button clickable — and putting the invitation password on a
+ * request from here would be the same sin wearing a credential.
  */
 export const CUSTODY_BLOCKERS = Object.freeze([
   Object.freeze({
-    code: "claim-cell-underivable",
-    what: "The SHIPPED extension cannot derive the player's canonical cell, so every claim refuses before the node is asked.",
+    code: "settle-node-curtained",
+    what:
+      "The node the extension is pinned to answers every request with HTTP 401: it is behind the " +
+      "private-beta invitation curtain, and the extension carries no credential for it by design.",
     detail:
-      "`background.ts::clientCellIdHex` derives the player cell by calling `wasm.cell_id_for_pubkey(pubkeyHex, " +
-      "\"default\")`, behind a `typeof … === \"function\"` probe that falls through to `return null`. THAT " +
-      "FUNCTION HAD NEVER EXISTED — not in `wasm/src/lib.rs`, not in the glue, not in any commit: `git log -S` " +
-      "over `wasm/` returned nothing, and the shipped bundle's 171 exports did not include it. So the probe " +
-      "was false on every build there has ever been, `submitPoaSignalClaim` refused at `Could not derive the " +
-      "active player's canonical cell` on EVERY call — live beta as much as here — and `queryBalance` failed " +
-      "the same way one function up.\n\n" +
-      "⚑ THE BINDING IS IN THE SOURCE NOW AND THE ARTIFACT DOES NOT CARRY IT, which is why this wall still " +
-      "stands. `wasm/src/lib.rs` exports `cell_id_for_pubkey` over the same primitive the rest of the system " +
-      "uses (`CellId::derive_raw(pk, blake3(domain))` — exactly `Cipherclerk::cell_id`, and at `\"default\"` " +
-      "exactly `poa_signal::signal_player_cell`). The extension bundle has NOT been rebuilt against it, and a " +
-      "player runs the bundle, not the source. `scripts/check-wasm-freshness.sh extension --kind no-modules` " +
-      "is RED on exactly this and names the two fingerprints.\n\n" +
-      "⚠ THE REBUILD IS BLOCKED, and not by anything in this path: the wasm32 workspace does not compile. A " +
-      "concurrent lane's `Effect::Deshield` variant is in `turn/src/action.rs` in the working tree (13 " +
-      "occurrences; ZERO in HEAD) and six `match` sites in `turn/src/executor/` and `turn/src/` have not been " +
-      "extended for it. Until that lands, `cargo build --target wasm32-unknown-unknown` fails before it " +
-      "reaches this crate.\n\n" +
-      "⚑ MEASURED BY DRIVING, and it could not have been found any other way: it sits BEHIND the wasm-carrier " +
-      "wall, so until that one fell every claim refused earlier and this refusal was unreachable. " +
-      "`extension/tests/e2e/judged-signal-session.spec.ts` drives the seam and asserts the refusal by name.\n\n" +
-      "⚠ A silent capability probe is what made it survivable. `clientCellIdHex` returns `null` rather than " +
-      "throwing, so an absent binding reads as an ordinary negative result all the way up; nothing anywhere " +
-      "says a function was looked for and not found. The binding closes this instance; the PROBE is still " +
-      "silent and will hide the next one.",
+      "⚑ THIS IS THE FIRST WALL IN THIS LIST THAT IS NOT ABOUT A LOCAL ARTIFACT. Everything on the browser " +
+      "side of the wire now works: the page derives and checks the statement, the extension signs it with " +
+      "the player key, builds the carrier, derives the cell, and reaches the network. It stops at the hop.\n\n" +
+      "MEASURED 2026-08-09, not read: every path on `https://node.pathofangels.network` answers `HTTP 401` " +
+      "with `www-authenticate: Basic realm=\"restricted\"` and `server: Caddy` — `/`, `/status`, `/health`, " +
+      "and `/api/poa/signal/<authority>/status` alike. So the node's own `public_routes` never get to " +
+      "answer, and `session-routes-authenticated` (in FALLEN_WALLS above) really did fall: this 401 is the " +
+      "reverse proxy, NOT the node's bearer layer, and reading it as a stale deployment is a misdiagnosis.\n\n" +
+      "The curtain lives in `dregg-infra`'s `edge/anchor/Caddyfile`, where `basic_auth` sits at site-block " +
+      "top level with NO path matcher, so it covers the host entirely; the same curtain covers " +
+      "`beta.pathofangels.network`. It has been there since 2026-08-02, predates the re-genesis by six days, " +
+      "and is the standing private-beta posture rather than an accident — that repo asserts it deliberately " +
+      "in three places and pins it with a test.\n\n" +
+      "⚑ THE PAGE IS NOT BLOCKED BY IT AND THE EXTENSION IS, WHICH IS THE WHOLE ASYMMETRY. This module " +
+      "fetches `\"/node\" + path` with `credentials: \"same-origin\"`, through Caddy's `handle_path /node/*` " +
+      "tunnel on the beta origin — so a player already past the curtain carries it for free, and OPENING " +
+      "and PLAYING a judged run is reachable for an invited player. `POA_SIGNAL_NODE_URL` in " +
+      "`extension/src/poa-signal.ts` is the DIRECT host: a different origin, with no credential, because " +
+      "`background.ts` says in as many words that there is intentionally no Basic-Auth credential or shared " +
+      "beta password in the extension. SETTLING is what that costs.\n\n" +
+      "⚠ NOTHING HERE IS WORKED AROUND. This page does not hold the invitation password, must not carry " +
+      "one, and will not put a credential on a request to make a button light up.",
     needs:
-      "the extension bundle rebuilt against the `cell_id_for_pubkey` now in `wasm/src/lib.rs` " +
-      "(`cd extension && ./build.sh wasm`), which needs the wasm32 workspace to compile again",
+      "either the extension's claim path routed through the same-origin `/node/*` tunnel it already " +
+      "reaches the session routes by, or a path carve-out in the beta Caddyfile for the public signal " +
+      "routes, or the curtain lifted — each a deployment/topology decision, not a change to this page",
   }),
 ]);
 
@@ -514,15 +550,19 @@ export function judgedCustody(provider = globalThis.window?.dregg ?? null, sessi
     // merely believes in: it is identity + signer detected on the provider, and
     // a route that actually answered.
     canPlay: identityAvailable && signerAvailable && routesReachable === true,
-    // ⚑ AND SO IS `canSettle`, WHICH IS WHY IT IS NOT `false`. This page knows
-    // `claim-cell-underivable` stands and STILL enables the action, because what
-    // it can observe is that the provider exposes the method — and the wall lives
-    // inside the extension, where no page can look. Hardcoding `false` here would
-    // be the exact sin the play path already refuses: a wall this file BELIEVES in
-    // rather than one it OBSERVED, and it would go on believing it for a week
-    // after the wasm export lands. The click submits, the extension's refusal
-    // comes back BY NAME, and the panel renders that name. A wall a player meets
-    // is a wall someone fixes; a wall a docblock asserts is one that rots.
+    // ⚑ AND SO IS `canSettle`, WHICH IS WHY IT IS NOT `false` — AND 2026-08-09 IS
+    // THE DAY THAT CHOICE PAID. This page could observe only that the provider
+    // exposes the method; the wall lived inside the extension, where no page can
+    // look. Hardcoding `false` would have been the exact sin the play path
+    // refuses: a wall this file BELIEVES in rather than one it OBSERVED. It would
+    // ALSO have gone on believing it after the export landed — the copy asserting
+    // `claim-cell-underivable` was still saying "the artifact does not carry it"
+    // and "the rebuild is blocked" hours after both stopped being true.
+    //
+    // Instead the click submitted, the extension's refusal came back BY NAME, and
+    // the name CHANGED — from the cell derivation to the node hop. That change is
+    // how the wall was known to have fallen. A wall a player meets is a wall
+    // someone fixes; a wall a docblock asserts is one that rots.
     canSettle: identityAvailable && settlerAvailable,
     identityAvailable,
     signerAvailable,
