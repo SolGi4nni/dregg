@@ -625,7 +625,9 @@ fn attack_flood_does_not_desync() {
     let honest_tip = n1.tips().get(&honest_id).copied();
     assert_eq!(
         honest_tip,
-        Some(honest_blocks.last().unwrap().id()),
+        Some(dregg_blocklace::finality::CreatorTips::One(
+            honest_blocks.last().unwrap().id()
+        )),
         "FINDING: the flood corrupted the honest creator's tip"
     );
     assert!(
@@ -672,8 +674,14 @@ fn attack_double_spend_race_no_node_finalizes_one_fork() {
     // NON-VACUITY: this pre-check is what proves the id below is the label the
     // lace really keys by — the tip lookup HITS before the race is resolved.
     let spender_id = Block::hybrid_id(&spender);
-    assert_eq!(n1.tips().get(&spender_id), Some(&spend_to_alice.id()));
-    assert_eq!(n2.tips().get(&spender_id), Some(&spend_to_bob.id()));
+    assert_eq!(
+        n1.tips().get(&spender_id),
+        Some(&dregg_blocklace::finality::CreatorTips::One(spend_to_alice.id()))
+    );
+    assert_eq!(
+        n2.tips().get(&spender_id),
+        Some(&dregg_blocklace::finality::CreatorTips::One(spend_to_bob.id()))
+    );
 
     // Now gossip cross-delivers the conflicting spend to each node.
     let _ = n1.lace.receive_block(spend_to_bob.clone());
@@ -735,7 +743,7 @@ fn attack_eclipse_delay_not_permanent_fork() {
     // an observed removal rather than a key that was never present.
     assert_eq!(
         victim.tips().get(&byz_id),
-        Some(&fork_a.id()),
+        Some(&dregg_blocklace::finality::CreatorTips::One(fork_a.id())),
         "single-fork tip during eclipse"
     );
 
