@@ -9,7 +9,7 @@ It renders the Lean-authored, ∀-refined `merklePathData d` (MerkleEmit.lean �
 proof-covered `emitGnarkJson` renderer (EmitFaithful `emit_faithful` covers the
 byte grammar) to the committed `*_template.json` grammar the generic ReplayClosed
 driver reads. One file per commit-phase depth the apex-shrink fixture opens
-(`commitMerkleDepths apexShrinkShape = [17,16,…,3]`).
+(`commitMerkleDepths apexShrinkShape = [18,17,…,3]`).
 
 Layout (MerkleEmit.lean §5): `var 0` = leaf, `var 1` = root, `var (2+2i)` =
 sibling i, `var (2+2i+1)` = path bit i; the Poseidon internals mint from `2+2d`.
@@ -28,7 +28,7 @@ import Dregg2.Circuit.Emit.GnarkVerifier.EmitJson
 open Dregg2.Circuit.Emit.GnarkVerifier
 
 /-- The commit-phase Merkle depths the deployed apex-shrink descriptor opens
-(`EmitJson.commitMerkleDepths apexShrinkShape` = `[17,16,…,3]`). -/
+(`EmitJson.commitMerkleDepths apexShrinkShape` = `[18,17,…,3]`). -/
 def merkleDepths : List Nat := commitMerkleDepths apexShrinkShape
 
 def main : IO Unit := do

@@ -12,8 +12,10 @@ the Lean-generated honest assignment (`St.assigns`, var-index-ordered) to
 `fri_fold_witness.json` -- the same object `friFold_leaf_refines` quantifies over.
 
 The fixture is the apex-shrink round-0 fold: β = the real fixture
-`expected_betas[0]` (chain/gnark/fixtures/apex_shrink_fri_real.json), 17 parent
-bits = `log_global_max_height − 1` (= 18 − 1). The siblings + claimed are a
+`expected_betas[0]` (chain/gnark/fixtures/apex_shrink_fri_real.json), and
+`apexShrinkShape.logGlobalMaxHeight − 1` parent bits — DERIVED from the shape, not
+typed, because the Go replayer refuses a query whose parent-bit count exceeds the
+template's and a re-mint moves it. The siblings + claimed are a
 self-consistent honest fold (`claimed := foldCoreV s0 s1 β (invSV bits)`), so the
 emitted R1CS is satisfiable by the dumped witness. The round-0 fold-beta operand
 the transcript link binds (block1FoldBeta) is a SEPARATE flat-bank carrier; this
@@ -35,17 +37,18 @@ open Dregg2.Circuit.Emit.GnarkVerifier.FriFold
 
 /-- The real apex-shrink fixture round-0 fold beta (`expected_betas[0]`,
 chain/gnark/fixtures/apex_shrink_fri_real.json). -/
-def katBeta0 : ExtV := ⟨1176421496, 1958289700, 1400433207, 698068907⟩
+def katBeta0 : ExtV := ⟨50676219, 1323309208, 1065951566, 1868626682⟩
 
 /-- Two canonical sibling extension values (the FriFoldEmit §1 gold-vector siblings). -/
 def foldS0 : ExtV := ⟨123, 456, 789, 1011⟩
 def foldS1 : ExtV := ⟨2021, 2223, 2425, 2627⟩
 
-/-- 17 parent-index bits — the round-0 fold's `|parentBits| = logGlobalMaxHeight − 1`
-for the apex-shrink fixture (log_global_max_height = 18). -/
+/-- The round-0 fold's parent-index bits: `|parentBits| = logGlobalMaxHeight − 1`, read
+off `apexShrinkShape` so a fixture re-mint cannot leave it short (the Go replayer pads a
+shorter query but REFUSES a longer one). The pattern is the gold-vector index 92973
+LSB-first — a placeholder the replayer rebinds per query; only the LENGTH is binding. -/
 def foldBits : List Bool :=
-  [true, false, true, true, false, true, false, false, true,
-   true, false, true, false, true, true, false, true]
+  (List.range (apexShrinkShape.logGlobalMaxHeight - 1)).map (Nat.testBit 92973)
 
 /-- The self-consistent claimed folded value: the deployed fold of the siblings at β. -/
 def foldClaimed : ExtV := foldCoreV foldS0 foldS1 katBeta0 (invSV foldBits)

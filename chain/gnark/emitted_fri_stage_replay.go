@@ -32,7 +32,7 @@
 // THE FOLD WITNESS. The fold template carries 4705 free internal witnesses — the
 // honest hint fill the Lean `friFold_leaf_refines` theorem quantifies over (the
 // reduce quotient/remainder hints, the 31-bit canonicity bit decompositions, and
-// the 17 parent-index bits). On the block path those came from a committed round-0
+// the 18 parent-index bits). On the block path those came from a committed round-0
 // fixture (fri_fold_witness.json); on the FRI-stage path the siblings/beta are LIVE
 // per-round in-circuit values, so the fill is materialized by a gnark HINT
 // (friFoldWitnessHint) that natively SOLVES the emitted template from the bound
@@ -361,12 +361,12 @@ func (s *templateSolver) solve() {
 // ---------------------------------------------------------------------------
 
 // friFoldParentBitVars is, in select-gate (== parent-bit j) order, the variable
-// index of each of the fold template's 17 parent-index bits — the condition var of
+// index of each of the fold template's 18 parent-index bits — the condition var of
 // each `select(bit, ginv, 1)` in the invS chain. Loaded once alongside the class.
 type friFoldHintPlan struct {
 	tpl          *Template
 	inputVars    []int // the 12 sibling0/sibling1/beta limb vars (public inputs 0..11)
-	parentVars   []int // the 17 parent-bit vars, j-order
+	parentVars   []int // the 18 parent-bit vars, j-order
 	witnessIdx   []int // ClassifyVars(12).Witness — the free witnesses to emit, ascending
 	numParent    int
 	numInputLimb int
@@ -435,7 +435,7 @@ func loadFriFoldHintPlan() (*friFoldHintPlan, error) {
 
 // friFoldWitnessHint materializes the fold template's free internal witnesses for
 // one commit-phase round. Inputs: the 12 sibling0/sibling1/beta limbs followed by
-// the 17 parent-index bits (real bits, zero-padded above logMaxHeight−r−1). It binds
+// the 18 parent-index bits (real bits, zero-padded above logMaxHeight−r−1). It binds
 // those, natively solves the emitted friFoldData template to a fixpoint (deriving
 // folded_claim and every reduce/canonicity intermediate), and writes the
 // ClassifyVars(12).Witness free witnesses in ascending index order — exactly what
@@ -484,10 +484,10 @@ func friFoldWitnessHint(mod *big.Int, inputs, outputs []*big.Int) error {
 type friStageReplay struct {
 	leafTpl    *Template         // leafhash_template.json (8 row limbs → leaf)
 	merkleTpls map[int]*Template // depth → merkle_path_bn254_d{d}.json
-	foldTpl    *Template         // fri_fold_template.json (17 parent bits)
+	foldTpl    *Template         // fri_fold_template.json (18 parent bits)
 	foldWit    []int             // ClassifyVars(12).Witness indices, ascending
 	parentVars []int             // fold template parent-bit var indices, j-order
-	parentBits int               // 17
+	parentBits int               // 18
 }
 
 // newFriStageReplay assembles the replay context from the templates the block-path

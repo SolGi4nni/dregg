@@ -15,7 +15,7 @@ injected class-hash compressions, same arity-2 path), not the source of the cons
 WHAT `InputOpenEmit` MISSED — the single-leaf template. `InputOpenEmit.inputOpenCircuit`
 hashes ONE row group into ONE leaf and ladders a plain depth-`d` path to the root. The
 DEPLOYED input-open opening is a MULTI-HEIGHT MMCS BATCH TREE (mmcs.rs:1052-1180): a query
-opens matrices at several LDE heights (e.g. per-round log-heights {18,17,12,3}); the
+opens matrices at several LDE heights (e.g. per-round log-heights {19,18,12,3}); the
 matrices are sorted tallest-first into HEIGHT CLASSES; the leaf digest is the MultiField
 sponge over the concatenation of ALL rows at the max height; the walk is one arity-2
 `Poseidon2Bn254Compress` per level steered by the query bit; and — the structural piece the
@@ -50,8 +50,8 @@ Deliverables (genuine ∀-theorems, not `#guard` samples):
 
 `#guard` KAT: the batch walk reproduces the REAL apex-shrink fixture input root
 (`chain/gnark/fixtures/apex_shrink_fri_real.json`, query 0, input round 1: height classes
-{18,17,12,3}, root `0x17cef0…`, computed by `openInputBatchRootRef` in
-`chain/gnark/zz_kat_dump_test.go`) BIT-EXACTLY, plus tamper-rejects.
+{19,18,12,3}, root `0x0800ca…`, computed by `openInputBatchRootRef` in
+`chain/gnark/stark_open_input_ref.go`) BIT-EXACTLY, plus tamper-rejects.
 -/
 import Dregg2.Circuit.Emit.GnarkVerifier.InputOpenEmit
 
@@ -904,63 +904,65 @@ theorem inputOpenBatch_sound (widths : List ℕ) (maxLh : ℕ) (injMask : List B
 
 /-! ## §11 KAT teeth — the REAL apex-shrink fixture input root (both polarities).
 
-The four height classes {18,17,12,3} of query 0, input round 1 of
-`chain/gnark/fixtures/apex_shrink_fri_real.json`, its 18-node path, query index 188446, and
+The four height classes {19,18,12,3} of query 0, input round 1 of
+`chain/gnark/fixtures/apex_shrink_fri_real.json`, its 19-node path, query index 357832, and
 the committed round-1 input root — the exact data `openInputBatchRootRef`
-(`chain/gnark/stark_open_input_ref.go`, dumped by `TestDumpRound1KAT`) laddered to
-`katInputRoot`. `batchRefRoot` (the refinement's right-hand predicate) reproduces it
-BIT-EXACTLY, and every tamper moves it. -/
+(`chain/gnark/stark_open_input_ref.go`) laddered to `katInputRoot`. `batchRefRoot` (the
+refinement's right-hand predicate) reproduces it BIT-EXACTLY, and every tamper moves it. -/
 
-/-- Class 0 (height 18): four width-4 matrix rows concatenated (16 base limbs). -/
+/-- Class 0 (height 19): two width-4 matrix rows concatenated (8 base limbs). -/
 def katG0 : List Fr :=
-  [686982087, 102826776, 1248879442, 616641052, 1667606521, 483193326, 1039330215, 298184868,
-   1421880185, 1764313843, 261235522, 1086618168, 118279411, 124684518, 1532425643, 1600978877]
-/-- Class 1 (height 17): two width-4 rows (8 limbs). -/
+  [1515012075, 1644027478, 710008838, 1069764620, 1518310020, 1884049610, 1904091301, 1704050631]
+/-- Class 1 (height 18): four width-4 rows (16 limbs). -/
 def katG1 : List Fr :=
-  [1774373552, 858140425, 1741284518, 293417566, 1545906854, 723958632, 1352570167, 1830454632]
+  [673423875, 664706297, 1931899510, 158149210, 1133113356, 1384102861, 187522263, 1095088913,
+   684796996, 24805640, 959729680, 109327476, 689854820, 1909853986, 566436532, 1073934107]
 /-- Class 2 (height 12): four width-4 rows (16 limbs). -/
 def katG2 : List Fr :=
-  [15962564, 738174842, 1369832338, 562986188, 343896967, 133664769, 1362434029, 796719384,
-   1189585827, 955990518, 718135626, 197886653, 272206116, 831486462, 1841692207, 1813034813]
+  [1117915787, 642091300, 1750569592, 242313706, 714251418, 775970689, 45910543, 1550892170,
+   682948935, 1025247676, 768752747, 468074298, 831584578, 912354886, 768668927, 1836181704]
 /-- Class 3 (height 3): two width-4 rows (8 limbs). -/
 def katG3 : List Fr :=
-  [1271295196, 1395969703, 299345889, 588694441, 1271295196, 1395969703, 299345889, 588694441]
+  [45825524, 1088835559, 1235286852, 870073596, 45825524, 1088835559, 1235286852, 870073596]
 
-/-- The 18 native BN254 path nodes (bottom-up), verbatim from the fixture query 0 round 1. -/
+/-- The 19 native BN254 path nodes (bottom-up), verbatim from the fixture query 0 round 1. -/
 def katPath : List Fr :=
-  [0x300b673ebe0b14759db1ac3b2d9588549a90011e3eb6b6cdaf4e3510572379ea,
-   0x18309ea2727eebf57bce94b3b7e9583d5105487b9190107511c6e9fb8464b457,
-   0x2be98866e1c856d997d28e2f599f302a34fc7b6aa9a74c167980336ce8d5cc7c,
-   0x14921f1c28be31c3a1ca867cfe9c435303b50e17a1f5176cfb76b8436dffa370,
-   0x168d01e4f20cde6f3db159b23fe271bf74dce6632cc12b5bab55aa1ae3b88c18,
-   0x2071461827f7c9f454e63cb32c45199f8c4a0d87c92780d70c3ac1bd7c978741,
-   0x21ec431dbd595f5331af535fda7919e8a3d05ab79c8ef98e1d00b46460f6afa2,
-   0x12da0c0b71ddaa44745f6d0da7f786004d1658c95e4cd495ab3b9e7f9e547fc7,
-   0x2eae80a137e783ea5caf415f8ab038fa49eb111a42b3cf13e1803f76c180013a,
-   0x2fa6f74248ab20d4c02cdd08b5be835ea29406beb2e8763bfb6d60e4d9f61f72,
-   0x298a471101c639e256309059bfd5cecd269f9f906ce031de1ccc571ed726ae68,
-   0x0335ccdf93c3f23d28121d5564bc30c4bb40b6fc57aa2a3a3d8e17f7c77042d3,
-   0x0b3ee6caa5a745983aff992f121590c0b5f086b978359f5448bdaf660cfdcc4e,
-   0x1cdcc0dfae98360edc5f89fb6a48e7f00c306c306962b0ba575cf71bcfdf06b0,
-   0x034548815cd0abff5a331f141520dea1e7cc3b96ba45f0a44beb4dd3ea3f3817,
-   0x1a1c27d13d362202cb628bac43bacfd52ab950de11d63c0d7d34ad6b6207c3a7,
-   0x23ae47f70604c9646a6f04710b1a74875dd8e2aca00fb0801327b7b7232ad8fb,
-   0x0068c456d44813e6aa6f9a941922d27745cb55fc8b4757102bfa54936fca7600]
+  [0x046a3c4113264bec48760e971b7b6415e619babc5035314c8790f804f61fa55a,
+   0x1ebc6f6c3d041f1800b72f4da0b3605fe967377b7a5c4e791e4fe22bc81801db,
+   0x04b190c209e8fd5fedd6d6a978faa1a6b4fc53068efb7f35dfbe9a8a97aee6b6,
+   0x124f73e1ae5872e6d06ebd058193c6702d6fccad30ff5558c863b605a2562905,
+   0x014b1fa17c4a23818e473c00cb3f98fb139df94363590796a143df535ec7c99c,
+   0x13b196576882ff8e0379525d3c67888bd8a17c8ef8f5d485484db6db23bdd1b2,
+   0x1f717f009a8f15b3e13f273c6ae5230a807cb9b3e2e176e7251df9b08dbc1750,
+   0x186c164ff3a664be8f594e7225619c28ebdad52ef15013badb8839ca78516d06,
+   0x0b8a81876d19cb1173a3bfc9a628a181cc7686f370760642e6f109f0f20a9f71,
+   0x229a9ecd0ea0919a8927850d941588e8185132e0668501f8f236c082796b9a79,
+   0x09ccd9f312f4141587651ed8606629e8feb915cdc855da1edc2ab674bb31b2ea,
+   0x24b9ea8719b61c63143ca17b362fe24f53199b3b1d4eb75d5eed87216a6c91a5,
+   0x09366e81178e75a66c4121e2d84c31c8ac81407a5ccf5366e486193f4c63a9b3,
+   0x0ad657d541ff0e548126ed59da55caf61f6d6e726b581b8bd83708790b701b97,
+   0x26c7dcd31302bc29381cd41f9d17ebc10ed7c19ed0e7919e22fe2a83b4cbd009,
+   0x07e28d8670680290e27adad340a5404d9346d74ef8bc47b00446c6e23b11cf60,
+   0x0d0b7c39946327b232b8426a95f048c9e317c13e630af057e75837c980019a1b,
+   0x2c7e9df092779d85dcc837d3897d6607cbfc9fdf53c5caaa6fcfe77dc3cc310f,
+   0x263b02a82f1542d47d08c8c199e3a5b43d788cabc9a10b81f24f29ce72de5ec6]
 
-/-- The query index (188446): the 18 LSB-first path bits steer the walk. -/
-def katBits : List Bool := (List.range 18).map (Nat.testBit 188446)
+/-- The query index (357832): the 19 LSB-first path bits steer the walk. The batch tree's
+max class height is 19 = the fixture's `log_global_max_height`, so the reduced index is the
+full index (no shift). -/
+def katBits : List Bool := (List.range 19).map (Nat.testBit 357832)
 
-/-- The class-injection schedule: classes 1/2/3 (heights 17/12/3) inject after steps 0/5/14
-(`17 - step ∈ {17,12,3}`), so the walk reaches a class-carrying height there. -/
+/-- The class-injection schedule: classes 1/2/3 (heights 18/12/3) inject after steps 0/6/15
+(`18 - step ∈ {18,12,3}`), so the walk reaches a class-carrying height there. -/
 def katMask : List Bool :=
-  [true, false, false, false, false, true, false, false, false, false,
-   false, false, false, false, true, false, false, false]
+  [true, false, false, false, false, false, true, false, false, false,
+   false, false, false, false, false, true, false, false, false]
 
 /-- The committed round-1 input commitment root (`openInputBatchRootRef` = `roots[1]`). -/
-def katInputRoot : Fr := 0x17cef0325c031b102b0c01dce649c1bca5552046f7853c85c32a7a59df24c952
+def katInputRoot : Fr := 0x0800ca135b86a94ffd34a511fc975caab11234662ccaf9cc5bc35eb4531d12f4
 
 -- The multi-height batch walk reproduces the REAL fixture input root BIT-EXACTLY (accept):
--- class-0 leaf hash laddered up the 18-node path with classes 1/2/3 injected at steps 0/5/14.
+-- class-0 leaf hash laddered up the 19-node path with classes 1/2/3 injected at steps 0/6/15.
 #guard batchRefRoot (multiFieldHashRef katG0) (katPath.zip katBits) katMask [katG1, katG2, katG3]
   = katInputRoot
 
@@ -976,9 +978,9 @@ def katInputRoot : Fr := 0x17cef0325c031b102b0c01dce649c1bca5552046f7853c85c32a7
 -- Tampered injected class row (class 3) — the injected class hash moves ⇒ the root moves (reject).
 #guard batchRefRoot (multiFieldHashRef katG0) (katPath.zip katBits) katMask
     [katG1, katG2, (0 :: katG3.tail)] ≠ katInputRoot
--- Dropped injection (mask false at step 14) — class 3 never folds in ⇒ the root moves (reject).
+-- Dropped injection (mask false at step 15) — class 3 never folds in ⇒ the root moves (reject).
 #guard batchRefRoot (multiFieldHashRef katG0) (katPath.zip katBits)
-    (katMask.take 14 ++ [false] ++ katMask.drop 15) [katG1, katG2, katG3] ≠ katInputRoot
+    (katMask.take 15 ++ [false] ++ katMask.drop 16) [katG1, katG2, katG3] ≠ katInputRoot
 
 /-! ## §12 The emitted JSON artifacts.
 
@@ -988,8 +990,8 @@ Two committed templates:
     (`leafHashData`) at a real class width (8 limbs = two extension evals). Rows-in →
     leaf-out, NO `select`; the Go side binds the row prefix and solves the leaf.
   * `chain/gnark/emitted/inputopen_batch_template.json` — the multi-height batch opening
-    (`batchData`) at the deployed round-1 shape: classes {18,17,12,3} (widths [16,8,16,8]),
-    path depth 18, the {0,5,14} injection schedule. The `ReplayClosed` boundary binds
+    (`batchData`) at the deployed round-1 shape: classes {19,18,12,3} (widths [8,16,16,8]),
+    path depth 19, the {0,6,15} injection schedule. The `ReplayClosed` boundary binds
     rows/path-nodes/bits/root by index; the define-chain solves the Poseidon internals.
 
 Byte pins are length + FNV-1a of the exact rendered string (a literal pin of a multi-MB
@@ -1006,20 +1008,20 @@ def leafHashTemplateJson : String :=
 /-- The deployed round-1 batch template bytes (committed at
 `chain/gnark/emitted/inputopen_batch_template.json`). -/
 def batchTemplateJson : String :=
-  Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (batchData [16, 8, 16, 8] 18 katMask)
+  Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (batchData [8, 16, 16, 8] 19 katMask)
 
 /-- The three OTHER deployed input-round batch templates — the SAME `batchData` at the real
 apex-shrink per-round opened-row widths (trace / preprocessed / permutation rounds; the
 quotient round is `batchTemplateJson` above). All four rounds open the height classes
-{18,17,12,3} with the {0,5,14} injection schedule at depth 18, so they share `katMask` and
+{19,18,12,3} with the {0,6,15} injection schedule at depth 19, so they share `katMask` and
 differ only in the per-class row widths; every instance is covered by the parametric
 `inputOpenBatch_refines`. Committed at `chain/gnark/emitted/inputopen_batch_r{0,2,3}.json`. -/
 def batchTemplateR0Json : String :=
-  Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (batchData [80, 300, 8, 132] 18 katMask)
+  Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (batchData [76, 304, 8, 164] 19 katMask)
 def batchTemplateR2Json : String :=
-  Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (batchData [61, 24, 4, 66] 18 katMask)
+  Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (batchData [59, 26, 8, 82] 19 katMask)
 def batchTemplateR3Json : String :=
-  Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (batchData [76, 28, 8, 132] 18 katMask)
+  Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (batchData [72, 32, 8, 164] 19 katMask)
 
 -- Structure pins for the leaf-hash template: one sponge block (width 8 = one rate slot) is
 -- 435 emitted round-schedule asserts + the leaf pin; the ReplayTemplate boundary is 8 rows
@@ -1027,22 +1029,23 @@ def batchTemplateR3Json : String :=
 #guard (leafHashCircuit 8).asserts.length == 436
 #guard (leafHashData 8).publicInputs.length == 9
 
--- Structure pin for the deployed round-1 batch shape (widths [16,8,16,8], depth 18): the 18
--- per-level booleanity asserts + class-0 leaf hash (435) + 15 plain path compressions (15·435)
+-- Structure pin for the deployed round-1 batch shape (widths [8,16,16,8], depth 19): the 19
+-- per-level booleanity asserts + class-0 leaf hash (435) + 16 plain path compressions (16·435)
 -- + 3 injection levels (each path compress + class leaf hash + inject compress = 3·435) + the
--- final root pin = 10894.
-#guard (batchCircuit [16, 8, 16, 8] 18 katMask).asserts.length == 10894
+-- final root pin = 19 + 435 + 6960 + 3915 + 1 = 11330. (Every class here is one sponge block:
+-- `(leafHashCircuit 8).asserts.length = (leafHashCircuit 16).asserts.length = 436` = 435 + pin.)
+#guard (batchCircuit [8, 16, 16, 8] 19 katMask).asserts.length == 11330
 
 -- Byte pins of the committed artifacts: exact length + FNV-1a. Any byte drift flips the digest.
 #guard leafHashTemplateJson.length == 154488
 #guard fnv1a leafHashTemplateJson == 6822594251786242841
-#guard batchTemplateJson.length == 3966872
-#guard fnv1a batchTemplateJson == 10048758642377789676
-#guard batchTemplateR0Json.length == 9384598
-#guard fnv1a batchTemplateR0Json == 17146023565816985036
-#guard batchTemplateR2Json.length == 5360833
-#guard fnv1a batchTemplateR2Json == 11431238223898258167
-#guard batchTemplateR3Json.length == 6281989
-#guard fnv1a batchTemplateR3Json == 10236309978567012609
+#guard batchTemplateJson.length == 4126538
+#guard fnv1a batchTemplateJson == 8606667901513431991
+#guard batchTemplateR0Json.length == 9915026
+#guard fnv1a batchTemplateR0Json == 8675028724040056151
+#guard batchTemplateR2Json.length == 5713435
+#guard fnv1a batchTemplateR2Json == 12934477427165409992
+#guard batchTemplateR3Json.length == 6812448
+#guard fnv1a batchTemplateR3Json == 9190003375973087705
 
 end Dregg2.Circuit.Emit.GnarkVerifier.InputOpenBatch

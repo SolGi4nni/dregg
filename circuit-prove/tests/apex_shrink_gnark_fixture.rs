@@ -336,9 +336,24 @@ fn real_shrink_proof(outer_config: &DreggOuterConfig) -> BatchStarkProof<DreggOu
 ///     REAL deployed apex, so the SettlementCircuit's baked pin does not rest
 ///     on trusting whoever compiled the fixture.
 ///
-/// VK material is content-independent and (WRAP on) depth-invariant, so the
-/// fixed 2-turn chain's fresh fold carries the deployed circuit's identity —
-/// the derivation depends only on the circuit definition at HEAD.
+/// VK material is content-independent (two proofs of the same circuit over
+/// different data carry identical material), so the fold's DATA does not enter
+/// the derivation.
+///
+/// ⚑⚑ **IT IS NOT DEPTH-INVARIANT, AND THIS DOCBLOCK CLAIMED IT WAS.** Until
+/// 2026-08-08 the paragraph above continued "and (WRAP on) depth-invariant, so
+/// the fixed 2-turn chain's fresh fold carries the deployed circuit's identity
+/// — the derivation depends only on the circuit definition at HEAD". MEASURED
+/// FALSE by
+/// [`the_apex_identity_is_one_chain_length_and_every_other_length_is_refused`]
+/// below over real 2/3/4/5-turn folds: the `RecursionVk` fingerprint, the apex
+/// VK-core lanes AND the root VK spine all differ at every length. WRAP
+/// normalizes a LEAF's mint shape; it does not make a 2-turn root and a 3-turn
+/// root the same circuit.
+///
+/// So read every "deployed apex identity" in this file as "the deployed apex
+/// identity AT [`DREGG_APEX_PINNED_CHAIN_TURNS`] TURNS". What this test checks
+/// is the identity of ONE circuit, and that circuit is the 2-turn root.
 ///
 /// ⚑ **THE WRITE USED TO LIVE HERE, AND IT IS WHY THIS PIN RAN NOWHERE.**
 /// Until 2026-08-08 this one test both *asserted* the fixture matched **and**
@@ -419,7 +434,10 @@ fn derive_deployed_apex_vk_identity_and_check_fixture() {
     );
 }
 
-/// **THE MEASUREMENT THAT DECIDES HOW THE VK SPINE MAY BE BOUND ON THE SETTLEMENT PATH.**
+/// ⚑⚑ **THE SETTLEMENT PATH ACCEPTS CHAINS OF EXACTLY ONE LENGTH, AND THIS IS WHERE THAT IS
+/// STATED AND ENFORCED.**
+///
+/// ## The decision, recorded rather than left implicit
 ///
 /// The apex's exposed claim is `[settlement segment(25) ‖ vk_spine(8)]`. The segment is the
 /// statement; the spine is subtree circuit identity. The gnark `SettlementCircuit` can bind an
@@ -431,26 +449,64 @@ fn derive_deployed_apex_vk_identity_and_check_fixture() {
 ///  * **PUBLISH it** as further Groth16 public inputs, which keeps the verifier length-generic
 ///    and moves the on-chain arity 25 → 33 (three chains' verifiers re-emit).
 ///
-/// The apex `RecursionVk` is depth-INVARIANT (WRAP), so the settlement circuit is otherwise
-/// length-generic — a 2-turn and a 3-turn chain shrink to the same shape. Whether the SPINE is
-/// too is a fact about `combine_vk_spine`'s fold, not a matter of taste, so this test MEASURES it
-/// instead of arguing: fold a 2-turn chain and a 3-turn chain and compare the root spines.
+/// **DECIDED 2026-08-08: length-genericity is NOT taken, and publishing the spine would not buy
+/// it.** The measurement below is why. Folding real chains of 2, 3, 4 and 5 turns at HEAD moves
+/// ALL THREE of the `RecursionVk` fingerprint, the `apex_preprocessed_commit` lanes and the root
+/// VK spine at every length — so the thing that varies is not just the spine block, it is the
+/// APEX CIRCUIT ITSELF. Publishing the spine as public input would leave
+/// `apexPreprocessedCommit` — a baked constant this circuit `connect`s to the apex verification's
+/// preprocessed-commitment inputs — still specific to one length. There is no binding choice at
+/// this layer that reaches length-genericity.
 ///
-/// ⚠ HONEST LABEL: this is a MEASUREMENT over two concrete chain lengths — a Rust case-test. It
-/// is not a proof that the spine varies for every pair of lengths, and it carries no formal
-/// content. It is here because it answers the design question with an observation instead of an
-/// assumption, and because it will fail loudly if the fold is ever made shape-invariant.
+/// Getting it is **root-shape normalization in the recursion tower** (the fork's
+/// `normalize_to_shape_spike`), i.e. a DESIGN CHANGE to how the tower folds, not a repair of a
+/// pin, an artifact or a binding. It is not taken here and this file does not pretend otherwise.
+///
+/// ## So the constraint is STATED — [`DREGG_APEX_PINNED_CHAIN_TURNS`] — and ENFORCED HERE
+///
+/// It was already enforced, by accident and by nobody's decision: a chain of any other length
+/// derives a different fingerprint, so `check_apex_vk_identity_pin` fails closed against the
+/// governance anchor and the pinned shrink cannot even witness. Enforcement that nothing asserts
+/// is enforcement nobody can rely on and nobody can notice losing, so this test now asserts it in
+/// BOTH polarities:
+///
+///  * **ACCEPT** — the identity derived at [`DREGG_APEX_PINNED_CHAIN_TURNS`] passes the
+///    governance pin. Without this the refusals below would be vacuous (a pin that refuses
+///    everything refuses nothing in particular).
+///  * **REFUSE** — the identity derived at every other length in 3..=5 FAILS the same pin. That
+///    is the settlement path declining to settle a chain it is not the verifier of.
+///
+/// It stays armed for the converse too: if root-shape normalization ever lands, the identities
+/// stop varying, this goes green-to-RED, and the binding must be re-decided rather than
+/// inherited.
+///
+/// ⚠ HONEST LABEL: four concrete lengths — a Rust case-test with no formal content. It does not
+/// prove the identity varies for every pair of lengths, and it is not a proof that no other
+/// length can settle; it is the *observation* that decides the design question, plus the
+/// *assertion* that the governance anchor is what stands between the deployed circuit and a
+/// chain it was not derived over.
 #[test]
-#[ignore = "FOUR real folds (2,3,4,5 turns), MEASURED 106s: MEASURES whether the root VK spine \
-            varies with chain length — the fact that decides whether the settlement path may \
-            BAKE the spine, and the refutation of the depth-invariance claim"]
-fn root_vk_spine_varies_with_chain_length() {
+#[ignore = "FOUR real folds (2,3,4,5 turns), MEASURED 106s: states and enforces that the deployed \
+            apex identity — RecursionVk, VK core AND root VK spine — is ONE chain length's, \
+            accepting at DREGG_APEX_PINNED_CHAIN_TURNS and refusing every other length against \
+            the governance anchor. Also the refutation of the depth-invariance claim."]
+fn the_apex_identity_is_one_chain_length_and_every_other_length_is_refused() {
     use dregg_circuit_prove::apex_shrink_gnark_export::{
-        APEX_CLAIM_LANES, VK_SPINE_LANES, apex_root_vk_spine, derive_apex_vk_identity,
+        APEX_CLAIM_LANES, DREGG_APEX_PINNED_CHAIN_TURNS, VK_SPINE_LANES, apex_root_vk_spine,
+        check_apex_vk_identity_pin, derive_apex_vk_identity,
     };
 
+    assert_eq!(
+        the_chain().len(),
+        DREGG_APEX_PINNED_CHAIN_TURNS,
+        "the derivation lane's chain is no longer DREGG_APEX_PINNED_CHAIN_TURNS turns — the \
+         constant and the circuit whose identity is deployed have come apart"
+    );
     println!("apex claim lanes   : {APEX_CLAIM_LANES} (segment 25 ++ spine {VK_SPINE_LANES})");
-    let mut rows: Vec<(usize, String, Vec<u32>, Vec<u32>)> = Vec::new();
+    println!("pinned chain length: {DREGG_APEX_PINNED_CHAIN_TURNS} turns");
+
+    // (n, recursion_vk_hex, apex VK core, root spine, does it pass the governance pin)
+    let mut rows: Vec<(usize, String, Vec<u32>, Vec<u32>, bool)> = Vec::new();
     for n in 2..=5usize {
         let chain: Vec<FinalizedTurn> = (0..n).map(|i| make_turn(1000, i as u32)).collect();
         let whole = prove_turn_chain_recursive(&chain)
@@ -458,14 +514,22 @@ fn root_vk_spine_varies_with_chain_length() {
         let spine = apex_root_vk_spine(&whole.root).expect("root exposes a VK spine");
         assert_eq!(spine.len(), VK_SPINE_LANES);
         let id = derive_apex_vk_identity(&whole.root).expect("identity derives");
+        let pinned = check_apex_vk_identity_pin(&id).is_ok();
         println!("--- {n} turns ---");
         println!("  recursion_vk : {}", id.recursion_vk_hex);
         println!("  apex VK core : {:?}", id.apex_preprocessed_commit);
         println!("  root spine   : {spine:?}");
-        rows.push((n, id.recursion_vk_hex, id.apex_preprocessed_commit, spine));
+        println!("  governance pin: {}", if pinned { "ACCEPTS" } else { "REFUSES" });
+        rows.push((
+            n,
+            id.recursion_vk_hex,
+            id.apex_preprocessed_commit,
+            spine,
+            pinned,
+        ));
     }
 
-    // THE TWO INVARIANCE QUESTIONS, reported as a table rather than asserted one pair at a time
+    // THE THREE INVARIANCE QUESTIONS, reported as a table rather than asserted one pair at a time
     // (an early panic on the first pair hides the shape of the answer).
     let n0 = rows[0].0;
     for r in &rows[1..] {
@@ -478,11 +542,47 @@ fn root_vk_spine_varies_with_chain_length() {
         );
     }
 
-    assert_ne!(
-        rows[0].3, rows[1].3,
-        "the root VK spine is IDENTICAL across chain lengths — combine_vk_spine has become \
-         shape-invariant, and the settlement path may bake it as a constant after all. Re-decide \
-         the binding before trusting this test's name."
+    // ── THE MEASUREMENT: all three move, so the apex circuit itself is length-specific. ────────
+    for r in &rows[1..] {
+        assert_ne!(
+            rows[0].1, r.1,
+            "the RecursionVk fingerprint is IDENTICAL at {} and {} turns — the apex has become \
+             shape-invariant. Re-decide the spine binding (and this test's name) before \
+             inheriting it.",
+            rows[0].0, r.0
+        );
+        assert_ne!(
+            rows[0].3, r.3,
+            "the root VK spine is IDENTICAL at {} and {} turns — combine_vk_spine has become \
+             shape-invariant, and the settlement path may bake it as a constant after all.",
+            rows[0].0, r.0
+        );
+    }
+
+    // ── THE ENFORCEMENT, both polarities. ─────────────────────────────────────────────────────
+    // ACCEPT first, so the refusals below cannot be a pin that refuses everything.
+    assert!(
+        rows[0].4,
+        "the identity derived at the PINNED chain length ({} turns) does not pass \
+         DREGG_APEX_RECURSION_VK. The governance anchor and the deployed circuit have come apart, \
+         and every refusal below is vacuous until that is repaired.",
+        rows[0].0
+    );
+    for r in &rows[1..] {
+        assert!(
+            !r.4,
+            "the {}-turn apex PASSED the governance anchor pinned for {}-turn chains. Either the \
+             apex became depth-invariant (then the whole binding is re-decidable and the \
+             assertions above should already have fired) or check_apex_vk_identity_pin has stopped \
+             discriminating — which would mean the settlement path accepts an apex it is not the \
+             verifier of.",
+            r.0, DREGG_APEX_PINNED_CHAIN_TURNS
+        );
+    }
+    println!(
+        "\n⚑ ENFORCED: the governance anchor ACCEPTS {} turns and REFUSES {:?}.",
+        DREGG_APEX_PINNED_CHAIN_TURNS,
+        rows[1..].iter().map(|r| r.0).collect::<Vec<_>>()
     );
 }
 

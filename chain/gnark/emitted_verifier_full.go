@@ -167,18 +167,18 @@ var knownVFGadgets = map[[2]string]bool{
 
 // inputBatchTemplatePaths maps a round's per-class row-width signature to the
 // committed Lean-emitted multi-height MMCS batch-opening template
-// (InputOpenBatchEmit.lean `batchData widths 18 katMask`, §12). The apex-shrink
+// (InputOpenBatchEmit.lean `batchData widths 19 katMask`, §12). The apex-shrink
 // fixture's four input rounds (trace / quotient / preprocessed / permutation)
-// share the height classes {18,17,12,3} and the {0,5,14} injection schedule but
+// share the height classes {19,18,12,3} and the {0,6,15} injection schedule but
 // differ in per-class row widths; each shape has its own emitted template. Round
-// 1 ([16,8,16,8]) is the originally-committed template; the other three shapes
+// 1 ([8,16,16,8]) is the originally-committed template; the other three shapes
 // are emitted from the SAME `batchData` (proven by `inputOpenBatch_refines`,
 // parametric over widths) at the deployed round widths.
 var inputBatchTemplatePaths = map[string]string{
-	"16,8,16,8":    "emitted/inputopen_batch_template.json",
-	"80,300,8,132": "emitted/inputopen_batch_r0.json",
-	"61,24,4,66":   "emitted/inputopen_batch_r2.json",
-	"76,28,8,132":  "emitted/inputopen_batch_r3.json",
+	"8,16,16,8":    "emitted/inputopen_batch_template.json",
+	"76,304,8,164": "emitted/inputopen_batch_r0.json",
+	"59,26,8,82":   "emitted/inputopen_batch_r2.json",
+	"72,32,8,164":  "emitted/inputopen_batch_r3.json",
 }
 
 // widthsSig is the comma-joined per-class width signature used to key the batch
@@ -499,8 +499,8 @@ var errBlock3NeedsSym = fmt.Errorf("block 3 (BatchTableInstance/stark_constraint
 // in PCS round order — trace(main)=0, quotient=1, preprocessed=2, permutation=3 —
 // the SAME order shrinkInputRootsRef reads the anchored inputRootDigOff and the
 // descriptor's round_widths list (EmitJson.lean apexShrinkShape.inputRoundWidths:
-// trace [80,300,8,132], quotient [16,8,16,8], preprocessed [61,24,4,66],
-// permutation [76,28,8,132]). So block 2b's opened root at THIS round is the
+// trace [76,304,8,164], quotient [8,16,16,8], preprocessed [59,26,8,82],
+// permutation [72,32,8,164]). So block 2b's opened root at THIS round is the
 // shrink proof's preprocessed commitment — the value SettlementCircuit pins as
 // c.PrefixDigests[c.loc.preDigOff] (settlement_circuit.go:268-270), which the
 // shrink-VK pin asserts equals the baked vkPreprocessedRoot.
@@ -1616,8 +1616,8 @@ func friFoldWitnessPath() string { return "emitted/fri_fold_witness.json" }
 
 // friFoldParentBits is the parent-index-bit count the committed template is emitted
 // at — the apex-shrink round-0 fold's |parentBits| = logGlobalMaxHeight − 1
-// (= 18 − 1). It fixes the invS selection chain length, hence the template shape.
-const friFoldParentBits = 17
+// (= 19 − 1). It fixes the invS selection chain length, hence the template shape.
+const friFoldParentBits = 18
 
 // checkFriFoldTemplateShape fail-closes if the loaded fold template does not match
 // the friFoldData shape: its gadget provenance must be [FriFoldRowArity2,
@@ -1658,13 +1658,13 @@ func checkFriFoldTemplateShape(tpl *Template) error {
 		return fmt.Errorf("fri fold template %q: %d select gates != %d parent bits "+
 			"(the invS bit-selection chain length)", tpl.Name, nSel, friFoldParentBits)
 	}
-	// Deterministic friFoldData shape at friFoldParentBits=17 (the committed emit).
-	if got := tpl.NumVars(); got != 4721 {
-		return fmt.Errorf("fri fold template %q: %d vars != 4721 (not the |bits|=%d "+
+	// Deterministic friFoldData shape at friFoldParentBits=18 (the committed emit).
+	if got := tpl.NumVars(); got != 4818 {
+		return fmt.Errorf("fri fold template %q: %d vars != 4818 (not the |bits|=%d "+
 			"friFoldData shape)", tpl.Name, got, friFoldParentBits)
 	}
-	if got := tpl.NumMulGates(); got != 9374 {
-		return fmt.Errorf("fri fold template %q: %d mul gates != 9374 (not the |bits|=%d "+
+	if got := tpl.NumMulGates(); got != 9566 {
+		return fmt.Errorf("fri fold template %q: %d mul gates != 9566 (not the |bits|=%d "+
 			"friFoldData shape)", tpl.Name, got, friFoldParentBits)
 	}
 	return nil

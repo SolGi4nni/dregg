@@ -380,6 +380,37 @@ pub struct ApexVkIdentity {
 pub const DREGG_APEX_RECURSION_VK: &str =
     "588720d922f1990378fae6cb8c06d08882a723f70422487e48b38098b72be92e";
 
+/// ⚑⚑ **THE CHAIN LENGTH [`DREGG_APEX_RECURSION_VK`] IS THE ANCHOR OF — the constraint the
+/// settlement path had but did not state.**
+///
+/// The apex is **not depth-invariant** (see [`ApexVkIdentity`]'s docblock for the measurement).
+/// Its `RecursionVk` fingerprint, its `apex_preprocessed_commit` lanes and its root VK spine are
+/// all three different at every chain length, so the governance anchor above, the identity
+/// artifact it pins, and the `apexPreprocessedCommit` / `rootVkSpine` constants the gnark
+/// `SettlementCircuit` bakes from it are **the identity of one circuit: the root of a chain of
+/// exactly this many turns.**
+///
+/// **The settlement path therefore accepts chains of exactly one length**, and it always did:
+/// [`check_apex_vk_identity_pin`] fails closed on an apex derived at any other length, and a
+/// shrink pinned to a foreign apex VK-core cannot witness. What was missing was anyone SAYING so —
+/// no test in the tree folded two lengths and compared, so *"a fresh fold of ANY chain at HEAD
+/// derives the deployed circuit's identity"* stood in three docblocks unchallenged. Enforcement
+/// nothing asserts is enforcement nobody can rely on and nobody notices losing.
+///
+/// ⚠ **THIS IS A RECORDED DECISION, NOT A COST ESTIMATE THAT BECAME A CONSTRAINT.**
+/// Length-genericity is *wanted* and is *not taken here*, because reaching it is not a binding
+/// choice at this layer: publishing the spine as Groth16 public inputs (arity 25 → 33) would leave
+/// `apexPreprocessedCommit` — a baked constant `connect`ed to the apex verification's
+/// preprocessed-commitment inputs — still specific to one length. It is **root-shape normalization
+/// in the recursion tower** (the fork's `normalize_to_shape_spike`), i.e. a change to how the tower
+/// folds. Until that lands, one length is the truth and this constant is where it is written down.
+///
+/// The tooth, both polarities, is
+/// `apex_shrink_gnark_fixture.rs::the_apex_identity_is_one_chain_length_and_every_other_length_is_refused`
+/// (route `armed-dark`): the identity at this length passes the anchor, and the identities at
+/// 3, 4 and 5 turns are REFUSED by it.
+pub const DREGG_APEX_PINNED_CHAIN_TURNS: usize = 2;
+
 /// Assert an [`ApexVkIdentity`]'s fingerprint equals the governance-pinned
 /// [`DREGG_APEX_RECURSION_VK`] anchor — fail-closed. This is the check that
 /// makes the anchor authoritative rather than decorative: without it the

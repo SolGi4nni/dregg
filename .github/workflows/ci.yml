@@ -1913,6 +1913,111 @@ jobs:
             Dregg2.Circuit.Emit.AutomataflNGenGolden
         run: bash scripts/axiom-hygiene-guard.sh
 
+  # ══════════════════════════════════════════════════════════════════════════════════════
+  # ⚑ THE GNARK LANE — `chain/gnark` was in NO WORKFLOW AT ALL until 2026-08-08.
+  #
+  # It is the only Go module in this repository (`chain/gnark/go.mod`, 174 tests) and it holds
+  # the BN254 settlement wrap: the Lean-emitted R1CS templates under `chain/gnark/emitted/`,
+  # the apex-VK governance pin the `SettlementCircuit` bakes, and the replay drivers that run
+  # the Lean emissions against the real apex-shrink proof fixture. Nothing in
+  # `.github/workflows/` mentioned `go`, `gnark` or `chain/` — measured by grep, 2026-08-08 —
+  # so ALL of it was executed by nothing. When the fixture was re-minted at `94fc8e161` the
+  # emitted twin went stale and EIGHT tests went red; that red sat in the tree unseen because
+  # no lane could report it.
+  #
+  # ⚠ WHAT THIS JOB IS AND IS NOT — read before trusting a green here.
+  #
+  # A DIFFERENTIAL between two committed artifacts detects DISAGREEMENT, never STALENESS: a
+  # self-consistent pair that HEAD does not produce, shifted identically in both files, is
+  # GREEN. `TestApexPinFixtureMatchesDerivedDeployedIdentity` is exactly that shape — it
+  # compares `fixtures/apex_shrink_fri_real.json` against `fixtures/apex_vk_identity.json`,
+  # and both move together when someone re-mints them.
+  #
+  # So this lane is deliberately NOT the whole instrument. It carries the half that is cheap
+  # and hosted-runnable — a `go build` + the full suite, with a FLOOR on what executed — and
+  # the FRESHNESS half lives where the derivation actually is:
+  #
+  #   * `armed-teeth.yml` `dark-binding-teeth` runs
+  #     `derive_deployed_apex_vk_identity_and_check_fixture` (route `armed-dark`,
+  #     `.github/ignored-test-routes.txt`), which folds a FRESH apex at HEAD, asserts the
+  #     governance-pinned `DREGG_APEX_RECURSION_VK` anchor, and asserts BOTH committed
+  #     artifacts equal that derivation. That is the only thing in this tree that can see a
+  #     stale-but-self-consistent pair, and it was routed `fixture-mint` (i.e. armed by
+  #     nothing) until 2026-08-08 because it also REWROTE the artifact it checked.
+  #   * `TestEmittedDescriptorShapeIsDerivedFromTheFixture` (this suite) re-derives the
+  #     emitted descriptor's height classes / per-class widths / merkle depths FROM the
+  #     fixture's own `input_rounds` and `fri` block rather than comparing two committed
+  #     shape literals. It is what turns "the templates agree with each other" into "the
+  #     templates agree with the proof they are supposed to open".
+  #
+  # If you add an artifact under `chain/gnark/emitted/`, add its derivation here — not a
+  # second committed copy to diff it against.
+  #
+  # NO `lfs: true`: `git check-attr filter` reports `unspecified` for everything under
+  # `chain/gnark/` (measured 2026-08-08). The LFS allowance is this repo's only real Actions
+  # bill; see the LFS block at the top of this file.
+  # ══════════════════════════════════════════════════════════════════════════════════════
+  gnark:
+    name: gnark settlement wrap (Go)
+    # ⚑ SLOW LANE — see the `schedule:` block at the top of this file, and this is a MEASUREMENT,
+    # not a guess. The full suite is **2399 s (40 min)**, measured 2026-08-08 on an M-series laptop
+    # after the apex-shrink fixture's shape grew (FRI rounds 15 → 16, log-height 18 → 19). This
+    # file's own header records that main's median inter-commit gap is **92 SECONDS**, so a
+    # 40-minute job on a push trigger has ~26 copies of itself in flight at steady state; `main` is
+    # deliberately NOT `cancel-in-progress`, so they queue rather than supersede and none reaches a
+    # verdict. That is the exact pathology the header measured as "ZERO succeeded" over 60 runs.
+    # So: nightly, on a PR, or on demand — never on a push to main. A per-push verdict that is
+    # structurally unreachable is worth less than a nightly one a human reads.
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    # 90, not 45: the suite is 40 min on a laptop and a hosted 4-vCPU runner is slower. Raise this
+    # with the measurement, never to make a timing red go away.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: chain/gnark/go.mod
+          cache-dependency-path: chain/gnark/go.sum
+
+      - name: go vet
+        working-directory: chain/gnark
+        run: go vet ./...
+
+      - name: go test (whole module, with a floor on what actually ran)
+        working-directory: chain/gnark
+        run: |
+          # ⚠ `set +e` is load-bearing, same argument as armed-teeth.yml's arming steps:
+          # GitHub runs `run:` under `bash --noprofile --norc -eo pipefail`, so `-e` is
+          # ALREADY ON and the floor check after a red `go test` would be unreachable code.
+          set +e
+          set -uo pipefail
+          # THE FLOOR. `go test` exits 0 for a package whose filter matched nothing, and a
+          # build-tag mistake that compiles away every test file reports `[no tests to run]`
+          # and exits 0 too. Measured at HEAD 2026-08-08: `go test -list '.*' .` enumerates
+          # 174 top-level tests. Floor at 150 to leave room for honest churn — RAISE it when
+          # the suite grows; never lower it to make a red lane green.
+          FLOOR_TESTS=150
+          # ⚠ `-timeout` IS LOAD-BEARING AND THE DEFAULT IS NOT ENOUGH. Go's default is 10m for the
+          # WHOLE binary, and it is a PANIC, not a failure: the run dies with a goroutine dump and
+          # no per-test verdict for anything that had not finished. MEASURED 2026-08-08, right after
+          # the apex-shrink fixture's shape moved (FRI rounds 15 → 16, log-height 18 → 19, wider
+          # opened rows): `TestEmittedVerifierFullTranscriptLinkIsLoadBearing` alone took 9m21s and
+          # tripped the 10m wall — `panic: test timed out after 10m0s`. Everything before it had
+          # passed; the suite still reported FAIL. A wall-clock wall reported as a red is the worst
+          # kind of red, because it looks like the code.
+          # Raise this when a shape grows; the job's own `timeout-minutes` is the real budget.
+          go test -timeout 70m -v ./... 2>&1 | tee gnark-test.log
+          status=${PIPESTATUS[0]}
+          ran=$(grep -cE '^(--- )?(PASS|FAIL): Test' gnark-test.log || true)
+          echo "gnark: $ran top-level test result line(s) observed (floor $FLOOR_TESTS)."
+          if [ "${ran:-0}" -lt "$FLOOR_TESTS" ]; then
+            echo "::error::only ${ran:-0} gnark test(s) reported a result, below the floor of $FLOOR_TESTS."
+            echo "::error::An exit code cannot tell 'the suite passed' from 'nothing was built'."
+            exit 1
+          fi
+          exit "$status"
+
   descriptor-drift:
     name: Descriptor Lean↔JSON drift gate
     # ⚑ SLOW LANE — see the `schedule:` block at the top of this file. Skipped on a push to

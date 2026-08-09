@@ -38,7 +38,7 @@ Deliverables:
     pins, emitted from the committed `BabyBearFr` gadgets.
   * **`selectorsV ζ db`** — the ℕ/`ExtV` value mirror of `computeStarkSelectorsNative`,
     `#guard`-KAT'd BIT-EXACT against the deployed Go on the REAL fixture ζ for every `db`
-    the shrink uses (`{0, 9, 14, 15}`).
+    the shrink uses (`{0, 9, 15, 16}`).
   * **`selectorTemplate_refines`** — the ∀-theorem, both polarities: for ALL canonical
     ζ and claimed triples, under the honest witness and the honest-inverse pins (the
     non-degeneracy the deployed `ExtInv` enforces), the LOWERED genuine R1CS of the emitted
@@ -49,7 +49,7 @@ Deliverables:
   * **`selectorTemplate_reject`** — the reject polarity (non-vacuity): a claimed triple that
     DISAGREES with the derivation makes the emitted R1CS UNSATISFIABLE under the honest
     witness.
-  * **`selectorsDbJson db`** committed at `chain/gnark/emitted/selectors_db{0,9,14,15}.json`,
+  * **`selectorsDbJson db`** committed at `chain/gnark/emitted/selectors_db{0,9,15,16}.json`,
     byte-pinned (length + FNV-1a).
 
 Classified seam (named, not silent — the `BabyBearFr`/`FriFoldEmit` ledger): the ∀-theorem
@@ -574,46 +574,48 @@ theorem selectorTemplate_reject (db : ℕ) (zeta c0 c1 c2 : ExtV)
 
 The real transcript ζ (`chain/gnark/fixtures/apex_shrink_fri_real.json`, extracted by the
 harness `extractShrinkStark(...).ch.zeta`) and the `computeStarkSelectorsRef` output at every
-degree bits the shrink uses (`{0, 9, 14, 15}` — `degree_bits = [9,9,15,14,15,0]`). All
-literals are the deployed Go's own output (dumped 2026-07-19). -/
+degree bits the shrink uses (`{0, 9, 15, 16}` — `degree_bits = [9,9,16,15,15,0]`). All
+literals are the deployed Go's own output (dumped 2026-08-08, at the re-minted apex-shrink
+fixture: the apex-VK flag day moved both the degree bits and the transcript ζ). -/
 
 /-- The real fixture transcript ζ. -/
-def katZeta : ExtV := ⟨1038051687, 1574878094, 802741036, 1709031159⟩
+def katZeta : ExtV := ⟨99790091, 1104783006, 255303953, 1593865295⟩
 
 -- db 9 — the full triple, bit-exact vs `computeStarkSelectorsNative(bb, zeta, 9)`.
 #guard selectorsV katZeta 9 ==
-  (⟨1075748727, 222474023, 267163968, 1228797678⟩,
-   ⟨1489185007, 1859274254, 1077996678, 871015396⟩,
-   ⟨1189642409, 1574878094, 802741036, 1709031159⟩)
+  (⟨125572954, 1029063903, 706937462, 1728905076⟩,
+   ⟨1924382664, 401512721, 1434662666, 220747139⟩,
+   ⟨251380813, 1104783006, 255303953, 1593865295⟩)
 -- db 15
 #guard selectorsV katZeta 15 ==
-  (⟨1061825778, 527264096, 1491253767, 1814611307⟩,
-   ⟨418428422, 1335656016, 445440124, 403588592⟩,
-   ⟨1640010673, 1574878094, 802741036, 1709031159⟩)
--- db 14
-#guard (selectorsV katZeta 14).1 == ⟨1553825384, 1818351521, 784833924, 1536139977⟩
-#guard (selectorsV katZeta 14).2.1 == ⟨1802388416, 776261930, 62441646, 159486401⟩
-#guard (selectorsV katZeta 14).2.2 == ⟨931750018, 1574878094, 802741036, 1709031159⟩
+  (⟨1694686603, 684106744, 1116876170, 1147746015⟩,
+   ⟨938325115, 775150034, 882591307, 475039212⟩,
+   ⟨701749077, 1104783006, 255303953, 1593865295⟩)
+-- db 16 — the tallest trace the re-minted shrink proof carries.
+#guard selectorsV katZeta 16 ==
+  (⟨1825836338, 1781978203, 678681319, 1035663521⟩,
+   ⟨943523277, 774095624, 1129234042, 949366847⟩,
+   ⟨572113979, 1104783006, 255303953, 1593865295⟩)
 -- db 0 — the degenerate trace height: E = ζ, Z_H = ζ − 1, both denominators equal, selectors = 1.
 #guard selectorsV katZeta 0 ==
-  (extConst 1, extConst 1, ⟨1038051686, 1574878094, 802741036, 1709031159⟩)
+  (extConst 1, extConst 1, ⟨99790090, 1104783006, 255303953, 1593865295⟩)
 
 -- The `E = ζ^{2^db}` vanishing recompute (`sel.zetaPow2Db`), bit-exact per db.
-#guard extExpV 9 katZeta == ⟨38130455, 1372960716, 1733388335, 853424123⟩
-#guard extExpV 15 katZeta == ⟨1597138321, 228536408, 703824202, 2002843979⟩
-#guard extExpV 14 katZeta == ⟨311950694, 113639385, 1473504265, 56746156⟩
+#guard extExpV 9 katZeta == ⟨870772733, 920256621, 638406872, 1995050955⟩
+#guard extExpV 15 katZeta == ⟨752083680, 676024996, 786371405, 277213116⟩
+#guard extExpV 16 katZeta == ⟨1317425510, 1082945534, 249831723, 1192034363⟩
 
 -- The generator inverses `g^{-1} = bbInvRef(bbTwoAdicGeneratorRef(db))` (the `isTransition`
 -- shift), bit-exact vs the deployed table.
 #guard ginvT 9 == 1861675199
 #guard ginvT 15 == 1411306935
-#guard ginvT 14 == 106301669
+#guard ginvT 16 == 1540942033
 #guard ginvT 0 == 1
 
 -- Non-vacuity of the refinement hypotheses: the honest-inverse pins `a · extInvV a = 1`
 -- HOLD at the real ζ for both denominators, for every db the shrink uses — so
 -- `selectorTemplate_refines` fires on the real fixture (its hypotheses are discharged here).
-#guard [0, 9, 14, 15].all fun db =>
+#guard [0, 9, 15, 16].all fun db =>
   (extMulV (extSubV katZeta (extConst 1)) (extInvV (extSubV katZeta (extConst 1))) == extConst 1)
   && (extMulV (extSubV katZeta (extConst (ginvT db)))
       (extInvV (extSubV katZeta (extConst (ginvT db)))) == extConst 1)
@@ -625,11 +627,14 @@ def katZeta : ExtV := ⟨1038051687, 1574878094, 802741036, 1709031159⟩
 
 /-! ## §8 The emitted JSON artifacts.
 
-One template per distinct degree bits the shrink uses (`{0, 9, 14, 15}`), committed at
+One template per distinct degree bits the shrink uses (`{0, 9, 15, 16}`), committed at
 `chain/gnark/emitted/selectors_db{N}.json`. The emitted constraint STRUCTURE depends only on
-`db` (the squaring count + the constant `g^{-1}`); the placeholder ζ is the real fixture ζ
-and the claimed triple its true derivation, so each template is a consistent,
-honestly-fillable instance. Byte pins are length + FNV-1a of the exact rendered string. -/
+`db` (the squaring count + the constant `g^{-1}`) — ζ enters as an INPUT variable, so the
+0/9/15 bytes survived the 2026-08-08 fixture re-mint that moved ζ unchanged, and only the
+paired WITNESS fixtures (`scripts/gen_selectors_witness.lean`) had to be re-dumped. The
+placeholder ζ is the real fixture ζ and the claimed triple its true derivation, so each
+template is a consistent, honestly-fillable instance. Byte pins are length + FNV-1a of the
+exact rendered string. -/
 
 /-- FNV-1a over the UTF-8 bytes — the byte-pin digest. -/
 def fnv1a (s : String) : UInt64 :=
@@ -640,16 +645,16 @@ def fnv1a (s : String) : UInt64 :=
 def selectorsDbJson (db : ℕ) : String :=
   Dregg2.Circuit.Emit.GnarkVerifier.emitGnarkJson (emitSelectors db katZeta)
 
--- **Byte pins** of the committed artifacts `chain/gnark/emitted/selectors_db{0,9,14,15}.json`:
+-- **Byte pins** of the committed artifacts `chain/gnark/emitted/selectors_db{0,9,15,16}.json`:
 -- exact length + FNV-1a digest of the rendered string. Any byte drift in an emitted template
 -- (a changed squaring count, a wrong `g^{-1}` constant, a re-ordered gadget) flips the digest.
 #guard (selectorsDbJson 0).length == 1406036
 #guard fnv1a (selectorsDbJson 0) == 17056074594331056466
 #guard (selectorsDbJson 9).length == 2749975
 #guard fnv1a (selectorsDbJson 9) == 9381981038340892017
-#guard (selectorsDbJson 14).length == 3496631
-#guard fnv1a (selectorsDbJson 14) == 1023112868994874525
 #guard (selectorsDbJson 15).length == 3646187
 #guard fnv1a (selectorsDbJson 15) == 2043968993851460074
+#guard (selectorsDbJson 16).length == 3797142
+#guard fnv1a (selectorsDbJson 16) == 7875364795002385664
 
 end Dregg2.Circuit.Emit.GnarkVerifier.Selector

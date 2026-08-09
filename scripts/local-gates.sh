@@ -36,19 +36,6 @@ for a in "$@"; do case "$a" in --all) RUN_ALL=1 ;; -h|--help) sed -n '2,30p' "$0
 
 # name | timeout_s | command
 GATES=(
-  # ⚑ THE ONLY GO MODULE IN THE REPOSITORY, AND UNTIL 2026-08-08 IT WAS IN NO WORKFLOW AND NO
-  # RUNNER. `chain/gnark` holds the BN254 settlement wrap: the Lean-emitted R1CS templates under
-  # `chain/gnark/emitted/`, the apex-VK governance pin the `SettlementCircuit` bakes, and the
-  # replay drivers that run those emissions against the real apex-shrink proof fixture. Measured by
-  # grep across `.github/workflows/`: no `go`, no `gnark`, no `chain/`. When the fixture was
-  # re-minted at `94fc8e161` the emitted twin went stale and EIGHT tests went red — a red nothing
-  # in the tree could report. `ci.yml`'s `gnark` job is the CI half; this is the local one, and
-  # LOCAL is the stricter bar here.
-  # ⚠ It is a differential over committed artifacts and CANNOT see staleness on its own. The
-  # freshness instrument is `derive_deployed_apex_vk_identity_and_check_fixture` (route
-  # `armed-dark`), which folds a fresh apex at HEAD; see the header of ci.yml's `gnark` job.
-  # ~2 min warm, no proving, no network.
-  "gnark|1800|bash -c 'cd chain/gnark && go vet ./... && go test ./...'"
   "doc-refs|300|bash scripts/check-doc-refs.sh"
   # ⚑ THE DOCUMENTATION FORM OF A DANGLING IMPORT (2026-08-08). `doc-refs` checks cited FILES;
   # this checks cited LEAN NAMES: a comment citing a theorem/def that was deleted or renamed
@@ -952,6 +939,23 @@ GATES=(
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
+  # ⚑ THE ONLY GO MODULE IN THE REPOSITORY, AND UNTIL 2026-08-08 IT WAS IN NO WORKFLOW AND NO
+  # RUNNER. `chain/gnark` holds the BN254 settlement wrap: the Lean-emitted R1CS templates under
+  # `chain/gnark/emitted/`, the apex-VK governance pin the `SettlementCircuit` bakes, and the
+  # replay drivers that run those emissions against the real apex-shrink proof fixture. Measured by
+  # grep across `.github/workflows/`: no `go`, no `gnark`, no `chain/`. When the fixture was
+  # re-minted at `94fc8e161` the emitted twin went stale and EIGHT tests went red — a red nothing
+  # in the tree could report. `ci.yml`'s `gnark` job is the CI half; this is the local one, and
+  # LOCAL is the stricter bar here.
+  # ⚠ It is a differential over committed artifacts and CANNOT see staleness on its own. The
+  # freshness instrument is `derive_deployed_apex_vk_identity_and_check_fixture` (route
+  # `armed-dark`), which folds a fresh apex at HEAD; see the header of ci.yml's `gnark` job.
+  # ⚠ `-timeout 70m` IS LOAD-BEARING. Go's default is 10m for the WHOLE binary and it PANICS rather
+  # than failing, so a slow test kills the run with a goroutine dump and no verdict for anything
+  # unfinished. MEASURED 2026-08-08 after the apex-shrink shape moved (FRI rounds 15 → 16, log-height
+  # 18 → 19): `TestEmittedVerifierFullTranscriptLinkIsLoadBearing` took 9m21s and tripped it, and
+  # everything that had already run had PASSED. Do not read that shape of red as the code.
+  "gnark|5400|bash -c 'cd chain/gnark && go vet ./... && go test -timeout 70m ./...'"
   # THE COMPILE-FAIL RATCHET ITSELF, over the real tree. Expensive for one reason: it is a
   # whole-workspace `cargo clippy --all-targets --keep-going` (226 members). Its cheap half
   # — the self-test — is in the default set above and is the part that proves the gate can

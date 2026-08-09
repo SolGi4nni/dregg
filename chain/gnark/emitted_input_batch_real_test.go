@@ -143,10 +143,10 @@ func TestReplayClosedInputBatchRealFixture(t *testing.T) {
 		path string
 		ri   int
 	}{
-		{"round0-trace [80,300,8,132]", "emitted/inputopen_batch_r0.json", 0},
-		{"round1-quotient [16,8,16,8]", "emitted/inputopen_batch_template.json", 1},
-		{"round2-preprocessed [61,24,4,66]", "emitted/inputopen_batch_r2.json", 2},
-		{"round3-permutation [76,28,8,132]", "emitted/inputopen_batch_r3.json", 3},
+		{"round0-trace [76,304,8,164]", "emitted/inputopen_batch_r0.json", 0},
+		{"round1-quotient [8,16,16,8]", "emitted/inputopen_batch_template.json", 1},
+		{"round2-preprocessed [59,26,8,82]", "emitted/inputopen_batch_r2.json", 2},
+		{"round3-permutation [72,32,8,164]", "emitted/inputopen_batch_r3.json", 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

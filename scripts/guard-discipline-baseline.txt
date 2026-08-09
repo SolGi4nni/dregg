@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15264 guards across 1152 modules (2532 .lean files scanned).
+# TOTAL 15262 guards across 1152 modules (2532 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -47,6 +47,7 @@
 # BASELINE-PROVENANCE 21fd365d8-DIRTY 15285→15264 (-21) DECREASED — verify-wire malformed/verdict split: Fips204Verify 21 -> 10 and R3Verify 10 -> 0. Every wire-level guard on the three signature-verification exports asserted a string that a MALFORMED wire also rendered ("0" / "REJECT"), so none could tell a forged signature from a wire nothing parsed; they are now named theorems over the new distinct "2 <fault>" code, native_decide + #assert_compiled (String.splitOn does not reduce in the kernel), beside kernel-proved #assert_axioms both-pole iffs
 # BASELINE-PROVENANCE 59b82fa60-DIRTY 15264→15263 (-1) DECREASED — deshield off-ramp: deleted the roster-length #guard that verbatim duplicated the named, #assert_axioms-pinned theorem effect_tag_count (which the Rust verb_registry_gate greps for)
 # BASELINE-PROVENANCE 62478f68a-DIRTY 15263→15264 (+1) INCREASED — KimchiStepMainPins08 72 -> 73 (8015b6f07, the AIR cross-row lane). ⚑ DEBT MARKER, NOT APPROVAL — the same treatment 15523->15602 gave the live wrap_main cone. The +1 is the SEGMENT-D SPONGE CORRECTION: three guards that read 'segment D is a Sponge.copy of sponge_after_index' became three that read the opposite (step.rs:2718 hands the OUTER hash merge::dlog_plonk_index(wrap_prover), so D starts FRESH and absorbs its own 56 coordinates), and the third — 'a different key gives a different after_index state' — is a NEW claim, not a restatement. It is also the LOAD-BEARING one: it is what makes §18's tie bind the key at all, and it is exactly the kind of fact that must be a NAMED THEOREM. Rowed rather than converted ONLY because this is the live Pickles step/wrap cone (KimchiWrapMainCore has a 349-line uncommitted rewrite in the shared tree at this moment and every KimchiWrapMainPins module is mid-lake-build), and converting one guard out of 73 in a sibling lane's module would launder the count without doing the burndown. OWNER: the Pickles step/wrap lane, 8015b6f07. Disposition: CONVERT to a named native_decide theorem + #assert_compiled, do not keep. The row must SHRINK; no other module may hide behind it.
+# BASELINE-PROVENANCE HEAD-DIRTY 15264→15262 (-2) DECREASED — apex-shrink fixture re-mint: SelectorEmit's db-14 KAT was THREE guards spelling one triple componentwise ((selectorsV katZeta 14).1/.2.1/.2.2); the fixture's degree bits moved 14 -> 16, and the replacement db-16 KAT is the ONE whole-triple guard the db-9/db-15 rows already used. A re-mint, not a burndown — the count fell because a three-way split collapsed back to the module's own idiom, and no claim was dropped.
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -398,7 +399,7 @@
 8	Dregg2/Circuit/Emit/GnarkVerifier/Poseidon2Emit.lean
 19	Dregg2/Circuit/Emit/GnarkVerifier/QueryPowEmit.lean
 9	Dregg2/Circuit/Emit/GnarkVerifier/SegmentEmit.lean
-24	Dregg2/Circuit/Emit/GnarkVerifier/SelectorEmit.lean
+22	Dregg2/Circuit/Emit/GnarkVerifier/SelectorEmit.lean
 3	Dregg2/Circuit/Emit/GraduateNarrow.lean
 3	Dregg2/Circuit/Emit/GraduateWideNarrow.lean
 1	Dregg2/Circuit/Emit/GuardedHidingSpanEmit.lean

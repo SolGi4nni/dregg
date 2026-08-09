@@ -1,4 +1,11 @@
-//! ⚑⚑ **THE CHILD-VK IDENTITY PIN, AT EVERY 2-TO-1 FOLD IN THIS CRATE.**
+//! ⚑⚑ **THE CHILD-VK IDENTITY PIN, TAKEN AT EVERY 2-TO-1 FOLD IN THIS CRATE.**
+//!
+//! ⚑ **AND THE VERB MATTERS: "TAKEN", NOT "FORCED".** The tree has summarised this module as *"all
+//! 66 fold sites pin child VK identity"*, which reads as a closure by constraint. It is not one.
+//! The correct closure kind, spelled out in "WHAT THE PIN BUYS" below, is **recursion wiring plus a
+//! CONSUMER REFUSAL**: the parent circuit goes UNSAT for a mismatched child (wiring, on a box), and
+//! what makes the pinned value NAME a particular circuit is a consumer comparing the parent's
+//! `RecursionVk` fingerprint against an anchor it already trusts. Neither leg is an AIR gate.
 //!
 //! ⚠ **LABEL FIRST.** This is recursion *wiring* — `alloc_const` + `connect` over targets the
 //! child verifier already allocated. It authors **no AIR** (House Law #1 holds: every AIR under

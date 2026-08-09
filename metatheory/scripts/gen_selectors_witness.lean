@@ -4,8 +4,9 @@ witness-aware replayer test (chain/gnark/emitted_gadget_replay_witness_test.go:
 ReplayTemplateWithWitness).
 
 It dumps the Lean-generated honest assignment `selectorsAsg` (SelectorEmit.lean) — the
-same object the `selectorTemplate_refines` ∀-theorem quantifies over — for each degree
-bits the shrink uses, as a JSON array of decimal BN254 residues indexed by template
+same object the `selectorTemplate_refines` ∀-theorem quantifies over — for each DISTINCT
+degree bits the shrink uses (`apexShrinkShape.degreeBits`, so a fixture re-mint moves this
+set in ONE place), as a JSON array of decimal BN254 residues indexed by template
 variable. Written byte-for-byte to chain/gnark/emitted/selectors_witness_db{N}.json,
 alongside the committed template bytes selectors_db{N}.json (which are the emitted
 `selectorsData` from the SAME instance, `emitSelectors db katZeta`).
@@ -23,6 +24,7 @@ that a corrupted witness is unsatisfiable.
 import Dregg2.Circuit.Emit.GnarkVerifier.SelectorEmit
 
 open Dregg2.Circuit.R1csFr
+open Dregg2.Circuit.Emit.GnarkVerifier (apexShrinkShape)
 open Dregg2.Circuit.Emit.GnarkVerifier.Selector
 
 /-- The honest witness list — the minted assignment values in variable-index order for
@@ -38,7 +40,7 @@ def renderWitness (l : List Fr) : String :=
   "[" ++ String.intercalate "," (l.map (fun x => toString x.val)) ++ "]"
 
 def main : IO Unit := do
-  for db in [0, 9, 14, 15] do
+  for db in apexShrinkShape.degreeBits.eraseDups do
     let s := honestAssigns db
     let path := s!"../chain/gnark/emitted/selectors_witness_db{db}.json"
     IO.FS.writeFile path (renderWitness s)

@@ -42,11 +42,11 @@ func TestVerifierFullLoadsAndValidates(t *testing.T) {
 	if len(vf.Gadgets) != 10 {
 		t.Fatalf("expected 10 gadget records, got %d", len(vf.Gadgets))
 	}
-	if vf.Derived.CommitMerkleCompressions != 5700 {
-		t.Fatalf("commit_merkle_compressions = %d, want 5700", vf.Derived.CommitMerkleCompressions)
+	if vf.Derived.CommitMerkleCompressions != 6384 {
+		t.Fatalf("commit_merkle_compressions = %d, want 6384", vf.Derived.CommitMerkleCompressions)
 	}
-	if vf.Derived.InputMerkleCompressions != 2736 {
-		t.Fatalf("input_merkle_compressions = %d, want 2736", vf.Derived.InputMerkleCompressions)
+	if vf.Derived.InputMerkleCompressions != 2888 {
+		t.Fatalf("input_merkle_compressions = %d, want 2888", vf.Derived.InputMerkleCompressions)
 	}
 	// checkDerivedParity ran inside Validate; a second explicit call documents it.
 	if err := vf.checkDerivedParity(); err != nil {

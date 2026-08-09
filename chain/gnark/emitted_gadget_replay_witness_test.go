@@ -6,7 +6,7 @@
 // value the prover chooses, pinned by the constraint.
 //
 // The motivating instance is the STARK Lagrange-selector derivation
-// (SelectorEmit.lean, emitted/selectors_db{0,9,14,15}.json): inputs `[zeta]`, outputs
+// (SelectorEmit.lean, emitted/selectors_db{0,9,15,16}.json): inputs `[zeta]`, outputs
 // `[isFirstRow, isLastRow, isTransition]`, with thousands of free internal witnesses
 // (the 31-bit canonicity decompositions of every ingested/minted extension
 // coordinate, the two hinted field inverses of the `ExtInv` gadget, and the
@@ -37,7 +37,7 @@ import (
 
 // The real fixture transcript ζ (SelectorEmit.lean katZeta — the emitted templates'
 // placeholder point; the emitted constraint structure is value-independent).
-var selectorsKatZeta = bbExtRef{1038051687, 1574878094, 802741036, 1709031159}
+var selectorsKatZeta = bbExtRef{99790091, 1104783006, 255303953, 1593865295}
 
 // loadWitnessValues reads a Lean-dumped honest assignment: a JSON array of decimal
 // field residues, index = template variable.
@@ -164,7 +164,7 @@ func mkSelectorsWitnessCircuit(t *testing.T, db int) (*selectorsWitnessCircuit, 
 // native computeStarkSelectorsRef bit-exact (test.IsSolved accepts).
 func TestReplayTemplateWithWitnessSelectorsKAT(t *testing.T) {
 	field := ecc.BN254.ScalarField()
-	for _, db := range []int{0, 9, 14, 15} {
+	for _, db := range []int{0, 9, 15, 16} {
 		db := db
 		t.Run(fmt.Sprintf("db%d", db), func(t *testing.T) {
 			circuit, asg := mkSelectorsWitnessCircuit(t, db)
@@ -190,8 +190,8 @@ func TestReplayTemplateWithWitnessClassification(t *testing.T) {
 	}{
 		{0, 3936, 3912, 20},
 		{9, 7608, 7584, 20},
-		{14, 9648, 9624, 20},
 		{15, 10056, 10032, 20},
+		{16, 10464, 10440, 20},
 	} {
 		tpl, err := LoadTemplate(fmt.Sprintf("emitted/selectors_db%d.json", tc.db))
 		if err != nil {
