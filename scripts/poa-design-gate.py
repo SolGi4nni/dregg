@@ -17,6 +17,17 @@ already total finite transition functions, and reports per game:
   * dead / dominated       — actions never accepted, and actions provably never optimal
   * unreachable outcomes   — declared feedback classes or states that cannot occur
   * instance families      — trivial, duplicated, or seed-inert instances
+  * ⚑ the fixed-strategy pass — is there ONE SCRIPT that wins?  A blind line's win
+                             rate with the line printed, the band between that script
+                             and perfect play, whether an information-buying verb is
+                             ever worth taking, and whether the budget covers the
+                             DISTRIBUTION perfect play needs rather than one floor
+
+⚑ EVERY MEASURE ABOVE THAT PASS IS A PROPERTY OF THE GAME TREE, AND A SOLUTION IS A
+PROPERTY OF ONE PATH THROUGH IT.  Deck Descent passed this gate at 0 FAIL / 0 WARN with
+1360 outcome-changing forks and zero budget slack, and a nine-action script wins it on
+every board while reading nothing.  Read the pass's own header before adding a measure
+that counts states, forks, or floors and expects to see that.
 
 Anti-mirror discipline.  Where this tool needs a rule model that the descriptor does
 not tabulate (Signal's feedback over targets other than the pinned one; Salvage's
@@ -1318,13 +1329,18 @@ class ParametricMachineGame:
         """Artificer Logic: rebuilt in full by `ManualRules`, which is written from
         the descriptor's own `manual` block and the state views and knows nothing
         about the Lean kernel's numbers."""
-        ManualRules(self.doc).differential(self)
+        # ⚑ KEPT, not discarded.  The fixed-strategy pass plays a script against the
+        # REBUILT model — the one every emitted row was just checked against — rather
+        # than against a second reconstruction, which would be a mirror of a mirror.
+        self.rule_model = ManualRules(self.doc)
+        self.rule_model.differential(self)
 
     def _descent_differential(self) -> None:
         """Deck Descent: rebuilt in full by `DescentRules`, which is written from the
         descriptor's own `shaft` block and the state views and knows nothing about
         the Lean kernel's numbers."""
-        DescentRules(self.doc).differential(self)
+        self.rule_model = DescentRules(self.doc)
+        self.rule_model.differential(self)
 
     # ⚑ RAISED 2026-08-06.  This search was a bare `itertools.permutations` over the
     # action alphabet — 9! = 363k for a descent, and 24! for a rule-induction game,
@@ -1927,6 +1943,45 @@ class DescentRules:
             return None
         c = self.target(s[0], line)
         return self.step(s, kind, line, board[c] if c is not None else self.sound)
+
+    # -- which verbs buy information, DERIVED and then checked ---------------
+
+    def information_verbs(self, meta) -> list:
+        """The verbs whose whole effect is on what the player KNOWS.
+
+        ⚑ NOT `kind == "survey"`.  A name is a label a descriptor writes about itself,
+        and this file's discipline is to derive the fact and then check it.  A verb
+        qualifies here when, at every state where it is open,
+
+          1. its row is a `resolve` — it consults the instance, so it does buy a bit;
+          2. its two branches agree on every component of the state EXCEPT the lore
+             vector, which is exactly the player's reading of the shaft.
+
+        `descend` fails (2): its branches differ in damage and in the sling a body
+        forfeits, so it moves the world and not only the map.  What comes back is the
+        set of verbs a player takes for no reason other than to find out — and whether
+        finding out is worth anything is then a MEASUREMENT (delete them and replay),
+        not an argument from the word `survey`.
+        """
+        out = []
+        for aid, (kind, line) in meta.items():
+            opens, pure = 0, True
+            for st in self.state_of.values():
+                verdict, _, nxt, on_m, on_f = self.row_for(st, kind, line)
+                if verdict == "refuse":
+                    continue
+                opens += 1
+                if verdict != "resolve":
+                    pure = False
+                    break
+                a, b = list(on_m), list(on_f)
+                a[4] = b[4] = None      # index 4 IS the lore vector: what is known
+                if a != b:
+                    pure = False
+                    break
+            if pure and opens:
+                out.append(aid)
+        return sorted(out)
 
     # -- the differential ----------------------------------------------------
 
@@ -4226,6 +4281,823 @@ def relay_instance_family(doc: dict, rep: Report, summary: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ⚑ THE FIXED-STRATEGY PASS — is there a script that wins without ever looking?
+# ---------------------------------------------------------------------------
+#
+# ⚑ WHY THIS EXISTS, MEASURED 2026-08-09.  Deck Descent shipped and passed this gate
+# with 0 FAIL and 0 WARN — 1360 outcome-changing forks, budget slack 0, a junction the
+# gate called a genuine decision.  A playtest then beat it with a NINE-ACTION SCRIPT
+# that wins on every board of the family and reads nothing:
+#
+#     shore · descend · shore · descend · lift · ascend · lift · ascend · extract
+#
+# Two shorings make both passages safe before anybody walks them, and nine actions is
+# exactly the air budget.  Every measurement the gate had was true and none of them
+# could see it:
+#
+#   * `outcome_forks` counts states where SOME action changes the outcome.  It says
+#     nothing about whether one fixed line ignores all 1360 of them and still wins.
+#   * `budget_slack = 0` says the clock binds THE OPTIMAL route.  It does not say the
+#     clock is tight against the DUMBEST route, and here they are the same route.
+#   * a `resolve` row proves the instance is CONSULTED.  It is not evidence the answer
+#     is worth anything: Descent's two `survey` verbs resolve the board on every open
+#     row, and deleting them outright changes neither the minimax value (9) nor the
+#     win rate (8/8).
+#
+# The class is: EVERY EXISTING MEASURE IS A PROPERTY OF THE GAME TREE, AND A SOLUTION
+# IS A PROPERTY OF ONE PATH THROUGH IT.  A tree can be enormous, branchy and hostile
+# and still contain a straight line that wins.  So this pass does not measure the
+# tree.  It searches for the line.
+#
+# ## What a blind line is here
+#
+# A FIXED SEQUENCE OF ACTION IDS, chosen before the instance is drawn and never
+# revised in response to anything the game shows: no branch, no memory, no reading of
+# a disclosed board.  Playing it applies the ids in order; an action the rules REFUSE
+# is a no-op that costs nothing and the script moves to the next id, which is what
+# every one of these games actually does with a refusal — a refused row names no
+# successor and does not advance the clock.  The line wins on an instance when the
+# state it lands in is a rewarded terminal.
+#
+# An instance that is DISCLOSED to its own player (Relay's damage report) is modelled
+# by giving that instance its own opening state, so a player who reads the report is
+# telling two instances apart from the first action and a blind line is exactly a
+# player who did not read it.  Nothing declares which games those are; it falls out.
+#
+# ## Why the search is honest in exactly one direction
+#
+# A line this pass finds is REPLAYED through the emitted transition and its win count
+# is a measurement, so a FAIL here is a witness and cannot be a false alarm.  A line
+# it fails to find is not a proof that none exists: the product search is capped, and
+# `blind_line_search_exhaustive` in the summary says whether the cap was reached.  A
+# capped search that finds nothing reports an INFO saying so rather than an all-clear
+# — the alternative is a gate that goes quiet when it runs out of time, which is a
+# gate that cannot go red.
+#
+# ⚑ A COST ROW IS NOT A TRANSITION (see the module header).  Nothing below ranks an
+# action by what it spends.  Every number comes from walking the REAL transition the
+# emitted table names, per instance, and counting terminals.
+
+# The thresholds, with their reasons.  Each is stated in every finding it produces,
+# because a number a reader has to go looking for is a number nobody checks.
+BLIND_SOLVED = 1.0       # a line that loses on NO instance is a solution, not a play
+BLIND_DOMINANT = 0.75    # three runs in four never needed the instance at all
+BLIND_MAJORITY = 0.5     # the majority of runs are decided before the first action
+SKILL_BAND_FAIL = 0.10   # under ten points between a script and perfect play
+SKILL_BAND_WARN = 0.25
+OPTIMAL_MUST_WIN = 0.95  # a perfect player losing more than one run in twenty
+
+# Both searches are capped in TRANSITION CALLS rather than nodes, because a node costs
+# `actions x instances` steps and a node cap therefore means something different for
+# every game.  A cap in the shared currency is comparable across the rack.
+SEARCH_STEPS = 3_000_000
+
+
+class Solvability:
+    """The instance family, the emitted transition and a WIN — the whole input to the
+    fixed-strategy checks.
+
+    A backend supplies one only when it can build all of it HONESTLY:
+
+      * `instances`   the family a run is drawn from, enumerated from the artifact;
+      * `weights`     how many descriptor instances each member stands for, so a
+                      family collapsed to its information classes still reports
+                      fractions over the DECLARED space;
+      * `initials`    the opening state PER INSTANCE — equal for a hidden instance,
+                      distinct for one disclosed to its own player;
+      * `actions`     the emitted action ids in the order the descriptor declares
+                      them (the order is load-bearing: it is a canonical line);
+      * `step(s,a,i)` the real transition on one instance, or None for a refusal;
+      * `won(s)`      is this state a rewarded terminal;
+      * `info_verbs`  action ids the backend DERIVED to be information-buying and
+                      then CHECKED against the branch structure — never named.
+
+    A backend that cannot build these says so with a reason and the pass reports the
+    reason.  It does not guess a family: a fabricated family makes every number below
+    a number about a game nobody ships.
+    """
+
+    def __init__(self, instances, initial, actions, step, won, *,
+                 initials=None, weights=None, info_verbs=(), depth_slack=2,
+                 search_steps=SEARCH_STEPS):
+        # ⚠ `initial` is the SHARED opening — a hidden instance shows a run the same
+        # first screen whichever member was drawn.  `initials` overrides it per
+        # instance and is how a DISCLOSED instance is modelled; it is a separate
+        # keyword rather than a sniffed type, because a state that happened to be a
+        # list would otherwise be silently read as eight openings.
+        self.instances = list(instances)
+        n = len(self.instances)
+        if not n:
+            raise Refusal("a solvability family declares no instances")
+        self.weights = list(weights) if weights else [1] * n
+        self.initials = list(initials) if initials is not None else [initial] * n
+        if len(self.weights) != n or len(self.initials) != n:
+            raise Refusal("a solvability family weights or opens a different number "
+                          "of instances than it declares")
+        self.actions = list(actions)
+        self.step = step
+        self.won = won
+        self.info_verbs = list(info_verbs)
+        self.depth_slack = depth_slack
+        self.search_steps = search_steps
+        self.total = sum(self.weights)
+
+    def depth(self, budget):
+        """How long a fixed line is allowed to be.
+
+        Long enough for a full sweep of the alphabet plus the clock, and no longer.
+        ⚠ A depth that is too SHORT can only under-report what a script wins — the
+        search then misses lines rather than inventing them — which is the same
+        direction as the step cap and the same reason it is safe."""
+        return max(budget * self.depth_slack,
+                   min(len(self.actions) + budget, 4 * budget), 8)
+
+    def prune(self, line):
+        """Drop every position no instance accepts.
+
+        An action the whole family refuses is a no-op on the whole family and can be
+        deleted from a line without changing what the line does — the same fact the
+        product search prunes on.  Doing it to the REPORTED line is what turns
+        Signal's 216-entry canonical sweep into the five guesses that actually
+        happened.  The caller re-replays and keeps the original on any disagreement,
+        so this can shorten a line and can never change one."""
+        used = [False] * len(line)
+        for i, inst in enumerate(self.instances):
+            st = self.initials[i]
+            for k, aid in enumerate(line):
+                nxt = self.step(st, aid, inst)
+                if nxt is not None:
+                    used[k] = True
+                    st = nxt
+        return [aid for k, aid in enumerate(line) if used[k]]
+
+    def stripped(self, drop):
+        keep = [a for a in self.actions if a not in drop]
+        return Solvability(self.instances, None, keep, self.step, self.won,
+                           initials=self.initials, weights=self.weights,
+                           depth_slack=self.depth_slack,
+                           search_steps=self.search_steps)
+
+    # -- replay: the measurement every reported line is checked by ------------
+
+    def replay(self, line):
+        """Play a fixed line against every instance.  Returns (won weight, worst
+        accepted-action count).  This is the ONLY place a win count comes from — a
+        search proposes, this measures."""
+        won_w, worst = 0, 0
+        for i, inst in enumerate(self.instances):
+            st, spent = self.initials[i], 0
+            for aid in line:
+                nxt = self.step(st, aid, inst)
+                if nxt is not None:
+                    st, spent = nxt, spent + 1
+            if self.won(st):
+                won_w += self.weights[i]
+            worst = max(worst, spent)
+        return won_w, worst
+
+    # -- the canonical lines: what a player who is not trying would type -----
+
+    def canonical_lines(self, depth):
+        """The DUMBEST SENSIBLE lines, with no search in any of them.
+
+        Nothing here is tuned: the descriptor's own action order cycled, that order
+        sorted, and each single verb repeated.  Black Box's `any systematic scan wins`
+        is exactly the first of these, and keeping them apart from the product search
+        is what makes their win rate the NAIVE rate the skill band needs."""
+        out = [("the descriptor's own action order, cycled",
+                [self.actions[k % len(self.actions)] for k in range(depth)]),
+               ("that order sorted, cycled",
+                [sorted(self.actions)[k % len(self.actions)] for k in range(depth)])]
+        for aid in self.actions:
+            out.append((f"`{aid}` repeated", [aid] * depth))
+        return out
+
+    # -- the exhaustive product search ---------------------------------------
+
+    def product_search(self, depth):
+        """Every fixed line, searched over the PRODUCT of the per-instance states.
+
+        A fixed line applied to the whole family is one walk in the product machine,
+        so the search is a DFS there with the product state memoised.  An action every
+        instance refuses is dropped — it is a no-op on the whole family and can be
+        deleted from any line without changing what the line does — and that is what
+        keeps the branching down.
+
+        Returns (best won weight, best line, exhaustive?).
+        """
+        best = [0, []]
+        seen = {}
+        steps = [0]
+        limit = self.search_steps
+        exhaustive = [True]
+        step, won, actions, weights = self.step, self.won, self.actions, self.weights
+        insts = self.instances
+        cost = len(actions) * len(insts)
+
+        def rec(tup, line):
+            w = sum(weights[i] for i, st in enumerate(tup) if won(st))
+            if w > best[0]:
+                best[0], best[1] = w, list(line)
+            hit = seen.get(tup)
+            if hit is not None:
+                return hit
+            if len(line) >= depth:
+                return w
+            steps[0] += cost
+            if steps[0] > limit:
+                exhaustive[0] = False
+                return w
+            seen[tup] = w
+            out = w
+            for aid in actions:
+                nxt, moved = [], False
+                for i, st in enumerate(tup):
+                    s2 = step(st, aid, insts[i])
+                    if s2 is None:
+                        nxt.append(st)
+                    else:
+                        nxt.append(s2)
+                        moved = True
+                if not moved:
+                    continue
+                line.append(aid)
+                out = max(out, rec(tuple(nxt), line))
+                line.pop()
+            seen[tup] = out
+            return out
+
+        rec(tuple(self.initials), [])
+        return best[0], best[1], exhaustive[0]
+
+    # -- perfect play, over the same family and the same win -----------------
+
+    def optimal_wins(self):
+        """The largest number of instances ANY policy wins, over the same emitted
+        transition and inside the same budget.
+
+        The state is what the player observes, so two instances are told apart exactly
+        when they drive the run into different states; the belief is the set of
+        instances still consistent with the state, and the recursion is the ordinary
+        one over (state, belief).  A refusal is an observation like any other: it keeps
+        its instances at the same state with a STRICTLY SMALLER belief, so the
+        recursion terminates.
+
+        Returns (won weight, exact?).  ⚠ When the cap is reached this returns the
+        CEILING — the whole family — and `exact` is False.  That direction is chosen
+        on purpose.  An under-estimated optimum makes the skill band look thinner than
+        it is and fires a check that should have stayed silent, and a false alarm in a
+        gate whose findings are supposed to be witnesses is worse than a gap that says
+        out loud that it is a gap.
+        """
+        memo = {}
+        steps = [0]
+        limit = self.search_steps
+        exact = [True]
+        step, won, actions, weights = self.step, self.won, self.actions, self.weights
+        insts = self.instances
+
+        def rec(state, belief):
+            if won(state):
+                return sum(weights[i] for i in belief)
+            key = (state, belief)
+            hit = memo.get(key)
+            if hit is not None:
+                return hit
+            steps[0] += len(actions) * len(belief)
+            if steps[0] > limit:
+                exact[0] = False
+                return sum(weights[i] for i in belief)
+            memo[key] = 0
+            best = 0
+            for aid in actions:
+                groups = defaultdict(set)
+                for i in belief:
+                    s2 = step(state, aid, insts[i])
+                    groups[state if s2 is None else s2].add(i)
+                if len(groups) == 1 and state in groups:
+                    continue          # every instance refuses: a no-op on this belief
+                tot = 0
+                for s2, grp in groups.items():
+                    tot += rec(s2, frozenset(grp))
+                if tot > best:
+                    best = tot
+            memo[key] = best
+            return best
+
+        opening = defaultdict(set)
+        for i, s0 in enumerate(self.initials):
+            opening[s0].add(i)
+        got = sum(rec(s0, frozenset(grp)) for s0, grp in opening.items())
+        if not exact[0]:
+            return self.total, False
+        return got, True
+
+
+def _line_text(line):
+    return " · ".join(str(a) for a in line) if line else "(empty)"
+
+
+def solvability_pass(fam, name, budget, rep, summary) -> None:
+    """The four checks, over one family.  Every number is a replay of the emitted
+    transition; the searches only propose lines."""
+    depth = fam.depth(budget)
+
+    # ---- 1. the blind line -------------------------------------------------
+    naive = []
+    for k, (label, line) in enumerate(fam.canonical_lines(depth)):
+        w, worst = fam.replay(line)
+        naive.append((w, k, worst, label, line))
+    # ⚠ ties go to the EARLIER canonical line, and `canonical_lines` puts the
+    # descriptor's own action order first.  Tie-breaking on cost instead reported
+    # "`alpha-beta` repeated" as the naive strategy of a game where every canonical
+    # line wins nothing, which reads as a finding about one link.
+    naive.sort(key=lambda x: (-x[0], x[1]))
+    naive_w, _, naive_cost, naive_label, naive_line = naive[0]
+
+    if naive_w >= fam.total:
+        # The ceiling is already reached, so there is nothing left for a search to
+        # find: no line wins more instances than all of them.  Skipping here is a
+        # consequence of the bound and not a time-saving that weakens the check.
+        prod_w, prod_line, exhaustive = 0, [], True
+    else:
+        prod_w, prod_line, exhaustive = fam.product_search(depth)
+    if prod_w >= naive_w:
+        blind_w, blind_line = prod_w, prod_line
+        blind_source = ("an exhaustive search over the product of the family"
+                        if exhaustive else
+                        "a CAPPED search over the product of the family")
+    else:
+        blind_w, blind_line = naive_w, naive_line
+        blind_source = naive_label
+
+    # ⚠ Never report a number the replay has not confirmed.  The pruned line is used
+    # only when it replays to the same win count, so shortening cannot change a result.
+    pruned = fam.prune(blind_line)
+    if pruned and fam.replay(pruned)[0] == blind_w:
+        blind_line = pruned
+    check_w, blind_cost = fam.replay(blind_line)
+    if check_w != blind_w:
+        raise Refusal(f"the fixed-line search reports {blind_w} wins and replaying the "
+                      f"same line through the emitted transition gives {check_w}: the "
+                      f"search and the rules are not the same game")
+
+    blind = blind_w / fam.total
+    naive_rate = naive_w / fam.total
+    if blind_w >= fam.total:
+        # A policy may always ignore what it sees, so optimal >= blind; and optimal
+        # cannot exceed the family.  Both bounds meet here, so this is EXACT and not a
+        # ceiling — the belief search would spend minutes re-deriving a `<=`.
+        opt_w, opt_exact = fam.total, True
+    else:
+        opt_w, opt_exact = fam.optimal_wins()
+    opt = opt_w / fam.total
+    band = opt - blind
+
+    summary["blind_line_win_rate"] = round(blind, 6)
+    summary["blind_line"] = list(blind_line)
+    summary["blind_line_source"] = blind_source
+    summary["blind_line_cost"] = blind_cost
+    summary["blind_line_search_exhaustive"] = exhaustive
+    summary["naive_line_win_rate"] = round(naive_rate, 6)
+    summary["naive_line_worst_cost"] = naive_cost
+    summary["optimal_win_rate"] = round(opt, 6)
+    summary["optimal_win_rate_exact"] = opt_exact
+    summary["skill_band"] = round(band, 6)
+    summary["solvability_family_size"] = fam.total
+
+    line_note = (f"The line is {_line_text(blind_line)} — {len(blind_line)} action(s), "
+                 f"of which the worst run spends {blind_cost} against an "
+                 f"`action_limit` of {budget}.  Found by {blind_source}, then REPLAYED "
+                 f"through the emitted transition on every one of the {fam.total} "
+                 f"instances, which is where the count comes from."
+                 + (f"  ⚠ At least {len(blind_line) - blind_cost} of those positions "
+                    f"are REFUSED on any given run and cost nothing — that is what the "
+                    f"emitted rows say a refusal is — so a script may attempt every one "
+                    f"of them and let the rules filter.  Where a refusal is the game "
+                    f"declining a WRONG action rather than letting it lose, the refusal "
+                    f"vocabulary is doing the player's deduction for them."
+                    if len(blind_line) > blind_cost else ""))
+
+    if blind >= BLIND_SOLVED:
+        rep.find(name, "solved-by-a-fixed-line", FAIL,
+                 "one fixed sequence of actions wins on EVERY instance while reading "
+                 "nothing",
+                 f"{blind_w}/{fam.total} instances, {blind * 100:.1f}%.  {line_note}  "
+                 f"The threshold is 100%: a line that loses on no instance is a "
+                 f"SOLUTION, and a solved game has no decision in it whatever its game "
+                 f"tree looks like.  ⚑ This is the check a fork count cannot make — "
+                 f"outcome-changing forks are a property of the TREE and a solution is "
+                 f"a property of one PATH through it, so a game can fork thousands of "
+                 f"times and still be a script.  Do not baseline this: the repair is to "
+                 f"the game, and it is a repair to whichever rule lets one line cover "
+                 f"every instance at once.")
+    elif blind >= BLIND_DOMINANT:
+        rep.find(name, "blind-line-dominates", FAIL,
+                 f"a fixed sequence that reads nothing wins {blind * 100:.1f}% of "
+                 f"instances",
+                 f"{blind_w}/{fam.total}.  {line_note}  The threshold is "
+                 f"{BLIND_DOMINANT * 100:.0f}%: at three runs in four the instance is "
+                 f"decoration for three players out of four, and the one who reads it "
+                 f"is attending to a fact that changes nothing about their run.  "
+                 f"Perfect play wins {opt * 100:.1f}%, so the entire skill content of "
+                 f"the game is {band * 100:.1f} points wide.")
+    elif blind >= BLIND_MAJORITY:
+        rep.find(name, "blind-line-wins-the-majority", WARN,
+                 f"a fixed sequence that reads nothing wins {blind * 100:.1f}% of "
+                 f"instances",
+                 f"{blind_w}/{fam.total}.  {line_note}  The threshold is "
+                 f"{BLIND_MAJORITY * 100:.0f}%: past it the majority of runs are "
+                 f"decided before the first action.  Perfect play wins "
+                 f"{opt * 100:.1f}%.")
+    elif not exhaustive:
+        rep.find(name, "fixed-line-search-truncated", INFO,
+                 f"the best fixed line FOUND wins {blind * 100:.1f}%, and the search "
+                 f"was capped",
+                 f"the product search hit its {fam.search_steps}-transition cap, so "
+                 f"{blind_w}/{fam.total} is a LOWER bound on what a script can do here "
+                 f"and not an all-clear.  A line this pass finds is replayed and is "
+                 f"therefore real; one it does not find may still exist.  Best found: "
+                 f"{_line_text(blind_line)}.")
+    else:
+        rep.find(name, "no-blind-line", INFO,
+                 f"the best fixed line wins {blind * 100:.1f}% of instances, searched "
+                 f"exhaustively",
+                 f"{blind_w}/{fam.total}.  Best found: {_line_text(blind_line)}.  The "
+                 f"product search CLOSED — every fixed sequence up to {depth} actions "
+                 f"walked over the whole family — so this is the exact ceiling for a "
+                 f"player who reads nothing, against {opt * 100:.1f}% for one who plays "
+                 f"perfectly.")
+
+    # ---- 2. the naive-strategy headroom, as a band -------------------------
+    band_note = (f"blind {blind * 100:.1f}% ({blind_w}/{fam.total}) against perfect "
+                 f"{opt * 100:.1f}% ({opt_w}/{fam.total})"
+                 + ("" if opt_exact else
+                    ", and the perfect figure is a CEILING because the belief search "
+                    "hit its cap, so the real band is no wider than this")
+                 + f".  The dumbest sensible line — {naive_label} — wins "
+                   f"{naive_rate * 100:.1f}% and its worst run spends {naive_cost} "
+                   f"action(s) against an `action_limit` of {budget}"
+                 + (", so the budget is set at the worst case of a strategy with no "
+                    "thought in it."
+                    if naive_cost <= budget and naive_rate >= OPTIMAL_MUST_WIN
+                    else "."))
+    if band <= SKILL_BAND_FAIL:
+        rep.find(name, "skill-band-is-decorative", FAIL,
+                 f"perfect play beats a script by {band * 100:.1f} points",
+                 f"{band_note}  The threshold is {SKILL_BAND_FAIL * 100:.0f} points: "
+                 f"below it, nine runs in ten end the same way whether the player "
+                 f"thought or not, and every measurement of depth in this report is "
+                 f"describing a tree nobody has to walk.  ⚠ This is the number "
+                 f"`budget_slack` was standing in for and could not see: slack 0 says "
+                 f"the clock binds the OPTIMAL route, and it says nothing at all when "
+                 f"the optimal route and the thoughtless one are the same route.")
+    elif band <= SKILL_BAND_WARN:
+        rep.find(name, "skill-band-is-narrow", WARN,
+                 f"perfect play beats a script by {band * 100:.1f} points",
+                 f"{band_note}  The threshold is {SKILL_BAND_WARN * 100:.0f} points.")
+    else:
+        rep.find(name, "skill-band-is-real", INFO,
+                 f"perfect play beats a script by {band * 100:.1f} points", band_note)
+
+    # ---- 3. the budget against the DISTRIBUTION of perfect play ------------
+    #
+    # ⚠ THE CRUELLER DEFECT, AND THE INVERSE OF THE ONE ABOVE.  A budget can also be
+    # too SMALL, and the existing budget verdicts cannot see that either: each compares
+    # `action_limit` against ONE number — a floor, a worst case, a mean — and a game
+    # where perfect play sometimes needs more than the budget is a game that REFUSES
+    # correct play, which is exactly as broken as one that rewards none.
+    if not opt_exact:
+        rep.find(name, "optimal-win-rate-not-measured", INFO,
+                 "the budget was not checked against the distribution of perfect play",
+                 f"the belief search hit its {fam.search_steps}-transition cap on a "
+                 f"family of {fam.total}, so what a perfect player wins here is a "
+                 f"ceiling and `budget-refuses-optimal-play` cannot fire.  Reported "
+                 f"rather than skipped: a check that goes quiet when it runs out of "
+                 f"time is a check that cannot go red.")
+    elif opt < OPTIMAL_MUST_WIN:
+        # ⚑ DOCUMENTED IS NOT DETECTED.  If another measure in THIS SAME REPORT called
+        # the budget generous while this one says it refuses perfect play, the two are
+        # not both describing the emitted game and the report should say so in numbers
+        # rather than leave a reader to notice.  Measured 2026-08-09 on salvage-lock:
+        # `hidden-board-floor` reported a worst case of 10 against `action_limit` 12
+        # and a WARN for two spare, while a perfect player wins 60% — because that
+        # floor answers each exposure with a GLYPH IDENTITY and the emitted rows only
+        # ever name `on_match` / `on_mismatch`, which is one bit per PAIR.
+        slack = summary.get("budget_slack")
+        floor = summary.get("worst_case_optimal")
+        clash = ""
+        if isinstance(slack, int) and slack > 0:
+            clash = (f"  ⚠ CONTRADICTION INSIDE THIS REPORT: another measure here puts "
+                     f"the worst case under optimal play at {floor} and reports "
+                     f"{slack} unit(s) of SLACK on the same budget.  Both cannot be "
+                     f"describing the emitted table.  The usual cause is an "
+                     f"observation channel: a floor that lets the player learn more "
+                     f"per action than the emitted rows reveal measures an easier game "
+                     f"and prices the budget for it.")
+        rep.find(name, "budget-refuses-optimal-play", FAIL,
+                 f"a player who plays PERFECTLY still loses {(1 - opt) * 100:.1f}% of "
+                 f"runs to the clock",
+                 f"the largest number of instances any policy wins inside "
+                 f"`action_limit` {budget} is {opt_w} of {fam.total} "
+                 f"({opt * 100:.1f}%), by exact backward induction over the belief "
+                 f"state on the EMITTED transition.  The threshold is "
+                 f"{OPTIMAL_MUST_WIN * 100:.0f}%: a budget that refuses more than one "
+                 f"perfect run in twenty is not a difficulty knob, it is a game that "
+                 f"cannot be played correctly.  ⚑ Read this against the other budget "
+                 f"findings for this game rather than beside them.  A floor, a worst "
+                 f"case and a mean are each ONE number and a budget has to cover a "
+                 f"DISTRIBUTION; where one of them says the budget has slack and this "
+                 f"says it refuses, that floor is measuring an easier game than the "
+                 f"table describes — most often because it credits the player with an "
+                 f"observation the emitted rows never make." + clash)
+    else:
+        rep.find(name, "budget-covers-optimal-play", INFO,
+                 f"perfect play wins {opt * 100:.1f}% of instances inside the budget",
+                 f"{opt_w} of {fam.total} within `action_limit` {budget}, by exact "
+                 f"backward induction over the belief state.  A budget has to cover a "
+                 f"DISTRIBUTION and not a single floor, so this is measured apart from "
+                 f"every other budget verdict in this report.")
+
+    # ---- 4. the information verbs -----------------------------------------
+    if not fam.info_verbs:
+        return
+    stripped = fam.stripped(set(fam.info_verbs))
+    if not stripped.actions:
+        return
+    s_naive_w = max(stripped.replay(l)[0] for _, l in stripped.canonical_lines(depth))
+    if s_naive_w >= fam.total:
+        s_prod_w = 0
+    else:
+        s_prod_w, _, _ = stripped.product_search(depth)
+    s_blind_w = max(s_prod_w, s_naive_w)
+    if s_blind_w >= fam.total:
+        s_opt_w, s_opt_exact = fam.total, True
+    else:
+        s_opt_w, s_opt_exact = stripped.optimal_wins()
+    summary["information_verbs"] = list(fam.info_verbs)
+    summary["optimal_win_rate_without_information_verbs"] = round(s_opt_w / fam.total, 6)
+    summary["blind_win_rate_without_information_verbs"] = round(s_blind_w / fam.total, 6)
+
+    # ⚠ A CAPPED STRIPPED SEARCH RETURNS THE CEILING, and the ceiling would satisfy
+    # `the verbs buy nothing` for free.  That is the one direction this check must not
+    # go wrong in, so an inexact stripped optimum reports what it is instead.
+    if not s_opt_exact:
+        rep.find(name, "information-verb-value-not-measured", INFO,
+                 f"whether {sorted(fam.info_verbs)} buy anything was not decided",
+                 f"deleting them and re-solving hit the {stripped.search_steps}-"
+                 f"transition cap, so the stripped optimum is a ceiling and would make "
+                 f"`information-verb-buys-nothing` true by arithmetic rather than by "
+                 f"measurement.  Reported rather than asserted.")
+    elif s_opt_w >= opt_w and s_blind_w >= blind_w:
+        rep.find(name, "information-verb-buys-nothing", FAIL,
+                 f"{sorted(fam.info_verbs)} can be DELETED from the game without "
+                 f"changing what anybody wins",
+                 f"these verbs are DERIVED, not named: every open row of each is a "
+                 f"`resolve` — it consults the instance — and its two branches agree on "
+                 f"every part of the state except what the player KNOWS, so buying "
+                 f"information is the whole of what they do.  Delete them and perfect "
+                 f"play still wins {s_opt_w}/{fam.total} (was {opt_w}) and the best "
+                 f"blind line still wins {s_blind_w}/{fam.total} (was {blind_w}).  A "
+                 f"game whose stated decision is WHEN TO BUY INFORMATION, and whose "
+                 f"answer is NEVER, does not have that decision: it has a verb that "
+                 f"spends the clock and a brief describing a different game.  ⚑ A "
+                 f"`resolve` row proves the instance is CONSULTED and is not evidence "
+                 f"the answer is worth anything; this is the measurement that tells "
+                 f"those two apart.")
+    elif s_opt_w >= opt_w:
+        rep.find(name, "information-verb-never-improves-the-guarantee", WARN,
+                 f"deleting {sorted(fam.info_verbs)} does not change what a perfect "
+                 f"player wins",
+                 f"perfect play wins {s_opt_w}/{fam.total} without them and "
+                 f"{opt_w}/{fam.total} with them.  They do move the blind number "
+                 f"({s_blind_w} against {blind_w}), so they are not pure decoration — "
+                 f"but nobody who is trying ever needs one.")
+    else:
+        rep.find(name, "information-verb-is-load-bearing", INFO,
+                 f"deleting {sorted(fam.info_verbs)} costs a perfect player "
+                 f"{opt_w - s_opt_w} instance(s)",
+                 f"perfect play wins {opt_w}/{fam.total} with them and "
+                 f"{s_opt_w}/{fam.total} without, so buying information is worth "
+                 f"something to somebody who is trying."
+                 + ("" if s_opt_exact else
+                    "  ⚠ The stripped figure is a ceiling: the belief search capped."))
+
+
+# ---------------------------------------------------------------------------
+# the families, one per backend that can honestly build one
+# ---------------------------------------------------------------------------
+#
+# ⚑ EVERY ONE OF THESE WALKS THE EMITTED ROWS.  None of them re-derives a rule: where
+# a backend already rebuilt the game and checked it row by row (Descent, Artificer),
+# the family calls that model; where it did not (Salvage, Relay), the family reads the
+# emitted transition table directly and consults the instance only to choose between
+# the two branches the table itself names.
+
+def _descent_family(model, game):
+    meta = {aid: (game.action_meta[aid]["kind"], game.action_meta[aid]["line"])
+            for aid in game.actions}
+    boards = [dict(zip(model.chambers, combo))
+              for combo in itertools.product((model.sound, model.flooded),
+                                             repeat=len(model.chambers))]
+    init = model.state_of[game.initial]
+
+    def step(st, aid, board):
+        kind, line = meta[aid]
+        return model.successor(st, kind, line, board)
+
+    return Solvability(boards, init, game.actions, step, lambda s: s[7],
+                       info_verbs=model.information_verbs(meta))
+
+
+def _salvage_family(game, doc):
+    """Salvage Lock, straight off the emitted table.
+
+    ⚑ THE OBSERVATION CHANNEL IS THE EMITTED ONE.  A `resolve` row names `on_match`
+    and `on_mismatch` and nothing else, so a run learns ONE BIT per second exposure —
+    did these two plates carry the same glyph — and never a glyph NAME.  The instance
+    is therefore the PAIRING and not the labelled board: two boards with the same
+    matching drive identical transcripts.  The family below is the set of matchings the
+    emitted `practice.boards` reach, each weighted by how many of those boards carry it,
+    so the fractions are over the declared instance space.
+    """
+    slots = {a["id"]: a["slot"] for a in doc["state_machine"]["actions"]}
+    states = game.states
+    trans = game.trans
+    practice = doc.get("practice")
+    if not isinstance(practice, dict) or not isinstance(practice.get("boards"), list):
+        raise Refusal("the salvage descriptor carries no `practice.boards`, so there "
+                      "is no emitted instance family to measure a script against")
+    counts = Counter()
+    for row in practice["boards"]:
+        pairs = []
+        for glyph in sorted(set(row)):
+            members = [i for i, x in enumerate(row) if x == glyph]
+            if len(members) != 2:
+                raise Refusal(f"practice board {row} does not pair its plates")
+            pairs.append(frozenset(members))
+        counts[frozenset(pairs)] += 1
+    matchings = sorted(counts, key=lambda m: sorted(sorted(p) for p in m))
+    weights = [counts[m] for m in matchings]
+
+    def partner(matching, s):
+        for pair in matching:
+            if s in pair:
+                return next(iter(pair - {s}))
+        raise Refusal(f"the matching {sorted(sorted(p) for p in matching)} does not "
+                      f"cover plate {s}")
+
+    def step(sid, aid, matching):
+        t = trans[(sid, aid)]
+        if t["verdict"] == "refuse":
+            return None
+        if t["verdict"] == "accept":
+            return t["next"]
+        exposed = states[sid]["view"]["exposed"]
+        return (t["on_match"] if partner(matching, slots[aid]) == exposed
+                else t["on_mismatch"])
+
+    def won(sid):
+        return len(states[sid]["view"]["cleared"]) == len(slots)
+
+    return Solvability(matchings, game.initial, game.actions, step, won,
+                       weights=weights)
+
+
+def _manual_family(game, model):
+    """Artificer Logic: the instance is the LIVE RULE, and the state is the posterior
+    the emitted view already carries."""
+    rules = list(model.rules)
+    init = model.state_of[game.initial]
+
+    def step(st, aid, live):
+        kind, charge, rule = model.meta[aid]
+        if not model.is_open(st, kind, charge, rule):
+            return None
+        answer = (charge in model.sig[live]) if kind == "probe" else (rule == live)
+        return model.step(st, kind, charge, rule, answer)
+
+    return Solvability(rules, init, game.actions, step, lambda s: s[2] == "identified")
+
+
+def _relay_family(game, doc):
+    """Relay Repair: the damage report is DISCLOSED to its own player, so each board
+    opens in its own state and a blind line is exactly a player who did not read it."""
+    sm = doc["state_machine"]
+    actions = [a["id"] for a in sm["actions"]]
+    tables, views = {}, {}
+    for machine in sm["machines"]:
+        b = machine["board"]
+        views[b] = {s["id"]: s for s in machine["states"]}
+        tables[b] = {(t["state"], t["action"]): t for t in machine["transitions"]}
+    boards = sorted(tables)
+    initials = [(b, sm["initial_state"]) for b in boards]
+
+    def step(st, aid, board):
+        b, sid = st
+        t = tables[b].get((sid, aid))
+        if t is None or t["verdict"] != "accept":
+            return None
+        return (b, t["next"])
+
+    def won(st):
+        b, sid = st
+        return bool(views[b][sid]["view"]["solved"])
+
+    return Solvability(boards, None, actions, step, won, initials=initials)
+
+
+def _oracle_family(game):
+    """Black Box Reconstruction: the state is the transcript a client actually holds —
+    which probes it has played and which of them MATCHED — and both are things the
+    player sees.  Legality is the descriptor's own `settles` rule, already checked
+    against every emitted witness by `check_refusal_witnesses`."""
+    required = game.required
+    slot_of, frag_of = game.slot_of, game.fragment_of
+    budget = game.budget
+    hits = game.hits
+
+    def step(st, probe, live):
+        played, matched = st
+        slots = {slot_of[p] for p in matched}
+        frags = {frag_of[p] for p in matched}
+        if (len(slots) >= required or len(played) >= budget or probe in played
+                or slot_of[probe] in slots or frag_of[probe] in frags):
+            return None
+        if probe in hits[live]:
+            return (played | {probe}, matched | {probe})
+        return (played | {probe}, matched)
+
+    def won(st):
+        return len({slot_of[p] for p in st[1]}) >= required
+
+    return Solvability(list(range(game.space)),
+                       (frozenset(), frozenset()), list(game.probes), step, won)
+
+
+def _deduction_family(game):
+    """Signal Triangulation: the state is the transcript — the guesses made and the
+    feedback class each drew — and a blind line is a player who never reads a badge."""
+    budget = game.budget
+    fb, win = game.fb, game.win
+    ids = ["guess-" + "".join(str(x) for x in c) for c in game.codes]
+    by_id = {ids[i]: i for i in range(game.n)}
+
+    def step(st, aid, target):
+        if st and st[-1][1] == win:
+            return None
+        if len(st) >= budget:
+            return None
+        g = by_id[aid]
+        return st + ((g, fb[target][g]),)
+
+    def won(st):
+        return bool(st) and st[-1][1] == win
+
+    return Solvability(list(range(game.n)), (), ids, step, won)
+
+
+def solvability_family(backend, doc):
+    """(family, None) — or (None, reason), and the reason is REPORTED.
+
+    ⚠ A backend with no family is not a backend that passed.  The pass writes an INFO
+    naming what it could not measure, because a check that silently skips a game is a
+    check the next reader believes ran.
+    """
+    if isinstance(backend, PushYourLuckGame):
+        return None, (
+            "Vent Crawl has no binary win.  A crawl ends BANKED with a number or "
+            "DROWNED with nothing, and the number is the whole point — `vent.payout` "
+            "and the four carry ladders price every depth — so `did this line win` is "
+            "not a question the game asks and a fixed line that banks at the mouth "
+            "would score 100% on it.  The same question in the currency this game "
+            "actually pays is already measured and is the finding "
+            "`information-is-worth-acting-on`: exact backward induction over the "
+            "belief state against the best policy that ignores everything it sees.  "
+            "⚠ Reported, not skipped — if this game ever grows a target to hit, it "
+            "needs a family here.")
+    if isinstance(backend, MachineFamilyGame):
+        return _relay_family(backend, doc), None
+    if isinstance(backend, ProbeOracleGame):
+        return _oracle_family(backend), None
+    if isinstance(backend, DeductionGame):
+        return _deduction_family(backend), None
+    if isinstance(backend, ParametricMachineGame):
+        model = getattr(backend, "rule_model", None)
+        if isinstance(model, DescentRules):
+            return _descent_family(model, backend), None
+        if isinstance(model, ManualRules):
+            return _manual_family(backend, model), None
+        if doc.get("ruleset") == "salvage-v2":
+            return _salvage_family(backend, doc), None
+        return None, (f"ruleset {doc.get('ruleset')!r} has a rebuilt rule model but no "
+                      f"registered instance family, so a script cannot be played "
+                      f"against it")
+    return None, (f"{type(backend).__name__} builds no instance family this pass can "
+                  f"play a fixed line against")
+
+
+# ---------------------------------------------------------------------------
 # reference self-check
 # ---------------------------------------------------------------------------
 
@@ -4337,6 +5209,42 @@ def summary_table(report: Report, out):
     out.write("  exec floor  shortest accepted path to a reward, given the descriptor\n")
     out.write("              the client actually fetches\n")
     out.write("  opt wc      worst case under optimal play (exact, not heuristic)\n")
+
+
+def solvability_table(report: Report, out):
+    """⚑ THE TABLE THE FORK COUNT COULD NOT WRITE.
+
+    Every column above is a property of the game TREE.  These four are properties of
+    one PATH through it, and they are the difference between a game and a ritual.
+    """
+    rows = [g for g in report.games if "blind_line_win_rate" in g]
+    out.write("\n" + "=" * 78 + "\n")
+    out.write("FIXED-STRATEGY PASS — what a script that reads nothing wins\n")
+    out.write("=" * 78 + "\n")
+    if not rows:
+        out.write("  no game in this run built an instance family (see the findings)\n")
+        return
+    out.write(f"  {'game':<22}{'blind':>8}{'naive':>8}{'perfect':>9}{'band':>8}"
+              f"{'exhaustive':>12}\n")
+    for g in rows:
+        out.write(
+            f"  {g['game']:<22}{g['blind_line_win_rate'] * 100:>7.1f}%"
+            f"{g['naive_line_win_rate'] * 100:>7.1f}%"
+            f"{g['optimal_win_rate'] * 100:>8.1f}%"
+            f"{g['skill_band'] * 100:>7.1f}"
+            f"{str(g['blind_line_search_exhaustive']):>12}\n")
+    for g in rows:
+        out.write(f"\n  {g['game']}: best blind line ({g['blind_line_cost']} of "
+                  f"{g['action_limit']} actions spent, via {g['blind_line_source']})\n")
+        out.write(f"    {' · '.join(str(a) for a in g['blind_line']) or '(empty)'}\n")
+    out.write("\n  blind       the best FIXED sequence found, replayed on every instance\n")
+    out.write("  naive       the dumbest sensible line: the declared action order,\n")
+    out.write("              cycled — no search in it at all\n")
+    out.write("  perfect     the most instances ANY policy wins inside the budget\n")
+    out.write("              (a CEILING where `perfect exact` is false — see findings)\n")
+    out.write("  band        perfect - blind, in points: the whole skill content\n")
+    out.write("  exhaustive  did the product search close, or did it hit its cap?\n")
+    out.write("              a capped search under-reports `blind` and never over-reports\n")
 
 
 def bar(label, value):
@@ -4572,6 +5480,7 @@ def render(report: Report, out) -> None:
                 w("\n")
 
     summary_table(report, out)
+    solvability_table(report, out)
     check_reference(report, out)
 
     w("\n" + "=" * 78 + "\n")
@@ -5611,12 +6520,34 @@ def analyse_doc(doc: dict, rep: Report) -> dict:
     # First, and before anything is measured: does the artifact state its own
     # answer?  If it does, every floor below it is a floor of one.
     disclosure = check_instance_contract(doc, rep)
-    summary = pick_backend(doc)(doc, rep).analyse()
+    backend = pick_backend(doc)(doc, rep)
+    summary = backend.analyse()
     summary["instance_disclosure"] = disclosure
     if doc["game_id"] == "salvage-lock":
         salvage_seed_family(doc, rep, summary)
     if doc["game_id"] == "relay-repair":
         relay_instance_family(doc, rep, summary)
+
+    # ⚑ THE FIXED-STRATEGY PASS RUNS LAST AND ON EVERY GAME.  Everything above
+    # measures the game TREE; this asks whether one PATH through it wins.  It is not
+    # opt-in per game — a backend that cannot build a family says so and the reason is
+    # reported, because a check that silently skips a game is a check the next reader
+    # believes ran.
+    try:
+        fam, reason = solvability_family(backend, doc)
+        if fam is None:
+            rep.find(doc["game_id"], "no-fixed-strategy-family", INFO,
+                     "this game was NOT checked for a winning script", reason)
+            summary["solvability_family"] = None
+        else:
+            solvability_pass(fam, doc["game_id"], doc["action_limit"], rep, summary)
+    except Refusal as exc:
+        # ⚠ CAUGHT HERE ON PURPOSE.  Letting this out would make `analyse_doc` refuse
+        # the whole descriptor and throw away every measurement above it, so one
+        # disagreement inside the fixed-strategy pass would delete the report of a game
+        # it was only ever meant to add a finding to.  It is still a FAIL.
+        rep.find(doc["game_id"], "fixed-strategy-pass-refused", FAIL,
+                 "the fixed-strategy pass refused to measure this game", str(exc))
     return summary
 
 
