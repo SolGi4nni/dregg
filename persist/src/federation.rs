@@ -237,14 +237,37 @@ impl StoredAttestedRoot {
         self.is_structurally_complete()
     }
 
+    /// The quorum bar this root must clear against `committee`.
+    ///
+    /// ⚑ The stored `threshold` field is NOT covered by any signed preimage
+    /// (`signing_message` / `finalization_vote_signing_message` omit it), so an
+    /// offline store tamper can rewrite it to `1` and promote a single member
+    /// signature into a "verified quorum". The committee being verified against
+    /// therefore sets the FLOOR: the strict BFT supermajority of ITS size
+    /// (`⌊2n/3⌋+1` — the same `dregg_blocklace::supermajority_threshold` every
+    /// live quorum is assembled at). The self-declared field can only RAISE the
+    /// bar, never lower it below that floor. n=1 (solo) floors at 1, so solo
+    /// semantics are unchanged.
+    fn required_quorum(&self, committee: &[PublicKey]) -> usize {
+        self.threshold
+            .max(dregg_blocklace::supermajority_threshold(committee.len()))
+    }
+
     /// Verify signatures cryptographically against a set of known committee keys.
     ///
-    /// Checks that the threshold count is met AND each signature verifies against
-    /// the corresponding public key in `committee`.  Thresholds count distinct
+    /// Checks that the quorum bar is met AND each signature verifies against
+    /// the corresponding public key in `committee`.  Quorums count distinct
     /// committee identities: duplicating one valid `(key, signature)` row never
-    /// manufactures a quorum, and a zero threshold is not an authority.
+    /// manufactures a quorum, and a zero threshold is not an authority. The bar
+    /// is [`Self::required_quorum`] — the committee's own supermajority, which
+    /// the stored (unsigned, tamperable) `threshold` field can raise but never
+    /// lower.
     pub fn verify_signatures(&self, committee: &[PublicKey]) -> bool {
-        if self.threshold == 0 || self.quorum_signatures.len() < self.threshold {
+        let required = self.required_quorum(committee);
+        if self.threshold == 0
+            || committee.is_empty()
+            || self.quorum_signatures.len() < required
+        {
             return false;
         }
         let message = self.signing_message();
@@ -258,7 +281,7 @@ impl StoredAttestedRoot {
             }
             distinct.insert(pk.0);
         }
-        distinct.len() >= self.threshold
+        distinct.len() >= required
     }
 
     /// Does this root carry a (non-empty) finalization-vote quorum record?
@@ -287,8 +310,10 @@ impl StoredAttestedRoot {
     ///     self-carried PQ key that differs from the enrolled one, does not count
     ///     (fail-closed hybrid: `classical ∧ pq`, PQ key pinned to genesis);
     ///   * the number of **distinct** fully-valid committee signers is
-    ///     `>= threshold` (an equivocating/duplicated voter counts at most once,
-    ///     so a single member cannot inflate the quorum).
+    ///     `>=` [`Self::required_quorum`] — the committee's own supermajority,
+    ///     which the stored (unsigned) `threshold` can raise but never lower
+    ///     (an equivocating/duplicated voter counts at most once, so a single
+    ///     member cannot inflate the quorum).
     ///
     /// `ml_dsa_committee` is the genesis-ENROLLED ML-DSA-65 roster, aligned
     /// index-for-index with `committee`. A misaligned/empty roster
@@ -313,7 +338,11 @@ impl StoredAttestedRoot {
         let Some(block_id) = self.blocklace_block_id else {
             return false;
         };
-        if self.finalization_quorum.len() < self.threshold {
+        // The bar is the committee's own supermajority (see `required_quorum`):
+        // the stored `threshold` is unsigned and tamperable, so it can never
+        // LOWER the number of distinct valid signers demanded here.
+        let required = self.required_quorum(committee);
+        if committee.is_empty() || self.finalization_quorum.len() < required {
             return false;
         }
         // The enrolled PQ roster MUST align index-for-index with the ed25519
@@ -355,7 +384,7 @@ impl StoredAttestedRoot {
             }
             distinct.insert(qs.voter.0);
         }
-        distinct.len() >= self.threshold
+        distinct.len() >= required
     }
 
     /// Does at least one committee-member signature validly bind THIS root's
@@ -744,4 +773,155 @@ fn current_timestamp() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod quorum_floor_tests {
+    use super::*;
+
+    fn key(seed: u8) -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+    }
+    fn pubkey(sk: &ed25519_dalek::SigningKey) -> PublicKey {
+        PublicKey(sk.verifying_key().to_bytes())
+    }
+
+    /// A root with NO signatures yet — the preimage every pole below signs.
+    fn bare_root() -> StoredAttestedRoot {
+        StoredAttestedRoot {
+            merkle_root: [0x11; 32],
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height: 7,
+            timestamp: 1_700_000_000,
+            blocklace_block_id: Some([0x22; 32]),
+            finality_round: Some(3),
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            threshold: 0,
+            federation_id: FederationId::default(),
+            receipt_stream_root: None,
+            finalization_quorum: Vec::new(),
+        }
+    }
+
+    fn sign_with(root: &StoredAttestedRoot, sk: &ed25519_dalek::SigningKey) -> (PublicKey, Signature) {
+        use ed25519_dalek::Signer;
+        let msg = root.signing_message();
+        (pubkey(sk), Signature(sk.sign(&msg).to_bytes()))
+    }
+
+    /// ⚑ THE PREMISE THIS WHOLE FIX RESTS ON, ASSERTED RATHER THAN READ ONCE:
+    /// `threshold` is not covered by the signed preimage. Move the field, and
+    /// the bytes every committee member signed do not move — so a store tamper
+    /// that rewrites it invalidates nothing.
+    #[test]
+    fn the_threshold_field_is_not_in_the_signed_preimage() {
+        let mut a = bare_root();
+        a.threshold = 1;
+        let mut b = bare_root();
+        b.threshold = 999;
+        assert_eq!(
+            a.signing_message(),
+            b.signing_message(),
+            "if this ever fails the field became authenticated and `required_quorum`'s floor \
+             is no longer load-bearing — re-derive it rather than deleting this test"
+        );
+    }
+
+    /// HONEST POLE: a real supermajority of a 4-member committee verifies.
+    /// Without this, every refusal below is satisfied just as well by a
+    /// predicate that refuses everything.
+    #[test]
+    fn an_honest_supermajority_verifies() {
+        let sks: Vec<_> = (1u8..=4).map(key).collect();
+        let committee: Vec<PublicKey> = sks.iter().map(pubkey).collect();
+        assert_eq!(
+            dregg_blocklace::supermajority_threshold(committee.len()),
+            3,
+            "n=4 floors at 3; if this moves the poles below are measuring another bar"
+        );
+
+        let mut root = bare_root();
+        root.threshold = 3;
+        let sigs: Vec<_> = sks[..3].iter().map(|sk| sign_with(&root, sk)).collect();
+        root.quorum_signatures = sigs;
+        assert!(
+            root.verify_signatures(&committee),
+            "three distinct valid committee signatures ARE the supermajority of four"
+        );
+    }
+
+    /// ⚑ THE TAMPER POLE: `threshold` rewritten to 1 with a single genuine
+    /// signature. Before this fix that read back as a verified quorum, because
+    /// the bar was the tampered field itself.
+    #[test]
+    fn a_rewritten_threshold_of_one_cannot_promote_a_lone_signature() {
+        let sks: Vec<_> = (1u8..=4).map(key).collect();
+        let committee: Vec<PublicKey> = sks.iter().map(pubkey).collect();
+
+        let mut root = bare_root();
+        root.threshold = 1; // the tamper
+        let lone = sign_with(&root, &sks[0]);
+
+        // ASSERT THE FALSIFIER IS LIVE before reading the verdict: the tamper is
+        // present, and the lone signature is a GENUINE committee signature that
+        // verifies on its own — so a refusal below is about the QUORUM BAR and
+        // not about a broken signature.
+        assert_eq!(root.threshold, 1, "the tamper must be present");
+        assert!(committee.contains(&lone.0), "the signer is a committee member");
+        assert!(
+            lone.0.verify(&root.signing_message(), &lone.1),
+            "the lone signature must actually verify, or this test refuses for the wrong reason"
+        );
+
+        root.quorum_signatures = vec![lone];
+        assert!(
+            !root.verify_signatures(&committee),
+            "SOUNDNESS: a store tamper set threshold=1 and one valid signature read back as a \
+             verified quorum — the committee's own supermajority is the floor"
+        );
+    }
+
+    /// The field can still RAISE the bar — it is a floor, not a replacement.
+    #[test]
+    fn a_higher_declared_threshold_still_binds() {
+        let sks: Vec<_> = (1u8..=4).map(key).collect();
+        let committee: Vec<PublicKey> = sks.iter().map(pubkey).collect();
+        let mut root = bare_root();
+        root.threshold = 4;
+        root.quorum_signatures = sks[..3].iter().map(|sk| sign_with(&root, sk)).collect();
+        assert!(
+            !root.verify_signatures(&committee),
+            "three signatures do not clear a self-declared bar of four"
+        );
+    }
+
+    /// An empty committee is not an authority — its floor is 1 and it can
+    /// contain no valid signer, so the refusal is stated explicitly rather than
+    /// left to `contains` on an empty slice.
+    #[test]
+    fn an_empty_committee_verifies_nothing() {
+        let sk = key(1);
+        let mut root = bare_root();
+        root.threshold = 1;
+        root.quorum_signatures = vec![sign_with(&root, &sk)];
+        assert!(!root.verify_signatures(&[]), "an empty committee is not a quorum");
+    }
+
+    /// Solo (n=1) is unchanged: the floor is 1, so a single-member federation
+    /// still anchors on its own signature.
+    #[test]
+    fn solo_semantics_are_unchanged() {
+        let sk = key(9);
+        let committee = vec![pubkey(&sk)];
+        assert_eq!(dregg_blocklace::supermajority_threshold(1), 1);
+        let mut root = bare_root();
+        root.threshold = 1;
+        root.quorum_signatures = vec![sign_with(&root, &sk)];
+        assert!(
+            root.verify_signatures(&committee),
+            "n=1 floors at 1 — the fix must not break solo"
+        );
+    }
 }
