@@ -81,6 +81,25 @@ signature_intact` is the other pole. Multi-process: `scripts/federation-leave-po
 5→4 CONTINUES, pole 2 4→3 REFUSED BY NAME (`ConfigStep::RosterFloor`), with `approvals ≥ required`
 asserted before the refusal is read.
 
+✅ **MEASURED — hbox lane `privnode`, `--release --profile full`: `5 tests run: 5 passed (5 slow)`,
+`pbuild: VERDICT outcome=PASS`.** Both drain poles green: the straddling crossing is refused, the
+committee continues on survivor votes alone with NO departed signature in the assembled quorum, and
+the already-crossed quorum survives the boundary with the departed member's signature INTACT.
+
+⚑ **AND THE RUN FOUND A RED THAT PREDATES THIS WORK.** `validator_added_and_removed_live_chain_
+continues` was written in `611d104a2` over a genesis committee of THREE, so its remove leg was a
+`4 → 3` step — which `2fce89d4a` made **REFUSED BY NAME** (`classifyStep 4 0 1 = .refuseRosterFloor`;
+`f(3) = 0`). That commit shipped its own tests and **never touched this file** (`git log`: last
+toucher before today was `5f216e915`), so `apply_if_passed` returned `Err(RosterFloor)`,
+`unwrap_or(false)` flattened it to "did not apply", and the assert had been failing ever since —
+caller committed, callee not, in the test layer. Fixed FORWARD in `2c91410f1`: genesis 3 → 4, so the
+add is `4 → 5` and the remove is `5 → 4`, both admitted; bar [B] unchanged. And the refused shape
+became a POLE rather than a deletion — `a_leave_that_would_breach_the_roster_floor_is_refused_by_name`
+asserts the mutation present TWICE (the member is in the roster AND the proposal reached quorum)
+before reading "unchanged" as a refusal, then reads the refusal's NAME and pins `config_seq() == 0`.
+That is the brief's refused-by-name pole on the live multi-node path, which until now existed only in
+Lean and at the constitution layer.
+
 ⚠ **AND WHAT DID NOT RUN, said plainly rather than left to look like it did.** The Lean typechecks
 clean and `#assert_axioms` passes on every keystone; `cargo check -p dregg-node --lib --tests` is
 clean. The five `epoch_transition_e2e` tests were **KILLED by `[profile.default]`'s 45 s × 4 in
