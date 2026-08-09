@@ -212,6 +212,27 @@ D's OWN 56+20 preimage and gets segment D's squeeze to the digit
 refutation and the new answer named. The theorem is unchanged — it was always right; its reason was
 not.
 
+### THE HARNESS RAN — and the accounting is per rung, not a verdict word
+
+`pickles-wrapmain-harness`, release, real proofs, **zero FATAL and zero panic anywhere**.
+**All five polarities green on SEVEN rungs** — `w6_xhat`, `w7_split`, `w8_ftcomm`, `w9_prev`,
+`w11_bullet`, `w11_wraphack`, `w12_close` — plus `w1_transcript` at four (it has `public 0`, so (5)
+does not apply). The derived census grows exactly where the sub-circuit map says it should:
+6 → 9 at `w8_ftcomm` (slots 2/3/4 join, W-FTCOMM) → 10 at `w9_prev` (slot 12) → 13 at `w11_bullet`
+(slots 0/1/9, W-BULLET and W-COMBINE) → 11 at `w11_wraphack` with slot **11** joining → **14 at
+`w12_close`** `[5,6,7,8,10,13,12,11,4,2,3,9,0,1]`. ⚑ **The SIGMA leg is the discriminating one** and
+it REFUSES at derived slots including **1 (`b`) and 4 (`perm`)** — two of the six pass-throughs — and
+ACCEPTS at every sampled declared-unread slot. That is the leg that says the six are bound rather
+than inert; the VECTOR leg would say 40/40 either way.
+
+⚠ **THIS IS THE `smoke` TAG AND ITS COUNTS ARE THE SMOKE CIRCUIT'S.** `w12_close`'s "14 derived of
+40" is a smaller circuit's census and is **not** the 39-of-40 above, which is `shapeWrap`'s. The two
+live in different objects and quoting one for the other is the mistake this log has paid for.
+
+⚠ **NOT MEASURED THIS PASS**: `w10_finalize` got polarities (1) and (2) (honest `verify()==true`,
+68/68 probes reject) before the environment killed the run; `w10_combine` and `w11_finsponge` did not
+run. Named rather than rounded up.
+
 ### ⚑ ONE STANDING DEVNET BLOCKER IS ALREADY CLOSED — checked rather than relayed
 
 The brief this pass ran on said *"`pickles-vk-derive/fixtures/wrapmain_smoke_w4_bind.json` is two
