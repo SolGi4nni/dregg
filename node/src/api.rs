@@ -72,13 +72,26 @@ pub struct StatusResponse {
     ///
     /// ⚑ 2026-08-09 — A SIXTH, because the partition conjuncts still could not
     /// go false for the JOINER. Measured on port 8465: 345 s of refused join
-    /// requests, never a committee member, `healthy: true` throughout. A
-    /// non-member runs on its OWN single-key constitution, so its threshold is
-    /// 1 — `quorum_reachable` is trivially true (it counts toward its own
-    /// quorum) and `finality_stalled` is deliberately inert below threshold 2.
-    /// Both partition legs are structurally blind to it. `healthy` now also
-    /// requires `join_member || !ever_asked_to_join`: a node that has proposed
-    /// and heard nothing says so. See the `join_*` fields.
+    /// requests, never a committee member, `healthy: true` throughout.
+    ///
+    /// A joiner that carries no committee descriptor of its own runs on a
+    /// SINGLE-KEY constitution, so its threshold is 1: `quorum_reachable` is
+    /// trivially true (it counts toward its own quorum) and `finality_stalled`
+    /// is deliberately inert below threshold 2. Both partition legs are
+    /// structurally blind to it. Re-measured on a live 4-node federation
+    /// 2026-08-09 (port 8565, 300 s, 21 requests sent, no proposal ever opened):
+    /// `quorum_threshold: 1, quorum_reachable: true, finality_stalled: false,
+    /// consensus_live: true, block_count: 3` — every pre-existing conjunct TRUE,
+    /// and only the join conjunct makes the verdict false.
+    ///
+    /// A joiner that DID sync the federation's descriptor sees the real
+    /// threshold, so `quorum_reachable` catches it too (port 8564 in the same
+    /// run: threshold 3, `quorum_reachable: false`). The join conjunct is not
+    /// redundant there — it is the one that names the actual condition, "I am
+    /// not a member", rather than a symptom of it.
+    ///
+    /// `healthy` now also requires `join_member || !ever_asked_to_join`: a node
+    /// that has proposed and heard nothing says so. See the `join_*` fields.
     ///
     /// This means a legitimately-joining node reports `healthy: false` for the
     /// whole interval between its first join request and admission. That is the
