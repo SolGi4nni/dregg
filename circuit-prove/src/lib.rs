@@ -107,6 +107,7 @@ pub mod mina_wrap_closing_fold;
 /// node that `cb.connect`s their 32 published ξ limbs so the two halves are ONE value in-circuit
 /// rather than two that a host-side test compares.
 pub mod mina_wrap_finalize_fold;
+pub mod mina_wrap_opening_fold;
 pub mod mpt_holding_leaf;
 pub mod note_spend_leaf_adapter;
 pub mod packed_interleaved_merkle;

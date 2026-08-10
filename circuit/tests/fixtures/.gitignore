@@ -8,3 +8,12 @@ mina-finalize-scalars-trace.txt
 mina-finalize-scalars-forged-eval-trace.txt
 mina-finalize-scalars-forged-perm-trace.txt
 mina-finalize-scalars-lct-shift-trace.txt
+
+# mina-wrap-opening-sched: the three 2048x581 traces (~5 MB each) are UNTRACKED —
+# deterministically re-emitted by
+#   cd metatheory && lake build mina_wrap_opening_sched_emit
+#   ./.lake/build/bin/mina_wrap_opening_sched_emit ../circuit/tests/fixtures
+# The descriptor JSON and PI vectors are small and tracked.
+mina-wrap-opening-sched-trace.txt
+mina-wrap-opening-sched-forged-sg-trace.txt
+mina-wrap-opening-sched-forged-fold-trace.txt
