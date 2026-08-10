@@ -44,6 +44,7 @@ use dregg_circuit::descriptor_ir2::{
     prove_vm_descriptor2_unchecked, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::assert_violated_constraint_not_bus;
 
 const CHAIN_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fp-chainlink.json");
 const BODY_PIS_ALL: &str = include_str!("fixtures/pasta-fp-bodyhash-pis.txt");
@@ -173,6 +174,32 @@ fn prove_and_verify_adversarial(
 ) -> Result<(), String> {
     let proof = prove_vm_descriptor2_unchecked(d, t, pis, &MemBoundaryWitness::default(), &[])?;
     verify_vm_descriptor2(d, &proof, pis)
+}
+
+/// Assert a refusal is the constraint system's own — and NAME the verdict, positively.
+///
+/// ⚑ **THE POSITIVE CLAUSE WAS MISSING UNTIL 2026-08-09**, and one of the three teeth below
+/// asserted nothing about the message at all. `prove_and_verify_adversarial` is
+/// `prove_vm_descriptor2_unchecked(..)?` then `verify_vm_descriptor2`; the `?` means any
+/// prove-side `Err` arrives as the same `String` the verifier's verdict does. `check: false`
+/// gates the pre-flight replay AND the `verify_batch` self-check — that is what puts the forged
+/// witness in front of the deployed verifier — but `check_descriptor2` and the trace/PI SHAPE
+/// pre-flight still run first and still return `Err` before the constraint system reads a cell.
+/// A pair of negatives (`!"exact-public"`, `!"pre-flight"`) is satisfied by every one of those.
+/// `assert_violated_constraint_not_bus` requires a `CONSTRAINT_REFUSAL_MARKERS` verdict, so a
+/// shape fault REDS. Measured in `--release`: all three refuse with
+/// `OodEvaluationMismatch { index: Some(0) }`, the Main AIR's own.
+fn assert_air_refusal(err: &str) {
+    assert!(
+        !err.contains("exact-public"),
+        "the ROM must be SILENT about the sponge state and about WHICH value is absorbed — the \
+         boundary PIN is the whole of the preimage binding; got: {err}"
+    );
+    assert!(
+        !err.to_lowercase().contains("pre-flight") && !err.to_lowercase().contains("replay"),
+        "the refusal must be the CONSTRAINT SYSTEM's, not the producer replay's; got: {err}"
+    );
+    assert_violated_constraint_not_bus("body-hash-chain forgery", err);
 }
 
 // ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -305,15 +332,7 @@ fn a_substituted_body_element_is_refused_by_the_air() {
     let err = prove_and_verify_adversarial(&d, &t, &forged)
         .expect_err("a body element that is not this block's must be REFUSED BY THE CIRCUIT");
     println!("\n§3 ⚑⚑ SUBSTITUTED BODY ELEMENT REFUSED BY THE AIR: {err}");
-    assert!(
-        !err.contains("exact-public"),
-        "the ROM must be SILENT about WHICH value is absorbed -- the boundary PIN is the whole of \
-         the preimage binding; got: {err}"
-    );
-    assert!(
-        !err.to_lowercase().contains("pre-flight") && !err.to_lowercase().contains("replay"),
-        "the refusal must be the CONSTRAINT SYSTEM's, not the producer replay's; got: {err}"
-    );
+    assert_air_refusal(&err);
 
     // …and the CHECKED rail refuses it as well, which is the producer doing its job.
     assert!(
@@ -342,10 +361,7 @@ fn a_forged_head_state_is_refused_by_the_air() {
     let err = prove_and_verify_adversarial(&d, &t, &forged)
         .expect_err("an incoming state that is not the pinned salt must be REFUSED BY THE CIRCUIT");
     println!("\n§3b ⚑ FORGED HEAD REFUSED BY THE AIR: {err}");
-    assert!(
-        !err.contains("exact-public"),
-        "the ROM must be SILENT about the sponge state; got: {err}"
-    );
+    assert_air_refusal(&err);
 }
 
 /// ⚑ **AND A FORGED OUTGOING LANE 2 IS REFUSED** — the lane the seven-block descriptor never
@@ -365,4 +381,7 @@ fn a_forged_third_outgoing_lane_is_refused_by_the_air() {
     let err = prove_and_verify_adversarial(&d, &t, &forged)
         .expect_err("a third outgoing lane the machine did not compute must be REFUSED");
     println!("\n§3c ⚑ FORGED THIRD OUTGOING LANE REFUSED BY THE AIR: {err}");
+    // ⚑ This tooth asserted NOTHING about the message until 2026-08-09 — a bare `expect_err`,
+    // which is satisfied by the shape pre-flight, by `check_descriptor2`, by anything at all.
+    assert_air_refusal(&err);
 }

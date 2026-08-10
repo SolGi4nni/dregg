@@ -47,6 +47,7 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, decomp_cols_pub,
     parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
+use dregg_circuit::refusal::assert_violated_constraint_not_bus;
 
 const ROUND_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fp-round.json");
 const ROUND_TRACE: &str = include_str!("fixtures/pasta-fp-round-trace.txt");
@@ -474,6 +475,11 @@ fn a_forged_absorbed_value_is_refused_by_the_pi_pin() {
         !err.contains("exact-public"),
         "the ROM must be SILENT about the absorbed VALUE -- the PIN is what refuses; got: {err}"
     );
+    // ⚑ The negative above was the WHOLE assertion until 2026-08-09, and a lone negative is
+    // satisfied by every error string — including the prover's trace-width / PI-arity pre-flight,
+    // which fires before the constraint system reads a cell. Name the verdict positively.
+    // Measured in `--release`: `OodEvaluationMismatch { index: Some(0) }`, the Main AIR's own.
+    assert_violated_constraint_not_bus("fp-sponge forged absorbed value", &err);
     println!("\n§3 ⚑ FORGED ABSORBED VALUE -> REFUSED by the boundary PIN: {err}");
 }
 

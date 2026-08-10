@@ -42,6 +42,7 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, decomp_cols_pub,
     parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
+use dregg_circuit::refusal::assert_violated_constraint_not_bus;
 
 const ROUND_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fq-round.json");
 const ROUND_TRACE: &str = include_str!("fixtures/pasta-fq-round-trace.txt");
@@ -573,6 +574,11 @@ fn the_order_and_the_set_are_fixed_by_different_things() {
         !err.contains("exact-public"),
         "the ROM must be SILENT about the absorbed VALUE -- the pin is what refuses; got: {err}"
     );
+    // ⚑ Leg (c) carried only that negative until 2026-08-09, while legs (a) and (b) above already
+    // asserted their verdict positively — so the one leg whose whole claim is "the PIN, not the
+    // bus" was the one that could not tell them apart. Measured in `--release`:
+    // `OodEvaluationMismatch { index: Some(0) }`.
+    assert_violated_constraint_not_bus("fq-sponge swapped absorbed values", &err);
     println!(
         "\n⚑ THE DIVISION OF LABOUR, MEASURED:\n  \
          the ROM fixes WHICH round constant runs at WHICH round (a, bus)\n  \

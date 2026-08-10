@@ -74,6 +74,32 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::assert_violated_constraint_not_bus;
+
+/// Assert a refusal is the constraint system's own.
+///
+/// ⚑ **THE POSITIVE CLAUSE WAS MISSING UNTIL 2026-08-09.** The teeth here used to assert only
+/// that the error did NOT name the ROM or a producer replay — and a pair of negatives is
+/// satisfied by every error string there is. `prove_and_verify_adversarial` is
+/// `prove_vm_descriptor2_unchecked(..)?` then `verify_vm_descriptor2`, and the `?` hands back
+/// any prove-side `Err` in the same `String` the verifier's verdict uses. `check: false` gates
+/// the pre-flight replay and the `verify_batch` self-check, which is why the forgery reaches the
+/// circuit at all — but `check_descriptor2` and the trace/PI SHAPE pre-flight still run and still
+/// return `Err` before one witness cell is read. Requiring a `CONSTRAINT_REFUSAL_MARKERS` verdict
+/// (`OodEvaluationMismatch`, every profile; or p3's debug `constraints not satisfied on row`)
+/// makes a shape fault RED. Measured in `--release`: both teeth refuse with
+/// `OodEvaluationMismatch { index: Some(0) }`.
+fn assert_air_refusal(err: &str) {
+    assert!(
+        !err.contains("exact-public"),
+        "no table is declared, so the refusal cannot be a ROM verdict; got: {err}"
+    );
+    assert!(
+        !err.contains("pre-flight") && !err.contains("replay"),
+        "the refusal must be the constraint system's, not a producer pre-flight; got: {err}"
+    );
+    assert_violated_constraint_not_bus("body-preimage-bits forgery", err);
+}
 
 const BITS_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-body-preimage-bits-v1.json");
@@ -295,14 +321,7 @@ fn an_over_wide_chunk_bit_is_refused_by_the_air() {
     let err = prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
         .expect_err("a one-bit chunk carrying 2 must be REFUSED");
     println!("\n§2 ⚑⚑ OVER-WIDE CHUNK BIT REFUSED BY THE AIR: {err}");
-    assert!(
-        !err.contains("exact-public"),
-        "no table is declared, so the refusal cannot be a ROM verdict; got: {err}"
-    );
-    assert!(
-        !err.contains("pre-flight") && !err.contains("replay"),
-        "the refusal must be the constraint system's, not a producer pre-flight; got: {err}"
-    );
+    assert_air_refusal(&err);
 
     // …and the CHECKED rail refuses it too.
     prove_vm_descriptor2(
@@ -349,10 +368,7 @@ fn a_limb_that_is_not_its_bits_is_refused_by_the_air() {
     let err = prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
         .expect_err("a limb that is not the composition of its bits must be REFUSED");
     println!("\n§2b ⚑ MIS-COMPOSED LIMB REFUSED BY THE AIR: {err}");
-    assert!(
-        !err.contains("exact-public") && !err.contains("pre-flight"),
-        "the refusal must be the constraint system's; got: {err}"
-    );
+    assert_air_refusal(&err);
 }
 
 /// ⚑ **AND THE OLD-ADMITS-NEW-REJECTS PAIR, AS ONE STATEMENT.**
@@ -368,9 +384,10 @@ fn body_preimage_bits_discriminates() {
     );
     let mut forged = honest;
     forged[FALSIFIER_BIT] = BabyBear::new(2);
-    assert!(
-        prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis).is_err(),
-        "the over-wide chunk is rejected"
-    );
+    // ⚑ Not a bare `is_err()` — that is satisfied by the prover's shape pre-flight as readily as
+    // by the circuit, which is not the sentence this pair is written to support.
+    let err = prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
+        .expect_err("the over-wide chunk is rejected");
+    assert_air_refusal(&err);
     println!("\n§3 ⚑ old admits / new rejects — on the emitted object, at the deployed prover.");
 }

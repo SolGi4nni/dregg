@@ -43,6 +43,7 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, decomp_cols_pub,
     parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
+use dregg_circuit::refusal::assert_violated_constraint_not_bus;
 
 const LINK_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fq-wraplink.json");
 const LINK_TRACE: &str = include_str!("fixtures/pasta-fq-wraplink-trace.txt");
@@ -392,6 +393,9 @@ fn a_forged_incoming_transcript_state_is_refused() {
         !err.contains("exact-public"),
         "the ROM must be SILENT about the transcript state -- the PIN is what refuses; got: {err}"
     );
+    // ⚑ A lone negative is satisfied by every error string, including the prover's shape
+    // pre-flight. Measured in `--release`: `OodEvaluationMismatch { index: Some(0) }`.
+    assert_violated_constraint_not_bus("fq-wrap forged incoming transcript state", &err);
 }
 
 /// ⚑ **§3 — THE ABSORBED ELEMENT IS BOUND, AND ONLY BY THE PIN.** Claim the sponge absorbed
@@ -411,6 +415,7 @@ fn a_forged_absorbed_transcript_element_is_refused() {
         !err.contains("exact-public"),
         "the ROM must be SILENT about WHICH value is absorbed; got: {err}"
     );
+    assert_violated_constraint_not_bus("fq-wrap forged absorbed element (PI)", &err);
 
     // …and the same lie told in the TRACE instead of the claim. Row 0's R3 is the register the
     // first absorb instruction reads.
@@ -420,7 +425,11 @@ fn a_forged_absorbed_transcript_element_is_refused() {
     let err = prove_and_verify(&d, &t, &pis)
         .expect_err("a trace that absorbs a different element must be REFUSED");
     println!("§3b forged ABSORBED TAPE ELEMENT REFUSED (trace): {err}");
-    assert!(!err.is_empty());
+    // ⚑ This read `assert!(!err.is_empty())` until 2026-08-09 — the weakest assertion in the
+    // suite. Every refusal, every crash, every shape complaint is a non-empty string, so it
+    // recorded that SOMETHING went wrong and nothing about what. Measured: the same
+    // `OodEvaluationMismatch { index: Some(0) }` the PI-side leg above gets.
+    assert_violated_constraint_not_bus("fq-wrap forged absorbed element (trace)", &err);
 }
 
 /// ⚑ **§4 — AND THE SQUEEZE IS BOUND AT BOTH LANES.** Claim a different `v′`, then a different `u′`.

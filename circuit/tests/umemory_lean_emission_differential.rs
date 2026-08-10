@@ -39,8 +39,8 @@
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, MemKind, UMemBoundaryWitness, UMemOpSpec,
-    VmConstraint2, prove_vm_descriptor2_umem, table_air_gates_accept, umem_rows_for,
-    verify_vm_descriptor2,
+    VmConstraint2, check_descriptor2_wellformed, prove_vm_descriptor2_umem, table_air_gates_accept,
+    umem_rows_for, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
@@ -560,13 +560,29 @@ fn a_pad_row_spells_the_forbidden_nullifier_write_and_a_real_row_cannot() {
     }
 }
 
-/// The prover-level pole for refutation TWO, stated at ITS OWN resolution: the ASSEMBLER refuses a
-/// nullifier-domain write that installs an absent cell. ⚠ That is a completeness-of-refusal fact
-/// about `build_traces`, NOT a gate verdict — the gate verdicts are the test directly above.
+/// ⚑⚑ **THE STATICALLY-VIOLATING SHAPE IS REFUSED AT THE DESCRIPTOR CHECK — NOT BY THE ASSEMBLER,
+/// AND THIS TEST USED TO CLAIM OTHERWISE.**
+///
+/// Until 2026-08-09 this was one test named `a_nullifier_delete_is_refused_by_the_deployed_
+/// assembler`, whose doc-comment called its subject *"a completeness-of-refusal fact about
+/// `build_traces`"* and whose only assertion was `reason().contains("insert-only")`.
+///
+/// **`build_traces` was never reached.** `prove_vm_descriptor2_inner`'s FIRST statement is
+/// `let layout = check_descriptor2(desc)?` (`descriptor_ir2.rs:7098`); `build_traces` is not called
+/// until `:7146`. With `present: LeanExpr::Const(0)` the descriptor is *statically* violating, so
+/// `check_descriptor2`'s own insert-only arm (`descriptor_ir2.rs:2327`) returns first with
+/// *"nullifier-domain umem_op write installs a definitely-absent cell"*. The tooth stayed green
+/// only because **both messages contain the substring `insert-only`** — it asserted a message it
+/// does get, produced by a door it was not testing, and the assembler arm at
+/// `descriptor_ir2.rs:5883` had no covering tooth from this file at all.
+///
+/// So the two faces are now two tests, and each asserts the substring only ITS door produces.
+/// This one is the static face, driven through the deployed admission check directly.
 #[test]
-fn a_nullifier_delete_is_refused_by_the_deployed_assembler() {
+fn a_statically_shaped_nullifier_delete_is_refused_at_the_descriptor_check() {
     let mut desc = umem_desc();
-    // Rewrite op 0 into a WRITE installing `none` at the nullifier domain.
+    // Rewrite op 0 into a WRITE installing `none` at the nullifier domain — a CONSTANT `present`,
+    // so the violation is visible in the descriptor without evaluating a single row.
     desc.constraints[0] = VmConstraint2::UMemOp(UMemOpSpec {
         guard: LeanExpr::Var(4),
         domain: NULLIFIER_DOMAIN,
@@ -578,6 +594,17 @@ fn a_nullifier_delete_is_refused_by_the_deployed_assembler() {
         prev_serial: LeanExpr::Const(0),
         kind: MemKind::Write,
     });
+
+    // The deployed admission check is what speaks, and it is asked directly rather than inferred.
+    let admission =
+        check_descriptor2_wellformed(&desc).expect_err("a static un-spend must be inadmissible");
+    assert!(
+        admission.contains("definitely-absent cell"),
+        "the descriptor check must name the STATIC shape it caught: {admission}"
+    );
+
+    // …and that is also what the whole prove path reports, which is the point: the assembler's
+    // message is NOT reachable from this descriptor.
     let refused = must_refuse_or_unsat_panic("a nullifier-domain write installing `none`", || {
         prove_vm_descriptor2_umem(
             &desc,
@@ -589,10 +616,79 @@ fn a_nullifier_delete_is_refused_by_the_deployed_assembler() {
         )
         .map(|_| ())
     });
+    let reason = refused.reason();
     assert!(
-        refused.reason().contains("insert-only"),
-        "the refusal must name the discipline: {}",
-        refused.reason()
+        reason.contains("definitely-absent cell"),
+        "the prove path must surface the DESCRIPTOR CHECK's verdict: {reason}"
+    );
+    assert!(
+        !reason.contains("installs an ABSENT cell"),
+        "⚑ the assembler arm is UNREACHABLE from a statically-violating descriptor — if this ever \
+         fires, the check order changed and `a_nullifier_delete_is_refused_by_the_deployed_\
+         assembler` below is testing the wrong door: {reason}"
+    );
+}
+
+/// The prover-level pole for refutation TWO, stated at ITS OWN resolution: the ASSEMBLER refuses a
+/// nullifier-domain write that installs an absent cell. ⚠ That is a completeness-of-refusal fact
+/// about `build_traces`, NOT a gate verdict — the gate verdicts are the test two above.
+///
+/// ⚑ **REACHING IT AT ALL REQUIRES A DYNAMIC `present`.** `check_descriptor2` only matches
+/// `present == Const(0)`; an expression that merely *evaluates* to zero is admissible by
+/// construction, precisely so the row-by-row face has something to bite (the descriptor check says
+/// so at `descriptor_ir2.rs:2331`). So `present` rides column 3, and column 3 is zeroed in the
+/// trace — the shape the in-crate twin `ir2_umem_insert_only_refuses_unspend` uses for its second
+/// half. This is the only tooth in this file that reaches `descriptor_ir2.rs:5883`.
+#[test]
+fn a_nullifier_delete_is_refused_by_the_deployed_assembler() {
+    let mut desc = umem_desc();
+    desc.constraints[0] = VmConstraint2::UMemOp(UMemOpSpec {
+        guard: LeanExpr::Var(4),
+        domain: NULLIFIER_DOMAIN,
+        key: LeanExpr::Var(0),
+        present: LeanExpr::Var(3), // DYNAMIC — admissible, and evaluates to 0 below
+        value: LeanExpr::Const(0),
+        prev_present: LeanExpr::Const(0),
+        prev_value: LeanExpr::Const(0),
+        prev_serial: LeanExpr::Const(0),
+        kind: MemKind::Write,
+    });
+    // Falsifier integrity, asserted BEFORE the verdict is read: the descriptor is ADMISSIBLE, so
+    // whatever refuses below cannot be the check this shape was written to get past.
+    check_descriptor2_wellformed(&desc).expect(
+        "a dynamic `present` must clear the descriptor check — otherwise this tooth is \
+                 measuring the static arm again",
+    );
+
+    let mut rows = umem_trace();
+    for row in &mut rows {
+        row[3] = BabyBear::ZERO; // the dynamic present bit evaluates to 0: an un-spend
+    }
+
+    let refused = must_refuse_or_unsat_panic(
+        "a nullifier-domain write whose dynamic `present` evaluates to 0",
+        || {
+            prove_vm_descriptor2_umem(
+                &desc,
+                &rows,
+                &[],
+                &MemBoundaryWitness::default(),
+                &[],
+                &umem_boundary(),
+            )
+            .map(|_| ())
+        },
+    );
+    let reason = refused.reason();
+    assert!(
+        reason.contains("installs an ABSENT cell"),
+        "the ASSEMBLER's own arm must be what speaks here — `insert-only` alone does not \
+         discriminate it from the descriptor check, which is how this tooth was green for the \
+         wrong reason: {reason}"
+    );
+    assert!(
+        !reason.contains("definitely-absent cell"),
+        "the DESCRIPTOR CHECK's message must not be what refuses: {reason}"
     );
 }
 

@@ -48,6 +48,7 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::assert_violated_constraint_not_bus;
 
 const LEGS_JSON: &str = include_str!("../descriptors/by-name/dregg-mina-preamble-legs-v1.json");
 const ROW_TXT: &str = include_str!("fixtures/mina-preamble-legs-row.txt");
@@ -141,6 +142,26 @@ fn prove_and_verify_adversarial(
 
 /// Assert a refusal is the constraint system's own — not a ROM verdict, not a producer
 /// pre-flight. This AIR declares no table, so no lookup can be the refusal either.
+///
+/// ⚑ **THE POSITIVE REQUIREMENT IS THE LOAD-BEARING HALF, AND IT USED TO BE ABSENT.** Through
+/// 2026-08-09 this function asserted only the two NEGATIVES below, and a pair of negatives is
+/// satisfied by *every* error string — including the ones that witness nothing. That matters
+/// precisely here: `prove_and_verify_adversarial` is `prove_vm_descriptor2_unchecked(..)?` followed
+/// by `verify_vm_descriptor2`, so its `?` LAUNDERS any prove-side `Err` into the same `String` the
+/// verifier's verdict arrives in. `prove_vm_descriptor2_unchecked` passes `check: false`, which
+/// gates BOTH the pre-flight replay AND the `verify_batch` self-check — the flag is why the
+/// forged witness reaches the circuit at all — but the prover's SHAPE pre-flight (`base row width
+/// N must equal descriptor trace_width M`, `public input count`, the producer-owned-width refusal
+/// in `trace_with_chip_lanes`) still runs and still returns `Err` **before the constraint system
+/// reads one cell**. Under negatives-only, a fixture that drifted to the wrong width would have
+/// kept every tooth in this file green while measuring the arity check.
+///
+/// So require a verdict that only the constraint system can produce:
+/// `refusal::assert_violated_constraint_not_bus` demands one of `CONSTRAINT_REFUSAL_MARKERS`
+/// (`OodEvaluationMismatch` — the deployed verifier, every profile; or p3's debug
+/// `constraints not satisfied on row`) and forbids the bus verdicts. A shape fault contains
+/// neither, so it now REDS. Measured 2026-08-09 in `--release`: all six teeth here refuse with
+/// `OodEvaluationMismatch { index: Some(0) }`, the Main AIR's own.
 fn assert_air_refusal(err: &str) {
     assert!(
         !err.contains("exact-public"),
@@ -150,6 +171,7 @@ fn assert_air_refusal(err: &str) {
         !err.contains("pre-flight") && !err.contains("replay"),
         "the refusal must be the constraint system's, not a producer pre-flight; got: {err}"
     );
+    assert_violated_constraint_not_bus("preamble-legs forgery", err);
 }
 
 // ============================================================================
@@ -438,9 +460,11 @@ fn preamble_legs_discriminate() {
     let mut forged = honest;
     forged[IDX_PUBLIC] = BabyBear::new(41);
     let forged_pis = public_inputs(&forged);
-    assert!(
-        prove_and_verify_adversarial(&d, &trace_from(forged, 2), &forged_pis).is_err(),
-        "the 41-word index is rejected"
-    );
+    // ⚑ Not a bare `is_err()`. On this rail `is_err()` is satisfied by the prover's SHAPE
+    // pre-flight as readily as by the circuit, so the "rejects" half of an admits/rejects pair
+    // stated that way is weaker than the sentence it is written to support.
+    let err = prove_and_verify_adversarial(&d, &trace_from(forged, 2), &forged_pis)
+        .expect_err("the 41-word index is rejected");
+    assert_air_refusal(&err);
     println!("\n§3 ⚑ old admits / new rejects — on the emitted object, at the deployed prover.");
 }
