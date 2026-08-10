@@ -11,10 +11,14 @@ use dregg_lean_ffi::poa_ffi::{judge_poa_signal, poa_signal_judge_available, PoaS
 const INPUT_FILE: &str = include_str!("fixtures/poa-signal-input-v1.json");
 const OUTPUT_FILE: &str = include_str!("fixtures/poa-signal-output-v1.json");
 
+/// ⚠ Lean emits these two fixtures with NO trailing newline (its siblings under
+/// `fixtures/` still have one, so the shape is the GENERATOR's, not the wire's). An
+/// `.expect` here panics on a re-emit and pins whitespace rather than content — which is
+/// exactly what happened when `059f62db3` re-cut both files onto the `POA-RUN-IN-1` wire.
+/// `bytes` is already a binding, so the one-expression form is the right one here; the
+/// `include_str!`-inline sites need a `let raw` first (see `node/src/poa_signal_adapter.rs`).
 fn without_fixture_newline(bytes: &'static str) -> &'static str {
-    bytes
-        .strip_suffix('\n')
-        .expect("committed PoA fixture must have exactly one file newline")
+    bytes.strip_suffix('\n').unwrap_or(bytes)
 }
 
 #[test]

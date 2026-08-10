@@ -1338,7 +1338,19 @@ jobs:
       # separately-red leg that names its own cause. It is not a way to make this one quiet: the
       # floor below is raised to match, so a run that reaches this step and does NOT execute all
       # of them fails.
-      - name: Lean runtime probes nothing else builds (10 probes + the Linux twin)
+      # ⚑ TWO MORE, AND THEY WERE DARK FOR A REASON THE LIST ABOVE ALREADY NAMES (2026-08-10).
+      # `poa_signal_judge_probe` and `poa_network_genesis_probe` are the same class as the six
+      # armed on 08-08 — whole-file `#![cfg(feature = "lean-lib")]` over a real `@[export]` — and
+      # they were the only two of the eight NOT added, because `check-never-run-targets.py` sees
+      # `scripts/test-poa.sh:112,117` naming them and scores them run. It is right about the text
+      # and wrong about the reachability: the only workflow that calls that script is
+      # `path-of-angels.yml`, which is `workflow_dispatch:` on a self-hosted runner. That gate has
+      # no `push`, no `pull_request` and no `schedule` trigger, so "some invocation names it" and
+      # "any automatic run executes it" are different facts and only the first one is measured.
+      # The cost of the mistake is on the record: `poa_signal_judge_probe`'s two assertions have
+      # been panicking since `059f62db3` re-emitted the fixture without its trailing newline on
+      # 08-09, and nothing said so for a day.
+      - name: Lean runtime probes nothing else builds (12 probes + the Linux twin)
         if: steps.pin.outputs.armed == '1'
         run: |
           # `set +e` is load-bearing: GitHub runs `run:` under `bash -eo pipefail`, so
@@ -1358,6 +1370,8 @@ jobs:
             --test poa_slot_derive_probe \
             --test poa_station_daily_probe \
             --test trustline_step_oracle_probe \
+            --test poa_signal_judge_probe \
+            --test poa_network_genesis_probe \
             -- --nocapture 2>&1 | tee lean-probes.log
           status=${PIPESTATUS[0]}
           ran=$(sed -nE 's/^test result:.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/p' lean-probes.log \
@@ -1369,13 +1383,14 @@ jobs:
           #   deployed_constraint_probe 10 · multiway_tug_oracle_probe 8 · handler_cutover_probe 1
           #   embeddable_runtime_probe_linux 1 (Linux only) · poa_dark_bazaar_judge_probe 3
           #   poa_records_probe 3 · poa_signal_feedback_probe 8 · poa_slot_derive_probe 3
-          #   poa_station_daily_probe 6 · trustline_step_oracle_probe 5           = 48
+          #   poa_station_daily_probe 6 · trustline_step_oracle_probe 5
+          #   poa_signal_judge_probe 2 · poa_network_genesis_probe 3 (added 2026-08-10) = 53
           # ⚠ THE OLD FLOOR OF 18 WAS ALREADY STALE BEFORE THE SIX ARRIVED: it was measured on
           # 2026-07-25 with `deployed_constraint_probe` at 8, and that file now carries 10. A
           # floor that drifts DOWN from the population it floors stops being a floor, so it is
           # re-derived here rather than nudged.
-          if [ "$ran" -lt 48 ]; then
-            echo "::error::only $ran probe assertion(s) ran, below the measured floor of 48."
+          if [ "$ran" -lt 53 ]; then
+            echo "::error::only $ran probe assertion(s) ran, below the measured floor of 53."
             echo "::error::These probes report \`ok. 0 passed\` when their cfg is off, so a green"
             echo "::error::exit code here means nothing on its own. Either \`lean-lib\` did not"
             echo "::error::activate, or a whole-file cfg (platform!) emptied a probe. Do NOT lower"

@@ -1264,15 +1264,23 @@ mod tests {
         bundle_bytes(&genesis, &[transition])
     }
 
+    /// ⚠ Lean's emitter writes the judge fixtures with NO trailing newline, and whether it does
+    /// is a property of the GENERATOR's whitespace, not of the content this module tests. An
+    /// `.expect` here pins the former and panics the moment the fixture is re-emitted — which is
+    /// what `059f62db3` did when it re-cut both files onto the `POA-RUN-IN-1` wire. Strip the
+    /// newline if it is there and accept the file if it is not; both shapes decode identically.
+    fn without_fixture_newline(raw: &'static [u8]) -> &'static [u8] {
+        raw.strip_suffix(b"\n").unwrap_or(raw)
+    }
+
+    const SIGNAL_INPUT_FIXTURE: &[u8] =
+        include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json");
+    const SIGNAL_OUTPUT_FIXTURE: &[u8] =
+        include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-output-v1.json");
+
     fn checked_in_signal_bundle() -> (Vec<u8>, String) {
-        let judge_input =
-            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
-                .strip_suffix(b"\n")
-                .expect("committed Signal fixture has one file newline");
-        let judge_output =
-            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-output-v1.json")
-                .strip_suffix(b"\n")
-                .expect("committed Signal fixture has one file newline");
+        let judge_input = without_fixture_newline(SIGNAL_INPUT_FIXTURE);
+        let judge_output = without_fixture_newline(SIGNAL_OUTPUT_FIXTURE);
         (
             signal_bundle(judge_input, judge_output),
             String::from_utf8(judge_output.to_vec()).unwrap(),
@@ -1301,10 +1309,7 @@ mod tests {
     /// no `Serialize` impl, so this struct cannot be made to print one.
     #[test]
     fn the_review_envelope_takes_the_slot_state_and_drops_the_secret() {
-        let judge_input =
-            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
-                .strip_suffix(b"\n")
-                .expect("committed Signal fixture has one file newline");
+        let judge_input = without_fixture_newline(SIGNAL_INPUT_FIXTURE);
         let input: JudgeInputEnvelope = serde_json::from_slice(judge_input)
             .expect("the review envelope must accept the real POA-RUN-IN-1 wire");
 
@@ -1372,12 +1377,8 @@ mod tests {
 
     #[test]
     fn hostile_self_consistent_forged_carrier_is_never_reported_as_finality() {
-        let original_input = std::str::from_utf8(
-            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
-                .strip_suffix(b"\n")
-                .expect("committed Signal fixture has one file newline"),
-        )
-        .unwrap();
+        let original_input =
+            std::str::from_utf8(without_fixture_newline(SIGNAL_INPUT_FIXTURE)).unwrap();
         let original_actor_root = "44".repeat(32);
         let forged_actor_root = "ab".repeat(32);
         let forged_input = original_input.replace(&original_actor_root, &forged_actor_root);
