@@ -135,6 +135,7 @@ calls it.
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
 import Dregg2.Games.PathOfAngels.HiddenInstance
+import Dregg2.Games.PathOfAngels.DayWater
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.VentCrawl
@@ -527,12 +528,101 @@ def floodTapeFromRunSeed? (runSeed : Digest32) : Option FloodTape := do
 def floodTapeFromRunSeed (runSeed : Digest32) : FloodTape :=
   (floodTapeFromRunSeed? runSeed).getD calmTape
 
-def veinFromDaySeed? (daySeed : Digest32) : Option Vein := do
-  let (i, _) ← SeedDraw.drawBelow? VEINS (by decide) daySeed.bytes
-  some (veinAt i)
+/-- Which SEAM the day is running.  ⚑ This used to be a single `drawBelow? VEINS`
+that drew the whole vein; the BOTTOM has left it — see below. -/
+abbrev SEAMS : Nat := DayWater.SEAM_COUNT
 
-def veinFromDaySeed (daySeed : Digest32) : Vein :=
-  (veinFromDaySeed? daySeed).getD .barren
+theorem the_family_is_the_seams_and_the_bottom : VEINS = SEAMS * 2 := by decide
+
+/-- ⚑ **The bottom of the shaft is the SHIP'S bit, not the vent's.**  A wet bilge
+means the shaft bottoms out in water that is already in the ship and the last
+rung pays its seam's PINCH; a dry one means it opens into the POCKET.  The seam
+is still the day's own draw, so the eight-vein family is exactly what it was —
+`the_day_and_the_bilge_name_every_vein` — but one of its three bits is now a fact
+Deck Descent's mouth also reads.
+
+⚠ This is the only place in the seven-game rack where two DIFFERENT GAMES read
+one draw.  `DayWater` carries the calibration, both posteriors, and the proof
+that neither family moved. -/
+def veinFromDayAndBilge? (daySeed : Digest32) (bilge : Bool) : Option Vein := do
+  let (s, _) ← SeedDraw.drawBelow? SEAMS (by decide) daySeed.bytes
+  some (veinAt (DayWater.veinIndexFrom s bilge))
+
+def veinFromDayAndBilge (daySeed : Digest32) (bilge : Bool) : Vein :=
+  (veinFromDayAndBilge? daySeed bilge).getD .barren
+
+/-- The seam draw never rejects either: `SEAMS = 4` divides 256. -/
+theorem draw_below_the_seam_count_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
+    SeedDraw.drawBelow? SEAMS (by decide) (b :: rest)
+      = some (⟨b.val % SEAMS, Nat.mod_lt _ (by decide)⟩, rest) :=
+  a_full_ceiling_never_rejects SEAMS (by decide) (by decide) b rest
+
+/-- ⚑ **The family did not move.**  The eight `(seam, bilge)` pairs name the eight
+published veins, in the published order, one apiece.  So a crawler who knows
+nothing about the day is drawing from exactly the distribution the single
+`drawBelow? 8` gave — the coupling is a relabelling of where one bit comes from
+and not a reweighting of the day. -/
+theorem the_day_and_the_bilge_name_every_vein :
+    allVeins.all (fun v =>
+      decide ((DayWater.allVeinDraws.filter fun t =>
+        veinAt (DayWater.veinIndexFrom t.1 t.2) = v).length = 1)) = true := by
+  decide
+
+/-- The other half of the bijection, so that "exactly one preimage each" is not
+resting on the two lists happening to be the same length: the eight draws land on
+eight DISTINCT veins.  Together with `allVeins_complete` this is a bijection onto
+the whole `Vein` type, not merely onto a list. -/
+theorem the_day_and_the_bilge_collide_on_nothing :
+    (DayWater.allVeinDraws.map fun t =>
+      veinAt (DayWater.veinIndexFrom t.1 t.2)).eraseDups.length = VEINS := by
+  decide
+
+/-- ⚠ **AND THE STATEMENT THAT IS FALSE, kept refuted rather than deleted.**
+
+The first draft of the theorem above asserted LIST EQUALITY — that mapping the
+eight `(seam, bilge)` pairs yields `allVeins` itself — and `decide` proved its
+NEGATION.  That refutation is recorded here because the reason is a trap: it is
+not that the bijection fails, it is that two enumerations disagree on ORDER.
+`DayWater.allBilge` lists the dry night first, while a WET night is the PINCH and
+therefore index 0, so the flatMap emits each seam's POCKET before its PINCH and
+`allVeins` lists them the other way round.
+
+The distinction matters because `allVeins` order IS load-bearing on the wire —
+`still_possible` and every wager row's haul list are rendered in it — while
+`DayWater.allVeinDraws` is a proof-side enumeration that is rendered nowhere.  A
+reader who saw the failed equality and concluded the coupling was unsupported
+would be reading an ordering accident as a mechanism failure. -/
+theorem the_draw_order_is_not_the_wire_order :
+    (DayWater.allVeinDraws.map fun t => veinAt (DayWater.veinIndexFrom t.1 t.2))
+      ≠ allVeins := by
+  decide
+
+/-- Which side of its seam a vein is: `true` is the POCKET, and it is exactly the
+bit a dry bilge names. -/
+def Vein.opensAtTheBottom : Vein → Bool
+  | .barren | .patchy | .layered | .foolsLode => false
+  | .barrenPocket | .patchyPocket | .layeredPocket | .motherlode => true
+
+theorem the_bilge_is_the_bottom :
+    ∀ (seam : Fin SEAMS) (bilge : Bool),
+      (veinAt (DayWater.veinIndexFrom seam bilge)).opensAtTheBottom = !bilge := by
+  decide
+
+/-- ⚑ **THE COUPLING IS USABLE, which is a different claim from being real.**
+`the_bottom_rung_is_a_coin_flip_on_every_seam` says the crawler at the deepest
+decision holds exactly TWO candidate veins that want OPPOSITE verbs.  This says
+the day's water names WHICH of the two — at every seam, exactly one of the two
+survivors agrees with the bilge.  The bit that is undecided inside this game is
+decided outside it, and that is the whole content of "information earned in one
+game is usable in another". -/
+theorem the_bilge_settles_the_bottom_rung :
+    allVeins.all (fun v =>
+      let d := DEPTH_CAP - 1
+      let cs := consistentVeins d (v.carriedAt d)
+      decide (cs.length = 2) &&
+      decide ((cs.filter (fun w =>
+        w.opensAtTheBottom = v.opensAtTheBottom)).length = 1)) = true := by
+  decide
 
 /-- ⚑ The sentinel the day's shared table is drawn for.  It is not a crawler and
 it is not a key: it is a reserved 32-byte constant that separates the per-slot
@@ -1419,10 +1509,16 @@ structure JudgeContext where
   playerKey : Digest32
   previousPlayerCounter : Nat
   daySeed : Digest32
+  /-- ⚑ The day's water, from `DayWater.bilgeFor` — a per-SLOT bit under its own
+  sponge domain, taking no mission and no player.  It arrives here and NOT in the
+  `Config` for the same reason the day seed does: a host must not be able to name
+  it, because Deck Descent's mouth reads the same bit. -/
+  bilge : Bool
 
 /-- The vein a context is judged against.  Named so the derivation is one
 function and not an expression repeated at two call sites. -/
-def JudgeContext.vein (ctx : JudgeContext) : Vein := veinFromDaySeed ctx.daySeed
+def JudgeContext.vein (ctx : JudgeContext) : Vein :=
+  veinFromDayAndBilge ctx.daySeed ctx.bilge
 
 def judge (cfg : Config) (before : WorldState) (ctx : JudgeContext)
     (actions : List Action) : Option JudgedRun :=
@@ -1558,10 +1654,19 @@ def check_the_day_table_is_not_a_player_stream : Bool :=
 
 /-- ⚑ **Two crawlers on one day draw two tapes.**  The vein they share; the water
 they do not.  This is what makes a neighbour's drowning news about the day and
-not news about the crawler. (Pinned `= true` in `VentCrawlFixtures`.) -/
+not news about the crawler.
+
+⚠ The first conjunct was a TAUTOLOGY until 2026-08-09: it read
+`veinFromDaySeed (daySeedFor …) = veinFromDaySeed (daySeedFor …)`, the same
+closed expression on both sides, so it was `x = x` and would have stayed `true`
+if the day draw had been replaced by a constant.  "Two crawlers share a vein" was
+never checkable here anyway — `daySeedFor` takes no player, so it is a fact about
+the SIGNATURE.  The conjunct now carries the fact that IS contingent and IS new:
+the day's water moves the vein, on the same seam.  (Pinned `= true` in
+`VentCrawlFixtures`.) -/
 def check_two_crawlers_share_a_vein_and_not_a_tape : Bool :=
-  decide (veinFromDaySeed (daySeedFor fixtureSecret fixtureSlot fixtureContext) =
-    veinFromDaySeed (daySeedFor fixtureSecret fixtureSlot fixtureContext)) &&
+  decide (veinFromDayAndBilge (daySeedFor fixtureSecret fixtureSlot fixtureContext) true ≠
+    veinFromDayAndBilge (daySeedFor fixtureSecret fixtureSlot fixtureContext) false) &&
   decide (floodTapeFromRunSeed
       (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
         fixtureContext) ≠
@@ -1569,6 +1674,13 @@ def check_two_crawlers_share_a_vein_and_not_a_tape : Bool :=
       (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
         fixtureContext))
 
+#assert_axioms the_family_is_the_seams_and_the_bottom
+#assert_axioms draw_below_the_seam_count_never_rejects
+#assert_axioms the_day_and_the_bilge_name_every_vein
+#assert_axioms the_day_and_the_bilge_collide_on_nothing
+#assert_axioms the_draw_order_is_not_the_wire_order
+#assert_axioms the_bilge_is_the_bottom
+#assert_axioms the_bilge_settles_the_bottom_rung
 #assert_axioms allVeins_complete
 #assert_axioms allVeins_nodup
 #assert_axioms veinAt_injective

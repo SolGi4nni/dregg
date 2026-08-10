@@ -1694,11 +1694,18 @@ theorem descentReward_accepted (runSeed : Digest32)
   decide
 
 /-- Total, like `relayConfig`: `DeckDescent.boardFromRunSeed` is total, and
-`draw_below_two_never_rejects` records that its fallback is dead code. -/
-def descentConfig (runSeed : Digest32)
+`draw_below_the_reading_never_rejects` records that its mouth-reading fallback is
+dead code.
+
+⚠ `bilge` is now a PARAMETER: the mouth is a reading of the day's water, which is
+a per-slot draw the node supplies, so a descent config cannot be built without
+naming the night.  `DeckDescent.judge` refuses a config whose night disagrees
+with its context. -/
+def descentConfig (bilge : Bool) (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     DeckDescent.Config :=
-  { board := DeckDescent.boardFromRunSeed runSeed
+  { board := DeckDescent.boardFromRunSeed bilge runSeed
+    bilge := bilge
     mission := descentMission runSeed federationId sourceDigest contentDigest contentRoot
       activationDigest
     mouthRelic := relicSlot ⟨5⟩ 0
@@ -1713,13 +1720,13 @@ def descentConfig (runSeed : Digest32)
     board_eq := rfl }
 
 /-- ⚑ The board a run is judged on is the one its precommitted seed draws. -/
-theorem descentConfig_board_is_the_live_draw (runSeed : Digest32)
+theorem descentConfig_board_is_the_live_draw (bilge : Bool) (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
-    (descentConfig runSeed federationId sourceDigest contentDigest contentRoot
-      activationDigest).board = DeckDescent.boardFromRunSeed runSeed := rfl
+    (descentConfig bilge runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest).board = DeckDescent.boardFromRunSeed bilge runSeed := rfl
 
 private def demoDescentBoard (tag : Nat) : DeckDescent.Board :=
-  DeckDescent.boardFromRunSeed
+  DeckDescent.boardFromRunSeed (tag % 2 == 1)
     (demoLiveSeed (descentMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
       (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 [])) tag)
 
@@ -1938,11 +1945,12 @@ theorem ventReward_accepted (runSeed : Digest32)
 takes none either: the whole point of the per-slot draw is that a demonstration
 that varied the player would show a difference the real game does not have. -/
 private def demoVeinTag? (tag : Nat) : Option String :=
-  (VentCrawl.veinFromDaySeed?
+  (VentCrawl.veinFromDayAndBilge?
     (VentCrawl.daySeedFor (demoSecret tag) demoSlot
       (HiddenInstance.MissionContext.ofMission
         (ventMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
-          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 []))))).map
+          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 []))))
+    (tag % 2 == 1)).map
     VentCrawl.Vein.tag
 
 /-- ⚑ **The artifact does not determine the day's vein.**

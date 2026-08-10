@@ -231,10 +231,20 @@ private def blackBoxContext (carrier : FinalizedCarrier) : BlackBoxReconstructio
   playerKey := carrier.playerKey
   previousPlayerCounter := carrier.currentPlayerCounter.val
 
-private def deckDescentContext (carrier : FinalizedCarrier) : DeckDescent.JudgeContext where
+/-- ⚑ Deck Descent joined Vent Crawl in needing `active` as well as `carrier` on
+2026-08-09: its MOUTH is a three-in-four reading of the ship's bilge, which is a
+per-SLOT draw under `DayWater.SHIP_DOMAIN` — no mission, no player.  The bit is
+derived here from the very `slotSecret` `admissionChecks` has already pinned to
+the published commitment, so nothing new is trusted, and
+`DeckDescent.judge_binds_the_day` refuses any config that names a different
+night. -/
+private def deckDescentContext (active : ActiveRunState) (carrier : FinalizedCarrier) :
+    DeckDescent.JudgeContext where
   actorRoot := carrier.actorRoot
   playerKey := carrier.playerKey
   previousPlayerCounter := carrier.currentPlayerCounter.val
+  bilge := DayWater.bilgeFor active.slotSecret active.slot
+    active.game.mission.federationId active.game.mission.contentSession
 
 /-- ⚠ The only judge context built from `active` as well as `carrier`, and the
 reason is the whole point of Vent Crawl: its hidden table is drawn once per SLOT
@@ -256,6 +266,8 @@ private def ventCrawlContext (active : ActiveRunState) (carrier : FinalizedCarri
   previousPlayerCounter := carrier.currentPlayerCounter.val
   daySeed := VentCrawl.daySeedFor active.slotSecret active.slot
     (HiddenInstance.MissionContext.ofMission active.game.mission)
+  bilge := DayWater.bilgeFor active.slotSecret active.slot
+    active.game.mission.federationId active.game.mission.contentSession
 
 /-! ## Abstract judged value with game-specific executable evidence -/
 
@@ -294,7 +306,7 @@ private inductive JudgedEvidence where
       (admitted : admissionChecks active carrier claim = true)
       (actions : List DeckDescent.Action)
       (run : DeckDescent.JudgedRun)
-      (judged : DeckDescent.judge config active.world (deckDescentContext carrier) actions = some run)
+      (judged : DeckDescent.judge config active.world (deckDescentContext active carrier) actions = some run)
   | ventCrawl
       (active : ActiveRunState) (carrier : FinalizedCarrier) (claim : RunClaim)
       (config : VentCrawl.Config)
@@ -355,7 +367,7 @@ def judgeAdmitted (active : ActiveRunState) (carrier : FinalizedCarrier)
       | none => none
   | .deckDescent config, .deckDescent actions =>
       match hjudged : DeckDescent.judge config active.world
-          (deckDescentContext carrier) actions with
+          (deckDescentContext active carrier) actions with
       | some run => some ⟨.deckDescent active carrier claim config hadmitted actions run hjudged⟩
       | none => none
   | .ventCrawl config, .ventCrawl actions =>
@@ -566,7 +578,7 @@ theorem JudgedRun.has_executable_origin (run : JudgedRun) :
         (config : DeckDescent.Config)
         (actions : List DeckDescent.Action)
         (raw : DeckDescent.JudgedRun),
-      DeckDescent.judge config active.world (deckDescentContext carrier) actions = some raw ∧
+      DeckDescent.judge config active.world (deckDescentContext active carrier) actions = some raw ∧
       run.receipt = raw.receipt) ∨
     (∃ (active : ActiveRunState) (carrier : FinalizedCarrier)
         (config : VentCrawl.Config)

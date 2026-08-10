@@ -100,6 +100,7 @@ run out of air, it runs out of knowing, and the spare unit buys nothing.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
+import Dregg2.Games.PathOfAngels.DayWater
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.DeckDescent
@@ -412,17 +413,50 @@ rejected.  The `getD` fallback below is therefore no longer dead code: it is
 reached when every remaining seed byte is 255.  The docblock this replaces said
 the fallback was unreachable — true of three below-two draws, false of this
 derivation — and it is corrected rather than carried forward.
-`draw_below_two_never_rejects` still covers the MOUTH draw. -/
-def boardFromRunSeed? (runSeed : Digest32) : Option Board := do
-  let (m, s₁) ← SeedDraw.drawBelow? 2 (by decide) runSeed.bytes
-  let (b, _) ← SeedDraw.drawBelow? 3 (by decide) s₁
-  some (boardAt ⟨3 * m.val + b.val, by
-    have hm : m.val < 2 := m.isLt
-    have hb : b.val < 3 := b.isLt
-    omega⟩)
+`draw_below_the_reading_never_rejects` still covers the MOUTH draw.
 
-def boardFromRunSeed (runSeed : Digest32) : Board :=
-  (boardFromRunSeed? runSeed).getD { mouth := .sound, west := .sound, east := .sound }
+⚑ **CHANGED AGAIN, the same day: the mouth is a READING of the ship's bilge.**
+The main shaft is not an independent coin — it is the same water Vent Crawl's
+crawlers meet at the bottom of their shaft, and a descent reads it badly.  A wet
+bilge floods the mouth on THREE of the reading's four faces; a dry one, on ONE.
+`DayWater` carries the calibration (the mouth is still a fair coin to anyone who
+has not been in the vents) and the measurement that picked 3/4 rather than an
+exact bit — an exact bit takes this game's best BLIND fixed line from 0.6667 to
+0.8333, past the design gate's own 0.75 bar, because six boards and one spare
+unit of air have no slack to give away.
+
+`the_board_family_did_not_move` is the statement that makes this SAFE: the six
+boards are drawn in exactly the proportions they were. -/
+def boardFromRunSeed? (bilge : Bool) (runSeed : Digest32) : Option Board := do
+  let (m, s₁) ← SeedDraw.drawBelow? DayWater.READING_FACES (by decide) runSeed.bytes
+  let (b, _) ← SeedDraw.drawBelow? 3 (by decide) s₁
+  some (boardAt (DayWater.boardIndexFrom bilge m b))
+
+def boardFromRunSeed (bilge : Bool) (runSeed : Digest32) : Board :=
+  (boardFromRunSeed? bilge runSeed).getD { mouth := .sound, west := .sound, east := .sound }
+
+/-- ⚑ **The board family did not move.**  Over the twenty-four equally likely
+`(bilge, reading face, spur)` triples each of the six boards comes up four times —
+exactly the uniform the old fair-mouth draw gave over its six.  A player who
+knows nothing about the day is playing the game that shipped, not one like it. -/
+theorem the_board_family_did_not_move :
+    (boardTable.map (fun board =>
+      (DayWater.allBoardDraws.filter fun t =>
+        boardAt (DayWater.boardIndexFrom t.1 t.2.1 t.2.2) = board).length))
+      = [4, 4, 4, 4, 4, 4] := by
+  decide
+
+/-- ⚠ And the falsifier that keeps the theorem above from being the whole story:
+CONDITIONED on a wet night the three flooded-mouth boards are three times as
+likely as the dry ones.  A coupling that survived this conditioning would be a
+coupling that does nothing — which is exactly the failure mode "a connection the
+player is told about but cannot use". -/
+theorem the_board_family_moves_with_the_day :
+    (boardTable.map (fun board =>
+      ((DayWater.allBoardDraws.filter fun t => t.1 = true).filter fun t =>
+        boardAt (DayWater.boardIndexFrom t.1 t.2.1 t.2.2) = board).length))
+      = [1, 1, 1, 3, 3, 3] := by
+  decide
 
 /-- The fallback is a board the table really holds, so a seed that runs out of
 acceptable bytes still names a declared instance rather than a shape no
@@ -431,12 +465,12 @@ theorem board_fallback_is_in_the_table :
     ({ mouth := .sound, west := .sound, east := .sound } : Board) ∈ boardTable := by
   decide
 
-/-- A bound of 2 divides 256, so `ceilingFor 2 = 256` and no byte is ever
-rejected: the MOUTH draw always succeeds off a 32-byte seed. -/
-theorem draw_below_two_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
-    SeedDraw.drawBelow? 2 (by decide) (b :: rest)
-      = some (⟨b.val % 2, Nat.mod_lt _ (by decide)⟩, rest) := by
-  have hceil : SeedDraw.ceilingFor 2 = 256 := by decide
+/-- `DayWater.READING_FACES = 4` divides 256, so `ceilingFor 4 = 256` and no byte
+is ever rejected: the MOUTH reading always succeeds off a 32-byte seed. -/
+theorem draw_below_the_reading_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
+    SeedDraw.drawBelow? DayWater.READING_FACES (by decide) (b :: rest)
+      = some (⟨b.val % DayWater.READING_FACES, Nat.mod_lt _ (by decide)⟩, rest) := by
+  have hceil : SeedDraw.ceilingFor DayWater.READING_FACES = 256 := by decide
   simp [SeedDraw.drawBelow?, hceil, b.isLt]
 
 /-! ## Player state -/
@@ -1113,9 +1147,15 @@ structure Config where
   relics_declared :
     mouthRelic ∈ mission.allowedRelics ∧ westRelic ∈ mission.allowedRelics ∧
     eastRelic ∈ mission.allowedRelics ∧ eastSecondRelic ∈ mission.allowedRelics
-  /-- ⚑ The played board is the one the precommitted seed draws.  A host cannot
-  re-flood the deck after reading the transcript. -/
-  board_eq : board = boardFromRunSeed mission.runSeed
+  /-- ⚑ The day's water.  It is a per-SLOT draw and the run seed is a per-PLAYER
+  one, so it cannot arrive through `mission.runSeed` — and because a host COULD
+  set this field, `judge` refuses unless it equals the `JudgeContext`'s, which the
+  node derives from the pinned slot secret (`judge_binds_the_day`). -/
+  bilge : Bool
+  /-- ⚑ The played board is the one the precommitted seed draws, on the day the
+  ship is actually having.  A host cannot re-flood the deck after reading the
+  transcript, and cannot re-flood it by claiming a different night either. -/
+  board_eq : board = boardFromRunSeed bilge mission.runSeed
 
 /-- The relics a sling's counts name, under the declared lift/forfeit order:
 one east relic in hand is always `eastRelic`, the second is `eastSecondRelic`. -/
@@ -1199,7 +1239,7 @@ theorem replay_eq_replayB (cfg : Config) (s : State) (acts : List Action) :
 
 /-- ⚑ The board a run is judged on is the one its precommitted seed draws. -/
 theorem judged_board_is_the_drawn_board (cfg : Config) :
-    cfg.board = boardFromRunSeed cfg.mission.runSeed := cfg.board_eq
+    cfg.board = boardFromRunSeed cfg.bilge cfg.mission.runSeed := cfg.board_eq
 
 def byte (n : Nat) : Fin 256 := ⟨n % 256, Nat.mod_lt _ (by omega)⟩
 
@@ -1239,9 +1279,20 @@ structure JudgeContext where
   actorRoot : Digest32
   playerKey : Digest32
   previousPlayerCounter : Nat
+  /-- ⚑ The day's water, from `DayWater.bilgeFor` — derived by the node from the
+  slot secret that admission has already pinned to the published commitment.  This
+  is the authority; `Config.bilge` is only a claim, and `judge` refuses when the
+  two disagree. -/
+  bilge : Bool
 
+/-- ⚑ **A run is judged on the night the ship is actually having.**  Every other
+`Config` field is pinned to `mission.runSeed`, which admission pins; the bilge
+cannot be, because it is a per-slot draw.  So it is checked here instead, and the
+check is fail-closed: a config claiming the other night has no judged run at all.
+Without this a host would pick the mouth bit by picking a night. -/
 def judge (cfg : Config) (before : WorldState) (ctx : JudgeContext)
     (actions : List Action) : Option JudgedRun :=
+  if cfg.bilge != ctx.bilge then none else
   match replay cfg initialState actions with
   | none => none
   | some finalState =>
@@ -1296,11 +1347,35 @@ theorem judge_some_sound (cfg : Config) (before : WorldState) (ctx : JudgeContex
     · contradiction
     · split at h
       · contradiction
-      · simp only [Option.some.injEq] at h
-        subst run
-        refine ⟨by assumption, ?_, by assumption, rfl, rfl⟩
-        apply terminalOutput_canonical
-        assumption
+      · split at h
+        · contradiction
+        · simp only [Option.some.injEq] at h
+          subst run
+          refine ⟨by assumption, ?_, by assumption, rfl, rfl⟩
+          apply terminalOutput_canonical
+          assumption
+
+/-- ⚑ **The judge binds the night.**  A `Config` that names a different bilge
+from the one the node derived has no judged run — the refusal is the FIRST arm of
+`judge`, before a single action is replayed.  This is what stops the day's water
+from being a field a host fills in, and it is the reason the coupling is sound
+rather than merely present. -/
+theorem judge_binds_the_day (cfg : Config) (before : WorldState) (ctx : JudgeContext)
+    (actions : List Action) {run : JudgedRun} (h : judge cfg before ctx actions = some run) :
+    cfg.bilge = ctx.bilge := by
+  unfold judge at h
+  split at h
+  · contradiction
+  · rename_i hne
+    simpa using hne
+
+/-- The falsifier: a config that lies about the night is REFUSED, for every
+world, context and transcript.  A rule that cannot fire is not a rule. -/
+theorem a_config_that_lies_about_the_night_is_refused
+    (cfg : Config) (before : WorldState) (ctx : JudgeContext) (actions : List Action)
+    (hne : cfg.bilge ≠ ctx.bilge) : judge cfg before ctx actions = none := by
+  unfold judge
+  simp [hne]
 
 theorem judge_receipt_binds_transcript (cfg : Config) (before : WorldState)
     (ctx : JudgeContext) (actions : List Action) {run : JudgedRun}
@@ -2033,9 +2108,13 @@ def solvedB (s : State) : Bool := s.banked
 #assert_axioms board_fallback_is_in_the_table
 #assert_axioms boardAt_mem
 #assert_axioms boardAt_injective
-#assert_axioms draw_below_two_never_rejects
+#assert_axioms draw_below_the_reading_never_rejects
 #assert_axioms asymmetry_is_prize_not_price
 #assert_axioms the_east_spur_is_an_expedition_by_itself
+#assert_axioms the_board_family_did_not_move
+#assert_axioms the_board_family_moves_with_the_day
+#assert_axioms judge_binds_the_day
+#assert_axioms a_config_that_lies_about_the_night_is_refused
 #assert_axioms Config.slingRelics_length_le
 #assert_axioms Sling.forfeit_is_deepest
 #assert_axioms actionCode_injective
