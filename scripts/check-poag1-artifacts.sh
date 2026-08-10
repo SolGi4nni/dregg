@@ -109,6 +109,16 @@ be64() {
 # `Emit.lean`'s imports inside `Dregg2/Games/PathOfAngels/`. It now does.
 source_files=(
   "Dregg2/Games/PathOfAngels/Core.lean"
+  # ⚑ ADDED 2026-08-10. `DayWater` decides WHICH OF SIX BOARDS a Deck Descent run gets
+  # (`boardIndexFrom`) and which vein sits at the vent's bottom rung (`bilgeFrom`). It
+  # landed in `6b336d810` and was NOT added here, so for a day the digest that claims to
+  # cover "the rules" did not cover the rules that PICK A PLAYER'S INSTANCE — a verbatim
+  # recurrence of the `SeedDraw` wound the comment below exists to prevent, in the same
+  # file, against the same check. `EmitDigestHex` came out of the aggregator in `d543c63a6`
+  # for the same reason and was missed the same way: a module MOVING is as invisible to a
+  # hand-maintained list as a module ARRIVING.
+  "Dregg2/Games/PathOfAngels/DayWater.lean"
+  "Dregg2/Games/PathOfAngels/EmitDigestHex.lean"
   "Dregg2/Games/PathOfAngels/RelicNamespace.lean"
   "Dregg2/Games/PathOfAngels/SeedDraw.lean"
   "Dregg2/Games/PathOfAngels/SignalTriangulation.lean"
