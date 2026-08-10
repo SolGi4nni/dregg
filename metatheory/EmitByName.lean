@@ -770,8 +770,18 @@ Both directions are gated outside Lean:
 -- default recursion depth — the list is longer, not the descriptor heavier. Raised, not weakened.
 -- ⚑ 2026-08-08: 127 = 126 + `dregg-mina-preamble-legs-v1.json` (the five `verify_block` preamble
 -- legs as emitted polynomials). Rows and pin are one atom — bumped in the same edit as the row.
+-- ⚑ 2026-08-09 → repaired 2026-08-10: 131 = 127 + the four Schwartz-Zippel rows `001e4732a` added
+-- (`pasta-alu-sz`, `pasta-alu-fq-sz`, `pasta-{pallas,vesta}-complete-add-sz`). THE ACCIDENT EVERY
+-- NOTE ABOVE PREDICTS HAPPENED AGAIN, for the sixth time: rows landed, the pin did not move, `rfl`
+-- was `131 = 127`, and the whole by-name emit surface was dead for every lane for ~19 hours. It
+-- also took a gate with it that no one would look for here — `emit_descriptors.py`'s STATIC parse
+-- refuses when its count disagrees with this pin ("refusing to report on a table it may be reading
+-- wrong"), so `--verify-provenance` / `--verify-by-name-routing` exited before checking anything,
+-- and the `provenance` local-gates row reported NOTHING rather than a pass or a fail. The pin is
+-- not a cap on the table; it is the parser's independent ground truth. 131 is the measured count:
+-- 131 rows, 131 tracked `circuit/descriptors/by-name/*.json`, no duplicates.
 set_option maxRecDepth 8000 in
-theorem byNameDescriptors_length : byNameDescriptors.length = 127 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 131 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
