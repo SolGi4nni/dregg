@@ -302,6 +302,11 @@ pub fn read_exposed_child_vk(
     Some(out)
 }
 
+/// The binding node's failure prefix, single-sourced so the production `format!` and
+/// `binding_tooth`'s arm assertion cannot drift apart.
+pub const FACTORY_BINDING_NODE_SEGMENTED_ARM: &str =
+    "segmented factory-binding aggregation node failed";
+
 /// **THE SEGMENT-PRESERVING FACTORY BINDING NODE (the factory analog of
 /// [`crate::joint_turn_recursive::prove_sovereign_binding_node_segmented`]).** Aggregate a factory
 /// turn's DUAL-EXPOSE `EFFECT_CREATE_CELL` leg leaf (whose single `expose_claim` carries the chain
@@ -409,17 +414,18 @@ pub fn prove_factory_binding_node_segmented(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("segmented factory-binding aggregation node failed: {e:?}"),
+        reason: format!("{FACTORY_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::{assert_node_refused_by_binding_connect, report_refusal};
     use crate::ivc_turn_chain::{
         SEG_WIDTH, ir2_leaf_wrap_config, prove_descriptor_leaf_with_pi_slice_expose,
     };
-    use dregg_circuit::refusal::must_refuse;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
 
     fn make_witness() -> FactoryBackingWitness {
         FactoryBackingWitness {
@@ -485,9 +491,16 @@ mod tests {
         assert_ne!(forged_pis, w.public_inputs());
         let config = ir2_leaf_wrap_config();
 
-        must_refuse("a FORGED factory backing tuple", || {
-            prove_factory_leaf(&w, &forged_pis, &config)
-        });
+        let what = "a FORGED factory backing tuple";
+        let err = must_refuse(what, || prove_factory_leaf(&w, &forged_pis, &config));
+        // ⚑ NAME THE VERDICT. The tooth's claim is that `PiBinding{First}` (`row0[col] == pi[col]`)
+        // is UNSAT — a violated CONSTRAINT. A bare `must_refuse` was satisfied identically by the
+        // leaf's own PI-count pre-flight, by the recursion wrap failing, or by an OOM.
+        // `assert_violated_constraint_not_bus` is the profile-independent form: p3's
+        // `constraints not satisfied on row N` under `cargo test`, the deployed verifier's
+        // `OodEvaluationMismatch` under `--release`, and NEITHER bus verdict in either.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 
     /// Build a factory `EFFECT_CREATE_CELL` leg leaf that PUBLISHES `[segment ‖ child_vk]` as a
@@ -614,17 +627,18 @@ mod tests {
         forged[0] += BabyBear::new(1);
         let leg_leaf = factory_leg_leaf(&segment, forged, &config);
 
-        must_refuse(
-            "a FORGED child_vk (no backing leaf binds it) produced an aggregate root",
-            || {
-                prove_factory_binding_node_segmented(
-                    &leg_leaf,
-                    &backing_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg_leaf, &backing_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what = "a FORGED child_vk (no backing leaf binds it) produced an aggregate root";
+        let err = must_refuse(what, || {
+            prove_factory_binding_node_segmented(
+                &leg_leaf,
+                &backing_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg_leaf, &backing_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        // The per-lane `connect` between the leg's CLAIMED child_vk and the backing leaf's GENUINE
+        // one is what must object — not a lane-count guard, not the wrap, not an OOM.
+        assert_node_refused_by_binding_connect(what, &err, FACTORY_BINDING_NODE_SEGMENTED_ARM);
     }
 }

@@ -197,6 +197,10 @@ pub fn prove_segment_merge_preserving_claims(
     .map_err(|error| invalid(format!("claim-preserving cohort merge failed: {error:?}")))
 }
 
+/// The whole-turn cohort node's failure prefix, single-sourced so the production `format!` and
+/// `binding_tooth`'s arm assertion cannot drift apart.
+pub const WHOLE_TURN_DIRECT_IR2_NODE_ARM: &str = "whole-turn direct-IR2 binding failed";
+
 /// Bind a direct-IR2 application proof to a complete multi-cohort turn.
 ///
 /// `whole_turn_carrier` must be the result of the claim-preserving spine and
@@ -325,7 +329,7 @@ pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
         None,
         Some(&expose),
     )
-    .map_err(|error| invalid(format!("whole-turn direct-IR2 binding failed: {error:?}")))
+    .map_err(|error| invalid(format!("{WHOLE_TURN_DIRECT_IR2_NODE_ARM}: {error:?}")))
 }
 
 /// Claim widths for a complete whole-turn carrier.  Kept public so producer

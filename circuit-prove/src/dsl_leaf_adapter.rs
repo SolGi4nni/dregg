@@ -176,13 +176,14 @@ pub fn dsl_leaf_unmapped_kinds(program: &CellProgram) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::report_refusal;
     use crate::custom_leaf_adapter::read_exposed_pi_commitment;
     use crate::custom_proof_bind::custom_proof_pi_commitment;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
     use dregg_circuit::dsl::circuit::{
         CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
     };
-    use dregg_circuit::refusal::must_refuse;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
 
     /// A genuine ALGEBRAIC DFA transition predicate (no Poseidon2 / TableFunction), so it reuses the
     /// custom leaf machinery directly. A toy "advance" DFA: `next == state + symbol` per row (the
@@ -363,9 +364,15 @@ mod tests {
         let pis: Vec<BabyBear> = vec![BabyBear::new(0), BabyBear::new(2)];
         let config = ir2_leaf_wrap_config();
 
-        must_refuse("a FORGED DSL transition", || {
+        let what = "a FORGED DSL transition";
+        let err = must_refuse(what, || {
             prove_dsl_leaf_with_commitment(&program, &w, rows, &pis, &config)
         });
+        // The claim is that the step POLYNOMIAL is non-zero on the forged row — a violated
+        // CONSTRAINT. A bare `must_refuse` was satisfied identically by the CellProgram lowering
+        // refusing, by the recursion wrap failing, or by an OOM.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 
     /// THE PRODUCTION DESCRIPTOR FULLY MAPS: `dregg-dfa-routing-v1` uses `Hash4to1` (entry-hash,

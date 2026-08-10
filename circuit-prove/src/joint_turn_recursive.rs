@@ -49,6 +49,37 @@ pub const CUSTOM_COMMIT_PI_LO: usize = dregg_circuit::effect_vm::trace_rotated::
 /// (`dregg_circuit::effect_vm_descriptors::require_custom_carrier_vk8`).
 pub const CUSTOM_COMMIT_LEN: usize = 8;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ⚑ THE ARM NAMES, SINGLE-SOURCED.
+//
+// Each binding node wraps its aggregation failure as `AggregationProofInvalid { reason:
+// format!("<arm>: {e:?}") }`. `binding_tooth::assert_node_refused_by_binding_connect` asserts the
+// arm, so that a refusal from a DIFFERENT node cannot satisfy this node's tooth. These were
+// duplicated string literals — the production `format!` and the test's expectation — which is
+// exactly the drift where a renamed arm silently turns a tooth into "any refusal at all". They are
+// one object now: rename the constant and both move.
+//
+// ⚠ `CUSTOM_BINDING_NODE_ARM` is a SUBSTRING of `CUSTOM_BINDING_NODE_SEGMENTED_ARM`, so a
+// `contains` on the former is satisfied by the latter. That is harmless where it is used (each
+// tooth calls one node directly and the segmented node is a different entry point), but it is not a
+// discrimination between those two — do not read it as one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// [`prove_custom_binding_node`]'s failure prefix.
+pub const CUSTOM_BINDING_NODE_ARM: &str = "custom-binding aggregation node failed";
+/// [`prove_custom_binding_node_segmented`]'s failure prefix.
+pub const CUSTOM_BINDING_NODE_SEGMENTED_ARM: &str =
+    "segmented custom-binding aggregation node failed";
+/// [`prove_custom_binding_node_state_segmented`]'s failure prefix.
+pub const CUSTOM_STATE_BINDING_NODE_ARM: &str = "state-binding custom fold aggregation node failed";
+/// [`prove_custom_binding_node_state_and_board_segmented`]'s failure prefix.
+pub const CUSTOM_BOARD_WINDOW_NODE_ARM: &str = "board-window custom fold aggregation node failed";
+/// [`prove_custom_binding_node_app_root_segmented`]'s failure prefix.
+pub const CUSTOM_APP_ROOT_NODE_ARM: &str = "app-root weld custom fold aggregation node failed";
+/// `prove_sovereign_binding_node_segmented`'s failure prefix.
+pub const SOVEREIGN_BINDING_NODE_SEGMENTED_ARM: &str =
+    "segmented sovereign-binding aggregation node failed";
+
 // ============================================================================
 // THE CUSTOM-EFFECT FOLD-WIRE (DEPLOYED — wired into the chain prover). The binding the Lean
 // `CustomBindingFromFold.custom_binding_from_fold` premise needs is now REAL for a pure light
@@ -187,7 +218,7 @@ pub fn prove_custom_binding_node(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("custom-binding aggregation node failed: {e:?}"),
+        reason: format!("{CUSTOM_BINDING_NODE_ARM}: {e:?}"),
     })
 }
 
@@ -389,7 +420,7 @@ pub fn prove_custom_binding_node_state_segmented(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("state-binding custom fold aggregation node failed: {e:?}"),
+        reason: format!("{CUSTOM_STATE_BINDING_NODE_ARM}: {e:?}"),
     })
 }
 
@@ -541,7 +572,7 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("board-window custom fold aggregation node failed: {e:?}"),
+        reason: format!("{CUSTOM_BOARD_WINDOW_NODE_ARM}: {e:?}"),
     })
 }
 
@@ -833,7 +864,7 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("app-root weld custom fold aggregation node failed: {e:?}"),
+        reason: format!("{CUSTOM_APP_ROOT_NODE_ARM}: {e:?}"),
     })
 }
 
@@ -920,7 +951,7 @@ pub fn prove_claim_binding_node_segmented(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("segmented custom-binding aggregation node failed: {e:?}"),
+        reason: format!("{CUSTOM_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
 }
 
@@ -1048,7 +1079,7 @@ pub fn prove_sovereign_binding_node_segmented(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("segmented sovereign-binding aggregation node failed: {e:?}"),
+        reason: format!("{SOVEREIGN_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
 }
 
@@ -1078,6 +1109,7 @@ pub fn prove_sovereign_binding_node_segmented(
 #[cfg(test)]
 mod custom_fold_wire_tests {
     use super::*;
+    use crate::binding_tooth::assert_node_refused_by_binding_connect;
     use crate::custom_leaf_adapter::{
         prove_custom_leaf_with_commitment, read_exposed_pi_commitment,
     };
@@ -1280,18 +1312,20 @@ mod custom_fold_wire_tests {
             .expect("the custom sub-proof leaf proves");
         let ev_leaf = effectvm_leg_leaf(forged, &config); // internally consistent, but FORGED claim
 
-        must_refuse(
-            "a FORGED custom_proof_commitment minted a verifying fold node",
-            || {
-                prove_custom_binding_node(
-                    &ev_leaf,
-                    &custom_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&ev_leaf, &custom_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what = "a FORGED custom_proof_commitment minted a verifying fold node";
+        let err = must_refuse(what, || {
+            prove_custom_binding_node(
+                &ev_leaf,
+                &custom_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&ev_leaf, &custom_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        // ⚑ ASSERT THE REASON, not merely `Err`. Bare `must_refuse` here was satisfied equally by
+        // an OOM, an FRI fault, or the node's own pre-connect lane-count guard — none of which
+        // exercise the per-lane `connect` this tooth names.
+        assert_node_refused_by_binding_connect(what, &err, CUSTOM_BINDING_NODE_ARM);
     }
 
     /// THE PER-LANE TOOTH (flag-day spec: mutations targeted at EACH of the eight lanes make
@@ -1318,18 +1352,22 @@ mod custom_fold_wire_tests {
             forged[k] = BabyBear::new((real[k].0 + 1) % BABYBEAR_P);
             assert_ne!(forged[k], real[k]);
             let ev_leaf = effectvm_leg_leaf(forged, &config);
-            must_refuse(
-                "a commitment forged ONLY in lane {k} minted a verifying fold node —  that lane is NOT bound",
-                || {
-                    prove_custom_binding_node(
-                        &ev_leaf,
-                        &custom_leaf,
-                        &crate::fold_vk_pin::FoldVkPins::tracked(&ev_leaf, &custom_leaf)
-                            .expect("both fold children carry a preprocessed commitment"),
-                        &config,
-                    )
-                },
+            let what = format!(
+                "a commitment forged ONLY in lane {k} minted a verifying fold node — that lane is \
+                 NOT bound"
             );
+            let err = must_refuse(&what, || {
+                prove_custom_binding_node(
+                    &ev_leaf,
+                    &custom_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&ev_leaf, &custom_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            });
+            // Per-lane: the refusal must be lane k's OWN `connect` conflicting. A lane-count guard
+            // or an operational fault would satisfy an any-`Err` tooth identically for all eight.
+            assert_node_refused_by_binding_connect(&what, &err, CUSTOM_BINDING_NODE_ARM);
         }
     }
 }
@@ -1354,6 +1392,9 @@ mod custom_fold_wire_tests {
 #[allow(non_snake_case)]
 mod custom_state_fold_wire_tests {
     use super::*;
+    use crate::binding_tooth::{
+        assert_node_refused_by_binding_connect, assert_node_refused_fail_closed, report_refusal,
+    };
     use crate::custom_leaf_adapter::{
         prove_custom_leaf_with_state_commitment, read_exposed_pi_commitment,
         read_exposed_state_prefix,
@@ -1589,9 +1630,21 @@ mod custom_state_fold_wire_tests {
         let (w, rows) = honest_witness();
         let pis = vec![BabyBear::new(10), BabyBear::new(15)];
 
-        must_refuse(
-            "a sub-program with 2 PIs minted a state-binding leaf",
-            || prove_custom_leaf_with_state_commitment(&program, &w, rows, &pis, &config),
+        let what = "a sub-program with 2 PIs minted a state-binding leaf";
+        let err = must_refuse(what, || {
+            prove_custom_leaf_with_state_commitment(&program, &w, rows, &pis, &config)
+        });
+        // ⚑ NAME THE REFUSAL. This tooth's subject is the leaf's OWN fail-closed ABI-width guard
+        // (`custom_leaf_adapter.rs`: "the state-binding ABI requires at least 16"), which returns
+        // BEFORE any prove. A bare `must_refuse` was satisfied identically by the inner IR-v2 prove
+        // failing for an unrelated reason on a 2-PI descriptor — i.e. by the program being refused
+        // for NOT BEING PROVABLE rather than for not expressing the binding.
+        report_refusal(what, &err);
+        assert!(
+            err.contains("state-binding ABI requires at least"),
+            "{what}: the refusal must be the ABI-width guard, which fires before any prove. \
+             Anything else means the 2-PI program was refused for some other reason and the guard \
+             is untested.\n  got: {err}"
         );
     }
 
@@ -1654,18 +1707,22 @@ mod custom_state_fold_wire_tests {
                 .expect("the forged-root sub-proof still PROVES — that is the whole problem");
         let leg = dual_expose_leg_leaf(claim, &real_old8, &real_new8, &config);
 
-        must_refuse(
-            "a custom proof about a DIFFERENT transition minted a verifying state-bound fold",
-            || {
-                prove_custom_binding_node_state_segmented(
-                    &leg,
-                    &custom_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what =
+            "a custom proof about a DIFFERENT transition minted a verifying state-bound fold";
+        let err = must_refuse(what, || {
+            prove_custom_binding_node_state_segmented(
+                &leg,
+                &custom_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        // ⚑ It must be the STATE `connect` conflicting. The commitment connect cannot be what
+        // fires (the leg claims the sub-proof's genuine commitment, by construction above), and the
+        // node's lane-count guard cannot either (the leaf is a 24-lane state leaf) — but neither of
+        // those was excluded by the bare `must_refuse` that used to stand here.
+        assert_node_refused_by_binding_connect(what, &err, CUSTOM_STATE_BINDING_NODE_ARM);
     }
 
     /// **THE CANARY — the connects are load-bearing, shown without editing code.**
@@ -1709,18 +1766,21 @@ mod custom_state_fold_wire_tests {
         );
 
         // THE LEG: the state connects ENABLED => the same forgery is UNSAT.
-        must_refuse(
-            "the state-bound node accepted a forged-root proof the canary proves is forgeable",
-            || {
-                prove_custom_binding_node_state_segmented(
-                    &leg,
-                    &custom_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what =
+            "the state-bound node accepted a forged-root proof the canary proves is forgeable";
+        let err = must_refuse(what, || {
+            prove_custom_binding_node_state_segmented(
+                &leg,
+                &custom_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        // The canary's WHOLE claim is "the state connects are what differ". If this half refused
+        // for an operational or arity reason instead, the pair measures nothing about the connects
+        // — and an any-`Err` tooth could not tell.
+        assert_node_refused_by_binding_connect(what, &err, CUSTOM_STATE_BINDING_NODE_ARM);
     }
 
     /// **THE PER-LANE TOOTH.** Every one of the 16 state-prefix lanes is load-bearing: a node
@@ -1749,19 +1809,22 @@ mod custom_state_fold_wire_tests {
                 prove_custom_leaf_with_state_commitment(&program, &w, rows, &pis, &config)
                     .expect("the lane-forged sub-proof proves");
             let leg = dual_expose_leg_leaf(claim, &real_old8, &real_new8, &config);
-            must_refuse(
-                "a root forged in ONE state-prefix lane minted a verifying state-bound fold — \
-                 that lane is NOT bound",
-                || {
-                    prove_custom_binding_node_state_segmented(
-                        &leg,
-                        &custom_leaf,
-                        &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
-                            .expect("both fold children carry a preprocessed commitment"),
-                        &config,
-                    )
-                },
+            let what = format!(
+                "a root forged in state-prefix lane {k} minted a verifying state-bound fold — that \
+                 lane is NOT bound"
             );
+            let err = must_refuse(&what, || {
+                prove_custom_binding_node_state_segmented(
+                    &leg,
+                    &custom_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                )
+            });
+            // Per-lane, so the assertion must be per-lane too: lane k's own `connect` conflicting.
+            // Sixteen any-`Err`s are sixteen copies of one unmeasured claim.
+            assert_node_refused_by_binding_connect(&what, &err, CUSTOM_STATE_BINDING_NODE_ARM);
         }
     }
 
@@ -1784,18 +1847,22 @@ mod custom_state_fold_wire_tests {
             .expect("the commitment-only leaf proves");
         let leg = dual_expose_leg_leaf(claim, &old8, &new8, &config);
 
-        must_refuse(
-            "a commitment-only leaf was accepted by the state-binding node",
-            || {
-                prove_custom_binding_node_state_segmented(
-                    &leg,
-                    &thin_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &thin_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what = "a commitment-only leaf was accepted by the state-binding node";
+        let err = must_refuse(what, || {
+            prove_custom_binding_node_state_segmented(
+                &leg,
+                &thin_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &thin_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        // ⚑ THIS TOOTH IS NOT A CONNECT TOOTH and must not be asserted as one. Its subject is the
+        // node's fail-closed LANE-COUNT guard, which returns before a single `cb.connect` exists.
+        // `assert_node_refused_fail_closed` therefore asserts that guard's own message AND the
+        // ABSENCE of a `WitnessConflict`: a conflict here would mean the 8-lane leaf was admitted
+        // into the binding and silently degraded, which is exactly what the guard exists to stop.
+        assert_node_refused_fail_closed(what, &err, "claim lane(s)");
     }
 }
 
@@ -1817,6 +1884,9 @@ mod custom_state_fold_wire_tests {
 #[allow(non_snake_case)]
 mod app_root_weld_fold_tests {
     use super::*;
+    use crate::binding_tooth::{
+        assert_node_refused_by_binding_connect, assert_node_refused_fail_closed,
+    };
     use crate::custom_leaf_adapter::{
         prove_custom_leaf_with_app_root_commitment, prove_custom_leaf_with_state_commitment,
         read_exposed_app_root,
@@ -2144,19 +2214,22 @@ mod app_root_weld_fold_tests {
         .expect("the disagreeing-R sub-proof still PROVES — that is the whole problem");
         let leg = app_root_leg_leaf(claim, &real_field, &old8, &new8, &config);
 
-        must_refuse(
-            "a published root disagreeing with the cell's real field minted a verifying fold",
-            || {
-                prove_custom_binding_node_app_root_segmented(
-                    &leg,
-                    &custom_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                    APP_ROOT_LEN,
-                )
-            },
-        );
+        let what =
+            "a published root disagreeing with the cell's real field minted a verifying fold";
+        let err = must_refuse(what, || {
+            prove_custom_binding_node_app_root_segmented(
+                &leg,
+                &custom_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+                APP_ROOT_LEN,
+            )
+        });
+        // The headline tooth of the keystone: it must be the APP-ROOT `connect`. This node has FOUR
+        // pre-connect guards (two "carries no expose_claim", two lane-count) and any of them would
+        // have satisfied the bare `must_refuse` while R was never welded to anything.
+        assert_node_refused_by_binding_connect(what, &err, CUSTOM_APP_ROOT_NODE_ARM);
     }
 
     /// **THE CANARY — the app-root connect is load-bearing, shown without editing code.**
@@ -2272,19 +2345,19 @@ mod app_root_weld_fold_tests {
         )
         .expect("the app-root leaf proves");
         let leg = app_root_leg_leaf(claim, &real_field, &old8, &new8, &config);
-        must_refuse(
-            "the app-root node accepted a disagreeing-R turn the canary proves is forgeable",
-            || {
-                prove_custom_binding_node_app_root_segmented(
-                    &leg,
-                    &custom_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                    APP_ROOT_LEN,
-                )
-            },
-        );
+        let what = "the app-root node accepted a disagreeing-R turn the canary proves is forgeable";
+        let err = must_refuse(what, || {
+            prove_custom_binding_node_app_root_segmented(
+                &leg,
+                &custom_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+                APP_ROOT_LEN,
+            )
+        });
+        // The canary pair only measures the app-root connect if THIS half refused at the connect.
+        assert_node_refused_by_binding_connect(what, &err, CUSTOM_APP_ROOT_NODE_ARM);
     }
 
     /// **THE PER-LANE TOOTH.** Every one of the 8 published-root lanes is load-bearing: a node
@@ -2313,20 +2386,21 @@ mod app_root_weld_fold_tests {
             )
             .expect("the lane-forged sub-proof proves");
             let leg = app_root_leg_leaf(claim, &real_field, &old8, &new8, &config);
-            must_refuse(
-                "a published root forged in ONE lane minted a verifying app-root fold — that lane \
-                 is NOT bound",
-                || {
-                    prove_custom_binding_node_app_root_segmented(
-                        &leg,
-                        &custom_leaf,
-                        &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
-                            .expect("both fold children carry a preprocessed commitment"),
-                        &config,
-                        APP_ROOT_LEN,
-                    )
-                },
+            let what = format!(
+                "a published root forged in lane {k} minted a verifying app-root fold — that lane \
+                 is NOT bound"
             );
+            let err = must_refuse(&what, || {
+                prove_custom_binding_node_app_root_segmented(
+                    &leg,
+                    &custom_leaf,
+                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &custom_leaf)
+                        .expect("both fold children carry a preprocessed commitment"),
+                    &config,
+                    APP_ROOT_LEN,
+                )
+            });
+            assert_node_refused_by_binding_connect(&what, &err, CUSTOM_APP_ROOT_NODE_ARM);
         }
     }
 
@@ -2348,18 +2422,19 @@ mod app_root_weld_fold_tests {
             .expect("the state-only leaf proves");
         let leg = app_root_leg_leaf(claim, &r8, &old8, &new8, &config);
 
-        must_refuse(
-            "a state-only leaf was accepted by the app-root node",
-            || {
-                prove_custom_binding_node_app_root_segmented(
-                    &leg,
-                    &state_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &state_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                    APP_ROOT_LEN,
-                )
-            },
-        );
+        let what = "a state-only leaf was accepted by the app-root node";
+        let err = must_refuse(what, || {
+            prove_custom_binding_node_app_root_segmented(
+                &leg,
+                &state_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &state_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+                APP_ROOT_LEN,
+            )
+        });
+        // As with the state node's twin: the SUBJECT is the fail-closed lane-count guard, so the
+        // connect marker must be ABSENT — its presence would mean the 24-lane leaf reached the weld.
+        assert_node_refused_fail_closed(what, &err, "claim lane(s)");
     }
 }

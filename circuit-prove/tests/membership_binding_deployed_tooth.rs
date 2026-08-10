@@ -42,8 +42,7 @@
 // FAIL-CLOSED on every deployed leg today** — `MembershipBindingFromFold`'s flip is inert on the
 // deployed object, and this tooth's *honest* pole cannot pass either. The same cause reds bridge PI 46.
 // The teeth are not "native at 1771..1772"; they do not exist.
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::assert_refused_by_binding_node;
 
 use dregg_cell::Ledger;
 use dregg_circuit::descriptor_ir2::{

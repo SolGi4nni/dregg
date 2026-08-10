@@ -74,6 +74,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::assert_violated_constraint_not_bus;
+use dregg_circuit_prove::binding_tooth::{BINDING_CONNECT_MARKERS, binding_connect_marker};
 use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     ABSORBED_PI_LO, ABSORBED_WIDTH, CHAIN_CLAIM_LEN, CHAIN_LINKS, CHAIN_PI_COUNT, OUT_PI_LO, SK,
@@ -184,11 +186,14 @@ fn emitted_fri(
 
 /// `Result::expect_err` needs `T: Debug`, and a `RecursionOutput` is not. This says the same thing
 /// and keeps the refusal message the assertion is about.
+/// ⚑ ROUTED THROUGH [`dregg_circuit::refusal::must_refuse`] (2026-08-10) so every site here
+/// inherits its `SHAPE_FAULT_MARKERS` net: a `base row width … must equal descriptor trace_width`
+/// is the prover rejecting the trace's GEOMETRY in its pre-flight, and this used to hand it back
+/// as a refusal reason exactly as a genuine verdict. The `Result` is already evaluated, so a panic
+/// during the prove still propagates and REDS the test, which is correct — a panic is not a
+/// refusal.
 fn expect_refusal<T>(r: Result<T, String>, must: &str) -> String {
-    match r {
-        Ok(_) => panic!("{must}"),
-        Err(e) => e,
-    }
+    dregg_circuit::refusal::must_refuse(must, || r)
 }
 
 /// Little-endian 8-bit limbs -> the value.
@@ -483,6 +488,20 @@ fn a_skipped_link_is_refused_by_the_folds_connect() {
         "a chain that skips link 1 must be REFUSED by the fold",
     );
     println!("\n§3 ⚑ BROKEN JOIN REFUSED BY THE FOLD: {err}");
+    // ⚑ THE POSITIVE POLE. The sentence below already NAMES the mechanism ("the in-circuit CONNECT
+    // is what refuses a broken join") while asserting only that the text lacks "exact-public" —
+    // which every FRI fault, OOM and claim-layout guard also lacks. Assert the connect.
+    // ⚠ `fold_chain_links` formats with `{e}` (Display): `Witness conflict: WitnessId(N) …`.
+    assert!(
+        binding_connect_marker(&err).is_some(),
+        "the broken join must be refused by the fold's own `cb.connect` — one of \
+         {BINDING_CONNECT_MARKERS:?}. Anything else means the connect was never reached and this \
+         tooth would stay green with the carry DELETED; got: {err}"
+    );
+    assert!(
+        !err.contains("claim lane(s)") && !err.contains("carries no expose_claim"),
+        "the fold refused on CLAIM LAYOUT, before the connect existed; got: {err}"
+    );
     assert!(
         !err.contains("exact-public"),
         "the ROM must be SILENT about the transcript state -- the in-circuit CONNECT is what \
@@ -517,6 +536,9 @@ fn a_forged_absorbed_element_is_refused_by_the_pin() {
         "an absorbed element that is not the tape's must be REFUSED",
     );
     println!("\n§3b ⚑ FORGED ABSORBED TAPE ELEMENT REFUSED AT THE LEAF: {err}");
+    // ⚑ THE POSITIVE POLE: the boundary PIN is UNSAT — a violated constraint, not a bus imbalance
+    // and not an operational fault. Without it the negative alone is satisfied by every failure.
+    assert_violated_constraint_not_bus("a forged absorbed tape element", &err);
     assert!(
         !err.contains("exact-public"),
         "the ROM must be SILENT about WHICH value is absorbed -- the boundary PIN is the whole of \
@@ -542,6 +564,10 @@ fn a_forged_outgoing_state_is_refused_at_the_third_lane() {
         "a third outgoing lane the machine did not compute must be REFUSED",
     );
     println!("\n§3c ⚑ FORGED THIRD OUTGOING LANE REFUSED: {err}");
+    // ⚑ THE POSITIVE POLE: the third-lane pin is UNSAT — a violated constraint. This is the tamper
+    // the SEVEN-block descriptor could not catch, so "it refused for SOME reason" is exactly the
+    // evidence that must not be accepted here.
+    assert_violated_constraint_not_bus("a forged third outgoing lane", &err);
     assert!(
         !err.contains("exact-public"),
         "the ROM must be SILENT about the handed-on state; got: {err}"

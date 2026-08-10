@@ -23,8 +23,7 @@
 //! The fold is a real recursion (minutes), so both poles are `#[ignore]`. Run with:
 //!   cargo test -p dregg-circuit-prove --test custom_binding_production_path -- --ignored --nocapture
 
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::assert_refused_by_binding_node;
 
 use std::collections::HashMap;
 

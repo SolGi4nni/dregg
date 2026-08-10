@@ -33,8 +33,7 @@
 //! ANSWERS:         does the committed mintVmDescriptor2R24 row pin PI 46 to the FIRST-row param0 mint-hash column, do two spends differing only in nullifier carry distinct felt identities, and does a real 2-turn deployed bridge-mint chain fold plus light-client-verify while the SAME chain publishing that identity plus ONE is refused by the segmented bridge mint-hash binding node with a WitnessConflict?
 //! DOES NOT ANSWER: whether the note-spend witness corresponds to any real foreign note (it is a synthetic depth-2 fixture built in this file), whether a node executor would admit the minted turn, or whether double-minting is prevented — set-uniqueness lives in the executor BridgedNullifierSet and is exercised nowhere here.
 
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::assert_refused_by_binding_node;
 
 use dregg_cell::Ledger;
 use dregg_circuit::descriptor_ir2::{

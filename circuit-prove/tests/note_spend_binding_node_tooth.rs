@@ -21,14 +21,16 @@
 //! regen lands this is the MECHANISM tooth; `Dregg2.Circuit.BridgeBackingAttack`
 //! STANDS.
 //!
-//! ANSWERS:         do two distinct real note-spend witnesses prove as claim leaves, does folding leaf A against ITSELF through prove_note_spend_binding_node succeed and re-expose exactly the tuple A claims, and does folding leaf A against leaf B return SOME Err?
-//! DOES NOT ANSWER: whether the refusal is the BINDING that fired. This file calls bare must_refuse, not assert_refused_by_binding_node, so any Err satisfies the negative pole — an OOM, an FRI fault or a trace-shape error all read as the forgery being rejected. It also reaches no deployed leg: the positive pole folds one leaf against itself, so no leg-versus-sub-proof distinction is exercised anywhere here.
+//! ANSWERS:         do two distinct real note-spend witnesses prove as claim leaves, does folding leaf A against ITSELF through prove_note_spend_binding_node succeed and re-expose exactly the tuple A claims, and and is folding leaf A against leaf B refused BY THE BINDING CONNECT — a WitnessConflict naming the note-spend binding node's arm, not merely SOME Err?
+//! DOES NOT ANSWER: whether any DEPLOYED leg is reached. The positive pole folds one leaf against itself, so no leg-versus-sub-proof distinction is exercised anywhere here, and the deployed mintV3 felt-domain leg is still the named VK-gated big-bang piece. (The former entry here — that any Err satisfied the negative pole — was repaired on 2026-08-10: the tooth now asserts the connect's own WitnessConflict via binding_tooth, so an OOM, an FRI fault or a trace-shape error each RED it.)
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::note_spending_witness::{NoteSpendingWitness, test_spending_key};
 use dregg_circuit::poseidon2::hash_many;
 use dregg_circuit::refusal::must_refuse;
+use dregg_circuit_prove::binding_tooth::assert_node_refused_by_binding_connect;
 use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+use dregg_circuit_prove::note_spend_leaf_adapter::NOTE_SPEND_BINDING_NODE_ARM;
 
 /// ⚑ TRACKED child-VK pins for a 2-to-1 fold (`dregg_circuit_prove::fold_vk_pin`) — every fold in
 /// the crate now takes them, because `into_recursion_input` left each child's preprocessed
@@ -54,10 +56,10 @@ use dregg_circuit_prove::note_spend_leaf_adapter::{
 /// cheap single-source-of-truth for a doc line that is also runtime output.
 fn scope() {
     println!(
-        "ANSWERS:         do two distinct real note-spend witnesses prove as claim leaves, does folding leaf A against ITSELF through prove_note_spend_binding_node succeed and re-expose exactly the tuple A claims, and does folding leaf A against leaf B return SOME Err?"
+        "ANSWERS:         do two distinct real note-spend witnesses prove as claim leaves, does folding leaf A against ITSELF through prove_note_spend_binding_node succeed and re-expose exactly the tuple A claims, and and is folding leaf A against leaf B refused BY THE BINDING CONNECT — a WitnessConflict naming the note-spend binding node's arm, not merely SOME Err?"
     );
     println!(
-        "DOES NOT ANSWER: whether the refusal is the BINDING that fired. This file calls bare must_refuse, not assert_refused_by_binding_node, so any Err satisfies the negative pole — an OOM, an FRI fault or a trace-shape error all read as the forgery being rejected. It also reaches no deployed leg: the positive pole folds one leaf against itself, so no leg-versus-sub-proof distinction is exercised anywhere here."
+        "DOES NOT ANSWER: whether any DEPLOYED leg is reached. The positive pole folds one leaf against itself, so no leg-versus-sub-proof distinction is exercised anywhere here, and the deployed mintV3 felt-domain leg is still the named VK-gated big-bang piece. (The former entry here — that any Err satisfied the negative pole — was repaired on 2026-08-10: the tooth now asserts the connect's own WitnessConflict via binding_tooth, so an OOM, an FRI fault or a trace-shape error each RED it.)"
     );
 }
 
@@ -121,8 +123,13 @@ fn note_spend_binding_node_bites() {
 
     // NEGATIVE POLE (THE TOOTH): a leg claiming tuple A folded against a sub-proof
     // backing tuple B is a per-lane `connect` conflict — UNSAT, no root.
-    must_refuse(
-        "a claim with NO backing note-spend folded through the node",
-        || prove_note_spend_binding_node(&leaf_a, &leaf_b, &pins(&leaf_a, &leaf_b), &config),
-    );
+    let what = "a claim with NO backing note-spend folded through the node";
+    let err = must_refuse(what, || {
+        prove_note_spend_binding_node(&leaf_a, &leaf_b, &pins(&leaf_a, &leaf_b), &config)
+    });
+    // ⚑ THE SELF-DECLARED HOLE, CLOSED. This file's own header said it: a bare `must_refuse` made
+    // an OOM, an FRI fault and a trace-shape error all read as the forgery being rejected. The
+    // per-lane `connect` between leg A's claim and sub-proof B's bound tuple is the mechanism, and
+    // `WitnessConflict` is that connect objecting by name.
+    assert_node_refused_by_binding_connect(what, &err, NOTE_SPEND_BINDING_NODE_ARM);
 }

@@ -645,6 +645,11 @@ fn prove_note_spend_inner(
     Ok((desc2, inner))
 }
 
+/// The note-spend binding node's failure prefix, single-sourced so the production `format!` and
+/// `binding_tooth`'s arm assertion cannot drift apart. ⚠ it is a SUBSTRING of the segmented
+/// node's prefix, so a `contains` on it does not discriminate the two.
+pub const NOTE_SPEND_BINDING_NODE_ARM: &str = "note-spend binding aggregation node failed";
+
 /// **THE NOTE-SPEND BINDING MECHANISM NODE (no segment).** Aggregate a leg leaf that
 /// RE-EXPOSES its CLAIMED 7-slot tuple WITH the note-spend sub-proof leaf
 /// ([`prove_note_spend_leaf_with_claim`]), CONNECTING the two tuples lane-by-lane
@@ -725,7 +730,7 @@ pub fn prove_note_spend_binding_node(
         Some(&expose),
     )
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("note-spend binding aggregation node failed: {e:?}"),
+        reason: format!("{NOTE_SPEND_BINDING_NODE_ARM}: {e:?}"),
     })
 }
 

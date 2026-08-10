@@ -341,6 +341,15 @@ pub fn read_exposed_membership(
 // THE MEMBERSHIP-BINDING FOLD NODES.
 // ============================================================================
 
+/// The two membership binding nodes' failure prefixes, single-sourced so the production
+/// `format!` and `binding_tooth`'s arm assertion cannot drift apart. ⚠ the first is a SUBSTRING
+/// of the second, so a `contains` on it does not discriminate the two nodes.
+pub const MEMBERSHIP_BINDING_NODE_ARM: &str = "membership-binding aggregation node failed";
+
+/// The segment-preserving node's prefix.
+pub const MEMBERSHIP_BINDING_NODE_SEGMENTED_ARM: &str =
+    "segmented membership-binding aggregation node failed";
+
 /// **THE MEMBERSHIP-BINDING MECHANISM NODE (the minimal fold tooth — no segment).**
 /// Aggregate a `SenderAuthorized` leg leaf (which must RE-EXPOSE its CLAIMED 2-slot
 /// `(sender_leaf, authorized_root)` as an `expose_claim`, via
@@ -418,7 +427,7 @@ pub fn prove_membership_binding_node(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("membership-binding aggregation node failed: {e:?}"),
+        reason: format!("{MEMBERSHIP_BINDING_NODE_ARM}: {e:?}"),
     })
 }
 
@@ -526,15 +535,16 @@ pub fn prove_membership_binding_node_segmented(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("segmented membership-binding aggregation node failed: {e:?}"),
+        reason: format!("{MEMBERSHIP_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::report_refusal;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
-    use dregg_circuit::refusal::must_refuse;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
 
     fn make_witness() -> SenderMembershipWitness {
         SenderMembershipWitness {
@@ -616,8 +626,10 @@ mod tests {
         assert_ne!(forged_pis, w.public_inputs());
         let config = ir2_leaf_wrap_config();
 
-        must_refuse("a FORGED membership tuple", || {
-            prove_membership_leaf(&w, &forged_pis, &config)
-        });
+        let what = "a FORGED membership tuple";
+        let err = must_refuse(what, || prove_membership_leaf(&w, &forged_pis, &config));
+        // `PiBinding{First}` UNSAT — a violated CONSTRAINT, in whichever profile this ran.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 }

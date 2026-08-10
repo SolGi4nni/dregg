@@ -469,9 +469,10 @@ pub fn read_exposed_zkoracle_claim(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::report_refusal;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
     use dregg_circuit::poseidon2::{hash_bytes, hash_many, single_perm_compress};
-    use dregg_circuit::refusal::must_refuse;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
     use std::time::Instant;
 
     /// An Anthropic-messages-shaped JSON response body padded to EXACTLY `total`
@@ -726,9 +727,13 @@ mod tests {
         let mut pis = zkoracle_leaf_public_inputs(&w);
         pis[ZKORACLE_LEAF_COMMIT_PI] += BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
-        must_refuse("a FORGED commitment", || {
-            prove_zkoracle_leaf(&w, &pis, &config)
-        });
+        let what = "a FORGED commitment";
+        let err = must_refuse(what, || prove_zkoracle_leaf(&w, &pis, &config));
+        // The claim is that the chip-recomputed carrier chain + the PI pin go UNSAT — a violated
+        // CONSTRAINT. (The header's "`catch_unwind` also tolerates a panicking assembly" is stale:
+        // `must_refuse` REDS on a panic and has since the refusal module landed.)
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 
     /// THE LENGTH TOOTH: lying about the body length in the claim (commit lane
@@ -742,7 +747,11 @@ mod tests {
         let mut pis = zkoracle_leaf_public_inputs(&w);
         pis[ZKORACLE_LEAF_LEN_PI] += BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
-        must_refuse("a LIED length", || prove_zkoracle_leaf(&w, &pis, &config));
+        let what = "a LIED length";
+        let err = must_refuse(what, || prove_zkoracle_leaf(&w, &pis, &config));
+        // The claim is the length pin disagreeing with the structural-length gate — a constraint.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 
     /// THE BODY-TAMPER TOOTH: flip ONE witnessed body limb while the claim stays the
@@ -756,8 +765,10 @@ mod tests {
         let mut tampered = honest.clone();
         tampered.body_limbs[7] += BabyBear::ONE; // one flipped limb
         let config = ir2_leaf_wrap_config();
-        must_refuse("a TAMPERED body proved under the stale claim", || {
-            prove_zkoracle_leaf(&tampered, &pis, &config)
-        });
+        let what = "a TAMPERED body proved under the stale claim";
+        let err = must_refuse(what, || prove_zkoracle_leaf(&tampered, &pis, &config));
+        // The claim is that the stale commitment no longer recomputes — a violated constraint.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 }

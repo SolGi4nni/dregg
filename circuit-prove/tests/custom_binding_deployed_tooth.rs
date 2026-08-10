@@ -38,8 +38,10 @@
 //! ANSWERS:         over a real 2-turn deployed customVmDescriptor2R24 chain, does the honest pair fold and light-client-verify; is a commitment with lane 0 perturbed by ONE refused by the state-binding custom-binding node; is a sub-proof declaring roots 900/950 instead of the leg REAL rotated roots refused by that same node while the PRE-flip commitment-only node still accepts it; and is a 2-PI sub-program refused fail-closed at the leaf mint?
 //! DOES NOT ANSWER: whether the custom sub-program MEANS anything. The relation re-proved is a 4-column toy conservation polynomial built in this file, so what the fold binds is that SOME verifying sub-proof exists over the declared roots — never that those roots are the ones a node executor would compute, nor that the program is the one a cell installed.
 
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::{
+    assert_node_refused_by_binding_connect, assert_refused_by_binding_node,
+};
+use dregg_circuit_prove::joint_turn_recursive::CUSTOM_STATE_BINDING_NODE_ARM;
 
 use std::collections::HashMap;
 
@@ -634,17 +636,21 @@ fn canary__the_pre_flip_deployed_pair_accepts_the_forged_root_the_state_node_ref
             "the state-binding leaf proves — the forged-root sub-proof still PROVES, that is \
                  the whole problem",
         );
-    must_refuse(
-        "the DEPLOYED state node accepted a forged-root proof the canary proves is forgeable",
-        || {
-            prove_custom_binding_node_state_segmented(
-                &dual,
-                &state_leaf,
-                &pins(&dual, &state_leaf),
-                &config,
-            )
-        },
-    );
+    let what =
+        "the DEPLOYED state node accepted a forged-root proof the canary proves is forgeable";
+    let err = must_refuse(what, || {
+        prove_custom_binding_node_state_segmented(
+            &dual,
+            &state_leaf,
+            &pins(&dual, &state_leaf),
+            &config,
+        )
+    });
+    // ⚑ THE CANARY PAIR ONLY MEASURES THE STATE CONNECTS IF THIS HALF REFUSED AT THEM. Bare
+    // `must_refuse` accepted any `Err` here, so the pair's conclusion ("the 16 state connects are
+    // load-bearing on the real leg") rested on an unmeasured refusal — an OOM on the second fold
+    // would have printed the same sentence.
+    assert_node_refused_by_binding_connect(what, &err, CUSTOM_STATE_BINDING_NODE_ARM);
     eprintln!(
         "DEPLOYED CANARY: the pre-flip pair ACCEPTS the forged-root fold; the deployed state pair \
          REFUSES it. The 16 state connects are load-bearing on the real leg."

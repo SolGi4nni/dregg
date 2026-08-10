@@ -307,6 +307,11 @@ pub fn read_exposed_contract_hash(
     Some(out)
 }
 
+/// The binding node's failure prefix, single-sourced so the production `format!` and
+/// `binding_tooth`'s arm assertion cannot drift apart.
+pub const HATCHERY_BINDING_NODE_SEGMENTED_ARM: &str =
+    "segmented hatchery-binding aggregation node failed";
+
 /// **THE SEGMENT-PRESERVING HATCHERY BINDING NODE (the hatchery analog of
 /// [`crate::joint_turn_recursive::prove_sovereign_binding_node_segmented`]).** Aggregate a hatchery
 /// mint's DUAL-EXPOSE effect-vm leg leaf (whose single `expose_claim` carries the chain SEGMENT in
@@ -418,18 +423,19 @@ pub fn prove_hatchery_binding_node_segmented(
         D,
     >(&left, &right, config, &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("segmented hatchery-binding aggregation node failed: {e:?}"),
+        reason: format!("{HATCHERY_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::{assert_node_refused_by_binding_connect, report_refusal};
     use crate::ivc_turn_chain::{
         SEG_WIDTH, ir2_leaf_wrap_config, prove_descriptor_leaf_with_pi_slice_expose,
     };
     use dregg_circuit::field::BABYBEAR_P;
-    use dregg_circuit::refusal::must_refuse;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
     use p3_field::PrimeField32;
 
     fn make_witness() -> HatcheryAttestationWitness {
@@ -497,9 +503,11 @@ mod tests {
         assert_ne!(forged_pis, w.public_inputs());
         let config = ir2_leaf_wrap_config();
 
-        must_refuse("a FORGED hatchery attestation tuple", || {
-            prove_hatchery_leaf(&w, &forged_pis, &config)
-        });
+        let what = "a FORGED hatchery attestation tuple";
+        let err = must_refuse(what, || prove_hatchery_leaf(&w, &forged_pis, &config));
+        // The claim is `PiBinding{First}` UNSAT — a violated CONSTRAINT in whichever profile.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 
     /// Build a minimal effect-vm leg leaf that PUBLISHES `segment ++ contract_hash` in IR2 PIs
@@ -621,17 +629,16 @@ mod tests {
             .expect("the attestation leaf folds (it binds the REAL contract_hash)");
         let leg_leaf = hatchery_leg_leaf(&segment, forged, &config); // claims the FORGED hash
 
-        must_refuse(
-            "a FORGED contract_hash (no backing attestation) produced a fold root —  hatchery forever",
-            || {
-                prove_hatchery_binding_node_segmented(
-                    &leg_leaf,
-                    &attestation_leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg_leaf, &attestation_leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what = "a FORGED contract_hash (no backing attestation) produced a fold root";
+        let err = must_refuse(what, || {
+            prove_hatchery_binding_node_segmented(
+                &leg_leaf,
+                &attestation_leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg_leaf, &attestation_leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        assert_node_refused_by_binding_connect(what, &err, HATCHERY_BINDING_NODE_SEGMENTED_ARM);
     }
 }

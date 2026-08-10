@@ -111,6 +111,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::assert_violated_constraint_not_bus;
+use dregg_circuit_prove::binding_tooth::{BINDING_CONNECT_MARKERS, binding_connect_marker};
 use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     ABSORBED_PI_LO, ABSORBED_WIDTH, CHAIN_CLAIM_LEN, CHAIN_PI_COUNT, OUT_PI_LO, SK, STATE_WIDTH,
@@ -209,11 +211,14 @@ fn link_trace(j: usize) -> Vec<Vec<BabyBear>> {
 }
 
 /// `Result::expect_err` needs `T: Debug`, and a `RecursionOutput` is not.
+/// ⚑ ROUTED THROUGH [`dregg_circuit::refusal::must_refuse`] (2026-08-10) so every site here
+/// inherits its `SHAPE_FAULT_MARKERS` net: a `base row width … must equal descriptor trace_width`
+/// is the prover rejecting the trace's GEOMETRY in its pre-flight, and this used to hand it back
+/// as a refusal reason exactly as a genuine verdict. The `Result` is already evaluated, so a panic
+/// during the prove still propagates and REDS the test, which is correct — a panic is not a
+/// refusal.
 fn expect_refusal<T>(r: Result<T, String>, must: &str) -> String {
-    match r {
-        Ok(_) => panic!("{must}"),
-        Err(e) => e,
-    }
+    dregg_circuit::refusal::must_refuse(must, || r)
 }
 
 /// Recompose 32 little-endian 8-bit limbs into a DECIMAL string, by repeated multiply-add on the
@@ -491,6 +496,14 @@ fn a_substituted_body_element_is_refused_by_the_pin() {
         "a body element that is not this block's must be REFUSED even when the hash is unchanged",
     );
     println!("\n§2 ⚑⚑ SUBSTITUTED BODY ELEMENT REFUSED AT THE LEAF: {err}");
+    // ⚑ THE POSITIVE POLE, which was missing: the negative below is satisfied by EVERY failure
+    // mode that does not happen to contain "exact-public" — an OOM, an FRI fault, a shape
+    // complaint, a leaf-wrap error. `assert_violated_constraint_not_bus` says what this tooth
+    // actually claims — the BOUNDARY PIN is UNSAT, a violated constraint — and says it
+    // profile-independently (p3's `constraints not satisfied on row N` under `cargo test`, the
+    // deployed verifier's `OodEvaluationMismatch` under `--release`).
+    assert_violated_constraint_not_bus("a substituted body element", &err);
+    // …and the NEGATIVE keeps its own statement: the pin, not the ROM's exact-public manifest.
     assert!(
         !err.contains("exact-public"),
         "the ROM must be SILENT about WHICH value is absorbed -- the boundary PIN is the whole of \
@@ -529,6 +542,21 @@ fn a_skipped_body_link_is_refused_by_the_folds_connect() {
         "a body-hash chain that skips link 1 must be REFUSED by the fold",
     );
     println!("\n§2b ⚑ BROKEN JOIN REFUSED BY THE FOLD: {err}");
+    // ⚑ THE POSITIVE POLE. This tooth's whole claim is that the 96 `cb.connect`s object — so the
+    // refusal must BE a connect conflict, not merely "not exact-public". ⚠ `fold_chain_links`
+    // formats with `{e}` (Display), so the text is `Witness conflict: WitnessId(N) already set to
+    // …`, NOT the derived `WitnessConflict` — `binding_connect_marker` accepts both renderings.
+    assert!(
+        binding_connect_marker(&err).is_some(),
+        "the broken join must be refused by the fold's own `cb.connect` — one of \
+         {BINDING_CONNECT_MARKERS:?}. Anything else (a claim-layout guard, an FRI fault, an OOM) \
+         means the connect was never built and this tooth would stay green with the carry \
+         DELETED; got: {err}"
+    );
+    assert!(
+        !err.contains("claim lane(s)") && !err.contains("carries no expose_claim"),
+        "the fold refused on CLAIM LAYOUT, before the connect existed; got: {err}"
+    );
     assert!(
         !err.contains("exact-public"),
         "the ROM must be SILENT about the sponge state; got: {err}"
@@ -570,6 +598,15 @@ fn a_fresh_sponge_head_is_refused() {
         "an incoming state that is not the pinned salt must be REFUSED",
     );
     println!("\n§2c ⚑ FORGED HEAD REFUSED AT THE LEAF: {err}");
+    // ⚑ THIS TOOTH ASSERTED NOTHING AT ALL until 2026-08-10 — `expect_refusal` alone, so any `Err`
+    // was "the forged head was refused", including the descriptor failing to build. The claim is
+    // that the head PIN is UNSAT: a violated CONSTRAINT, in whichever profile.
+    assert_violated_constraint_not_bus("a fresh-sponge head", &err);
+    assert!(
+        !err.contains("exact-public"),
+        "the ROM must be SILENT about the incoming state -- the head PIN is the whole of the \
+         binding; got: {err}"
+    );
 }
 
 // ============================================================================

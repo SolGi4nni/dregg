@@ -35,8 +35,7 @@
 //! `#[ignore]`. Run with:
 //!   cargo test -p dregg-circuit-prove --test mpt_holding_fold_pilot -- --ignored --nocapture
 
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::assert_refused_by_binding_node;
 
 use dregg_cell::Ledger;
 use dregg_circuit::descriptor_ir2::UMemBoundaryWitness;
@@ -48,7 +47,8 @@ use dregg_circuit::effect_vm::trace_rotated::{
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::refusal::must_refuse;
+use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
+use dregg_circuit_prove::binding_tooth::report_refusal;
 use dregg_circuit_prove::custom_leaf_adapter::{
     prove_custom_leaf_with_commitment, read_exposed_pi_commitment,
 };
@@ -308,9 +308,16 @@ fn assert_leaf_refuses(label: &str, witness: &MptHoldingWitness, public_inputs: 
     let program = mpt_holding_program();
     let (wv, rows) = witness.witness_values();
     let config = ir2_leaf_wrap_config();
-    must_refuse(&format!("{label}: a FORGED holding tuple"), || {
+    let what = format!("{label}: a FORGED holding tuple");
+    let err = must_refuse(&what, || {
         prove_custom_leaf_with_commitment(&program, &wv, rows, public_inputs, &config)
     });
+    // ⚑ NAME THE VERDICT. This is a LEAF tooth, not a fold tooth: the claim is that the holding
+    // program's own constraints go UNSAT on the forged tuple. A bare `must_refuse` was satisfied
+    // identically by `lower_cellprogram` refusing the program, by the recursion wrap failing, or by
+    // an OOM — none of which say anything about the forgery.
+    report_refusal(&what, &err);
+    assert_violated_constraint_not_bus(&what, &err);
     eprintln!("MPT P0 leaf tooth: {label} REFUSED at the leaf (the deployed arm's exact call).");
 }
 

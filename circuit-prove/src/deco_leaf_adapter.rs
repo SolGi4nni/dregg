@@ -374,6 +374,18 @@ pub fn prove_deco_leaf_with_claim(
     .map_err(|e| format!("deco claim leaf expose-wrap failed: {e}"))
 }
 
+/// The two deco binding nodes' failure prefixes, single-sourced so the production
+/// `format!` and `binding_tooth`'s arm assertion cannot drift apart.
+///
+/// ⚠ `DECO_BINDING_NODE_ARM` is a SUBSTRING of `DECO_BINDING_NODE_SEGMENTED_ARM`, so a
+/// `contains` on the former does not discriminate the two nodes — only that the refusal came
+/// from a deco payment-binding node rather than from the wrap, the chain, or the box.
+pub const DECO_BINDING_NODE_ARM: &str = "deco payment-binding aggregation node failed";
+
+/// The segment-preserving node's prefix.
+pub const DECO_BINDING_NODE_SEGMENTED_ARM: &str =
+    "segmented deco payment-binding aggregation node failed";
+
 /// **THE SEGMENT-PRESERVING DECO PAYMENT-BINDING NODE (deployed-path shape).** The DECO
 /// twin of [`crate::note_spend_leaf_adapter::prove_note_spend_mint_binding_node_segmented`]:
 /// the leg is a DUAL-EXPOSE leaf over the deployed `stripeMint` row — its `expose_claim` =
@@ -461,7 +473,7 @@ pub fn prove_deco_payment_binding_node_segmented(
         Some(&expose),
     )
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("segmented deco payment-binding aggregation node failed: {e:?}"),
+        reason: format!("{DECO_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
 }
 
@@ -535,7 +547,7 @@ pub fn prove_deco_binding_node(
         Some(&expose),
     )
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("deco payment-binding aggregation node failed: {e:?}"),
+        reason: format!("{DECO_BINDING_NODE_ARM}: {e:?}"),
     })
 }
 
@@ -620,9 +632,10 @@ pub fn verify_deco_leaf_proof_bytes(bytes: &[u8]) -> Result<[BabyBear; DECO_CLAI
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::{assert_node_refused_by_binding_connect, report_refusal};
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
     use dregg_circuit::descriptor_ir2::{VmConstraint2, chip_absorb_all_lanes};
-    use dregg_circuit::refusal::must_refuse;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
 
     fn make_witness(tag: u32) -> DecoLeafWitness {
         DecoLeafWitness {
@@ -754,9 +767,11 @@ mod tests {
         let mut pis = deco_leaf_public_inputs(&w);
         pis[DECO_LEAF_PAYMENT_HASH_PI] += BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
-        must_refuse("a FORGED payment_hash", || {
-            prove_deco_leaf(&w, &pis, &config)
-        });
+        let what = "a FORGED payment_hash";
+        let err = must_refuse(what, || prove_deco_leaf(&w, &pis, &config));
+        // The claim is the in-AIR recompute + the PI-4 pin going UNSAT — a violated CONSTRAINT.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 
     /// THE FACT-BINDING TOOTH: a forged fact lane (tampered amount, payment_hash stale) is
@@ -768,7 +783,12 @@ mod tests {
         let mut pis = deco_leaf_public_inputs(&w);
         pis[COL_AMOUNT] += BabyBear::ONE; // amount changes, payment_hash lane stays
         let config = ir2_leaf_wrap_config();
-        must_refuse("a FORGED amount", || prove_deco_leaf(&w, &pis, &config));
+        let what = "a FORGED amount";
+        let err = must_refuse(what, || prove_deco_leaf(&w, &pis, &config));
+        // The claim is that the pinned amount no longer recomputes the pinned identity — a
+        // violated CONSTRAINT, not a bus imbalance.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 
     /// A "leg" that publishes ONE claimed payment identity at claim position 0 — the DECO leaf
@@ -829,17 +849,18 @@ mod tests {
         let backing =
             prove_deco_leaf_with_claim(&backing_w, &deco_leaf_public_inputs(&backing_w), &config)
                 .expect("backing leaf B proves");
-        must_refuse(
-            "a leg identity backed by NO matching DECO commitment folded",
-            || {
-                prove_deco_binding_node(
-                    &leg,
-                    &backing,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &backing)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what = "a leg identity backed by NO matching DECO commitment folded";
+        let err = must_refuse(what, || {
+            prove_deco_binding_node(
+                &leg,
+                &backing,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &backing)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        // The in-circuit `connect` between the leg's published identity A and the backing leaf's
+        // bound identity B is what must object — the anti-ghost bite, by name.
+        assert_node_refused_by_binding_connect(what, &err, DECO_BINDING_NODE_ARM);
     }
 }

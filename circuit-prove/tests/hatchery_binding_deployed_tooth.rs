@@ -26,8 +26,7 @@
 //! ANSWERS:         does a real 2-turn hatchery-mint chain whose contract_hash8 octet is published at PI 55..62 fold plus light-client-verify, and is an attestation bundle claiming a contract_hash that differs in ONE BIT refused by the segmented hatchery-binding node with a WitnessConflict?
 //! DOES NOT ANSWER: whether the contract hash ATTESTS anything. It is the literal 0xC7 octet threaded through RotationCarrierMaterial and no HpresProof is verified in this file, so the fold binds two copies of one constant. As in the factory tooth, pinned_factory_twin may also be a Rust-side pin transform rather than the committed registry row.
 
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::assert_refused_by_binding_node;
 
 use dregg_cell::Ledger;
 use dregg_cell::commitment::RotationCarrierMaterial;

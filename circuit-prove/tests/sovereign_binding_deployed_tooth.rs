@@ -64,8 +64,7 @@
 //! ANSWERS:         does the deployed dispatcher resolve the committed makeSovereign row byte-for-byte, does that row width and teeth column re-derive through both epoch-1 kill-sets, does the leg publish the executor KEY_COMMIT both at PI 58..61 and at the committed teeth columns, does the honest chain fold plus light-client-verify, and is a key_commit ONE greater refused by the segmented sovereign-binding node with a WitnessConflict?
 //! DOES NOT ANSWER: whether an unauthorized party is stopped from promoting a cell. The bundle sequence, anchor and new_commit are handed in by this test and no signature is checked anywhere in the chain, so what is bound is the leg published key DIGEST against a re-proven authority tuple over the same digest — never possession of the key it digests.
 
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::assert_refused_by_binding_node;
 
 use dregg_cell::{CellMode, Ledger};
 use dregg_circuit::descriptor_ir2::{

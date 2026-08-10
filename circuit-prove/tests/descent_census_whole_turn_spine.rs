@@ -19,6 +19,8 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 use dregg_circuit::refusal::must_refuse;
+use dregg_circuit_prove::binding_tooth::assert_node_refused_by_binding_connect;
+use dregg_circuit_prove::custom_cohort_spine::WHOLE_TURN_DIRECT_IR2_NODE_ARM;
 use dregg_circuit_prove::custom_cohort_spine::{
     prove_direct_ir2_whole_turn_binding_node_segmented, prove_segment_merge_preserving_claims,
     terminal_custom_suffix_len,
@@ -294,7 +296,8 @@ fn exact_census_binds_to_setfield_prefix_and_terminal_custom() {
         &config,
     )
     .expect("the cohort spine faithfully preserves the wrong committed field");
-    must_refuse("wrong terminal census field", || {
+    let what = "wrong terminal census field";
+    let err = must_refuse(what, || {
         prove_direct_ir2_whole_turn_binding_node_segmented(
             &wrong_carrier,
             &direct,
@@ -303,4 +306,8 @@ fn exact_census_binds_to_setfield_prefix_and_terminal_custom() {
             APP_LEN,
         )
     });
+    // ⚑ ASSERT THE REASON. This node has two `require_claim_len` pre-flights ("exposes N claim
+    // lane(s)", "carries no expose_claim instance") that fire before a single `cb.connect` exists,
+    // and a bare `must_refuse` was satisfied by either — with the app-field connect never built.
+    assert_node_refused_by_binding_connect(what, &err, WHOLE_TURN_DIRECT_IR2_NODE_ARM);
 }

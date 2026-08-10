@@ -33,8 +33,7 @@
 //! ANSWERS:         does a real 2-turn CreateCellFromFactory chain whose child_vk8 octet is published at PI 47..54 fold plus light-client-verify, is a backing bundle claiming a child_vk that differs in ONE BIT refused by the segmented factory-binding node with a WitnessConflict, and is a factory witness on a stand-in leg whose descriptor lacks the octet claim pins refused by the fold arm admission gate?
 //! DOES NOT ANSWER: whether the descriptor under test is the COMMITTED registry row. pinned_factory_twin falls back to a Rust-side insert_tail_claim_pins transform whenever its native-pin lookup misses, so a green can be a green about a locally rebuilt descriptor rather than the emitted bytes. Nor is the child_vk derived from anything: it is the literal 0x9A octet threaded through RotationCarrierMaterial, so the fold binds two copies of one constant.
 
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::assert_refused_by_binding_node;
 
 use dregg_cell::Ledger;
 use dregg_cell::commitment::RotationCarrierMaterial;

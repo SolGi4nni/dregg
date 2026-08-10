@@ -312,8 +312,9 @@ pub fn read_exposed_key_commit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::report_refusal;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
-    use dregg_circuit::refusal::must_refuse;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
 
     fn make_witness() -> SovereignAuthorityWitness {
         SovereignAuthorityWitness {
@@ -386,8 +387,10 @@ mod tests {
         assert_ne!(forged_pis, w.public_inputs());
         let config = ir2_leaf_wrap_config();
 
-        must_refuse("a FORGED sovereign authority tuple", || {
-            prove_sovereign_leaf(&w, &forged_pis, &config)
-        });
+        let what = "a FORGED sovereign authority tuple";
+        let err = must_refuse(what, || prove_sovereign_leaf(&w, &forged_pis, &config));
+        // `PiBinding{First}` UNSAT — a violated CONSTRAINT, in whichever profile this ran.
+        report_refusal(what, &err);
+        assert_violated_constraint_not_bus(what, &err);
     }
 }

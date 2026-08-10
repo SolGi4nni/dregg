@@ -26,7 +26,9 @@
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::refusal::must_refuse;
+use dregg_circuit_prove::binding_tooth::assert_node_refused_by_binding_connect;
 use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+use dregg_circuit_prove::membership_leaf_adapter::MEMBERSHIP_BINDING_NODE_ARM;
 
 /// ⚑ TRACKED child-VK pins for a 2-to-1 fold (`dregg_circuit_prove::fold_vk_pin`) — every fold in
 /// the crate now takes them, because `into_recursion_input` left each child's preprocessed
@@ -90,10 +92,15 @@ fn membership_binding_forged_rejected() {
     let ms = prove_membership_leaf_with_claim(&ms_w, &ms_pis, &config)
         .expect("the honest membership leaf mints");
 
-    must_refuse(
-        "a leg claiming a membership tuple NO bound membership leaf backs folded into a  verifying node",
-        || prove_membership_binding_node(&leg, &ms, &pins(&leg, &ms), &config),
-    );
+    let what = "a leg claiming a membership tuple NO bound membership leaf backs folded into a verifying \
+         node";
+    let err = must_refuse(what, || {
+        prove_membership_binding_node(&leg, &ms, &pins(&leg, &ms), &config)
+    });
+    // ⚑ ASSERT THE REASON. Bare `must_refuse` here accepted ANY `Err` — an OOM, an FRI fault, or
+    // the node's own "leg leaf carries no expose_claim" pre-flight — all of which would have kept
+    // this tooth green with the per-lane `connect` never built.
+    assert_node_refused_by_binding_connect(what, &err, MEMBERSHIP_BINDING_NODE_ARM);
     eprintln!(
         "MEMBERSHIP binding: out-of-set tuple REJECTED by the fold (connect conflict ⇒ no root)."
     );

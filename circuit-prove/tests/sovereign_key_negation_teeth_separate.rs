@@ -48,8 +48,6 @@
 //! * `deployed_prover_accepts_the_honest_owner_key` — the honest pole, so the refusal above is not
 //!   "it rejects everything".
 
-mod binding_tooth;
-
 use dregg_cell::{CellMode, Ledger};
 use dregg_circuit::descriptor_ir2::WindowExpr;
 use dregg_circuit::descriptor_ir2::{

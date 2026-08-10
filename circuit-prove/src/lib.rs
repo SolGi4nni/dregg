@@ -23,6 +23,10 @@ pub mod apex_shrink_gnark_export;
 /// The MINA/PASTA fixture exporter — a native-Pasta shrink terminal into the
 /// o1js Kimchi verifier (`bridge/mina-zkapp/src/MinaShrinkVerify.ts`).
 pub mod apex_shrink_mina_export;
+/// ⚑ The REASON ASSERTION for every binding-node refusal tooth on the p3-recursion rail. Lifted
+/// out of `tests/binding_tooth/` on 2026-08-10 so the in-lib fold teeth (which cannot see a
+/// `tests/` module) can say WHICH refusal they mean — see the module header.
+pub mod binding_tooth;
 pub mod blinded_membership_leaf_adapter;
 pub mod carrier_pin_twin;
 pub mod caveat_admission_leaf_adapter;

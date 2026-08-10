@@ -34,8 +34,7 @@
 //! ANSWERS:         does the committed mintVmDescriptor2R24 row pin PI 46 to the FIRST-row param0 column, does the deployed Stripe money-in producer publish deco_payment_hash_felt there, do two payments differing only in paymentIntentId carry distinct identities, and does a real 2-turn deployed Stripe-mint chain fold plus light-client-verify while the SAME chain publishing that identity plus ONE is refused by the segmented deco payment-binding node with a WitnessConflict?
 //! DOES NOT ANSWER: whether any Stripe payment ever cleared. Every PaymentFacts field here is a literal typed into this file; no notary, TLS transcript, webhook signature or Stripe response is verified anywhere in it. The fold binds the leg to a felt the test itself chose, so a green means the plumbing is consistent, not that money moved.
 
-mod binding_tooth;
-use binding_tooth::assert_refused_by_binding_node;
+use dregg_circuit_prove::binding_tooth::assert_refused_by_binding_node;
 
 use dregg_cell::Ledger;
 use dregg_circuit::descriptor_ir2::{

@@ -309,12 +309,14 @@ pub fn decode_public_input_bytes(bytes: &[u8]) -> Result<Vec<u32>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::assert_node_refused_by_binding_connect;
     use crate::custom_leaf_adapter::prove_direct_ir2_leaf_with_app_root_commitment;
     use crate::custom_proof_bind::custom_proof_pi_commitment;
     use crate::ivc_turn_chain::{
         CUSTOM_PROGRAM_VK_PI_LO, DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN, SEG_ANCHOR_WIDTH,
         ir2_leaf_wrap_config, prove_descriptor_leaf_expose_segment_and_claims,
     };
+    use crate::joint_turn_recursive::CUSTOM_APP_ROOT_NODE_ARM;
     use crate::joint_turn_recursive::{
         CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO, prove_direct_ir2_binding_node_app_root_segmented,
     };
@@ -565,7 +567,7 @@ mod tests {
         ];
         for (name, c, field, vk, old, new) in cases {
             let leg = direct_leg_leaf(c, field, vk, old, new, &config);
-            must_refuse(name, || {
+            let err = must_refuse(name, || {
                 prove_direct_ir2_binding_node_app_root_segmented(
                     &leg,
                     &direct,
@@ -575,6 +577,11 @@ mod tests {
                     1,
                 )
             });
+            // ⚑ FOUR cases, and an any-`Err` tooth could not tell them apart from ONE cause. Each
+            // must be the node's own `connect` conflicting on the lane that case perturbs; the
+            // node's two `claim lane(s)` guards and its `expose_claim` pre-flights would otherwise
+            // satisfy all four identically with nothing welded.
+            assert_node_refused_by_binding_connect(name, &err, CUSTOM_APP_ROOT_NODE_ARM);
         }
     }
 
