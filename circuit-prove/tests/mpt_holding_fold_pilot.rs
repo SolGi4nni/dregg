@@ -61,7 +61,7 @@ use dregg_circuit_prove::joint_turn_aggregation::{
 };
 use dregg_circuit_prove::joint_turn_recursive::{CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO};
 use dregg_circuit_prove::mpt_holding_leaf::{
-    MPT_HOLDING_HASH_PI, MptHoldingWitness, mpt_holding_program,
+    MPT_HOLDING_HASH_PI, MPT_HOLDING_TUPLE_BASE, MptHoldingWitness, mpt_holding_program,
 };
 use dregg_turn::rotation_witness as rw;
 
@@ -361,7 +361,13 @@ fn honest_holding_proves_as_foldable_leaf() {
 fn forged_balance_does_not_fold() {
     let w = holding_witness();
     let mut pis = leaf_pis(&w);
-    pis[11] += BabyBear::ONE; // balance lane; identity lane stays stale
+    // ⚑ THE INDEX OUTLIVED ITS LAYOUT, AND THE TOOTH WENT SILENT (measured 2026-08-10).
+    // This read `pis[11]` — true when the tuple started at PI 0, false since the
+    // `custom_state_binding` ABI prefixed it with `[old_commit8 ‖ new_commit8]`. PI 11 is now
+    // `new8[3]`, a lane the LEAF does not pin at all (the FOLD's state connect binds it), so the
+    // "forgery" proved and `must_refuse` reported `the forgery was ACCEPTED — this tooth is OPEN`.
+    // The balance lane is tuple offset 11 past `MPT_HOLDING_TUPLE_BASE`, i.e. PI 27.
+    pis[MPT_HOLDING_TUPLE_BASE + 11] += BabyBear::ONE; // balance lane; identity lane stays stale
     assert_leaf_refuses("forged balance (+1, identity stale)", &w, &pis);
 }
 
@@ -385,7 +391,10 @@ fn zero_balance_does_not_fold() {
 fn tampered_root_octet_does_not_fold() {
     let w = holding_witness();
     let mut pis = leaf_pis(&w);
-    pis[3] += BabyBear::ONE; // root limb 3; identity lane stays stale
+    // ⚑ Same defect as `forged_balance_does_not_fold`: `pis[3]` is `old8[3]` since the state
+    // prefix landed, not `state_root` limb 3. The root octet is tuple offsets 0..8 past
+    // `MPT_HOLDING_TUPLE_BASE`, i.e. PI 16..24.
+    pis[MPT_HOLDING_TUPLE_BASE + 3] += BabyBear::ONE; // root limb 3; identity lane stays stale
     assert_leaf_refuses("tampered root octet (limb 3 +1, identity stale)", &w, &pis);
 }
 
