@@ -373,8 +373,18 @@ theorem the_field_gate_is_a_limbs_leg (f : Nat) :
       ∧ (fieldLimbsLeg f).mainRailOk = true
       ∧ (LimbsLeg.lookupCount ⟨fieldCols f, BODY_LIMB_BITS, bodyLimbTid⟩) = 32
       ∧ (LimbsLeg.capacityBits ⟨fieldCols f, BODY_LIMB_BITS, bodyLimbTid⟩) = 256 := by
-  refine ⟨rfl, ?_, ?_, ?_⟩ <;> simp [fieldLimbsLeg, fieldCols, LimbsLeg.mainRailOk,
-    LimbsLeg.lookupCount, LimbsLeg.capacityBits, BODY_LIMB_BITS]
+  -- ⚑ TWO unfolds were missing, and the pair is why this read as a hard goal.
+  -- (1) `AirLeg.mainRailOk`, not `LimbsLeg.mainRailOk` — the original simp set carried the
+  --     inner one, but the goal is the OUTER dispatch `| .limbs l => l.mainRailOk`, so it
+  --     never reached the leg at all.
+  -- (2) `SK`, so `(List.range SK).map` is visibly non-nil for `!cols.isEmpty`.
+  -- The content is `!cols.isEmpty && 0 < bits && bits ≤ 29` at 32 columns and 8 bits —
+  -- trivially true. With either unfold missing it survives as a bare `.mainRailOk = true`,
+  -- which READS LIKE A MISSING LEMMA rather than a missing unfold. That presentation is
+  -- how it reached HEAD carrying unsolved goals and an axiom-hygiene FAIL.
+  refine ⟨rfl, ?_, ?_, ?_⟩ <;>
+    simp [fieldLimbsLeg, fieldCols, AirLeg.mainRailOk, LimbsLeg.mainRailOk,
+      LimbsLeg.lookupCount, LimbsLeg.capacityBits, BODY_LIMB_BITS, PastaFieldSound.SK]
 
 /-- ⚑⚑ **NO PUBLISHED COLUMN IS INERT.** Every limb slot this descriptor publishes has at least one
 bit under it, so its gate names TWO columns and the emitted `pi_binding`'s column is in a component
