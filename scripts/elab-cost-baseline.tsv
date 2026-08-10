@@ -192,7 +192,7 @@ Dregg2.Circuit.Emit.MinaWrapSgChunk2	0	4000000	0
 Dregg2.Circuit.Emit.MinaWrapSgChunk3	0	4000000	0
 Dregg2.Circuit.Emit.MinaWrapSgCore	0	4000000	0
 Dregg2.Circuit.Emit.MinaWrapVerifierAir	8000000	100000	0
-Dregg2.Circuit.Emit.MinaWrapVerifierProgram	2000000	100000	0
+Dregg2.Circuit.Emit.MinaWrapVerifierProgram	0	100000	0
 Dregg2.Circuit.Emit.MinaWrapVerifierSponge	0	400000	0
 Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp	0	400000	0
 Dregg2.Circuit.Emit.MinaWrapVkDigestChain	4000000	20000000	0

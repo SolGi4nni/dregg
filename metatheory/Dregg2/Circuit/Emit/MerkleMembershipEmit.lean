@@ -151,7 +151,14 @@ def merkleAir : EffectAir :=
             , .window ⟨.last, contWindow⟩ ] }
 
 -- The source block is main-rail expressible, decided on the emitted predicate.
-#guard merkleAir.mainRailOk == true
+/-- ⚑ **THE COMPILER ACCEPTS EVERY LEG** — `mainRailOk` is the decidable verdict that each leg has
+a deployed main-rail image. Named rather than `#guard`ed: a `#guard` checks one closed instance,
+leaves no term for the `TiedAir` below to be HANDED, and is invisible to `#assert_axioms`. -/
+theorem merkleAir_mainRailOk : merkleAir.mainRailOk = true := by decide
+
+/-- ⚑ **EVERY PUBLISHED COLUMN IS DERIVED BY ANOTHER LEG** — `EffectAir.pinsTied`, the verdict that
+makes a DECORATIVE pin unrepresentable rather than merely detectable. -/
+theorem merkleAir_pinsTied : merkleAir.pinsTied = true := by decide
 #guard merkleAir.legs.length == 5
 #guard merkleAir.lookupCount == 2
 #guard merkleAir.pinsFit 1 == true
@@ -161,7 +168,9 @@ def merkleAir : EffectAir :=
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def merkleTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := merkleAir
+  air  := merkleAir
+  ok   := merkleAir_mainRailOk
+  tied := merkleAir_pinsTied
 
 /-- **`merkleMembershipDesc`** — the depth-2, 4-ary Poseidon2 Merkle-membership descriptor,
 **COMPILED from `merkleAir`**. Two child→parent chip lookups, the level-tying continuity gate, the

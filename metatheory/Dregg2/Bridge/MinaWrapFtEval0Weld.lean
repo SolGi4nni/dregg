@@ -75,7 +75,7 @@ import Dregg2.Bridge.MinaWrapFtEval0
 import Dregg2.Bridge.MinaWrapDeferredWeld
 import Dregg2.Bridge.TickShifts
 import Dregg2.Circuit.Emit.MinaRealBlockGate
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 
 set_option autoImplicit false
 set_option maxRecDepth 100000

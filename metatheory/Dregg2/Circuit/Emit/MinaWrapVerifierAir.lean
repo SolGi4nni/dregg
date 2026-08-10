@@ -227,12 +227,32 @@ theorem pastaAluAir_mainRailOk (pl : Nat → ℤ) : (pastaAluAir pl).mainRailOk 
     | decide
     | (intro m _; rfl)
 
+/-- ⚑ **THE TIE VERDICT, PROVED ONCE AND MODULUS-PARAMETRICALLY.** The ALU row publishes NOTHING —
+its descriptors carry `piCount = 0` and no `.pin` leg appears in the block — so every leg lands in
+the non-`pin` arm of `EffectAir.pinsTied` and the verdict follows from the leg SHAPES, at seven
+blocks rather than the 171 legs a `decide` would whnf one at a time.
+
+⚠ Not a weakening: the same `pinsTied`, at the same value. Growing a `.pin` leg here would leave
+the `intro m _; rfl` arm with a goal it cannot close, and this would go red. -/
+theorem pastaAluAir_pinsTied (pl : Nat → ℤ) : (pastaAluAir pl).pinsTied = true := by
+  unfold pastaAluAir EffectAir.pinsTied
+  simp only [List.all_append, List.all_map, Bool.and_eq_true]
+  repeat' apply And.intro
+  all_goals rfl
+
 /-- ⚑ **THE TIED SOURCE** — `(pastaAluAir pLimb)` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
-decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+decorative pin is unrepresentable here rather than detectable by a census afterwards.
+
+⚑ **BOTH VERDICTS ARE SUPPLIED, NOT RE-DERIVED.** The fields are `autoParam`s defaulting to
+`by decide`; left blank they re-derive, inside the elaborator's `whnf` and at the CONCRETE limb
+vector, the two facts the parametric theorems above already carry — once per instance, and this
+file has four. -/
 def fpAluTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (pastaAluAir pLimb)
+  air  := (pastaAluAir pLimb)
+  ok   := pastaAluAir_mainRailOk pLimb
+  tied := pastaAluAir_pinsTied pLimb
 
 /-- The `fp` ALU: every row is an operation modulo the Pallas base / Vesta scalar prime. -/
 def fpAluDesc : EffectVmDescriptor2 :=
@@ -260,7 +280,9 @@ theorem fpAluDesc_eq_lowerAir :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def fqAluTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (pastaAluAir qLimb)
+  air  := (pastaAluAir qLimb)
+  ok   := pastaAluAir_mainRailOk qLimb
+  tied := pastaAluAir_pinsTied qLimb
 
 /-- The `fq` ALU: the same shape at the Vesta base / Pallas scalar prime. The encoding is
 field-independent; only the constant limb vector moves. -/
@@ -1090,9 +1112,19 @@ theorem alu_sz_leg_collapse (pl : Nat → ℤ) :
   rw [pastaAluAir_leg_shape, pastaAluSzAir_leg_shape]
   decide
 
+/-- ⚑ **THE TIE VERDICT ON THE SCHWARTZ–ZIPPEL ROW**, same argument as `pastaAluAir_pinsTied` and
+same reason it is parametric: the collapse replaced 63 gate legs with two challenge legs and
+published nothing new, so the block still carries no `.pin`. -/
+theorem pastaAluSzAir_pinsTied (pl : Nat → ℤ) : (pastaAluSzAir pl).pinsTied = true := by
+  unfold pastaAluSzAir EffectAir.pinsTied
+  simp only [List.all_append, List.all_map, Bool.and_eq_true]
+  repeat' apply And.intro
+  all_goals rfl
+
 def fpAluSzTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (pastaAluSzAir pLimb)
-  ok  := pastaAluSzAir_mainRailOk pLimb
+  air  := (pastaAluSzAir pLimb)
+  ok   := pastaAluSzAir_mainRailOk pLimb
+  tied := pastaAluSzAir_pinsTied pLimb
 
 /-- ⚑ **THE `fp` SCHWARTZ–ZIPPEL ALU ROW** — the deployed atom of the transcript stage, at 325
 constraints. -/
@@ -1109,8 +1141,9 @@ theorem fpAluSzDesc_eq_lowerAir :
     fpAluSzDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-alu-sz::v1" ALU_WIDTH 0 [] (pastaAluSzAir pLimb) := rfl
 
 def fqAluSzTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (pastaAluSzAir qLimb)
-  ok  := pastaAluSzAir_mainRailOk qLimb
+  air  := (pastaAluSzAir qLimb)
+  ok   := pastaAluSzAir_mainRailOk qLimb
+  tied := pastaAluSzAir_pinsTied qLimb
 
 def fqAluSzDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

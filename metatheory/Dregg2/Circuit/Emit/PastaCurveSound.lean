@@ -519,12 +519,27 @@ theorem pallasCompleteAddSoundAir_mainRailOk : pallasCompleteAddSoundAir.mainRai
 theorem vestaCompleteAddSoundAir_mainRailOk : vestaCompleteAddSoundAir.mainRailOk = true := by
   decide
 
+/-- ⚑ **THE TIE VERDICT ON BOTH BLOCKS, NAMED.** Neither standalone row publishes a public input —
+both descriptors carry `piCount = 0` and no `.pin` leg appears in either — so every leg lands in
+the non-`pin` arm of `EffectAir.pinsTied`.
+
+⚑ These exist so the `TiedAir`s below can be HANDED both verdicts. Their fields are `autoParam`s
+defaulting to `by decide`; a blank field re-derives, inside the elaborator's `whnf`, a fact this
+file already proves — and this file carries four such blocks. -/
+theorem pallasCompleteAddSoundAir_pinsTied : pallasCompleteAddSoundAir.pinsTied = true := by
+  decide
+
+theorem vestaCompleteAddSoundAir_pinsTied : vestaCompleteAddSoundAir.pinsTied = true := by
+  decide
+
 /-- ⚑ **THE TIED SOURCE** — `pallasCompleteAddSoundAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def pallasCompleteAddTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := pallasCompleteAddSoundAir
+  air  := pallasCompleteAddSoundAir
+  ok   := pallasCompleteAddSoundAir_mainRailOk
+  tied := pallasCompleteAddSoundAir_pinsTied
 
 def pallasCompleteAddSoundDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
@@ -551,7 +566,9 @@ theorem pallasCompleteAddSoundDesc_eq_lowerAir :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def vestaCompleteAddTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := vestaCompleteAddSoundAir
+  air  := vestaCompleteAddSoundAir
+  ok   := vestaCompleteAddSoundAir_mainRailOk
+  tied := vestaCompleteAddSoundAir_pinsTied
 
 def vestaCompleteAddSoundDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
@@ -1331,9 +1348,19 @@ theorem pallasCompleteAddSzAir_mainRailOk : pallasCompleteAddSzAir.mainRailOk = 
 set_option maxHeartbeats 4000000 in
 theorem vestaCompleteAddSzAir_mainRailOk : vestaCompleteAddSzAir.mainRailOk = true := by decide
 
+set_option maxHeartbeats 4000000 in
+/-- ⚑ **THE TIE VERDICT ON THE SCHWARTZ–ZIPPEL PAIR.** Same argument as the schoolbook pair: the
+collapse relocated 24 gates onto two challenge legs and published nothing, so neither block carries
+a `.pin`. Named so the `TiedAir`s are handed the verdict instead of deciding it again. -/
+theorem pallasCompleteAddSzAir_pinsTied : pallasCompleteAddSzAir.pinsTied = true := by decide
+
+set_option maxHeartbeats 4000000 in
+theorem vestaCompleteAddSzAir_pinsTied : vestaCompleteAddSzAir.pinsTied = true := by decide
+
 def pallasCompleteAddSzTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := pallasCompleteAddSzAir
-  ok  := pallasCompleteAddSzAir_mainRailOk
+  air  := pallasCompleteAddSzAir
+  ok   := pallasCompleteAddSzAir_mainRailOk
+  tied := pallasCompleteAddSzAir_pinsTied
 
 def pallasCompleteAddSzDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
@@ -1352,8 +1379,9 @@ theorem pallasCompleteAddSzDesc_eq_lowerAir :
     pallasCompleteAddSzDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-pallas-complete-add-sz::v1" RCB_WIDTH 0 [] pallasCompleteAddSzAir := rfl
 
 def vestaCompleteAddSzTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := vestaCompleteAddSzAir
-  ok  := vestaCompleteAddSzAir_mainRailOk
+  air  := vestaCompleteAddSzAir
+  ok   := vestaCompleteAddSzAir_mainRailOk
+  tied := vestaCompleteAddSzAir_pinsTied
 
 def vestaCompleteAddSzDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

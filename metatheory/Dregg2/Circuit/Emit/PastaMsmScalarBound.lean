@@ -65,7 +65,7 @@ current resolution.
 -/
 import Dregg2.Circuit.Emit.PastaMsmBound
 import Dregg2.Circuit.Emit.PastaIPA
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 
 namespace Dregg2.Circuit.Emit.PastaMsmScalarBound
 

@@ -1016,12 +1016,23 @@ theorem ladderAir_mainRailOk : ladderAir.mainRailOk = true := by
   simp only [pinOutPoint, List.all_append, List.all_map, Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
+/-- ⚑ **NO PIN IS DECORATIVE** — every published column is DERIVED by another leg: the 64 pins
+publish `TX`/`TY`'s limb columns, which the routing gates and the register window legs read.
+
+⚑ Named so `ladderTiedAir` is HANDED both verdicts. Its fields are `autoParam`s defaulting to
+`by decide`; a blank field re-derives, inside the elaborator's `whnf`, a fact this file already
+carries — and for `ok` that fact is `commitAir_mainRailOk` APPLIED, not a `decide` over the
+assembled ladder at all. -/
+theorem ladderAir_pinsTied : ladderAir.pinsTied = true := by decide
+
 /-- ⚑ **THE TIED SOURCE** — `ladderAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def ladderTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := ladderAir
+  air  := ladderAir
+  ok   := ladderAir_mainRailOk
+  tied := ladderAir_pinsTied
 
 def ladderDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

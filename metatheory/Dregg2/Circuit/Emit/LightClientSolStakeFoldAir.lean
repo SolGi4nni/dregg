@@ -266,12 +266,23 @@ vocabulary was adequate; a leg the rail cannot hold lowers to an UNSATISFIABLE p
 silence. -/
 theorem solStakeFoldAir_mainRailOk : solStakeFoldAir.mainRailOk = true := by rfl
 
+/-- ⚑ **EVERY PUBLISHED COLUMN IS DERIVED BY ANOTHER LEG** — `EffectAir.pinsTied`, the verdict that
+makes a DECORATIVE pin unrepresentable rather than merely detectable. The eight root lanes and the
+four total-stake lanes are all read by the fold legs that compute them.
+
+⚑ It is stated HERE rather than only in `PinsTiedCensus`, which had `by decide`d the same fact one
+module downstream: the `TiedAir` below carries the obligation in its type, and an `autoParam` left
+blank re-derives it inside the elaborator's `whnf` a third time. -/
+theorem solStakeFoldAir_pinsTied : solStakeFoldAir.pinsTied = true := by decide
+
 /-- ⚑ **THE TIED SOURCE** — `solStakeFoldAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def solStakeFoldTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := solStakeFoldAir
+  air  := solStakeFoldAir
+  ok   := solStakeFoldAir_mainRailOk
+  tied := solStakeFoldAir_pinsTied
 
 /-- **`solStakeFoldDesc`** — the Solana stake-table fold as an emitted IR-v2 AIR, one row per entry.
 PIs `[table_root[0..7], total_stake[0..3]]`: the eight-lane Poseidon2 commitment to the exhibited

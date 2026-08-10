@@ -357,11 +357,21 @@ theorem pallasScheduledAir_mainRailOk : pallasScheduledAir.mainRailOk = true := 
 
 theorem vestaScheduledAir_mainRailOk : vestaScheduledAir.mainRailOk = true := by decide
 
+/-- ⚑ **THE TIE VERDICT, NAMED RATHER THAN RE-DERIVED.** This block publishes no PI at all, so
+every leg lands in the non-`pin` arm of `EffectAir.pinsTied`. The `TiedAir` fields below are
+`autoParam`s defaulting to `by decide`; a blank field decides the same block a second time inside
+the elaborator's `whnf`, which is what these two theorems exist to stop. -/
+theorem pallasScheduledAir_pinsTied : pallasScheduledAir.pinsTied = true := by decide
+
+theorem vestaScheduledAir_pinsTied : vestaScheduledAir.pinsTied = true := by decide
+
 /-- ⚑ **THE TIED SOURCE.** Same `TiedAir` discipline as the one-row block: a decorative pin is
 unrepresentable. (This block publishes no PI at all, so `pinsTied` is vacuously true — recorded
 here rather than left implicit.) -/
 def pallasScheduledTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := pallasScheduledAir
+  air  := pallasScheduledAir
+  ok   := pallasScheduledAir_mainRailOk
+  tied := pallasScheduledAir_pinsTied
 
 def pallasScheduledDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
@@ -377,7 +387,9 @@ theorem pallasScheduledDesc_certified :
     "dregg-pasta-pallas-complete-add-scheduled::v1" SCHED_W 0 [] pallasScheduledTiedAir).property
 
 def vestaScheduledTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := vestaScheduledAir
+  air  := vestaScheduledAir
+  ok   := vestaScheduledAir_mainRailOk
+  tied := vestaScheduledAir_pinsTied
 
 def vestaScheduledDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

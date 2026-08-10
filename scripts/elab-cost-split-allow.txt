@@ -18,7 +18,6 @@
 # actually splitting the module. A row for a module that no longer has the shape is RED
 # (arm d-stale), so fixing one FORCES retiring its line.
 Dregg2.Circuit.Emit.EffectVmEmitRotationV3	# 13 data-only importer(s); hb=6,400,000 decides=28 defs=258 thms=201
-Dregg2.Circuit.Emit.MinaWrapOpeningGate	# 7 data-only importer(s); hb=4,000,000 decides=27 defs=44 thms=35
 Dregg2.Bridge.MinaStateHashDerive	# 6 data-only importer(s); hb=0 decides=2 defs=38 thms=9
 Dregg2.Circuit.Emit.EffectVmEmitRotationWide	# 4 data-only importer(s); hb=12,800,000 decides=0 defs=23 thms=48
 Dregg2.Circuit.Emit.KimchiWrapMainCore	# 4 data-only importer(s); hb=4,000,000 decides=0 defs=506 thms=12

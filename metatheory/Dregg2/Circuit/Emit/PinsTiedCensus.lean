@@ -244,7 +244,8 @@ theorem minaLinkAir_untied : LightClientMinaLinkAir.minaLinkAir.pinsTied = false
 discrimination and not a constant. (Until 2026-08-08 this theorem asserted the two Mina airs pass;
 that assertion is the one the confession above retires.) -/
 theorem the_tied_neighbours_pass :
-    LightClientSolStakeFoldAir.solStakeFoldAir.pinsTied = true := by decide
+    LightClientSolStakeFoldAir.solStakeFoldAir.pinsTied = true :=
+  LightClientSolStakeFoldAir.solStakeFoldAir_pinsTied
 
 /-! ## §3 — the emitted census, per descriptor, pinned to its exact literal.
 

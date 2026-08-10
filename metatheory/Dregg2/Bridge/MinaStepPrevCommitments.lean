@@ -45,7 +45,7 @@ No `sorry`, no `native_decide`; the `#guard`s below reduce in the interpreter.
 -- closure, so that cost was on the step emitter's every cold build.
 import Dregg2.Circuit.Emit.MinaWrapPublicCommData
 import Dregg2.Circuit.Emit.MinaWrapAggregationGate
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 
 namespace Dregg2.Bridge.MinaStepPrevCommitments
 

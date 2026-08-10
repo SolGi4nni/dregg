@@ -327,12 +327,19 @@ theorem endoAir_mainRailOk : endoAir.mainRailOk = true := by
     Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
+/-- ⚑ **NO PIN IS DECORATIVE** — the 64 pins publish `VP`'s and `OUT`'s limb columns, which the
+routing gates and the register window legs read. Named so `endoTiedAir` takes the term instead of
+re-deriving it: the `TiedAir` fields are `autoParam`s defaulting to `by decide`. -/
+theorem endoAir_pinsTied : endoAir.pinsTied = true := by decide
+
 /-- ⚑ **THE TIED SOURCE** — `endoAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def endoTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := endoAir
+  air  := endoAir
+  ok   := endoAir_mainRailOk
+  tied := endoAir_pinsTied
 
 def endoDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

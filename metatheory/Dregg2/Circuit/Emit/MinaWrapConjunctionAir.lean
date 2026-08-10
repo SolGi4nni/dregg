@@ -662,9 +662,9 @@ and this would be false. -/
 theorem conjunctionAir_mainRailOk : conjunctionAir.mainRailOk = true := by decide
 
 /-- ⚑ **EVERY PUBLISHED COLUMN IS READ BY ANOTHER LEG** — `EffectAir.pinsTied`, the verdict that
-makes a DECORATIVE pin unrepresentable rather than merely detectable. It is already carried in
-`conjunctionTiedAir`'s type (the structure's `tied` field is `by decide`, so the definition does not
-elaborate without it); it is named here so a consumer can cite it.
+makes a DECORATIVE pin unrepresentable rather than merely detectable. `conjunctionTiedAir` is
+HANDED this term; the structure's `tied` field is an `autoParam` defaulting to `by decide`, so a
+field left blank decides the same block a second time inside the elaborator's `whnf`.
 
 ⚑ Each of the five is read by at least the `.limbs` range leg of its input block, and four of them
 by more: `XI_CL` by `xiCorrectLegs`, `B_CL` by `bCorrectLegs` and by `ubCoefLegs`' `z1·b0` multiply,
@@ -781,7 +781,9 @@ theorem conjunctionAir_bind_shape :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def conjunctionTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := conjunctionAir
+  air  := conjunctionAir
+  ok   := conjunctionAir_mainRailOk
+  tied := conjunctionAir_pinsTied
 
 def conjunctionDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
@@ -803,12 +805,21 @@ Also the unfolding lemma for the cost/shape proofs below, which reason through `
 theorem conjunctionDesc_eq_lowerAir :
     conjunctionDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-mina-wrap-conjunction::v1" CJ_WIDTH CJ_PI_COUNT [] conjunctionAir := rfl
 
+/-- ⚑ **THE UNTHREADED TWIN'S TIE VERDICT.** The negative control drops the 448 window legs and
+keeps `bodyLegs` — pins included — so the verdict is a claim about the SMALLER block and had to be
+settled separately. Named for the same reason as its threaded sibling: the `TiedAir` field below
+takes the term instead of deciding the block again. -/
+theorem conjunctionAirUnthreaded_pinsTied :
+    Dregg2.Circuit.EffectAirIR.EffectAir.pinsTied conjunctionAirUnthreaded = true := by decide
+
 /-- ⚑ **THE TIED SOURCE** — `conjunctionAirUnthreaded` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def conjunctionUnthreadedTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := conjunctionAirUnthreaded
+  air  := conjunctionAirUnthreaded
+  ok   := conjunctionAirUnthreaded_mainRailOk
+  tied := conjunctionAirUnthreaded_pinsTied
 
 def conjunctionUnthreadedDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

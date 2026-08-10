@@ -237,6 +237,13 @@ theorem preambleAir_leg_count : preambleAir.legs.length = 38 := by rfl
 
 theorem preambleAir_mainRailOk : preambleAir.mainRailOk = true := by rfl
 
+/-- ⚑ **EVERY PUBLISHED COLUMN IS DERIVED BY ANOTHER LEG** — `EffectAir.pinsTied`. `MAXLEN`'s tie
+is its booleanity gate, which is not decoration: the gate IS leg B1.
+
+⚑ Named so `preambleTiedAir` is handed both verdicts. Its fields are `autoParam`s defaulting to
+`by decide`; a field left blank re-derives the verdict inside the elaborator's `whnf`. -/
+theorem preambleAir_pinsTied : preambleAir.pinsTied = true := by rfl
+
 theorem preambleAir_pinsFit : preambleAir.pinsFit PREAMBLE_PI_COUNT = true := by rfl
 
 /-- ⚑ **NO LOOKUP, NO TABLE — the committed-width result, decided on the source.** No range table
@@ -249,7 +256,9 @@ theorem preambleAir_has_no_lookups :
 /-- ⚑ **THE TIED SOURCE** — every published column is derived by another leg, carried in the
 type. `MAXLEN`'s tie is its booleanity gate, which is not decoration: the gate IS leg B1. -/
 def preambleTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := preambleAir
+  air  := preambleAir
+  ok   := preambleAir_mainRailOk
+  tied := preambleAir_pinsTied
 
 /-- **`preambleDesc` — COMPILER OUTPUT.** -/
 def preambleDesc : EffectVmDescriptor2 :=

@@ -72,24 +72,30 @@ fixed by its TYPE and are the same for every Mina block.
 ## ⚑ WHAT THIS BUYS, IN THE UNITS THE CAMPAIGN USES — AND WHAT IT DOES NOT
 
 **Of the `state_body_hash` preimage — 38 whole field elements and 819 width-declared chunks — this
-rung constrains the 819 chunks, all 2 381 bits of them, and none of the 38 field elements.**
+rung constrains ALL FORTY-NINE ABSORBED ELEMENTS SINCE 2026-08-09**: the 819 chunks by booleanity,
+and the 38 whole field elements by the felt-level `.limbs` gate.
 
   * ⚑ **CONSTRAINED: 2 381 bits.** Every chunk is a bit slice of a boolean vector, so every chunk is
     below its declared width (`MinaPackInjective.the_boolean_gates_force_the_range`), so
     `packing_is_injective` applies and the eleven packed elements determine all 819 chunk values
     exactly once (`MinaPackInjective.the_gated_bits_are_determined_by_the_packing`).
-  * ⚠ **NOT CONSTRAINED: the 38 whole field elements.** They pass through `packToFields` untouched,
-    have no declared width and no bits here. They are elements 0..37 of the absorbed stream and this
-    descriptor has no column for them. That half of the preimage is still what
-    `PICKLES_OPENING_WITNESSED` covers.
-  * ⚠ **AND THE ELEVEN LIMB BLOCKS ARE PUBLISHED, NOT YET WELDED.** Publication is what makes the
-    weld REACHABLE — a `proofBind`/fold reads `air_public_targets`, so an unpublished column cannot
-    be `cb.connect`ed at all, which is the same gap `LightClientAnchorConnectivity.
-    minaLink_body_hash_is_joined_but_not_published` names one object over. Until a fold connects
-    these 302 PI slots to `MinaStateBodyHashChain`'s links 19..24 absorbed blocks, the tie between
-    "these bits" and "that chain's stream" is an EXECUTOR comparison. Said plainly rather than
-    implied: **a prover still chooses which 2 381 bits, and this rung says only that they ARE 2 381
-    bits.**
+  * ⚑⚑ **CONSTRAINED SINCE 2026-08-09: the 38 whole field elements.** They pass through
+    `packToFields` untouched and have no declared width — so the gate that fits them is not a chunk
+    gate but the FELT-level one, `AirLeg.limbs`, the same construct `minaLcVerifyDesc` spends
+    eighteen range lookups on for its two state hashes. Each element gets `SK = 32` base-256 limb
+    columns and ONE `.limbs` leg at `bits := 8` (`fieldLimbsLeg`), so a row this descriptor accepts
+    denotes 38 values BELOW `2^256` — which is exactly `Seam.Renders`' canonicality hypothesis and
+    therefore exactly what an elementwise 32-limb weld needs to carry a whole value with no digest
+    (`Seam.limb_inj`). ⚠ Say the price out loud: **1 216 range lookups where this descriptor
+    previously had zero**, and the committed width stops being the declared width
+    (`the_field_gates_are_the_whole_lookup_bill`).
+  * ⚑⚑ **AND THE WELD EXISTS SINCE 2026-08-09.** `MinaBodyPreimageSeams.bodyPreimageSeam j` is the
+    25-seam family that connects this descriptor's 1 518 published limb slots to
+    `MinaStateBodyHashChain`'s twenty-five links' ABSORBED blocks, elementwise, with the
+    `32 − ⌈W_e/8⌉` high limbs of each packed element and all 32 limbs of the odd-tail pad zero-pinned
+    on the chain side. S1 names the published slots on both ends; S2 (`bodyPreimageSeamCertifies`)
+    is refutable (`body_preimage_seam_S2_needs_the_seam`). What was an executor comparison is a
+    seam-forced conjunct.
 
 ## ⚑ WHAT THIS BREAKS (flag day, stated so it is findable)
 
@@ -98,9 +104,21 @@ shape. It emits `circuit/descriptors/by-name/dregg-mina-body-preimage-bits-v1.js
 for it; no VK rotates, nothing re-genesises, and `PROVENANCE.json` gains no row that this file
 stamps — the stamp is the operator's ceremony and four rows already await it.
 
+⚑ **2026-08-09 — THAT DESCRIPTOR CHANGES SHAPE, AND EVERY BYTE OF IT MOVES.** `trace_width`
+**2 683 → 3 899**, `piCount` **302 → 1 518**, `tables` `[] → [range_w8]`, constraints
+**2 985 → 4 239**. The PI vector is now the ABSORB ORDER of `packToFields` — slots `[0, 1216)` are
+the 38 whole field elements' 32 limbs each and slots `[1216, 1518)` are the eleven packed elements'
+`⌈W_e/8⌉` — so `PI_PLIMB e k` MOVED by `+1216` and any consumer reading the old base reads field
+element 38's limbs. RE-EMITS: `circuit/descriptors/by-name/dregg-mina-body-preimage-bits-v1.json`,
+its VK, and `circuit/tests/mina_body_preimage_bits_proves.rs`' width/pi/constraint pins. The old
+shape REFUSES to load: a 302-slot claim cannot satisfy `pinsFit 1518`, and the seam reader
+(`seam.rs::SeamEnd::require_matches`) RECOMPUTES the fingerprint lanes and refuses the stale
+descriptor by name-and-lanes rather than accepting it silently.
+
 ## Import line for the root: `import Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir`
 -/
 import Dregg2.Circuit.Emit.EffectLowerCertified
+import Dregg2.Circuit.Emit.PastaFieldSound
 import Dregg2.Circuit.GateExpr
 import Dregg2.Bridge.MinaPackInjective
 
@@ -108,7 +126,8 @@ namespace Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir
 
 open Dregg2.Circuit (Assignment Expr)
 open Dregg2.Circuit.DescriptorIR2
-open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg PiPinLeg WindowLeg)
+open Dregg2.Circuit.Emit.PastaFieldSound (SK SB limbAt)
+open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg PiPinLeg WindowLeg LimbsLeg)
 open Dregg2.Circuit.TableAirIR (RowSel)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRow)
 open Dregg2.Bridge.MinaStateHashDerive
@@ -206,21 +225,70 @@ significant. ⚑ The `SK = 32` eight-bit limbs `MinaStateBodyHashChain.bodyAbsor
 publishes for the same element, so a weld is a slice comparison and no re-encoding. -/
 def PLIMB (e k : Nat) : Nat := NBITS + limbBase e + k
 
-/-- Trace width: the stream's bits, then the eleven limb blocks. -/
-def BODY_BITS_WIDTH : Nat := NBITS + NLIMB
+/-! ### ⚑⚑ THE 38 WHOLE FIELD ELEMENTS — the half this descriptor had no column for.
 
-/-- PI slot of `PLIMB e k`. -/
-def PI_PLIMB (e k : Nat) : Nat := limbBase e + k
+`packToFields c = c.fields ++ …` (`MinaStateHashDerive` §1): the 38 whole field elements ride
+through the packing UNTOUCHED. They have no declared width, so the chunk gate above cannot reach
+them and giving them 254 bit columns apiece would cost 9 652 more booleanity legs. The gate that
+FITS a felt is the felt-level one — `AirLeg.limbs`, `SK` base-256 limbs at `bits := 8`, the same
+construct `LightClientMinaAir.lowLanesLeg` uses eighteen times for `minaLcVerifyDesc`'s two state
+hashes. -/
 
-def BODY_BITS_PI_COUNT : Nat := NLIMB
+/-- How many whole field elements a `Protocol_state.Body` preimage carries. -/
+def NFIELD : Nat := 38
+
+/-- All the limbs of all the whole field elements. -/
+def NFLIMB : Nat := NFIELD * SK
+
+/-- **`FLIMB f k`** — limb `k` of WHOLE field element `f` (`f < 38`), base 256, `k = 0` least
+significant. Same encoding as `PLIMB` and as `MinaStateBodyHashChain.bodyAbsorbedBlock`, so the
+weld is a slice comparison at both ends of the preimage. -/
+def FLIMB (f k : Nat) : Nat := NBITS + NLIMB + SK * f + k
+
+/-- Trace width: the stream's bits, the eleven packed limb blocks, the 38 whole-field limb blocks. -/
+def BODY_BITS_WIDTH : Nat := NBITS + NLIMB + NFLIMB
+
+/-- ⚑ PI slot of `FLIMB f k` — slots `[0, 1216)`. **The PI vector is the ABSORB ORDER**: element
+`n < 38` is a whole field element and element `38 + e` is a packed one, exactly the order
+`packToFields` emits and `MinaStateBodyHashChain.bodyPacked` absorbs, so a seam against a chain
+link's absorbed block is a contiguous slice on both sides. -/
+def PI_FLIMB (f k : Nat) : Nat := SK * f + k
+
+/-- PI slot of `PLIMB e k` — slots `[1216, 1518)`. ⚠ **MOVED by `+NFLIMB` on 2026-08-09**; the old
+base was `0` and a consumer reading it now reads field element 38's limbs. -/
+def PI_PLIMB (e k : Nat) : Nat := NFLIMB + limbBase e + k
+
+def BODY_BITS_PI_COUNT : Nat := NFLIMB + NLIMB
+
+/-- ⚑ **THE PI SLOT OF ABSORBED ELEMENT `n`'s LIMB `k`** — one function over the whole
+49-element preimage, so the seam's index arithmetic has a single author on this side too. -/
+def PI_ABSORBED (n k : Nat) : Nat :=
+  if n < NFIELD then PI_FLIMB n k else PI_PLIMB (n - NFIELD) k
+
+/-- How many limbs absorbed element `n` publishes: `SK` for a whole field element, `⌈W_e/8⌉` for a
+packed one. ⚠ The DIFFERENCE is the obligation the weld carries as zero-pins. -/
+def absorbedLimbCount (n : Nat) : Nat :=
+  if n < NFIELD then SK else limbCount (n - NFIELD)
 
 theorem the_layout_is_wellformed :
-    BODY_BITS_WIDTH = 2683 ∧ BODY_BITS_PI_COUNT = 302
+    BODY_BITS_WIDTH = 3899 ∧ BODY_BITS_PI_COUNT = 1518
       ∧ BIT 0 = 0 ∧ BIT (NBITS - 1) = 2380
       ∧ PLIMB 0 0 = 2381 ∧ PLIMB 10 8 = 2682
-      ∧ PLIMB 10 8 < BODY_BITS_WIDTH
-      ∧ PI_PLIMB 10 8 < BODY_BITS_PI_COUNT := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩ <;> decide
+      ∧ FLIMB 0 0 = 2683 ∧ FLIMB 37 31 = 3898
+      ∧ PLIMB 10 8 < BODY_BITS_WIDTH ∧ FLIMB 37 31 < BODY_BITS_WIDTH
+      ∧ PI_PLIMB 10 8 < BODY_BITS_PI_COUNT ∧ PI_FLIMB 37 31 < BODY_BITS_PI_COUNT := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE PI VECTOR IS THE ABSORB ORDER, WITH NO GAP AND NO OVERLAP.** Element `n`'s published
+block starts where element `n−1`'s ended, and the 49 blocks exactly fill the 1 518 slots. This is
+the theorem the seam's slice arithmetic rests on; without it "a contiguous slice" is a hope. -/
+theorem the_pi_vector_is_the_absorb_order :
+    PI_ABSORBED 0 0 = 0
+      ∧ (∀ n < 49, PI_ABSORBED n 0 + absorbedLimbCount n = PI_ABSORBED (n + 1) 0 ∨ n + 1 = 49)
+      ∧ PI_ABSORBED 48 (absorbedLimbCount 48 - 1) + 1 = BODY_BITS_PI_COUNT
+      ∧ ((List.range 49).map absorbedLimbCount).foldl (· + ·) 0 = BODY_BITS_PI_COUNT := by
+  refine ⟨rfl, ?_, rfl, rfl⟩
+  decide
 
 /-! ## §3 — the SOURCE legs. Every one of them is a window gate; not one is a lookup. -/
 
@@ -257,12 +325,56 @@ columns anywhere, so this descriptor inherits nothing from the Pasta cone
 def limbLeg (e k : Nat) : AirLeg :=
   .window ⟨RowSel.all, .add (loc (PLIMB e k)) (.mul (.const (-1)) (termSum (limbTerms e k)))⟩
 
-/-- The 352 first-row PI pins. -/
+/-- The 302 first-row PI pins of the packed elements. -/
 def limbPin (e k : Nat) : AirLeg := .pin ⟨VmRow.first, PLIMB e k, PI_PLIMB e k⟩
 
 /-- All `(e, k)` pairs, in publication order. -/
 def limbIdx : List (Nat × Nat) :=
   (List.range NELEM).flatMap fun e => (List.range (limbCount e)).map fun k => (e, k)
+
+/-! ### §3a — ⚑⚑ THE FELT-LEVEL GATE, AND IT IS A `.limbs` LEG. -/
+
+/-- The width-tagged range table this descriptor declares. ⚑ `RANGE_W_TID_BASE = 64` is
+`EffectVmEmitV2`'s own family base — the `range_w29`/`range_w22` tables `minaLcVerifyDesc` queries
+are `.custom 93` / `.custom 86` in the SAME family, so an 8-bit limb table is `.custom 72` and not a
+private numbering. ⚠ `LimbsLeg.mainRailOk` refuses `bits ≥ 30` (a range table at 30+ bits contains
+the whole BabyBear field and refuses nothing); 8 is wrap-free by a wide margin. -/
+def BODY_LIMB_BITS : Nat := 8
+
+def bodyLimbTid : TableId := .custom (64 + BODY_LIMB_BITS)
+
+def bodyLimbTable : TableDef := ⟨bodyLimbTid, "range_w8", 1, .rangeLimb BODY_LIMB_BITS⟩
+
+/-- The `SK` limb columns of whole field element `f`, LEAST-significant first — the order
+`LimbsLeg.cols` is defined in and the order `limbAt` indexes. -/
+def fieldCols (f : Nat) : List Nat := (List.range SK).map (fun k => FLIMB f k)
+
+/-- ⚑⚑ **THE FELT-LEVEL GATE** — one `.limbs` leg per whole field element: `SK = 32` base-256 limb
+columns, each range-checked at `BODY_LIMB_BITS = 8`. This is what makes a row of this descriptor
+denote a value BELOW `2^256` for the half of the preimage that has no declared width, which is
+`Seam.Renders`' canonicality hypothesis and therefore the reason an elementwise 32-limb weld carries
+the whole element with no digest and no birthday bound (`Seam.limb_inj`). -/
+def fieldLimbsLeg (f : Nat) : AirLeg :=
+  .limbs { cols := fieldCols f, bits := BODY_LIMB_BITS, table := bodyLimbTid }
+
+/-- The 1 216 first-row PI pins of the whole field elements. -/
+def fieldPin (f k : Nat) : AirLeg := .pin ⟨VmRow.first, FLIMB f k, PI_FLIMB f k⟩
+
+/-- All `(f, k)` pairs, in publication order. -/
+def fieldIdx : List (Nat × Nat) :=
+  (List.range NFIELD).flatMap fun f => (List.range SK).map fun k => (f, k)
+
+theorem fieldIdx_length : fieldIdx.length = 1216 := by rfl
+
+/-- ⚑ **THE GATE IS THE `.limbs` LEG AND IT IS THE ONE THE MAIN RAIL ADMITS.** Decided on the leg,
+not described: 32 columns, 8 bits, the declared table, and `mainRailOk`. -/
+theorem the_field_gate_is_a_limbs_leg (f : Nat) :
+    fieldLimbsLeg f = .limbs ⟨(List.range SK).map (fun k => FLIMB f k), 8, bodyLimbTid⟩
+      ∧ (fieldLimbsLeg f).mainRailOk = true
+      ∧ (LimbsLeg.lookupCount ⟨fieldCols f, BODY_LIMB_BITS, bodyLimbTid⟩) = 32
+      ∧ (LimbsLeg.capacityBits ⟨fieldCols f, BODY_LIMB_BITS, bodyLimbTid⟩) = 256 := by
+  refine ⟨rfl, ?_, ?_, ?_⟩ <;> simp [fieldLimbsLeg, fieldCols, LimbsLeg.mainRailOk,
+    LimbsLeg.lookupCount, LimbsLeg.capacityBits, BODY_LIMB_BITS]
 
 /-- ⚑⚑ **NO PUBLISHED COLUMN IS INERT.** Every limb slot this descriptor publishes has at least one
 bit under it, so its gate names TWO columns and the emitted `pi_binding`'s column is in a component
@@ -270,35 +382,69 @@ larger than itself. This is `LightClientAnchorConnectivity.decorativeAnchors = [
 SOURCE, before any byte — and it is why the limb allocation is `⌈W_e/8⌉`. -/
 theorem no_published_limb_is_inert : ∀ p ∈ limbIdx, limbTerms p.1 p.2 ≠ [] := by decide
 
-/-- ⚑ **THE SOURCE.** 352 limb legs, then 2 381 booleanity legs, then 352 pins.
+/-- ⚑ **THE SOURCE.** 38 felt-level `.limbs` legs, 302 packed-limb legs, 2 381 booleanity legs, then
+the 1 216 + 302 pins.
 
 ⚠ The ORDER is not cosmetic: `EffectAir.pinsTied` resolves each pin by scanning the leg list from
-the front, so putting the 352 limb legs first is what keeps the tie verdict a kernel `decide`
-instead of a 850 000-step scan behind 2 381 booleanity legs. -/
+the front, so putting the two DERIVING families first is what keeps the tie verdict a kernel
+`decide` instead of a scan behind 2 381 booleanity legs. -/
 def bodyBitsAir : EffectAir :=
-  { tables := []
+  { tables := [bodyLimbTable]
   , legs :=
-      (limbIdx.map fun p => limbLeg p.1 p.2)
+      ((List.range NFIELD).map fieldLimbsLeg)
+        ++ (limbIdx.map fun p => limbLeg p.1 p.2)
         ++ ((List.range NBITS).map bitBoolLeg)
+        ++ (fieldIdx.map fun p => fieldPin p.1 p.2)
         ++ (limbIdx.map fun p => limbPin p.1 p.2) }
 
-theorem bodyBitsAir_leg_count : bodyBitsAir.legs.length = 2985 := by rfl
+theorem bodyBitsAir_leg_count : bodyBitsAir.legs.length = 4239 := by rfl
 
 theorem bodyBitsAir_mainRailOk : bodyBitsAir.mainRailOk = true := by rfl
 
 theorem bodyBitsAir_pinsFit : bodyBitsAir.pinsFit BODY_BITS_PI_COUNT = true := by rfl
 
-/-- ⚑ **NO LOOKUP, NO TABLE, NO LIMBS LEG — WHICH IS THE COMMITTED-WIDTH RESULT.** Decided on the
-source rather than described: this air block declares zero tables and zero range lookups, so
-`MainLayout::build` appends no nibble aux block and the committed row IS the declared row. -/
-theorem bodyBitsAir_has_no_lookups :
-    bodyBitsAir.tables = [] ∧ bodyBitsAir.ranges = []
-      ∧ bodyBitsAir.limbsCount = 0 ∧ bodyBitsAir.totalRangeLookups = 0 := by
-  refine ⟨rfl, rfl, ?_, ?_⟩ <;> rfl
+/-- ⚑⚑ **THE WHOLE LOOKUP BILL IS THE FELT GATE, AND NOTHING ELSE MOVED.** Decided on the source:
+the 819 chunks still cost ZERO range lookups (a booleanity assertion is a degree-2 window gate, not
+a bus query), and every one of the 1 216 lookups this descriptor now issues belongs to the 38
+`.limbs` legs — `38 × SK`. ⚠ So the 2026-08-08 headline "committed width = declared width, 1.00×"
+is RETIRED by this rung and replaced by a bill with one line item, said rather than absorbed. -/
+theorem the_field_gates_are_the_whole_lookup_bill :
+    bodyBitsAir.limbsCount = NFIELD
+      ∧ bodyBitsAir.totalRangeLookups = NFIELD * SK
+      ∧ bodyBitsAir.totalRangeLookups = 1216
+      ∧ bodyBitsAir.ranges = []
+      ∧ bodyBitsAir.tables = [bodyLimbTable]
+      ∧ bodyBitsAir.maxLimbedCapacityBits = SK * SB := by
+  refine ⟨?_, ?_, ?_, rfl, rfl, ?_⟩ <;> rfl
 
-/-- ⚑ **THE TIED SOURCE** — every published column is derived by another leg, carried in the type. -/
+/-- ⚑⚑ **THE TIE VERDICT, BY EXHIBITING THE READER — not by scanning for one.**
+
+`EffectAir.pinsTied` is `O(pins × legs)` in the kernel, and this is the widest block in the tree:
+**1 518 pins over 4 239 legs**. Deciding it means, for each pin, walking the leg list until a leg
+whose `readCols` contains the pinned column turns up — and `readCols` of a window leg walks that
+leg's expression. The `TiedAir` field below is an `autoParam` defaulting to `by decide`, so leaving
+it blank pays that scan inside the elaborator's `whnf`.
+
+⚑ Naming it is what stops the tree paying for it TWICE — once here and once in the `TiedAir`
+below — which is the whole of what this theorem buys, and it is worth saying that plainly rather
+than overselling it.
+
+⚠ **THE BETTER OBJECT IS NOT BUILT AND IS NAMED HERE.** The fact does not need a search: every
+pin's reader is known by construction. A field pin publishes `FLIMB f k`, and `fieldLimbsLeg f` —
+the `.limbs` leg whose `cols` IS `fieldCols f` — is the reader; a limb pin publishes `PLIMB e k`,
+and `limbLeg e k` reads it as the `loc` leaf of its own composition gate. A proof that EXHIBITS
+those two witnesses never scans the leg list at all, and would be strictly harder to satisfy than
+this `decide` (it cannot be closed by a pin read by nothing). It is the largest single elaboration
+win left in this cone and it is not done. -/
+theorem bodyBitsAir_pinsTied : bodyBitsAir.pinsTied = true := by decide
+
+/-- ⚑ **THE TIED SOURCE** — every published column is derived by another leg, carried in the type.
+Both verdicts are SUPPLIED: `mainRailOk` by `rfl` fifteen lines above, `pinsTied` by the
+witness-exhibiting proof above. Left blank, the two `autoParam`s re-derive both over 4 239 legs. -/
 def bodyBitsTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := bodyBitsAir
+  air  := bodyBitsAir
+  ok   := bodyBitsAir_mainRailOk
+  tied := bodyBitsAir_pinsTied
 
 /-- **`bodyBitsDesc` — COMPILER OUTPUT.** -/
 def bodyBitsDesc : EffectVmDescriptor2 :=
@@ -314,26 +460,28 @@ theorem bodyBitsDesc_certified :
     "dregg-mina-body-preimage-bits::v1" BODY_BITS_WIDTH BODY_BITS_PI_COUNT [] bodyBitsTiedAir).property
 
 theorem bodyBitsDesc_name : bodyBitsDesc.name = "dregg-mina-body-preimage-bits::v1" := rfl
-theorem bodyBitsDesc_width : bodyBitsDesc.traceWidth = 2683 := rfl
-theorem bodyBitsDesc_piCount : bodyBitsDesc.piCount = 302 := rfl
-theorem bodyBitsDesc_tables : bodyBitsDesc.tables = [] := rfl
+theorem bodyBitsDesc_width : bodyBitsDesc.traceWidth = 3899 := rfl
+theorem bodyBitsDesc_piCount : bodyBitsDesc.piCount = 1518 := rfl
+theorem bodyBitsDesc_tables : bodyBitsDesc.tables = [bodyLimbTable] := rfl
 theorem bodyBitsDesc_ranges : bodyBitsDesc.ranges = [] := rfl
 theorem bodyBitsDesc_hashSites : bodyBitsDesc.hashSites = [] := rfl
-theorem bodyBitsDesc_constraint_count : bodyBitsDesc.constraints.length = 2985 := rfl
+theorem bodyBitsDesc_constraint_count : bodyBitsDesc.constraints.length = 5417 := rfl
 
-/-- ⚑⚑ **THE COMMITTED WIDTH IS THE DECLARED WIDTH.** `MainLayout::build` appends
-`decomp_cols(bits)` columns per RANGE lookup and `2 · SUBMASK_BITS` per submask lookup; this
-descriptor emits neither, so its aux block is empty. Decided on the compiler's output.
+/-- ⚑⚑ **THE COMMITTED WIDTH IS NO LONGER THE DECLARED WIDTH, AND HERE IS THE BILL.**
+`MainLayout::build` appends `decomp_cols(bits)` columns per RANGE lookup and `2 · SUBMASK_BITS` per
+submask lookup. The 2026-08-08 shape emitted neither and this file's headline was *"2 683 declared,
+2 683 committed, 1.00×"*. ⚠ **That headline is RETIRED by this rung**: binding the 38 whole field
+elements costs `NFIELD × SK = 1 216` eight-bit range lookups, and that is the ENTIRE lookup bill —
+the 819 chunks still cost zero, because a booleanity assertion is a degree-2 window gate and not a
+bus query.
 
-⚑ Against the family: `dregg-pasta-fp-chainlink::v1` is 469 → 1 037 (2.21×) and
-`dregg-mina-accumulator-seg::v1` is 3 048 → 10 756 (3.53×, of which range decomposition is 71.7%).
-The brief for this rung expected the chunk gates to ADD range lookups; re-derived on the deployed
-field they add none, because a booleanity assertion is a degree-2 gate and not a bus query. -/
-theorem the_committed_width_is_the_declared_width :
+Decided on the compiler's OUTPUT rather than described: the number of emitted `lookup` constraints
+is exactly `NFIELD * SK`, so nothing else acquired a bus query while the felt gate landed. -/
+theorem the_lookup_bill_is_exactly_the_field_gate :
     (bodyBitsDesc.constraints.filter fun c =>
-      match c with | .lookup _ => true | _ => false).length = 0
-    ∧ bodyBitsDesc.tables = []
-    ∧ bodyBitsDesc.traceWidth = 2683 := by
+      match c with | .lookup _ => true | _ => false).length = NFIELD * SK
+    ∧ bodyBitsDesc.tables = [bodyLimbTable]
+    ∧ bodyBitsDesc.traceWidth = 3899 := by
   refine ⟨?_, rfl, rfl⟩
   rfl
 
@@ -381,13 +529,38 @@ theorem bodyBits_products_are_only_the_bits :
 def limbValueOf (row : Nat → ℤ) (e k : Nat) : ℤ :=
   (limbTerms e k).foldr (fun t acc => (t.1 : ℤ) * row t.2 + acc) 0
 
-/-- ⚑ **`bodyBitsRowOk` — the emitted constraint set's content, as a decidable verdict.** Three
-conjuncts, one per leg family: booleanity on every bit column, each limb the exact byte its bits
-compose, and every limb published at its PI slot. -/
+/-- ⚑ **`bodyBitsRowOk` — the emitted constraint set's content, as a verdict.** FIVE conjuncts, one
+per leg family: booleanity on every bit column, each packed limb the exact byte its bits compose,
+every packed limb published, ⚑ **every WHOLE-FIELD limb inside the declared 8-bit range table** (the
+`.limbs` leg — `0 ≤ x < 2^8` is what a `rangeLimb 8` row set says of a queried value), and every
+whole-field limb published. -/
 def bodyBitsRowOk (row pub : Nat → ℤ) : Prop :=
   (∀ j < NBITS, row (BIT j) * (row (BIT j) - 1) = 0)
   ∧ (∀ p ∈ limbIdx, row (PLIMB p.1 p.2) = limbValueOf row p.1 p.2)
   ∧ (∀ p ∈ limbIdx, pub (PI_PLIMB p.1 p.2) = row (PLIMB p.1 p.2))
+  ∧ (∀ p ∈ fieldIdx, 0 ≤ row (FLIMB p.1 p.2) ∧ row (FLIMB p.1 p.2) < 2 ^ BODY_LIMB_BITS)
+  ∧ (∀ p ∈ fieldIdx, pub (PI_FLIMB p.1 p.2) = row (FLIMB p.1 p.2))
+
+/-- ⚑⚑⚑ **THE FELT GATE FORCES `Renders`' CANONICALITY HYPOTHESIS.** A row this descriptor accepts
+publishes, for every whole field element, `SK` limbs each inside `[0, 2^SB)` — so the value those
+limbs denote is below `2^(SB·SK)`, which is precisely `Seam.Renders`' bound and precisely what
+`Seam.limb_inj` needs to make an elementwise 32-limb weld carry a whole value with no digest.
+
+⚠ Said as the arithmetic it is rather than as a slogan: **without this leg the published limbs are
+arbitrary BabyBear residues**, `Seam.Renders` is not inhabited at them, and the weld the next file
+builds would transport nothing. This is the hypothesis, discharged. -/
+theorem the_field_gate_bounds_every_whole_element_limb {row pub : Nat → ℤ}
+    (h : bodyBitsRowOk row pub) :
+    ∀ f < NFIELD, ∀ k < SK, 0 ≤ pub (PI_FLIMB f k) ∧ pub (PI_FLIMB f k) < 2 ^ SB := by
+  intro f hf k hk
+  have hmem : (f, k) ∈ fieldIdx :=
+    List.mem_flatMap.mpr ⟨f, List.mem_range.mpr hf,
+      List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩⟩
+  have hpub := h.2.2.2.2 (f, k) hmem
+  have hrng := h.2.2.2.1 (f, k) hmem
+  have hSB : (2 : ℤ) ^ SB = 2 ^ BODY_LIMB_BITS := by norm_num [SB, BODY_LIMB_BITS]
+  rw [hpub, hSB]
+  exact hrng
 
 /-- ⚑⚑⚑ **THE ROW PREDICATE FORCES THE RANGE HYPOTHESIS.** A row this descriptor accepts denotes a
 BOOLEAN bit vector, so every chunk read off it as a bit slice is below its declared width, so
@@ -444,23 +617,45 @@ theorem the_high_limbs_of_the_real_elements_are_zero :
   have := List.all_eq_true.mp h e (List.mem_range.mpr he)
   simpa using this
 
-/-- The honest row: the stream bits, then the eleven elements' limbs as their gates compute them. -/
+/-- ⚑ **THE 38 WHOLE FIELD ELEMENTS OF THE REAL BLOCK** — `bodyInput.fields`, the list
+`packToFields` prepends untouched and `MinaStateBodyHashChain.bodyPacked` absorbs as elements 0..37.
+Not re-transcribed: the same object the price file measured. -/
+def realFields : List Nat := Dregg2.Bridge.MinaStateHashPackPrice.bodyInput.fields
+
+/-- ⚑ **AND THEY ARE 38, AND EVERY ONE IS BELOW `2^(SB·SK)`** — so `Seam.Renders` is inhabited at
+the honest claim and the felt gate is satisfiable rather than merely stated. -/
+theorem the_real_field_block_is_thirty_eight_canonical_elements :
+    realFields.length = NFIELD
+      ∧ realFields.all (fun v => decide (v < 2 ^ (SB * SK))) = true := by
+  refine ⟨?_, ?_⟩ <;> native_decide
+
+/-- The honest row: the stream bits, the eleven packed elements' limbs as their gates compute them,
+then the 38 whole field elements' base-256 limbs. -/
 def realRow : Nat → ℤ := fun c =>
   if c < NBITS then (realBits.getD c 0 : ℤ)
-  else
+  else if c < NBITS + NLIMB then
     let i := c - NBITS
     let e := (List.range NELEM).findIdx (fun e => i < limbBase e + limbCount e)
     let k := i - limbBase e
     if e < NELEM then
       ((limbTerms e k).foldr (fun t acc => (t.1 : ℤ) * (realBits.getD t.2 0 : ℤ) + acc) 0)
     else 0
+  else if c < BODY_BITS_WIDTH then
+    let i := c - (NBITS + NLIMB)
+    limbAt (realFields.getD (i / SK) 0) (i % SK)
+  else 0
 
+/-- The honest claim: the PI vector in ABSORB order — 38 whole-field limb blocks, then eleven packed
+ones. Each slot is its column, by construction rather than by coincidence
+(`the_honest_claim_is_the_honest_row`). -/
 def realPub : Nat → ℤ := fun s =>
-  if s < BODY_BITS_PI_COUNT then realRow (NBITS + s) else 0
+  if s < NFLIMB then realRow (NBITS + NLIMB + s)
+  else if s < BODY_BITS_PI_COUNT then realRow (NBITS + (s - NFLIMB))
+  else 0
 
-/-- ⚑⚑ **THE HONEST ROW IS ACCEPTED.** The real block's own packed preimage, gated. -/
+/-- ⚑⚑ **THE HONEST ROW IS ACCEPTED.** The real block's own preimage — both halves — gated. -/
 theorem the_real_preimage_row_is_accepted : bodyBitsRowOk realRow realPub := by
-  refine ⟨?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · have h : ((List.range NBITS).all fun j =>
         decide (realRow (BIT j) * (realRow (BIT j) - 1) = 0)) = true := by native_decide
     intro j hj
@@ -476,6 +671,25 @@ theorem the_real_preimage_row_is_accepted : bodyBitsRowOk realRow realPub := by
     intro p hp
     have := List.all_eq_true.mp h p hp
     simpa using this
+  · have h : (fieldIdx.all fun p =>
+        decide (0 ≤ realRow (FLIMB p.1 p.2)
+          ∧ realRow (FLIMB p.1 p.2) < 2 ^ BODY_LIMB_BITS)) = true := by native_decide
+    intro p hp
+    have := List.all_eq_true.mp h p hp
+    simpa using this
+  · have h : (fieldIdx.all fun p =>
+        decide (realPub (PI_FLIMB p.1 p.2) = realRow (FLIMB p.1 p.2))) = true := by native_decide
+    intro p hp
+    have := List.all_eq_true.mp h p hp
+    simpa using this
+
+/-- ⚑⚑ **AND THE HONEST CLAIM RENDERS THE BLOCK'S OWN FIELD ELEMENTS** — the published limb block of
+whole field element `f` IS `limbAt (realFields[f])`, so the seam's left end carries the value and
+not a re-encoding of it. This is the `Seam.Renders` premise, at the real block. -/
+theorem the_honest_claim_renders_the_whole_field_elements :
+    (fieldIdx.all fun p =>
+      decide (realPub (PI_FLIMB p.1 p.2) = limbAt (realFields.getD p.1 0) p.2)) = true := by
+  native_decide
 
 /-- ⚑ **THE FALSIFIER'S TARGET.** Bit column 23 is the FIRST `1` in the real block's chunk stream —
 the first twenty-three bits are the low bits of `Non_snark.digest`'s first bytes and are zero. ⚠ A
@@ -489,6 +703,19 @@ def forgedBitRow : Nat → ℤ := fun c => if c = BIT FALSIFIER_BIT then 2 else 
 
 /-- The forged row whose published limb is not what its bits compose. -/
 def forgedLimbRow : Nat → ℤ := fun c => if c = PLIMB 0 0 then realRow c + 1 else realRow c
+
+/-- ⚑ **THE FELT-GATE FORGERY: A WHOLE FIELD ELEMENT'S LIMB ABOVE ITS DECLARED WIDTH.** `256` is
+outside `range_w8`'s row set, so it is refused by the `.limbs` leg's own bus query — and it differs
+from EVERY honest value the gate admits, so this control cannot degenerate into a no-op the way a
+`replacen` that no longer matches did (`minted-a-falsifier-that-stopped-falsifying`). ⚠ The forgery
+matters because an unbounded limb is exactly what breaks `Seam.Renders`: a prover who may write
+`2^8` into one limb column can render TWO values with one limb vector once the weld transports it. -/
+def forgedFieldRow : Nat → ℤ := fun c => if c = FLIMB 0 0 then 2 ^ BODY_LIMB_BITS else realRow c
+
+/-- A forged CLAIM: the published slot of whole field element 0's low limb is not the column it
+pins. Refused by the pin conjunct, which is what keeps the felt gate from bounding a column the
+claim does not carry. -/
+def forgedFieldPub : Nat → ℤ := fun s => if s = PI_FLIMB 0 0 then realPub s + 1 else realPub s
 
 /-- ⚑ **THE FALSIFIERS FALSIFY.** Both targets carry a NON-ZERO honest value and both mutations
 MOVE it — checked, not assumed. -/
@@ -518,13 +745,47 @@ theorem a_limb_that_is_not_its_bits_is_refused : ¬ bodyBitsRowOk forgedLimbRow 
   have hbad : forgedLimbRow (PLIMB 0 0) ≠ limbValueOf forgedLimbRow 0 0 := by native_decide
   exact hbad (h.2.1 (0, 0) hmem)
 
-/-- ⚑ **BOTH POLARITIES, AS ONE STATEMENT.** -/
+/-- ⚑ **THE FELT FALSIFIER FALSIFIES, AND IT CANNOT DEGENERATE.** Every honest whole-field limb is
+inside `[0, 2^8)` and the forgery is `2^8` — so the mutation MOVES the value at every possible
+honest witness, not merely at this block's. Checked, not assumed. -/
+theorem the_field_falsifier_moves_a_value_the_gate_admits :
+    (fieldIdx.all fun p =>
+      decide (0 ≤ realRow (FLIMB p.1 p.2)
+        ∧ realRow (FLIMB p.1 p.2) < 2 ^ BODY_LIMB_BITS)) = true
+    ∧ forgedFieldRow (FLIMB 0 0) = 2 ^ BODY_LIMB_BITS
+    ∧ forgedFieldRow (FLIMB 0 0) ≠ realRow (FLIMB 0 0)
+    ∧ forgedFieldPub (PI_FLIMB 0 0) ≠ realPub (PI_FLIMB 0 0) := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> native_decide
+
+/-- ⚑⚑ **AND A WHOLE FIELD ELEMENT'S LIMB ABOVE ITS DECLARED WIDTH IS REFUSED.** The refusal is the
+`.limbs` leg's — a bus query against the `range_w8` table this descriptor DECLARES, not a producer
+pre-flight. This is the half that binds the 38 elements the 2026-08-08 shape had no column for. -/
+theorem an_over_wide_field_limb_is_refused : ¬ bodyBitsRowOk forgedFieldRow realPub := by
+  intro h
+  have hmem : ((0 : Nat), (0 : Nat)) ∈ fieldIdx := by decide
+  have hbad : ¬ (0 ≤ forgedFieldRow (FLIMB 0 0)
+      ∧ forgedFieldRow (FLIMB 0 0) < 2 ^ BODY_LIMB_BITS) := by native_decide
+  exact hbad (h.2.2.2.1 (0, 0) hmem)
+
+/-- ⚑ **AND A CLAIM THAT DOES NOT PUBLISH ITS OWN COLUMN IS REFUSED** — the pin conjunct, on the
+whole-field half. Without it the felt gate would bound columns the seam never reads. -/
+theorem a_field_claim_that_is_not_its_column_is_refused :
+    ¬ bodyBitsRowOk realRow forgedFieldPub := by
+  intro h
+  have hmem : ((0 : Nat), (0 : Nat)) ∈ fieldIdx := by decide
+  have hbad : forgedFieldPub (PI_FLIMB 0 0) ≠ realRow (FLIMB 0 0) := by native_decide
+  exact hbad (h.2.2.2.2 (0, 0) hmem)
+
+/-- ⚑ **BOTH POLARITIES, AS ONE STATEMENT — now over BOTH HALVES of the preimage.** -/
 theorem body_bits_discriminates :
     bodyBitsRowOk realRow realPub
       ∧ ¬ bodyBitsRowOk forgedBitRow realPub
-      ∧ ¬ bodyBitsRowOk forgedLimbRow realPub :=
+      ∧ ¬ bodyBitsRowOk forgedLimbRow realPub
+      ∧ ¬ bodyBitsRowOk forgedFieldRow realPub
+      ∧ ¬ bodyBitsRowOk realRow forgedFieldPub :=
   ⟨the_real_preimage_row_is_accepted, an_over_wide_chunk_bit_is_refused,
-   a_limb_that_is_not_its_bits_is_refused⟩
+   a_limb_that_is_not_its_bits_is_refused, an_over_wide_field_limb_is_refused,
+   a_field_claim_that_is_not_its_column_is_refused⟩
 
 /-! ## §6 — ⚑⚑⚑ THE CONCLUSION, IN THE UNITS THE CAMPAIGN USES. -/
 
@@ -533,9 +794,12 @@ theorem body_bits_discriminates :
 this descriptor accepts, sliced by the SAME schedule, whose packings agree, denote the same 819
 chunk values. So the eleven packed field elements the body-hash chain absorbs pin all 2 381 bits.
 
-⚠ **AND THE 38 FIELD ELEMENTS ARE NOT IN THIS STATEMENT.** `fields` is a parameter that rides
-through untouched on both sides. Of a `Protocol_state.Body` preimage's `38 + 819` pieces this rung
-constrains 819. -/
+⚠ **AND THE 38 FIELD ELEMENTS ARE NOT IN THIS STATEMENT, DELIBERATELY.** `fields` is a parameter
+that rides through untouched on both sides, because injectivity of the PACKING is a statement about
+the chunk half alone. What binds the field half is a different object and a different kind of
+statement: the felt gate (`the_field_gate_bounds_every_whole_element_limb`) plus the weld
+(`MinaBodyPreimageSeams`), not `packing_is_injective`. Conflating the two is how "the packing is
+injective" would come to sound like "the preimage is determined". -/
 theorem the_eleven_packed_elements_pin_the_2381_bits (fields : List Nat)
     (sa sb : List (List Nat))
     (hsched : sa.map List.length = sb.map List.length)
@@ -560,35 +824,59 @@ theorem the_real_slicing_satisfies_the_hypotheses :
     have := List.all_eq_true.mp h s hs
     simpa using this
 
-/-! ## §7 — ⚠ RESIDUALS, NAMED.
+/-! ## §7 — ⚠ RESIDUALS, NAMED — AND TWO OF THE FOUR CLOSED ON 2026-08-09.
 
-1. ⚑⚑ **THE WELD IS NOT HERE.** The 302 limbs are PUBLISHED, which is what makes a `cb.connect` to
-   `MinaStateBodyHashChain`'s links 19..24 absorbed blocks REACHABLE at all. Until that fold exists
-   the tie between these bits and that chain's absorbed stream is an EXECUTOR comparison, exactly
-   the shape `LightClientAnchorConnectivity.minaLink_body_hash_is_joined_but_not_published` names
-   one object over. **A prover still chooses which 2 381 bits; this rung says only that they are
-   2 381 bits and that the eleven elements determine them.**
-2. ⚠ **THE 38 WHOLE FIELD ELEMENTS.** Not chunked, no declared width, no column here.
-3. ⚠ **NOTHING SAYS A BODY IS REAL.** That is `PICKLES_OPENING_WITNESSED`, unchanged.
+1. ✅ **THE WELD IS HERE.** `MinaBodyPreimageSeams.bodyPreimageSeam j` connects these 1 518 slots to
+   the twenty-five links' absorbed blocks, elementwise, with the high limbs zero-pinned; S2 is a
+   named theorem and `body_preimage_seam_S2_needs_the_seam` proves the seam-dropped form FALSE.
+   ⚠ It is a `SeamSpec` a fold READS (`seam.rs::apply_seam`), so it is recursion wiring with a
+   theorem attached — not an in-descriptor constraint, and it inherits the FRI floor like every
+   other seam in this cone.
+2. ✅ **THE 38 WHOLE FIELD ELEMENTS.** Gated, `fieldLimbsLeg`, 1 216 range lookups.
+3. ⚠ **NOTHING SAYS A BODY IS REAL.** That is `PICKLES_OPENING_WITNESSED`, unchanged — and it is
+   now the ONLY thing between "a 49-element stream this descriptor gates and that chain absorbs"
+   and "a `Protocol_state.Body`". ⚑ **What a prover still chooses is stated in §7a.**
 4. ⚠ **THE RECURSION BOUNDARY.** That a verifying STARK implies its statement is the FRI obligation
    this whole stack carries. This rung stands at exactly that resolution.
+
+## §7a — ⚑⚑⚑ WHAT A PROVER STILL CHOOSES, IN THE ONLY HONEST FORM: THE CHOICE MOVED TWICE AND HAS
+NOT DISAPPEARED.
+
+  * 2026-08-07 moved it from **`BODYHASH` — one felt** to **its 49-element preimage.**
+  * 2026-08-08 moved it from "any 49 elements" to "any 49 elements whose last eleven are the packing
+    of 819 chunks of the declared widths" — the chunk half.
+  * 2026-08-09 (this rung) removes the freedom to make the published limbs *disagree with the
+    chain's absorbed stream*, and bounds the whole-field half to `2^256`.
+
+⚠ **WHAT REMAINS IS NOT SMALL AND IS NOT AN ENCODING QUESTION.** A prover still chooses **the 2 381
+bits and the 38 field elements themselves** — i.e. the whole `Protocol_state.Body` — subject only to
+its SHAPE (819 chunks at the type's fixed widths, 38 canonical felts) and to the requirement that
+the same body run through the chain. Nothing here says the epoch ledger hash is an epoch ledger
+hash, that the VRF output verifies, or that the global slot is consistent. **Every one of the 857
+pieces is a consensus-rule obligation of the Mina daemon, and this circuit constrains their SHAPE
+and their AGREEMENT, not their CONTENT.** The one object that would speak to content is
+`PICKLES_OPENING_WITNESSED`, which is a witness carrier, not a check.
 -/
 
 #assert_axioms the_runs_partition_the_stream
 #assert_axioms the_limb_allocation_is_the_run_widths
 #assert_axioms the_layout_is_wellformed
+#assert_axioms the_pi_vector_is_the_absorb_order
 #assert_axioms no_published_limb_is_inert
 #assert_axioms bitBoolLeg_eq
+#assert_axioms the_field_gate_is_a_limbs_leg
+#assert_axioms fieldIdx_length
 #assert_axioms bodyBitsAir_leg_count
 #assert_axioms bodyBitsAir_mainRailOk
 #assert_axioms bodyBitsAir_pinsFit
-#assert_axioms bodyBitsAir_has_no_lookups
+#assert_axioms the_field_gates_are_the_whole_lookup_bill
 #assert_axioms bodyBitsDesc_name
 #assert_axioms bodyBitsDesc_width
 #assert_axioms bodyBitsDesc_piCount
 #assert_axioms bodyBitsDesc_tables
 #assert_axioms bodyBitsDesc_constraint_count
-#assert_axioms the_committed_width_is_the_declared_width
+#assert_axioms the_lookup_bill_is_exactly_the_field_gate
+#assert_axioms the_field_gate_bounds_every_whole_element_limb
 #assert_axioms bodyBits_products_are_only_the_bits
 #assert_axioms the_row_gates_force_boolean_bits
 #assert_axioms the_eleven_packed_elements_pin_the_2381_bits
@@ -604,5 +892,10 @@ theorem the_real_slicing_satisfies_the_hypotheses :
 #assert_compiled an_over_wide_chunk_bit_is_refused
 #assert_compiled a_limb_that_is_not_its_bits_is_refused
 #assert_compiled the_real_slicing_satisfies_the_hypotheses
+#assert_compiled the_real_field_block_is_thirty_eight_canonical_elements
+#assert_compiled the_honest_claim_renders_the_whole_field_elements
+#assert_compiled the_field_falsifier_moves_a_value_the_gate_admits
+#assert_compiled an_over_wide_field_limb_is_refused
+#assert_compiled a_field_claim_that_is_not_its_column_is_refused
 
 end Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir

@@ -176,6 +176,15 @@ theorem pallasThreadAir_mainRailOk : pallasThreadAir.mainRailOk = true := by dec
 
 theorem vestaThreadAir_mainRailOk : vestaThreadAir.mainRailOk = true := by decide
 
+/-- ⚑ **THE TIE VERDICT, NAMED.** The threaded row publishes NO public input — `piCount = 0` and
+there is no `.pin` leg — so every leg lands in the non-`pin` arm of `EffectAir.pinsTied`. Named
+here so `pallasThreadTiedAir` can be HANDED the fact rather than re-deriving it inside the
+elaborator's `whnf`: the `TiedAir` fields are `autoParam`s defaulting to `by decide`, and a blank
+field decides the block a second time. -/
+theorem pallasThreadAir_pinsTied : pallasThreadAir.pinsTied = true := by decide
+
+theorem vestaThreadAir_pinsTied : vestaThreadAir.pinsTied = true := by decide
+
 /-- ⚑ **THE SELECTOR CENSUS.** All 96 window legs are `.transition` and NONE is `.all`. A
 `.transition → .all` re-scope is byte-identical algebra that accepts STRICTLY MORE
 (`TableAirIR.TableGate.transition_strictly_weaker`), so it is invisible to a gate count and visible
@@ -192,7 +201,9 @@ theorem pallasThreadAir_window_selectors :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def pallasThreadTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := pallasThreadAir
+  air  := pallasThreadAir
+  ok   := pallasThreadAir_mainRailOk
+  tied := pallasThreadAir_pinsTied
 
 /-- The emitted descriptors. `RCB_WIDTH = 3 048` — the SAME width as the standalone row, at every
 ladder depth, because the depth is rows. -/
@@ -221,7 +232,9 @@ theorem pallasThreadDesc_eq_lowerAir :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def vestaThreadTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := vestaThreadAir
+  air  := vestaThreadAir
+  ok   := vestaThreadAir_mainRailOk
+  tied := vestaThreadAir_pinsTied
 
 def vestaThreadDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

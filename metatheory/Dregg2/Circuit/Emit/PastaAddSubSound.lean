@@ -423,12 +423,32 @@ theorem soundAddSubAir_mainRailOk (pl : Nat → ℤ) (sy sc : ℤ) :
   intro m _
   rfl
 
+/-- ⚑ **THE TIE VERDICT, PROVED ONCE FOR ALL FOUR EMITTED BLOCKS.** This block publishes NOTHING —
+its four descriptors carry `piCount = 0` and no `.pin` leg appears — so every leg lands in the
+non-`pin` arm of `EffectAir.pinsTied` and the verdict follows from the leg SHAPES, parametrically
+in the limb vector and the sign pair.
+
+⚠ Not a weakening: the same `pinsTied` at the same value. A `.pin` leg here would leave the
+`rfl` arm with a goal it cannot close.
+
+⚑ Why it is named rather than left to the `TiedAir` `autoParam`: the field defaults to `by decide`,
+so a blank field re-derives this inside the elaborator's `whnf` at the CONCRETE limb vector — four
+times over in this file. -/
+theorem soundAddSubAir_pinsTied (pl : Nat → ℤ) (sy sc : ℤ) :
+    (soundAddSubAir pl sy sc).pinsTied = true := by
+  unfold soundAddSubAir EffectAir.pinsTied
+  simp only [List.all_append, List.all_map, Bool.and_eq_true]
+  repeat' apply And.intro
+  all_goals rfl
+
 /-- ⚑ **THE TIED SOURCE** — `(soundAddSubAir pLimb 1 (-1))` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def fpAddTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (soundAddSubAir pLimb 1 (-1))
+  air  := (soundAddSubAir pLimb 1 (-1))
+  ok   := soundAddSubAir_mainRailOk pLimb 1 (-1)
+  tied := soundAddSubAir_pinsTied pLimb 1 (-1)
 
 /-- `fpAdd`: `x + y ≡ z (mod p)` (Pallas base / Vesta scalar). -/
 def fpAddSoundDesc : EffectVmDescriptor2 :=
@@ -455,7 +475,9 @@ theorem fpAddSoundDesc_eq_lowerAir :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def fpSubTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (soundAddSubAir pLimb (-1) 1)
+  air  := (soundAddSubAir pLimb (-1) 1)
+  ok   := soundAddSubAir_mainRailOk pLimb (-1) 1
+  tied := soundAddSubAir_pinsTied pLimb (-1) 1
 
 /-- `fpSub`: `x − y ≡ z (mod p)`. -/
 def fpSubSoundDesc : EffectVmDescriptor2 :=
@@ -482,7 +504,9 @@ theorem fpSubSoundDesc_eq_lowerAir :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def fqAddTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (soundAddSubAir qLimb 1 (-1))
+  air  := (soundAddSubAir qLimb 1 (-1))
+  ok   := soundAddSubAir_mainRailOk qLimb 1 (-1)
+  tied := soundAddSubAir_pinsTied qLimb 1 (-1)
 
 /-- `fqAdd`: the same shape at the Vesta-base / Pallas-scalar modulus. -/
 def fqAddSoundDesc : EffectVmDescriptor2 :=
@@ -509,7 +533,9 @@ theorem fqAddSoundDesc_eq_lowerAir :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def fqSubTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (soundAddSubAir qLimb (-1) 1)
+  air  := (soundAddSubAir qLimb (-1) 1)
+  ok   := soundAddSubAir_mainRailOk qLimb (-1) 1
+  tied := soundAddSubAir_pinsTied qLimb (-1) 1
 
 /-- `fqSub`. -/
 def fqSubSoundDesc : EffectVmDescriptor2 :=

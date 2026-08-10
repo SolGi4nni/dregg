@@ -2,7 +2,7 @@
    Run: `lake env lean --run scripts/gen_opening_manifest.lean`
    Output: the 35 addend triples as Lean literals + the terminal sanity line.
    The literals are SPLICED, never hand-typed (the finalize `hiTable` lesson). -/
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 
 open Dregg2.Circuit.Emit.MinaWrapOpeningGate
 open Dregg2.Circuit.Emit.MinaWrapGroupGate (smul padd pneg)

@@ -205,14 +205,23 @@ def predicateLeAir : EffectAir :=
               , .lookup factHashLeg
               , .lookup factCommitLeg ] }
 
-#guard predicateLeAir.mainRailOk == true
+/-- ⚑ **THE COMPILER ACCEPTS EVERY LEG** — `mainRailOk` is the decidable verdict that each leg has
+a deployed main-rail image. Named rather than `#guard`ed: a `#guard` checks one closed instance,
+leaves no term for the `TiedAir` below to be HANDED, and is invisible to `#assert_axioms`. -/
+theorem predicateLeAir_mainRailOk : predicateLeAir.mainRailOk = true := by decide
+
+/-- ⚑ **EVERY PUBLISHED COLUMN IS DERIVED BY ANOTHER LEG** — `EffectAir.pinsTied`, the verdict that
+makes a DECORATIVE pin unrepresentable rather than merely detectable. -/
+theorem predicateLeAir_pinsTied : predicateLeAir.pinsTied = true := by decide
 
 /-- ⚑ **THE TIED SOURCE** — `predicateLeAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def predicateLeTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := predicateLeAir
+  air  := predicateLeAir
+  ok   := predicateLeAir_mainRailOk
+  tied := predicateLeAir_pinsTied
 
 /-- **`predicateLeDesc`** — COMPILED from `predicateLeAir`. -/
 def predicateLeDesc : EffectVmDescriptor2 :=

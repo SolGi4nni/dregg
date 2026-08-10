@@ -1,4 +1,4 @@
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 /-!
 # Dregg2.Circuit.Emit.MinaWrapOpeningWeld — 5d ⋈ 5f: the opening relation on the aggregate the
 kernel BUILT, not the one it was handed.

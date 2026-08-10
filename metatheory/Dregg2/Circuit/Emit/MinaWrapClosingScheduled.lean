@@ -407,8 +407,17 @@ theorem closingSchedFinalAirQ_mainRailOk : closingSchedFinalAirQ.mainRailOk = tr
 set_option maxHeartbeats 40000000 in
 /-- ⚑ **NO PIN IS DECORATIVE** — every published column is DERIVED by another leg. The accumulator
 columns are read by the carry legs, the op gates and the thread; a pin on a column nothing
-constrains would make this false. -/
+constrains would make this false.
+
+⚑ The `TiedAir`s below are HANDED this and its segment twin. Their fields are `autoParam`s
+defaulting to `by decide`: a field left blank decides the same 40-million-heartbeat verdict a
+second time, inside the elaborator's `whnf`. -/
 theorem closingSchedFinalAir_pinsTied : closingSchedFinalAir.pinsTied = true := by decide
+
+set_option maxHeartbeats 40000000 in
+/-- The segment block's tie verdict — the same claim about the block WITHOUT the discharge legs,
+which `closingSchedFinalAir_extends_seg` makes a strictly smaller leg list. -/
+theorem closingSchedSegAir_pinsTied : closingSchedSegAir.pinsTied = true := by decide
 
 set_option maxHeartbeats 40000000 in
 /-- ⚑ **EVERY COLUMN THE CONSTRAINTS ADDRESS IS INSIDE THE DECLARED WIDTH** — the check
@@ -430,10 +439,14 @@ theorem the_scheduled_closing_selector_census :
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
 def closingSchedSegTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := closingSchedSegAir
+  air  := closingSchedSegAir
+  ok   := closingSchedSegAir_mainRailOk
+  tied := closingSchedSegAir_pinsTied
 
 def closingSchedFinalTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := closingSchedFinalAir
+  air  := closingSchedFinalAir
+  ok   := closingSchedFinalAir_mainRailOk
+  tied := closingSchedFinalAir_pinsTied
 
 def closingSchedSegDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

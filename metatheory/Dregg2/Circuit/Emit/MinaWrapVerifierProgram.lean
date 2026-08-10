@@ -824,21 +824,46 @@ theorem sboxAir_mainRailOk : sboxAir.mainRailOk = true := by
   simp only [sboxPins, List.all_append, List.all_map, Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
-set_option maxHeartbeats 2000000 in
+/-- ⚑ **THE S-BOX BOUNDARY IS A REGISTER BOUNDARY** — both blocks pin `SK` limb columns of a
+register (`R0` on the first row, `R3` on the last), which is exactly what §6a's `RegPinBoundary`
+asks. This is the whole tie obligation for the two descriptors below, and it does not mention the
+program: `longAir` reuses it at a `2^10` height without a second proof. -/
+theorem sboxPins_regPin : RegPinBoundary sboxPins := by
+  intro p hp
+  rcases List.mem_append.mp hp with h | h
+  · obtain ⟨i, hi, heq⟩ := List.mem_map.mp h
+    refine ⟨0, i, by decide, List.mem_range.mp hi, ?_⟩
+    have heq' : (⟨VmRow.first, regCol 0 + i, i⟩ : PiPinLeg) = p := by
+      have hp' : AirLeg.pin (⟨VmRow.first, regCol 0 + i, i⟩ : PiPinLeg) = AirLeg.pin p := heq
+      injection hp'
+    rw [← heq']
+  · obtain ⟨i, hi, heq⟩ := List.mem_map.mp h
+    refine ⟨3, i, by decide, List.mem_range.mp hi, ?_⟩
+    have heq' : (⟨VmRow.last, regCol 3 + i, SK + i⟩ : PiPinLeg) = p := by
+      have hp' : AirLeg.pin (⟨VmRow.last, regCol 3 + i, SK + i⟩ : PiPinLeg) = AirLeg.pin p := heq
+      injection hp'
+    rw [← heq']
+
+/-- ⚑ **THE TIE VERDICT, WITHOUT DECIDING THE ASSEMBLED BLOCK.** `programAir_boundary_pinsTied`
+composes the machine's vacuous verdict with the boundary obligation above; nothing here scans 64
+pins across 515 legs. -/
+theorem sboxAir_pinsTied : sboxAir.pinsTied = true :=
+  programAir_boundary_pinsTied pLimb sboxProg sboxPins sboxPins_regPin
+
 /-- ⚑ **THE TIED SOURCE** — `sboxAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards.
 
-⚠ **The `by decide` here is the expensive one and it is set-option'd, not weakened.** `pinsTied`
-is `O(pins × legs)` in the kernel and this block carries 64 pins over 515 legs; the default
-heartbeat budget stops the elaborator mid-`whnf`. Raising the budget decides the SAME verdict — it
-does not admit a block the check would refuse. (The strictly better object is a theorem about
-`programAir` GENERAL over `prog`; deciding one instance is what this pass buys.) -/
+⚑ **THE `by decide` IS GONE AND THE VERDICT IS NOT.** §6a's `programAir_boundary_pinsTied` is
+the general theorem this docblock used to name as "the strictly better object" — `pinsTied` for the
+machine plus ANY register boundary, at any program length and any pin count, with no `decide` over
+the assembled block. Both verdicts are now HANDED to the structure instead of re-derived inside the
+elaborator's `whnf`, and the `maxHeartbeats` raise this declaration needed is gone with them. -/
 def sboxTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := sboxAir
-  ok   := by decide
-  tied := by decide
+  air  := sboxAir
+  ok   := sboxAir_mainRailOk
+  tied := sboxAir_pinsTied
 
 /-- ⚑ **THE EMITTED S-BOX DESCRIPTOR.** -/
 def sboxDesc : EffectVmDescriptor2 :=
@@ -1047,21 +1072,25 @@ theorem longAir_mainRailOk : longAir.mainRailOk = true := by
   simp only [sboxPins, List.all_append, List.all_map, Bool.and_eq_true, List.all_eq_true]
   exact ⟨fun _ _ => rfl, fun _ _ => rfl⟩
 
-set_option maxHeartbeats 2000000 in
+/-- The 1 024-row instance's tie verdict, from the SAME boundary lemma — the program moved, the
+boundary did not. -/
+theorem longAir_pinsTied : longAir.pinsTied = true :=
+  programAir_boundary_pinsTied pLimb longProg sboxPins sboxPins_regPin
+
 /-- ⚑ **THE TIED SOURCE** — `longAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards.
 
-⚠ **The `by decide` here is the expensive one and it is set-option'd, not weakened.** `pinsTied`
-is `O(pins × legs)` in the kernel and this block carries 64 pins over 515 legs; the default
-heartbeat budget stops the elaborator mid-`whnf`. Raising the budget decides the SAME verdict — it
-does not admit a block the check would refuse. (The strictly better object is a theorem about
-`programAir` GENERAL over `prog`; deciding one instance is what this pass buys.) -/
+⚑ **THE `by decide` IS GONE AND THE VERDICT IS NOT.** §6a's `programAir_boundary_pinsTied` is
+the general theorem this docblock used to name as "the strictly better object" — `pinsTied` for the
+machine plus ANY register boundary, at any program length and any pin count, with no `decide` over
+the assembled block. Both verdicts are now HANDED to the structure instead of re-derived inside the
+elaborator's `whnf`, and the `maxHeartbeats` raise this declaration needed is gone with them. -/
 def longTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := longAir
-  ok   := by decide
-  tied := by decide
+  air  := longAir
+  ok   := longAir_mainRailOk
+  tied := longAir_pinsTied
 
 def longDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

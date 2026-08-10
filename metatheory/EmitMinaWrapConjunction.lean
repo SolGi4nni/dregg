@@ -26,7 +26,7 @@ than a constrained meaningless one.
 This file only RENDERS; it authors nothing.
 -/
 import Dregg2.Circuit.Emit.MinaWrapConjunctionAir
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 import Dregg2.Circuit.Emit.MinaRealBlockGate
 
 open Dregg2.Circuit.Emit.MinaWrapConjunctionAir

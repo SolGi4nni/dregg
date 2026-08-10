@@ -87,7 +87,7 @@ by the `Dregg2` root, per house practice for gates. Import line:
 `import Dregg2.Circuit.Emit.MinaWrapOpeningSched`
 -/
 import Dregg2.Circuit.Emit.MinaWrapClosingScheduled
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 
 namespace Dregg2.Circuit.Emit.MinaWrapOpeningSched
 

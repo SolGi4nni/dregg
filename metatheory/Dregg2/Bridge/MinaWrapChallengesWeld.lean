@@ -43,7 +43,7 @@ Everything else absorbed — the two accumulator commitments, the 15 witness com
 Compiled, not kernel: every pin below is `#guard`. That is the point of the file.
 -/
 import Dregg2.Bridge.MinaWrapChallenges
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 
 set_option autoImplicit false
 set_option maxRecDepth 100000

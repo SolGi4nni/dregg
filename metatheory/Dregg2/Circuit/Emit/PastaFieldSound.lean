@@ -657,12 +657,31 @@ theorem soundMulAir_mainRailOk (pl : Nat → ℤ) : (soundMulAir pl).mainRailOk 
   intro m _
   rfl
 
+/-- ⚑ **THE TIE VERDICT, PROVED ONCE AND MODULUS-PARAMETRICALLY.** This block publishes NOTHING —
+its descriptor's `piCount` is `0` and there is no `.pin` leg in it — so every leg falls into the
+non-`pin` arm of `EffectAir.pinsTied` and the verdict holds by the leg SHAPES, at `NG + 5` blocks
+rather than the `NG + 5` legs a `decide` would whnf one at a time.
+
+⚠ Not a weakening: the same statement a `decide` would settle, over the same `pinsTied`. A `.pin`
+leg appearing in this block would leave the `intro m _; rfl` arm with a goal it cannot close. -/
+theorem soundMulAir_pinsTied (pl : Nat → ℤ) : (soundMulAir pl).pinsTied = true := by
+  unfold soundMulAir EffectAir.pinsTied
+  simp only [List.all_append, List.all_map, Bool.and_eq_true]
+  repeat' apply And.intro
+  all_goals rfl
+
 /-- ⚑ **THE TIED SOURCE** — `(soundMulAir pLimb)` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
-decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
+decorative pin is unrepresentable here rather than detectable by a census afterwards.
+
+⚑ **BOTH VERDICTS ARE SUPPLIED, NOT RE-DERIVED.** The two fields are `autoParam`s defaulting to
+`by decide`; left blank they re-decide, inside the elaborator's `whnf`, facts this file proves as
+named theorems fifteen lines above — once per instance, and this file has two. -/
 def fpMulTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (soundMulAir pLimb)
+  air  := (soundMulAir pLimb)
+  ok   := soundMulAir_mainRailOk pLimb
+  tied := soundMulAir_pinsTied pLimb
 
 /-- The `fpMul` descriptor: `x·y ≡ z (mod p)` (Pallas base / Vesta scalar). -/
 def fpMulSoundDesc : EffectVmDescriptor2 :=
@@ -690,7 +709,9 @@ theorem fpMulSoundDesc_eq_lowerAir :
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def fqMulTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (soundMulAir qLimb)
+  air  := (soundMulAir qLimb)
+  ok   := soundMulAir_mainRailOk qLimb
+  tied := soundMulAir_pinsTied qLimb
 
 /-- The `fqMul` descriptor: same shape, `q` limbs. The encoding is field-independent. -/
 def fqMulSoundDesc : EffectVmDescriptor2 :=

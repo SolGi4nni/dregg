@@ -44,7 +44,7 @@ naive `2^15`, i.e. it saves one. See §4 of `PastaIpaFold` and §6.1 of
 import Dregg2.Circuit.Emit.MinaWrapSrsG
 import Dregg2.Circuit.Emit.MinaWrapSgParts
 import Dregg2.Circuit.Emit.PastaIpaFold
-import Dregg2.Circuit.Emit.MinaWrapOpeningGate
+import Dregg2.Circuit.Emit.MinaWrapOpeningGateData
 
 namespace Dregg2.Circuit.Emit.MinaWrapSgCore
 

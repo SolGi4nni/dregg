@@ -206,12 +206,29 @@ def turnAir : EffectAir where
   ranges  := []
   extraPi := 0
 
+/-- Every leg the source declares has a deployed main-rail image — no leg lowered to the
+UNSATISFIABLE refusal pair. Without this the `turnChainDerived_eq_handwritten` `rfl` below could
+hold by BOTH sides being wrong.
+
+⚑ It sits HERE, above `turnTiedAir`, because that is where it is USED — the structure's `ok` field
+is an `autoParam` defaulting to `by decide`, and a field left blank re-derives this same verdict
+inside the elaborator's `whnf` instead of taking the term. -/
+theorem turnAir_mainRailOk : turnAir.mainRailOk = true := rfl
+
+/-- ⚑ **EVERY PUBLISHED COLUMN IS DERIVED BY ANOTHER LEG.** The six pins publish `OLD_ROOT`,
+`NEW_ROOT`, `ACC`, `IDX` and `REAL_COUNT` columns, every one of which the continuity, accumulation
+and increment legs read. Named for the same reason as its neighbour: so the `tied` field is handed
+a term rather than deciding the block a second time. -/
+theorem turnAir_pinsTied : turnAir.pinsTied = true := rfl
+
 /-- ⚑ **THE TIED SOURCE** — `turnAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def turnTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := turnAir
+  air  := turnAir
+  ok   := turnAir_mainRailOk
+  tied := turnAir_pinsTied
 
 /-- **The DERIVED descriptor.** No `VmConstraint2` appears on this right-hand side. -/
 def turnChainDerived : EffectVmDescriptor2 :=
@@ -255,10 +272,6 @@ theorem turnChainDerived_emits_the_same_bytes :
     emitVmJson2 turnChainDerived
       = emitVmJson2 Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding.turnChainBindingDescriptor :=
   congrArg emitVmJson2 turnChainDerived_eq_handwritten
-
-/-- Every leg the source declares has a deployed main-rail image — no leg lowered to the
-UNSATISFIABLE refusal pair. Without this the `rfl` above could hold by BOTH sides being wrong. -/
-theorem turnAir_mainRailOk : turnAir.mainRailOk = true := rfl
 
 /-- Every PI pin indexes a slot the descriptor declares. -/
 theorem turnAir_pinsFit : turnAir.pinsFit Chain.PI_COUNT = true := rfl

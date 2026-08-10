@@ -245,12 +245,25 @@ theorem szMulAir_mainRailOk (pl : Nat → ℤ) : (szMulAir pl).mainRailOk = true
   refine ⟨?_, by decide⟩
   rfl
 
+/-- ⚑ **THE TIE VERDICT, PROVED ONCE AND MODULUS-PARAMETRICALLY.** The block publishes NOTHING —
+both descriptors carry `piCount = 0` and no `.pin` leg appears — so every leg lands in the
+non-`pin` arm of `EffectAir.pinsTied`. Named so the two `TiedAir`s below are HANDED the verdict:
+their fields are `autoParam`s defaulting to `by decide`, and a blank field re-derives this inside
+the elaborator's `whnf` at the concrete limb vector. -/
+theorem szMulAir_pinsTied (pl : Nat → ℤ) : (szMulAir pl).pinsTied = true := by
+  unfold szMulAir EffectAir.pinsTied
+  simp only [List.all_append, Bool.and_eq_true]
+  repeat' apply And.intro
+  all_goals rfl
+
 /-- ⚑ **THE TIED SOURCE** — `(szMulAir pLimb)` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def fpSzMulTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (szMulAir pLimb)
+  air  := (szMulAir pLimb)
+  ok   := szMulAir_mainRailOk pLimb
+  tied := szMulAir_pinsTied pLimb
 
 /-- The `fpMul` Schwartz–Zippel descriptor. -/
 def fpSzMulDesc : EffectVmDescriptor2 :=
@@ -273,7 +286,9 @@ theorem fpSzMulDesc_eq_lowerAir :
 
 /-- The `fqMul` tied source. -/
 def fqSzMulTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := (szMulAir qLimb)
+  air  := (szMulAir qLimb)
+  ok   := szMulAir_mainRailOk qLimb
+  tied := szMulAir_pinsTied qLimb
 
 /-- The `fqMul` twin. -/
 def fqSzMulDesc : EffectVmDescriptor2 :=

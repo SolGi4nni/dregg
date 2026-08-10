@@ -67,6 +67,31 @@ import the data module and stop paying.
 Arm (d) refuses a module that has the shape unless it is listed in the allow file with a
 reason. It is the arm that turns a fix somebody did by hand into a property of the tree.
 
+═══ ⛑ ARM (e): A `TiedAir` THAT RE-DERIVES WHAT ITS FILE ALREADY PROVES ═════════════════════
+Same disease as (d), one layer INSIDE a module. `EffectLower.TiedAir` carries two decidable
+verdicts in its type:
+
+    structure TiedAir where
+      air  : EffectAir
+      ok   : air.mainRailOk = true := by decide
+      tied : air.pinsTied   = true := by decide
+
+Both are `autoParam`s. A field left blank is not free — it runs `decide` over the whole leg
+list inside the ELABORATOR's `whnf`, at the point of the `def`. Measured 2026-08-09: a lane's
+build was SIGKILLed at 15,674 s with a stack sample sitting in
+`elabMutualDef -> synthesizeSyntheticMVars -> runTactic -> whnf`, deciding `mainRailOk` over
+6,404 constraints — a fact the same file proved as a named theorem fifteen lines above.
+Supplying the proved terms: 2,979 s green. On `PastaFieldSound`, standalone: 127.7 s -> 65.6 s.
+
+So the arm is: **every `TiedAir` instance must SUPPLY `ok :=` and `tied :=`, and must supply a
+TERM.** `ok := by decide` is refused too, and deliberately: it is the `autoParam` written out,
+identical in cost, and it leaves no named theorem anything else can cite.
+
+⚠ What the arm does NOT do, and must not: it does not weaken `TiedAir`. The two fields stay
+proof obligations, and a decorative pin stays UNREPRESENTABLE. The arm says only that the
+obligation is discharged by a theorem with a name rather than by a re-derivation nobody can
+reuse. A file with no such theorem must PROVE one — that is the work, not the workaround.
+
 ═══ WHAT THIS GATE DOES NOT CATCH — read before trusting a green ══════════════════
   * A module that is slow for a reason it never declares. `MlKemNttFaithful` needs no
     heartbeat raise and takes 98 s standalone; its cost is 64.4 s of KERNEL type checking
@@ -124,6 +149,47 @@ RE_DECL = re.compile(
 RE_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_'!?]*")
 # `by decide` / bare `decide` line, excluding native_decide
 RE_DECIDE = re.compile(r"(?<!native_)\bdecide\b")
+
+# ── arm (e): `TiedAir` instances and their supplied fields ─────────────────────────
+# A `def <name> ... : ...TiedAir where` followed by an indented field block. The
+# `structure TiedAir where` DECLARATION is not matched (it is not a `def`), so the
+# module that defines the type is not a finding about itself.
+RE_TIEDAIR = re.compile(
+    r"^(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+|noncomputable\s+)*def\s+"
+    r"([A-Za-z_][A-Za-z0-9_'!?]*)[^\n:]*:[^\n]*\bTiedAir\b[ \t]*where[ \t]*\n"
+    r"((?:[ \t]+\S[^\n]*\n)*)", re.M)
+RE_TIEDAIR_FIELD = re.compile(r"^[ \t]+(air|ok|tied)\b[ \t]*:=", re.M)
+TIEDAIR_REQUIRED = ("ok", "tied")
+
+
+def tiedair_findings(name: str, code: str) -> list[str]:
+    """Arm (e): a `TiedAir` instance that leaves a verdict to the `autoParam`, or writes
+    the `autoParam` out as `by decide`, is re-deriving a fact that belongs in a theorem."""
+    out = []
+    # cheap guard: the expensive scan runs only on the ~30 modules that mention the type.
+    # Without it the arm walks every `def` line in 2,600 files looking for a `TiedAir` that
+    # is not there, which took the gate past its 300 s budget in `local-gates.sh`.
+    if "TiedAir" not in code:
+        return out
+    for m in RE_TIEDAIR.finditer(code):
+        inst, block = m.group(1), m.group(2)
+        # split the field block into (field, value) pairs, values may span lines
+        marks = list(RE_TIEDAIR_FIELD.finditer(block))
+        fields = {}
+        for i, fm in enumerate(marks):
+            end = marks[i + 1].start() if i + 1 < len(marks) else len(block)
+            fields[fm.group(1)] = block[fm.end():end]
+        for f in TIEDAIR_REQUIRED:
+            if f not in fields:
+                out.append(f"(e) {name}.{inst}: `{f} :=` not supplied — the `TiedAir` "
+                           f"autoParam re-derives it with `by decide` inside the "
+                           f"elaborator's whnf. Supply the file's named theorem (prove one "
+                           f"if it has none); do NOT weaken the field.")
+            elif RE_DECIDE.search(fields[f]):
+                out.append(f"(e) {name}.{inst}: `{f} :=` is a `decide`, which is the "
+                           f"autoParam written out — same cost, and no named theorem to "
+                           f"cite. Name the fact and pass the term.")
+    return out
 
 
 RE_COMMENT_TOK = re.compile(r"/-|-/|--")
@@ -419,6 +485,9 @@ def evaluate(mods, base, allow):
         if name not in mods:
             red.append(f"(stale) {name}: baseline row for a module that no longer exists")
 
+    for m in mods.values():
+        red.extend(tiedair_findings(m.name, m.code))
+
     shaped = {r[1] for r in split_candidates(mods)}
     for name in sorted(allow - shaped):
         red.append(f"(d-stale) {name}: allow-listed as a data-from-gates backlog item, but "
@@ -512,6 +581,29 @@ def self_test():
           evaluate({"G": FakeMod("G", cheap)}, {"G": (0, 0, 0)}, {"G"}), True, "(d-stale)")
     check("new: unlisted module declaring a raise",
           evaluate(mods, {}, {"G"}), True, "(new)")
+
+    # arm (e): a `TiedAir` that leaves a verdict to the autoParam, and the two controls
+    tied_blank = ("def fooTiedAir : EffectLower.TiedAir where\n"
+                  "  air := fooAir\n")
+    tied_decide = ("def fooTiedAir : EffectLower.TiedAir where\n"
+                   "  air  := fooAir\n  ok   := by decide\n  tied := by decide\n")
+    tied_good = ("def fooTiedAir : EffectLower.TiedAir where\n"
+                 "  air  := fooAir\n  ok   := fooAir_mainRailOk\n"
+                 "  tied := fooAir_pinsTied\n")
+    check("arm (e): a TiedAir with no `ok :=` is a finding",
+          evaluate({"T": FakeMod("T", tied_blank)}, {}, set()), True, "`ok :=` not supplied")
+    check("arm (e): a TiedAir with no `tied :=` is a finding",
+          evaluate({"T": FakeMod("T", "def fooTiedAir : EffectLower.TiedAir where\n"
+                                      "  air := fooAir\n  ok  := fooAir_mainRailOk\n")},
+                   {}, set()), True, "`tied :=` not supplied")
+    check("arm (e): `ok := by decide` is the autoParam written out, still a finding",
+          evaluate({"T": FakeMod("T", tied_decide)}, {}, set()), True, "is a `decide`")
+    check("arm (e) control: both verdicts supplied as terms is green",
+          evaluate({"T": FakeMod("T", tied_good)}, {}, set()), False)
+    check("arm (e) control: the `structure TiedAir where` DECLARATION is not an instance",
+          evaluate({"T": FakeMod("T", "structure TiedAir where\n  air : EffectAir\n"
+                                      "  ok : air.mainRailOk = true := by decide\n")},
+                   {}, set()), False)
 
     # the comment stripper must not be fooled — a `#guard`-free file whose PROSE
     # mentions maxHeartbeats must not register a raise

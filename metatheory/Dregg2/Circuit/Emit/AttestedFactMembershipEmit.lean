@@ -243,14 +243,23 @@ def attestedFactMembershipAir : EffectAir :=
             , .pin ⟨VmRow.first, STATE_ROOT, STATE_ROOT_PI⟩
             , .window ⟨.last, contWindow⟩ ] }
 
-#guard attestedFactMembershipAir.mainRailOk == true
+/-- ⚑ **THE COMPILER ACCEPTS EVERY LEG** — `mainRailOk` is the decidable verdict that each leg has
+a deployed main-rail image. Named rather than `#guard`ed: a `#guard` checks one closed instance,
+leaves no term for the `TiedAir` below to be HANDED, and is invisible to `#assert_axioms`. -/
+theorem attestedFactMembershipAir_mainRailOk : attestedFactMembershipAir.mainRailOk = true := by decide
+
+/-- ⚑ **EVERY PUBLISHED COLUMN IS DERIVED BY ANOTHER LEG** — `EffectAir.pinsTied`, the verdict that
+makes a DECORATIVE pin unrepresentable rather than merely detectable. -/
+theorem attestedFactMembershipAir_pinsTied : attestedFactMembershipAir.pinsTied = true := by decide
 
 /-- ⚑ **THE TIED SOURCE** — `attestedFactMembershipAir` carrying its two decidable verdicts in its TYPE:
 `mainRailOk` (main-rail expressible) and `pinsTied` (every published column is DERIVED by another
 leg). A `TiedAir` cannot be built for a block that publishes a column nothing else constrains, so a
 decorative pin is unrepresentable here rather than detectable by a census afterwards. -/
 def attestedFactMembershipTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
-  air := attestedFactMembershipAir
+  air  := attestedFactMembershipAir
+  ok   := attestedFactMembershipAir_mainRailOk
+  tied := attestedFactMembershipAir_pinsTied
 
 def attestedFactMembershipDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
