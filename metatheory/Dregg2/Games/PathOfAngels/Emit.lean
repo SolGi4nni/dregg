@@ -1941,6 +1941,66 @@ theorem ventReward_accepted (runSeed : Digest32)
   apply (MissionSpec.acceptsContribution_eq_true_iff _ _).2
   exact ⟨ventReward_within, by simp [ventMission, ventReward]⟩
 
+/-! ### The emitted Vent Crawl configuration
+
+The analogue of `signalConfigWith`, and it is TOTAL where that one is partial.
+Signal's target is a draw that can refuse (216 ∤ 2^256), so a `Config` needs the
+caller's own measurement of it.  Vent Crawl's per-player hidden thing is the FLOOD
+TAPE, and `floodTapeFromRunSeed` is total: `VentCrawl.draw_below_eight_never_rejects`
+says a bound of 8 divides 256 and rejects no byte, so every 32-byte seed draws a
+tape.  There is therefore no `ventConfig?`, no measurement argument, and no `Option`.
+
+⚠ **The VEIN is not here and must never be.**  It is a per-SLOT draw the node
+derives into `VentCrawl.JudgeContext` from the committed slot secret
+(`Judged.ventCrawlContext`).  A `Config` field for it would be a field a host could
+set, which is exactly the hole `Judged.RunClaim` closed for Signal's target. -/
+def ventDeepRelic : RelicId := relicSlot ⟨7⟩ 0
+
+theorem ventDeepRelic_declared (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    ventDeepRelic ∈ (ventMission runSeed federationId sourceDigest contentDigest
+      contentRoot activationDigest).allowedRelics := by
+  simp [ventMission, ventDeepRelic]
+
+def ventConfigWith (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    VentCrawl.Config :=
+  { mission := ventMission runSeed federationId sourceDigest contentDigest contentRoot
+      activationDigest
+    floods := VentCrawl.floodTapeFromRunSeed runSeed
+    deepRelic := ventDeepRelic
+    relic_declared := ventDeepRelic_declared runSeed federationId sourceDigest contentDigest
+      contentRoot activationDigest
+    floods_eq := rfl }
+
+/-- The judged tape is the one the LIVE seed draws, for whatever seed the judge was
+handed — the Vent Crawl twin of `signalConfig_target_from_live_seed`, and `rfl`
+because `Config.floods_eq` is a field rather than a claim. -/
+theorem ventConfig_tape_from_live_seed (runSeed : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    (ventConfigWith runSeed federationId sourceDigest contentDigest contentRoot
+        activationDigest).floods =
+      VentCrawl.floodTapeFromRunSeed
+        (ventConfigWith runSeed federationId sourceDigest contentDigest contentRoot
+          activationDigest).mission.runSeed := rfl
+
+/-- ⚠ The mission context a Vent Crawl run derives its DAY from ignores the run
+seed, exactly as Signal's does — so the per-slot vein cannot be moved by re-drawing
+a player's own seed.  This is `signalMission_context_ignores_the_run_seed`'s twin and
+it is what makes `daySeedFor` a per-slot value rather than a per-player one. -/
+theorem ventMission_context_ignores_the_run_seed (runSeed runSeed' : Digest32)
+    (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
+    HiddenInstance.MissionContext.ofMission
+        (ventMission runSeed federationId sourceDigest contentDigest contentRoot
+          activationDigest) =
+      HiddenInstance.MissionContext.ofMission
+        (ventMission runSeed' federationId sourceDigest contentDigest contentRoot
+          activationDigest) := rfl
+
+#assert_axioms ventDeepRelic_declared
+#assert_axioms ventConfig_tape_from_live_seed
+#assert_axioms ventMission_context_ignores_the_run_seed
+
 /-- The day's table, as its published tag.  ⚠ `daySeedFor` takes NO player, so this
 takes none either: the whole point of the per-slot draw is that a demonstration
 that varied the player would show a difference the real game does not have. -/

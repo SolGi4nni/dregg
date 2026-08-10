@@ -682,7 +682,12 @@ has no partial mode. -/
 def project? (bytes : String) : Option ViewWire := do
   let request ← decodeRequest bytes
   let genesisWire ← decodeCanonState request.genesisCanon.text
-  let configWire ← decodeSignalConfig request.config.text
+  let configWire ← decodeGameConfig request.config.text
+  -- ⚠ REFUSES rather than renders for a game with no constant payout. Vent Crawl pays
+  -- what the banked rung pays, so there is no number to put here; publishing a zero or
+  -- a ceiling would be publishing a payout no run receives. The Records read model does
+  -- not render Vent Crawl yet and says so by declining, not by inventing.
+  let reward ← configWire.reward?
   -- The claimed authority, the installed Canon and the installed mission must
   -- name one world; otherwise a Records read could publish a foreign world.
   if genesisWire.federationId != request.federationId then none
@@ -716,7 +721,7 @@ def project? (bytes : String) : Option ViewWire := do
       curatorKey := folded.projection.canon.curatorKey
       stage := stageOf folded.runs
       mission := PublicMissionWire.ofMission configWire.mission
-      reward := configWire.reward
+      reward
       world := folded.projection.canon.world
       canonRevision := folded.projection.canon.revision
       catalog := catalog
@@ -784,8 +789,10 @@ private def fixtureTemplateConfig : SignalTriangulation.Config :=
   Emit.signalTemplateConfig fixtureFederationId fixtureSourceDigest
     fixtureContentDigest fixtureContentRoot fixtureActivationDigest
 
-private def fixtureConfigWire : SignalConfigWire :=
+private def fixtureSignalConfigWire : SignalConfigWire :=
   SignalConfigWire.ofSemantic fixtureTemplateConfig
+
+private def fixtureConfigWire : GameConfigWire := .signal fixtureSignalConfigWire
 
 /-- The plaintext "transcript digest" of the fixture's single submitted action.
 It exists here only to be searched for and not found. -/
@@ -916,14 +923,14 @@ old fixture did — is refused outright rather than rendered.
 (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
 def check_hostile_live_run_seed_config_refused : Bool :=
   (project? { fixtureRequest [fixtureRow] with
-    config := ⟨(SignalConfigWire.ofSemantic fixtureConfig).toJson⟩ }.toJson).isNone
+    config := ⟨(GameConfigWire.signal (SignalConfigWire.ofSemantic fixtureConfig)).toJson⟩ }.toJson).isNone
 
 /-- ⚠ The falsifier above really does substitute something: the live config's
 bytes differ from the template's, and they differ in the run seed specifically.
 Without this the refusal could be refusing an unchanged input.
 (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
 def check_hostile_live_config_is_a_real_substitution : Bool :=
-  decide ((SignalConfigWire.ofSemantic fixtureConfig).toJson ≠ fixtureConfigWire.toJson) &&
+  decide ((GameConfigWire.signal (SignalConfigWire.ofSemantic fixtureConfig)).toJson ≠ fixtureConfigWire.toJson) &&
     decide ((SignalConfigWire.ofSemantic fixtureConfig).mission.runSeed ≠
       fixtureConfigWire.mission.runSeed)
 
@@ -963,9 +970,9 @@ def check_hostile_foreign_authority_refused : Bool :=
 (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
 def check_hostile_mission_from_another_world_refused : Bool :=
   (project? { fixtureRequest [] with
-    config := ⟨{ fixtureConfigWire with
-      mission := { fixtureConfigWire.mission with
-        contentRoot := digestByte 253 } }.toJson⟩ }.toJson).isNone
+    config := ⟨(GameConfigWire.signal { fixtureSignalConfigWire with
+      mission := { fixtureSignalConfigWire.mission with
+        contentRoot := digestByte 253 } }).toJson⟩ }.toJson).isNone
 
 /-- (Pinned `= true` in `RecordsRuntimeFixtures`.) -/
 def check_fixture_export_refuses_malformed : Bool :=

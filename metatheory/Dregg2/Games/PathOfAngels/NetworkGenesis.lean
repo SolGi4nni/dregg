@@ -40,8 +40,8 @@ private def expectedConfig (input : GenesisInputWire) : SignalTriangulation.Conf
     input.content.sourceDigest
     input.content.signalContentDigest input.content.contentRoot input.content.activationDigest
 
-private def expectedConfigWire (input : GenesisInputWire) : SignalConfigWire :=
-  SignalConfigWire.ofSemantic (expectedConfig input)
+private def expectedConfigWire (input : GenesisInputWire) : GameConfigWire :=
+  .signal (SignalConfigWire.ofSemantic (expectedConfig input))
 
 private def expectedCanon (input : GenesisInputWire) : CanonState :=
   CanonState.empty input.deployment.federationId input.content.contentRoot
@@ -184,7 +184,7 @@ structure AuthorizedGenesis where
   output_epoch_exact : output.contentEpoch = input.content.contentEpoch
   output_activation_counter_exact :
     output.activationCounter = input.content.activationCounter
-  output_config_exact : output.configJson = (SignalConfigWire.ofSemantic config).toJson
+  output_config_exact : output.configJson = (GameConfigWire.signal (SignalConfigWire.ofSemantic config)).toJson
   output_canon_exact : output.canonJson = (CanonStateWire.ofSemantic canon).toJson
   output_hashes_exact :
     sha256Wire? output.configJson = some output.configSha256 ∧
@@ -211,7 +211,7 @@ def authorizeGenesis (input : GenesisInputWire) : Option AuthorizedGenesis := do
     let config := expectedConfig input
     let canon := expectedCanon input
     let canonWire := CanonStateWire.ofSemantic canon
-    let configJson := (SignalConfigWire.ofSemantic config).toJson
+    let configJson := (GameConfigWire.signal (SignalConfigWire.ofSemantic config)).toJson
     let canonJson := canonWire.toJson
     match configDigestEq : sha256Wire? configJson with
     | none => none
@@ -282,13 +282,14 @@ def authorizeGenesis (input : GenesisInputWire) : Option AuthorizedGenesis := do
   else none
 
 theorem AuthorizedGenesis.config_is_exact_emission (genesis : AuthorizedGenesis) :
-    genesis.input.config = SignalConfigWire.ofSemantic genesis.config := by
+    genesis.input.config = .signal (SignalConfigWire.ofSemantic genesis.config) := by
   calc
     genesis.input.config = expectedConfigWire genesis.input :=
       genesisChecks_requires_exact_config genesis.checks
-    _ = SignalConfigWire.ofSemantic (expectedConfig genesis.input) := rfl
-    _ = SignalConfigWire.ofSemantic genesis.config :=
-      congrArg SignalConfigWire.ofSemantic genesis.config_from_lean.symm
+    _ = .signal (SignalConfigWire.ofSemantic (expectedConfig genesis.input)) := rfl
+    _ = .signal (SignalConfigWire.ofSemantic genesis.config) :=
+      congrArg (fun c => GameConfigWire.signal (SignalConfigWire.ofSemantic c))
+        genesis.config_from_lean.symm
 
 theorem AuthorizedGenesis.canon_is_empty (genesis : AuthorizedGenesis) :
     genesis.canon = CanonState.empty genesis.input.deployment.federationId
@@ -301,7 +302,8 @@ theorem AuthorizedGenesis.canon_is_empty (genesis : AuthorizedGenesis) :
 theorem AuthorizedGenesis.persisted_coordinates_are_lean_bytes (genesis : AuthorizedGenesis) :
     genesis.output.authorityId = genesis.input.deployment.federationId ∧
     genesis.output.deploymentDigest = genesis.input.deployment.deploymentDigest ∧
-    genesis.output.configJson = (SignalConfigWire.ofSemantic genesis.config).toJson ∧
+    genesis.output.configJson =
+      (GameConfigWire.signal (SignalConfigWire.ofSemantic genesis.config)).toJson ∧
     genesis.output.canonJson = (CanonStateWire.ofSemantic genesis.canon).toJson := by
   exact ⟨genesis.output_authority_exact, genesis.output_deployment_exact,
     genesis.output_config_exact, genesis.output_canon_exact⟩
@@ -447,6 +449,13 @@ def fixtureCuratorKey := digestOrZero FIXTURE_CURATOR_KEY
 def fixtureConfigSha256 := digestOrZero FIXTURE_CONFIG_SHA256
 def fixtureCanonSha256 := digestOrZero FIXTURE_CANON_SHA256
 
+/-- The Signal arm of the fixture's config, named so the hostile variants below can
+perturb ONE field of it — a `GameConfigWire` is a sum and has no record-update. -/
+def fixtureSignalConfigWire : SignalConfigWire :=
+  SignalConfigWire.ofSemantic
+    (Emit.signalTemplateConfig fixtureFederationId fixtureSourceDigest
+      fixtureSignalDigest fixtureContentRoot fixtureActivationDigest)
+
 def fixtureInput : GenesisInputWire := {
   deployment := {
     schema := DEPLOYMENT_SCHEMA
@@ -469,9 +478,7 @@ def fixtureInput : GenesisInputWire := {
     contentEpoch := 1
     activationCounter := 2
   }
-  config := SignalConfigWire.ofSemantic
-    (Emit.signalTemplateConfig fixtureFederationId fixtureSourceDigest
-      fixtureSignalDigest fixtureContentRoot fixtureActivationDigest)
+  config := .signal fixtureSignalConfigWire
   initial := emptyInitialState
 }
 
@@ -540,13 +547,13 @@ def check_fixture_tampered_output_is_syntax_only : Bool :=
 /-! ## Hostile ceremony fixtures -/
 
 def wrongRewardInput : GenesisInputWire := {
-  fixtureInput with config := { fixtureInput.config with
-    reward := { fixtureInput.config.reward with score := 501 } }
+  fixtureInput with config := .signal { fixtureSignalConfigWire with
+    reward := { fixtureSignalConfigWire.reward with score := 501 } }
 }
 
 def wrongSessionInput : GenesisInputWire := {
-  fixtureInput with config := { fixtureInput.config with mission := {
-    fixtureInput.config.mission with contentSession := fixtureDeploymentId } }
+  fixtureInput with config := .signal { fixtureSignalConfigWire with mission := {
+    fixtureSignalConfigWire.mission with contentSession := fixtureDeploymentId } }
 }
 
 def wrongFederationInput : GenesisInputWire := {

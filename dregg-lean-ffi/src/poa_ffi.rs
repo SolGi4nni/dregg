@@ -53,7 +53,7 @@ impl AcceptedPoaSignalOutput {
 /// The only two semantic outcomes exposed by the internal evaluator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PoaSignalVerdict {
-    /// Lean replayed the complete transition and emitted these canonical `POA-SIGNAL-OUT-1` bytes.
+    /// Lean replayed the complete transition and emitted these canonical `POA-RUN-OUT-1` bytes.
     Accepted(AcceptedPoaSignalOutput),
     /// Lean refused strict decoding, semantic reconstruction, game replay, or Canon application.
     Rejected,
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn nonempty_lean_reply_is_preserved_opaquely() {
-        let reply = r#"{"format":"POA-SIGNAL-OUT-1"}"#.to_owned();
+        let reply = r#"{"format":"POA-RUN-OUT-1"}"#.to_owned();
         let PoaSignalVerdict::Accepted(accepted) = decode_reply("exact input", reply.clone())
         else {
             panic!("nonempty native reply must be accepted");

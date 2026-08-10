@@ -843,7 +843,7 @@ fn verify_judge_state_binding(transition: &Transition) -> Result<(), String> {
         strict_json(&transition.judge_input, "judge input").map_err(|error| error.to_string())?;
     let output: JudgeOutputEnvelope =
         strict_json(&transition.judge_output, "judge output").map_err(|error| error.to_string())?;
-    if input.format != "POA-SIGNAL-IN-1" || output.format != "POA-SIGNAL-OUT-1" {
+    if input.format != "POA-RUN-IN-1" || output.format != "POA-RUN-OUT-1" {
         return Err("judge input/output format marker mismatch".into());
     }
     // Touch every strict field so future edits cannot accidentally make the
@@ -1141,7 +1141,7 @@ mod tests {
         // `slot_state` carries a secret on the real wire; this skeleton uses an
         // obviously-fake one, and `SlotStateEnvelope` discards it either way.
         let input = format!(
-            "{{\"format\":\"POA-SIGNAL-IN-1\",\"config\":{config},\"world\":{{}},\"canon\":{canon},\
+            "{{\"format\":\"POA-RUN-IN-1\",\"config\":{config},\"world\":{{}},\"canon\":{canon},\
              \"carrier\":{{}},\"slot_state\":{{\"slot\":9,\"secret\":\"{secret}\",\"commitment\":\"{commitment}\"}},\
              \"request\":{{\"slot\":9,\"slot_commitment\":\"{commitment}\"}}}}",
             secret = "77".repeat(32),
@@ -1150,7 +1150,7 @@ mod tests {
         let successor_canon =
             format!("{{\"world\":{{\"sequence\":{sequence}}},\"revision\":{revision}}}");
         let output = format!(
-            "{{\"format\":\"POA-SIGNAL-OUT-1\",\"receipt\":{{}},\"successor_world\":{{\"sequence\":{sequence}}},\"successor_canon\":{successor_canon}}}"
+            "{{\"format\":\"POA-RUN-OUT-1\",\"receipt\":{{}},\"successor_world\":{{\"sequence\":{sequence}}},\"successor_canon\":{successor_canon}}}"
         );
         (input.into_bytes(), output.into_bytes())
     }
@@ -1306,7 +1306,7 @@ mod tests {
                 .strip_suffix(b"\n")
                 .expect("committed Signal fixture has one file newline");
         let input: JudgeInputEnvelope = serde_json::from_slice(judge_input)
-            .expect("the review envelope must accept the real POA-SIGNAL-IN-1 wire");
+            .expect("the review envelope must accept the real POA-RUN-IN-1 wire");
 
         assert_eq!(input.slot_state.slot, 9);
         assert_eq!(

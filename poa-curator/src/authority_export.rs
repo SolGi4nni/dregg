@@ -475,8 +475,8 @@ fn verify_judge_bindings(
     output: &Value,
     claim: dregg_sdk::poa_signal::SignalClaimV1,
 ) -> Result<(), AuthorityExportError> {
-    if value_str(input, &["format"]) != Some("POA-SIGNAL-IN-1")
-        || value_str(output, &["format"]) != Some("POA-SIGNAL-OUT-1")
+    if value_str(input, &["format"]) != Some("POA-RUN-IN-1")
+        || value_str(output, &["format"]) != Some("POA-RUN-OUT-1")
     {
         return Err(AuthorityExportError::Schema(
             "judge input/output format is unknown".into(),

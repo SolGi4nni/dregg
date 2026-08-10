@@ -64,13 +64,53 @@ def exactEmittedSignalConfig (config : SignalTriangulation.Config) : Bool :=
   decide (ActiveGame.configClaim (.signal config) =
     ActiveGame.configClaim (.signal (emittedSignalConfig config)))
 
+/-- Rebuild the only Vent Crawl configuration this boundary accepts.
+
+⚠ **TOTAL, unlike Signal's, and the difference is which hidden thing the config
+holds.**  Signal's rebuild has to carry the candidate's own target because
+`targetFromSeed?` is partial; Vent Crawl's per-player hidden thing is the FLOOD TAPE,
+`floodTapeFromRunSeed` is total, and `Config.floods_eq` already forces it — so
+`Emit.ventConfigWith` takes the live run seed and nothing else that could be chosen.
+
+⚠ And the VEIN is absent from both sides of this comparison, which is the point: it
+is not in a `Config` at all.  What the comparison does check is everything a host
+could otherwise drift — mission id, artifact digests, epoch, session, budget, privacy,
+ballot, the allowlist, and the deep relic. -/
+def emittedVentConfig (config : VentCrawl.Config) : VentCrawl.Config :=
+  Emit.ventConfigWith config.mission.runSeed
+    config.mission.federationId
+    config.mission.artifact.sourceDigest config.mission.artifact.contentDigest
+    config.mission.contentRoot config.mission.activationDigest
+
+def exactEmittedVentConfig (config : VentCrawl.Config) : Bool :=
+  decide (ActiveGame.configClaim (.ventCrawl config) =
+    ActiveGame.configClaim (.ventCrawl (emittedVentConfig config)))
+
+/-- The one config gate, over whatever game the wire decoded to.
+
+⚠ **The four games with no transport arm return `false`, not `true`.**  A default that
+admitted them would be a config gate that stops checking the moment a fifth game is
+enrolled in `Judged` and forgotten here — the failure would be that a Deck Descent run
+settles against an unchecked configuration, which is the opposite of quiet.  They
+cannot reach this function today (`GameConfigWire.toSemantic?` cannot produce them),
+and if that changes this refuses until someone writes the arm. -/
+def exactEmittedConfig : ActiveGame → Bool
+  | .signal config => exactEmittedSignalConfig config
+  | .ventCrawl config => exactEmittedVentConfig config
+  | _ => false
+
+theorem an_untransported_game_is_refused_by_the_config_gate
+    (config : DeckDescent.Config) : exactEmittedConfig (.deckDescent config) = false := rfl
+
+#assert_axioms an_untransported_game_is_refused_by_the_config_gate
+
 /-- Cross-object state checks that are not game-judge concerns.  In particular,
 the request must pin the state it saw, and world/canon must name the same complete
 artifact population.  Strict `<` leaves room for the successor sequence/revision
 inside the bounded network format. -/
 def preStateChecks (input : SemanticInput) : Bool :=
-  exactEmittedSignalConfig input.config &&
-  decide (input.request.missionId = input.config.mission.missionId.value) &&
+  exactEmittedConfig input.game &&
+  decide (input.request.missionId = input.game.mission.missionId.value) &&
   decide (input.request.expectedWorldSequence = input.world.sequence) &&
   decide (input.request.expectedCanonRevision = input.canon.revision) &&
   decide (input.world = input.canon.world) &&
@@ -83,7 +123,7 @@ from `input.request`, which is the client's.  `admissionChecks` then requires th
 commitment to be the commitment OF that secret and the run seed to be the derivation
 FROM it, so neither the node nor the client can name the instance after the fact. -/
 def activeOf (input : SemanticInput) : ActiveRunState := {
-  game := .signal input.config
+  game := input.game
   federationId := input.canon.federationId
   contentRoot := input.canon.contentRoot
   activationDigest := input.canon.activationDigest
@@ -92,7 +132,7 @@ def activeOf (input : SemanticInput) : ActiveRunState := {
   slot := input.slot
   slotSecret := input.slotSecret
   slotCommitment := input.slotCommitment
-  runSeed := input.config.mission.runSeed
+  runSeed := input.game.mission.runSeed
   world := input.canon.world
   playerCounters := input.canon.playerCounters
 }
@@ -101,7 +141,7 @@ def activeOf (input : SemanticInput) : ActiveRunState := {
 What a client asserts about its instance is now exactly two values it legitimately
 holds — the slot it played in, and the commitment its opening showed it. -/
 def claimOf (input : SemanticInput) : RunClaim := {
-  config := .signal input.config.mission input.config.reward
+  config := input.game.configClaim
   federationId := input.request.federationId
   contentRoot := input.request.contentRoot
   activationDigest := input.request.activationDigest
@@ -114,33 +154,30 @@ def claimOf (input : SemanticInput) : RunClaim := {
   claimedPreviousPlayerCounter := input.request.previousPlayerCounter
 }
 
-/-- The submitted transcript, in the order it was played.
+/-- The submitted transcript, in the order it was played, for whatever game the
+config named.
 
-⚑ **THIS WAS `oneSignalAction?`, AND IT MATCHED `[wireAction]`.** A request with two
-or more actions returned `none`, so `settle` refused it and the whole node reported
-`LeanRejected`.  `SignalTriangulation.judge` has always taken a `List Action` and
-`replay`ed it, `NetworkJudgeWire.WIRE_ACTION_LIMIT` has always been
-`SignalTriangulation.MAX_TURNS = 5`, and `parseActions` has always parsed up to five
-— but this boundary let exactly one through.  The judged game was therefore a
-ONE-ROUND game: the only transcript the network could score was a single guess, which
-is precisely what made a blind 1-in-216 claim the whole of judged play.
+⚑ **THIS WAS `signalActions?`, AND BEFORE THAT `oneSignalAction?`.**  The one-action
+version made judged Signal a single blind guess; this version's predecessor fixed that
+and was still `List CodeWire → List SignalTriangulation.Action`, which is why five of
+the six games `judgeActive` can score had no way in.  The decode now lives in
+`NetworkJudgeWire.ActionsWire.toSemantic?` and lands directly on `Judged.SubmittedRun`,
+so this boundary chooses no game: it forwards the one the config already fixed.
 
-The RULE is untouched.  `replay` is fail-stop, `step` refuses once `solved`, and
-`terminalOutput` refuses an unsolved final state, so a transcript still settles only
-if its LAST round locks all three bands and nothing follows it.  What changed is that
-the boundary now hands `judge` the list it was always written to score.
+The empty-transcript refusal moved with it, and moved UP: it is stated once at the
+wire for every game rather than once here for Signal. -/
+def submittedRun? (request : SignalRequestWire) : Option SubmittedRun :=
+  request.actions.toSemantic?
 
-An EMPTY transcript is refused here rather than one line later: `replay` on `[]`
-returns `initialState`, whose `solved` is false, so `judge` would refuse it anyway —
-but a run with no rounds is not a game and saying so at the boundary is where the
-reason is legible. -/
-def signalActions? (request : SignalRequestWire) :
-    Option (List SignalTriangulation.Action) :=
-  match request.actions with
-  | [] => none
-  | actions =>
-      actions.mapM (fun wireAction =>
-        (SignalTriangulation.Action.submit ·) <$> wireAction.toSemantic?)
+/-- ⚠ And the run it forwards is the game the config named — so the
+`judgeAdmitted` catch-all, which returns `none` for a config/actions mismatch and is
+therefore indistinguishable from a losing run, is unreachable from this boundary. -/
+theorem submitted_run_is_the_configs_game {request : SignalRequestWire} {run : SubmittedRun}
+    (h : submittedRun? request = some run) :
+    NetworkJudgeWire.submittedRunTag? run = some request.actions.game :=
+  NetworkJudgeWire.ActionsWire.toSemantic_preserves_tag h
+
+#assert_axioms submitted_run_is_the_configs_game
 
 /-! ## Proof-carrying settlement -/
 
@@ -168,12 +205,11 @@ def Settlement.successorWorld (settlement : Settlement) : WorldState :=
 no accepted no-op and no partial Canon write. -/
 def settle (input : SemanticInput) : Option Settlement :=
   if preStateChecks input then
-    match signalActions? input.request with
+    match submittedRun? input.request with
     | none => none
-    | some actions =>
+    | some submitted =>
         let active := activeOf input
         let claim := claimOf input
-        let submitted : SubmittedRun := .signal actions
         match hj : judgeActive active input.carrier claim submitted with
         | none => none
         | some judgedRun =>
@@ -404,8 +440,8 @@ def check_fixture_wrong_player_refused : Bool :=
 
 def wrongConfigInputWire : SignalInputWire := {
   fixtureInputWire with
-  config := { fixtureInputWire.config with
-    reward := { fixtureInputWire.config.reward with score := 499 } }
+  config := .signal { SignalConfigWire.ofSemantic fixtureConfig with
+    reward := { ContributionWire.ofSemantic Emit.signalReward with score := 499 } }
 }
 
 /-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
@@ -434,7 +470,7 @@ def check_fixture_stale_counter_refused : Bool :=
 def wrongActionInputWire : SignalInputWire := {
   fixtureInputWire with
   request := { fixtureInputWire.request with
-    actions := [{ low := 0, mid := 0, high := 0 }] }
+    actions := .signal [{ low := 0, mid := 0, high := 0 }] }
 }
 
 /-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
@@ -444,7 +480,8 @@ def check_fixture_wrong_action_refused : Bool :=
 def multipleActionsInputWire : SignalInputWire := {
   fixtureInputWire with
   request := { fixtureInputWire.request with
-    actions := [CodeWire.ofSemantic fixtureConfig.target, CodeWire.ofSemantic fixtureConfig.target] }
+    actions := .signal
+      [CodeWire.ofSemantic fixtureConfig.target, CodeWire.ofSemantic fixtureConfig.target] }
 }
 
 /-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
@@ -527,10 +564,82 @@ def unboundSeedConfig : SignalTriangulation.Config :=
 
 def unboundSeedInputWire : SignalInputWire := {
   fixtureInputWire with
-  config := SignalConfigWire.ofSemantic unboundSeedConfig
+  config := .signal (SignalConfigWire.ofSemantic unboundSeedConfig)
   request := { fixtureInputWire.request with
-    actions := [CodeWire.ofSemantic unboundSeedConfig.target] }
+    actions := .signal [CodeWire.ofSemantic unboundSeedConfig.target] }
 }
+
+/-! ### ⚑ THE SECOND GAME, THROUGH THIS EXACT EXPORT
+
+`processSignalWire` is the body of `@[export dregg_poa_signal_judge]`.  These checks run
+a Vent Crawl transcript through IT — not through `VentCrawl.judge` directly, not through
+a test harness — so what they pin is that the deployed boundary settles a second game.
+
+⚠ Each hostile check asserts its MUTATION IS PRESENT before it reads the verdict.  A
+`.isNone` alone would stay green if the mutation stopped applying, which is the shape
+that killed a falsifier in this repo already. -/
+
+/-- POLE ONE — a legitimate Vent Crawl run SETTLES. -/
+def check_vent_fixture_settles : Bool :=
+  (processSignalWire ventFixtureInputWire.toJson).isSome
+
+/-- ⚑ And it settles into the SAME canonical output wire the Signal arm produces —
+so the successor a node persists is one shape for every game. -/
+def check_vent_output_is_canonical : Bool :=
+  match processSignal ventFixtureInputWire.toJson with
+  | none => false
+  | some output => (decodeSignalOutput output.toJson == some output)
+
+/-- ⚑ The two games are NOT settling the same run: their inputs differ and so do their
+receipts.  Without this, a vent fixture that silently fell through to the Signal arm
+would look exactly like a success. -/
+def check_vent_and_signal_are_different_runs : Bool :=
+  decide (ventFixtureInputWire.toJson ≠ fixtureInputWire.toJson) &&
+  (match processSignal ventFixtureInputWire.toJson, processSignal fixtureInputWire.toJson with
+   | some vent, some signal => decide (vent.receipt ≠ signal.receipt)
+   | _, _ => false)
+
+/-- POLE TWO(a) — a FORGED transcript: banking twice, which the kernel's own
+`openB` refuses from a terminal state. -/
+def check_vent_forged_continuation_refused : Bool :=
+  decide (ventForgedContinuationInputWire.toJson ≠ ventFixtureInputWire.toJson) &&
+  (processSignalWire ventForgedContinuationInputWire.toJson).isNone
+
+/-- POLE TWO(b) — a WRONG-INSTANCE claim: a slot commitment no curator published. -/
+def check_vent_wrong_instance_refused : Bool :=
+  decide (ventWrongInstanceInputWire.toJson ≠ ventFixtureInputWire.toJson) &&
+  (processSignalWire ventWrongInstanceInputWire.toJson).isNone
+
+/-- POLE TWO(c) — a REPLAY: the same run against an already-advanced counter. -/
+def check_vent_replayed_counter_refused : Bool :=
+  decide (ventReplayedCounterInputWire.toJson ≠ ventFixtureInputWire.toJson) &&
+  (processSignalWire ventReplayedCounterInputWire.toJson).isNone
+
+/-- POLE TWO(d) — a request naming a mission its own config does not carry. -/
+def check_vent_wrong_mission_refused : Bool :=
+  decide (ventWrongMissionInputWire.toJson ≠ ventFixtureInputWire.toJson) &&
+  (processSignalWire ventWrongMissionInputWire.toJson).isNone
+
+/-- ⚑ The tag is LOAD-BEARING, not decorative: retagging the accepted vent bytes as
+`signal-triangulation` — changing nothing else — must refuse, or the tag is a comment.
+⚠ The mutation is asserted present first; `replacen` of a string that has left the
+fixture is exactly how an adversary stops adversing. -/
+def ventRetaggedBytes : String :=
+  ventFixtureInputWire.toJson.replace
+    "{\"game\":\"vent-crawl\"" "{\"game\":\"signal-triangulation\""
+
+def check_vent_retagged_as_signal_refused : Bool :=
+  decide (ventRetaggedBytes ≠ ventFixtureInputWire.toJson) &&
+  (processSignalWire ventRetaggedBytes).isNone
+
+/-- And the converse: the Signal fixture retagged as Vent Crawl refuses too. -/
+def signalRetaggedBytes : String :=
+  fixtureInputWire.toJson.replace
+    "{\"game\":\"signal-triangulation\"" "{\"game\":\"vent-crawl\""
+
+def check_signal_retagged_as_vent_refused : Bool :=
+  decide (signalRetaggedBytes ≠ fixtureInputWire.toJson) &&
+  (processSignalWire signalRetaggedBytes).isNone
 
 /-- (Pinned `= true` in `NetworkJudgeFixtures`.) -/
 def check_fixture_unbound_run_seed_refused : Bool :=

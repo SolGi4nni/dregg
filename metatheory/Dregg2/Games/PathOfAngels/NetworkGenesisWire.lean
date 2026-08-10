@@ -125,7 +125,7 @@ deriving DecidableEq
 structure GenesisInputWire where
   deployment : DeploymentIdentityWire
   content : ContentIdentityWire
-  config : SignalConfigWire
+  config : GameConfigWire
   initial : InitialStateWire
 deriving DecidableEq
 
@@ -271,13 +271,13 @@ private def parseCode (j : Json) : Except String CodeWire := do
     high := ← objectNat j "high" 5
   }
 
-private def parseConfig (j : Json) : Except String SignalConfigWire := do
-  exactKeys j ["target", "mission", "reward"]
-  pure {
-    target := ← parseCode (← j.getObjVal? "target")
-    mission := ← parseMission (← j.getObjVal? "mission")
-    reward := ← parseContribution (← j.getObjVal? "reward")
-  }
+/-- ⚑ DELEGATED 2026-08-09.  This module used to carry its OWN copy of the config
+parser — a second description of what an active configuration is, in the one place
+whose whole job is to install one.  It now calls the judge's parser, so a genesis blob
+is accepted here exactly when `decodeGameConfig` would accept it later, and the
+game tag reaches genesis for free. -/
+private def parseConfig (j : Json) : Except String GameConfigWire :=
+  NetworkJudgeWire.parseGameConfig j
 
 private def parseWorld (j : Json) : Except String WorldStateWire := do
   exactKeys j ["intel", "supplies", "cohesion", "influence", "score",

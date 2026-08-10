@@ -1,7 +1,7 @@
 /-
-# Path of Angels — strict Signal network wire
+# Path of Angels — strict judged-RUN network wire
 
-This is the deliberately small text boundary used by the internal Signal
+This is the deliberately small text boundary used by the internal settlement
 evaluator.  The request is untrusted, but `config`/`canon`/`carrier` become
 authoritative only when the node adapter derives them from persisted activated
 state and the finalized SignedTurn; this codec does not authenticate their origin.
@@ -11,8 +11,42 @@ unknown fields, alternate number spellings, uppercase digests, and trailing byte
 all refuse.
 
 Syntax parsing and semantic construction are separate.  The wire structures are
-proof-erased and bounded; `SignalConfigWire.toSemantic?` and
+proof-erased and bounded; `GameConfigWire.toSemantic?` and
 `WorldStateWire.toSemantic?` rebuild the proof-carrying game types.
+
+## ⚑ FLAG DAY 2026-08-09 — `POA-SIGNAL-IN-1` is GONE; this wire is `POA-RUN-IN-1`
+
+`Judged.judgeActive` has been generic over six games since it was written
+(`ActiveGame` = signal | relay | salvage | blackBox | deckDescent | ventCrawl) and
+`Judged.admissionChecks` names no game at all.  The ONLY thing that made the
+network settle exactly one of them was this file: `config` was a
+`SignalConfigWire` and `request.actions` was a `List CodeWire`, so a Vent Crawl
+transcript had no way to reach a judge that was already willing to score it.
+
+What changed is the two game-specific fields and nothing else:
+
+* `config` is a `GameConfigWire` — a sum whose FIRST KEY is `"game"`, so the blob
+  is self-describing wherever it is stored on its own (persistence keeps the
+  active config as its own sealed bytes; a tag carried only by the enclosing
+  request would leave that blob ambiguous);
+* `request.actions` is an `ActionsWire`, and `parseRequest` takes the tag READ OFF
+  THE CONFIG rather than a second tag of its own.  There is no second tag to
+  disagree with the first — a two-tag wire would need a cross-check, and a
+  cross-check is a thing that can be forgotten.
+
+⚠ **What re-emits.**  Every persisted `poa_signal_heads_v1` config blob, every
+`poa_signal_transitions_v1` input/output blob, and the checked-in judge fixture
+`dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json` are the OLD shape and
+**refuse to decode** — they name a format string that no longer exists.  A node
+carrying them must be re-genesised.  That is the intended outcome: the old bytes
+do not get reinterpreted under the new schema, they fail the format compare in
+`parseInputJson` and return the `""` sentinel.
+
+⚠ **What did NOT change.**  `MissionWire`, `WorldStateWire`, `CanonStateWire`,
+`FinalizedCarrierWire`, `SlotStateWire`, the whole receipt/output wire, and every
+identity/counter field of the request are byte-identical and shared by every game.
+The per-game cost is exactly one config variant, one action variant, and one arm
+in `NetworkJudge.settle` — which is the number that prices the remaining games.
 -/
 import Lean.Data.Json
 import Mathlib.Data.Finset.Sort
@@ -27,8 +61,51 @@ open Dregg2.Games.PathOfAngels
 
 set_option autoImplicit false
 
-abbrev INPUT_FORMAT : String := "POA-SIGNAL-IN-1"
-abbrev OUTPUT_FORMAT : String := "POA-SIGNAL-OUT-1"
+abbrev INPUT_FORMAT : String := "POA-RUN-IN-1"
+abbrev OUTPUT_FORMAT : String := "POA-RUN-OUT-1"
+
+/-! ## The game tag
+
+⚠ **These strings are the descriptor's `game_id`, not a spelling invented here.**
+The emitted POAG1 bundle publishes `games/signal-triangulation.json` and
+`games/vent-crawl.json`, and `poa-curator`'s `validate_game_descriptor_mission_match`
+already checks each descriptor's `game_id` against the catalog.  A third spelling on
+the judge wire would be a third thing to keep in agreement, and the failure would be
+silent: a node tagging a run `"vent"` would simply never reach the vent arm and would
+report a format refusal instead of a wrong-game one. -/
+inductive GameTag where
+  | signal
+  | ventCrawl
+deriving DecidableEq, Repr
+
+def GameTag.tag : GameTag → String
+  | .signal => "signal-triangulation"
+  | .ventCrawl => "vent-crawl"
+
+def GameTag.ofTag? : String → Option GameTag
+  | "signal-triangulation" => some .signal
+  | "vent-crawl" => some .ventCrawl
+  | _ => none
+
+def allGameTags : List GameTag := [.signal, .ventCrawl]
+
+theorem allGameTags_complete (game : GameTag) : game ∈ allGameTags := by
+  cases game <;> simp [allGameTags]
+
+/-- The two directions agree, on every tag — so a tag that encodes cannot fail to
+decode, and a decoded tag re-encodes to the bytes it came from. -/
+theorem game_tag_roundtrips : allGameTags.all (fun g => GameTag.ofTag? g.tag == some g) = true := by
+  decide
+
+/-- And no two games share a spelling. ⚠ Stated over the tag LIST rather than as a
+pairwise inequality, so enrolling a third game that copy-pasted a neighbour's tag reds
+this theorem instead of silently routing to the neighbour. -/
+theorem game_tags_are_distinct :
+    (allGameTags.map GameTag.tag).eraseDups = allGameTags.map GameTag.tag := by decide
+
+#assert_axioms allGameTags_complete
+#assert_axioms game_tag_roundtrips
+#assert_axioms game_tags_are_distinct
 
 /-- Every integer admitted by this transport fits an unsigned 64-bit host word. -/
 abbrev WIRE_NAT_LIMIT : Nat := 2 ^ 64 - 1
@@ -88,7 +165,44 @@ abbrev WIRE_RECEIPT_LIMIT : Nat := 16384
 /-- Sparse players are likewise bounded per content epoch; reaching this requires
 epoch rollover or a committed sparse-map root before admitting another player. -/
 abbrev WIRE_COUNTER_LIMIT : Nat := 16384
-abbrev WIRE_ACTION_LIMIT : Nat := SignalTriangulation.MAX_TURNS
+/-! ### ⚑ The transcript bound is PER GAME, and it is the game's own clock
+
+`WIRE_ACTION_LIMIT` was `SignalTriangulation.MAX_TURNS` and could not be anything
+else while one game settled.  It is now a function of the tag, and each arm is the
+kernel's OWN bound rather than a number restated here:
+
+* Signal's is `MAX_TURNS = 5` — the burst budget of a deduction run.
+* Vent Crawl's is `VentCrawl.ACTION_LIMIT = DEPTH_CAP = 6` — and it is not a budget
+  at all, it is the shaft.  `VentCrawl.replayB_length_le_fuel` proves no accepted
+  transcript can be longer, because every accepted action either goes one rung
+  deeper or ends the run.  Bounding it here at 5 would refuse the ONE transcript
+  that reaches the bottom rung, which is the transcript the whole game is about;
+  bounding it at some larger number would admit prefixes `replay` refuses one step
+  later, after the player paid the carrying turn to find out.
+
+A wire limit that is not the kernel's own limit is a second rule. -/
+def GameTag.actionLimit : GameTag → Nat
+  | .signal => SignalTriangulation.MAX_TURNS
+  | .ventCrawl => VentCrawl.ACTION_LIMIT
+
+/-- The widest transcript ANY game admits — the outer array fuse, applied before the
+per-game bound so a hostile array cannot be walked at length while its tag is read. -/
+abbrev WIRE_ACTION_LIMIT : Nat :=
+  max GameTag.signal.actionLimit GameTag.ventCrawl.actionLimit
+
+theorem wire_action_limit_dominates (game : GameTag) :
+    game.actionLimit ≤ WIRE_ACTION_LIMIT := by
+  cases game <;> decide
+
+/-- ⚠ And the domination is not slack that hides a refusal: each game's own bound is
+still the one `parseActions` applies, so Signal does NOT gain a sixth round from Vent
+Crawl's deeper shaft. -/
+theorem the_per_game_bounds_are_distinct :
+    GameTag.signal.actionLimit ≠ GameTag.ventCrawl.actionLimit := by decide
+
+#assert_axioms wire_action_limit_dominates
+#assert_axioms the_per_game_bounds_are_distinct
+
 /-- Refuse oversized envelopes before invoking the JSON parser.  Collection
 bounds remain the semantic limits; this is the outer allocation/CPU fuse. -/
 abbrev WIRE_BYTE_LIMIT : Nat := 16 * 1024 * 1024
@@ -180,6 +294,110 @@ structure SignalConfigWire where
   reward : ContributionWire
 deriving DecidableEq
 
+/-- Vent Crawl's config on the wire.
+
+⚠ **Three fields Signal has are ABSENT, and each absence is the game.**
+
+* No `target` — Vent Crawl's per-player hidden thing is the FLOOD TAPE, and it is
+  not carried at all: `VentCrawl.Config.floods_eq` forces it to be
+  `floodTapeFromRunSeed mission.runSeed`, so `toSemantic?` DERIVES it and there is
+  no field a wire could name a different tape in.
+* No `reward` — what a Vent Crawl run pays is `VentCrawl.terminalOutput` of the rung
+  it banked from, not a constant.  `Judged.GameConfigClaim.ventCrawl` carries no
+  reward for the same reason.
+* No vein.  It is a per-SLOT draw the judge derives from the committed slot secret
+  in `Judged.ventCrawlContext`; a wire field for it would be a field a host could
+  set, and the host is the party that must not know it before the run is judged. -/
+structure VentConfigWire where
+  mission : MissionWire
+  /-- What the bottom rung awards.  Checked against the mission's own allowlist in
+  `toSemantic?` — `VentCrawl.Config.relic_declared` is a proof field, so a wire
+  naming an undeclared relic cannot produce a `Config` at all. -/
+  deepRelic : Nat
+deriving DecidableEq
+
+/-- The game-tagged active configuration.
+
+⚑ The `"game"` key is the FIRST key of the encoding, so this blob is self-describing
+wherever it is stored alone — and persistence does store it alone
+(`poa_signal_heads_v1` keeps the active config as its own sealed bytes). -/
+inductive GameConfigWire where
+  | signal (config : SignalConfigWire)
+  | ventCrawl (config : VentConfigWire)
+deriving DecidableEq
+
+def GameConfigWire.game : GameConfigWire → GameTag
+  | .signal _ => .signal
+  | .ventCrawl _ => .ventCrawl
+
+/-- The mission every game carries, so the shared cross-object checks in
+`NetworkJudge.preStateChecks` do not need a match. -/
+def GameConfigWire.mission : GameConfigWire → MissionWire
+  | .signal c => c.mission
+  | .ventCrawl c => c.mission
+
+/-- The constant payout a config declares, where it declares one.
+
+⚠ **`none` for Vent Crawl is not a gap — it is the game.**  What a crawl pays is
+`VentCrawl.terminalOutput` of the rung it banked from, and `Judged.GameConfigClaim`
+carries no reward for that arm either.  A public view that rendered a zero, or the
+budget ceiling, or the deepest possible haul would be publishing a payout no run
+actually receives; refusing to render is the honest answer until such a view knows how
+to say "it depends on how deep you went". -/
+def GameConfigWire.reward? : GameConfigWire → Option ContributionWire
+  | .signal c => some c.reward
+  | .ventCrawl _ => none
+
+/-- One Vent Crawl move.  ⚠ The tags are `VentCrawl.Action.tag`'s own strings, which
+the emitted descriptor's transition table already publishes — the client renders the
+same two words the judge scores. -/
+inductive VentMoveWire where
+  | crawl
+  | bank
+deriving DecidableEq, Repr
+
+def VentMoveWire.tag : VentMoveWire → String
+  | .crawl => VentCrawl.Action.tag .crawl
+  | .bank => VentCrawl.Action.tag .bank
+
+def VentMoveWire.ofTag? : String → Option VentMoveWire
+  | "crawl" => some .crawl
+  | "bank" => some .bank
+  | _ => none
+
+def VentMoveWire.toSemantic : VentMoveWire → VentCrawl.Action
+  | .crawl => .crawl
+  | .bank => .bank
+
+def allVentMoveWires : List VentMoveWire := [.crawl, .bank]
+
+/-- ⚑ **The wire's move alphabet IS the kernel's.**  Not "contains" and not "maps
+into": the two lists are equal after mapping, so a verb added to `VentCrawl.Action`
+that nobody taught this wire reds here rather than becoming an unreachable move. -/
+theorem vent_move_wire_is_the_kernel_alphabet :
+    allVentMoveWires.map VentMoveWire.toSemantic = VentCrawl.allActions := by decide
+
+theorem vent_move_tags_roundtrip :
+    allVentMoveWires.all (fun m => VentMoveWire.ofTag? m.tag == some m) = true := by decide
+
+#assert_axioms vent_move_wire_is_the_kernel_alphabet
+#assert_axioms vent_move_tags_roundtrip
+
+/-- The game-tagged transcript.  Its tag is never parsed from the request: it is read
+off the config, so there is no second tag to disagree with the first. -/
+inductive ActionsWire where
+  | signal (codes : List CodeWire)
+  | ventCrawl (moves : List VentMoveWire)
+deriving DecidableEq
+
+def ActionsWire.game : ActionsWire → GameTag
+  | .signal _ => .signal
+  | .ventCrawl _ => .ventCrawl
+
+def ActionsWire.length : ActionsWire → Nat
+  | .signal codes => codes.length
+  | .ventCrawl moves => moves.length
+
 structure WorldStateWire where
   intel : Nat
   supplies : Nat
@@ -261,7 +479,7 @@ structure SignalRequestWire where
   previousPlayerCounter : Nat
   expectedWorldSequence : Nat
   expectedCanonRevision : Nat
-  actions : List CodeWire
+  actions : ActionsWire
 deriving DecidableEq
 
 /-- Facts authenticated by the finalized SignedTurn path.  This is intentionally
@@ -279,7 +497,7 @@ structure FinalizedCarrierWire where
 deriving DecidableEq
 
 structure SignalInputWire where
-  config : SignalConfigWire
+  config : GameConfigWire
   world : WorldStateWire
   canon : CanonStateWire
   carrier : FinalizedCarrierWire
@@ -388,10 +606,29 @@ def CodeWire.toJson (c : CodeWire) : String :=
     ",\"mid\":" ++ toString c.mid ++
     ",\"high\":" ++ toString c.high ++ "}"
 
-def SignalConfigWire.toJson (c : SignalConfigWire) : String :=
-  "{\"target\":" ++ c.target.toJson ++
+def SignalConfigWire.bodyJson (c : SignalConfigWire) : String :=
+  ",\"target\":" ++ c.target.toJson ++
     ",\"mission\":" ++ c.mission.toJson ++
-    ",\"reward\":" ++ c.reward.toJson ++ "}"
+    ",\"reward\":" ++ c.reward.toJson
+
+def VentConfigWire.bodyJson (c : VentConfigWire) : String :=
+  ",\"mission\":" ++ c.mission.toJson ++
+    ",\"deep_relic\":" ++ toString c.deepRelic
+
+/-- ⚠ `"game"` is emitted FIRST and by this function alone, so no arm can forget it
+and no arm can spell it differently: the per-game encoders above render only their own
+remaining keys, each already comma-prefixed. -/
+def GameConfigWire.toJson (c : GameConfigWire) : String :=
+  "{\"game\":" ++ jsonString c.game.tag ++
+    (match c with
+     | .signal config => config.bodyJson
+     | .ventCrawl config => config.bodyJson) ++ "}"
+
+def VentMoveWire.toJson (m : VentMoveWire) : String := jsonString m.tag
+
+def ActionsWire.toJson : ActionsWire → String
+  | .signal codes => jsonArray (codes.map CodeWire.toJson)
+  | .ventCrawl moves => jsonArray (moves.map VentMoveWire.toJson)
 
 def WorldStateWire.toJson (w : WorldStateWire) : String :=
   "{\"intel\":" ++ toString w.intel ++
@@ -447,7 +684,7 @@ def SignalRequestWire.toJson (r : SignalRequestWire) : String :=
     ",\"previous_player_counter\":" ++ toString r.previousPlayerCounter ++
     ",\"expected_world_sequence\":" ++ toString r.expectedWorldSequence ++
     ",\"expected_canon_revision\":" ++ toString r.expectedCanonRevision ++
-    ",\"actions\":" ++ jsonArray (r.actions.map CodeWire.toJson) ++ "}"
+    ",\"actions\":" ++ r.actions.toJson ++ "}"
 
 def SlotStateWire.toJson (s : SlotStateWire) : String :=
   "{\"slot\":" ++ toString s.slot ++
@@ -555,13 +792,31 @@ private def parseCode (j : Json) : Except String CodeWire := do
     high := ← objectNat j "high" 5
   }
 
-private def parseConfig (j : Json) : Except String SignalConfigWire := do
-  exactKeys j ["target", "mission", "reward"]
+private def parseSignalConfig (j : Json) : Except String SignalConfigWire := do
+  exactKeys j ["game", "target", "mission", "reward"]
   pure {
     target := ← parseCode (← j.getObjVal? "target")
     mission := ← parseMission (← j.getObjVal? "mission")
     reward := ← parseContribution (← j.getObjVal? "reward")
   }
+
+private def parseVentConfig (j : Json) : Except String VentConfigWire := do
+  exactKeys j ["game", "mission", "deep_relic"]
+  pure {
+    mission := ← parseMission (← j.getObjVal? "mission")
+    deepRelic := ← objectNat j "deep_relic" WIRE_ID_LIMIT
+  }
+
+/-- ⚠ The tag is read BEFORE any other key, and an unknown one throws rather than
+falling through to a default arm.  `exactKeys` inside each arm then refuses a blob
+that carries the RIGHT tag and the WRONG shape — a Vent Crawl config with a `target`
+is not a Signal config wearing a vent tag, it is a refusal. -/
+def parseGameConfig (j : Json) : Except String GameConfigWire := do
+  let tag ← j.getObjValAs? String "game"
+  match GameTag.ofTag? tag with
+  | none => throw "unknown Path of Angels game tag"
+  | some .signal => pure (.signal (← parseSignalConfig j))
+  | some .ventCrawl => pure (.ventCrawl (← parseVentConfig j))
 
 private def parseWorld (j : Json) : Except String WorldStateWire := do
   exactKeys j ["intel", "supplies", "cohesion", "influence", "score",
@@ -628,10 +883,24 @@ private def parseCanon (j : Json) : Except String CanonStateWire := do
     curatorCounter := ← objectNat j "curator_counter"
   }
 
-private def parseActions (j : Json) : Except String (List CodeWire) := do
+private def parseVentMove (j : Json) : Except String VentMoveWire := do
+  match VentMoveWire.ofTag? (← j.getStr?) with
+  | none => throw "unknown Vent Crawl move"
+  | some move => pure move
+
+/-- ⚠ Two bounds, in this order and for two different reasons.  `WIRE_ACTION_LIMIT`
+is the outer allocation fuse and is checked against the RAW array before a single
+element is decoded; `game.actionLimit` is the game's OWN clock and is what actually
+refuses a transcript longer than its kernel can score.  Collapsing them into the
+larger one would let Signal play six rounds; collapsing them into the smaller one
+would refuse the Vent Crawl run that reaches the bottom rung. -/
+private def parseActions (game : GameTag) (j : Json) : Except String ActionsWire := do
   let values := (← j.getArr?).toList
-  if values.length > WIRE_ACTION_LIMIT then throw "Signal transcript exceeds turn limit"
-  values.mapM parseCode
+  if values.length > WIRE_ACTION_LIMIT then throw "transcript exceeds the widest game bound"
+  if values.length > game.actionLimit then throw "transcript exceeds this game's action limit"
+  match game with
+  | .signal => pure (.signal (← values.mapM parseCode))
+  | .ventCrawl => pure (.ventCrawl (← values.mapM parseVentMove))
 
 private def parseSlotState (j : Json) : Except String SlotStateWire := do
   exactKeys j ["slot", "secret", "commitment"]
@@ -641,7 +910,7 @@ private def parseSlotState (j : Json) : Except String SlotStateWire := do
     commitment := ← objectDigest j "commitment"
   }
 
-private def parseRequest (j : Json) : Except String SignalRequestWire := do
+private def parseRequest (game : GameTag) (j : Json) : Except String SignalRequestWire := do
   exactKeys j ["mission_id", "federation_id", "content_root", "activation_digest",
     "content_session", "content_epoch", "slot", "slot_commitment", "actor_root", "player_key",
     "previous_player_counter", "expected_world_sequence", "expected_canon_revision", "actions"]
@@ -659,7 +928,7 @@ private def parseRequest (j : Json) : Except String SignalRequestWire := do
     previousPlayerCounter := ← objectNat j "previous_player_counter"
     expectedWorldSequence := ← objectNat j "expected_world_sequence"
     expectedCanonRevision := ← objectNat j "expected_canon_revision"
-    actions := ← parseActions (← j.getObjVal? "actions")
+    actions := ← parseActions game (← j.getObjVal? "actions")
   }
 
 private def parseCarrier (j : Json) : Except String FinalizedCarrierWire := do
@@ -679,14 +948,18 @@ private def parseCarrier (j : Json) : Except String FinalizedCarrierWire := do
 private def parseInputJson (j : Json) : Except String SignalInputWire := do
   exactKeys j ["format", "config", "world", "canon", "carrier", "slot_state", "request"]
   let format ← j.getObjValAs? String "format"
-  if format != INPUT_FORMAT then throw "wrong Signal input format"
+  if format != INPUT_FORMAT then throw "wrong judged-run input format"
+  -- ⚠ The config is parsed FIRST because its tag is what selects the request's
+  -- transcript decoder.  There is exactly one tag on this wire and this is where it
+  -- is read; the request never states a game of its own.
+  let config ← parseGameConfig (← j.getObjVal? "config")
   pure {
-    config := ← parseConfig (← j.getObjVal? "config")
+    config
     world := ← parseWorld (← j.getObjVal? "world")
     canon := ← parseCanon (← j.getObjVal? "canon")
     carrier := ← parseCarrier (← j.getObjVal? "carrier")
     slotState := ← parseSlotState (← j.getObjVal? "slot_state")
-    request := ← parseRequest (← j.getObjVal? "request")
+    request := ← parseRequest config.game (← j.getObjVal? "request")
   }
 
 /-- A generic canonicality seal.  The semantic parser is run first, then the exact
@@ -726,13 +999,16 @@ def decodeCanonStateWithLimit (byteLimit : Nat) (bytes : String) : Option CanonS
 def decodeCanonState (bytes : String) : Option CanonStateWire :=
   decodeCanonStateWithLimit WIRE_BYTE_LIMIT bytes
 
-def decodeSignalConfigWithLimit (byteLimit : Nat) (bytes : String) : Option SignalConfigWire :=
+/-- ⚑ RENAMED from `decodeSignalConfigWithLimit` and RETYPED: the standalone active
+config blob is a `GameConfigWire` now, so the persisted head of a Vent Crawl authority
+decodes under the identical canonical seal instead of needing a second entry point. -/
+def decodeGameConfigWithLimit (byteLimit : Nat) (bytes : String) : Option GameConfigWire :=
   if bytes.length ≤ byteLimit then
-    canonicalDecode parseConfig SignalConfigWire.toJson bytes
+    canonicalDecode parseGameConfig GameConfigWire.toJson bytes
   else none
 
-def decodeSignalConfig (bytes : String) : Option SignalConfigWire :=
-  decodeSignalConfigWithLimit WIRE_BYTE_LIMIT bytes
+def decodeGameConfig (bytes : String) : Option GameConfigWire :=
+  decodeGameConfigWithLimit WIRE_BYTE_LIMIT bytes
 
 theorem canonicalDecode_reencodes {T : Type} (parse : Json → Except String T)
     (encode : T → String) {bytes : String} {value : T}
@@ -764,11 +1040,11 @@ theorem decodeCanonState_reencodes {bytes : String} {canon : CanonStateWire}
   · exact canonicalDecode_reencodes parseCanon CanonStateWire.toJson accepted
   · contradiction
 
-theorem decodeSignalConfig_reencodes {bytes : String} {config : SignalConfigWire}
-    (accepted : decodeSignalConfig bytes = some config) : config.toJson = bytes := by
-  simp only [decodeSignalConfig, decodeSignalConfigWithLimit] at accepted
+theorem decodeGameConfig_reencodes {bytes : String} {config : GameConfigWire}
+    (accepted : decodeGameConfig bytes = some config) : config.toJson = bytes := by
+  simp only [decodeGameConfig, decodeGameConfigWithLimit] at accepted
   split at accepted
-  · exact canonicalDecode_reencodes parseConfig SignalConfigWire.toJson accepted
+  · exact canonicalDecode_reencodes parseGameConfig GameConfigWire.toJson accepted
   · contradiction
 
 /-- The strict decoder is injective on accepted byte strings, independent of any
@@ -861,6 +1137,123 @@ def SignalConfigWire.toSemantic? (c : SignalConfigWire) : Option SignalTriangula
       some { target, mission, reward, reward_accepted := rewardAccepted, target_eq := targetEq }
     else none
   else none
+
+/-- ⚑ **The tape is DERIVED here, never carried.**  `VentCrawl.Config.floods_eq` is a
+proof field, so the only tape this function can install is `floodTapeFromRunSeed` of
+the very run seed the mission carries — and the run seed is the one
+`Judged.admissionChecks` separately requires to be `HiddenInstance.runSeedFor` of the
+committed slot secret.  A host cannot re-roll a crawler's water after reading their
+transcript, and the wire has no field in which it could try.
+
+The one thing this DOES check is the relic: `relic_declared` is the other proof field,
+so a wire naming a deep relic the mission never allowlisted yields `none` rather than
+a run that mints it. -/
+def VentConfigWire.toSemantic? (c : VentConfigWire) : Option VentCrawl.Config := do
+  let mission ← c.mission.toSemantic?
+  let relic : RelicId := ⟨c.deepRelic⟩
+  if relicDeclared : relic ∈ mission.allowedRelics then
+    some {
+      mission
+      floods := VentCrawl.floodTapeFromRunSeed mission.runSeed
+      deepRelic := relic
+      relic_declared := relicDeclared
+      floods_eq := rfl
+    }
+  else none
+
+/-- The wire decodes straight to `Judged.ActiveGame` — the exact type the judge
+consumes — rather than to a private sum this module would then have to translate.
+That is what keeps the arm count honest: enrolling a game is one constructor here and
+one in `Judged`, with no third representation in between to fall out of step. -/
+def GameConfigWire.toSemantic? : GameConfigWire → Option ActiveGame
+  | .signal c =>
+      match c.toSemantic? with
+      | some config => some (.signal config)
+      | none => none
+  | .ventCrawl c =>
+      match c.toSemantic? with
+      | some config => some (.ventCrawl config)
+      | none => none
+
+/-- The tag of a semantic game, where this wire can carry one.  `none` for the four
+games `Judged` can judge and this wire cannot yet transport — a total function into
+`GameTag` would have to invent a tag for them, and inventing one is how the fifth game
+gets silently routed to the first. -/
+def activeGameTag? : ActiveGame → Option GameTag
+  | .signal _ => some .signal
+  | .ventCrawl _ => some .ventCrawl
+  | _ => none
+
+/-- The tag on the wire IS the game that comes out of it. -/
+theorem GameConfigWire.toSemantic_preserves_tag {c : GameConfigWire} {game : ActiveGame}
+    (h : c.toSemantic? = some game) : activeGameTag? game = some c.game := by
+  cases c with
+  | signal config =>
+      rw [GameConfigWire.toSemantic?] at h
+      split at h
+      · cases h; rfl
+      · contradiction
+  | ventCrawl config =>
+      rw [GameConfigWire.toSemantic?] at h
+      split at h
+      · cases h; rfl
+      · contradiction
+
+#assert_axioms GameConfigWire.toSemantic_preserves_tag
+
+/-- ⚑ **An empty transcript is refused HERE, at the wire, for every game.**
+
+It used to be refused one layer up and only for Signal (`NetworkJudge.signalActions?`
+matched `[]` and returned `none`).  Stating it once at the boundary means a game
+enrolled later cannot forget it — and it is the honest place, because "a run with no
+rounds is not a game" is a fact about runs, not about Signal.
+
+Both kernels would refuse it anyway: `SignalTriangulation.replay []` returns the
+initial state whose `solved` is false, and `VentCrawl.replayB … []` returns
+`initialState` whose outcome is `crawling`, which `terminalOutput` refuses. -/
+def ActionsWire.toSemantic? : ActionsWire → Option SubmittedRun
+  | .signal codes =>
+      if codes.isEmpty then none
+      else
+        match codes.mapM (fun c => (SignalTriangulation.Action.submit ·) <$> c.toSemantic?) with
+        | some actions => some (.signal actions)
+        | none => none
+  | .ventCrawl moves =>
+      if moves.isEmpty then none
+      else some (.ventCrawl (moves.map VentMoveWire.toSemantic))
+
+theorem empty_transcripts_are_refused :
+    ActionsWire.toSemantic? (.signal []) = none ∧
+      ActionsWire.toSemantic? (.ventCrawl []) = none := ⟨rfl, rfl⟩
+
+def submittedRunTag? : SubmittedRun → Option GameTag
+  | .signal _ => some .signal
+  | .ventCrawl _ => some .ventCrawl
+  | _ => none
+
+/-- ⚑ **The transcript cannot come out of a different game than the config went in
+as.**  `Judged.judgeAdmitted` ends in a catch-all `| _, _ => none`, so a config/actions
+mismatch would be a SILENT refusal indistinguishable from a losing run.  It cannot
+arise: `parseRequest` is handed the config's tag, so the two are one decision, and this
+theorem is that structural fact stated where a future reader will look for it. -/
+theorem ActionsWire.toSemantic_preserves_tag {a : ActionsWire} {run : SubmittedRun}
+    (h : a.toSemantic? = some run) : submittedRunTag? run = some a.game := by
+  cases a with
+  | signal codes =>
+      rw [ActionsWire.toSemantic?] at h
+      split at h
+      · contradiction
+      · split at h
+        · cases h; rfl
+        · contradiction
+  | ventCrawl moves =>
+      rw [ActionsWire.toSemantic?] at h
+      split at h
+      · contradiction
+      · cases h; rfl
+
+#assert_axioms empty_transcripts_are_refused
+#assert_axioms ActionsWire.toSemantic_preserves_tag
 
 def WorldStateWire.toSemantic? (w : WorldStateWire) : Option WorldState := do
   if w.sequence > WIRE_NAT_LIMIT then none else
@@ -971,7 +1364,11 @@ from `SlotStateWire`.  They are what lets `NetworkJudge.activeOf` build an
 re-derive the run seed from, and a judge that cannot re-derive it is a judge that
 trusts a supplied one. -/
 structure SemanticInput where
-  config : SignalTriangulation.Config
+  /-- ⚑ WAS `config : SignalTriangulation.Config`.  It is `Judged.ActiveGame` now —
+  the exact type `judgeActive` takes — so `NetworkJudge.activeOf` no longer wraps a
+  Signal config in a constructor it chose, and the game a run is judged as is the
+  game its config decoded to. -/
+  game : ActiveGame
   world : WorldState
   canon : CanonState
   carrier : FinalizedCarrier
@@ -984,14 +1381,14 @@ structure SemanticInput where
 network judge combines this with `CanonStateWire.toSemantic?` once constructing the
 complete active Canon state. -/
 def SignalInputWire.toSemantic? (input : SignalInputWire) : Option SemanticInput := do
-  let config ← input.config.toSemantic?
+  let game ← input.config.toSemantic?
   let world ← input.world.toSemantic?
   let canon ← input.canon.toSemantic?
   let carrier ← input.carrier.toSemantic?
   if input.slotState.slot > WIRE_NAT_LIMIT then none else
   if _worldExact : world = canon.world then
     some {
-      config, world, canon, carrier
+      game, world, canon, carrier
       slot := ⟨input.slotState.slot⟩
       slotSecret := ⟨input.slotState.secret⟩
       slotCommitment := input.slotState.commitment
@@ -1293,6 +1690,30 @@ def SignalConfigWire.ofSemantic (c : SignalTriangulation.Config) : SignalConfigW
   reward := ContributionWire.ofSemantic c.reward
 }
 
+def VentConfigWire.ofSemantic (c : VentCrawl.Config) : VentConfigWire := {
+  mission := MissionWire.ofSemantic c.mission
+  deepRelic := c.deepRelic.value
+}
+
+/-- ⚠ PARTIAL, and deliberately so.  The four games `Judged` can judge and this wire
+cannot yet transport return `none` here rather than being encoded as something else.
+An encoder that fell back to a Signal shape would put a Deck Descent run on the wire
+under a Signal tag, and the judge would refuse it by the `judgeAdmitted` catch-all —
+a silent wrong-game refusal.  `none` is the visible one. -/
+def GameConfigWire.ofSemantic? : ActiveGame → Option GameConfigWire
+  | .signal c => some (.signal (SignalConfigWire.ofSemantic c))
+  | .ventCrawl c => some (.ventCrawl (VentConfigWire.ofSemantic c))
+  | _ => none
+
+def VentMoveWire.ofSemantic : VentCrawl.Action → VentMoveWire
+  | .crawl => .crawl
+  | .bank => .bank
+
+theorem vent_move_ofSemantic_roundtrips (a : VentCrawl.Action) :
+    (VentMoveWire.ofSemantic a).toSemantic = a := by cases a <;> rfl
+
+#assert_axioms vent_move_ofSemantic_roundtrips
+
 def WorldStateWire.ofSemantic (w : WorldState) : WorldStateWire := {
   intel := w.intel.val
   supplies := w.supplies.val
@@ -1544,7 +1965,7 @@ def fixtureRequestWire : SignalRequestWire where
   previousPlayerCounter := 0
   expectedWorldSequence := 0
   expectedCanonRevision := 0
-  actions := [CodeWire.ofSemantic fixtureTarget]
+  actions := .signal [CodeWire.ofSemantic fixtureTarget]
 
 def fixtureSlotStateWire : SlotStateWire where
   slot := fixtureSlot.value
@@ -1552,7 +1973,7 @@ def fixtureSlotStateWire : SlotStateWire where
   commitment := fixtureSlotCommitment
 
 def fixtureInput : SemanticInput where
-  config := fixtureConfig
+  game := .signal fixtureConfig
   world := WorldState.empty
   canon := fixtureCanon
   carrier := fixtureCarrier
@@ -1562,7 +1983,7 @@ def fixtureInput : SemanticInput where
   request := fixtureRequestWire
 
 def fixtureInputWire : SignalInputWire where
-  config := SignalConfigWire.ofSemantic fixtureConfig
+  config := .signal (SignalConfigWire.ofSemantic fixtureConfig)
   world := WorldStateWire.ofSemantic WorldState.empty
   canon := CanonStateWire.ofSemantic fixtureCanon
   carrier := {
@@ -1579,6 +2000,147 @@ def fixtureInputWire : SignalInputWire where
   request := fixtureRequestWire
 
 def fixtureInputBytes : String := fixtureInputWire.toJson
+
+/-! ### ⚑ The SECOND game — a real Vent Crawl run on the very same wire
+
+Everything below reuses the Signal fixture's identities, slot, secret and curator
+UNCHANGED.  That is the point of it: the only things that differ are the mission
+(`Emit.ventMission`, id 7), the config variant, and the transcript.  If this settles,
+the generalisation is real and not a second pipeline wearing the first one's name.
+
+⚠ **The transcript is `[bank]`, and it is chosen for DETERMINISM, not for drama.**
+`VentCrawl.openB` admits `bank` from the initial state on every vein and every flood
+tape, so this fixture's verdict does not depend on the sponge output — a run that
+crawled would settle or refuse according to a tape nobody can predict at authoring
+time, and a fixture whose expected verdict is unknown is not a pin.  It is a real
+judged run all the same: the crawler climbs out at the mouth with the cache in the
+sling, which is a legal terminal state of the actual game.
+
+⚠ **And it does NOT demonstrate the interesting run.**  A `[crawl, …]` transcript is
+what makes Vent Crawl the rack's one genuinely good game, and pinning one needs the
+drawn tape measured first.  Not done here; named so nobody reads this pin as more than
+it is. -/
+def ventFixtureMissionContext : HiddenInstance.MissionContext :=
+  HiddenInstance.MissionContext.ofMission
+    (Emit.ventMission Emit.UNBOUND_RUN_SEED fixtureFederationId fixtureSourceDigest
+      fixtureContentDigest fixtureContentRoot fixtureActivationDigest)
+
+/-- Derived, exactly as Signal's is, and for the same reason: `admissionChecks` refuses
+any active state whose run seed is not `runSeedFor` of the committed slot secret. -/
+def ventFixtureRunSeed : Digest32 :=
+  HiddenInstance.runSeedFor ⟨fixtureSlotSecret, fixtureSlot, fixturePlayerKey⟩
+    ventFixtureMissionContext
+
+/-- ⚠ TOTAL — no measured instance, no `Option`.  Vent Crawl's per-player draw is the
+flood tape and `floodTapeFromRunSeed` never rejects, so unlike `fixtureConfig` this
+carries no measurement obligation at all. -/
+def ventFixtureConfig : VentCrawl.Config :=
+  Emit.ventConfigWith ventFixtureRunSeed fixtureFederationId fixtureSourceDigest
+    fixtureContentDigest fixtureContentRoot fixtureActivationDigest
+
+def ventFixtureMission : MissionSpec := ventFixtureConfig.mission
+
+/-- The seed was drawn against the context the live mission carries — the vent twin of
+`fixtureMissionContext_is_the_live_context`, and an instance of the general fact rather
+than a restatement of it. -/
+theorem ventFixtureMissionContext_is_the_live_context :
+    HiddenInstance.MissionContext.ofMission ventFixtureMission = ventFixtureMissionContext :=
+  Emit.ventMission_context_ignores_the_run_seed _ _ _ _ _ _ _
+
+/-- ⚑ The two games draw DIFFERENT seeds from the SAME secret, slot and player — the
+mission context separates them.  Without this the vent fixture could be settling
+against Signal's instance and nothing here would notice. -/
+theorem the_two_games_draw_different_run_seeds :
+    ventFixtureMissionContext ≠ fixtureMissionContext := by decide
+
+def ventFixtureCanon : CanonState :=
+  CanonState.empty fixtureFederationId fixtureContentRoot fixtureActivationDigest
+    ventFixtureMission.contentSession ventFixtureMission.epoch fixtureCuratorKey
+
+def ventFixtureCarrier : FinalizedCarrier where
+  federationId := fixtureFederationId
+  contentRoot := fixtureContentRoot
+  activationDigest := fixtureActivationDigest
+  contentSession := ventFixtureMission.contentSession
+  contentEpoch := ventFixtureMission.epoch
+  actorRoot := fixtureActorRoot
+  playerKey := fixturePlayerKey
+  currentPlayerCounter := 0
+
+def ventFixtureRequestWire : SignalRequestWire where
+  missionId := ventFixtureMission.missionId.value
+  federationId := fixtureFederationId
+  contentRoot := fixtureContentRoot
+  activationDigest := fixtureActivationDigest
+  contentSession := ventFixtureMission.contentSession
+  contentEpoch := ventFixtureMission.epoch.value
+  slot := fixtureSlot.value
+  slotCommitment := fixtureSlotCommitment
+  actorRoot := fixtureActorRoot
+  playerKey := fixturePlayerKey
+  previousPlayerCounter := 0
+  expectedWorldSequence := 0
+  expectedCanonRevision := 0
+  actions := .ventCrawl [.bank]
+
+def ventFixtureInputWire : SignalInputWire where
+  config := .ventCrawl (VentConfigWire.ofSemantic ventFixtureConfig)
+  world := WorldStateWire.ofSemantic WorldState.empty
+  canon := CanonStateWire.ofSemantic ventFixtureCanon
+  carrier := {
+    federationId := ventFixtureCarrier.federationId
+    contentRoot := ventFixtureCarrier.contentRoot
+    activationDigest := ventFixtureCarrier.activationDigest
+    contentSession := ventFixtureCarrier.contentSession
+    contentEpoch := ventFixtureCarrier.contentEpoch.value
+    actorRoot := ventFixtureCarrier.actorRoot
+    playerKey := ventFixtureCarrier.playerKey
+    currentPlayerCounter := ventFixtureCarrier.currentPlayerCounter.val
+  }
+  slotState := fixtureSlotStateWire
+  request := ventFixtureRequestWire
+
+def ventFixtureInputBytes : String := ventFixtureInputWire.toJson
+
+/-! #### The hostile Vent Crawl fixtures
+
+⚠ Each carries its own MUTATION-PRESENT check, and that is not ceremony: a hostile
+fixture whose mutation silently stopped applying is a falsifier that reports green
+forever.  The `_differs` definitions below are compared against the accepted bytes, so
+a refusal can never be credited to a mutation that is not there. -/
+
+/-- A crawler who already climbed out, banking a second time.  `VentCrawl.openB` admits
+no action from a `banked` state, so `replay` returns `none` and the judge refuses —
+and it refuses for a reason that does NOT depend on the drawn vein or tape, which is
+what makes it a pin rather than a coin flip. -/
+def ventForgedContinuationInputWire : SignalInputWire := {
+  ventFixtureInputWire with
+  request := { ventFixtureRequestWire with actions := .ventCrawl [.bank, .bank] }
+}
+
+/-- A run claiming a slot commitment no curator published — the wrong-instance claim.
+`Judged.admissionChecks` requires `claim.slotCommitment = active.slotCommitment`. -/
+def ventWrongInstanceInputWire : SignalInputWire := {
+  ventFixtureInputWire with
+  request := { ventFixtureRequestWire with
+    slotCommitment := ⟨List.replicate 32 253, by simp⟩ }
+}
+
+/-- A replayed run: the same transcript submitted against a counter that has already
+advanced.  `admissionChecks` requires the claim's previous counter to be the carrier's
+current one, and the carrier's is authenticated by the finalized turn. -/
+def ventReplayedCounterInputWire : SignalInputWire := {
+  ventFixtureInputWire with
+  request := { ventFixtureRequestWire with previousPlayerCounter := 1 }
+}
+
+/-- ⚠ Vent Crawl's config under SIGNAL's mission id.  The transport-level game tag says
+`vent-crawl`, so this is not a tag confusion — it is a request naming a mission its own
+config does not carry, refused by `preStateChecks`. -/
+def ventWrongMissionInputWire : SignalInputWire := {
+  ventFixtureInputWire with
+  request := { ventFixtureRequestWire with missionId := 1 }
+}
 
 /-- ⚑ The banked relics are TAKEN FROM THE EMITTED REWARD, not spelled here.
 
@@ -1599,7 +2161,7 @@ def fixturePostWorldWire : WorldStateWire where
   cohesion := 10
   influence := 5
   score := 500
-  discoveredRelics := fixtureInputWire.config.reward.relics
+  discoveredRelics := (ContributionWire.ofSemantic Emit.signalReward).relics
   betaArtifacts := [fixtureInputWire.config.mission.artifact]
   sequence := 1
 
@@ -1645,7 +2207,7 @@ def fixtureReceiptWire : SignalReceiptWire where
   runSeed := fixtureMission.runSeed
   preWorld := fixtureInputWire.world
   postWorld := fixturePostWorldWire
-  contribution := fixtureInputWire.config.reward
+  contribution := ContributionWire.ofSemantic Emit.signalReward
   transcriptDigest := SignalTriangulation.transcriptDigest [.submit fixtureTarget]
 
 def fixtureOutputWire : SignalOutputWire where
@@ -1680,7 +2242,8 @@ def check_fixture_input_refuses_uppercase_digest : Bool :=
 
 def oversizedActionsInput : SignalInputWire :=
   { fixtureInputWire with request := {
-      fixtureInputWire.request with actions := List.replicate (WIRE_ACTION_LIMIT + 1) { low := 0, mid := 0, high := 0 }
+      fixtureInputWire.request with
+        actions := .signal (List.replicate (GameTag.signal.actionLimit + 1) { low := 0, mid := 0, high := 0 })
     } }
 
 /-- (Pinned `= true` in `NetworkJudgeWireFixtures`.) -/
@@ -1742,7 +2305,7 @@ def check_fixture_output_refuses_trailing_bytes : Bool :=
 #assert_axioms CanonStateWire.ofSemantic_refuses_receipt_capacity
 #assert_axioms CanonStateWire.ofSemantic_refuses_player_capacity
 #assert_axioms decodeCanonState_reencodes
-#assert_axioms decodeSignalConfig_reencodes
+#assert_axioms decodeGameConfig_reencodes
 
 -- The thirteen fixture pins (`native_decide` + `#assert_compiled`) live in
 -- `NetworkJudgeWireFixtures.lean`, rooted in `PathOfAngelsGuards` — see the fixture

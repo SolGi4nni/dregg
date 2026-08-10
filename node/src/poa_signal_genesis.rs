@@ -247,6 +247,10 @@ struct GenesisContent {
 
 #[derive(Serialize)]
 struct SignalConfig {
+    /// ⚑ The game tag `GameConfigWire.toJson` emits first. Genesis installs the very
+    /// bytes `NetworkJudgeWire.decodeGameConfig` will later re-decode, so an untagged
+    /// blob installed here would be a head no judge could read.
+    game: &'static str,
     target: SignalCode,
     mission: SignalMission,
     reward: Contribution,
@@ -438,6 +442,7 @@ fn build_network_genesis_input(
             activation_counter: verified.envelope().counter,
         },
         config: SignalConfig {
+            game: crate::poa_signal_adapter::POA_GAME_TAG_SIGNAL,
             target,
             mission: SignalMission {
                 mission_id: required_u64(mission, "mission_id")?,

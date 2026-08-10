@@ -22,8 +22,13 @@ use dregg_turn::Effect;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-const SIGNAL_INPUT_FORMAT: &str = "POA-SIGNAL-IN-1";
-const SIGNAL_OUTPUT_FORMAT: &str = "POA-SIGNAL-OUT-1";
+/// ⚑ FLAG DAY 2026-08-09. The judge wire is `POA-RUN-IN-1` and its `config` object
+/// carries a leading `"game"` tag, because `NetworkJudgeWire` is game-tagged now and
+/// settles Vent Crawl as well as Signal. Old persisted head/transition blobs name the
+/// old format and REFUSE to decode rather than being reinterpreted; a node carrying
+/// them must be re-genesised.
+const SIGNAL_INPUT_FORMAT: &str = "POA-RUN-IN-1";
+const SIGNAL_OUTPUT_FORMAT: &str = "POA-RUN-OUT-1";
 const LEAN_SIGNAL_WIRE_BYTES: usize = 16 * 1024 * 1024;
 const METRIC_LIMIT: u64 = 1_000_000;
 const RELIC_LIMIT: usize = 64;
@@ -1118,6 +1123,12 @@ pub enum SignalAdapterError {
     /// transition was proposed, so reporting this as "Lean rejected the transition"
     /// would name a cause that did not happen.
     FeedbackRefused,
+    /// The persisted active config names a game this transport arm does not carry.
+    /// ⚠ Refused BY NAME rather than as a decode fault: "this authority runs
+    /// vent-crawl and you handed it to the Signal arm" and "these bytes are corrupt"
+    /// are different operator actions, and a wire that reported them identically is
+    /// the refusal-renders-as-the-expected-verdict shape.
+    UnexpectedGameTag(String),
     OutputBinding(&'static str),
     PreparedTransition(String),
     SemanticReplay(String),
@@ -1150,6 +1161,11 @@ impl fmt::Display for SignalAdapterError {
                 f,
                 "the Lean Signal feedback oracle refused this classification wire; no guess was \
                  scored"
+            ),
+            Self::UnexpectedGameTag(tag) => write!(
+                f,
+                "the active configuration names game {tag:?}, which this transport arm does not \
+                 carry (expected {POA_GAME_TAG_SIGNAL:?})"
             ),
             Self::OutputBinding(reason) => write!(f, "Lean Signal output binding failed: {reason}"),
             Self::PreparedTransition(error) => {
@@ -1251,10 +1267,21 @@ impl From<SignalCode> for SignalCodeDto {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SignalConfigDto {
+    /// ⚑ The game tag, and it is FIRST because `GameConfigWire.toJson` emits it first
+    /// and this DTO's field order IS the wire. Lean re-encodes and byte-compares, so a
+    /// tag in the wrong position refuses exactly as a wrong tag does.
+    game: String,
     target: SignalCodeDto,
     mission: MissionDto,
     reward: ContributionDto,
 }
+
+/// The tag Lean's `GameTag.signal` renders. It is the signed descriptor's own
+/// `game_id` (`poa/artifacts/poag1/games/signal-triangulation.json`), not a third
+/// spelling invented at the transport.
+pub(crate) const POA_GAME_TAG_SIGNAL: &str = "signal-triangulation";
+/// `GameTag.ventCrawl`'s, from `games/vent-crawl.json`.
+pub(crate) const POA_GAME_TAG_VENT_CRAWL: &str = "vent-crawl";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1502,6 +1529,16 @@ fn validate_evaluation_binding(
 }
 
 fn validate_config(config: &SignalConfigDto) -> Result<(), SignalAdapterError> {
+    // ⚠ The tag is checked HERE and not only by Lean. Lean would refuse an unknown tag
+    // too, but it would refuse it as a decode failure — indistinguishable from a
+    // truncated blob — and this node would report a transport fault for what is
+    // actually "this authority is running a game I was not built to carry". The
+    // Vent Crawl tag is deliberately NOT accepted by this arm: a vent config reaching
+    // the Signal DTO means the persisted head and this code path disagree about the
+    // game, which must refuse loudly rather than be re-typed.
+    if config.game != POA_GAME_TAG_SIGNAL {
+        return Err(SignalAdapterError::UnexpectedGameTag(config.game.clone()));
+    }
     validate_code(&config.target)?;
     validate_mission(&config.mission)?;
     validate_contribution(&config.reward)
@@ -2478,12 +2515,12 @@ mod tests {
         assert_eq!(output.as_str(), fixture(OUTPUT_FILE));
 
         let reordered = fixture(INPUT_FILE).replacen(
-            "{\"format\":\"POA-SIGNAL-IN-1\",\"config\":",
+            "{\"format\":\"POA-RUN-IN-1\",\"config\":",
             "{\"config\":",
             1,
         );
         let reordered =
-            reordered.replacen("\"world\":", "\"format\":\"POA-SIGNAL-IN-1\",\"world\":", 1);
+            reordered.replacen("\"world\":", "\"format\":\"POA-RUN-IN-1\",\"world\":", 1);
         assert!(matches!(
             CanonicalSignalInput::parse(&reordered),
             Err(SignalAdapterError::Noncanonical(_))
