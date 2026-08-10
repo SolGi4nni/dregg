@@ -59,6 +59,7 @@ use dregg_circuit::descriptor_ir2::{
     parse_vm_descriptor2, prove_vm_descriptor2, prove_vm_descriptor2_unchecked,
     verify_vm_descriptor2,
 };
+use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
 
 // ── the artifacts ───────────────────────────────────────────────────────────────────────────────
 const PALLAS_SOUND: &str =
@@ -148,6 +149,18 @@ fn chal_gates(d: &EffectVmDescriptor2) -> Vec<&VmConstraint2> {
         .iter()
         .filter(|c| matches!(c, VmConstraint2::ChalGate(_)))
         .collect()
+}
+
+/// ⚑ **THE ADVERSARIAL PATH, and the verify is NOT optional.** `prove_vm_descriptor2_unchecked`
+/// passes `check: false` to `prove_vm_descriptor2_inner`, and that flag gates BOTH the
+/// producer-side replay AND the `verify_batch` self-check (the `if check` guard before
+/// `Ok(proof)`). So the unchecked prover RETURNS A PROOF for a forged witness, and it is the
+/// caller's `verify_vm_descriptor2` that renders the verdict. A tooth that read only the prove
+/// result would report the forgery ACCEPTED — measured here 2026-08-09 on the SCHOOLBOOK row,
+/// whose algebra refuses this tamper perfectly well once something actually checks it.
+fn prove_unchecked_then_verify(d: &EffectVmDescriptor2, t: &[Vec<BabyBear>]) -> Result<(), String> {
+    let proof = prove_vm_descriptor2_unchecked(d, t, &[], &MemBoundaryWitness::default(), &[])?;
+    verify_vm_descriptor2(d, &proof, &[])
 }
 
 fn prove_verify(d: &EffectVmDescriptor2, t: &[Vec<BabyBear>]) -> Result<(f64, f64), String> {
@@ -311,13 +324,15 @@ fn the_multiply_forgery_is_refused_by_both_curve_rows() {
         // ⚑ UNCHECKED, deliberately: `prove_vm_descriptor2`'s producer-side pre-flight replay is a
         // Rust `assert` an adversary never runs. This entry puts the forged witness in front of the
         // CONSTRAINT SYSTEM, so the refusal below is the AIR's verdict and not the producer's.
-        let err =
-            prove_vm_descriptor2_unchecked(&d, &forged, &[], &MemBoundaryWitness::default(), &[])
-                .err()
-                .unwrap_or_else(|| {
-                    panic!("{label}: a bumped quotient limb must be REFUSED by the AIR")
-                });
-        println!("§3 {label} curve row REFUSED the quotient forgery: {err}");
+        let r = must_refuse_or_unsat_panic(&format!("{label} curve row / quotient bump"), || {
+            prove_unchecked_then_verify(&d, &forged)
+        });
+        let reason = r.reason();
+        // ⚑ …and the refusal must be the VIOLATED CONSTRAINT, not a lookup/bus imbalance. The
+        // forgery stays inside every declared 8-bit range on purpose, so a bus refusal here
+        // would mean the tooth measured the wrong check.
+        assert_violated_constraint_not_bus(&format!("{label} curve row"), &reason);
+        println!("§3 {label} curve row REFUSED the quotient forgery: {reason}");
     }
 }
 
@@ -337,13 +352,15 @@ fn the_multiply_forgery_is_refused_by_both_alu_rows() {
         let d = desc(json);
         prove_vm_descriptor2(&d, &honest, &[], &MemBoundaryWitness::default(), &[])
             .unwrap_or_else(|e| panic!("{label}: the honest trace must prove first: {e}"));
-        let err =
-            prove_vm_descriptor2_unchecked(&d, &forged, &[], &MemBoundaryWitness::default(), &[])
-                .err()
-                .unwrap_or_else(|| {
-                    panic!("{label}: a bumped quotient limb must be REFUSED by the AIR")
-                });
-        println!("§3 {label} ALU row REFUSED the quotient forgery: {err}");
+        let r = must_refuse_or_unsat_panic(&format!("{label} ALU row / quotient bump"), || {
+            prove_unchecked_then_verify(&d, &forged)
+        });
+        let reason = r.reason();
+        // ⚑ …and the refusal must be the VIOLATED CONSTRAINT, not a lookup/bus imbalance. The
+        // forgery stays inside every declared 8-bit range on purpose, so a bus refusal here
+        // would mean the tooth measured the wrong check.
+        assert_violated_constraint_not_bus(&format!("{label} ALU row"), &reason);
+        println!("§3 {label} ALU row REFUSED the quotient forgery: {reason}");
     }
 }
 
@@ -424,9 +441,15 @@ fn a_challenge_descriptor_refuses_the_uni_stark_route() {
         let err = Ir2UniAir::new(d)
             .err()
             .unwrap_or_else(|| panic!("{name}: uni-stark must REFUSE a chal_gate descriptor"));
+        // ⚠ SAY WHICH REFUSAL FIRES, because it is not the one the name suggests. Measured
+        // 2026-08-09: these descriptors declare FOUR tables (main + three range tables) and
+        // `Ir2UniAir::new`'s TABLE check refuses FIRST — "declares 4 table(s); uni-stark has no
+        // bus to serve them". The `chal_gate` arm of the same constructor is the BACKSTOP behind
+        // it and never gets a word in. Asserting `contains("chal_gate")` would have been a tooth
+        // asserting a message that is never produced.
         assert!(
-            err.contains("chal_gate"),
-            "{name}: the refusal must name the constraint kind, got: {err}"
+            err.contains("uni-stark") && (err.contains("no bus") || err.contains("chal_gate")),
+            "{name}: the refusal must name the uni-stark route and its reason, got: {err}"
         );
         println!("§5 {name} uni-stark REFUSED: {err}");
     }
@@ -449,8 +472,17 @@ fn a_challenge_descriptor_refuses_the_uni_stark_route() {
 ///   moves. **This is the number that decides prover memory, and the sz collapse does not move it
 ///   by one cell.** Anyone selling sz as a trace-size fix is quoting the wrong currency.
 ///
-/// Wall clock is printed, not asserted: it is one box on one day, and the assertions above are the
-/// facts.
+/// ⚠ **AND THE WALL CLOCK, WHICH IS THE NUMBER NOBODY WANTS.** Measured 2026-08-09 on this laptop
+/// at 8 rows: prove went `1 508 → 1 598 ms` (Pallas), `1 431 → 2 222 ms` (Vesta), `129 → 148 ms`
+/// (ALU) — **the sz row did not prove FASTER, and on this shape it proved slower.** That is not a
+/// contradiction of anything above: at `2^3` rows the FRI commitment and the LDE dominate, both are
+/// driven by the committed width, and the committed width is exactly what does not move. The
+/// saving is `−732` and `−61` CONSTRAINTS, which is a recursion figure, and `4.99×` fewer
+/// multiplication nodes, which is an asymptotic per-row figure that a 8-row trace cannot show.
+/// Verify moved the right way and barely (`407 → 390`, `390 → 381`, `18.7 → 15.2 ms`).
+///
+/// Wall clock is therefore printed and NOT asserted — it is one box, one day, one trace height, and
+/// asserting it would be asserting noise. The assertions above are the facts.
 #[test]
 fn the_cost_is_re_derived_on_the_real_objects() {
     println!("\n═══ THE CHEAP MULTIPLY: BEFORE / AFTER, SAME BINARY, SAME BOX, SAME TRACE ═══");
@@ -512,7 +544,9 @@ fn the_cost_is_re_derived_on_the_real_objects() {
         );
     }
     println!(
-        "\n⚑ The currency that moved is ALGEBRAIC GATES and MULTIPLICATION NODES, not memory.\n\
+        "\n⚑ The currency that moved is ALGEBRAIC GATES and MULTIPLICATION NODES, not memory —\n\
+         ⚠ and NOT wall clock at this trace height: see this test's header for the measured\n\
+         ⚠ prove/verify numbers, where the sz row is no faster to prove at 8 rows.\n\
          ⚑ In the emitted bodies: 2 206 → 442 multiplication nodes per multiply \
          (PastaSzMul.sz_arithmetic_ratio), 12 × that on the curve row, and at \
          MinaWrapVerifierAir.WRAP_MULS = 588 732 that is 1.04e9 multiplication nodes removed \

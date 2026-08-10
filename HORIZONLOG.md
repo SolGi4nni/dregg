@@ -67,6 +67,44 @@ trace-size fix is quoting the wrong currency.** What it buys at §5's census is
 evaluation, and **zero** committed cells: `WRAP_CELLS = 161 308 368` and `WRAP_ROWS_SOUND = 279 016`
 do not move by one.
 
+### ⚑ MEASURED ON THE DEPLOYED PROVER — 8/8 green in release, and one number is unflattering
+
+`circuit/tests/pasta_sz_multiply_routed.rs`, both polarities, one binary, one box, one trace:
+
+```
+artifact                      cons   declW   commitW   rows    LDE cells   prove ms  verify ms
+pallas complete-add           4476    3048     10756      8      5507072     1243.1      379.0
+pallas complete-add SZ        3744    3048     10756      8      5507072     1546.1      393.1
+vesta  complete-add           4476    3048     10756      8      5507072     1670.5      562.6
+vesta  complete-add SZ        3744    3048     10756      8      5507072     2106.3      508.0
+fp ALU row                     386     226       794      8       406528      148.0       26.6
+fp ALU row SZ                  325     226       794      8       406528      204.0       26.9
+```
+
+Committed width `10 756` and LDE cells `5 507 072` are ASSERTED EQUAL across each pair, not merely
+printed. All four sz artifacts prove and verify; the in-range quotient forgery is refused on all
+four through `prove_vm_descriptor2_unchecked` + `verify`, and the refusal is
+`OodEvaluationMismatch` — the deployed verifier's CONSTRAINT verdict, checked by
+`assert_violated_constraint_not_bus` so a lookup/bus imbalance could not be mistaken for it.
+
+⚠⚠ **AND THE WALL CLOCK DID NOT MOVE THE WAY THE HEADLINE SUGGESTS: the sz row is NOT faster to
+prove at this trace height — it is slower.** `1 243 → 1 546`, `1 671 → 2 106`, `148 → 204 ms`. That
+is not a contradiction; it is the same fact as the unchanged width, seen from the prover side. At
+`2^3` rows the FRI commitment and the LDE dominate, both are driven by committed width, and
+committed width is exactly what does not move. What the collapse buys is `−732` / `−61`
+CONSTRAINTS — a recursion figure — and `4.99×` fewer multiplication nodes, an asymptotic per-row
+figure an 8-row trace cannot show. Verify moved the right way and barely. **Nobody should quote a
+prover speedup from this pass, and the test prints the numbers rather than asserting them because
+asserting them would be asserting noise.**
+
+⚑ **AND A TOOTH-SHAPED FINDING WORTH MORE THAN THE PASS.** `prove_vm_descriptor2_unchecked` passes
+`check: false` to `prove_vm_descriptor2_inner`, and that one flag gates BOTH the producer-side
+replay AND the `verify_batch` self-check. So the unchecked prover RETURNS A PROOF for a forged
+witness. The first draft of §3 read only the prove result and reported the SCHOOLBOOK row's
+forgery **ACCEPTED** — on a row whose algebra refuses it perfectly well once something checks.
+Any falsifier on that entry point must call `verify_vm_descriptor2` itself or it is measuring
+nothing.
+
 ### ⚠ The ledger rides along, and it is a HYPOTHESIS
 
 The sz row forces the congruence at `1 − 2^−197.0` over the draw where the schoolbook row forces it
