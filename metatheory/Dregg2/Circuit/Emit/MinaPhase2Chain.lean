@@ -242,10 +242,58 @@ theorem chainAir_mainRailOk : chainAir.mainRailOk = true := by
   repeat' apply And.intro
   all_goals (intro _ _; rfl)
 
+/-! ### ⚑⚑ THE TIE VERDICT AND THE CERTIFICATE.
+
+Measured 2026-08-09: this descriptor was lowered with `lowerAir`, so **no `CertifiedRefines`
+existed** for the 46-link chain row — the widest boundary in the cone (256 pins over 707 legs) and
+the one every phase-2 continuity claim is stated about. The mechanism was in use two files down
+(`MinaWrapVerifierProgram`'s `sboxDesc`/`longDesc`); this row was never switched over.
+
+⚑ Composed, not decided: `programAir_boundary_pinsTied` at `qLimb`, so the eight-block boundary
+costs the same as the six-block ones. And `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`, so
+ZERO BYTES MOVE — `chainDesc_eq_lowerAir` is that as a theorem. No re-emit, no VK rotation. -/
+
+theorem chainPins_regPin : RegPinBoundary chainPins := by
+  unfold chainPins
+  repeat' apply RegPinBoundary.append
+  all_goals exact pinBlock_regPin _ _ _ (by decide)
+
+/-- ⚑ **ALL 256 PUBLISHED COLUMNS ARE READ BY THE MACHINE.** The incoming state, the outgoing state
+IN FULL, and the absorbed pair are register columns, and the routing gate reads the register file at
+every limb. -/
+theorem chainAir_pinsTied : chainAir.pinsTied = true :=
+  programAir_boundary_pinsTied qLimb absorbProg chainPins chainPins_regPin
+
+def chainTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air  := chainAir
+  ok   := chainAir_mainRailOk
+  tied := chainAir_pinsTied
+
 /-- ⚑ **THE EMITTED CHAIN-LINK DESCRIPTOR.** ONE descriptor for all 46 links — the residual really
 was witnesses and not an algebra, and this is the object that says so. -/
 def chainDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fq-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fq-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainTiedAir).val
+
+/-- ⚑ **THE CHAIN LINK'S CERTIFICATE, PRODUCED BY THE EMIT.** Every leg of `chainAir` — the
+machine's 451 and the boundary's 256 pins — is FORCED by the emitted descriptor's constraints on any
+row window that satisfies them. `AirLeg.forces` is stated in the SOURCE's vocabulary and never
+mentions the lowering, so this is not `P → P`.
+
+⚠ **What it is not.** `the_chain_step_is_the_kimchi_permutation` and
+`the_emitted_claims_are_continuous` are statements about `runProgAt` / `chainState`, the
+INTERPRETER. This certificate joins the emitted constraints to the source LEGS, not to that run;
+the bridge between them is a separate, still-open obligation (`MinaWrapClosingAir` §b). -/
+theorem chainDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines chainDesc [] chainAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fq-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl` — so
+the migration changed what this definition PROVES, not what it PRODUCES. -/
+theorem chainDesc_eq_lowerAir :
+    chainDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir
+      "dregg-pasta-fq-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainAir := rfl
 
 /-- ⚑ **AND IT PINS A STRICT SUPERSET OF THE DEPLOYED WRAP LINK.** The seven-block descriptor's
 legs are the program's plus `linkPins`; this one's are the program's plus `chainPins`. Both start
@@ -320,6 +368,10 @@ theorem chainTrace_is_the_program_run (j : Nat) :
 #assert_axioms chainPIs_length
 #assert_axioms the_emitted_claims_are_continuous
 #assert_axioms chainTrace_is_the_program_run
+#assert_axioms chainPins_regPin
+#assert_axioms chainAir_pinsTied
+#assert_axioms chainDesc_certified
+#assert_axioms chainDesc_eq_lowerAir
 
 -- ⚑ COMPILER-TRUSTED, and said out loud: each is up to 46 Kimchi permutations of a 255-bit state.
 #assert_compiled the_chain_absorbs_the_tape_in_order

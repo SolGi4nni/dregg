@@ -876,8 +876,31 @@ b. **The absorb descriptor's own soundness is the standing every seam in this co
    `MinaWrapVerifierSpongeFp.the_absorb_program_permutes_gen` is general and hypothesis-free but is
    about the INTERPRETER (`runProgAt`), not about the 858 emitted constraints; nothing in this tree
    joins those constraints to `Core.perm`. `PastaPoseidon.perm_forces` IS a constraint-level forcing
-   theorem, but for an UNEMITTED 9×30-limb gadget. That gap is inherited, not introduced here, and
-   it is undone work with a named shape: a `CertifiedRefines` for `programAir`.
+   theorem, but for an UNEMITTED 9×30-limb gadget. That gap is inherited, not introduced here.
+
+   ⚑ **2026-08-09 — HALF OF IT IS NOW DISCHARGED, AND ONLY HALF. SAY WHICH.** The named shape above
+   was *"a `CertifiedRefines` for `programAir`"*, and it exists:
+   `MinaWrapVerifierSpongeFp.fpAbsorbDesc_certified`, produced by `lowerTiedAir` at zero moved bytes.
+   That closes **obligation 1**: the 858 emitted constraints FORCE every leg of `fpAbsorbAir`, in
+   `AirLeg.forces` — the source's own vocabulary, never mentioning the lowering.
+   ⚠ **It does NOT close this residual**, and the reason is worth stating exactly rather than
+   inheriting: `CertifiedRefines` relates the DESCRIPTOR to the SOURCE LEGS.
+   `the_absorb_program_permutes_gen` relates `runProgAt` to `Core.perm`. Between them sits
+   **obligation 2, which nothing in this tree discharges**: that a row window satisfying all the
+   forced legs IS a step of `runProgAt` — the ALU relations, the one-hot routing, the register
+   window and the ROM lookup composed over 2 048 rows into the interpreter's transition function,
+   with the routing lemmas' `hsel` one-hot hypotheses supplied by the ROM manifest rather than
+   assumed. ⚑ What the certificate DOES buy toward it, said exactly: the per-row forcing lemmas
+   (`MinaWrapVerifierAir.alu_mul_forces`, `MinaWrapVerifierProgram.xRoute_forces_operand`,
+   `.yRoute_forces_immediate`, `.reg_window_leaves_nothing_free`, `.pc_thread_forces_successor`)
+   all take a hypothesis of the form `P ∣ <body>`, and `AirLeg.forces` on a `gate`/`window` leg
+   delivers `<body> ≡ 0 [ZMOD PMOD]` with `PMOD = P` by `rfl` — so the certificate now SUPPLIES
+   those hypotheses from the descriptor instead of leaving them assumed about a hand-named
+   constraint. **What is still absent is the composition**: no theorem assembles them into "row
+   `k+1`'s register file is `stepRegsAt` of row `k`'s", and none inducts that over 2 048 rows to
+   `runRowsAt`. The shape it would take is `AirCrossRow.rcbSat_of_rows` /
+   `scheduledRows_force_the_rcb_formula`, which does exactly this for the scheduled RCB row.
+   So: **the emitted constraints refine their AIR. The AIR is not yet proved to be the interpreter.**
 c. **`z₁`, `z₂` and `b₀` are untouched, and that is not the same kind of gap.** A forger who moves
    `z₂` shifts the sum by `δ·H`; upstream refuses that by the dlog/extraction argument (P10), not by
    a transcript. P10 is a FLOOR and is undischarged here and everywhere in this stack. `delta`'s was

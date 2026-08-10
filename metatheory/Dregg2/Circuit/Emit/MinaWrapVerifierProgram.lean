@@ -628,6 +628,120 @@ theorem programAir_mainRailOk (pl : Nat → ℤ) (prog : List Instr) :
     | decide
     | (intro m _; rfl)
 
+/-! ### §6a — ⚑ THE TIE VERDICT FOR THE WHOLE MACHINE, PROVED ONCE AND GENERAL OVER THE PROGRAM.
+
+`sboxTiedAir` and `longTiedAir` below each decide `pinsTied` on their own assembled block, and each
+pays `O(pins × legs)` in the kernel with a raised heartbeat budget for the privilege. The deployed
+transcript rows are bigger — 192 pins over 643 legs (`MinaWrapVerifierSponge`) and 256 over 707
+(`MinaPhase2Chain`) — and that is the wrong reason for a descriptor to be uncertified.
+
+⚑ **The fact does not depend on the program, the pin count, or the pin rows.** `programAir`'s legs
+never mention `prog` (the program enters through the ROM *table*, `.exactPublicRows (romRows prog)`,
+not through a leg), and every boundary in this cone pins REGISTER columns. So the verdict is proved
+once here, general in `pl` and in `prog`, and every boundary that reuses the machine inherits it. -/
+
+/-- ⚑ **THE MACHINE'S LEGS ARE THE SAME LEGS AT EVERY PROGRAM.** By `rfl`: the leg list is written
+without reference to `prog`. This is what makes §6a general rather than an eight-instruction fact
+re-decided at 2 048. -/
+theorem programAir_legs_indep (pl : Nat → ℤ) (prog prog' : List Instr) :
+    (programAir pl prog).legs = (programAir pl prog').legs := rfl
+
+/-- ⚑ **THE ROUTING GATE READS THE WHOLE REGISTER FILE AT ITS LIMB.** `xRouteExpr i` is
+`Σ_r XSELᵣ·(x_i − REGᵣ_i)`, so ONE leg names `regCol r + i` for EVERY register `r`.
+
+⚠ This is `AirLeg.readCols`, the EMISSION-FAITHFUL walk (`EffectLowerCertified` §1a) — the routing
+gate is a `.gate` leg, so its columns are the columns of the polynomial the lowering actually emits.
+There is no declaration arm here for a verdict to pass through. -/
+theorem regCol_mem_xRoute_readCols (r i : Nat) (hr : r < NREG) :
+    regCol r + i ∈ (AirLeg.gate ⟨xRouteExpr i, .const 0⟩).readCols := by
+  have hr6 : r < 6 := hr
+  interval_cases r <;>
+    simp [AirLeg.readCols, xRouteExpr, esum, esub, range_NREG,
+      Dregg2.Circuit.EffectAirIR.exprCols]
+
+/-- ⚑⚑ **THE READER IS NAMED, AND IT IS A `gate`.** Stated as the pair rather than as an `∃` so the
+witness cannot drift: the leg that ties `REGᵣ_i` is the `x`-routing gate at limb `i`, it is IN the
+machine's legs, and it READS that column.
+
+⚠ This is the shape the two demotions of 2026-08-08 turned on. `minaHeadTiedAir` and
+`minaLinkTiedAir` were "tied" by `bind` legs whose `readCols` scored a DECLARED vector as read; the
+emission-faithful `.bind` arm took that away and both went red. There is no such arm in play here —
+see `programAir_has_no_bind_legs` — and the reader exhibited below is a flat `.gate`, whose
+`readCols` is `exprCols` of the polynomial the lowering emits. -/
+theorem the_register_pins_are_read_by_the_routing_gate (pl : Nat → ℤ) (prog : List Instr)
+    (r i : Nat) (hr : r < NREG) (hi : i < SK) :
+    AirLeg.gate ⟨xRouteExpr i, Expr.const 0⟩ ∈ (programAir pl prog).legs
+    ∧ regCol r + i ∈ (AirLeg.gate ⟨xRouteExpr i, Expr.const 0⟩).readCols := by
+  refine ⟨?_, regCol_mem_xRoute_readCols r i hr⟩
+  have hmem : AirLeg.gate ⟨xRouteExpr i, Expr.const 0⟩
+      ∈ (List.range SK).map (fun j => AirLeg.gate ⟨xRouteExpr j, Expr.const 0⟩) :=
+    List.mem_map_of_mem (List.mem_range.mpr hi)
+  simp only [programAir, List.mem_append]
+  tauto
+
+/-- ⚑ **EVERY REGISTER COLUMN THE MACHINE HAS IS READ BY THE MACHINE**, at every program. This is
+the obligation `pinsTied` imposes on a register pin, discharged for all of them at once. -/
+theorem programAir_reads_regCol (pl : Nat → ℤ) (prog : List Instr) (r i : Nat)
+    (hr : r < NREG) (hi : i < SK) :
+    (programAir pl prog).readsCol (regCol r + i) = true := by
+  obtain ⟨hlegs, hcol⟩ := the_register_pins_are_read_by_the_routing_gate pl prog r i hr hi
+  unfold EffectAir.readsCol
+  exact List.any_eq_true.mpr ⟨_, hlegs, by simpa using hcol⟩
+
+/-- ⚑⚑ **THE VERDICT CANNOT PASS THROUGH A DECLARATION HERE — THE SOFT ARM IS UNREACHABLE.**
+`AirLeg.readCols` has exactly one arm that could score a column as "read" without an emitted
+polynomial behind it, and it is `.bind`: a seam's `vk`/`commit` lanes count only under a
+`vkPin`/`bound`, and every deployed `bound := none` seam emits ZERO polynomials for its commit
+vector. That is what demoted `minaHeadTiedAir` and `minaLinkTiedAir` on 2026-08-08.
+
+**This machine emits no `bind` leg and no `chal` leg at all.** So every column it reads is read by a
+`gate`, `window`, `lookup` or `limbs` leg — each of which lowers to a constraint whose body is
+exactly those columns. The tie verdict on `programAir` is therefore a statement about emitted
+constraints, and there is no arm for it to pass through. -/
+theorem programAir_has_no_bind_legs (pl : Nat → ℤ) (prog : List Instr)
+    (b : Dregg2.Circuit.EffectAirIR.BindLeg) :
+    AirLeg.bind b ∉ (programAir pl prog).legs := by
+  intro hb
+  simp [programAir, regWindowLegs, selBoolLegs] at hb
+
+theorem programAir_has_no_chal_legs (pl : Nat → ℤ) (prog : List Instr)
+    (c : Dregg2.Circuit.EffectAirIR.ChalLeg) :
+    AirLeg.chal c ∉ (programAir pl prog).legs := by
+  intro hc
+  simp [programAir, regWindowLegs, selBoolLegs] at hc
+
+/-- ⚑ **THE MACHINE PUBLISHES NOTHING**, so its own tie verdict is vacuous and every boundary
+composes onto it. Not a weakening: a `programAir` that grew a `pin` leg would break this. -/
+theorem programAir_pinsTied (pl : Nat → ℤ) (prog : List Instr) :
+    (programAir pl prog).pinsTied = true := by
+  refine EffectAir.pinsTied_of_no_pins _ (fun p hp => ?_)
+  simp [programAir, regWindowLegs, selBoolLegs] at hp
+
+/-- ⚑ **A BOUNDARY OF REGISTER PINS** — the shape every emitted instance of this machine has. Every
+`pin` in the boundary publishes a column of the register file, and the register file is what the
+machine reads. Stated as a `Prop` over the leg list so the per-descriptor obligation is one `apply`
+and does not depend on how many blocks the boundary has or in what order. -/
+def RegPinBoundary (pins : List AirLeg) : Prop :=
+  ∀ p : PiPinLeg, AirLeg.pin p ∈ pins → ∃ r i, r < NREG ∧ i < SK ∧ p.col = regCol r + i
+
+theorem RegPinBoundary.append {a b : List AirLeg} (ha : RegPinBoundary a) (hb : RegPinBoundary b) :
+    RegPinBoundary (a ++ b) := by
+  intro p hp
+  rcases List.mem_append.mp hp with h | h
+  exacts [ha p h, hb p h]
+
+/-- ⚑⚑ **THE CERTIFICATE'S SIDE CONDITION, DISCHARGED FOR EVERY MACHINE INSTANCE AT ONCE.** A
+`TiedAir` for `programAir + boundary` now costs a `RegPinBoundary`, which is structural — no
+`decide` over the assembled block, at any program length or pin count. -/
+theorem programAir_boundary_pinsTied (pl : Nat → ℤ) (prog : List Instr) (pins : List AirLeg)
+    (h : RegPinBoundary pins) :
+    ({ programAir pl prog with legs := (programAir pl prog).legs ++ pins } : EffectAir).pinsTied
+      = true := by
+  refine EffectAir.pinsTied_append _ _ (programAir_pinsTied pl prog) (fun p hp => ?_)
+  obtain ⟨r, i, hr, hi, hcol⟩ := h p hp
+  rw [hcol]
+  exact programAir_reads_regCol pl prog r i hr hi
+
 /-- The emitted descriptor at the Pallas-base / Vesta-scalar prime, for a given program. -/
 def fpProgramDesc (name : String) (piCount : Nat) (prog : List Instr) : EffectVmDescriptor2 :=
   lowerAir name PROG_WIDTH piCount [] (programAir pLimb prog)
@@ -1060,5 +1174,13 @@ theorem the_discharge_removes_the_srs_leg_not_the_opening :
 #assert_axioms native_discharge_does_not_bind_the_in_air_relation
 #assert_axioms pinned_sg_is_what_the_discharge_supplies
 #assert_axioms the_discharge_removes_the_srs_leg_not_the_opening
+#assert_axioms programAir_legs_indep
+#assert_axioms regCol_mem_xRoute_readCols
+#assert_axioms programAir_reads_regCol
+#assert_axioms programAir_pinsTied
+#assert_axioms programAir_boundary_pinsTied
+#assert_axioms the_register_pins_are_read_by_the_routing_gate
+#assert_axioms programAir_has_no_bind_legs
+#assert_axioms programAir_has_no_chal_legs
 
 end Dregg2.Circuit.Emit.MinaWrapVerifierProgram

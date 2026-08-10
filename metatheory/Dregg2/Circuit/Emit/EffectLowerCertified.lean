@@ -216,6 +216,69 @@ def EffectAir.pinsJoined (air : EffectAir) : Bool :=
     | .pin p => air.legs.any (fun m => m.joins && p.col ∈ m.readCols)
     | _      => true
 
+/-! ### §1c — ⚑ THE TIE VERDICT COMPOSES, so it does not have to be RE-DECIDED per boundary.
+
+Every emitted row in the Pasta/Mina cone is assembled the same way: a reusable MACHINE block whose
+legs mention no public input, plus a BOUNDARY of `pin` legs that turns the machine into a statement.
+`pinsTied` on the assembled block is `O(pins × legs)` in the kernel, and the deployed transcript
+rows are 192–256 pins over 643–707 legs — a `by decide` that costs minutes and has to be paid again
+at every new boundary.
+
+⚠ And re-deciding is not only slow, it is the WRONG OBJECT. The fact does not depend on the pin
+COUNT or on the pin ROWS; it depends on each pinned COLUMN being read by a leg of the machine. Said
+that way it is proved ONCE, generally, and every boundary that reuses the machine inherits it. -/
+
+/-- **The obligation `pinsTied` actually imposes on one pin**, named: some leg of the block READS
+the column the pin publishes. `readCols` is the emission-faithful walk, so this is a claim about
+polynomials that exist, not about declarations. -/
+def EffectAir.readsCol (air : EffectAir) (col : Nat) : Bool :=
+  air.legs.any (fun m => col ∈ m.readCols)
+
+/-- ⚑ **THE TIE VERDICT COMPOSES OVER AN APPENDED BOUNDARY.** If the machine block is tied and
+every appended pin's column is read by the MACHINE, the assembled block is tied.
+
+⚑ Note which direction the hypothesis runs: the reader must be a leg of `air`, not of the appended
+boundary. A boundary that "tied" its own pins by pinning them twice would not discharge this — and
+it could not, because `AirLeg.readCols` of a `pin` is `[]` on purpose. That asymmetry is what stops
+this lemma from being a way to launder a decorative pin through a composition. -/
+theorem EffectAir.pinsTied_append (air : EffectAir) (pins : List AirLeg)
+    (hair : air.pinsTied = true)
+    (hpins : ∀ p : PiPinLeg, AirLeg.pin p ∈ pins → air.readsCol p.col = true) :
+    ({ air with legs := air.legs ++ pins } : EffectAir).pinsTied = true := by
+  simp only [EffectAir.pinsTied, List.all_eq_true] at hair
+  have key : ∀ p : PiPinLeg, AirLeg.pin p ∈ air.legs ++ pins →
+      ((air.legs ++ pins).any fun m => p.col ∈ m.readCols) = true := by
+    intro p hp
+    have hbase : (air.legs.any fun m => p.col ∈ m.readCols) = true := by
+      rcases List.mem_append.mp hp with h | h
+      · exact hair _ h
+      · exact hpins p h
+    rw [List.any_append, hbase, Bool.true_or]
+  refine List.all_eq_true.mpr (fun l hl => ?_)
+  cases l with
+  | pin p => exact key p hl
+  | gate _ => rfl
+  | lookup _ => rfl
+  | window _ => rfl
+  | limbs _ => rfl
+  | chal _ => rfl
+  | bind _ => rfl
+
+/-- **A block with no `pin` leg is vacuously tied.** The machine half of the composition above,
+so a caller never has to `decide` the machine's own verdict either. -/
+theorem EffectAir.pinsTied_of_no_pins (air : EffectAir)
+    (h : ∀ p : PiPinLeg, AirLeg.pin p ∉ air.legs) : air.pinsTied = true := by
+  simp only [EffectAir.pinsTied, List.all_eq_true]
+  intro l hl
+  cases l with
+  | pin p => exact absurd hl (h p)
+  | gate _ => rfl
+  | lookup _ => rfl
+  | window _ => rfl
+  | limbs _ => rfl
+  | chal _ => rfl
+  | bind _ => rfl
+
 end Dregg2.Circuit.EffectAirIR
 
 namespace Dregg2.Circuit.Emit.EffectLower
@@ -684,5 +747,7 @@ theorem demoTiedAir_joined : demoTiedAir.pinsJoined = true := by decide
 #assert_axioms demoUnaryThread_fails_joined
 #assert_axioms demoTiedAir_joined
 #assert_axioms lowerTiedAir_val
+#assert_axioms Dregg2.Circuit.EffectAirIR.EffectAir.pinsTied_append
+#assert_axioms Dregg2.Circuit.EffectAirIR.EffectAir.pinsTied_of_no_pins
 
 end Dregg2.Circuit.Emit.EffectLower

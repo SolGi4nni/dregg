@@ -415,9 +415,44 @@ theorem linkAir_mainRailOk : linkAir.mainRailOk = true := by
   repeat' apply And.intro
   all_goals (intro _ _; rfl)
 
+/-! ### ⚑⚑ THE TIE VERDICT AND THE CERTIFICATE.
+
+Same finding as `MinaWrapVerifierSponge`'s pair, 2026-08-09: this descriptor was lowered with
+`lowerAir` and carried **no `CertifiedRefines`**. Composed, not decided —
+`MinaWrapVerifierProgram.programAir_boundary_pinsTied`, so the seven-block boundary is free.
+⚑ `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`: zero bytes move, `linkDesc_eq_lowerAir`
+proves it, and `pasta-fq-wraplink.json`'s fingerprint is untouched. -/
+
+theorem linkPins_regPin : RegPinBoundary linkPins := by
+  unfold linkPins
+  repeat' apply RegPinBoundary.append
+  all_goals exact pinBlock_regPin _ _ _ (by decide)
+
+theorem linkAir_pinsTied : linkAir.pinsTied = true :=
+  programAir_boundary_pinsTied qLimb absorbProg linkPins linkPins_regPin
+
+def linkTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air  := linkAir
+  ok   := linkAir_mainRailOk
+  tied := linkAir_pinsTied
+
 /-- ⚑ **THE EMITTED WRAP-LINK DESCRIPTOR.** -/
 def linkDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fq-wraplink::v1" PROG_WIDTH LINK_PI_COUNT [] linkAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fq-wraplink::v1" PROG_WIDTH LINK_PI_COUNT [] linkTiedAir).val
+
+/-- ⚑ **THE WRAP LINK'S CERTIFICATE, PRODUCED BY THE EMIT.** Every leg of `linkAir` is FORCED by the
+emitted descriptor's constraints on any row window satisfying them, in the SOURCE's own vocabulary.
+⚠ It does NOT join those legs to `runProgAt` — `the_absorb_program_permutes_the_absorbed_state` is
+about the interpreter, and that bridge is a separate obligation. -/
+theorem linkDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines linkDesc [] linkAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fq-wraplink::v1" PROG_WIDTH LINK_PI_COUNT [] linkTiedAir).property
+
+theorem linkDesc_eq_lowerAir :
+    linkDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir
+      "dregg-pasta-fq-wraplink::v1" PROG_WIDTH LINK_PI_COUNT [] linkAir := rfl
 
 /-- The 224 public inputs, every one computed from the tape or from the interpreter. -/
 def linkPIs : List ℤ :=
@@ -502,6 +537,10 @@ theorem the_block_tape_costs_46_permutations :
 #assert_axioms the_link_absorbs_exactly_one_element
 #assert_axioms the_permutation_opcode_split_exactly
 #assert_axioms the_block_tape_costs_46_permutations
+#assert_axioms linkPins_regPin
+#assert_axioms linkAir_pinsTied
+#assert_axioms linkDesc_certified
+#assert_axioms linkDesc_eq_lowerAir
 
 -- ⚑ COMPILER-TRUSTED, and said out loud: each is 46 Kimchi permutations of a 255-bit state.
 #assert_compiled the_fq_sponge_reproduces_the_real_blocks_challenges

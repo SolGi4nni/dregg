@@ -411,9 +411,41 @@ theorem chainAir_mainRailOk : chainAir.mainRailOk = true := by
   repeat' apply And.intro
   all_goals (intro _ _; rfl)
 
+/-! ### ⚑⚑ THE TIE VERDICT AND THE CERTIFICATE.
+
+Same finding as the rest of the transcript cone, 2026-08-09: lowered with `lowerAir`, no
+`CertifiedRefines`. ⚑ This is the most-ridden of the seven — the 27 phase-1 transcript links, the 28
+VK-digest links (`MinaWrapVkDigestChain.vkChainDesc`) and the 25 body-hash links
+(`MinaStateBodyHashChain.bodyChainDesc`) are all THIS object, by `rfl`, so all three inherit the
+certificate without a line of their own.
+
+⚑ The boundary is `MinaPhase2Chain.chainPins` ITSELF, so its `RegPinBoundary` is shared too — the
+pins are column/PI indices and carry no field. `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`. -/
+
+theorem chainAir_pinsTied : chainAir.pinsTied = true :=
+  programAir_boundary_pinsTied pLimb fpAbsorbProg MinaPhase2Chain.chainPins
+    MinaPhase2Chain.chainPins_regPin
+
+def chainTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air  := chainAir
+  ok   := chainAir_mainRailOk
+  tied := chainAir_pinsTied
+
 /-- ⚑ **THE EMITTED PHASE-1 CHAIN-LINK DESCRIPTOR.** ONE descriptor for all 27 links. -/
 def chainDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fp-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fp-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainTiedAir).val
+
+/-- ⚑ **THE PHASE-1 CHAIN LINK'S CERTIFICATE.** ⚠ Forced LEGS, not the interpreter's run: the
+bridge from `AirLeg.forces` to `runProgAt` is a second obligation and is not claimed here. -/
+theorem chainDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines chainDesc [] chainAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fp-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainTiedAir).property
+
+theorem chainDesc_eq_lowerAir :
+    chainDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir
+      "dregg-pasta-fp-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainAir := rfl
 
 /-! ## §6 — THE 27 WITNESSES. -/
 
@@ -552,6 +584,9 @@ theorem the_tie_is_the_whole_element :
 #assert_axioms the_tamper_targets_are_real_tape_elements
 #assert_axioms the_wire_slice_is_the_outgoing_second_lane
 #assert_axioms the_phase2_wire_slice_is_the_tape_head
+#assert_axioms chainAir_pinsTied
+#assert_axioms chainDesc_certified
+#assert_axioms chainDesc_eq_lowerAir
 
 -- ⚑ COMPILER-TRUSTED, and said out loud: each is up to 27 Kimchi permutations of a 255-bit state,
 -- where the `decide` proof-term path overflows.

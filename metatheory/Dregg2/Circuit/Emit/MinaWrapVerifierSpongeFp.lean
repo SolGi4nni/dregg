@@ -5,10 +5,17 @@ the same Kimchi round program at the **`fp_kimchi`** constants and the **Pallas 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
 **This is Lean-authored AIR.** Not one gate, column, constraint or descriptor byte is authored in
-Rust. The emitted descriptors are `EffectLower.lowerAir` of `MinaWrapVerifierProgram.programAir` —
-**at `pLimb` instead of `qLimb`, which is the whole of the field change**, because `programAir` is
+Rust. The emitted descriptors are `EffectLower.lowerTiedAir` of `MinaWrapVerifierProgram.programAir`
+— **at `pLimb` instead of `qLimb`, which is the whole of the field change**, because `programAir` is
 parametric in the limb vector `pl : Nat → ℤ` and always was. Rust PROVES the artifacts and authors
 no constraint. House Law #1.
+
+⚑ **2026-08-09 — `lowerAir` → `lowerTiedAir`.** Both descriptors here carried NO `CertifiedRefines`
+until that date: the emitted constraints were not certified against the `programAir` legs they
+implement, while the same mechanism was in use two files down (`MinaWrapVerifierProgram`'s
+`sboxDesc`/`longDesc`). `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`, so **zero bytes moved** —
+`fpRoundDesc_eq_lowerAir` / `fpAbsorbDesc_eq_lowerAir` are that as theorems, not as a claim. No
+re-emit, no VK rotation, no re-genesis.
 
 ## THE GAP THIS CLOSES
 
@@ -440,13 +447,74 @@ theorem fpAbsorbAir_mainRailOk : fpAbsorbAir.mainRailOk = true := by
   repeat' apply And.intro
   all_goals (intro _ _; rfl)
 
+/-! ### ⚑⚑ THE TIE VERDICT AND THE CERTIFICATE, on the Fp pair.
+
+Same finding, same day, as the Fq pair (`MinaWrapVerifierSponge`): both Fp descriptors were lowered
+with `lowerAir` and carried **no `CertifiedRefines`**. Same machine, same boundary shape, so the
+same composition discharges both — `programAir_boundary_pinsTied` at `pLimb`.
+
+⚑ `lowerTiedAir … |>.val` is `lowerAir …` by `rfl`; the `_eq_lowerAir` theorems below prove the
+zero. No byte moves, no VK rotates, `pasta-fp-absorb.json`'s fingerprint (and therefore
+`MinaWrapClosingAir.ABSORB_FS_LANES`) is untouched. -/
+
+theorem fpRoundPins_regPin : RegPinBoundary fpRoundPins := by
+  unfold fpRoundPins
+  repeat' apply RegPinBoundary.append
+  all_goals exact pinBlock_regPin _ _ _ (by decide)
+
+theorem fpAbsorbPins_regPin : RegPinBoundary fpAbsorbPins := by
+  unfold fpAbsorbPins
+  repeat' apply RegPinBoundary.append
+  all_goals exact pinBlock_regPin _ _ _ (by decide)
+
+theorem fpRoundAir_pinsTied : fpRoundAir.pinsTied = true :=
+  programAir_boundary_pinsTied pLimb fpRoundProg fpRoundPins fpRoundPins_regPin
+
+theorem fpAbsorbAir_pinsTied : fpAbsorbAir.pinsTied = true :=
+  programAir_boundary_pinsTied pLimb fpAbsorbProg fpAbsorbPins fpAbsorbPins_regPin
+
+def fpRoundTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air  := fpRoundAir
+  ok   := fpRoundAir_mainRailOk
+  tied := fpRoundAir_pinsTied
+
+def fpAbsorbTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air  := fpAbsorbAir
+  ok   := fpAbsorbAir_mainRailOk
+  tied := fpAbsorbAir_pinsTied
+
 /-- ⚑ **THE EMITTED Fp ROUND DESCRIPTOR.** -/
 def fpRoundDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fp-round::v1" PROG_WIDTH SPONGE_PI_COUNT [] fpRoundAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fp-round::v1" PROG_WIDTH SPONGE_PI_COUNT [] fpRoundTiedAir).val
+
+theorem fpRoundDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fpRoundDesc [] fpRoundAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fp-round::v1" PROG_WIDTH SPONGE_PI_COUNT [] fpRoundTiedAir).property
+
+theorem fpRoundDesc_eq_lowerAir :
+    fpRoundDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir
+      "dregg-pasta-fp-round::v1" PROG_WIDTH SPONGE_PI_COUNT [] fpRoundAir := rfl
 
 /-- ⚑ **THE EMITTED Fp ABSORPTION DESCRIPTOR.** -/
 def fpAbsorbDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fp-absorb::v1" PROG_WIDTH SPONGE_PI_COUNT [] fpAbsorbAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fp-absorb::v1" PROG_WIDTH SPONGE_PI_COUNT [] fpAbsorbTiedAir).val
+
+/-- ⚑⚑ **THE DESCRIPTOR `MinaWrapClosingAir` §b NAMES AS THE STANDING GAP, CERTIFIED.** That note
+reads *"a `CertifiedRefines` for `programAir`"* — this is it, for `dregg-pasta-fp-absorb::v1`.
+⚠ And it closes the FIRST of two obligations only: it says the 858 emitted constraints force the
+source legs. `the_absorb_program_permutes_gen` is a theorem about `runProgAt`, the INTERPRETER;
+joining forced legs to that run is a second, still-open obligation. Do not read this as closing §b. -/
+theorem fpAbsorbDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fpAbsorbDesc [] fpAbsorbAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fp-absorb::v1" PROG_WIDTH SPONGE_PI_COUNT [] fpAbsorbTiedAir).property
+
+theorem fpAbsorbDesc_eq_lowerAir :
+    fpAbsorbDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir
+      "dregg-pasta-fp-absorb::v1" PROG_WIDTH SPONGE_PI_COUNT [] fpAbsorbAir := rfl
 
 /-- Both ROMs fit the deployed cell cap, by the same margin the Fq pair does — the instruction word
 is the same 55 cells and the programs are the same lengths. -/
@@ -600,5 +668,13 @@ theorem the_fp_absorb_pins_a_fresh_sponge :
 #assert_axioms the_emitted_fp_absorb_output_is_K3s_hash
 #assert_axioms fpAbsorbPIs_length
 #assert_axioms the_fp_absorb_pins_a_fresh_sponge
+#assert_axioms fpRoundPins_regPin
+#assert_axioms fpAbsorbPins_regPin
+#assert_axioms fpRoundAir_pinsTied
+#assert_axioms fpAbsorbAir_pinsTied
+#assert_axioms fpRoundDesc_certified
+#assert_axioms fpRoundDesc_eq_lowerAir
+#assert_axioms fpAbsorbDesc_certified
+#assert_axioms fpAbsorbDesc_eq_lowerAir
 
 end Dregg2.Circuit.Emit.MinaWrapVerifierSpongeFp

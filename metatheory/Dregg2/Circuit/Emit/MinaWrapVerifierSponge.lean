@@ -691,6 +691,20 @@ theorem SPONGE_PI_COUNT_eq : SPONGE_PI_COUNT = 192 := rfl
 def pinBlock (row : VmRow) (r base : Nat) : List AirLeg :=
   (List.range SK).map (fun i => AirLeg.pin ⟨row, regCol r + i, base + i⟩)
 
+/-- ⚑ **A PIN BLOCK PUBLISHES REGISTER COLUMNS AND NOTHING ELSE** — the boundary half of
+`MinaWrapVerifierProgram` §6a's composition. Every emitted instance of this machine (both sponge
+descriptors, both Fp ones, the 46-link chain) builds its boundary out of these, so this one lemma
+is the whole tie obligation for all five. -/
+theorem pinBlock_regPin (row : VmRow) (r base : Nat) (hr : r < NREG) :
+    RegPinBoundary (pinBlock row r base) := by
+  intro p hp
+  obtain ⟨i, hi, heq⟩ := List.mem_map.mp hp
+  refine ⟨r, i, hr, List.mem_range.mp hi, ?_⟩
+  have heq' : (⟨row, regCol r + i, base + i⟩ : PiPinLeg) = p := by
+    have : AirLeg.pin (⟨row, regCol r + i, base + i⟩ : PiPinLeg) = AirLeg.pin p := heq
+    injection this
+  rw [← heq']
+
 /-- The round instance's pins: the first row's `(R0,R1,R2)` is the input state, the last row's
 `(R4,R5,R0)` is the output state — and those are exactly `allocAt 0 {0,1,2}` and
 `allocAt 1 {0,1,2}`, the hand-off `the_allocation_hands_off` names. -/
@@ -733,13 +747,86 @@ theorem absorbAir_mainRailOk : absorbAir.mainRailOk = true := by
   repeat' apply And.intro
   all_goals (intro _ _; rfl)
 
+/-! ### ⚑⚑ THE TIE VERDICT, AND THE CERTIFICATE THESE TWO ROWS DID NOT HAVE.
+
+Measured 2026-08-09: `roundDesc` and `absorbDesc` were lowered with `lowerAir`, so **no
+`CertifiedRefines` existed for either** — the emitted constraints were not certified against the
+`programAir` legs they claim to implement, while `MinaWrapVerifierProgram`'s own `sboxDesc` and
+`longDesc` (the SAME machine, an eight- and a 1 024-instruction program) carried the certificate
+from `lowerTiedAir`. The mechanism existed and was used one file down; these two were never
+switched over.
+
+⚑ **`lowerTiedAir … |>.val` is `lowerAir …` by `rfl`, so ZERO BYTES MOVE** — the `_eq_lowerAir`
+theorems below are that as a proof rather than as a claim. No re-emit, no VK rotation, nothing
+re-genesises. What changes is that the emit no longer ELABORATES for a block either verdict
+refuses. -/
+
+theorem roundPins_regPin : RegPinBoundary roundPins := by
+  unfold roundPins
+  repeat' apply RegPinBoundary.append
+  all_goals exact pinBlock_regPin _ _ _ (by decide)
+
+theorem absorbPins_regPin : RegPinBoundary absorbPins := by
+  unfold absorbPins
+  repeat' apply RegPinBoundary.append
+  all_goals exact pinBlock_regPin _ _ _ (by decide)
+
+/-- ⚑ **THE ROUND ROW TIES EVERY COLUMN IT PUBLISHES.** Not decided over the assembled block —
+composed from `programAir_boundary_pinsTied`, so it costs nothing at 192 pins and would cost
+nothing at 2 048. -/
+theorem roundAir_pinsTied : roundAir.pinsTied = true :=
+  programAir_boundary_pinsTied qLimb roundProg roundPins roundPins_regPin
+
+theorem absorbAir_pinsTied : absorbAir.pinsTied = true :=
+  programAir_boundary_pinsTied qLimb absorbProg absorbPins absorbPins_regPin
+
+def roundTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air  := roundAir
+  ok   := roundAir_mainRailOk
+  tied := roundAir_pinsTied
+
+def absorbTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air  := absorbAir
+  ok   := absorbAir_mainRailOk
+  tied := absorbAir_pinsTied
+
 /-- ⚑ **THE EMITTED ROUND DESCRIPTOR.** -/
 def roundDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fq-round::v1" PROG_WIDTH SPONGE_PI_COUNT [] roundAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fq-round::v1" PROG_WIDTH SPONGE_PI_COUNT [] roundTiedAir).val
+
+/-- ⚑ **THE ROUND'S CERTIFICATE, PRODUCED BY THE EMIT.** Every leg of `roundAir` is FORCED by the
+emitted descriptor's constraints on any row window that satisfies them — `AirLeg.forces`, stated in
+the SOURCE's vocabulary and never mentioning the lowering, so it is not `P → P`. -/
+theorem roundDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines roundDesc [] roundAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fq-round::v1" PROG_WIDTH SPONGE_PI_COUNT [] roundTiedAir).property
+
+/-- ⚑ **THE ZERO.** The certified lowering emits the term the bare lowering emitted, by `rfl`. -/
+theorem roundDesc_eq_lowerAir :
+    roundDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir
+      "dregg-pasta-fq-round::v1" PROG_WIDTH SPONGE_PI_COUNT [] roundAir := rfl
 
 /-- ⚑ **THE EMITTED ABSORPTION DESCRIPTOR.** -/
 def absorbDesc : EffectVmDescriptor2 :=
-  lowerAir "dregg-pasta-fq-absorb::v1" PROG_WIDTH SPONGE_PI_COUNT [] absorbAir
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fq-absorb::v1" PROG_WIDTH SPONGE_PI_COUNT [] absorbTiedAir).val
+
+/-- ⚑⚑ **THE ABSORPTION'S CERTIFICATE.** This is the descriptor `MinaWrapClosingAir` §b names as
+the standing gap ("a `CertifiedRefines` for `programAir`") on the Fq side; its Fp twin is
+`MinaWrapVerifierSpongeFp.fpAbsorbDesc_certified`. ⚠ Read what it does and does not close in that
+file's §b note: this certifies that the 858 emitted constraints FORCE the source legs. It does not
+join those legs to `Core.perm` — `the_absorb_program_permutes_gen` is about `runProgAt`, and the
+bridge from forced legs to the interpreter's run is a SECOND obligation, still open. -/
+theorem absorbDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines absorbDesc [] absorbAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-fq-absorb::v1" PROG_WIDTH SPONGE_PI_COUNT [] absorbTiedAir).property
+
+theorem absorbDesc_eq_lowerAir :
+    absorbDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir
+      "dregg-pasta-fq-absorb::v1" PROG_WIDTH SPONGE_PI_COUNT [] absorbAir := rfl
 
 /-- ⚑ **BOTH ROMs FIT THE DEPLOYED CELL CAP**, and by how much. The absorption's manifest is
 `2 048 × 55 = 112 640` cells against `2^25` — 0.34%, so `rom_cannot_hold_the_whole_verifier` is
@@ -1121,5 +1208,14 @@ theorem the_absorb_pins_a_fresh_sponge :
 #assert_axioms the_emitted_absorb_output_is_the_kimchi_hash
 #assert_axioms absorbPIs_length
 #assert_axioms the_absorb_pins_a_fresh_sponge
+#assert_axioms pinBlock_regPin
+#assert_axioms roundPins_regPin
+#assert_axioms absorbPins_regPin
+#assert_axioms roundAir_pinsTied
+#assert_axioms absorbAir_pinsTied
+#assert_axioms roundDesc_certified
+#assert_axioms roundDesc_eq_lowerAir
+#assert_axioms absorbDesc_certified
+#assert_axioms absorbDesc_eq_lowerAir
 
 end Dregg2.Circuit.Emit.MinaWrapVerifierSponge
