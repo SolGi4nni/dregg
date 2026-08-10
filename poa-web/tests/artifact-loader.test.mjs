@@ -47,7 +47,7 @@ test("the client accepts the curator-signed counter-11 seven-game bundle end to 
     expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: await actualFetch(),
   });
-  assert.equal(bundle.contentEpoch.counter, 11);
+  assert.equal(bundle.contentEpoch.counter, 12);
   assert.equal(bundle.manifest.artifacts.length, 9);
   const missions = await loadMissionCatalog(bundle);
   // MISSION order (1..7) — deliberately NOT the manifest's path order above.

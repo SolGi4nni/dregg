@@ -1,11 +1,11 @@
 {
   "format":"POAG1",
   "schema_version":1,
-  "source_digest":"sha256:6c4d9fd1091b5535a3ef4f8ee1a64f8df51952c56e379faa0e518e5beacffc87",
+  "source_digest":"sha256:c2c82697e87c1b49338238cece11a3c9dc8b07eb3acc504746f78c87f766ad61",
   "authority":"Dregg2.Games.PathOfAngels",
   "artifacts":[
     {"path":"schema.json","media_type":"application/schema+json","bytes":2290,"sha256":"sha256:a92e4ef72d22e378ab7459190cab9edbbde9b373a36523476e4e25afde4ea304","fnv1a64":"dfbe09962c3f5a51"},
-    {"path":"catalog.json","media_type":"application/json","bytes":12797,"sha256":"sha256:2792bc267c9b7cda9fbef1b30d21ba4f38bef60327619b94e2823633f46bb14a","fnv1a64":"01ee5ff7f7cb8476"},
+    {"path":"catalog.json","media_type":"application/json","bytes":12797,"sha256":"sha256:3a8532d7378412e76814d5a034c13c18a7fb9ddd35ee72cbe4885341cbb2d63d","fnv1a64":"750a40b6cecbfc42"},
     {"path":"games/artificer-logic.json","media_type":"application/json","bytes":5103515,"sha256":"sha256:746557faa265894ac328b1aafd1f4f324f41811b64104d26fc7cad47b3403ddd","fnv1a64":"4434155fabaf1660"},
     {"path":"games/black-box-reconstruction.json","media_type":"application/json","bytes":9164,"sha256":"sha256:aaecdd40b47635fe92b13dfce84a3af4bfe571e4a7deded7d502522f9c05673e","fnv1a64":"8a96339de8cc1ad5"},
     {"path":"games/deck-descent.json","media_type":"application/json","bytes":2986014,"sha256":"sha256:cbef234798d7643841877d7cbe764f18cba375e00a6153bf62b9c50cadb13ee6","fnv1a64":"01b67ac41ef50576"},
