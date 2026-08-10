@@ -127,6 +127,9 @@ pub mod poa_crate_api;
 pub(crate) mod poa_galley_api;
 pub mod poa_galley_genesis;
 pub mod poa_holding_api;
+/// The judged-session TRANSPORT, with no game in it. Signal is the only game
+/// mounted on it; the other six on the rack have Lean judges and no transport.
+pub mod poa_judged_session;
 pub mod poa_records_api;
 pub mod poa_signal_adapter;
 pub mod poa_signal_authority_export;

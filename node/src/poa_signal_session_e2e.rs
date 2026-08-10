@@ -581,7 +581,7 @@ async fn a_judged_session_is_played_to_solved_and_its_code_settles() {
     //    `session-player-rate-limit` and the honest open below would be refused too —
     //    i.e. a stranger would have locked this player out of their own run using
     //    nothing but a public key. Every one of them must say `session-signature`.
-    let forgeries = crate::poa_signal_session::SESSION_WRITES_PER_PLAYER_PER_MINUTE + 1;
+    let forgeries = crate::poa_judged_session::SESSION_WRITES_PER_PLAYER_PER_MINUTE + 1;
     for attempt in 0..forgeries {
         let (label, signature) = match attempt % 3 {
             0 => ("a signature by the wrong key", hex_encode(&impostor_open)),
