@@ -100,6 +100,13 @@ echo "dregg-clean-build: building the COMMITTED tree $TREE — the dirty working
 # ── the remote driver (runs on the build host; identical logic used by local mode) ────────────
 DRIVER="$(cat <<'REMOTE_DRIVER'
 set -uo pipefail
+# ⚠ A NON-INTERACTIVE `ssh host bash` DOES NOT SOURCE ~/.profile, so `elan`'s shim directory is not
+# on PATH and `lake build` dies with `lake: command not found` (rc 127) — which the driver then
+# reported as `CB_RESULT=RED`, i.e. an ENV FAULT rendered as the expected verdict "this sha fails".
+# Measured on persvati 2026-08-10; hbox happened to have elan earlier on the default PATH, so the
+# advertised `--host persvati` had never worked. Put the shim dir on PATH here, once, for every host.
+[ -d "$HOME/.elan/bin" ] && case ":$PATH:" in *":$HOME/.elan/bin:"*) ;; *) PATH="$HOME/.elan/bin:$PATH";; esac
+export PATH
 BUILD_ROOT="$1"; GIT_SOURCE="$2"; SNAP="$3"; TARGET="$4"; WARM_LANE="$5"; COPY_MODE="$6"; KEEP="$7"; EXPECT_TREE="$8"; SWARM="$9"
 m(){ printf 'CB_%s=%s\n' "$1" "$2"; }
 

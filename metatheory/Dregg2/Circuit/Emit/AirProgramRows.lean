@@ -232,7 +232,7 @@ which is what a `.transition` leg needs to fire — see §11.3 for the row that 
 def RowsForced (pl : Nat → ℤ) (prog : List Instr) (tr : RowTrace) (pub chal : Assignment)
     (tf : TraceFamily) (n : Nat) : Prop :=
   ∀ t, t < n → ∀ l ∈ (programAir pl prog).legs,
-    l.forces tf (rowEnv tr pub chal t) (decide (t = 0)) false
+    l.forces tf (rowEnv tr pub chal t) (t == 0) false
 
 /-- ⚑ **WELL-FORMEDNESS OF AN INSTRUCTION** — a condition on DESCRIPTOR data, never on the witness.
 ⚠ `wr` is deliberately unconstrained: `romRow` emits `oneHot I.wr`, all-zero for `I.wr ≥ NREG`, and
@@ -978,10 +978,46 @@ theorem rowsForced_of_certified {pl : Nat → ℤ} {prog : List Instr} {tr : Row
     (hcert : Dregg2.Circuit.Emit.EffectLower.CertifiedRefines d cs
         { programAir pl prog with legs := (programAir pl prog).legs ++ pins })
     (hsat : ∀ t, t < n → ∀ vc ∈ d.constraints,
-        vc.holdsAt hash tf (rowEnv tr pub chal t) (decide (t = 0)) false) :
+        vc.holdsAt hash tf (rowEnv tr pub chal t) (t == 0) false) :
     RowsForced pl prog tr pub chal tf n := fun t ht l hl =>
-  (hcert hash tf (rowEnv tr pub chal t) (decide (t = 0)) false (hsat t ht)).1 l
+  (hcert hash tf (rowEnv tr pub chal t) (t == 0) false (hsat t ht)).1 l
     (List.mem_append_left _ hl)
+
+/-- A `VmTrace`'s rows, as the row-indexed family this file reasons about. `envAt` and `rowEnv`
+agree on it by `rfl` — the two are the same window. -/
+def rowsOf (t : Dregg2.Circuit.DescriptorIR2.VmTrace) : RowTrace :=
+  fun j => t.rows.getD j Dregg2.Circuit.DescriptorIR2.zeroAsg
+
+theorem envAt_is_rowEnv (t : Dregg2.Circuit.DescriptorIR2.VmTrace) (i : Nat) :
+    Dregg2.Circuit.DescriptorIR2.envAt t i = rowEnv (rowsOf t) t.pub t.chal i := rfl
+
+/-- ⚑⚑⚑ **AND THE DEPLOYED DENOTATION SUPPLIES IT.** `Satisfied2.rowConstraints` quantifies
+`c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)`; on any row that has a
+successor the last flag is `false`, and that is exactly `RowsForced`. So `rows_track_the_interpreter`
+applies to a trace satisfying the EMITTED DESCRIPTOR, not to a hand-rolled hypothesis.
+
+⚠ `hn : n + 1 ≤ t.rows.length` is §11.3 written as a hypothesis rather than a caveat: the
+composition reaches exactly the rows a successor exists for. -/
+theorem rowsForced_of_satisfied2 {pl : Nat → ℤ} {prog : List Instr} {n : Nat}
+    {pins : List AirLeg} {d : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2}
+    {cs : Dregg2.Circuit.ConstraintSystem} {hash : List ℤ → ℤ}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
+    {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
+    (hcert : Dregg2.Circuit.Emit.EffectLower.CertifiedRefines d cs
+        { programAir pl prog with legs := (programAir pl prog).legs ++ pins })
+    (hsat : Dregg2.Circuit.DescriptorIR2.Satisfied2 hash d minit mfin maddrs t)
+    (hn : n + 1 ≤ t.rows.length) :
+    RowsForced pl prog (rowsOf t) t.pub t.chal t.tf n := by
+  intro k hk l hl
+  have hklen : k < t.rows.length := by omega
+  have hlast : (k + 1 == t.rows.length) = false := by
+    simp only [beq_eq_false_iff_ne, ne_eq]
+    omega
+  have hrows := hsat.rowConstraints k hklen
+  have hforced := (hcert hash t.tf (Dregg2.Circuit.DescriptorIR2.envAt t k) (k == 0)
+    (k + 1 == t.rows.length) hrows).1 l (List.mem_append_left _ hl)
+  rw [hlast, envAt_is_rowEnv] at hforced
+  exact hforced
 
 /-! ## §10 — ⚑⚑ WHAT IT CLOSES, SAID EXACTLY.
 
@@ -1199,5 +1235,6 @@ theorem tracks_is_refutable : ¬ Tracks 5 (fun _ => (0 : ℤ)) (fun _ => 1) := b
 #assert_axioms aluRangedCols_are_the_limbs_legs_cols
 #assert_axioms tracks_is_refutable
 #assert_axioms rowsForced_of_certified
+#assert_axioms rowsForced_of_satisfied2
 
 end Dregg2.Circuit.Emit.AirProgramRows
