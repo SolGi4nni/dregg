@@ -1912,9 +1912,19 @@ fn receipt_key(receipt: &ReceiptKeyDto) -> (&str, &str, u64, &str, u64) {
 pub(crate) fn fixture_signal_slot_for_finality_test(
     authority_id: [u8; 32],
 ) -> dregg_persist::PoaInstalledSlotV1 {
-    let bytes = include_str!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
-        .strip_suffix('\n')
-        .expect("PoA Signal fixture has one trailing newline");
+    // ⚠ `059f62db3` regenerated this fixture FROM LEAN, which emits no trailing
+    // newline, so the `.expect` panicked and took three e2e tests with it. The
+    // guarantee that matters is "no trailing newline in the compared bytes" — which
+    // `unwrap_or` gives for both shapes. An `expect` on the shape of a REGENERATED
+    // artifact is a pin on the generator's whitespace, not on content.
+    //
+    // ⚠ The literal is bound FIRST. Written as
+    // `include_str!(..).strip_suffix('\n').unwrap_or(bytes)` this does not compile:
+    // `bytes` is the binding being defined, so it is not yet in scope. That spelling
+    // was published in a hand-off note and applied here verbatim; it broke the lib
+    // test target for every lane until this line.
+    let raw = include_str!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json");
+    let bytes = raw.strip_suffix('\n').unwrap_or(raw);
     let input = CanonicalSignalInput::parse(bytes).expect("canonical PoA Signal input fixture");
     let hex32 = |value: &str| {
         dregg_types::parse_hex32(value).expect("fixture digest is 32 bytes of lowercase hex")
@@ -2023,9 +2033,12 @@ pub(crate) fn play_session_for_test(
 pub(crate) fn fixture_signal_head_for_finality_test(
     authority_id: [u8; 32],
 ) -> dregg_persist::PoaSignalHeadV1 {
-    let bytes = include_str!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
-        .strip_suffix('\n')
-        .expect("PoA Signal fixture has one trailing newline");
+    // ⚠ Same regenerated-fixture hazard as the site above: Lean emits no trailing
+    // newline, so an `.expect` here pins the GENERATOR's whitespace, not content.
+    // The literal is bound first — see that site for why the one-expression spelling
+    // does not compile.
+    let raw = include_str!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json");
+    let bytes = raw.strip_suffix('\n').unwrap_or(raw);
     let mut input = CanonicalSignalInput::parse(bytes).expect("canonical PoA Signal input fixture");
     let authority_hex = dregg_types::hex_encode(&authority_id);
     input.dto.config.mission.federation_id = authority_hex.clone();
@@ -2066,7 +2079,7 @@ mod tests {
         include_str!("../../dregg-lean-ffi/tests/fixtures/poa-signal-output-v1.json");
 
     fn fixture(bytes: &'static str) -> &'static str {
-        bytes.strip_suffix('\n').expect("one fixture newline")
+        bytes.strip_suffix('\n').unwrap_or(bytes)
     }
 
     /// The SOLVING claim for the committed fixture.
