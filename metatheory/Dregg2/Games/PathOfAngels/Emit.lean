@@ -1878,7 +1878,7 @@ alphabet rather than a rule anything may rely on.
 ⚠ **The hidden thing here is not shaped like the others.**  Signal, Relay, Salvage,
 Black Box, Deck Descent and Artificer each hide a PER-PLAYER draw off
 `mission.runSeed`.  Vent Crawl hides a PER-SLOT SHARED table — the day's vein —
-drawn under `VentCrawl.DAY_TABLE_KEY`, a reserved sentinel that is not a player, so
+drawn under `DayWater.SHIP_DOMAIN`, which takes no player and no mission, so
 every crawler in the slot gets the same table and the per-player run seed only
 draws the flood tape.  The theorem below is therefore stated over the DAY SEED, not
 over `demoLiveSeed`. -/
@@ -1987,7 +1987,7 @@ theorem ventConfig_tape_from_live_seed (runSeed : Digest32)
 /-- ⚠ The mission context a Vent Crawl run derives its DAY from ignores the run
 seed, exactly as Signal's does — so the per-slot vein cannot be moved by re-drawing
 a player's own seed.  This is `signalMission_context_ignores_the_run_seed`'s twin and
-it is what makes `daySeedFor` a per-slot value rather than a per-player one. -/
+it is what makes the day a per-slot value rather than a per-player one. -/
 theorem ventMission_context_ignores_the_run_seed (runSeed runSeed' : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :
     HiddenInstance.MissionContext.ofMission
@@ -2001,17 +2001,20 @@ theorem ventMission_context_ignores_the_run_seed (runSeed runSeed' : Digest32)
 #assert_axioms ventConfig_tape_from_live_seed
 #assert_axioms ventMission_context_ignores_the_run_seed
 
-/-- The day's table, as its published tag.  ⚠ `daySeedFor` takes NO player, so this
-takes none either: the whole point of the per-slot draw is that a demonstration
-that varied the player would show a difference the real game does not have. -/
-private def demoVeinTag? (tag : Nat) : Option String :=
-  (VentCrawl.veinFromDayAndBilge?
-    (VentCrawl.daySeedFor (demoSecret tag) demoSlot
-      (HiddenInstance.MissionContext.ofMission
-        (ventMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
-          (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 []))))
-    (tag % 2 == 1)).map
-    VentCrawl.Vein.tag
+private def demoDayContext : HiddenInstance.MissionContext :=
+  HiddenInstance.MissionContext.ofMission
+    (ventMission UNBOUND_RUN_SEED (taggedBytes32 []) (taggedBytes32 [])
+      (taggedBytes32 []) (taggedBytes32 []) (taggedBytes32 []))
+
+/-- The day's table, as its published tag.  ⚠ The ship draw takes NO player and
+NO mission, so this takes neither: the whole point of the per-slot draw is that a
+demonstration varying either would show a difference the real game does not have.
+Only the federation and the content session enter, and those are the two lanes
+`DayWater.shipHeaderBlock` keeps. -/
+private def demoVeinTag (tag : Nat) : String :=
+  (VentCrawl.veinFromShipDay
+    (DayWater.shipDayFor (demoSecret tag) demoSlot
+      demoDayContext.federationId demoDayContext.contentSession)).tag
 
 /-- ⚑ **The artifact does not determine the day's vein.**
 
@@ -2019,10 +2022,19 @@ Vent Crawl's descriptor publishes ALL FOUR yield ladders in full — it has to, 
 client could not render the range a rung might pay — so the artifact names the
 hypothesis space exactly and names the instance not at all.  Stated in the repaired
 salvage shape: every demonstration secret RESOLVES to a vein, AND at least two of
-those veins differ. (Pinned `= true` in `EmitFixtures`.) -/
+those veins differ. (Pinned `= true` in `EmitFixtures`.)
+
+⚠ The first conjunct changed shape on 2026-08-10 and is called out because the
+lazy version would have been a TAUTOLOGY.  `veinFromShipDay` is total, so
+`.isSome` on its result is `true` by construction and would have asserted
+nothing.  What is still contingent — and is what the old `isSome` was really
+carrying — is that the ship DRAW resolves without reaching its fallback, so that
+is what is checked. -/
 def check_ventDescriptor_does_not_determine_the_vein : Bool :=
-  ((List.range 8).all fun tag => (demoVeinTag? tag).isSome) &&
-    decide (2 ≤ ((List.range 8).filterMap demoVeinTag?).eraseDups.length)
+  ((List.range 8).all fun tag =>
+    (DayWater.shipDayFrom? (DayWater.shipSeedFor (demoSecret tag) demoSlot
+      demoDayContext.federationId demoDayContext.contentSession)).isSome) &&
+    decide (2 ≤ ((List.range 8).map demoVeinTag).eraseDups.length)
 
 def ventPreview (runSeed : Digest32)
     (federationId sourceDigest contentDigest contentRoot activationDigest : Digest32) :

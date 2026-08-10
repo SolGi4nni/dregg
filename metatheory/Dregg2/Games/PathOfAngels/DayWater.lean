@@ -105,16 +105,27 @@ it pays 2.0000 → 1.6667 relics and 1.0000 → 0.8333 wins.  That is a cross-ga
 decision with an in-game cost, which is the shape a coupling has to have to be
 more than a difficulty knob.
 
-## The sentinel that stops being a convention
+## The sentinel that stopped being a convention — and the lane nobody had named
 
-`VentCrawl.daySeedFor` draws the day's table by handing `HiddenInstance.runSeedFor`
-a reserved sentinel PLAYER key, and its docblock names the residual out loud: a
+`VentCrawl.daySeedFor` drew the day's table by handing `HiddenInstance.runSeedFor`
+a reserved sentinel PLAYER key, and its docblock named ONE residual out loud: a
 crawler whose signing-key digest equalled `DAY_TABLE_KEY` would draw the day's
 table as their own stream, and "the structural fix — a distinct sponge domain —
-belongs in `HiddenInstance`".  `SHIP_DOMAIN` is that domain.  A ship draw takes
-no player and no mission, so there is no key to collide with and no mission to
-scope it to, and `the_ship_draw_is_not_a_player_draw` is the separation as a fact
-about the preimage rather than about a constant nobody chose adversarially.
+belongs in `HiddenInstance`".  `SHIP_DOMAIN` is that domain, and
+`the_ship_draw_is_not_a_player_draw` is the separation as a fact about the
+preimage rather than about a constant nobody chose adversarially.
+
+⚠ The residual nobody had named is worse, and it is why the seam moved here too
+(2026-08-10).  `runSeedFor` goes through `HiddenInstance.headerBlock`, whose LANE
+3 is the MISSION ID and lane 4 the epoch.  So the day's "shared" table was scoped
+to a slot AND A MISSION: two missions in one slot had no reason to agree about
+the seam, and a second game could never have read it — not for want of wiring,
+but because the derivation named a different day for every mission.  Meanwhile
+`vent.vein_scope` shipped as `"per-slot-shared"` and the client HARD-REFUSES any
+descriptor that says otherwise, so the overstatement was being enforced.
+`the_ship_day_is_not_scoped_to_a_mission` is that defect as arithmetic on lane 3
+of the two header blocks; `ShipDay` is the repair.  Both `DAY_TABLE_KEY` and
+`daySeedFor` are DELETED.
 
 ## Hard facts respected
 
@@ -125,9 +136,11 @@ about the preimage rather than about a constant nobody chose adversarially.
 `decide` below runs on the READING and the INDEX arithmetic, which mention no
 sponge.
 
-`SeedDraw.drawBelow?` is the only draw used.  Both bounds divide 256
-(`READING_FACES = 4`, the bilge bound 2), so neither ever rejects a byte and the
-`getD` fallbacks are dead code for a 32-byte seed — stated, not assumed.
+`SeedDraw.drawBelow?` is the only draw used.  All three bounds divide 256
+(`READING_FACES = 4`, the bilge bound 2, `SEAM_COUNT = 4`), so none ever rejects
+a byte and the `getD` fallbacks are dead code for a 32-byte seed — stated, not
+assumed, and `the_ship_day_bilge_is_the_bilge` is the statement that depends on
+it holding for EVERY `Digest32` rather than for a prefix.
 -/
 import Dregg2.Games.PathOfAngels.Core
 import Dregg2.Games.PathOfAngels.SeedDraw
@@ -216,10 +229,14 @@ One rejection-free draw.  `2` divides 256, so `SeedDraw.ceilingFor 2 = 256`, the
 draw reads exactly the first byte, and the `getD` below is dead code for a
 32-byte seed. -/
 
-/-- Is the lower ship holding water tonight? -/
-def bilgeFrom? (shipSeed : Digest32) : Option Bool := do
-  let (b, _) ← SeedDraw.drawBelow? 2 (by decide) shipSeed.bytes
+/-- Is the lower ship holding water tonight?  Stated over the byte stream so the
+theorems below — and `shipDayOfBytes?`, which reads the SAME first byte — can be
+put side by side without a `Digest32` length obligation in the way. -/
+def bilgeOfBytes? (bs : List (Fin 256)) : Option Bool := do
+  let (b, _) ← SeedDraw.drawBelow? 2 (by decide) bs
   some (b.val = 1)
+
+def bilgeFrom? (shipSeed : Digest32) : Option Bool := bilgeOfBytes? shipSeed.bytes
 
 def bilgeFrom (shipSeed : Digest32) : Bool := (bilgeFrom? shipSeed).getD false
 
@@ -549,6 +566,190 @@ theorem the_mouth_reaches_the_bottom_rung :
           (veinIndexFrom seam false).val = 2 * seam.val + 1))) = true := by
   decide
 
+/-! ## ⚑ The day as ONE object — and the scope defect that made it necessary
+
+The bilge above is the ship's first fact.  Vent Crawl draws a SECOND per-slot
+fact — which of the four SEAMS the shafts are running — and until now it drew it
+somewhere else entirely.  `VentCrawl.daySeedFor secret slot ctx` was
+`HiddenInstance.runSeedFor ⟨secret, slot, DAY_TABLE_KEY⟩ ctx`, and
+`HiddenInstance.headerBlock` puts `ctx.missionId` in lane 3 and `ctx.epoch` in
+lane 4.
+
+⚠ **So the seam was never a ship fact.**  It is a per-(slot, MISSION) fact that
+every crawler of ONE mission shares, while `vent.vein_scope = "per-slot-shared"`
+on the wire says more than the derivation does.  Two missions in one slot, under
+one secret, absorb different header blocks and have no reason to agree about the
+seam — and "two missions asking the day the same question get the same answer"
+is precisely the property this module's header names as the thing that makes a
+cross-game coupling possible at all.  The bilge has it.  The seam did not.
+
+`ShipDay` is the repair: both facts off ONE ship seed in two CONSUMING draws, so
+the day is a single object taking no mission and no player, and a third reader is
+a field read rather than a new derivation.
+
+⚑ **The bilge does not move.**  `shipDayOfBytes?` reads the same first byte
+`bilgeOfBytes?` reads, so the cutover changes where the SEAM comes from and
+nothing whatever about the coupling that already ships —
+`the_day_carries_the_same_bilge` is that, over any stream with two bytes to give.
+
+⚠ What this is NOT.  It adds no reader.  Measured out of band against the emitted
+vent-crawl descriptor, a crawler who knows the seam and nothing else gains
+0.0547 salvage on 5.5833 (+0.98%) where one who knows the bilge gains 0.5992
+(+10.73%); the two are exactly additive.  The seam is the cheap half of the day,
+and this section is a derivation repair, not a second coupling. -/
+
+/-- ⚑ The day, as one drawn object: the ship's water and the ship's seam. -/
+structure ShipDay where
+  bilge : Bool
+  seam : Fin SEAM_COUNT
+deriving Repr, DecidableEq
+
+/-- Two CONSUMING draws off one stream — the wound `SeedDraw` exists to close.
+`2` and `SEAM_COUNT = 4` both divide 256, so neither ever rejects a byte. -/
+def shipDayOfBytes? (bs : List (Fin 256)) : Option ShipDay := do
+  let (b, rest) ← SeedDraw.drawBelow? 2 (by decide) bs
+  let (s, _) ← SeedDraw.drawBelow? SEAM_COUNT (by decide) rest
+  some { bilge := b.val = 1, seam := s }
+
+def shipDayFrom? (shipSeed : Digest32) : Option ShipDay := shipDayOfBytes? shipSeed.bytes
+
+def shipDayFrom (shipSeed : Digest32) : ShipDay :=
+  (shipDayFrom? shipSeed).getD { bilge := false, seam := 0 }
+
+/-- ⚑ The whole day, as a judge assembles it: no mission, no player. -/
+def shipDayFor (secret : HiddenInstance.SlotSecret) (slot : EpochId)
+    (federationId contentSession : Digest32) : ShipDay :=
+  shipDayFrom (shipSeedFor secret slot federationId contentSession)
+
+/-- The seam draw never rejects either: `SEAM_COUNT = 4` divides 256. -/
+theorem the_seam_draw_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
+    SeedDraw.drawBelow? SEAM_COUNT (by decide) (b :: rest)
+      = some (⟨b.val % SEAM_COUNT, Nat.mod_lt _ (by decide)⟩, rest) := by
+  have hceil : SeedDraw.ceilingFor SEAM_COUNT = 256 := by decide
+  simp [SeedDraw.drawBelow?, hceil, b.isLt]
+
+/-- ⚑ **The cutover does not move the bilge.**  On any stream with two bytes to
+give, the day's water is the bit `bilgeOfBytes?` already read off the first one.
+This is what makes the repair invisible to the coupling that already ships. -/
+theorem the_day_carries_the_same_bilge (b c : Fin 256) (rest : List (Fin 256)) :
+    (shipDayOfBytes? (b :: c :: rest)).map ShipDay.bilge
+      = bilgeOfBytes? (b :: c :: rest) := by
+  simp [shipDayOfBytes?, bilgeOfBytes?, the_bilge_draw_never_rejects,
+    the_seam_draw_never_rejects]
+
+/-- ⚑⚑ **THE CUTOVER DID NOT MOVE THE WATER — over every seed, not a prefix.**
+
+`the_day_carries_the_same_bilge` is about a stream with two bytes to give.  This
+is the same fact about the object the judge actually holds: a `Digest32` has
+thirty-two bytes, so both draws always land, and the day's bilge IS the bit
+`bilgeFrom` was already reading.  Deck Descent's mouth and Vent Crawl's bottom
+see exactly the water they saw before this file grew a seam. -/
+theorem the_ship_day_bilge_is_the_bilge (d : Digest32) :
+    (shipDayFrom d).bilge = bilgeFrom d := by
+  obtain ⟨bs, hlen⟩ := d
+  match bs, hlen with
+  | [], h => simp at h
+  | [_], h => simp at h
+  | b :: c :: rest, _ =>
+      simp [shipDayFrom, bilgeFrom, shipDayFrom?, bilgeFrom?, shipDayOfBytes?,
+        bilgeOfBytes?, the_bilge_draw_never_rejects, the_seam_draw_never_rejects]
+
+/-- The same, at the call site `Judged` uses: one ship draw, and its water is the
+water `bilgeFor` names. -/
+theorem the_cutover_did_not_move_the_water (secret : HiddenInstance.SlotSecret)
+    (slot : EpochId) (federationId contentSession : Digest32) :
+    (shipDayFor secret slot federationId contentSession).bilge
+      = bilgeFor secret slot federationId contentSession :=
+  the_ship_day_bilge_is_the_bilge _
+
+/-- ⚠ **The falsifier: two reads, not one byte wearing two hats.**  Changing the
+SECOND byte moves the seam and leaves the water alone; changing the FIRST moves
+the water and leaves the seam alone.  A derivation that read one byte twice would
+fail both halves. -/
+theorem the_day_is_two_reads_and_not_one_byte_twice :
+    (shipDayOfBytes? [0, 0]).map ShipDay.bilge = (shipDayOfBytes? [0, 1]).map ShipDay.bilge ∧
+    (shipDayOfBytes? [0, 0]).map ShipDay.seam ≠ (shipDayOfBytes? [0, 1]).map ShipDay.seam ∧
+    (shipDayOfBytes? [0, 0]).map ShipDay.bilge ≠ (shipDayOfBytes? [1, 0]).map ShipDay.bilge ∧
+    (shipDayOfBytes? [0, 0]).map ShipDay.seam = (shipDayOfBytes? [1, 0]).map ShipDay.seam := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
+/-- The complete finite domain of days. -/
+def allShipDays : List ShipDay :=
+  allBilge.flatMap fun w => allSeams.map fun s => { bilge := w, seam := s }
+
+theorem the_day_has_eight_faces : allShipDays.length = 2 * SEAM_COUNT := by decide
+
+theorem allShipDays_nodup : allShipDays.Nodup := by decide
+
+theorem allShipDays_complete (w : Bool) (s : Fin SEAM_COUNT) :
+    ({ bilge := w, seam := s } : ShipDay) ∈ allShipDays := by
+  revert w s; decide
+
+/-- Every one of the eight days is actually drawn by some two-byte stream, so the
+day is a real eight-way draw and not a type with unreachable inhabitants. -/
+theorem every_day_is_drawn_by_some_stream :
+    (([0, 1] : List (Fin 256)).flatMap fun b =>
+      ([0, 1, 2, 3] : List (Fin 256)).filterMap fun c =>
+        shipDayOfBytes? [b, c]) = allShipDays := by
+  decide
+
+/-! ### The defect, as arithmetic on the two header blocks -/
+
+/-- Lane 3 of a per-player derive block is the MISSION. -/
+theorem deriveHeaderBlock_names_the_mission (purpose : HiddenInstance.Purpose)
+    (slot : EpochId) (ctx : HiddenInstance.MissionContext) :
+    (HiddenInstance.headerBlock purpose slot ctx)[3]? = some (ctx.missionId.value % P) := rfl
+
+/-- Lane 3 of a ship block is nothing at all. -/
+theorem shipHeaderBlock_names_no_mission (slot : EpochId) :
+    (shipHeaderBlock slot)[3]? = some 0 := rfl
+
+/-- ⚑ **The lane the ship draw drops.**  Any mission whose id is not the zero
+residue absorbs a header block the ship draw never absorbs, so a day table drawn
+through `HiddenInstance.runSeedFor` — which is what the deleted `daySeedFor` did
+— is scoped to that mission.  `shipHeaderBlock_is_the_slot_alone` is the other
+half: the ship's block is a function of the slot and nothing else. -/
+theorem the_ship_day_is_not_scoped_to_a_mission
+    (purpose : HiddenInstance.Purpose) (slot : EpochId)
+    (ctx : HiddenInstance.MissionContext) (h : ctx.missionId.value % P ≠ 0) :
+    HiddenInstance.headerBlock purpose slot ctx ≠ shipHeaderBlock slot := by
+  intro heq
+  apply h
+  have hlane : (HiddenInstance.headerBlock purpose slot ctx)[3]?
+      = (shipHeaderBlock slot)[3]? := by rw [heq]
+  rw [deriveHeaderBlock_names_the_mission, shipHeaderBlock_names_no_mission] at hlane
+  exact Option.some.inj hlane
+
+/-! ### The vein, straight off the day -/
+
+/-- The vein index a day names, with the seam and the bottom now coming from ONE
+object.  `VentCrawl.veinFromShipDay` is this composed with `veinAt`. -/
+def veinIndexOfDay (day : ShipDay) : Fin VEIN_COUNT := veinIndexFrom day.seam day.bilge
+
+/-- ⚑ **The eight days name the eight veins, one apiece.**  The family is still
+the uniform it was; the day is a relabelling of where two of the three bits come
+from and not a reweighting. -/
+theorem the_eight_days_name_the_eight_veins :
+    (List.range VEIN_COUNT).map (fun i =>
+      (allShipDays.filter fun d => (veinIndexOfDay d).val = i).length)
+      = [1, 1, 1, 1, 1, 1, 1, 1] := by
+  decide
+
+theorem the_day_to_vein_map_is_injective (w₁ : Bool) (s₁ : Fin SEAM_COUNT)
+    (w₂ : Bool) (s₂ : Fin SEAM_COUNT)
+    (h : veinIndexOfDay ⟨w₁, s₁⟩ = veinIndexOfDay ⟨w₂, s₂⟩) :
+    w₁ = w₂ ∧ s₁ = s₂ := by
+  revert w₁ s₁ w₂ s₂; decide
+
+/-- ⚠ And the conditioning falsifier, carried over to the assembled object: on a
+wet night four of the eight veins are gone, whatever the seam is doing. -/
+theorem the_wet_day_halves_the_vein_family :
+    ((allShipDays.filter fun d => d.bilge).map fun d => (veinIndexOfDay d).val)
+      = [0, 2, 4, 6] ∧
+    ((allShipDays.filter fun d => ! d.bilge).map fun d => (veinIndexOfDay d).val)
+      = [1, 3, 5, 7] := by
+  refine ⟨by decide, by decide⟩
+
 #assert_axioms ship_domain_is_new_and_canonical
 #assert_axioms shipHeaderBlock_length
 #assert_axioms shipHeaderBlock_is_the_slot_alone
@@ -581,5 +782,20 @@ theorem the_mouth_reaches_the_bottom_rung :
 #assert_axioms the_day_halves_the_vein_family
 #assert_axioms the_day_settles_the_bottom_rung
 #assert_axioms the_mouth_reaches_the_bottom_rung
+#assert_axioms the_seam_draw_never_rejects
+#assert_axioms the_day_carries_the_same_bilge
+#assert_axioms the_ship_day_bilge_is_the_bilge
+#assert_axioms the_cutover_did_not_move_the_water
+#assert_axioms the_day_is_two_reads_and_not_one_byte_twice
+#assert_axioms the_day_has_eight_faces
+#assert_axioms allShipDays_nodup
+#assert_axioms allShipDays_complete
+#assert_axioms every_day_is_drawn_by_some_stream
+#assert_axioms deriveHeaderBlock_names_the_mission
+#assert_axioms shipHeaderBlock_names_no_mission
+#assert_axioms the_ship_day_is_not_scoped_to_a_mission
+#assert_axioms the_eight_days_name_the_eight_veins
+#assert_axioms the_day_to_vein_map_is_injective
+#assert_axioms the_wet_day_halves_the_vein_family
 
 end Dregg2.Games.PathOfAngels.DayWater

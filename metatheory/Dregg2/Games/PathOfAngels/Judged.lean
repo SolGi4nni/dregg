@@ -243,8 +243,8 @@ private def deckDescentContext (active : ActiveRunState) (carrier : FinalizedCar
   actorRoot := carrier.actorRoot
   playerKey := carrier.playerKey
   previousPlayerCounter := carrier.currentPlayerCounter.val
-  bilge := DayWater.bilgeFor active.slotSecret active.slot
-    active.game.mission.federationId active.game.mission.contentSession
+  bilge := (DayWater.shipDayFor active.slotSecret active.slot
+    active.game.mission.federationId active.game.mission.contentSession).bilge
 
 /-- ⚠ The only judge context built from `active` as well as `carrier`, and the
 reason is the whole point of Vent Crawl: its hidden table is drawn once per SLOT
@@ -257,16 +257,17 @@ Nothing new is trusted: a node that swapped the secret after publishing is
 refused by `judgeActive_uncommitted_secret_refused`, and the same secret that
 fixes the player's tape fixes the day's vein.
 
-⚑ `VentCrawl.daySeedFor` is `HiddenInstance.runSeedFor` under a reserved sentinel
-key, so it is `@[irreducible]` all the way down — never `decide` through this. -/
+⚑ **ONE call, and it is the same call Deck Descent makes.**  Both games' contexts
+are now built from `DayWater.shipDayFor` on the same four arguments, so "the two
+games see one night" is a fact about these two definitions rather than about two
+derivations that happen to agree.  `shipSeedFor` is `@[irreducible]` — never
+`decide` through this. -/
 private def ventCrawlContext (active : ActiveRunState) (carrier : FinalizedCarrier) :
     VentCrawl.JudgeContext where
   actorRoot := carrier.actorRoot
   playerKey := carrier.playerKey
   previousPlayerCounter := carrier.currentPlayerCounter.val
-  daySeed := VentCrawl.daySeedFor active.slotSecret active.slot
-    (HiddenInstance.MissionContext.ofMission active.game.mission)
-  bilge := DayWater.bilgeFor active.slotSecret active.slot
+  day := DayWater.shipDayFor active.slotSecret active.slot
     active.game.mission.federationId active.game.mission.contentSession
 
 /-! ## Abstract judged value with game-specific executable evidence -/

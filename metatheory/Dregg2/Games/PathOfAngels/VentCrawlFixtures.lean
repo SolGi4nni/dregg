@@ -82,6 +82,13 @@ theorem the_day_table_is_not_a_player_stream :
 theorem two_crawlers_share_a_vein_and_not_a_tape :
     check_two_crawlers_share_a_vein_and_not_a_tape = true := by native_decide
 
+/-- ⚑ The counterfactual the seam moved for: two missions in one slot, alike in
+secret, slot, federation and content session, got DIFFERENT day seeds under the
+deleted `daySeedFor`, because `HiddenInstance.headerBlock` carries the mission id
+in lane 3.  See the ⚠ on the check for the tautology this deliberately is not. -/
+theorem a_mission_scoped_day_would_have_differed :
+    check_a_mission_scoped_day_would_have_differed = true := by native_decide
+
 #assert_compiled parametric_closure_is_closed
 #assert_compiled parametric_states_nodup
 #assert_compiled initial_state_is_declared
@@ -99,5 +106,6 @@ theorem two_crawlers_share_a_vein_and_not_a_tape :
 #assert_compiled the_scout_comes_home_where_the_third_crawl_drowns
 #assert_compiled the_day_table_is_not_a_player_stream
 #assert_compiled two_crawlers_share_a_vein_and_not_a_tape
+#assert_compiled a_mission_scoped_day_would_have_differed
 
 end Dregg2.Games.PathOfAngels.VentCrawl

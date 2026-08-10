@@ -543,19 +543,28 @@ Deck Descent's mouth also reads.
 
 ⚠ This is the only place in the seven-game rack where two DIFFERENT GAMES read
 one draw.  `DayWater` carries the calibration, both posteriors, and the proof
-that neither family moved. -/
-def veinFromDayAndBilge? (daySeed : Digest32) (bilge : Bool) : Option Vein := do
-  let (s, _) ← SeedDraw.drawBelow? SEAMS (by decide) daySeed.bytes
-  some (veinAt (DayWater.veinIndexFrom s bilge))
+that neither family moved.
 
-def veinFromDayAndBilge (daySeed : Digest32) (bilge : Bool) : Vein :=
-  (veinFromDayAndBilge? daySeed bilge).getD .barren
+⚑ **CHANGED: the SEAM moved too, and it had to.**  Both bits now come off the
+ship's own draw as one `DayWater.ShipDay`.  The seam used to be drawn from
+`daySeedFor` — `HiddenInstance.runSeedFor` under the sentinel player key
+`DAY_TABLE_KEY` — and that seed's header block carries the MISSION ID in lane 3,
+so the "day's shared table" was shared only among crawlers of THIS mission.  The
+descriptor's `vein_scope = "per-slot-shared"` said more than the derivation did.
+`DayWater.the_ship_day_is_not_scoped_to_a_mission` is the defect as arithmetic on
+the two header blocks, and `DayWater.the_day_carries_the_same_bilge` is the proof
+that repairing it moved nothing about the coupling that already ships. -/
+def veinFromShipDay (day : DayWater.ShipDay) : Vein :=
+  veinAt (DayWater.veinIndexOfDay day)
 
-/-- The seam draw never rejects either: `SEAMS = 4` divides 256. -/
-theorem draw_below_the_seam_count_never_rejects (b : Fin 256) (rest : List (Fin 256)) :
-    SeedDraw.drawBelow? SEAMS (by decide) (b :: rest)
-      = some (⟨b.val % SEAMS, Nat.mod_lt _ (by decide)⟩, rest) :=
-  a_full_ceiling_never_rejects SEAMS (by decide) (by decide) b rest
+/-- ⚑ **The eight days name the eight published veins, one apiece.**  The same
+statement `the_day_and_the_bilge_name_every_vein` makes about the two separate
+draws, now about the assembled object the judge actually hands over. -/
+theorem the_ship_day_names_every_vein :
+    allVeins.all (fun v =>
+      decide ((DayWater.allShipDays.filter fun d => veinFromShipDay d = v).length = 1))
+      = true := by
+  decide
 
 /-- ⚑ **The family did not move.**  The eight `(seam, bilge)` pairs name the eight
 published veins, in the published order, one apiece.  So a crawler who knows
@@ -624,24 +633,26 @@ theorem the_bilge_settles_the_bottom_rung :
         w.opensAtTheBottom = v.opensAtTheBottom)).length = 1)) = true := by
   decide
 
-/-- ⚑ The sentinel the day's shared table is drawn for.  It is not a crawler and
-it is not a key: it is a reserved 32-byte constant that separates the per-slot
-draw from every per-player draw made under the same secret.  See the ⚠ in the
-docblock for what this does and does not buy. -/
-def DAY_TABLE_KEY : Digest32 where
-  bytes := List.ofFn fun i : Fin 32 =>
-    match ([86, 69, 78, 84, 45, 68, 65, 89, 45, 84, 65, 66, 76, 69] : List Nat)[i.val]? with
-    | some n => ⟨n % 256, Nat.mod_lt _ (by decide)⟩
-    | none => ⟨0, by decide⟩
-  length_eq := by simp
+/-! ### ⚑ DELETED: `DAY_TABLE_KEY` and `daySeedFor`
 
-/-- **The day's shared table seed.**  It takes no player, so it cannot depend on
-one: every crawler in the slot draws the same vein, and that is a fact about this
-signature and not about a convention someone has to keep. -/
-def daySeedFor (secret : HiddenInstance.SlotSecret) (slot : EpochId)
-    (ctx : HiddenInstance.MissionContext) : Digest32 :=
-  HiddenInstance.runSeedFor
-    { secret := secret, slot := slot, playerKey := DAY_TABLE_KEY } ctx
+The day's table used to be drawn by handing `HiddenInstance.runSeedFor` a
+reserved sentinel PLAYER key.  Two things were wrong with it and only one was
+written down.
+
+The written one: a crawler whose signing-key digest equalled the sentinel would
+draw the day's table as their own stream, and the docblock said "the structural
+fix — a distinct sponge domain — belongs in `HiddenInstance`".
+`DayWater.SHIP_DOMAIN` is that domain, and `the_ship_draw_is_not_a_player_draw`
+is the separation as a fact about the preimage rather than about a constant
+nobody chose adversarially.
+
+⚠ The unwritten one, which is worse: `runSeedFor` goes through
+`HiddenInstance.headerBlock`, whose lane 3 is the MISSION ID.  So the day's
+"shared" table was scoped to a slot AND a mission, and could never have been read
+by a second game even in principle.  `DayWater.the_ship_day_is_not_scoped_to_a_mission`.
+
+Both are gone: the day is `DayWater.shipDayFor secret slot federationId
+contentSession`, which takes no mission and no player. -/
 
 /-! ## State -/
 
@@ -1499,26 +1510,30 @@ structure JudgedRun where
   afterWorld : WorldState
   receipt : RunReceipt
 
-/-- ⚠ Unlike every other POAG1 judge context, this one carries `daySeed`.  It has
+/-- ⚠ Unlike every other POAG1 judge context, this one carries the day.  It has
 to: the vein is a per-SLOT draw and the run seed is a per-PLAYER one, so the
 shared table cannot arrive through `mission.runSeed`.  `Judged.judgeAdmitted`
-builds it with `daySeedFor` from the very slot secret that `admissionChecks`
-already binds to the published commitment. -/
+builds it with `DayWater.shipDayFor` from the very slot secret that
+`admissionChecks` already binds to the published commitment.
+
+⚑ It is ONE field, not two.  It used to be a `daySeed : Digest32` — drawn under a
+sentinel player key, and mission-scoped — beside a `bilge : Bool` drawn under the
+ship domain.  Two facts about the same night arriving by two derivations with two
+different scopes is how the rack ended up with one shareable fact and one that
+only looked shareable.  The day arrives as the day.
+
+It arrives here and NOT in the `Config`: a host must not be able to name it,
+because Deck Descent's mouth reads the same water. -/
 structure JudgeContext where
   actorRoot : Digest32
   playerKey : Digest32
   previousPlayerCounter : Nat
-  daySeed : Digest32
-  /-- ⚑ The day's water, from `DayWater.bilgeFor` — a per-SLOT bit under its own
-  sponge domain, taking no mission and no player.  It arrives here and NOT in the
-  `Config` for the same reason the day seed does: a host must not be able to name
-  it, because Deck Descent's mouth reads the same bit. -/
-  bilge : Bool
+  day : DayWater.ShipDay
 
 /-- The vein a context is judged against.  Named so the derivation is one
 function and not an expression repeated at two call sites. -/
 def JudgeContext.vein (ctx : JudgeContext) : Vein :=
-  veinFromDayAndBilge ctx.daySeed ctx.bilge
+  veinFromShipDay ctx.day
 
 def judge (cfg : Config) (before : WorldState) (ctx : JudgeContext)
     (actions : List Action) : Option JudgedRun :=
@@ -1611,9 +1626,9 @@ theorem judged_run_within_budget (cfg : Config) (before : WorldState)
   have hsound := judge_some_sound cfg before ctx actions h
   exact accepted_transcript_within_budget ctx.vein cfg.floods actions run.finalState hsound.1
 
-/-! ## The sentinel, on a fixture
+/-! ## The ship draw, on a fixture
 
-The claim that `DAY_TABLE_KEY` separates the shared draw from a player's own is
+The claim that the SHIP DOMAIN separates the shared draw from a player's own is
 made refutable here rather than left in the docblock.  ⚠ Both checks evaluate
 Poseidon2 sponges, so they run ONLY under `native_decide` — in
 `VentCrawlFixtures.lean`, never in this module — and the elaborator is never
@@ -1637,20 +1652,54 @@ private def fixtureContext : HiddenInstance.MissionContext where
   federationId := taggedDigest [70, 69, 68]
   contentSession := taggedDigest [83, 69, 83, 83]
 
+/-- The SAME night, asked by a different mission.  Everything the ship draw reads
+— slot, federation, content session — is identical; only the mission id and epoch
+differ, and those are exactly the two lanes `DayWater.shipHeaderBlock` drops. -/
+private def fixtureOtherMission : HiddenInstance.MissionContext :=
+  { fixtureContext with missionId := ⟨5⟩, epoch := ⟨11⟩ }
+
 /-- ⚑ **The day's table is not any crawler's stream.**  Two crawlers in the slot
 draw two different tapes, and neither of them is the seed the vein came off.
 (Pinned `= true` in `VentCrawlFixtures`.) -/
 def check_the_day_table_is_not_a_player_stream : Bool :=
-  decide (daySeedFor fixtureSecret fixtureSlot fixtureContext ≠
+  decide (DayWater.shipSeedFor fixtureSecret fixtureSlot
+      fixtureContext.federationId fixtureContext.contentSession ≠
     HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
       fixtureContext) &&
-  decide (daySeedFor fixtureSecret fixtureSlot fixtureContext ≠
+  decide (DayWater.shipSeedFor fixtureSecret fixtureSlot
+      fixtureContext.federationId fixtureContext.contentSession ≠
     HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
       fixtureContext) &&
   decide (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
       fixtureContext ≠
     HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureOtherCrawler⟩
       fixtureContext)
+
+/-- ⚑ **A mission-scoped day WOULD have differed, and that is the whole reason
+the seam moved.**
+
+⚠ Read what this does NOT check, because the obvious version is a tautology and
+was written first.  "Two missions share one night" is a fact about
+`DayWater.shipDayFor`'s SIGNATURE — it takes no mission, so there is no mission
+to vary — and a fixture that fed it `fixtureContext.federationId` beside
+`fixtureOtherMission.federationId` would be comparing one closed expression with
+itself, exactly the `x = x` that
+`check_two_crawlers_share_a_vein_and_not_a_tape` was corrected for on
+2026-08-09.
+
+What IS contingent is the counterfactual: the derivation the ship draw REPLACED
+separates two missions that differ in nothing but their id.  `fixtureContext` and
+`fixtureOtherMission` share a secret, a slot, a federation and a content session;
+the deleted `daySeedFor` routed all of that through
+`HiddenInstance.headerBlock`, whose lane 3 is the mission id, and this is that
+difference on a real sponge.  (Pinned `= true` in `VentCrawlFixtures`.) -/
+def check_a_mission_scoped_day_would_have_differed : Bool :=
+  decide (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
+      fixtureContext ≠
+    HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
+      fixtureOtherMission) &&
+  decide (fixtureContext.federationId = fixtureOtherMission.federationId) &&
+  decide (fixtureContext.contentSession = fixtureOtherMission.contentSession)
 
 /-- ⚑ **Two crawlers on one day draw two tapes.**  The vein they share; the water
 they do not.  This is what makes a neighbour's drowning news about the day and
@@ -1665,8 +1714,12 @@ the SIGNATURE.  The conjunct now carries the fact that IS contingent and IS new:
 the day's water moves the vein, on the same seam.  (Pinned `= true` in
 `VentCrawlFixtures`.) -/
 def check_two_crawlers_share_a_vein_and_not_a_tape : Bool :=
-  decide (veinFromDayAndBilge (daySeedFor fixtureSecret fixtureSlot fixtureContext) true ≠
-    veinFromDayAndBilge (daySeedFor fixtureSecret fixtureSlot fixtureContext) false) &&
+  decide (veinFromShipDay
+      { bilge := true, seam := (DayWater.shipDayFor fixtureSecret fixtureSlot
+          fixtureContext.federationId fixtureContext.contentSession).seam } ≠
+    veinFromShipDay
+      { bilge := false, seam := (DayWater.shipDayFor fixtureSecret fixtureSlot
+          fixtureContext.federationId fixtureContext.contentSession).seam }) &&
   decide (floodTapeFromRunSeed
       (HiddenInstance.runSeedFor ⟨fixtureSecret, fixtureSlot, fixtureCrawler⟩
         fixtureContext) ≠
@@ -1675,7 +1728,7 @@ def check_two_crawlers_share_a_vein_and_not_a_tape : Bool :=
         fixtureContext))
 
 #assert_axioms the_family_is_the_seams_and_the_bottom
-#assert_axioms draw_below_the_seam_count_never_rejects
+#assert_axioms the_ship_day_names_every_vein
 #assert_axioms the_day_and_the_bilge_name_every_vein
 #assert_axioms the_day_and_the_bilge_collide_on_nothing
 #assert_axioms the_draw_order_is_not_the_wire_order
