@@ -20,6 +20,7 @@ about what those digests authorize.
 -/
 import Lean.Data.Json
 import Dregg2.Games.PathOfAngels.Core
+import Dregg2.Games.PathOfAngels.EmitDigestHex
 import Dregg2.Games.PathOfAngels.RelicNamespace
 import Dregg2.Games.PathOfAngels.SignalTriangulation
 import Dregg2.Games.PathOfAngels.FiniteTables
@@ -46,47 +47,20 @@ abbrev FORMAT : String := "POAG1"
 abbrev SCHEMA_VERSION : Nat := 1
 abbrev AUTHORITY : String := "Dregg2.Games.PathOfAngels"
 
-private def lowerHexDigit (n : Nat) : Char :=
-  if n < 10 then Char.ofNat ('0'.toNat + n)
-  else Char.ofNat ('a'.toNat + (n - 10))
+/-! ## The `Digest32` hex codec
 
-private def hexNibble? (c : Char) : Option Nat :=
-  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - '0'.toNat)
-  else if 'a' ≤ c ∧ c ≤ 'f' then some (10 + c.toNat - 'a'.toNat)
-  else none
+⚑ `lowerHexDigit`, `hexNibble?`, `isLowerHexOfLength`, `validSha256`, `parseByte?`,
+`parseDigestList?`, `parseDigest32?`, `parseBytes32Hex?`, `byteHex`, `bytes32Hex` and
+`digestHex` MOVED to `Dregg2.Games.PathOfAngels.EmitDigestHex` (2026-08-09), in this same
+namespace, so every `Emit.bytes32Hex` call site reads unchanged.  They are re-exported here
+by the import above; nothing was copied.
 
-def isLowerHexOfLength (n : Nat) (s : String) : Bool :=
-  s.length == n && s.toList.all (hexNibble? · |>.isSome)
-
-def validSha256 (s : String) : Bool :=
-  s.startsWith "sha256:" &&
-    isLowerHexOfLength 64 (String.ofList (s.toList.drop 7))
-
-private def parseByte? (hi lo : Char) : Option (Fin 256) := do
-  let h ← hexNibble? hi
-  let l ← hexNibble? lo
-  let n := 16 * h + l
-  if hn : n < 256 then some ⟨n, hn⟩ else none
-
-private def parseDigestList? : List Char → Option (List (Fin 256))
-  | [] => some []
-  | hi :: lo :: rest => do
-      let b ← parseByte? hi lo
-      return b :: (← parseDigestList? rest)
-  | _ => none
-
-/-- Parse the exact wire spelling used by POAG1 into Core's 32-byte type. -/
-def parseDigest32? (s : String) : Option Digest32 := do
-  if !validSha256 s then none else
-    let bytes ← parseDigestList? (s.toList.drop 7)
-    if h : bytes.length = 32 then
-      some { bytes := bytes, length_eq := h }
-    else none
-
-/-- Parse an identifier whose wire encoding is 64 lowercase hexadecimal digits
-without the `sha256:` claim.  Federation identifiers use this spelling. -/
-def parseBytes32Hex? (s : String) : Option Digest32 :=
-  if isLowerHexOfLength 64 s then parseDigest32? ("sha256:" ++ s) else none
+The reason is the build graph, not the code.  This module imports every game's emit driver
+— that is what an aggregate emitter is for — and seven RUNTIME/wire modules were importing
+it to reach three codec functions, which put every game in the rack into the closure of
+every crew/station guard module downstream (`CrewFieldMissionAdmissionFixtures`: 177 local
+modules, unbuildable whenever Vent Crawl was).  An aggregator belongs in the closure of the
+emitter binary and its pins, and nowhere else. -/
 
 /-- Explicit non-deployment vector for deterministic emitter tests.  Canonical
 artifacts never use it; their id is supplied only by verified PoA genesis. -/
@@ -119,15 +93,6 @@ def check_parseBytes32Hex_test_federation_vector : Bool :=
 /-- A display label is not a federation id. (Pinned `= true` in `EmitFixtures`.) -/
 def check_parseBytes32Hex_refuses_display_label : Bool :=
   (parseBytes32Hex? "POA-FED-1").isNone
-
-private def byteHex (b : Fin 256) : String :=
-  String.ofList [lowerHexDigit (b.val / 16), lowerHexDigit (b.val % 16)]
-
-def bytes32Hex (d : Digest32) : String :=
-  String.join (d.bytes.map byteHex)
-
-def digestHex (d : Digest32) : String :=
-  "sha256:" ++ bytes32Hex d
 
 /-! ## Stable byte pin -/
 

@@ -27,7 +27,7 @@ import Lean.Data.Json
 import Mathlib.Data.List.Sort
 import Mathlib.Data.Finset.Sort
 import Dregg2.Games.PathOfAngels.BazaarGame
-import Dregg2.Games.PathOfAngels.Emit
+import Dregg2.Games.PathOfAngels.EmitDigestHex
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.BazaarGameRuntime

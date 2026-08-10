@@ -59,7 +59,7 @@ import Mathlib.Data.List.Sort
 import Dregg2.Circuit.CommitmentTreeWide
 import Dregg2.Games.PathOfAngels.ContentContract
 import Dregg2.Games.PathOfAngels.CrewFieldMission
-import Dregg2.Games.PathOfAngels.Emit
+import Dregg2.Games.PathOfAngels.EmitDigestHex
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.CrewFieldMissionRuntime

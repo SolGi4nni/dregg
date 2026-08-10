@@ -39,7 +39,7 @@ import Lean.Data.Json
 import Mathlib.Data.List.Sort
 import Dregg2.Circuit.CommitmentTreeWide
 import Dregg2.Games.PathOfAngels.EventSourcing
-import Dregg2.Games.PathOfAngels.Emit
+import Dregg2.Games.PathOfAngels.EmitDigestHex
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime

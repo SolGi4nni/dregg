@@ -19,7 +19,7 @@ must carry a proof of the same statement in a separately versioned format.
 import Lean.Data.Json
 import Mathlib.Data.List.Sort
 import Dregg2.Games.PathOfAngels.DarkBazaar
-import Dregg2.Games.PathOfAngels.Emit
+import Dregg2.Games.PathOfAngels.EmitDigestHex
 import Dregg2.Circuit.CommitmentTreeWide
 import Dregg2.Tactics
 

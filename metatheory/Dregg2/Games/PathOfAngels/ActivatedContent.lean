@@ -38,7 +38,7 @@ writer.  In particular this module exports no caller-set
 -/
 import Lean.Data.Json
 import Dregg2.Bridge.MinaStateHashDerive
-import Dregg2.Games.PathOfAngels.Emit
+import Dregg2.Games.PathOfAngels.EmitDigestHex
 import Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyRuntime
 import Dregg2.Games.PathOfAngels.WorldActivation
 import Dregg2.Tactics

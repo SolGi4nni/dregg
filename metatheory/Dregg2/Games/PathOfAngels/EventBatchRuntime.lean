@@ -30,7 +30,7 @@ resistance theorem.
 -/
 import Lean.Data.Json
 import Dregg2.Circuit.CommitmentTreeWide
-import Dregg2.Games.PathOfAngels.Emit
+import Dregg2.Games.PathOfAngels.EmitDigestHex
 import Dregg2.Games.PathOfAngels.EventBatch
 import Dregg2.Tactics
 

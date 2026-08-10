@@ -20,7 +20,7 @@ It is therefore a new auditable activation, never deletion or head rewinding.
 -/
 import Lean.Data.Json
 import Dregg2.Bridge.MinaStateHashDerive
-import Dregg2.Games.PathOfAngels.Emit
+import Dregg2.Games.PathOfAngels.EmitDigestHex
 import Dregg2.Games.PathOfAngels.EventBatch
 import Dregg2.Tactics
 
