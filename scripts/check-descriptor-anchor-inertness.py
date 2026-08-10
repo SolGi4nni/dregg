@@ -91,9 +91,10 @@ SCOPE_DOES_NOT_ANSWER = (
     "registry TSVs, table-airs/, the top-level descriptors) is never opened."
 )
 SCOPE_ANSWERS_SELFTEST = (
-    "do three synthetic four-column descriptors get the decorative verdicts they were built to "
-    "have (pinned-and-never-named, read-by-an-arity-1-range-lookup-only, joined-by-a-window-gate), "
-    "and does a count above a baseline row get collected as red?"
+    "do five synthetic four-column descriptors get the decorative verdicts they were built to "
+    "have (pinned-and-never-named, read-by-an-arity-1-range-lookup-only, joined-by-a-window-gate, "
+    "joined-by-a-chal_gate, and joined-by-nothing-but-a-shared-challenge), and does a count above "
+    "a baseline row get collected as red?"
 )
 SCOPE_DOES_NOT_ANSWER_SELFTEST = (
     "anything about the descriptors on disk, and nothing about main()'s ratchet either: the "
@@ -104,12 +105,18 @@ SCOPE_DOES_NOT_ANSWER_SELFTEST = (
 # `var v` is a row-local column; `loc c` / `nxt c` are the SAME column read in two rows.
 EXPR_COL_KEY = {"var": "v", "loc": "c", "nxt": "c"}
 
+# ⚑ `chal i` is a VERIFIER-DRAWN SCALAR, not a trace column. It carries no column index and
+# must contribute none: a Schwartz–Zippel body `α·(a - b) + α²·(c - d)` relates a,b,c,d to each
+# other and relates NOTHING to `α`. Listed here rather than falling through to the `else` so the
+# omission is a decision with a reason, not a tag the walker happened not to meet.
+EXPR_SCALAR_LEAVES = ("const", "chal")
+
 
 def expr_cols(e, out):
     t = e["t"]
     if t in EXPR_COL_KEY:
         out.add(e[EXPR_COL_KEY[t]])
-    elif t == "const":
+    elif t in EXPR_SCALAR_LEAVES:
         pass
     elif t in ("add", "mul"):
         expr_cols(e["l"], out)
@@ -169,6 +176,15 @@ def analyze(d: dict) -> dict:
         elif t == "window_gate":
             relate(expr_cols(c["body"], set()),
                    "window_gate@" + ("transition" if c["on_transition"] else "all"), i)
+        elif t == "chal_gate":
+            # ⚑ THE CHALLENGE GATE (Lean `ChalConstraint.toJson`, Rust `VmConstraint2::ChalGate`).
+            # Same two-row `loc`/`nxt` body as `window_gate`, plus the `chal i` leaf. It is a
+            # polynomial identity the verifier checks at random coefficients, so the columns in
+            # one body are related exactly as strongly as in a plain gate — this is how the
+            # `pasta-*-sz` descriptors tie their operand lanes to their result lanes, and reading
+            # it as anything weaker would score those anchors decorative when they are not.
+            relate(expr_cols(c["body"], set()),
+                   "chal_gate@" + ("transition" if c["on_transition"] else "all"), i)
         elif t == "lookup":
             cols = set()
             for e in c["tuple"]:
@@ -369,6 +385,31 @@ def self_test() -> int:
          "body": ADD({"t": "loc", "c": 2}, {"t": "mul", "l": K(-1), "r": {"t": "nxt", "c": 3}})},
         PIN(2, 0), PIN(3, 1),
     ]), []))
+
+    # (4) THE `pasta-*-sz` SHAPE — a `chal_gate` body `(loc 2 - loc 3)·α` joins 2—3 exactly as a
+    #     plain gate does. Until 2026-08-10 this tag REFUSED the whole run (`unknown constraint
+    #     tag 'chal_gate'`, exit 2, no comparison performed) from the hour the first four
+    #     chal-carrying descriptors were routed into `by-name/`.
+    CHAL = lambda i: {"t": "chal", "i": i}
+    cases.append(("anchors joined by a chal_gate body", _desc([
+        {"t": "chal_gate", "on_transition": False,
+         "body": {"t": "mul",
+                  "l": ADD({"t": "loc", "c": 2}, {"t": "mul", "l": K(-1), "r": {"t": "loc", "c": 3}}),
+                  "r": CHAL(0)}},
+        PIN(2, 0), PIN(3, 1),
+    ]), []))
+
+    # (5) THE MISREAD THAT WOULD LAUNDER IT — a challenge is a VERIFIER SCALAR, not a column. Two
+    #     anchors each multiplied by the SAME `α` in separate one-column bodies share nothing; if
+    #     `chal i` were walked as a column index, `α` would become a hub joining every anchor that
+    #     touches it and this gate would report zero decorative anchors for every SZ descriptor.
+    cases.append(("a challenge is not a column that joins anchors", _desc([
+        {"t": "chal_gate", "on_transition": False,
+         "body": {"t": "mul", "l": {"t": "loc", "c": 2}, "r": CHAL(0)}},
+        {"t": "chal_gate", "on_transition": False,
+         "body": {"t": "mul", "l": {"t": "loc", "c": 3}, "r": CHAL(0)}},
+        PIN(2, 0), PIN(3, 1),
+    ]), [2, 3]))
 
     ok = True
     for label, d, expected in cases:
