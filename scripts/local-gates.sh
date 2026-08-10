@@ -36,6 +36,23 @@ for a in "$@"; do case "$a" in --all) RUN_ALL=1 ;; -h|--help) sed -n '2,30p' "$0
 
 # name | timeout_s | command
 GATES=(
+  # ⚑ A WIPED DEPENDENCY THAT PRESENTS AS A PROOF FAILURE (2026-08-09, twice in one
+  # evening). `~/src/mathlib4` was destroyed twice; `metatheory/.lake/packages/mathlib`
+  # is a SYMLINK into it, so the damage does not read as "a dependency is missing" —
+  # every mathlib-importing build dies on `object file '.../Ring/Defs.olean' does not
+  # exist`, which looks exactly like a broken proof. A lane spent real time believing
+  # its own module was at fault. Restore is ~10 min (clone at the pinned rev + `lake
+  # exe cache get`, 8105 oleans), so the cost was never the repair — it was the
+  # misdiagnosis. This row is first so the answer arrives before anything else runs.
+  # ⚠ NOT the tree's own scripts: `pbuild` is the only real `rsync --delete` and was
+  # hardened after it ate this same path on 07-28 (`pbuild:636-648`); `reclaim-space.sh`
+  # does not follow the symlink (`find` without `-L`; `rm -rf` takes the LINK). The
+  # destroyer is outside this repo. This gate does not name it — it makes the damage
+  # legible, which is the part that kept costing hours.
+  # ⚠ AND NOT "make it read-only": lake WRITES there by design (`cache get` populates
+  # it, an uncached import is built there, a rev bump adds oleans). The invariant is
+  # that lake writes and nothing DELETES THROUGH the link.
+  "mathlib-intact|60|python3 scripts/check-mathlib-intact.py"
   "doc-refs|300|bash scripts/check-doc-refs.sh"
   # ⚑ THE DOCUMENTATION FORM OF A DANGLING IMPORT (2026-08-08). `doc-refs` checks cited FILES;
   # this checks cited LEAN NAMES: a comment citing a theorem/def that was deleted or renamed
