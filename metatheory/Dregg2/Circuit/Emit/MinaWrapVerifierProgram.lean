@@ -128,8 +128,20 @@ def PC_COL : Nat := WSEL_BASE + NREG
 not the prover's. This is what lets a round constant and an MDS coefficient enter the trace. -/
 def IMM_BASE : Nat := PC_COL + 1
 
-/-- `226 + 6·32 + 3·6 + 1 + 32 = 469` declared main columns. -/
-def PROG_WIDTH : Nat := IMM_BASE + SK
+/-- ⚑⚑ **THE CANONICITY CERTIFICATE'S COMPLEMENT BLOCK** — `SK = 32` 8-bit limbs holding
+`N − 1 − z`, the witness that the ALU's RESULT is below the modulus rather than merely congruent to
+something that is. Without it `z`'s own limb ranges buy only `z < 2^256` against `N ≈ 2^254.9`, and
+`r`, `r+N`, `r+2N`, `r+3N`, `r+4N` all fit — see `PastaAddSubSound` §4b. -/
+def ZCAN_BASE : Nat := IMM_BASE + SK
+/-- …and its carry chain, `NA − 1 = 31` columns at `ACB = 8`. `PastaAddSubSound.adChain` is REUSED
+at this base; there is no second carry gadget. -/
+def ZCCAR_BASE : Nat := ZCAN_BASE + SK
+
+/-- `226 + 6·32 + 3·6 + 1 + 32 + 32 + 31 = 532` declared main columns.
+⚑ **Was `469` until the certificate landed**; the `+63` is `SK` complement limbs and `NA − 1`
+carries, four times cheaper than `PastaMsmScalarDerive` §2.7's `+255` boolean places — and, unlike
+§2.7's shape, forcing in the mod-`P` reading the deployed prover performs. -/
+def PROG_WIDTH : Nat := ZCCAR_BASE + (NA - 1)
 
 theorem REG_BASE_eq : REG_BASE = 226 := rfl
 theorem XSEL_BASE_eq : XSEL_BASE = 418 := rfl
@@ -137,7 +149,26 @@ theorem YSEL_BASE_eq : YSEL_BASE = 424 := rfl
 theorem WSEL_BASE_eq : WSEL_BASE = 430 := rfl
 theorem PC_COL_eq : PC_COL = 436 := rfl
 theorem IMM_BASE_eq : IMM_BASE = 437 := rfl
-theorem PROG_WIDTH_eq : PROG_WIDTH = 469 := rfl
+theorem ZCAN_BASE_eq : ZCAN_BASE = 469 := rfl
+theorem ZCCAR_BASE_eq : ZCCAR_BASE = 501 := rfl
+theorem PROG_WIDTH_eq : PROG_WIDTH = 532 := rfl
+
+/-- ⚑ **THE CERTIFICATE BLOCK IS DISJOINT FROM EVERY REGISTER COLUMN**, so no boundary pin and no
+routing gate reads a certificate cell: the register file ends at `XSEL_BASE = 418` and the block
+starts at `469`. Stated as a theorem because `register_column_is_not_ranged` (`AirProgramRows`
+§11.2) now needs `r < NREG` — the certificate's limbs ARE range-checked, and a `regCol r + i` with
+`r ≥ NREG` would land inside them. -/
+theorem the_certificate_block_is_above_the_register_file :
+    ∀ r i, r < NREG → i < SK → regCol r + i < ZCAN_BASE := by
+  intro r i hr hi
+  have hr6 : r < 6 := hr
+  have hi32 : i < 32 := hi
+  show REG_BASE + r * SK + i < ZCAN_BASE
+  have h1 : REG_BASE = 226 := rfl
+  have h2 : ZCAN_BASE = 469 := rfl
+  have h3 : SK = 32 := rfl
+  rw [h1, h2, h3]
+  omega
 
 /-- ⚑ **THE ARITHMETIC BLOCK IS UNMOVED**, so `MinaWrapVerifierAir`'s three forcing theorems are
 statements about this row. An edit that shifted any operand base would break this `rfl` rather than
@@ -572,6 +603,19 @@ def atMostOneExpr (base : Nat) : Expr :=
   esum (((List.range NREG) ×ˢ (List.range NREG)).filter (fun pr => pr.1 < pr.2)
     |>.map (fun pr => Expr.mul (.var (base + pr.1)) (.var (base + pr.2))))
 
+/-- ⚑⚑ **THE CANONICITY CERTIFICATE'S GATE at index `m`** — `PastaAddSubSound.cnExpr` at the ALU's
+result block and this file's two new column blocks. Nothing is authored here: the digit, the chain
+and the bound are §4b's, at a different base. Degree **1**. -/
+def zCanonExpr (pl : Nat → ℤ) (m : Nat) : Expr :=
+  Dregg2.Circuit.Emit.PastaAddSubSound.cnExpr Z_BASE ZCAN_BASE ZCCAR_BASE pl m
+
+/-- The certificate's `NA = 32` coefficient gates. -/
+def zCanonLegs (pl : Nat → ℤ) : List AirLeg :=
+  (List.range NA).map (fun m => AirLeg.gate ⟨zCanonExpr pl m, .const 0⟩)
+
+/-- The certificate's `NA − 1 = 31` carry columns. -/
+def zcCarryCols : List Nat := (List.range (NA - 1)).map (ZCCAR_BASE + ·)
+
 /-- ⚑ **THE MACHINE'S SOURCE AIR.** -/
 def programAir (pl : Nat → ℤ) (prog : List Instr) : EffectAir :=
   { tables := [ mainTableDef PROG_WIDTH
@@ -603,6 +647,8 @@ def programAir (pl : Nat → ℤ) (prog : List Instr) : EffectAir :=
       ++ [ AirLeg.window ⟨RowSel.first, pcStartExpr⟩
          , AirLeg.window ⟨RowSel.transition, pcThreadExpr⟩
          , AirLeg.lookup { table := ROM_TID, tuple := romTuple } ]
+      -- ⚑ the canonicity certificate on the ALU's RESULT, `z + c + 1 = N` limb-wise
+      ++ zCanonLegs pl
       -- the ranges, last
       ++ [ AirLeg.limbs ⟨limbCols X_BASE, SB, rangeTidW SB⟩
          , AirLeg.limbs ⟨limbCols Y_BASE, SB, rangeTidW SB⟩
@@ -610,7 +656,9 @@ def programAir (pl : Nat → ℤ) (prog : List Instr) : EffectAir :=
          , AirLeg.limbs ⟨limbCols ALU_Q_BASE, SB, rangeTidW SB⟩
          , AirLeg.limbs ⟨aluCarryCols, CB, rangeTidW CB⟩
          , AirLeg.limbs ⟨[ALU_AC_COL], CBITS, rangeTidW CBITS⟩
-         , AirLeg.limbs ⟨aluAcarCols, ACB, rangeTidW SB⟩ ] }
+         , AirLeg.limbs ⟨aluAcarCols, ACB, rangeTidW SB⟩
+         , AirLeg.limbs ⟨limbCols ZCAN_BASE, SB, rangeTidW SB⟩
+         , AirLeg.limbs ⟨zcCarryCols, ACB, rangeTidW SB⟩ ] }
 
 /-- ⚑ **THE COMPILER ACCEPTS THE MACHINE.** Every new leg has a deployed main-rail image: the 192
 register windows and the `pc` thread because they are `.transition`; the `pc` start because a
@@ -622,7 +670,7 @@ theorem programAir_mainRailOk (pl : Nat → ℤ) (prog : List Instr) :
     (programAir pl prog).mainRailOk = true := by
   unfold programAir EffectAir.mainRailOk
   simp only [List.all_append, List.all_map, List.all_flatMap, Bool.and_eq_true, List.all_eq_true,
-    regWindowLegs, selBoolLegs]
+    regWindowLegs, selBoolLegs, zCanonLegs]
   repeat' apply And.intro
   all_goals first
     | decide
@@ -702,20 +750,20 @@ theorem programAir_has_no_bind_legs (pl : Nat → ℤ) (prog : List Instr)
     (b : Dregg2.Circuit.EffectAirIR.BindLeg) :
     AirLeg.bind b ∉ (programAir pl prog).legs := by
   intro hb
-  simp [programAir, regWindowLegs, selBoolLegs] at hb
+  simp [programAir, regWindowLegs, selBoolLegs, zCanonLegs] at hb
 
 theorem programAir_has_no_chal_legs (pl : Nat → ℤ) (prog : List Instr)
     (c : Dregg2.Circuit.EffectAirIR.ChalLeg) :
     AirLeg.chal c ∉ (programAir pl prog).legs := by
   intro hc
-  simp [programAir, regWindowLegs, selBoolLegs] at hc
+  simp [programAir, regWindowLegs, selBoolLegs, zCanonLegs] at hc
 
 /-- ⚑ **THE MACHINE PUBLISHES NOTHING**, so its own tie verdict is vacuous and every boundary
 composes onto it. Not a weakening: a `programAir` that grew a `pin` leg would break this. -/
 theorem programAir_pinsTied (pl : Nat → ℤ) (prog : List Instr) :
     (programAir pl prog).pinsTied = true := by
   refine EffectAir.pinsTied_of_no_pins _ (fun p hp => ?_)
-  simp [programAir, regWindowLegs, selBoolLegs] at hp
+  simp [programAir, regWindowLegs, selBoolLegs, zCanonLegs] at hp
 
 /-- ⚑ **A BOUNDARY OF REGISTER PINS** — the shape every emitted instance of this machine has. Every
 `pin` in the boundary publishes a column of the register file, and the register file is what the
@@ -955,7 +1003,14 @@ def rowAsg (st : RegFile) (pc : Nat) (I : Instr) : Assignment := fun col =>
   else if col < WSEL_BASE then (if col - YSEL_BASE = I.yr then 1 else 0)
   else if col < PC_COL then (if col - WSEL_BASE = I.wr then 1 else 0)
   else if col = PC_COL then (pc : ℤ)
-  else if col < PROG_WIDTH then limbAt I.imm (col - IMM_BASE)
+  else if col < ZCAN_BASE then limbAt I.imm (col - IMM_BASE)
+  -- ⚑ the canonicity certificate: `c = p − 1 − z` and its carry chain. `opResult` is `%`-reduced,
+  -- so `z < p` and the complement exists with no search.
+  else if col < ZCCAR_BASE then
+    Dregg2.Circuit.Emit.PastaAddSubSound.cnLimbCell pN (opResult I.op xv yv) (col - ZCAN_BASE)
+  else if col < PROG_WIDTH then
+    Dregg2.Circuit.Emit.PastaAddSubSound.cnCarryCell pN (opResult I.op xv yv) pLimb
+      (col - ZCCAR_BASE)
   else 0
 
 /-- The machine's run: one row per instruction, threading the register file and the counter. -/

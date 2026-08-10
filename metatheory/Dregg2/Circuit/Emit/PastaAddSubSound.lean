@@ -379,6 +379,320 @@ theorem adExpr_eval (a : Assignment) (xB yB zB cCol cB : Nat) (pl : Nat → ℤ)
   · simp only [if_pos h, Expr.eval, adChainExpr_eval]; ring
   · simp only [if_neg h, Expr.eval, adChainExpr_eval]; ring
 
+/-! ## §4b — ⚑⚑ THE LESS-THAN-THE-MODULUS CERTIFICATE, IN THE READING THE PROVER PERFORMS.
+
+`addsub_gates_force_congruence` concludes a CONGRUENCE, and so does the multiply's
+`felt_gates_force_congruence`. A congruence class is not a number: at `SB·SK = 256` bits against a
+255-bit Pasta modulus the window `[0, 2^256)` holds `r`, `r+M`, `r+2M`, `r+3M` and `r+4M`, each with
+its own range-checked witness blocks. §4b is the certificate that removes the other four.
+
+    Z  +  C  +  1  =  M          over ℤ, with `C`'s 32 limbs range-checked to 8 bits
+
+`C ≥ 0` then gives `Z ≤ M − 1`, and `Z`'s own limb ranges give `Z ≥ 0`.
+
+## ⚑⚑ WHY THIS IS NOT `PastaMsmScalarDerive` §2.7, AND THE DIFFERENCE IS LOAD-BEARING
+
+§2.7 states the same idea as ONE gate over 255 boolean columns —
+`s + Σ_{p<255} 2^p·CB p − (q−1)`. That is correct **in the ℤ reading of the emitted bodies**
+(`PastaField.acceptB`), which is the model that tower is stated in, and §2.7's own docblock names
+the residual: *"the deployed prover reads the same bodies in BabyBear, where a weighted boolean sum
+can wrap"*. A single 256-bit weighted sum is exactly the shape that a `P ∣ body` reading cannot
+force: the body is ~`2^256`, `P ≈ 2^31`, and `P ∣ body` leaves `2^225` choices.
+
+So §2.7's SHAPE does not transfer to a gate list read mod `P`, and porting it verbatim would repeat
+`AirCrossRow.PhaseIndicator`'s first statement — an ℤ claim over legs that buy a congruence, of
+which no proof could have existed. What transfers is the IDEA. The shape that survives the mod-`P`
+reading is the one add/sub already uses: a LIMB-WISE identity with a carry chain, each body bounded
+below `P`, so `P ∣ body` forces `body = 0` over ℤ and the 32 identities telescope.
+
+⚑ It is also **four times cheaper**: `SK + (NA − 1) = 63` columns and `NA = 32` gates, against
+§2.7's `+255` columns and `+256` constraints. The bit decomposition pays 255 columns to say
+"non-negative"; a range-checked byte block says it in 32.
+
+## The bound, recomputed — this gadget's own, not add/sub's
+
+The digit is `z_m + c_m + [m=0] − p_m`: three bytes and a bit, one term fewer than add/sub's four
+(there is no `sc·(p_m·c)` reduction term, because the certificate is an ℤ identity and not a
+congruence). With the SAME 8-bit carry chain and `ACOFF = 2^7`:
+
+    3·(2^8 − 1) + 1 + ACOFF + 2^8·ACOFF  =  765 + 1 + 128 + 32768  =  **33 662**  <  P
+
+254 below add/sub's `33 916`, and `adChain`/`adChainExpr` are REUSED verbatim — the chain is the
+same object at a different base column, so there is no second carry gadget in this file. -/
+
+/-- `sVal` of a block of non-negative cells is non-negative. Stated here because §4b is the first
+consumer; it is a fact about `PastaFieldSound.sVal` and belongs to that family. -/
+theorem sVal_nonneg (a : Assignment) (B : Nat) (h : ∀ i, i < SK → 0 ≤ a (B + i)) :
+    0 ≤ sVal a B := by
+  unfold sVal sumL
+  refine List.sum_nonneg (fun x hx => ?_)
+  obtain ⟨i, hi, rfl⟩ := List.mem_map.mp hx
+  exact mul_nonneg (by positivity) (h i (List.mem_range.mp hi))
+
+/-- The `m`-th digit of the integer body `Z + C + 1 − M`. ⚑ `[m = 0]` and `pl m` are gate
+CONSTANTS, so this leg is degree **1** in the trace — the cheapest leg shape the compiler has. -/
+def cnDigit (a : Assignment) (zB cB : Nat) (pl : Nat → ℤ) (m : Nat) : ℤ :=
+  if m < SK then a (zB + m) + a (cB + m) + (if m = 0 then 1 else 0) - pl m else 0
+
+/-- The gate body at index `m`: digit + carry-in − radix · carry-out, on `adChain`'s chain. -/
+def cnBody (a : Assignment) (zB cB carB : Nat) (pl : Nat → ℤ) (m : Nat) : ℤ :=
+  cnDigit a zB cB pl m + adChain a carB m - (2 : ℤ) ^ SB * adChain a carB (m + 1)
+
+/-- The `[m = 0]` column of the digit recomposes to exactly `1` — the `+1` that turns `Z + C = M`
+(which admits `Z = M`) into `Z + C + 1 = M` (which does not). -/
+theorem cn_one_recomposes :
+    sumL (List.range NA) (fun m => ((2 : ℤ) ^ SB) ^ m * (if m = 0 then (1 : ℤ) else 0)) = 1 := by
+  decide
+
+/-- **The recomposition.** The base-`2^SB` fold of the 32 digits IS `Z + C + 1 − M`. -/
+theorem cn_recompose (a : Assignment) (zB cB : Nat) (pl : Nat → ℤ) (M : ℤ)
+    (hplM : sumL (List.range SK) (fun j => ((2 : ℤ) ^ SB) ^ j * pl j) = M) :
+    sumL (List.range NA) (fun m => ((2 : ℤ) ^ SB) ^ m * cnDigit a zB cB pl m)
+      = sVal a zB + sVal a cB + 1 - M := by
+  have hstep : ∀ m ∈ List.range NA,
+      ((2 : ℤ) ^ SB) ^ m * cnDigit a zB cB pl m
+        = ((((2 : ℤ) ^ SB) ^ m * a (zB + m) + ((2 : ℤ) ^ SB) ^ m * a (cB + m))
+            + ((2 : ℤ) ^ SB) ^ m * (if m = 0 then (1 : ℤ) else 0))
+          - ((2 : ℤ) ^ SB) ^ m * pl m := by
+    intro m hm
+    have hlt : m < SK := by
+      have := List.mem_range.mp hm; unfold NA at this; exact this
+    unfold cnDigit
+    rw [if_pos hlt]
+    ring
+  rw [sumL_congr _ _ _ hstep, sumL_sub, sumL_add, sumL_add, cn_one_recomposes]
+  unfold sVal NA
+  rw [hplM]
+
+/-- The digit is bounded by **three bytes and a bit** — one term fewer than add/sub's four. -/
+theorem cnDigit_abs_le (a : Assignment) (zB cB : Nat) (pl : Nat → ℤ) (m : Nat)
+    (hz : ∀ i, i < SK → 0 ≤ a (zB + i) ∧ a (zB + i) < 2 ^ SB)
+    (hc : ∀ i, i < SK → 0 ≤ a (cB + i) ∧ a (cB + i) < 2 ^ SB)
+    (hpl : ∀ j, 0 ≤ pl j ∧ pl j < 2 ^ SB) :
+    |cnDigit a zB cB pl m| ≤ 3 * ((2 : ℤ) ^ SB - 1) + 1 := by
+  unfold cnDigit
+  by_cases hm : m < SK
+  · rw [if_pos hm]
+    obtain ⟨hz0, hz1⟩ := hz m hm
+    obtain ⟨hc0, hc1⟩ := hc m hm
+    obtain ⟨hp0, hp1⟩ := hpl m
+    have hB : (2 : ℤ) ^ SB = 256 := by norm_num [SB]
+    rw [hB] at hz1 hc1 hp1 ⊢
+    have hone : (0 : ℤ) ≤ (if m = 0 then (1 : ℤ) else 0)
+        ∧ (if m = 0 then (1 : ℤ) else 0) ≤ 1 := by
+      by_cases h : m = 0 <;> simp [h]
+    rw [abs_le]
+    constructor <;> linarith [hone.1, hone.2]
+  · rw [if_neg hm]; norm_num [SB]
+
+/-- ⚑ **EVERY CERTIFICATE GATE BODY FITS A FELT** — `33 662 < 2 013 265 921`, this gadget's own
+number: `3·255 + 1 + 128 + 256·128`. -/
+theorem cnBody_abs_lt_P (a : Assignment) (zB cB carB : Nat) (pl : Nat → ℤ) (m : Nat)
+    (hz : ∀ i, i < SK → 0 ≤ a (zB + i) ∧ a (zB + i) < 2 ^ SB)
+    (hc : ∀ i, i < SK → 0 ≤ a (cB + i) ∧ a (cB + i) < 2 ^ SB)
+    (hpl : ∀ j, 0 ≤ pl j ∧ pl j < 2 ^ SB)
+    (hcar : ∀ i, i < NA - 1 → 0 ≤ a (carB + i) ∧ a (carB + i) < 2 ^ ACB) :
+    |cnBody a zB cB carB pl m| < P := by
+  have hd := cnDigit_abs_le a zB cB pl m hz hc hpl
+  have hc1 := adChain_abs_le a carB m hcar
+  have hc2 := adChain_abs_le a carB (m + 1) hcar
+  have hscale : |(2 : ℤ) ^ SB * adChain a carB (m + 1)| ≤ (2 : ℤ) ^ SB * ACOFF := by
+    rw [abs_mul, abs_of_nonneg (by positivity : (0 : ℤ) ≤ (2 : ℤ) ^ SB)]
+    exact mul_le_mul_of_nonneg_left hc2 (by positivity)
+  have hnum : 3 * ((2 : ℤ) ^ SB - 1) + 1 + ACOFF + (2 : ℤ) ^ SB * ACOFF < P := by
+    norm_num [SB, ACOFF, Dregg2.Circuit.Emit.EffectLower.P]
+  unfold cnBody
+  have h1 := abs_sub_le' (cnDigit a zB cB pl m + adChain a carB m)
+    ((2 : ℤ) ^ SB * adChain a carB (m + 1))
+  have h2 := abs_add_le' (cnDigit a zB cB pl m) (adChain a carB m)
+  linarith
+
+/-- The exact numeric margin, named so it is not a caption a reader has to recompute. -/
+theorem cnBody_bound_value :
+    3 * ((2 : ℤ) ^ SB - 1) + 1 + ACOFF + (2 : ℤ) ^ SB * ACOFF = 33662 := by
+  norm_num [SB, ACOFF]
+
+/-- ⚑⚑⚑ **THE CERTIFICATE FORCES THE VALUE BELOW THE MODULUS**, from the reading the DEPLOYED
+PROVER performs — every one of the 32 bodies `≡ 0 (mod P)` — plus the range facts the two emitted
+`limbs` legs supply. This is the theorem that turns a residue class into a NUMBER, and it is the
+one `PastaMsmScalarDerive` §2.7 is the ℤ-model analogue of.
+
+⚑ **SATISFIABLE, and not as a formality.** The honest prover writes `C = M − 1 − Z`, which exists
+for every `Z < M` and whose 32 limbs are bytes; §4c's generator does exactly that with no search,
+and `cnHonest_satisfies_gates` decides all 32 bodies zero at the deployed modulus.
+⚑ **REFUTABLE**: `cn_refuses_the_non_canonical_representative` exhibits `Z = M` as unreachable. -/
+theorem cn_gates_force_below_the_modulus (a : Assignment) (zB cB carB : Nat) (pl : Nat → ℤ)
+    (M : ℤ)
+    (hz : ∀ i, i < SK → 0 ≤ a (zB + i) ∧ a (zB + i) < 2 ^ SB)
+    (hc : ∀ i, i < SK → 0 ≤ a (cB + i) ∧ a (cB + i) < 2 ^ SB)
+    (hpl : ∀ j, 0 ≤ pl j ∧ pl j < 2 ^ SB)
+    (hplM : sumL (List.range SK) (fun j => ((2 : ℤ) ^ SB) ^ j * pl j) = M)
+    (hcar : ∀ i, i < NA - 1 → 0 ≤ a (carB + i) ∧ a (carB + i) < 2 ^ ACB)
+    (hgates : ∀ m, m < NA → P ∣ cnBody a zB cB carB pl m) :
+    0 ≤ sVal a zB ∧ sVal a zB < M := by
+  -- Step 1: each body FITS a felt, so `P ∣ body` forces `body = 0` over ℤ.
+  have hzero : ∀ m, m < NA → cnBody a zB cB carB pl m = 0 := by
+    intro m hm
+    have hlt := cnBody_abs_lt_P a zB cB carB pl m hz hc hpl hcar
+    rcases hgates m hm with ⟨t, ht⟩
+    by_contra hne
+    have ht0 : t ≠ 0 := by rintro rfl; rw [mul_zero] at ht; exact hne ht
+    have hP0 : (0 : ℤ) < P := by norm_num [Dregg2.Circuit.Emit.EffectLower.P]
+    have h1 : (1 : ℤ) ≤ |t| := by
+      rcases abs_cases t with ⟨h, _⟩ | ⟨h, _⟩ <;> omega
+    have : P ≤ |cnBody a zB cB carB pl m| := by
+      rw [ht, abs_mul, abs_of_nonneg (le_of_lt hP0)]
+      nlinarith
+    linarith
+  -- Step 2: the chain telescopes; both ends are pinned by construction (`adChain`, reused).
+  have hchain : ∀ m, adChain a carB m + cnDigit a zB cB pl m
+      = (2 : ℤ) ^ SB * adChain a carB (m + 1) := by
+    intro m
+    by_cases hm : m < NA
+    · have := hzero m hm; unfold cnBody at this; linarith
+    · have hNA : NA = 32 := rfl
+      have hSK : SK = 32 := rfl
+      have h1 : adChain a carB m = 0 := by
+        unfold adChain; rw [if_neg (by omega), if_neg (by omega)]
+      have h2 : adChain a carB (m + 1) = 0 := by
+        unfold adChain; rw [if_neg (by omega), if_neg (by omega)]
+      have h3 : cnDigit a zB cB pl m = 0 := by
+        unfold cnDigit; rw [if_neg (by omega)]
+      rw [h1, h2, h3]; ring
+  have htel := telescope ((2 : ℤ) ^ SB) (cnDigit a zB cB pl) (adChain a carB) hchain NA
+  rw [adChain_top, adChain_zero, mul_zero, sub_zero] at htel
+  -- Step 3: that recomposition IS `Z + C + 1 − M`, and `C ≥ 0` is the whole content.
+  rw [cn_recompose a zB cB pl M hplM] at htel
+  have hcnn : 0 ≤ sVal a cB := sVal_nonneg a cB (fun i hi => (hc i hi).1)
+  have hznn : 0 ≤ sVal a zB := sVal_nonneg a zB (fun i hi => (hz i hi).1)
+  exact ⟨hznn, by linarith⟩
+
+/-! ### §4b′ — the emitted expression, and the bridge to the body. -/
+
+/-- The digit expression at index `m`. ⚑ Degree 1: two variables and one gate constant. -/
+def cnDigitExpr (zB cB : Nat) (pl : Nat → ℤ) (m : Nat) : Expr :=
+  if m < SK then
+    .add (.add (.var (zB + m)) (.var (cB + m)))
+         (.const ((if m = 0 then (1 : ℤ) else 0) - pl m))
+  else .const 0
+
+/-- **The certificate gate expression at index `m`**, on `adChainExpr`'s chain. -/
+def cnExpr (zB cB carB : Nat) (pl : Nat → ℤ) (m : Nat) : Expr :=
+  .add (cnDigitExpr zB cB pl m)
+       (.add (adChainExpr carB m) (.mul (.const (-((2 : ℤ) ^ SB))) (adChainExpr carB (m + 1))))
+
+/-- ⚑ **THE BRIDGE.** The emitted gate expression evaluates to exactly the body §4b quantifies
+over — so `cn_gates_force_below_the_modulus` is about the object the descriptor carries. -/
+theorem cnExpr_eval (a : Assignment) (zB cB carB : Nat) (pl : Nat → ℤ) (m : Nat) :
+    (cnExpr zB cB carB pl m).eval a = cnBody a zB cB carB pl m := by
+  unfold cnExpr cnBody cnDigitExpr cnDigit
+  by_cases h : m < SK
+  · simp only [if_pos h, Expr.eval, adChainExpr_eval]; ring
+  · simp only [if_neg h, Expr.eval, adChainExpr_eval]; ring
+
+/-! ### §4c — the honest certificate witness, generated. -/
+
+/-- The complement the honest prover writes: `M − 1 − Z`. There is no search. -/
+def cnComplementOf (N zv : Nat) : Nat := N - 1 - zv
+
+/-- The honest digits, as a function of the value and the modulus. -/
+def cnDigitOf (N zv : Nat) (pl : Nat → ℤ) (m : Nat) : ℤ :=
+  if m < SK then
+    limbAt zv m + limbAt (cnComplementOf N zv) m + (if m = 0 then (1 : ℤ) else 0) - pl m
+  else 0
+
+/-- The honest carry chain: `S 0 = 0`, `S (m+1) = (S m + T m) / 2^SB`. Every division is exact
+BECAUSE the integer body is zero — that is the content, not a convenience. -/
+def cnCarryOf (N zv : Nat) (pl : Nat → ℤ) : Nat → ℤ
+  | 0 => 0
+  | (m + 1) => (cnCarryOf N zv pl m + cnDigitOf N zv pl m) / (2 : ℤ) ^ SB
+
+/-- The cell an honest witness writes at complement limb `i`. -/
+def cnLimbCell (N zv i : Nat) : ℤ := limbAt (cnComplementOf N zv) i
+
+/-- The cell an honest witness writes at carry column `i` (chain index `i + 1`, offset). -/
+def cnCarryCell (N zv : Nat) (pl : Nat → ℤ) (i : Nat) : ℤ := cnCarryOf N zv pl (i + 1) + ACOFF
+
+/-- The certificate's own measurement layout: `z` at `0`, the complement at `SK`, the carries at
+`2·SK`. `63` witness columns beyond the value's own `32`. -/
+def cnHonest (N zv : Nat) (pl : Nat → ℤ) : Assignment := fun col =>
+  if col < SK then limbAt zv col
+  else if col < 2 * SK then cnLimbCell N zv (col - SK)
+  else if col < 2 * SK + (NA - 1) then cnCarryCell N zv pl (col - 2 * SK)
+  else 0
+
+/-- ⚑⚑ **THE HONEST CERTIFICATE SATISFIES ITS GATES** at the deployed base-field modulus and a real
+255-bit value — all `32` bodies exactly zero over ℤ, a fortiori zero mod `P`, so the deployed prover
+accepts. (`decide`, kernel-reduced; no `native_decide`.)
+
+⚠ This is a KAT, not the general completeness theorem: it says the generator is right AT THIS
+VALUE. The general statement — *for every `zv < N`, `cnCarryOf`'s divisions are exact* — is the
+`limbs_recompose` truncation argument and is **NOT proved here**. Named so it is not mistaken for
+proved. -/
+theorem cnHonest_satisfies_gates :
+    ((List.range NA).all fun m =>
+      decide (cnBody (cnHonest pN PastaField.Ref.X pLimb) 0 SK (2 * SK) pLimb m = 0)) = true := by
+  decide
+
+/-- …and at the SCALAR modulus, so the `qLimb` instantiation is measured too. -/
+theorem cnHonest_satisfies_gates_fq :
+    ((List.range NA).all fun m =>
+      decide (cnBody (cnHonest qN PastaField.Ref.X qLimb) 0 SK (2 * SK) qLimb m = 0)) = true := by
+  decide
+
+/-- ⚑ **AND AT THE WORST VALUE THE MACHINE CAN CARRY** — `z = p − 1`, where the complement is `0`
+and every carry is exercised at the top of its range rather than sitting near zero. -/
+theorem cnHonest_satisfies_gates_at_the_top :
+    ((List.range NA).all fun m =>
+      decide (cnBody (cnHonest pN (pN - 1) pLimb) 0 SK (2 * SK) pLimb m = 0)) = true := by
+  decide
+
+/-- ⚑ **AND THE RANGES BITE ON IT** — every complement limb is a byte and every carry column lands
+inside the declared 8-bit table, so the honest witness is not merely gate-satisfying but
+LOOKUP-satisfying. A witness needing a 9-bit carry would make `cnBody_abs_lt_P` a bound about a
+shape the prover cannot carry. -/
+theorem cnHonest_cells_in_range :
+    (((List.range SK).all fun i =>
+        decide (0 ≤ cnLimbCell pN PastaField.Ref.X i ∧ cnLimbCell pN PastaField.Ref.X i < 2 ^ SB))
+      && ((List.range (NA - 1)).all fun i =>
+        decide (0 ≤ cnCarryCell pN PastaField.Ref.X pLimb i
+          ∧ cnCarryCell pN PastaField.Ref.X pLimb i < 2 ^ ACB))) = true := by
+  decide
+
+/-- ⚑⚑ **AND THE NON-CANONICAL REPRESENTATIVE IS REFUSED.** This is the whole point: `z + p` is the
+value every other emitted leg accepts — its 8-bit limbs exist, its quotient block absorbs the shift,
+and `felt_gates_force_congruence` is as true of it as of `z`. Move the honest `z` block to `z + p`'s
+limbs and the certificate's FIRST body is nonzero over ℤ **and** below `P` in absolute value, so it
+cannot vanish mod `P` either. That refusal is what `Tracks` at ℤ rests on. -/
+theorem cn_refuses_the_non_canonical_representative :
+    cnBody (fun c => if c < SK then limbAt (PastaField.Ref.X + pN) c
+                     else cnHonest pN PastaField.Ref.X pLimb c)
+      0 SK (2 * SK) pLimb 0 ≠ 0 := by
+  decide
+
+/-- …and the smallest tamper of all — `+1` on `z` limb 0 — moves body `0` by `1`, whose absolute
+value is `1 < P`. There is no compensator inside `[0, 2^8)`. -/
+theorem cnHonest_z_bump_is_caught :
+    cnBody (fun c => if c = 0 then cnHonest pN PastaField.Ref.X pLimb c + 1
+                     else cnHonest pN PastaField.Ref.X pLimb c)
+      0 SK (2 * SK) pLimb 0 ≠ 0 := by
+  decide
+
+#assert_axioms cnHonest_satisfies_gates
+#assert_axioms cnHonest_satisfies_gates_fq
+#assert_axioms cnHonest_satisfies_gates_at_the_top
+#assert_axioms cnHonest_cells_in_range
+#assert_axioms cn_refuses_the_non_canonical_representative
+#assert_axioms cnHonest_z_bump_is_caught
+#assert_axioms sVal_nonneg
+#assert_axioms cn_one_recomposes
+#assert_axioms cn_recompose
+#assert_axioms cnDigit_abs_le
+#assert_axioms cnBody_abs_lt_P
+#assert_axioms cnBody_bound_value
+#assert_axioms cn_gates_force_below_the_modulus
+#assert_axioms cnExpr_eval
+
 /-! ### The one-operation layout (the measurement unit and the falsifier target). -/
 
 def AX_BASE : Nat := 0

@@ -886,10 +886,20 @@ def rowAsgAt (N : Nat) (pl : Nat → ℤ) (st : RegFile) (pc : Nat) (I : Instr) 
     else if col < WSEL_BASE then (if col - YSEL_BASE = I.yr then 1 else 0)
     else if col < PC_COL then (if col - WSEL_BASE = I.wr then 1 else 0)
     else if col = PC_COL then (pc : ℤ)
-    else if col < PROG_WIDTH then limbAt I.imm (col - IMM_BASE)
+    else if col < ZCAN_BASE then limbAt I.imm (col - IMM_BASE)
+    -- ⚑ the canonicity certificate: `c = N − 1 − z` and its carry chain. `opResultAt` is
+    -- `%`-reduced, so `z < N` and the complement exists with no search.
+    else if col < ZCCAR_BASE then
+      Dregg2.Circuit.Emit.PastaAddSubSound.cnLimbCell N (opResultAt N I.op xv yv)
+        (col - ZCAN_BASE)
+    else if col < PROG_WIDTH then
+      Dregg2.Circuit.Emit.PastaAddSubSound.cnCarryCell N (opResultAt N I.op xv yv) pl
+        (col - ZCCAR_BASE)
     else 0
 
-/-- ⚑ **THE Fq WITNESS GENERATOR IS THE Fp ONE.** -/
+/-- ⚑ **THE Fq WITNESS GENERATOR IS THE Fp ONE.** ⚠ This `rfl` is the tripwire that caught an
+asymmetric edit of the certificate arm on 2026-08-10: the two generators must fill the complement
+and carry blocks byte-identically or it goes red. -/
 theorem rowAsgAt_is_the_program_one : rowAsgAt pN pLimb = rowAsg := rfl
 
 def runRowsAt (N : Nat) (pl : Nat → ℤ) (st : RegFile) (pc : Nat) : List Instr → List (List ℤ)

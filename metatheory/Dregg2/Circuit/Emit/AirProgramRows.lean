@@ -33,19 +33,25 @@ and `MinaWrapVerifierSpongeFp.the_absorb_program_permutes_gen` composes onto it 
 | `SlotsCarry` (discharged §7)         | `RowsForced` (the legs, at every row)                |
 | `PoolsRanged` (still a premise there)| `RangeTablesHonest` (still a premise here — §11.1)   |
 
-⚠ **AND EVERYTHING IS STATED MOD A MODULUS, NEVER OVER ℤ.** Two of them, and keeping them apart is
-most of the work:
+⚠ **EVERY COLUMN FACT IS STATED MOD `P`, AND THE REGISTER FILE IS NOW STATED OVER ℤ.** Keeping the
+two apart is most of the work:
 
 * **`P` — BabyBear.** `AirLeg.forces` on a `gate`/`window` is `body ≡ 0 [ZMOD PMOD]` with
   `PMOD = P` by `rfl`, so every COLUMN fact this file derives is a congruence mod `P`. A register
   column is NOT range-checked by `programAir` (§11.2), so `tr t (regCol r + i)` is known only up to
   `P` — which is exactly why `regVal` reads it through `· % P`.
-* **`N` — the Pasta modulus.** The ALU's conclusion is `N ∣ sVal x · sVal y − sVal z`, so the
-  REGISTER FILE is tracked mod `N` and never over ℤ.
+* **`N` — the Pasta modulus.** The ALU's conclusion is a DIVISIBILITY,
+  `N ∣ sVal x · sVal y − sVal z`, so the arithmetic relay runs mod `N`.
+* ⚑⚑ **AND `Tracks` IS AN ℤ EQUALITY** — `regVal a r = st r`, no modulus. It was a congruence mod
+  `N` until 2026-08-10 and could not have been anything else: no leg was a less-than-the-modulus
+  certificate on `z`, so `r, r+p, … r+4p` all fit inside the `2^256` window `z`'s limb ranges buy.
+  `MinaWrapVerifierProgram.zCanonLegs` is now a leg of `programAir`, `z_is_canonical` reads it, and
+  `eq_of_modEq_of_lt` closes the gap: two values in `[0, N)` that agree mod `N` are equal.
 
 `AirCrossRow`'s `PhaseIndicator` was FALSE of the descriptor for exactly one missing `% P`, and
 `tr 0 (SEL 0) = 1 + P` refuted it. Every statement below is in the reading
-`prove_vm_descriptor2` performs, from the start.
+`prove_vm_descriptor2` performs, from the start — including the ℤ one, which is reached THROUGH the
+mod-`P` reading of 32 bodies each provably below `P` in absolute value, never around it.
 
 ## ⚑ WHY THE TWO MODULI DO NOT COLLIDE — the canonicality relay, and it is the load-bearing idea
 
@@ -112,7 +118,8 @@ open Dregg2.Circuit.Emit.PastaFieldSound
    limbCols rangeTidW
    pLimb qLimb pLimb_bounds qLimb_bounds pLimb_recomposes qLimb_recomposes
    X_BASE Y_BASE Z_BASE)
-open Dregg2.Circuit.Emit.PastaAddSubSound (NA ACB CBITS)
+open Dregg2.Circuit.Emit.PastaAddSubSound
+  (NA ACB CBITS cnBody cnExpr_eval cn_gates_force_below_the_modulus)
 open Dregg2.Circuit.Emit.MinaWrapVerifierAir
   (ALU_WIDTH ALU_Q_BASE ALU_C_BASE ALU_AC_COL ALU_ACAR_BASE SEL_MUL SEL_ADD SEL_SUB SEL_CHAIN
    aluMulExpr aluAddSubExpr aluCarryCols aluAcarCols)
@@ -190,9 +197,30 @@ mod `P`. Writing `sVal (tr t) (regCol r)` instead would be a claim about integer
 never pins. -/
 def regVal (a : Assignment) (r : Nat) : ℤ := sVal (canonRow a) (regCol r)
 
-/-- ⚑⚑ **THE TRACE'S REGISTER FILE IS THE INTERPRETER'S, MOD THE PASTA MODULUS.** -/
-def Tracks (N : Nat) (a : Assignment) (st : RegFile) : Prop :=
-  ∀ r, r < NREG → regVal a r ≡ (st r : ℤ) [ZMOD (N : ℤ)]
+/-- ⚑⚑⚑ **THE TRACE'S REGISTER FILE IS THE INTERPRETER'S — OVER ℤ.**
+
+⚠ **This was `Tracks (N : Nat) (a) (st) : ∀ r < NREG, regVal a r ≡ st r [ZMOD N]` until the
+canonicity certificate landed, and the change is the point of that certificate.** An ℤ-equality
+`Tracks` was FALSE of the descriptor while no leg was a less-than-the-modulus certificate on `z`:
+`z`'s eight-bit limbs bought `sVal z < 2^256` against `pN ≈ 2^254.9`, so `r, r+p, … r+4p` all fit
+with their own range-checked quotients, and `AirCrossRow.PhaseIndicator`'s first statement is the
+precedent for what stating it anyway would have been. `MinaWrapVerifierProgram.zCanonLegs` is now a
+leg of `programAir` and `z_is_canonical` is what it buys, so the equality is now a THEOREM.
+
+⚑ **The modulus parameter is GONE, not defaulted.** An ℤ equality has no modulus to carry, and a
+retained-but-unused `N` would let every stale `Tracks N …` call site keep elaborating against a
+statement that no longer means what it did. Dropping the argument makes them REFUSE. -/
+def Tracks (a : Assignment) (st : RegFile) : Prop :=
+  ∀ r, r < NREG → regVal a r = (st r : ℤ)
+
+/-- Two values inside `[0, N)` that agree mod `N` are equal. The one arithmetic step that turns the
+ALU's divisibility plus the certificate's bound into an equality. -/
+theorem eq_of_modEq_of_lt {N : Nat} {a b : ℤ} (ha : 0 ≤ a) (ha' : a < (N : ℤ))
+    (hb : 0 ≤ b) (hb' : b < (N : ℤ)) (h : a ≡ b [ZMOD (N : ℤ)]) : a = b := by
+  have h1 : a % (N : ℤ) = a := Int.emod_eq_of_lt ha ha'
+  have h2 : b % (N : ℤ) = b := Int.emod_eq_of_lt hb hb'
+  rw [Int.ModEq, h1, h2] at h
+  exact h
 
 /-- A congruence mod `P` IS equality of residues — `Int.ModEq` is that by definition, and this is
 the step that turns the only fact a `window` leg gives into a fact about `regVal`. -/
@@ -359,6 +387,26 @@ theorem mem_limbsAc :
 
 theorem mem_limbsAcar :
     AirLeg.limbs ⟨aluAcarCols, ACB, rangeTidW SB⟩ ∈ (programAir pl prog).legs := by
+  simp only [programAir, List.mem_append, List.mem_cons]
+  tauto
+
+/-- ⚑⚑ **THE CANONICITY CERTIFICATE'S GATE at index `m` IS A LEG OF THE MACHINE.** -/
+theorem mem_zCanonGate {m : Nat} (hm : m < NA) :
+    AirLeg.gate ⟨zCanonExpr pl m, Expr.const 0⟩ ∈ (programAir pl prog).legs := by
+  have h : AirLeg.gate ⟨zCanonExpr pl m, Expr.const 0⟩ ∈ zCanonLegs pl :=
+    List.mem_map_of_mem (List.mem_range.mpr hm)
+  simp only [programAir, List.mem_append]
+  tauto
+
+/-- …and the complement block's range leg. -/
+theorem mem_limbsZCan :
+    AirLeg.limbs ⟨limbCols ZCAN_BASE, SB, rangeTidW SB⟩ ∈ (programAir pl prog).legs := by
+  simp only [programAir, List.mem_append, List.mem_cons]
+  tauto
+
+/-- …and its carry chain's. -/
+theorem mem_limbsZCCar :
+    AirLeg.limbs ⟨zcCarryCols, ACB, rangeTidW SB⟩ ∈ (programAir pl prog).legs := by
   simp only [programAir, List.mem_append, List.mem_cons]
   tauto
 
@@ -551,6 +599,10 @@ structure RowFacts (pl : Nat → ℤ) (tr : RowTrace) (tf : TraceFamily) (t : Na
   rc    : ∀ i, i < NG - 1 → 0 ≤ tr t (ALU_C_BASE + i) ∧ tr t (ALU_C_BASE + i) < 2 ^ CB
   rac   : 0 ≤ tr t ALU_AC_COL ∧ tr t ALU_AC_COL < 2
   racar : ∀ i, i < NA - 1 → 0 ≤ tr t (ALU_ACAR_BASE + i) ∧ tr t (ALU_ACAR_BASE + i) < 2 ^ ACB
+  -- ⚑ the canonicity certificate: its 32 gate bodies and the ranges on its two witness blocks.
+  zcan  : ∀ m, m < NA → P ∣ cnBody (tr t) Z_BASE ZCAN_BASE ZCCAR_BASE pl m
+  rzcan : ∀ i, i < SK → 0 ≤ tr t (ZCAN_BASE + i) ∧ tr t (ZCAN_BASE + i) < 2 ^ SB
+  rzcar : ∀ i, i < NA - 1 → 0 ≤ tr t (ZCCAR_BASE + i) ∧ tr t (ZCCAR_BASE + i) < 2 ^ ACB
 
 /-- ⚑⚑ **A FORCED ROW IS A ROW OF FACTS.** Every field is `AirLeg.forces` of a leg the membership
 lemmas of §4 exhibit in `programAir`'s own list. -/
@@ -563,7 +615,8 @@ theorem rowFacts_of_forced {pl : Nat → ℤ} {prog : List Instr} {tr : RowTrace
   have hnxt : (rowEnv tr pub chal t).nxt = tr (t + 1) := rfl
   refine
     { mul := ?_, add := ?_, sub := ?_, xrt := ?_, yrt := ?_, regw := ?_, pcw := ?_, rom := ?_
-    , rx := ?_, ry := ?_, rz := ?_, rq := ?_, rc := ?_, rac := ?_, racar := ?_ }
+    , rx := ?_, ry := ?_, rz := ?_, rq := ?_, rc := ?_, rac := ?_, racar := ?_
+    , zcan := ?_, rzcan := ?_, rzcar := ?_ }
   · intro m hm
     have := dvd_of_gate_forces (hrow _ (mem_mulGate pl prog hm)); rwa [hloc] at this
   · intro m hm
@@ -601,6 +654,32 @@ theorem rowFacts_of_forced {pl : Nat → ℤ} {prog : List Instr} {tr : RowTrace
   · intro i hi
     exact hrange.1 _ (hrow _ (mem_limbsAcar pl prog) _
       (List.mem_map_of_mem (List.mem_range.mpr hi)))
+  · intro m hm
+    have h := dvd_of_gate_forces (hrow _ (mem_zCanonGate pl prog hm))
+    have h2 : (zCanonExpr pl m).eval (tr t) = cnBody (tr t) Z_BASE ZCAN_BASE ZCCAR_BASE pl m :=
+      cnExpr_eval (tr t) _ _ _ pl m
+    rwa [hloc, h2] at h
+  · intro i hi
+    exact hrange.1 _ (hrow _ (mem_limbsZCan pl prog) _
+      (List.mem_map_of_mem (List.mem_range.mpr hi)))
+  · intro i hi
+    exact hrange.1 _ (hrow _ (mem_limbsZCCar pl prog) _
+      (List.mem_map_of_mem (List.mem_range.mpr hi)))
+
+/-- ⚑⚑⚑ **THE ROW'S RESULT IS A CANONICAL FIELD ELEMENT** — `0 ≤ sVal z < N`, from the emitted
+certificate's 32 gate bodies read mod `P` plus the ranges on its two witness blocks. This is the
+fact §11.5 recorded as ABSENT until the certificate landed, and it is the only thing that stood
+between `Tracks` as a congruence and `Tracks` as an equality.
+
+⚑ The proof is one application: the gadget is `PastaAddSubSound` §4b's, at this row's columns, and
+nothing about the bound or the telescope is re-derived here. -/
+theorem z_is_canonical {N : Nat} {pl : Nat → ℤ} {tr : RowTrace} {tf : TraceFamily} {t : Nat}
+    (hpl : ∀ j, 0 ≤ pl j ∧ pl j < 2 ^ SB)
+    (hplN : sumL (List.range SK) (fun j => ((2 : ℤ) ^ SB) ^ j * pl j) = (N : ℤ))
+    (hfacts : RowFacts pl tr tf t) :
+    0 ≤ sVal (tr t) Z_BASE ∧ sVal (tr t) Z_BASE < (N : ℤ) :=
+  cn_gates_force_below_the_modulus (tr t) Z_BASE ZCAN_BASE ZCCAR_BASE pl (N : ℤ)
+    hfacts.rz hfacts.rzcan hpl hplN hfacts.rzcar hfacts.zcan
 
 /-- ⚑ **THE COUNTER IS THE ROW INDEX**, mod `P` — the `.first` pin plus the `.transition` thread.
 This is the only induction §8's ROM identification needs, and it is `AirCrossRow.carried_constant`'s
@@ -811,22 +890,22 @@ This is the theorem `MinaWrapClosingAir` §b said nothing in the tree had: *"no 
 them into 'row `k+1`'s register file is `stepRegsAt` of row `k`'s'."* -/
 theorem step_of_row {N : Nat} {pl : Nat → ℤ} {prog : List Instr} {tr : RowTrace}
     {tf : TraceFamily} {t : Nat} {st : RegFile}
-    (hNle : N ≤ 2 ^ (SB * SK))
+    (hN : 0 < N) (hNle : N ≤ 2 ^ (SB * SK))
     (hpl : ∀ j, 0 ≤ pl j ∧ pl j < 2 ^ SB)
     (hplN : sumL (List.range SK) (fun j => ((2 : ℤ) ^ SB) ^ j * pl j) = (N : ℤ))
     (hfacts : RowFacts pl tr tf t)
     (hrom : RomFaithful prog tf) (hpc : tr t PC_COL ≡ (t : ℤ) [ZMOD P])
     (ht : t < prog.length) (hlen : prog.length < P)
     (hI : InstrOk N (instrAt prog t))
-    (hcanon : ∀ r, st r < N) (htr : Tracks N (tr t) st) :
-    Tracks N (tr (t + 1)) (stepRegsAt N st (instrAt prog t)) := by
+    (hcanon : ∀ r, st r < N) (htr : Tracks (tr t) st) :
+    Tracks (tr (t + 1)) (stepRegsAt N st (instrAt prog t)) := by
   obtain ⟨hsm, hsa, hss, _hsc, hXs, hYs, hWs, hIm⟩ :=
     rom_cells (tr t) t (instrAt prog t)
       (row_tuple_is_its_instruction prog (tr t) tf t hrom hfacts.rom hpc ht hlen)
   set I := instrAt prog t with hIdef
   -- ⚑ the `x` operand, as a value mod `N`
   have hxmod : sVal (tr t) X_BASE ≡ ((st I.xr : Nat) : ℤ) [ZMOD (N : ℤ)] := by
-    rw [operand_x_is_the_register hfacts hI.hxr hXs]; exact htr I.xr hI.hxr
+    rw [operand_x_is_the_register hfacts hI.hxr hXs, htr I.xr hI.hxr]
   -- ⚑ the `y` operand — the register the instruction names, or the ROM's own constant
   have hyv : sVal (tr t) Y_BASE ≡ ((yValue st I : Nat) : ℤ) [ZMOD (N : ℤ)]
       ∧ yValue st I < N := by
@@ -846,7 +925,7 @@ theorem step_of_row {N : Nat} {pl : Nat → ℤ} {prog : List Instr} {tr : RowTr
         operand_y_is_the_register hfacts hyrlt hYs
       have hyval : yValue st I = st I.yr := by simp [yValue, hyr]
       refine ⟨?_, ?_⟩
-      · rw [heq, hyval]; exact htr I.yr hyrlt
+      · rw [heq, hyval, htr I.yr hyrlt]
       · rw [hyval]; exact hcanon I.yr
   -- ⚑ the RESULT the row's `z` block carries, mod `N`
   have hzmod : sVal (tr t) Z_BASE
@@ -883,6 +962,13 @@ theorem step_of_row {N : Nat} {pl : Nat → ℤ} {prog : List Instr} {tr : RowTr
       have hop1 : I.op ≠ 1 := by omega
       have hop2 : I.op ≠ 2 := by omega
       simpa [opResultAt, hop, hop1, hop2] using h3
+  -- ⚑⚑ THE UPGRADE: `hzmod` is a congruence; the certificate makes both sides canonical, and two
+  -- values in `[0, N)` that agree mod `N` are EQUAL. This is where the mod-`N` ceiling lifted.
+  have hzeq : sVal (tr t) Z_BASE
+      = ((opResultAt N I.op (st I.xr) (yValue st I) : Nat) : ℤ) := by
+    obtain ⟨hz0, hz1⟩ := z_is_canonical hpl hplN hfacts
+    refine eq_of_modEq_of_lt hz0 hz1 (Int.natCast_nonneg _) ?_ hzmod
+    exact_mod_cast opResultAt_lt N hN I.op (st I.xr) (yValue st I)
   -- ⚑ and the register file's evolution, with no third option
   intro r hr
   by_cases hrw : r = I.wr
@@ -891,7 +977,7 @@ theorem step_of_row {N : Nat} {pl : Nat → ℤ} {prog : List Instr} {tr : RowTr
     have hstep : stepRegsAt N st I r = opResultAt N I.op (st I.xr) (yValue st I) := by
       unfold stepRegsAt; rw [if_pos ⟨hwlt, hrw⟩]
     rw [written_register_is_the_result hfacts hr hw, hstep]
-    exact hzmod
+    exact hzeq
   · have hw : tr t (WSEL_BASE + r) = 0 := by rw [hWs r hr, if_neg hrw]
     have hne : ¬ (I.wr < NREG ∧ r = I.wr) := fun hcon => hrw hcon.2
     have hstep : stepRegsAt N st I r = st r := by
@@ -926,8 +1012,8 @@ theorem rows_track_the_interpreter {N : Nat} {pl : Nat → ℤ} {prog : List Ins
     (hok : ∀ I ∈ prog, InstrOk N I) (hlen : prog.length < P) (hn : n ≤ prog.length)
     (hrange : RangeTablesHonest tf) (hrom : RomFaithful prog tf)
     (hf : RowsForced pl prog tr pub chal tf n)
-    (hcanon : ∀ r, st0 r < N) (h0 : Tracks N (tr 0) st0) :
-    ∀ t, t ≤ n → Tracks N (tr t) (runProgAt N st0 (prog.take t)) := by
+    (hcanon : ∀ r, st0 r < N) (h0 : Tracks (tr 0) st0) :
+    ∀ t, t ≤ n → Tracks (tr t) (runProgAt N st0 (prog.take t)) := by
   intro t
   induction t with
   | zero => intro _; simpa using h0
@@ -943,7 +1029,7 @@ theorem rows_track_the_interpreter {N : Nat} {pl : Nat → ℤ} {prog : List Ins
         rw [take_succ_eq prog k hkl, runProgAt_append]
         rfl
       rw [hrun]
-      exact step_of_row hNle hpl hplN (rowFacts_of_forced hrange hf hkn) hrom
+      exact step_of_row hN hNle hpl hplN (rowFacts_of_forced hrange hf hkn) hrom
         (pc_is_the_row_index hf k hkn) hkl hlen hIok
         (runProgAt_canonical N hN _ st0 hcanon) (ih (by omega))
 
@@ -957,8 +1043,8 @@ theorem runs_the_program {N : Nat} {pl : Nat → ℤ} {prog : List Instr} {tr : 
     (hok : ∀ I ∈ prog, InstrOk N I) (hlen : prog.length < P)
     (hrange : RangeTablesHonest tf) (hrom : RomFaithful prog tf)
     (hf : RowsForced pl prog tr pub chal tf prog.length)
-    (hcanon : ∀ r, st0 r < N) (h0 : Tracks N (tr 0) st0) :
-    Tracks N (tr prog.length) (runProgAt N st0 prog) := by
+    (hcanon : ∀ r, st0 r < N) (h0 : Tracks (tr 0) st0) :
+    Tracks (tr prog.length) (runProgAt N st0 prog) := by
   have h := rows_track_the_interpreter hN hNle hpl hplN hok hlen (le_refl _) hrange hrom hf
     hcanon h0 prog.length (le_refl _)
   simpa using h
@@ -1119,12 +1205,12 @@ theorem absorb_rows_force_the_permutation {Pm : Params} {pl : Nat → ℤ} {tr :
     (hlen : ((absorbCoreP Pm).length : ℤ) < P)
     (hrange : RangeTablesHonest tf) (hrom : RomFaithful (absorbCoreP Pm) tf)
     (hf : RowsForced pl (absorbCoreP Pm) tr pub chal tf (absorbCoreP Pm).length)
-    (hcanon : ∀ r, st0 r < Pm.modulus) (h0 : Tracks Pm.modulus (tr 0) st0) :
+    (hcanon : ∀ r, st0 r < Pm.modulus) (h0 : Tracks (tr 0) st0) :
     ∀ i, i < 3 →
       regVal (tr (absorbCoreP Pm).length) (allocAt PastaPoseidon.rounds i)
-        ≡ (((Dregg2.Circuit.Emit.PastaPoseidonFq.Core.perm Pm
+        = (((Dregg2.Circuit.Emit.PastaPoseidonFq.Core.perm Pm
               [(st0 0 + st0 3) % Pm.modulus, (st0 1 + st0 4) % Pm.modulus, st0 2]).getD i 0 : Nat)
-            : ℤ) [ZMOD (Pm.modulus : ℤ)] := by
+            : ℤ) := by
   have hrun := runs_the_program (N := Pm.modulus) (pl := pl) (prog := absorbCoreP Pm)
     (tr := tr) (pub := pub) (chal := chal) (tf := tf) (st0 := st0)
     hP hPle hpl hplN (absorbCoreP_instrOk Pm hP hpc) hlen hrange hrom hf hcanon h0
@@ -1148,11 +1234,14 @@ theorem absorb_rows_force_the_permutation {Pm : Params} {pl : Nat → ℤ} {tr :
    pool, which is the `RangeTablesHonest tf → PoolsRanged tr` shape `AirSelectorForcing`'s header
    asked for; wiring `AirCrossRow` onto it is a separate, mechanical pass.
 
-2. **The register file carries no range leg.** `programAir` range-checks `x`, `y`, `z`, the quotient
-   and the two carry pools — and NOT `regCol r + i`. This file does not need it (the header's
-   canonicality relay), but the fact is worth stating on its own: the ONLY thing forced about a
-   register column is its residue mod `P`, and any future consumer that reads `sVal (tr t) (regCol r)`
-   instead of `regVal (tr t) r` is reading integers the descriptor does not pin.
+2. **The register file carries no range leg.** `programAir` range-checks `x`, `y`, `z`, the
+   quotient, the two carry pools and now the certificate's two blocks — and NOT `regCol r + i`.
+   This file does not need it (the header's canonicality relay), but the fact is worth stating on
+   its own: the ONLY thing forced about a register column is its residue mod `P`, and any future
+   consumer that reads `sVal (tr t) (regCol r)` instead of `regVal (tr t) r` is reading integers the
+   descriptor does not pin. ⚠ `register_column_is_not_ranged` now carries `r < NREG` and `i < SK`
+   and is stated over `machineRangedCols`; without those hypotheses it is FALSE, because
+   `regCol 7 + 21 = 471` lands inside the certificate's complement block.
 
 3. **The last row's transition legs do not fire.** `transition_legs_are_vacuous_on_the_last_row` is
    that as a theorem. So `rows_track_the_interpreter` covers instructions `0 … n−1` where the trace
@@ -1164,23 +1253,35 @@ theorem absorb_rows_force_the_permutation {Pm : Params} {pl : Nat → ℤ} {tr :
    boundary does (`sboxPins` and its siblings), and `programAir_boundary_pinsTied` is what makes
    adding one cost a single structural lemma.
 
-5. ⚑⚑ **AND THE MOD-`N` RESOLUTION IS A CEILING, NOT A CHOICE — this is UNDONE WORK, not a
-   theorem of the model.** `Tracks` relates the trace's register file to the interpreter's *mod the
-   Pasta modulus* because that is the strongest thing the emitted legs support: the ALU's conclusion
-   is a DIVISIBILITY (`N ∣ sVal x · sVal y − sVal z`), and no leg in `programAir` is a
-   less-than-the-modulus certificate on `z`. The `z` limbs are range-checked to 8 bits, so
-   `sVal z < 2^256` while `pN ≈ 2^254.9` — the window holds `r`, `r + p`, `r + 2p`, `r + 3p` and
-   `r + 4p`, each with its own quotient block, all range-checked. So an internally consistent
-   NON-CANONICAL result is not excluded by these constraints, and an ℤ-equality form of `Tracks`
-   would be FALSE of the descriptor in the exact way `AirCrossRow.PhaseIndicator`'s first statement
-   was.
-   ⚑ **The fix shape already exists in this tree and is not applied here.**
-   `PastaMsmScalarDerive` §2.7 measured the identical hole on the sibling gadget — *"`s` and `s+q`
-   ALL fit and only the MANIFEST refused an internally consistent non-canonical row"* — and closed
-   it with the standard certificate: `s + Σ_{p<255} 2^p·CBc p = q − 1` over `CBITS = 255` boolean
-   columns. Applied here that is `+255` columns and `+256` constraints per row, and it would lift
-   `Tracks` from a congruence to an equality. **Do not read the mod-`N` statement as the natural
-   resolution of the problem; read it as the resolution these constraints buy.**
+5. ✅ **CLOSED 2026-08-10 — THE MOD-`N` CEILING IS GONE, AND WHAT REPLACED IT COST 63 COLUMNS.**
+   This entry read *"the mod-`N` resolution is a CEILING, not a choice — UNDONE WORK, not a theorem
+   of the model"*, and it was right: no leg was a less-than-the-modulus certificate on `z`, the
+   limb ranges bought only `sVal z < 2^256` against `pN ≈ 2^254.9`, and `r, r+p, r+2p, r+3p, r+4p`
+   all fit with their own range-checked quotients. `programAir` now carries
+   `MinaWrapVerifierProgram.zCanonLegs`; `z_is_canonical` reads it; `Tracks` is an ℤ EQUALITY.
+
+   ⚑⚑ **What did NOT transfer is the fix SHAPE, and the reason is the whole lesson.** This entry
+   named `PastaMsmScalarDerive` §2.7's certificate — `s + Σ_{p<255} 2^p·CBc p = q − 1` over 255
+   boolean columns — and priced it at `+255` columns / `+256` constraints. That shape is correct in
+   the model §2.7 is stated in (`PastaField.acceptB`, the ℤ reading of the emitted bodies) and
+   **cannot force anything in the model THIS file is stated in.** One gate whose integer body is
+   ~`2^256`, read as `P ∣ body` with `P ≈ 2^31`, leaves `2^225` satisfying assignments. Porting it
+   verbatim would have restated `AirCrossRow.PhaseIndicator`'s first statement one layer up: an ℤ
+   claim over legs that buy a congruence, of which no proof could have existed.
+
+   The shape that survives the mod-`P` reading is the one add/sub already uses — a LIMB-WISE
+   identity with a carry chain, every body bounded below `P` so `P ∣ body` forces `body = 0` over
+   ℤ, and 32 identities that telescope. `PastaAddSubSound` §4b is it: `z + c + 1 = N` over `SK = 32`
+   complement limbs and `NA − 1 = 31` carries.
+
+   ⚑ **RE-DERIVED PRICE, not inherited: `+63` columns and `+32` gate legs (plus 2 `limbs` legs),
+   against §2.7's `+255` / `+256`.** Four times cheaper AND forcing where §2.7's is not — the bit
+   decomposition spends 255 columns saying "non-negative"; a range-checked byte block says it in 32.
+
+   ⚠ **What this does NOT close, stated so it is not read as more:** `cnHonest_satisfies_gates` is a
+   KAT at three values, not the general completeness theorem (*for every `zv < N` the honest carry
+   chain's divisions are exact*), which is the `limbs_recompose` truncation argument and is UNDONE.
+   Soundness — the direction `Tracks` at ℤ depends on — is fully general.
 
 6. **Everything below this file's floor is untouched** — the ℤ↔felt reading (K1), the FRI/STARK
    floor, and `MinaWrapClosingAir` residuals (a) and (c). This closes (b) and nothing else. -/
@@ -1200,27 +1301,56 @@ def aluRangedCols : List Nat :=
   limbCols X_BASE ++ limbCols Y_BASE ++ limbCols Z_BASE ++ limbCols ALU_Q_BASE
     ++ aluCarryCols ++ [ALU_AC_COL] ++ aluAcarCols
 
+/-- ⚑ The canonicity certificate's two range-checked blocks: the complement's `SK` limbs and its
+`NA − 1` carries. **These are ABOVE the register file**, which is why the register-file fact below
+now carries `r < NREG`. -/
+def certRangedCols : List Nat := limbCols ZCAN_BASE ++ zcCarryCols
+
+/-- Everything the machine range-checks. -/
+def machineRangedCols : List Nat := aluRangedCols ++ certRangedCols
+
 set_option maxHeartbeats 2000000 in
 /-- The columns EVERY `limbs` leg of the machine names, read off the emitted leg list.
 ⚠ The kernel walks the whole leg list to check this, which is why the heartbeat budget is raised —
-the same price `sboxTiedAir` pays for `pinsTied`. -/
-theorem aluRangedCols_are_the_limbs_legs_cols (pl : Nat → ℤ) (prog : List Instr) :
+the same price `sboxTiedAir` pays for `pinsTied`.
+
+⚠ **RENAMED from `aluRangedCols_are_the_limbs_legs_cols`, whose NAME STOPPED BEING TRUE.** The
+machine now range-checks 63 columns that are not ALU columns — the certificate's complement block
+and its carry chain — so the flattened `limbs`-leg column list is no longer `aluRangedCols`. Keeping
+the old name over the new list would have been the quietest possible lie in this file. -/
+theorem machineRangedCols_are_the_limbs_legs_cols (pl : Nat → ℤ) (prog : List Instr) :
     ((programAir pl prog).legs.filterMap
         (fun l => match l with | AirLeg.limbs q => some q.cols | _ => none)).flatten
-      = aluRangedCols := rfl
+      = machineRangedCols := rfl
 
-/-- Every range-checked column of the machine is an ALU column. -/
+/-- Every range-checked column of the ARITHMETIC block is an ALU column. Still true, and still
+about `aluRangedCols` — which is now a proper sublist of what the machine ranges. -/
 theorem aluRangedCols_below_alu_width : ∀ c ∈ aluRangedCols, c < ALU_WIDTH := by decide
 
-/-- ⚑⚑ **AND NO REGISTER COLUMN IS ONE.** The register file starts where the ALU row ends, so a
-column of `regCol r` is at or above `ALU_WIDTH` and therefore in no declared range table — which is
-why §2's `regVal` reads the register block through `· % P` and never as an integer. -/
-theorem register_column_is_not_ranged (r i : Nat) : regCol r + i ∉ aluRangedCols := by
+/-- …and every certificate column is at or above `ZCAN_BASE = 469`. -/
+theorem certRangedCols_above_the_certificate_base : ∀ c ∈ certRangedCols, ZCAN_BASE ≤ c := by
+  decide
+
+/-- ⚑⚑ **AND NO REGISTER COLUMN IS ONE.** The register file sits strictly between the ALU row and
+the certificate block — `226 ≤ regCol r + i < 469` for `r < NREG`, `i < SK` — so it is in no
+declared range table, which is why §2's `regVal` reads the register block through `· % P` and never
+as an integer.
+
+⚠ **The hypotheses `r < NREG` and `i < SK` are NEW and they are not decoration.** The old statement
+quantified over ALL `r` and `i` and was true only because every ranged column was below
+`ALU_WIDTH`; the certificate's blocks live at `469..531`, and `regCol 7 + 21 = 471` is inside them.
+So the unhypothesised form is now FALSE, and stating it would have been the second-quietest lie. -/
+theorem register_column_is_not_ranged (r i : Nat) (hr : r < NREG) (hi : i < SK) :
+    regCol r + i ∉ machineRangedCols := by
   intro h
-  have h1 := aluRangedCols_below_alu_width _ h
-  have h2 : ALU_WIDTH ≤ regCol r + i := by
-    unfold regCol REG_BASE; omega
-  omega
+  rcases List.mem_append.mp h with h | h
+  · have h1 := aluRangedCols_below_alu_width _ h
+    have h2 : ALU_WIDTH ≤ regCol r + i := by
+      unfold regCol REG_BASE; omega
+    omega
+  · have h1 := certRangedCols_above_the_certificate_base _ h
+    have h2 := the_certificate_block_is_above_the_register_file r i hr hi
+    omega
 
 /-! ### §11a — ⚑ BOTH POLES: `Tracks` IS A PREDICATE, NOT A TAUTOLOGY.
 
@@ -1232,7 +1362,7 @@ theorem regVal_zero (r : Nat) : regVal (fun _ => (0 : ℤ)) r = 0 := by
   simp [regVal, canonRow, sVal, sumL]
 
 /-- ⚑⚑ **AND A ROW THAT READS `0` DOES NOT TRACK A REGISTER FILE HOLDING `1`.** -/
-theorem tracks_is_refutable : ¬ Tracks 5 (fun _ => (0 : ℤ)) (fun _ => 1) := by
+theorem tracks_is_refutable : ¬ Tracks (fun _ => (0 : ℤ)) (fun _ => 1) := by
   intro h
   have h0 := h 0 (by decide)
   rw [regVal_zero] at h0
@@ -1250,7 +1380,10 @@ theorem tracks_is_refutable : ¬ Tracks 5 (fun _ => (0 : ℤ)) (fun _ => 1) := b
 #assert_axioms absorbCoreP_instrOk
 #assert_axioms absorb_rows_force_the_permutation
 #assert_axioms register_column_is_not_ranged
-#assert_axioms aluRangedCols_are_the_limbs_legs_cols
+#assert_axioms machineRangedCols_are_the_limbs_legs_cols
+#assert_axioms certRangedCols_above_the_certificate_base
+#assert_axioms z_is_canonical
+#assert_axioms eq_of_modEq_of_lt
 #assert_axioms tracks_is_refutable
 #assert_axioms rowsForced_of_certified
 #assert_axioms rowsForced_of_satisfied2
