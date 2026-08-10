@@ -2432,6 +2432,25 @@ pub fn router_with_cors(
         // re-derives instead). The published commitment is `commit secret slot`:
         // no player, no mission, ~2^124 to invert.
         .merge(crate::poa_signal_slot_api::routes())
+        // ⚑ THE SLOT-CLOSE OPENING — the one route in this node that publishes a
+        // slot SECRET, and the answer to the census question below is deliberately
+        // YES for it. That is not a leak; it is what opening a commitment means.
+        //
+        // Every descriptor declares `instance.commitment.opened_after:
+        // "slot-close"`, `poa-web` REFUSES any descriptor that does not, and
+        // `schema.json` pins the opening as `["slot", "slot_secret"]` under
+        // `verify: "commit(slot_secret, slot) == commitment"`. Until this route
+        // there was no code anywhere that published either value, so the one
+        // integrity claim Path of Angels makes to a player — your instance was
+        // fixed before you played — was unfalsifiable by that player.
+        //
+        // The secret is bounded to slots that are SUPERSEDED. The gate is in
+        // `PersistentStore::load_poa_signal_slot_reveal_v1`, beside the monotone
+        // install that creates closure, and this route has no other accessor: a
+        // superseded slot cannot settle a run, so its secret answers a question
+        // nobody can still be asked. The LIVE slot refuses with 409 and its secret
+        // appears nowhere in the refusal.
+        .merge(crate::poa_signal_slot_reveal_api::routes())
         // ⚑ PUBLIC ON PURPOSE, 2026-08-07 — moved OUT of `protected_routes`, where a
         // docblock dated this same morning called it "AUTHENTICATED ON PURPOSE". That
         // note reasoned correctly about what a session SPENDS and then drew the wrong
@@ -11218,6 +11237,29 @@ mod tests {
             // target or pre-encoded signing message. Mounted protected, it made
             // every browser game permanently practice via a silent 401.
             "poa_signal_slot_api",
+            // ⚑ ADDED DELIBERATELY — the SLOT-CLOSE OPENING, and the one module on
+            // this list for which the standing question below is answered YES.
+            //
+            // A reader who has never played CAN reconstruct a hidden instance from
+            // what this route serves — that is precisely its purpose, and the
+            // descriptors have always promised it (`opened_after: "slot-close"`,
+            // enforced by `poa-web/src/hidden-instance.js`; `opened_after_close:
+            // ["slot","slot_secret"]`, enforced by `poa-curator`). A commitment
+            // that is never opened binds nothing a player can check.
+            //
+            // What bounds it is WHICH slots. `load_poa_signal_slot_reveal_v1`
+            // serves only a slot strictly below the authority's open pointer —
+            // superseded, and therefore unable to settle any run. The live slot,
+            // whose secret is the answer to every run in flight, refuses with 409
+            // and does not carry the secret in the refusal body.
+            //
+            // ⚠ Standing condition: this stays sound only while closure remains
+            // "strictly superseded by a later installed slot". If closure is ever
+            // widened — a timestamp, an operator assertion, an explicit close that
+            // does not require a successor — the widened predicate is what decides
+            // whether a live secret is published, and it must be re-argued HERE
+            // before it ships.
+            "poa_signal_slot_reveal_api",
             "poa_station_api",
         ];
         assert_eq!(

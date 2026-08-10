@@ -142,7 +142,8 @@ pub use poa_signal_session::{
 };
 pub use poa_signal_slot::{
     POA_SLOT_OPENING_STATEMENT_SCHEMA_V1, PoaInstalledSlotV1, PoaSlotInstallStatusV1,
-    PoaSlotOpeningStatementV1, SignedPoaSlotOpeningEnvelopeV1,
+    PoaSlotOpeningStatementV1, PoaSlotRevealStatusV1, PoaSlotRevealV1,
+    SignedPoaSlotOpeningEnvelopeV1,
 };
 pub use poa_signal_state::{
     MAX_POA_SIGNAL_WIRE_BYTES_V1, PoaSignalGenesisInitOutcome, PoaSignalHeadV1,

@@ -32,7 +32,11 @@
 //!
 //! And what it does NOT carry, deliberately:
 //!
-//! * **`secret`** — the run seed is `runSeedFor ⟨secret, slot, playerKey⟩`, and the
+//! * **`secret`** — WHILE THE SLOT IS LIVE. (Once it closes, the sibling
+//!   `poa_signal_slot_reveal_api` publishes it on purpose: an unopened commitment
+//!   is one no player can check. That route serves only superseded slots and
+//!   refuses this one, so the redaction below is unchanged for everything this
+//!   route can reach.) The run seed is `runSeedFor ⟨secret, slot, playerKey⟩`, and the
 //!   target is three modulo ops from the run seed. The secret is the answer to
 //!   every run in the slot. [`slot_publication_never_carries_the_secret`] builds
 //!   the response from the live encoder with a known secret installed and fails if

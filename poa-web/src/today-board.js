@@ -1,4 +1,6 @@
 import { ArtifactRefusal } from "./poag1.js";
+import { retainSlotOpening } from "./slot-opening-receipt.js";
+import { STATEMENT_SCHEMA, slotStatementMessage } from "./slot-statement.js";
 import { CRATE_OPEN_ROUTE, STATION_CREW_ROUTE, STATION_PANEL_ROUTE } from "./station-panel.js";
 
 /**
@@ -21,7 +23,6 @@ import { CRATE_OPEN_ROUTE, STATION_CREW_ROUTE, STATION_PANEL_ROUTE } from "./sta
  */
 
 const SLOT_FORMAT = "POA-SIGNAL-SLOT-1";
-const STATEMENT_SCHEMA = "POA-SLOT-OPENING-STATEMENT-1";
 const HEX_32 = /^[0-9a-f]{64}$/;
 const HEX_64 = /^[0-9a-f]{128}$/;
 
@@ -49,16 +50,12 @@ function hexBytes(hex) {
 }
 
 /**
- * The exact bytes the curator signed, rebuilt field by field in the documented
- * order. Written as one template rather than `JSON.stringify(received)` on
- * purpose: stringifying what arrived would re-serialise whatever order and
- * whatever extra keys the node sent, which is verifying a signature against the
- * attacker's bytes with extra steps.
+ * Re-exported from `slot-statement.js`, which is the ONE definition. It moved
+ * there when the slot-close reveal check needed to reproduce the same bytes: two
+ * modules encoding the signed statement separately is how a signature ends up
+ * verified against bytes that are not the statement beside it.
  */
-export function slotStatementMessage(statement) {
-  return `{"schema":"${STATEMENT_SCHEMA}","authority_id":"${statement.authorityId}",` +
-    `"mission_id":${statement.missionId},"slot":${statement.slot},"commitment":"${statement.commitment}"}`;
-}
+export { slotStatementMessage };
 
 /** Parse a published slot document. Shape only; the signature is checked after. */
 export function parseSlotDocument(value, authorityId) {
@@ -128,7 +125,7 @@ async function verifyOpening(opening, curatorPublicKey) {
  * "no judged play here", which is the safe direction — this can only ever fail
  * toward practice, never toward claiming a slot that is not open.
  */
-export async function loadSlotState({ authorityId, curatorPublicKey, baseUrl, fetchImpl = globalThis.fetch, prefix = "/node" } = {}) {
+export async function loadSlotState({ authorityId, curatorPublicKey, baseUrl, fetchImpl = globalThis.fetch, prefix = "/node", storage = globalThis.localStorage } = {}) {
   if (typeof authorityId !== "string" || !HEX_32.test(authorityId)) {
     return Object.freeze({ state: "unreachable", code: "slot-authority", reason: "This terminal does not know which network to ask" });
   }
@@ -160,12 +157,44 @@ export async function loadSlotState({ authorityId, curatorPublicKey, baseUrl, fe
   } catch (error) {
     return Object.freeze({ state: "refused", code: error?.code ?? "slot-bad-signature", reason: error?.message ?? "the slot opening did not verify" });
   }
+  // ⚑ RETAIN IT. The signature has just verified; this is the only moment at
+  // which the player holds evidence that it did. Until this call the function
+  // returned the commitment alone and dropped the curator key and the signature
+  // on the floor, which made the descriptors' `opened_after: "slot-close"`
+  // promise uncheckable by the person it is made to: comparing a revealed secret
+  // against a commitment the node hands you at reveal time proves only that the
+  // node can do arithmetic.
+  //
+  // Write-once per (authority, slot). A served opening that disagrees with one
+  // already held is an EQUIVOCATION and is surfaced as `refused`, not merged and
+  // not overwritten — the retained copy is the evidence, and replacing it would
+  // destroy exactly what it exists to preserve.
+  const retention = retainSlotOpening(parsed.opening, { storage });
+  if (retention.state === "equivocation") {
+    return Object.freeze({
+      state: "refused",
+      code: "slot-equivocation",
+      reason:
+        `This node served a different opening for slot ${parsed.opening.statement.slot} than the ` +
+        `one you already hold. Two commitments for one slot means at most one of them was ever ` +
+        `committed to. Do not play a judged run here.`,
+      retained: retention.retained,
+      served: retention.served,
+    });
+  }
+
   return Object.freeze({
     state: "open",
     slot: parsed.opening.statement.slot,
     missionId: parsed.opening.statement.missionId,
     commitment: parsed.opening.statement.commitment,
     consensusFinality: parsed.consensusFinality,
+    // The verified opening, KEPT rather than discarded. `receipt` is the exact
+    // document `dregg-node poa-verify-slot-reveal --opening` parses.
+    opening: parsed.opening,
+    receipt: retention.receipt,
+    /** `false` when storage refused the write: the receipt will not survive the tab. */
+    retained: retention.state !== "unstored",
   });
 }
 

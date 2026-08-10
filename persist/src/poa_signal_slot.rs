@@ -185,10 +185,18 @@ impl SignedPoaSlotOpeningEnvelopeV1 {
 
 /// One installed slot: the curator's signed opening plus the secret that opens it.
 ///
-/// ⚠ `secret` must never leave the node. No output wire, descriptor, catalog or
-/// authority export renders it, and `Emit` has no function that could. It is
-/// handed to the Lean judge — which needs it to re-derive the run seed — and
-/// nowhere else.
+/// ⚠ While the slot is LIVE, `secret` must never leave the node. No output wire,
+/// descriptor, catalog or authority export renders it, and `Emit` has no function
+/// that could. It is handed to the Lean judge — which needs it to re-derive the run
+/// seed — and nowhere else.
+///
+/// ⚑ **The one exception, and it is the point of the commitment.** Once the slot is
+/// CLOSED — strictly superseded, so it can settle nothing —
+/// [`PersistentStore::load_poa_signal_slot_reveal_v1`] publishes the secret as a
+/// [`PoaSlotRevealV1`], which is what the descriptors' `opened_after: "slot-close"`
+/// promises and what lets a player check the instance they were judged against was
+/// fixed before they played. That accessor holds the closure gate; this type's
+/// [`Self::secret`] is still the live value and still must not reach a wire.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PoaInstalledSlotV1 {
     envelope: SignedPoaSlotOpeningEnvelopeV1,
@@ -228,6 +236,77 @@ impl PoaInstalledSlotV1 {
     pub fn new_for_test(envelope: SignedPoaSlotOpeningEnvelopeV1, secret: [u8; 32]) -> Self {
         Self { envelope, secret }
     }
+}
+
+/// One CLOSED slot, opened: the signed opening players were handed BEFORE they
+/// played, plus the secret that opens its commitment.
+///
+/// ⚠ This is the one type in the crate that is BUILT to carry the secret outward.
+/// It is only ever produced by [`PersistentStore::load_poa_signal_slot_reveal_v1`],
+/// which produces it only for a slot the store can show is superseded.
+///
+/// # Why it needs no signature of its own
+///
+/// The reveal is self-authenticating and that is the point of a commitment. The
+/// `envelope` inside it is the curator's original Ed25519 signature over
+/// `(authority_id, mission_id, slot, commitment)` — the same bytes published
+/// before the slot opened — and the secret either satisfies
+/// `HiddenInstance.commit secret slot == commitment` or it does not. A malicious
+/// relay can withhold this document or corrupt it, but it cannot forge one: to
+/// substitute a different secret it would have to find a second preimage of a
+/// curator-signed commitment, which is the sponge capacity (~2^124). So a verifier
+/// needs nothing from the node it fetched this from — no TLS trust, no honesty, no
+/// second signature — only the curator pin it already had.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PoaSlotRevealV1 {
+    envelope: SignedPoaSlotOpeningEnvelopeV1,
+    secret: [u8; 32],
+    closed_by_slot: u64,
+}
+
+impl PoaSlotRevealV1 {
+    pub const fn envelope(&self) -> &SignedPoaSlotOpeningEnvelopeV1 {
+        &self.envelope
+    }
+
+    pub const fn slot(&self) -> u64 {
+        self.envelope.statement.slot
+    }
+
+    pub const fn mission_id(&self) -> u64 {
+        self.envelope.statement.mission_id
+    }
+
+    pub const fn commitment(&self) -> [u8; 32] {
+        self.envelope.statement.commitment
+    }
+
+    /// The now-published per-slot secret. It stopped being key material when the
+    /// slot closed: every run it could answer has already been settled.
+    pub const fn secret(&self) -> [u8; 32] {
+        self.secret
+    }
+
+    /// The open slot that superseded this one — the store's evidence of closure.
+    pub const fn closed_by_slot(&self) -> u64 {
+        self.closed_by_slot
+    }
+}
+
+/// What the store will say about a request to open one slot.
+///
+/// Three answers rather than an `Option`, because "no such slot" and "that slot is
+/// still live" are different facts and a client that cannot tell them apart cannot
+/// tell a typo from a withheld secret.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PoaSlotRevealStatusV1 {
+    /// No slot with these coordinates is installed for this authority.
+    Unknown,
+    /// The slot is installed but NOT closed. The secret is withheld: it is the
+    /// answer to every run currently being played in it.
+    StillOpen { open_slot: u64 },
+    /// The slot is closed, and this opens it.
+    Revealed(PoaSlotRevealV1),
 }
 
 /// Outcome of one install attempt.
@@ -388,6 +467,68 @@ impl PersistentStore {
         self.load_poa_signal_slot_v1(authority_id, slot.value())
     }
 
+    /// **THE SLOT-CLOSE OPENING.** Hand back the secret of a slot that is CLOSED,
+    /// and refuse for one that is not.
+    ///
+    /// This is the read the descriptors' `opened_after: "slot-close"` names, and it
+    /// is the only path by which a slot secret is allowed to leave the node. The
+    /// gate lives HERE, beside the write that establishes closure, for the same
+    /// reason `install_poa_signal_slot_v1` keeps the commitment check in persist:
+    /// so that no route, export or command can reach the secret around it.
+    ///
+    /// # What "closed" means, and why it needs no new record
+    ///
+    /// `install_poa_signal_slot_v1` refuses a slot that does not STRICTLY advance
+    /// the authority's open slot, so slots are totally ordered and
+    /// `POA_SIGNAL_OPEN_SLOT_V1` holds the greatest one installed. A slot is
+    /// therefore closed exactly when it is strictly less than that pointer —
+    /// superseded, its runs no longer settleable. No new signed object, no clock and
+    /// no operator assertion is involved: closure is a fact already forced by the
+    /// monotone install, which is what makes it checkable rather than announced.
+    ///
+    /// ⚠ **The consequence, stated rather than hidden:** the CURRENT slot is never
+    /// closed, so an authority that stops opening slots never opens its last one.
+    /// Withholding is then visible — the publication route keeps reporting that slot
+    /// as open — but it is not prevented. Forcing a reveal needs a deadline someone
+    /// other than the operator can enforce, and this store has no such clock.
+    ///
+    /// # Fail-closed
+    ///
+    /// Every path that is not provably "this slot is strictly below the open
+    /// pointer" withholds: a missing pointer, an unreadable record, a slot equal to
+    /// or above the pointer. A corrupt store loses the reveal; it does not leak a
+    /// live secret.
+    pub fn load_poa_signal_slot_reveal_v1(
+        &self,
+        authority_id: [u8; 32],
+        slot: u64,
+    ) -> Result<PoaSlotRevealStatusV1> {
+        let read = self.db.begin_read()?;
+        let open = read.open_table(POA_SIGNAL_OPEN_SLOT_V1)?;
+        // No pointer at all ⇒ nothing has ever been opened for this authority, so
+        // nothing can be closed. Withhold rather than fall through to the record.
+        let Some(open_slot) = open.get(authority_id.as_slice())? else {
+            return Ok(PoaSlotRevealStatusV1::Unknown);
+        };
+        let open_slot = open_slot.value();
+        drop(open);
+        drop(read);
+
+        let Some(installed) = self.load_poa_signal_slot_v1(authority_id, slot)? else {
+            return Ok(PoaSlotRevealStatusV1::Unknown);
+        };
+        // ⚠ THE REDACTION GATE. `>=` and not `>`: the open slot itself is live, and
+        // its secret is the answer to every run currently being played.
+        if slot >= open_slot {
+            return Ok(PoaSlotRevealStatusV1::StillOpen { open_slot });
+        }
+        Ok(PoaSlotRevealStatusV1::Revealed(PoaSlotRevealV1 {
+            envelope: installed.envelope,
+            secret: installed.secret,
+            closed_by_slot: open_slot,
+        }))
+    }
+
     /// Structural audit: every open-slot pointer resolves, and every stored record
     /// is readable and self-consistent with its key.
     pub fn audit_poa_signal_slots_v1(&self) -> Result<()> {
@@ -506,4 +647,217 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
 
 fn integrity(message: impl Into<String>) -> StoreError {
     StoreError::Integrity(message.into())
+}
+
+#[cfg(test)]
+mod slot_close_tests {
+    use super::*;
+
+    /// ⚑ **WHY THESE ARE UNIT TESTS AND SEED STORAGE DIRECTLY.**
+    ///
+    /// The gate under test — [`PersistentStore::load_poa_signal_slot_reveal_v1`] —
+    /// decides whether a slot SECRET leaves the node. It is the highest-stakes
+    /// predicate in this file and it involves no cryptography at all: it is a
+    /// comparison against the open-slot pointer.
+    ///
+    /// Reaching it through `install_poa_signal_slot_v1` would drag in
+    /// `HiddenInstance.commit` and make the redaction gate untestable whenever the
+    /// Lean archive is unavailable — which is precisely when a red suite is most
+    /// likely to be waved through. (Measured 2026-08-09: every Lean-calling test in
+    /// this crate times out at 180s while the non-Lean tests pass in milliseconds.)
+    ///
+    /// So these seed the two tables directly, from inside the module that owns
+    /// them, and assert only about the gate. That the secret OPENS the commitment
+    /// is a different property, checked by the install path and by
+    /// `dregg-node poa-verify-slot-reveal`.
+    const AUTHORITY: [u8; 32] = [0xa4; 32];
+    const OTHER_AUTHORITY: [u8; 32] = [0xb7; 32];
+    const CURATOR: [u8; 32] = [0xc0; 32];
+
+    fn secret_for(slot: u64) -> [u8; 32] {
+        // Distinct per slot, so a leak names the slot it came from.
+        [(slot as u8).wrapping_mul(17).wrapping_add(3); 32]
+    }
+
+    fn record_for(authority: [u8; 32], slot: u64) -> PoaInstalledSlotV1 {
+        let statement =
+            PoaSlotOpeningStatementV1::new(authority, 1, slot, [(slot as u8) ^ 0x5a; 32]);
+        PoaInstalledSlotV1 {
+            envelope: SignedPoaSlotOpeningEnvelopeV1::new(statement, CURATOR, [0x11; 64]),
+            secret: secret_for(slot),
+        }
+    }
+
+    /// Place a slot row and (optionally) point the authority's open slot at it,
+    /// exactly as `install_poa_signal_slot_v1` would, minus every check.
+    fn seed(store: &PersistentStore, authority: [u8; 32], slot: u64, make_open: bool) {
+        let record = record_for(authority, slot);
+        let encoded = postcard::to_stdvec(&record).expect("encode");
+        let write = store.db.begin_write().expect("write txn");
+        {
+            let mut slots = write.open_table(POA_SIGNAL_SLOT_V1).expect("slots table");
+            slots
+                .insert(slot_key(authority, slot).as_slice(), encoded.as_slice())
+                .expect("insert slot");
+            if make_open {
+                let mut open = write
+                    .open_table(POA_SIGNAL_OPEN_SLOT_V1)
+                    .expect("open table");
+                open.insert(authority.as_slice(), slot)
+                    .expect("insert open");
+            }
+        }
+        write.commit().expect("commit");
+    }
+
+    /// ⚑ **POLE ONE — a CLOSED slot opens, and carries the secret and its proof of
+    /// closure.**
+    #[test]
+    fn a_superseded_slot_is_revealed_with_its_secret_and_its_closing_slot() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        seed(&store, AUTHORITY, 9, false);
+        seed(&store, AUTHORITY, 10, true);
+
+        let status = store
+            .load_poa_signal_slot_reveal_v1(AUTHORITY, 9)
+            .expect("store read");
+        let PoaSlotRevealStatusV1::Revealed(reveal) = status else {
+            panic!("a superseded slot must open, got {status:?}");
+        };
+        assert_eq!(reveal.slot(), 9);
+        assert_eq!(reveal.secret(), secret_for(9));
+        assert_eq!(
+            reveal.closed_by_slot(),
+            10,
+            "the reveal must carry the slot that closed it — the store's evidence of closure"
+        );
+        assert_eq!(reveal.commitment(), record_for(AUTHORITY, 9).commitment());
+        assert_eq!(reveal.envelope().curator_key(), CURATOR);
+    }
+
+    /// ⚑ **POLE TWO — the LIVE slot is WITHHELD, and the refusal cannot carry the
+    /// secret.**
+    ///
+    /// This is the whole redaction gate. The live secret is the answer to every run
+    /// currently in flight; publishing it would let anyone compute the instance of
+    /// a session that has not finished.
+    ///
+    /// The precondition is asserted before the verdict is read — slot 9 IS present
+    /// and IS the open pointer — so the refusal is about closure, not about a
+    /// missing row.
+    #[test]
+    fn the_live_slot_is_withheld_and_no_variant_can_carry_its_secret() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        seed(&store, AUTHORITY, 9, true);
+        assert!(
+            store
+                .load_poa_signal_slot_v1(AUTHORITY, 9)
+                .expect("store read")
+                .is_some(),
+            "the precondition is that slot 9 EXISTS; without it the refusal below would \
+             be about a missing row"
+        );
+
+        let status = store
+            .load_poa_signal_slot_reveal_v1(AUTHORITY, 9)
+            .expect("store read");
+        assert_eq!(
+            status,
+            PoaSlotRevealStatusV1::StillOpen { open_slot: 9 },
+            "the open slot must be withheld"
+        );
+        // Structural, not a filter: `StillOpen` has no field that could hold a
+        // secret, so there is no redaction to forget. Belt and braces anyway —
+        // the debug rendering of the refusal must not contain the secret.
+        let rendered = format!("{status:?}");
+        let leaked = hex(&secret_for(9));
+        assert!(
+            !rendered.contains(&leaked),
+            "the refusal rendered the live secret: {rendered}"
+        );
+    }
+
+    /// A slot ABOVE the open pointer is withheld too. `install` forbids it, so this
+    /// is a corrupted or hand-edited store — and the gate must fail closed on it
+    /// rather than treat "not less than" as "greater than".
+    #[test]
+    fn a_slot_above_the_open_pointer_is_withheld_not_revealed() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        seed(&store, AUTHORITY, 4, true);
+        seed(&store, AUTHORITY, 9, false); // filed above the pointer, no advance
+
+        let status = store
+            .load_poa_signal_slot_reveal_v1(AUTHORITY, 9)
+            .expect("store read");
+        assert_eq!(status, PoaSlotRevealStatusV1::StillOpen { open_slot: 4 });
+    }
+
+    /// ⚑ **FAIL-CLOSED — a slot row with NO open pointer reveals nothing.**
+    ///
+    /// A corrupt store loses the reveal; it does not leak. If the pointer read were
+    /// ever relaxed to "no pointer means everything is closed", every secret in the
+    /// table would publish at once.
+    #[test]
+    fn a_row_with_no_open_pointer_reveals_nothing() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        seed(&store, AUTHORITY, 9, false);
+
+        let status = store
+            .load_poa_signal_slot_reveal_v1(AUTHORITY, 9)
+            .expect("store read");
+        assert_eq!(
+            status,
+            PoaSlotRevealStatusV1::Unknown,
+            "with no open pointer nothing is provably closed, so nothing opens"
+        );
+    }
+
+    /// An uninstalled coordinate is `Unknown`, distinct from a withheld one: a
+    /// client must be able to tell a typo from a secret being kept back.
+    #[test]
+    fn an_uninstalled_slot_is_unknown_rather_than_withheld() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        seed(&store, AUTHORITY, 9, false);
+        seed(&store, AUTHORITY, 10, true);
+
+        assert_eq!(
+            store
+                .load_poa_signal_slot_reveal_v1(AUTHORITY, 3)
+                .expect("store read"),
+            PoaSlotRevealStatusV1::Unknown
+        );
+        // ...while 9 still opens, or the assertion above would pass for the wrong
+        // reason.
+        assert!(matches!(
+            store
+                .load_poa_signal_slot_reveal_v1(AUTHORITY, 9)
+                .expect("store read"),
+            PoaSlotRevealStatusV1::Revealed(_)
+        ));
+    }
+
+    /// One authority's pointer must never open another authority's slot.
+    #[test]
+    fn an_authoritys_pointer_does_not_open_another_authoritys_slot() {
+        let store = PersistentStore::open_in_memory().expect("in-memory store");
+        // OTHER has advanced well past 9; AUTHORITY has only slot 9, still live.
+        seed(&store, OTHER_AUTHORITY, 9, false);
+        seed(&store, OTHER_AUTHORITY, 99, true);
+        seed(&store, AUTHORITY, 9, true);
+
+        assert_eq!(
+            store
+                .load_poa_signal_slot_reveal_v1(AUTHORITY, 9)
+                .expect("store read"),
+            PoaSlotRevealStatusV1::StillOpen { open_slot: 9 },
+            "AUTHORITY's live slot must not be opened by OTHER's advanced pointer"
+        );
+        // ...and OTHER's own slot 9 does open, so the isolation is two-sided.
+        assert!(matches!(
+            store
+                .load_poa_signal_slot_reveal_v1(OTHER_AUTHORITY, 9)
+                .expect("store read"),
+            PoaSlotRevealStatusV1::Revealed(_)
+        ));
+    }
 }

@@ -140,6 +140,13 @@ pub mod poa_signal_genesis;
 pub mod poa_signal_session;
 pub mod poa_signal_slot_api;
 pub mod poa_signal_slot_ceremony;
+/// THE SLOT-CLOSE OPENING — the only surface that renders a slot secret, and only
+/// for a slot the store can show is superseded. This is what the descriptors'
+/// `opened_after: "slot-close"` names and what, until it existed, nothing did.
+pub mod poa_signal_slot_reveal_api;
+/// THE PLAYER'S CHECK on that opening: two files, a curator key, no node and no
+/// network. The counterpart that makes the reveal worth publishing.
+pub mod poa_slot_reveal_verify;
 // STEPS 5–6 of the first-turn ceremony: THE ONE Signal carrier builder (lifted out
 // of the milestone test so the operator ships the carrier that was proved) plus the
 // submit + `latest_height` watch.
@@ -600,6 +607,50 @@ pub enum Command {
         /// never has to be retyped onto a command line.
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+
+    /// ⚑ FOR PLAYERS — check that your run was judged against an instance
+    /// committed before you played.
+    ///
+    /// This is the other half of `opened_after: "slot-close"`, the promise every
+    /// Path of Angels descriptor makes. It needs no data directory, opens no
+    /// database, makes no network request and holds no key: it is a check a person
+    /// who does not trust the operator runs on their own machine, against two files
+    /// they downloaded and a curator key they obtained out of band.
+    ///
+    /// ```text
+    /// --opening  the POA-SLOT-OPENING-RECEIPT-1 your browser saved BEFORE you played
+    /// --reveal   GET /api/poa/signal/<authority>/slot/<slot>/reveal, after the slot closed
+    /// ```
+    ///
+    /// ⚠ The retained receipt is load-bearing. Checking a secret against a
+    /// commitment the same responder handed you at the same moment proves only that
+    /// the responder can do arithmetic.
+    PoaVerifySlotReveal {
+        /// The curator's Ed25519 PUBLIC key, 64 lowercase hex. THE TRUST ANCHOR:
+        /// every conclusion is relative to it, so it is supplied rather than read
+        /// out of the documents being checked.
+        #[arg(long)]
+        curator_key: String,
+        /// The `POA-SLOT-OPENING-RECEIPT-1` retained before the session.
+        #[arg(long)]
+        opening: PathBuf,
+        /// The `POA-SIGNAL-SLOT-REVEAL-1` served after the slot closed.
+        #[arg(long)]
+        reveal: PathBuf,
+        /// Optional: also reproduce YOUR run seed. Needs all four of these; with a
+        /// subset the command refuses rather than deriving another run's seed.
+        #[arg(long)]
+        player_key: Option<String>,
+        /// The content epoch, from the signed world artifact.
+        #[arg(long)]
+        epoch: Option<u64>,
+        /// The federation id, from the signed world artifact.
+        #[arg(long)]
+        federation_id: Option<String>,
+        /// The mission's `content_session`, from the signed world artifact.
+        #[arg(long)]
+        content_session: Option<String>,
     },
 
     /// Steps 5–6: build the exact player-signed Signal carrier, POST it to the
@@ -1164,6 +1215,54 @@ pub fn install_verified_executor_oracles() {
 /// facilities (the rustls crypto provider, the verified-Lean distributed gates,
 /// and tracing) and then dispatches the chosen subcommand.
 pub async fn run(cli: Cli) {
+    // ⚑ THE PLAYER'S VERIFIER RUNS BEFORE THE NODE PREAMBLE, and must.
+    //
+    // `poa-verify-slot-reveal` exists so a person who does not trust this operator
+    // can check two JSON files on their own machine. Everything below this block —
+    // a rustls provider, the distributed gates, the executor oracles, and
+    // `assert_conservation_oracle_installed`, which REFUSES TO BOOT without a
+    // working Lean conservation export — is node-boot machinery that a document
+    // check has no business requiring. Left after the preamble, the verifier
+    // inherited the whole node's startup: on a tree whose Lean archive is
+    // unavailable it hung or aborted before reading either file, which turns "you
+    // can check this yourself" into "you can check this if you can boot our node".
+    //
+    // The sponge step still calls Lean, and refuses by name (`lean-unavailable`)
+    // when it cannot. That is the honest dependency: one export, reported as a
+    // refusal rather than paid as a boot cost. Every check that does NOT need the
+    // sponge — a substituted commitment, a withheld secret, a forged curator — now
+    // completes with no Lean at all.
+    if let Command::PoaVerifySlotReveal {
+        curator_key,
+        opening,
+        reveal,
+        player_key,
+        epoch,
+        federation_id,
+        content_session,
+    } = cli.command
+    {
+        let args = poa_slot_reveal_verify::VerifyArgs {
+            curator_key,
+            opening,
+            reveal,
+            player_key,
+            epoch,
+            federation_id,
+            content_session,
+        };
+        match poa_slot_reveal_verify::run(&args) {
+            Ok(verdict) => print!("{verdict}"),
+            Err(error) => {
+                // ⚠ stderr AND a non-zero exit. A verifier whose failure is a line
+                // on stdout is one a script reads as a pass.
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     // Install the ring CryptoProvider for rustls (required by quinn/QUIC).
     rustls::crypto::ring::default_provider()
         .install_default()
@@ -1437,6 +1536,12 @@ pub async fn run(cli: Cli) {
                 }
             }
         }
+        // ⚠ `Command::PoaVerifySlotReveal` is handled at the TOP of this function,
+        // before the node preamble, and returns there. It is unreachable here.
+        Command::PoaVerifySlotReveal { .. } => unreachable!(
+            "poa-verify-slot-reveal is dispatched before the node preamble so a player \
+             never pays node boot to check two files"
+        ),
         Command::PoaSignalSubmitClaim {
             endpoint,
             authority_id,
