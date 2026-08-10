@@ -131,6 +131,36 @@ type StepScalar = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
 /// The Tock domain a real wrap proof lives on. Sets `lr` to 15 and `t_comm` to 7 real chunks.
 const WRAP_LOG2: u32 = 15;
 
+/// ⚑⚑ **THE WRAP RUNG THIS PIPELINE PROVES — AND IT MUST BE THE RUNG WHOSE KEY IS ON DEVNET.**
+///
+/// Until 2026-08-10 this was `wrapmain_smoke_w1_transcript.json`, whose `public_input_size` is **0**,
+/// while `pickles-vk-derive` registers the key of `wrapmain_smoke_w4_bind.json` and
+/// `mina_onchain_index_probe` proves *that* rung at domain 2^14. Two different circuits were both
+/// called "dregg's wrap circuit" in one pipeline, and the visible symptom was the line this file
+/// used to print as a standing blocker:
+///
+/// > *the wrap circuit proved above has `public_input_size = 0`; Pickles will hand it 40 words.*
+///
+/// That was TRUE and it was OURS. `make_zkapp_verifier_index` fixes `public = 40`
+/// (`mina-rust @82480cd46 crates/ledger/src/proofs/verifiers.rs:400`) and
+/// `kimchi::verifier::verify` refuses on `public_input.len() != verifier_index.public`
+/// (`proof-systems 0.3.0 kimchi/src/verifier.rs:816-819`), so a 0-arity circuit can never be the
+/// object Pickles verifies — no padding closes it, because a proof of a circuit with no public rows
+/// commits to no public polynomial. It was never an upstream arity gap: TWELVE sibling rungs in the
+/// same fixture directory (`w4_bind` … `w12_close`) already carry `public_input_size = 40` in Mina's
+/// own slot order, and the emitter REFUSES anything wider (`EmitWrapMainJson.lean:253-254`).
+///
+/// ⚠ **CHANGING THIS CONSTANT IS A FLAG DAY, and `installed_gate` will say so on the next run.**
+/// The wrap verifier index derived here IS `MinaWrapOwnVerifierKey.INDEX_WORDS`, which the step
+/// assembly's segment D absorbs (`KimchiStepMainCore.lean:1170-1173`), so the chain is: re-install
+/// `MinaWrapOwnVerifierKey.lean` → segment D's preimage moves → the step statement's word 54 →
+/// `stepmain_step_r8_finalize.json` re-emits → the step proof re-proves →
+/// `KimchiStepWrapChainFixture` re-installs → `MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED`
+/// re-bakes → `shapeSmoke.xhatXY` re-derives → the thirty wrap fixtures re-emit. That is the same
+/// chain `KimchiWrapMainPins12` records for the 2026-08-08 install, and it did not move the 39/40
+/// count then.
+const WRAP_RUNG: &str = "wrapmain_smoke_w4_bind.json";
+
 // ───────────────────── the Lean-emitted circuit JSON (both harnesses' schema) ─────────────────────
 
 #[derive(Deserialize, Clone)]
@@ -291,11 +321,17 @@ fn pad_to<F: ark_ff::PrimeField>(
 /// `wrap_verifier.ml:542-548` expands packed word `27·p + k` into entry `32·p + (k+5)` for `k ≥ 5`,
 /// so packed word `27·p + 11 + j` is entry `32·p + 16 + j`.
 ///
-/// ⚠ **BLOCK 0 IS THE PADDING BLOCK AND ITS FIFTEEN ARE `vStmtDummy` FILLER**, not
-/// `Ro.scalar_chal ()` draws — small structured numerals rather than 128-bit challenges. That is a
-/// FIDELITY gap in `KimchiStepMainCore.stmtDummyVal` and it is stated rather than papered over: what
-/// this function fixes is that the two sides now hash the SAME thirty, not that all thirty are
-/// upstream-shaped.
+/// ⛑ **BLOCK 0 IS THE PADDING BLOCK AND ITS FIFTEEN ARE MINA'S OWN `Dummy.Ipa.Wrap.challenges`
+/// SINCE 2026-08-10** (`MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS`, emitted by
+/// `KimchiStepMainCore.stmtDummyVal` on a `PicklesStepStatement.slotOf` `.bpChallenge _ k` slot).
+/// They are still `vStmtDummy` WITNESS cells — upstream's are too — but they are no longer free:
+/// the wrap proof's slot-0 `prev_challenges` is built out of them and the reader
+/// (`prover.rs:13-28`) rebuilds that slot from `dummy_ipa_wrap_sg()` without consulting the wire,
+/// so any other value makes Mina verify a slot we did not commit. `[gate A2 pad]` is that identity.
+///
+/// ⚠ WHAT THIS REPLACED: `(7 + 1000003·j) % 2^127` — small structured numerals rather than
+/// 128-bit challenges — which made `gate_a2` slot 0 red and was invisible to every other rung.
+/// The seventeen NON-`bpChallenge` slots of the padding block are still filler and still say so.
 fn step_statement_prechallenges(
     step: &CircuitJson,
 ) -> [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED] {
@@ -341,10 +377,29 @@ fn prove_wrap(
     [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED],
     ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>,
 ) {
-    let c = load(&sibling(
-        "pickles-wrapmain-harness",
-        "wrapmain_smoke_w1_transcript.json",
-    ));
+    let c = load(&sibling("pickles-wrapmain-harness", WRAP_RUNG));
+    // ⚑⚑ THE REFUSAL, and it is the one whose absence let a 0-arity circuit be proved for a week.
+    // `make_zkapp_verifier_index` fixes `public = 40` (`verifiers.rs:400`) and kimchi refuses on
+    // `public_input.len() != verifier_index.public` (`verifier.rs:816-819`), so a wrap circuit at
+    // any other arity is not the object Pickles verifies and marshalling it publishes a proof that
+    // cannot be accepted by construction. A narrower rung must REFUSE here, not prove and print a
+    // complaint about itself.
+    assert_eq!(
+        c.public_input_size,
+        gates::WRAP_PUBLIC_INPUT,
+        "{WRAP_RUNG} declares public_input_size = {}, but the wrap verifier index Mina builds from \
+         account state fixes `public = {}` (`verifiers.rs:400`) and `kimchi::verifier::verify` \
+         refuses any other length (`verifier.rs:816-819`). Point `WRAP_RUNG` at a rung that carries \
+         Mina's forty — `w4_bind` upward all do.",
+        c.public_input_size,
+        gates::WRAP_PUBLIC_INPUT
+    );
+    assert_eq!(
+        c.public_input.len(),
+        gates::WRAP_PUBLIC_INPUT,
+        "{WRAP_RUNG} declares forty public words and carries {}",
+        c.public_input.len()
+    );
     let mut gates = gates_of::<Fq>(&c);
     let mut witness = witness_of::<Fq>(&c);
     let target = (1usize << WRAP_LOG2) - 8;
@@ -1245,8 +1300,9 @@ fn main() {
         }
         // ⚑⚑ BOTH POLARITIES OF THE FLOOR, on the settled invariant: a slot whose commitment is
         // PUBLISHED must carry fifteen prechallenges of at least
-        // `ACCUMULATOR_PRECHALLENGE_MIN_BITS`. Real block 539508's are 120-128;
-        // `KimchiStepMainCore.stmtDummyVal`'s ladder is 24-25.
+        // `ACCUMULATOR_PRECHALLENGE_MIN_BITS`. Real block 539508's are 120-128; the emitted padding
+        // block's are `DUMMY_WRAP_PRECHALS`, 123-128, so BOTH blocks clear it now — the floor's
+        // refusing polarity is therefore constructed below rather than found in the emission.
         let published = marshal::PROOFS_VERIFIED - marshal::STEP_RECURSION_SLOTS;
         let worst = (published..marshal::PROOFS_VERIFIED)
             .flat_map(|s| st.old_wrap_bulletproof_challenges[s].iter())
@@ -1262,10 +1318,46 @@ fn main() {
         if worst < marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS {
             failed += 1;
         }
+        // ⚑⚑ **THE PAD SLOT IS MINA'S OWN CONSTANT — the pad-slot repair's signature, stated
+        // directly rather than left implicit in slot 0's `comm_ok`.**
+        //
+        // Slot 0 of the wrap proof's kimchi `prev_challenges` is built from the STEP statement's
+        // padding block (`step_statement_prechallenges`, entries 16..30), and the reader does not
+        // read it from the wire at all — `prover.rs:13-28` INSERTS `dummy_ipa_wrap_sg()`. The two
+        // agree iff the padding block publishes `Dummy.Ipa.Wrap.challenges`, which
+        // `KimchiStepMainCore.stmtDummyVal` emits since 2026-08-10
+        // (`MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS`). Before that it was a
+        // `(7 + 1000003·j) % 2^127` ladder and this was false.
+        {
+            let pad = ledger::proofs::wrap::dummy_ipa_wrap_sg();
+            let ours = proof.prev_challenges[0].comm.chunks[0];
+            let is_minas_pad = ours == pad;
+            if !is_minas_pad {
+                failed += 1;
+            }
+            println!(
+                "[gate A2 pad] our wrap proof's slot-0 commitment == `dummy_ipa_wrap_sg()`, the \
+                 constant Mina's reader inserts = {is_minas_pad} (the padding block publishes \
+                 `Dummy.Ipa.Wrap.challenges`)"
+            );
+        }
+
         // ⚑⚑ **THE CONTROL THAT MAKES THE SELECTION A MEASUREMENT.** `marshal` published the
         // LEADING `STEP_RECURSION_SLOTS` until 2026-08-10. Rebuild that object — the same wire with
-        // the leading slot's commitment in the accumulator list — and watch every reconstructed
-        // slot come apart, which is what nothing in this tree was looking at.
+        // the leading slot's commitment in the accumulator list — and watch the slot carrying the
+        // REAL accumulator come apart, which is what nothing in this tree was looking at.
+        //
+        // ⚠ **THIS CONTROL ASSERTED "NOT ONE SLOT SURVIVES" UNTIL THE PAD-SLOT REPAIR LANDED, AND
+        // THAT WENT FALSE FOR A GOOD REASON.** Pre-repair, the pad slot's commitment was the
+        // commitment to a ladder, so the reader's inserted `dummy_ipa_wrap_sg()` matched NEITHER
+        // slot and the vector was `[false, false]`. Now the pad slot IS Mina's pad, so
+        // re-inserting it reproduces slot 0 — `[true, false]` — and slot 0 agreeing is the pad
+        // matching the pad, not a slot surviving. Keeping the old assertion would have made the
+        // pad-slot repair look like a regression; weakening it to "some slot disagrees" would have
+        // made it unfalsifiable. The invariant that is actually load-bearing, in both worlds, is
+        // the one asserted here: **every slot the record PUBLISHES comes apart.** That is the whole
+        // defect — the real accumulator stops being paired with its own challenges — and it is what
+        // `gate_a2`'s main leg above would report red if `marshal` reverted the selection.
         {
             let mut old_shape = wire.clone();
             let lead = &proof.prev_challenges[0].comm.chunks[0];
@@ -1287,14 +1379,21 @@ fn main() {
                         .enumerate()
                         .map(|(i, s)| proof.prev_challenges[i].comm.chunks[0] == s.comm)
                         .collect();
-                    let any = agree.iter().any(|b| *b);
-                    if any {
+                    // The slots the record PUBLISHES — the trailing `STEP_RECURSION_SLOTS`, i.e.
+                    // the ones carrying a real accumulator. Every one of them must come apart.
+                    let published_survives =
+                        (marshal::WRAP_PAD_SLOTS..marshal::PROOFS_VERIFIED).any(|i| agree[i]);
+                    if published_survives {
                         failed += 1;
                     }
                     println!(
                         "[gate A2 control] the pre-08-10 selection (leading slot published): \
-                         per-slot comm agreement {agree:?} — NOT ONE SLOT SURVIVES={}",
-                        !any
+                         per-slot comm agreement {agree:?} — THE PUBLISHED SLOT(S) {}..{} COME \
+                         APART={} (slot 0 agreeing is `dummy_ipa_wrap_sg()` matching the pad slot \
+                         it already is, not a slot surviving)",
+                        marshal::WRAP_PAD_SLOTS,
+                        marshal::PROOFS_VERIFIED,
+                        !published_survives
                     );
                 }
             }
@@ -1302,17 +1401,25 @@ fn main() {
 
         // ⚠⚠ …and the polarity that must refuse. It must be built so that the FLOOR is the only
         // rule left standing: shrinking the STATEMENT alone trips `PreChallengeMismatch` first, and
-        // a refusal by the wrong rule reads as protection while measuring nothing. So the ladder
+        // a refusal by the wrong rule reads as protection while measuring nothing. So the narrow
         // value goes into BOTH sides — the statement's prechallenge and the proof's expanded
         // `chals` — leaving them in agreement and the width the only thing wrong.
-        let ladder: PreChallenge = [7 + 1000003u64 * 6, 0];
+        //
+        // ⚠ **THIS VALUE WAS `stmtDummyVal`'S OWN LADDER DIGIT UNTIL 2026-08-10 AND IS NOW A
+        // CONSTRUCTED NARROW ONE**, because `stmtDummyVal` no longer emits a ladder into a slot
+        // this floor reaches. Calling it "the ladder" after the ladder left would be a mutation
+        // whose label outlived its source — the exact shape that lets an adversary quietly become
+        // a no-op. The mutation is CONSTRUCTIVE either way (it writes the value in rather than
+        // matching for it), and `prechallenge_bits` is printed below so the width the floor
+        // refused is measured and not asserted.
+        let narrow: PreChallenge = [7 + 1000003u64 * 6, 0];
         let mut small = st.clone();
         let mut small_proof = proof.clone();
         for s in
             (marshal::PROOFS_VERIFIED - marshal::STEP_RECURSION_SLOTS)..marshal::PROOFS_VERIFIED
         {
-            small.old_wrap_bulletproof_challenges[s][6] = ladder;
-            small_proof.prev_challenges[s].chals[6] = expand_prechallenge(&ladder);
+            small.old_wrap_bulletproof_challenges[s][6] = narrow;
+            small_proof.prev_challenges[s].chals[6] = expand_prechallenge(&narrow);
         }
         match marshal(&small_proof, &prev, &small) {
             Err(marshal::MarshalError::AccumulatorPrechallengeTooSmall {
@@ -1321,15 +1428,15 @@ fn main() {
                 bits,
                 floor,
             }) => println!(
-                "[floor] a PUBLISHED slot's round set to `stmtDummyVal`'s ladder, statement and \
-                     proof moved TOGETHER so nothing else can fire — REFUSED by the floor at slot \
-                     {slot} round {round}: {bits} bits < {floor}"
+                "[floor] a PUBLISHED slot's round set to a CONSTRUCTED narrow prechallenge, statement \
+                     and proof moved TOGETHER so nothing else can fire — REFUSED by the floor at \
+                     slot {slot} round {round}: {bits} bits < {floor}"
             ),
             other => {
                 failed += 1;
                 println!(
                     "[floor] ⚠ a {}-bit prechallenge in a published slot was NOT refused by the floor: {other:?}",
-                    marshal::prechallenge_bits(&ladder)
+                    marshal::prechallenge_bits(&narrow)
                 );
             }
         }
@@ -1340,8 +1447,8 @@ fn main() {
         if published > 0 {
             let mut padsmall = st.clone();
             let mut padsmall_proof = proof.clone();
-            padsmall.old_wrap_bulletproof_challenges[0][6] = ladder;
-            padsmall_proof.prev_challenges[0].chals[6] = expand_prechallenge(&ladder);
+            padsmall.old_wrap_bulletproof_challenges[0][6] = narrow;
+            padsmall_proof.prev_challenges[0].chals[6] = expand_prechallenge(&narrow);
             let r = marshal(&padsmall_proof, &prev, &padsmall);
             let scoped = !matches!(
                 r,
@@ -1565,20 +1672,53 @@ fn main() {
             gates::dec(&words[29])
         );
 
-        // THE BLOCKER, with the numbers.
-        let circuit_public = load(&sibling(
-            "pickles-wrapmain-harness",
-            "wrapmain_smoke_w1_transcript.json",
-        ))
-        .public_input_size;
+        // ⚑⚑ THE RESIDUE, MEASURED PER SLOT — not a width complaint about our own fixture choice.
+        //
+        // The WIDTH question is closed at the top of this file: `WRAP_RUNG` is a forty-word rung and
+        // `prove_wrap` refuses anything else, so `verifier_index.public = 40` and the proved
+        // circuit's arity now agree by construction. What is left is the INSTANCE question, and it
+        // is the only one worth printing: the forty words the proved circuit actually COMMITS TO
+        // (its public rows, `public_input[0..39]`, this assembly's own transcript) against the forty
+        // `PreparedStatement::to_public_input` DERIVES from the wire statement, which is what
+        // Pickles will hand the verifier. Agreement slot by slot is the emit path's real score.
+        //
+        // ⚠ Slots 0–4 and 9 (combined_inner_product, b, zeta_to_srs_length, zeta_to_domain_size,
+        // perm, xi) are `expand_deferred`'s RECOMPUTATION and are on no wire field at all, so no
+        // fixture can be right about them by carrying them — they have to be what the emit path
+        // puts in the public words.
+        let proved = load(&sibling("pickles-wrapmain-harness", WRAP_RUNG));
+        let committed: Vec<Fq> = proved
+            .public_input
+            .iter()
+            .map(|s| Fq::from_str(s).expect("a public word"))
+            .collect();
+        let disagreeing: Vec<usize> = (0..words.len())
+            .filter(|&i| committed.get(i) != words.get(i))
+            .collect();
         println!(
-            "[terminal] ⚑ BLOCKER, numbered: the wrap circuit proved above has public_input_size \
-             = {circuit_public}; Pickles will hand it {} words. Slots 0–4 and 9 \
-             (combined_inner_product, b, zeta_to_srs_length, zeta_to_domain_size, perm, xi) are \
-             `expand_deferred`'s RECOMPUTATION and are NOT on the wire at all, so no fixture can \
-             be right about them — they have to be what the emit path puts in the public words.",
-            words.len()
+            "[terminal] WIDTH: the wrap circuit proved above is `{}` at public_input_size = {}, \
+             and `verifiers.rs:400` fixes `public = {}` — AGREE={}",
+            proved.name,
+            proved.public_input_size,
+            gates::WRAP_PUBLIC_INPUT,
+            proved.public_input_size == gates::WRAP_PUBLIC_INPUT
         );
+        println!(
+            "[terminal] ⚑ INSTANCE: of the {} words, the proved circuit COMMITS TO the same value \
+             `to_public_input` derives at {} slot(s); it disagrees at {}: {:?}",
+            words.len(),
+            words.len() - disagreeing.len(),
+            disagreeing.len(),
+            disagreeing
+        );
+        for i in disagreeing.iter().take(8) {
+            println!(
+                "[terminal]   [{i:2}] {:<34} committed {}  derived {}",
+                names.get(*i).cloned().unwrap_or_default(),
+                gates::dec(&committed[*i]),
+                gates::dec(&words[*i])
+            );
+        }
 
         let mut js = String::from("{\n  \"npublic\": ");
         js.push_str(&words.len().to_string());
