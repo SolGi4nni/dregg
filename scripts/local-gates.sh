@@ -358,6 +358,30 @@ GATES=(
   # that is sound is in `_verify_provenance_findings`, and ONE full-path run keeps it honest):
   # 95s under the same load, and 9 cases became 11.
   "provenance-red|600|python3 scripts/emit_descriptors.py --self-test-provenance"
+  # ⚑ TWO OF THE TEN UNCALLED `--check` REGENERATORS, WIRED (2026-08-10). A census of the regen
+  # family found ten scripts owning ~50 committed artifacts whose freshness-vs-source question is
+  # asked by a `--check` mode that NO workflow, gate script or test invoked.
+  # `check-emitter-routing.sh`'s `regen:` class names eight of them and verifies only that the
+  # script EXISTS and mentions the file — never that the file is current — so the whole family read
+  # as routed while being ungraded.
+  # These two are the ones that cost nothing: no Lean, no cargo, no prover, no hbox lane. MEASURED
+  # on this laptop: 0.17s and 0.66s. The other eight need `lake build` + `lake env lean --run`
+  # (`regen-mina-commit-stages`, `regen-wrapmain-fixtures`, `regen-cert-qp`) or a real prover run on
+  # a named hbox lane (the five `regen-pasta-*`), which is a build-box row and not this table's.
+  #
+  # `gen-mina-step-srs --check` re-decodes `metatheory/emitted/mina-accumulator/vesta_srs_g.bin`
+  # into memory and diffs against `Dregg2/Circuit/Emit/MinaStepSrsG.lean` — 65,536 Vesta generators
+  # that `mina_accumulator_discharge` trusts. It reds on EITHER side moving: a drifted blob or a
+  # hand-edited Lean file. This is the transcription hop the repo keeps deleting, and until now the
+  # only thing standing between the two copies was the sha256 pin on the blob, which says nothing
+  # about the Lean.
+  "mina-step-srs|60|python3 scripts/gen-mina-step-srs.py --check"
+  # `test-drift-taxonomy.sh` is the -red row for `classify_descriptor_drift.py`, the classifier that
+  # decides whether a descriptor change is a cheap tail-append or a re-genesis-forcing geometry
+  # widen. Six cases including both non-vacuity poles (tail-append is NOT refused; geometry-widen IS
+  # refused without `--allow-regenesis`). A classifier that quietly stopped refusing would have
+  # waved a wipe-requiring change through, and nothing was running its driver.
+  "drift-taxonomy-red|120|bash scripts/test-drift-taxonomy.sh"
   # A Lean emitter asking the poseidon2 chip for an arity the chip AIR does not admit. The
   # descriptor it produces CAN NEVER BE SATISFIED, and nothing said so: `57105f387` found the wide
   # blinded membership tooth had been asking for arity 9 SINCE THE DAY IT WAS WRITTEN, and it
