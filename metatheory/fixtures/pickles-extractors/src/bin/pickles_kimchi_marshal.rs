@@ -581,16 +581,30 @@ fn prove_step(
     // and that is one of the TWO families slot 12 disagrees on** — the other is `G`.
     //
     // The repair is an EXTRACTION and not a choice: the assembly's sixteen are transcript-derived
-    // and every one is below `2^128`, so they drop into `[u64; 2]` unchanged. What stops it being a
-    // one-line read today is ARITY. `KimchiStepMainPins19.the_published_statement_carries_fifteen_of
-    // _segment_ds_sixteen` measures that the emitted step statement publishes **fifteen** of them —
-    // entries 48…62, i.e. `32·1 + 16 + j`, which are `uChal 1 … uChal 15` — and publishes `uChal 0`
-    // NOWHERE, raw or lifted. `step_statement_prechallenges` above reads exactly that window for the
-    // WRAP side's fifteen. So closing this half means either the step statement grows a word or the
-    // sixteenth travels out of band, and the first is a decision about the STATEMENT, not about this
-    // function. ⚠ Do not fill fifteen from the statement and leave the sixteenth a ladder digit: the
-    // record would then be true about the circuit in fifteen slots and false in one, which is the
-    // shape that reads as agreement in every per-slot instrument.
+    // and every one is below `2^128`, so they drop into `[u64; 2]` unchanged.
+    //
+    // ⚑⚑ **AND THE "ARITY BLOCKER" THIS PARAGRAPH USED TO NAME DOES NOT EXIST — SETTLED AT SOURCE
+    // 2026-08-10.** It read: *"only FIFTEEN are published (entries 48…62 are `uChal 1 … uChal 15`)
+    // and `uChal 0` NOWHERE, so closing this half means either the step statement grows a word or
+    // the sixteenth travels out of band."* Both horns are wrong, and the reason is that three
+    // different upstream vectors were being read as one:
+    //
+    //   (1) the wrap statement's SIXTEEN — the step proof's own IPA prechallenges, RAW,
+    //       `BACKEND_TICK_ROUNDS_N` (`wrap.rs:450`), packed at the forty's slots 13…28
+    //       (`prepared_statement.rs:126`). **`uChal 0` IS published — slot 13 — and it AGREES with
+    //       the referee** (`KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve`).
+    //   (2) the per-proof `Unfinalized`'s FIFTEEN — the previous WRAP proof's Tock prechallenges,
+    //       `[Fq; 15]` (`unfinalized.rs:103-108`, `wrap.rs:688-696`). THIS is what entries
+    //       `32·p + 16 + j` are, and it is the window `step_statement_prechallenges` above reads.
+    //   (3) `messages_for_next_step_proof.old_bulletproof_challenges`, `Vec<[Fp; 16]>`
+    //       (`transaction.rs:3746`) — the family `step_pre` is. **It is never a statement word:**
+    //       `MessagesForNextStepProof::to_fields` (`transaction.rs:3770-3805`) puts it in a
+    //       POSEIDON PREIMAGE and only the digest is published (`prepared_statement.rs:123`).
+    //
+    // So there is nothing to extract from the sixty-seven and no word to grow: hand `step_pre` the
+    // assembly's own emitted sixteen directly. ⚠ Do not fill fifteen from the statement and leave
+    // the sixteenth a ladder digit: the record would then be true about the circuit in fifteen slots
+    // and false in one, which is the shape that reads as agreement in every per-slot instrument.
     //
     // ⚠ And it would not close slot 12 on its own. `messages_for_next_step_proof
     // .challenge_polynomial_commitments[0]` is `proof.prev_challenges[_].comm` — forced by kimchi to

@@ -168,35 +168,76 @@ theorem the_two_transcripts_differ_at_t_and_u_and_b_and_nowhere_in_the_points :
 
 #assert_compiled the_two_transcripts_differ_at_t_and_u_and_b_and_nowhere_in_the_points
 
-/-- ⚑⚑ **(c) THE PUBLISHED STATEMENT CARRIES FIFTEEN OF SEGMENT D'S SIXTEEN, AND THE SIXTEENTH IS
-`uChal 0`.**
+/-- ⚑⚑ **(c) THE SIXTEEN ARE A HASH PREIMAGE, NOT STATEMENT WORDS — SETTLED AT SOURCE 2026-08-10,
+AND THE "MISSING `uChal 0`" WAS A THREE-FAMILY CONFLATION.**
 
-Segment D absorbs `bRounds = 16` lifted challenges (`§18b`'s cone, family four). The marshaller's
-`step_pre` — the step proof's own kimchi recursion prechallenges, and therefore the wire's
-`messages_for_next_step_proof.old_bulletproof_challenges` — is also sixteen wide. Making the second
-be the first is the half of slot 12 that needs no new arithmetic, and it needs the sixteen values to
-be READABLE from the emitted artifact, the way `step_statement_prechallenges` reads the wrap side's
-fifteen out of `public_input`.
+This entry was named `the_published_statement_carries_fifteen_of_segment_ds_sixteen` and concluded
+*"`uChal 0` is published NOWHERE … either the statement grows a word or the sixteenth travels out of
+band"*. **Both horns are wrong**, and the name was the reason: upstream (`mina-rust @ 82480cd46`)
+has **THREE** challenge vectors here, of two lengths over two fields, and no two are prefixes of one
+another.
 
-**Fifteen of them are readable, at entries 48…62** — `32·1 + 16 + j`, the second per-proof block's
-`deferred_values.bulletproof_challenges` — and they are `uChal 1 … uChal 15`, raw, below `2^128`, so
-they drop into `[u64; 2]` unchanged. **`uChal 0` is published NOWHERE**, in raw or lifted form. So
-`step_pre` cannot be an extraction at sixteen today: either the statement grows a word or the
-sixteenth travels out of band, and that is a decision about the STATEMENT, not about the marshaller.
+  1. **the wrap statement's SIXTEEN** — `DeferredValues<Fp>.bulletproof_challenges`, the STEP
+     proof's own IPA prechallenges, RAW. `wrap.rs:397-411` takes them from
+     `oracle.opening_prechallenges`; `wrap.rs:450` asserts the length is
+     `BACKEND_TICK_ROUNDS_N = 16` (`mod.rs:33`, `Fp::NROUNDS` at `field.rs:105`);
+     `prepared_statement.rs:126` packs **all sixteen** into the forty at **slots 13…28**.
+  2. **the per-proof `Unfinalized`'s FIFTEEN** — `unfinalized.rs:103-108`'s `DeferredValues`, which
+     is `Plonk<Fq>`-shaped, i.e. about a WRAP proof: the wrap proof's own IPA prechallenges, Tock,
+     `BACKEND_TOCK_ROUNDS_N = 15` (`mod.rs:34`, `Fq::NROUNDS` at `field.rs:124`), read back as
+     `[Fq; 15]` at `wrap.rs:688-696`. These are the entries `32·p + 16 + j`, `j < 15`.
+  3. **`messages_for_next_step_proof.old_bulletproof_challenges`** — `Vec<[Fp; 16]>`
+     (`transaction.rs:3746`), LIFTED by `ScalarChallenge::array_to_fields`
+     (`scalar_challenge.rs:97-100`, the `to_field` endo expansion at `scalar_challenge.ml:139`).
+     **This is the family segment D absorbs, and the family the marshaller's `step_pre` is.**
+
+⚑⚑ **AND (3) IS NEVER A STATEMENT WORD, ANYWHERE.** `MessagesForNextStepProof::to_fields`
+(`transaction.rs:3770-3805`) lays the sixteen beside each `sg` in a **Poseidon preimage** and only
+the DIGEST is published — `four_u64_to_field` at `prepared_statement.rs:123`, the forty's **slot
+12**, and one Fp through `make_public_input` (`wrap.rs:493-516`) at entry **64** of the sixty-seven.
+Upstream builds that record inside the STEP circuit (`step.rs:2845-2855`) and the wrap only re-hashes
+it (`wrap.rs:610-625`). So "READABLE from the emitted artifact" was never the right test for (3), and
+**there is no word for the statement to grow**.
+
+⚑ **AND `uChal 0` IS PUBLISHED — AT SLOT 13 OF THE FORTY, AND IT AGREES WITH MINA.** The assembly's
+`uChal 0 … uChal 15` are family (1): `KimchiStepMainPins16` pins `stmtVar (13 + k)` to the RAW
+`vN (uChal k)`, and `KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve` proves the emitted
+forty differs from `WRAP_PUBLIC_INPUT_MEASURED` at slot 12 **and nowhere else** — so all sixteen,
+`k = 0` included, are published AND correct against the referee. The absence measured below is an
+absence from the SIXTY-SEVEN, where family (1) does not belong.
+
+⚠ **WHAT CONJUNCT (1) ACTUALLY SHOWS IS AN ALIASING, and it is a fidelity defect of this assembly.**
+Entries 48…62 are `32·1 + 16 + j`, which upstream is family (2) — the previous WRAP proof's fifteen
+Tock challenges, the window `step_statement_prechallenges` reads and the one slot 11 rests on
+(`KimchiWrapHackDigest.WH_ROUNDS = 15`, `KimchiWrapMainField.FIN_W_CHAL = 11`). This assembly fills
+that window with `uChal 1 … uChal 15` — family (1) with its head dropped. **Sixteen laid into a
+fifteen-wide window is what manufactured the "sixteenth is missing" symptom**; the statement is not
+one word short, the model is one family over.
+
+⚑ **SO THE SIXTEEN-HALF OF SLOT 12 IS A ONE-VECTOR DECISION AND NOT A STATEMENT CHANGE.** Both sides
+need family (3) to name ONE object; conjunct (2) already proves all sixteen of the assembly's raw
+prechallenges are wire-shaped (below `2^128`, nonzero), so the emitted vector can be handed to
+`pickles_kimchi_marshal`'s `step_pre` — today a `k·0x9E3779B97F4A7C15 | 1` ladder chosen in
+`prove_step` — with no extraction from either statement and no arity blocker. ⚠ **It does not close
+slot 12 on its own:** cells 58–59 (`G`) remain, and those are the accumulator leg (item #11), priced
+in `KimchiStepMainPins13` §18b.
 
 ⚠ **The lifted values are in no published entry either**, which is the leg that says the wire must
 carry PRECHALLENGES and let `ScalarChallenge::limbs_to_field` do the lift — as `extract_bulletproof`
 (`util.rs:35-56`) in fact does. A `step_pre` filled with lifted values would be a 255-bit number in a
 128-bit wire slot. -/
-theorem the_published_statement_carries_fifteen_of_segment_ds_sixteen :
+theorem the_statement_window_is_the_wrap_sides_fifteen_not_segment_ds_sixteen :
     (let pub := stepPublic tStep
      let raw : Nat → Nat := fun k => chalOf shapeStep tStep.sp (shapeStep.uChal k)
      let lif : Nat → Nat := fun k => liftOf shapeStep tStep.sp (shapeStep.uChal k)
-     -- (1) entries 48…62 ARE `uChal 1 … uChal 15`, in order.
+     -- (1) ⚠ the ALIASING: entries 48…62 — upstream's family (2), the previous WRAP proof's
+     -- fifteen Tock challenges — are filled with `uChal 1 … uChal 15`, family (1) beheaded.
      (List.range 15).all (fun j => pub.getD (48 + j) 0 == (raw (j + 1) : Int))
-     -- (2) …and all sixteen raw prechallenges fit the wire's two `u64` limbs.
+     -- (2) ⚑ …and all sixteen raw prechallenges fit the wire's two `u64` limbs, which is what says
+     -- the emitted vector can BE `step_pre` with no extraction from either statement.
      && (List.range 16).all (fun k => raw k < 2 ^ 128 && raw k != 0)
-     -- (3) ⚑ …but `uChal 0` is in NO published entry — the one that cannot be read out.
+     -- (3) ⚑ …and `uChal 0` is in no entry of the SIXTY-SEVEN — where family (1) does not belong.
+     -- It IS published, at slot 13 of the FORTY (`…WrapMainPins12.the_forty_agree_but_for_slot_twelve`).
      && (pub.contains (raw 0 : Int)) == false
      -- (4) …and NO lifted value is published, so the wire slot is a prechallenge slot.
      && (List.range 16).all (fun k => (pub.contains (lif k : Int)) == false)
@@ -206,7 +247,7 @@ theorem the_published_statement_carries_fifteen_of_segment_ds_sixteen :
      && pub.length == 67 && shapeStep.bRounds == 16) = true := by
   native_decide
 
-#assert_compiled the_published_statement_carries_fifteen_of_segment_ds_sixteen
+#assert_compiled the_statement_window_is_the_wrap_sides_fifteen_not_segment_ds_sixteen
 
 /-- ⚑⚑ **(d) THE TRANSCRIPT HALF CLOSES: ONE REAL ABSORBED PAIR, AND THE ASSEMBLY'S OWN SPONGE
 SQUEEZES THE BLOCK'S ENTIRE OPENING TRANSCRIPT.**

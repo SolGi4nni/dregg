@@ -481,14 +481,24 @@ seventy-six-cell shape (`segd_slot12_probe` reproduces this squeeze to the digit
 `MessagesForNextStepProof::hash()`), so there is no sponge gap. They disagree on **TWO** of the four
 families, and the two have different prices:
 
-  * ⚑ **the sixteen challenges — an EXTRACTION, and it is fifteen-sixteenths available.** Segment D
-    absorbs `liftOf … (uChal k)`; the marshaller's `step_pre` is a `k·0x9E3779B97F4A7C15 | 1`
-    ladder chosen in `prove_step`. The assembly's own sixteen are transcript-derived and all below
-    `2^128`, so they drop into the wire's `[u64; 2]` unchanged — but only FIFTEEN of them are
-    published (entries 48…62 are `uChal 1 … uChal 15`); `uChal 0` is in no published entry, raw or
-    lifted. `KimchiStepMainPins19.the_published_statement_carries_fifteen_of_segment_ds_sixteen` is
-    that measurement, and it is what decides whether this half is a marshaller edit or a statement
-    change.
+  * ⚑ **the sixteen challenges — a ONE-VECTOR DECISION, and the "arity blocker" was a conflation
+    (SETTLED AT SOURCE 2026-08-10).** Segment D absorbs `liftOf … (uChal k)`; the marshaller's
+    `step_pre` is a `k·0x9E3779B97F4A7C15 | 1` ladder chosen in `prove_step`. This bullet read
+    *"only FIFTEEN of them are published … `uChal 0` is in no published entry"* and therefore
+    *"either the statement grows a word or the sixteenth travels out of band"*. **Both are wrong.**
+    Upstream's `messages_for_next_step_proof.old_bulletproof_challenges` (`transaction.rs:3746`) is
+    never a statement word at all — `MessagesForNextStepProof::to_fields`
+    (`transaction.rs:3770-3805`) lays it in a POSEIDON PREIMAGE and publishes only the digest
+    (`prepared_statement.rs:123`, slot 12; entry 64 of the sixty-seven). And `uChal 0` **is**
+    published — at **slot 13 of the FORTY**, agreeing with the referee
+    (`KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve`). What the sixty-seven's entries
+    48…62 hold upstream is a DIFFERENT family: the previous wrap proof's fifteen Tock challenges
+    (`unfinalized.rs:103-108`, `BACKEND_TOCK_ROUNDS_N = 15`), which this assembly fills with
+    `uChal 1 … uChal 15` — sixteen laid into a fifteen-wide window, which is what manufactured the
+    symptom. `KimchiStepMainPins19
+    .the_statement_window_is_the_wrap_sides_fifteen_not_segment_ds_sixteen` carries the measurement
+    and the citations. So this half is a marshaller edit: hand `step_pre` the assembly's own sixteen
+    (conjunct (2) proves all sixteen are wire-shaped), with no statement change.
   * ⚑⚑ **`G` — and the reason this paragraph gave for it was FALSE until 2026-08-08.** It read
     *"§17 measured that this assembly has no IPA opening to take a real
     `challenge_polynomial_commitment` from"*. There is one: block 539508's own `opening.sg`, in
