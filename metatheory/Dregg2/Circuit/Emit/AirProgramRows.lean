@@ -1164,7 +1164,25 @@ theorem absorb_rows_force_the_permutation {Pm : Params} {pl : Nat → ℤ} {tr :
    boundary does (`sboxPins` and its siblings), and `programAir_boundary_pinsTied` is what makes
    adding one cost a single structural lemma.
 
-5. **Everything below this file's floor is untouched** — the ℤ↔felt reading (K1), the FRI/STARK
+5. ⚑⚑ **AND THE MOD-`N` RESOLUTION IS A CEILING, NOT A CHOICE — this is UNDONE WORK, not a
+   theorem of the model.** `Tracks` relates the trace's register file to the interpreter's *mod the
+   Pasta modulus* because that is the strongest thing the emitted legs support: the ALU's conclusion
+   is a DIVISIBILITY (`N ∣ sVal x · sVal y − sVal z`), and no leg in `programAir` is a
+   less-than-the-modulus certificate on `z`. The `z` limbs are range-checked to 8 bits, so
+   `sVal z < 2^256` while `pN ≈ 2^254.9` — the window holds `r`, `r + p`, `r + 2p`, `r + 3p` and
+   `r + 4p`, each with its own quotient block, all range-checked. So an internally consistent
+   NON-CANONICAL result is not excluded by these constraints, and an ℤ-equality form of `Tracks`
+   would be FALSE of the descriptor in the exact way `AirCrossRow.PhaseIndicator`'s first statement
+   was.
+   ⚑ **The fix shape already exists in this tree and is not applied here.**
+   `PastaMsmScalarDerive` §2.7 measured the identical hole on the sibling gadget — *"`s` and `s+q`
+   ALL fit and only the MANIFEST refused an internally consistent non-canonical row"* — and closed
+   it with the standard certificate: `s + Σ_{p<255} 2^p·CBc p = q − 1` over `CBITS = 255` boolean
+   columns. Applied here that is `+255` columns and `+256` constraints per row, and it would lift
+   `Tracks` from a congruence to an equality. **Do not read the mod-`N` statement as the natural
+   resolution of the problem; read it as the resolution these constraints buy.**
+
+6. **Everything below this file's floor is untouched** — the ℤ↔felt reading (K1), the FRI/STARK
    floor, and `MinaWrapClosingAir` residuals (a) and (c). This closes (b) and nothing else. -/
 
 /-- ⚑⚑ **A `.transition` LEG CLAIMS NOTHING ON THE LAST ROW** — for EVERY body and every trace
