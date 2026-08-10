@@ -493,6 +493,65 @@ It is a FLOOR and not a width: `minaLcVerifyDesc` ties a NINE-lane `Faithful9` p
 smaller than the custom commitment. -/
 def PROOF_BIND_MIN_LANES : Nat := 8
 
+/-- ⚑ **THE NAME A PORTED HALF MUST PRODUCE.** `port` is the port's name in this descriptor's
+`ports.json` row; `seam` is the name of the `SeamSpec` or `WeldCover` that covers it. Both are
+resolved — by `SeamSpec.CoveredPort`, which cannot elaborate for an uncovered port, and by the
+Rust registry gate over `circuit/descriptors/seams/`. An empty name is refused by `widthOk`:
+a port that names nothing is the `none` this type replaced, wearing a constructor. -/
+structure PortCover where
+  port : String
+  seam : String
+  deriving Repr, DecidableEq
+
+/-- ⚑ **WHAT HOLDS THE COMMIT LANES — two states, no third.**
+
+⚑ **FLAG DAY 2026-08-10 — `bound : Option (List EmittedExpr)` IS GONE.** `Ir2Air::eval`'s arm read
+`if let Some(b) = &p.bound`, so a `proofBind` with `bound := none` emitted **zero polynomials over
+its commit lanes** — and *every deployed seam wrote `none`*. Results were then stated about columns
+appearing in no emitted constraint. Five detection layers were built around the nullable field
+(`SeamSpec`, S1/S2, `CoveredPort`, `TiedAir`, an emission-faithful `readCols`); none of them stopped
+the next `none` from being written, because the type still permitted it. **A bind that binds nothing
+is not a bind, it is a comment.**
+
+⚠ **`bound := some commit` IS NOT THE MIGRATION.** Comparing the commit vector to its own definition
+emits `guard·(x − x) ≡ 0`, which is identically true. The working model is
+`MinaAccumulatorAir.headBoundLanes`: the claim is an EMIT-TIME CONSTANT (VK-declared literals), so
+the congruence has content. A seam whose claim varies per proof cannot bind in-descriptor and is a
+`port` — that is a fact about the seam, and the honest name for it. Rust twin
+`descriptor_ir2::CommitBinding`. -/
+inductive CommitBindingOf (α : Type) where
+  /-- The commit lanes EQUAL these row-local expressions, lane by lane, under the guard. -/
+  | bound (lanes : List α)
+  /-- The commit lanes are a declared PORT covered by the named seam or weld. Emits no polynomial
+  over `commit` — and says so with a NAME, which is the whole difference from the retired `none`. -/
+  | port (cover : PortCover)
+  deriving Repr, DecidableEq
+
+/-- The target-language binding: lanes are emitted expressions. The SOURCE language
+(`EffectAirIR.BindLeg`) uses `CommitBindingOf Expr` and `lowerBindLeg` maps across it — one type,
+two expression vocabularies, so the source cannot express a state the target cannot carry. -/
+abbrev CommitBinding := CommitBindingOf EmittedExpr
+
+/-- Transport the lanes; a port travels unchanged. This is what makes `lowerBindLeg` total without
+a second inductive to keep in sync. -/
+def CommitBindingOf.map {α β : Type} (f : α → β) : CommitBindingOf α → CommitBindingOf β
+  | .bound l => .bound (l.map f)
+  | .port c  => .port c
+
+/-- Is this half ported (rather than bound in-descriptor)? -/
+def CommitBindingOf.isPort {α : Type} : CommitBindingOf α → Bool
+  | .bound _ => false
+  | .port _  => true
+
+/-- The bound lanes, or `[]` when ported. ⚠ Use it only where "the lanes an emitted polynomial
+reads" is what is meant — a port reads NONE, which is the whole content of the state. -/
+def CommitBindingOf.lanes {α : Type} : CommitBindingOf α → List α
+  | .bound l => l
+  | .port _  => []
+
+/-- A port names something, in both fields. The refusal that keeps `port` from being `none`. -/
+def PortCover.namesOk (c : PortCover) : Bool := !c.port.isEmpty && !c.seam.isEmpty
+
 /-- An accumulator / recursive-proof-binding op: the row's `custom_proof_commitment` LANES
 (`commit`) and `custom_program_vk_hash` LANES (`vk`), gated by `guard`, together with the two
 DECLARED objects the row-local gate checks them against. The §6c denotation binds `(commit, vk)` to
@@ -509,25 +568,20 @@ structure ProofBind where
   commit : List EmittedExpr
   /-- The attested program-VK LANES, low limb first. Same length as `commit`. -/
   vk     : List EmittedExpr
-  /-- ⚑ The DECLARED program VK this row recursion-binds to, as LITERAL LANES — one per `vk` lane.
-  Without it `vk` is a free column vector and "bound to a verifying sub-proof" quantifies over every
-  program.
+  /-- ⚑ The DECLARED program VK this row recursion-binds to, as LITERAL LANES. `none` = the
+  descriptor declares the program unpinned; `proofBindDeclarative` counts it. ⚠ A pin SHORTER than
+  `vk` does not mean "pin the prefix": `holdsAt` demands the lengths agree, so a truncated pin is
+  UNSATISFIABLE, and the Rust evaluator asserts an unsatisfiable body on the same mismatch.
 
-  `none` means the descriptor DECLARES that it does not pin the program — legitimate for the Custom
-  effect, whose whole job is to dispatch an arbitrary registered cell program. It is a VALUE in the
-  emitted wire bytes, not a silence: `proofBindDeclarative` counts it, so an unpinned seam is
-  countable by a gate rather than described in a docblock. ⚠ A pin SHORTER than `vk` does not mean
-  "pin the prefix": `holdsAt` demands the lengths agree, so a truncated pin is UNSATISFIABLE, and
-  the Rust evaluator asserts an unsatisfiable body on the same mismatch. -/
+  ⚠ **THIS FIELD IS THE SAME DEFECT AS THE RETIRED `bound : Option`, AND IT IS STILL AN `Option`** —
+  `none` emits no polynomial over the `vk` lanes. It stays nullable in the 2026-08-10 flag day
+  because two of its three `none` sites have NO COVER TO NAME (`MinaWrapConjunctionAir.bindLeg`'s
+  program VK is the digest of an artifact the emitter has not built; a literal written here would be
+  a pin against nothing). That is UNDONE WORK wearing a field, not a design, and the same sum type
+  is owed here once the pin exists. -/
   vkPin  : Option (List ℤ)
-  /-- ⚑ The DECLARED row-local expressions the bound commitment lanes must EQUAL — the row's own
-  statement, in its own columns, lane by lane. For a light-client fold this is the in-AIR digest of
-  the published anchors.
-
-  `none` means the descriptor DECLARES the commitment is a free witnessed column vector bound only
-  by the off-row fold (`joint_turn_recursive.prove_custom_binding_node`'s lane-by-lane `connect`).
-  Same rule: a value, countable, not a silence; and same length discipline as `vkPin`. -/
-  bound  : Option (List EmittedExpr)
+  /-- ⚑ What holds the `commit` lanes — see `CommitBinding`. **Not an `Option`.** -/
+  bound  : CommitBinding
   deriving Repr
 
 /-- ⚑ **A LANE-VECTOR CONGRUENCE, GATED.** `zeroLanes g xs ys` is the per-lane
@@ -565,9 +619,9 @@ def ProofBind.holdsAt (env : VmRowEnv) (m : ProofBind) : Prop :=
    | none    => True
    | some vs => zeroLanes (m.guard.eval env.loc) (m.vk.map (·.eval env.loc)) vs) ∧
   (match m.bound with
-   | none    => True
-   | some bs => zeroLanes (m.guard.eval env.loc) (m.commit.map (·.eval env.loc))
-                  (bs.map (·.eval env.loc)))
+   | .port _    => True
+   | .bound bs  => zeroLanes (m.guard.eval env.loc) (m.commit.map (·.eval env.loc))
+                     (bs.map (·.eval env.loc)))
 
 /-- ⚑ **THE WIDTH VERDICT on one seam** — decidable, in the authoring language, one stage upstream
 of the bytes. Each vector clears the lane FLOOR, and each declared pin names exactly as many lanes
@@ -583,13 +637,15 @@ def ProofBind.widthOk (m : ProofBind) : Bool :=
   decide (PROOF_BIND_MIN_LANES ≤ m.commit.length)
     && decide (PROOF_BIND_MIN_LANES ≤ m.vk.length)
     && (match m.vkPin with | none => true | some vs => vs.length == m.vk.length)
-    && (match m.bound with | none => true | some bs => bs.length == m.commit.length)
+    && (match m.bound with
+        | .port c   => c.namesOk
+        | .bound bs => bs.length == m.commit.length)
 
 /-- ⚑ **THE DECLARATIVE CENSUS.** A `proofBind` that pins neither its program nor its commitment
 still gates its guard — but its `(commit, vk)` pair is otherwise free, which is the shape the seam
 exists to retire. `proofBindDeclarative d` counts them, on the descriptor object, in the authoring
 language, so the number goes red BEFORE an emit rather than being read off the bytes afterwards. -/
-def ProofBind.isDeclarative (m : ProofBind) : Bool := m.vkPin.isNone && m.bound.isNone
+def ProofBind.isDeclarative (m : ProofBind) : Bool := m.vkPin.isNone && m.bound.isPort
 
 /-! ### §2.5 — `WindowExpr`: a two-row arithmetic expression (the cumulative-sum primitive).
 
@@ -2382,9 +2438,16 @@ def UMemOp.toJson (m : UMemOp) : String :=
   ",\"prev_value\":" ++ m.prevValue.toJson ++
   ",\"prev_serial\":" ++ m.prevSerial.toJson ++ "}"
 
+/-- ⚑ A ported half renders as a TAGGED OBJECT carrying its two names. The retired spelling was a
+bare `null`, which named nothing and could therefore be resolved by nothing. -/
+def portCoverJson (c : PortCover) : String :=
+  "{\"t\":\"port\",\"port\":\"" ++ c.port ++ "\",\"seam\":\"" ++ c.seam ++ "\"}"
+
 /-- Render one proof-binding op (the accumulator / recursive-proof binding: the row's
 `custom_proof_commitment` + `custom_program_vk_hash` columns, gated, plus the two DECLARED objects
-the row-local seam checks them against — `vk_pin` and `bound`). -/
+the row-local seam checks them against — `vk_pin` and `bound`). ⚑ Both halves are tagged objects
+since the 2026-08-10 flag day; a bare array or a `null` is REFUSED by the Rust door, never
+reinterpreted. -/
 def ProofBind.toJson (m : ProofBind) : String :=
   "{\"t\":\"proof_bind\",\"guard\":" ++ m.guard.toJson ++
   ",\"commit\":" ++ jsonArray EmittedExpr.toJson m.commit ++
@@ -2393,8 +2456,10 @@ def ProofBind.toJson (m : ProofBind) : String :=
                      | none    => "null"
                      | some vs => jsonArray (fun (v : ℤ) => toString v) vs) ++
   ",\"bound\":" ++ (match m.bound with
-                    | none    => "null"
-                    | some bs => jsonArray EmittedExpr.toJson bs) ++ "}"
+                    | .port c   => portCoverJson c
+                    | .bound bs =>
+                        "{\"t\":\"bound\",\"lanes\":"
+                          ++ jsonArray EmittedExpr.toJson bs ++ "}") ++ "}"
 
 /-- Render one v2 constraint (the v1 forms reuse the v1 renderer byte-for-byte). -/
 def VmConstraint2.toJson : VmConstraint2 → String
@@ -2967,7 +3032,7 @@ def demoCBind : ProofBind :=
   , commit := (List.range 8).map (fun k => .var k)
   , vk     := (List.range 8).map (fun k => .var (8 + k))
   , vkPin  := some ((List.range 8).map (fun k => (45 + k : ℤ)))
-  , bound  := some ((List.range 8).map (fun k => .const (123 + k : ℤ))) }
+  , bound  := .bound ((List.range 8).map (fun k => .const (123 + k : ℤ))) }
 
 /-- The proof-binding demo descriptor: one Custom row binding the eight-lane commitment (cols 0..7)
 and the eight-lane program VK (cols 8..15), gated by the (toy) custom selector at col 16 — and
@@ -2989,7 +3054,7 @@ byte-pinned. The Rust `descriptor_ir2.rs` decoder's `proof_bind` arm parses THIS
 a fact about the wire, not about a docblock. A `theorem` and not a `#guard`: the fact is worth a
 term. -/
 theorem demoC_wire_golden : emitVmJson2 demoC =
-  "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":17,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":16},\"commit\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7}],\"vk\":[{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}],\"vk_pin\":[45,46,47,48,49,50,51,52],\"bound\":[{\"t\":\"const\",\"v\":123},{\"t\":\"const\",\"v\":124},{\"t\":\"const\",\"v\":125},{\"t\":\"const\",\"v\":126},{\"t\":\"const\",\"v\":127},{\"t\":\"const\",\"v\":128},{\"t\":\"const\",\"v\":129},{\"t\":\"const\",\"v\":130}]}],\"hash_sites\":[],\"ranges\":[]}" := by
+  "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":17,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":16},\"commit\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7}],\"vk\":[{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}],\"vk_pin\":[45,46,47,48,49,50,51,52],\"bound\":{\"t\":\"bound\",\"lanes\":[{\"t\":\"const\",\"v\":123},{\"t\":\"const\",\"v\":124},{\"t\":\"const\",\"v\":125},{\"t\":\"const\",\"v\":126},{\"t\":\"const\",\"v\":127},{\"t\":\"const\",\"v\":128},{\"t\":\"const\",\"v\":129},{\"t\":\"const\",\"v\":130}]}}],\"hash_sites\":[],\"ranges\":[]}" := by
   native_decide
 
 #assert_compiled demoC_wire_golden

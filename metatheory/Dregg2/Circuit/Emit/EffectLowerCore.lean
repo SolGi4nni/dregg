@@ -340,7 +340,7 @@ pins. A compiled descriptor can declare none of the three. -/
 def lowerBindLeg (b : BindLeg) : List VmConstraint2 :=
   if b.mainRailOk then
     [.proofBind ⟨emitExpr b.guard, b.commit.map emitExpr, b.vk.map emitExpr, b.vkPin,
-                 b.bound.map (List.map emitExpr)⟩]
+                 b.bound.map emitExpr⟩]
   else refuseConstraints
 
 /-- **One leg → its main-rail constraints.** A gate goes through the SAME `Head` normalizer the

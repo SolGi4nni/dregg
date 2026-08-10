@@ -287,6 +287,9 @@ import Dregg2.Bridge.MinaStateHashDerive
 
 set_option autoImplicit false
 set_option maxHeartbeats 1600000
+-- ⚑ 2026-08-10: a ported `bound` carries two STRING names, and `String` reduces as a `List Char`,
+-- so every `rfl` over a descriptor carrying one costs the welder path's length in whnf steps.
+set_option maxRecDepth 16000
 
 namespace Dregg2.Circuit.Emit.LightClientMinaLinkAir
 
@@ -651,7 +654,14 @@ def stateHashBindLeg : AirLeg :=
         , commit := seamCommitLanes
         , vk     := hashVkCommitLanes
         , vkPin  := some ABSORB_VK_LANES
-        , bound  := none }
+        -- ⚑⚑ 2026-08-10: this half is the link's `state-hash-preimage` PORT, and it names the
+        -- welder it REQUIRES — which DOES NOT EXIST YET. `bodyHashWeld` covers the `BODYHASH`
+        -- nonet (REFUSAL 16d); nothing anywhere compares `PARENT` or `OWNHASH`, and the executor's
+        -- own docblock says `OWNHASH` is a free witness. Under the retired `bound := none` that
+        -- fact was a paragraph; it is now a NAME the registry gate resolves and FAILS to resolve,
+        -- counted by `scripts/check-proof-bind-port-covers.py`'s pinned literal. Writing the owed
+        -- welder is what shrinks it.
+        , bound  := .port ⟨"state-hash-preimage", "dregg_turn::executor::mina_head_verifier::check_state_hash_preimage_binding"⟩ }
 
 /-! ### §2c — ⚑⚑⚑ THE BODY-CHAIN SEAM: `BODYHASH` STOPS BEING AN UNBOUND ARGUMENT.
 
@@ -730,7 +740,9 @@ def bodyChainBindLeg : AirLeg :=
         , commit := bodyChainCommitLanes
         , vk     := chainVkCommitLanes
         , vkPin  := some FP_CHAINLINK_VK_LANES
-        , bound  := none }
+        -- ⚑ 2026-08-10: the commit half is the link's `body-hash` PORT, covered by REFUSAL 16
+        -- (`bodyHashWeld` / `bodyAccWeld`, `check_body_chain_binding`).
+        , bound  := .port ⟨"body-hash", "dregg_turn::executor::mina_head_verifier::check_body_chain_binding"⟩ }
 
 /-- ⚑ The nine `BODYHASH` PI pins (cols 22..30 → PI 20..28) — the publication that makes the weld
 reachable at all. -/
@@ -907,7 +919,7 @@ theorem minaLinkDesc_state_hash_seam :
           , commit := seamCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
           , vk     := hashVkCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
           , vkPin  := some ABSORB_VK_LANES
-          , bound  := none } ] := rfl
+          , bound  := .port ⟨"state-hash-preimage", "dregg_turn::executor::mina_head_verifier::check_state_hash_preimage_binding"⟩ } ] := rfl
 
 /-- ⚑ **THE COMMITMENT NAMES ALL FOUR OBJECTS AND NOTHING ELSE.** Thirty-six lanes: 27 constants
 then this row's three nonets, in that order. Stated separately from the byte pin above because it is
@@ -1018,7 +1030,8 @@ theorem minaLinkDesc_body_chain_seam :
           , commit := bodyChainCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
           , vk     := chainVkCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
           , vkPin  := some FP_CHAINLINK_VK_LANES
-          , bound  := none } ] := rfl
+          , bound  := .port ⟨"body-hash",
+              "dregg_turn::executor::mina_head_verifier::check_body_chain_binding"⟩ } ] := rfl
 
 /-- ⚑⚑ **THE BODY-CHAIN SEAM NAMES THE ABSORBED STREAM, NOT JUST `(salt, BODYHASH)`.** Forty-four
 commit lanes: 27 salt constants, 9 body-hash lanes, 8 accumulator lanes. ⚠ The 8 is the whole
@@ -1228,7 +1241,7 @@ def minaLinkSeam : Dregg2.Circuit.DescriptorIR2.ProofBind :=
   , commit := seamCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
   , vk     := hashVkCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
   , vkPin  := some ABSORB_VK_LANES
-  , bound  := none }
+  , bound  := .port ⟨"state-hash-preimage", "dregg_turn::executor::mina_head_verifier::check_state_hash_preimage_binding"⟩ }
 
 /-- The nine attested-program lanes a row READS, as values. The seam compares exactly this vector
 against `ABSORB_VK_LANES`. -/
@@ -1240,7 +1253,8 @@ def minaLinkBodyChainSeam : Dregg2.Circuit.DescriptorIR2.ProofBind :=
   , commit := bodyChainCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
   , vk     := chainVkCommitLanes.map Dregg2.Exec.CircuitEmit.emitExpr
   , vkPin  := some FP_CHAINLINK_VK_LANES
-  , bound  := none }
+  , bound  := .port ⟨"body-hash",
+      "dregg_turn::executor::mina_head_verifier::check_body_chain_binding"⟩ }
 
 /-- The emitted descriptor's proof-binding ops are exactly these TWO seams — the state-hash seam
 (2026-08-06) and the body-chain seam (2026-08-08), in emission order. ⚑ `proofBind_bound`'s

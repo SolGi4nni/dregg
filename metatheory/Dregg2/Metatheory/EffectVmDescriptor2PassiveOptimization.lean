@@ -317,13 +317,13 @@ theorem holdsAt_project (hash : List Int -> Int) (g : Nat -> Nat)
           ((m.vk.map (mapVarE g)).map (fun e => e.eval E.loc)) vs
         rw [hg, hv]; exact h2
     · cases hbd : m.bound with
-      | none => show True; trivial
-      | some bs =>
+      | port _ => show True; trivial
+      | bound bs =>
         have hb : (bs.map (mapVarE g)).map (fun e => e.eval E.loc)
             = bs.map (fun e => e.eval EX.loc) :=
           evalE_map_agree_list g bs E.loc EX.loc
             (fun e he r hr => hloc r (by
-              simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]
+              simp only [refs2, hbd, CommitBindingOf.lanes, List.mem_append]
               exact Or.inr (List.mem_flatMap.mpr ⟨e, he, hr⟩)))
         rw [hbd] at h3
         show zeroLanes ((mapVarE g m.guard).eval E.loc)

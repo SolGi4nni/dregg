@@ -520,7 +520,7 @@ def bindLeg : AirLeg :=
         , commit := (List.range 8).map (fun i => .var (vB LADDER_COMMIT + i))
         , vk := (List.range 8).map (fun i => .var (vB LADDER_VK + i))
         , vkPin := none
-        , bound := some boundLanes }
+        , bound := .bound boundLanes }
 
 /-! ## §10 — THE AIR, and its unthreaded TWIN. -/
 
@@ -772,7 +772,7 @@ and `mainRailOk` refuses it; that refusal is what `conjunctionAir_mainRailOk` ri
 theorem conjunctionAir_bind_shape :
     conjunctionAir.bindCount = 1
     ∧ boundLanes.length = 8
-    ∧ (match bindLeg with | .bind b => b.bound.isSome ∧ b.vkPin.isNone | _ => False) := by
+    ∧ (match bindLeg with | .bind b => !b.bound.isPort ∧ b.vkPin.isNone | _ => False) := by
   refine ⟨by decide, by decide, ?_⟩
   exact ⟨by decide, by decide⟩
 

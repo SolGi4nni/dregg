@@ -901,6 +901,101 @@ pub struct MapOpSpec {
 /// the 2^124 of the object it is a limb of"* — naming widening as the real fix and shipping the
 /// limb. The three fields carry the whole object now, and `Ir2Air::eval` asserts one congruence per
 /// lane. A seam tie is worth what the object is worth.
+/// ⚑ **WHAT HOLDS THE COMMIT LANES — TWO STATES, AND THERE IS NO THIRD.** The Lean twin is
+/// `DescriptorIR2.CommitBinding`.
+///
+/// ⚑ **FLAG DAY 2026-08-10 — `bound: Option<Vec<LeanExpr>>` IS GONE.** It was nullable, and
+/// `Ir2Air::eval`'s arm read `if let Some(b) = &p.bound`, so a `proof_bind` with `bound: null`
+/// emitted **zero polynomials over its commit lanes** — while *every deployed seam set `null`*.
+/// The consequence was not theoretical: headline results named columns appearing in **no emitted
+/// constraint** (*"`TIP_STATE` joined in-circuit"*, *"`OWNHASH` is the image of its row"*, the link
+/// seam's 44 lanes, the `-fs` weld's 192). Five layers of detection machinery were built around
+/// the nullable field — `SeamSpec`, S1/S2 certificates, `CoveredPort`, `TiedAir`, an
+/// emission-faithful `readCols` — none of which stopped a new `null` from being written. **A bind
+/// that binds nothing is not a bind, it is a comment**, and the type now refuses to hold one.
+///
+/// The two honest states, both of which say something a reader can check:
+///
+/// * [`CommitBinding::Bound`] — the commit lanes ARE a function of this row. Emits
+///   `guard·(commitᵢ − boundᵢ)` for every lane, in both languages.
+/// * [`CommitBinding::Port`] — the commit lanes are a declared **port**: published by this
+///   descriptor, forced by a NAMED external seam, and emitting nothing here *on purpose*. The
+///   name is the whole difference from the retired `null`: `null` named nothing, so nothing could
+///   resolve it; a port names the seam that covers it and
+///   [`ProofBindSpec::ported_cover`] hands that name to the registry gate
+///   (`circuit/descriptors/seams/ports.json`, Lean `SeamSpec.CoveredPort`).
+///
+/// ⚠ **DO NOT "fix" a port by writing `Bound(commit.clone())`.** Comparing the commit vector to its
+/// own definition is the decoration trap wearing the fix's clothes: it emits `guard·(x − x)`,
+/// which is identically zero and constrains nothing. The working model for a real `Bound` is
+/// `MinaAccumulatorAir.headBoundLanes` — the claim is an **emit-time constant** (VK-declared
+/// literals), so the equality has content. A seam whose claim varies per proof CANNOT bind
+/// in-descriptor and is a port; that is a fact about the seam, not a shortfall in the author.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommitBinding {
+    /// The commit lanes EQUAL these row-local expressions, lane by lane, under the guard.
+    Bound(Vec<LeanExpr>),
+    /// The commit lanes are a declared PORT covered by the named seam. Emits no polynomial over
+    /// `commit` — and says so with a name, not a `null`.
+    Port(PortCover),
+}
+
+/// The name pair a [`CommitBinding::Port`] must produce: which port of this descriptor, and which
+/// seam covers it. Both are resolved against `circuit/descriptors/seams/ports.json` by the
+/// registry gate (`circuit/tests/proof_bind_port_cover_registry.rs`) and against a registered
+/// `SeamSpec` by Lean's `CoveredPort`, which cannot elaborate for an uncovered port.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PortCover {
+    /// The port's name inside this descriptor's `ports.json` row (e.g. `"tip-state"`).
+    pub port: String,
+    /// The covering seam's name (e.g. `"dregg-seam-head-tip-to-link::v1"`).
+    pub seam: String,
+}
+
+impl CommitBinding {
+    /// Is this the ported state? The census predicate — countable, not describable.
+    pub fn is_port(&self) -> bool {
+        matches!(self, CommitBinding::Port(_))
+    }
+
+    /// The bound lane expressions, if this binds in-descriptor.
+    pub fn lanes(&self) -> Option<&[LeanExpr]> {
+        match self {
+            CommitBinding::Bound(b) => Some(b),
+            CommitBinding::Port(_) => None,
+        }
+    }
+
+    /// The port cover, if ported.
+    pub fn cover(&self) -> Option<&PortCover> {
+        match self {
+            CommitBinding::Bound(_) => None,
+            CommitBinding::Port(p) => Some(p),
+        }
+    }
+}
+
+impl PortCover {
+    /// ⚑ **A PORT MUST NAME SOMETHING.** An empty port or seam name is the `null` in a costume:
+    /// nothing can resolve it, so nothing can go red on it. Refused at all three admission doors.
+    pub fn names_ok(&self, half: &str) -> Result<(), String> {
+        if self.port.trim().is_empty() {
+            return Err(format!(
+                "proof_bind {half} declares a port with an empty port name: a port that names \
+                 nothing is the `null` this field replaced"
+            ));
+        }
+        if self.seam.trim().is_empty() {
+            return Err(format!(
+                "proof_bind {half} port `{}` names no covering seam: an uncovered port forces \
+                 nothing and cannot be resolved by the registry gate",
+                self.port
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProofBindSpec {
     /// Selector guard (active iff it evaluates to 1). Forced boolean by the seam.
@@ -914,10 +1009,18 @@ pub struct ProofBindSpec {
     /// ⚑ The DECLARED program VK literal LANES, one per `vk` lane. `None` = the descriptor declares
     /// the program unpinned. A pin of a DIFFERENT length is not a prefix pin — it is refused at
     /// admission and asserted unsatisfiable in the AIR.
+    ///
+    /// ⚠ **THIS FIELD IS THE SAME DEFECT AS THE RETIRED `bound: Option`, AND IT IS STILL AN
+    /// `Option`.** `None` emits zero polynomials over the `vk` lanes, exactly as `bound: None` once
+    /// did over `commit`. It is left nullable in the 2026-08-10 flag day for one reason, stated so
+    /// it is not mistaken for a design: two of the three `None` sites have **no cover to name** —
+    /// `MinaWrapConjunctionAir.bindLeg`'s program VK is a digest of an artifact the emitter has not
+    /// built yet, and inventing a literal there would be a pin against nothing. That is UNDONE
+    /// WORK, not a state of the world, and the same sum type is owed here once the pin exists.
     pub vk_pin: Option<Vec<i64>>,
-    /// ⚑ The DECLARED row-local expressions the `commit` lanes must equal. `None` = declared
-    /// free-witnessed. Same length discipline as `vk_pin`.
-    pub bound: Option<Vec<LeanExpr>>,
+    /// ⚑ What holds the `commit` lanes. **Not nullable** — see [`CommitBinding`] for the flag day
+    /// and for why `Bound(commit.clone())` is not a migration.
+    pub bound: CommitBinding,
 }
 
 /// ⚑ **THE LANE FLOOR of a recursion seam** — the felt count of the deployed objects a
@@ -933,10 +1036,26 @@ pub struct ProofBindSpec {
 pub const PROOF_BIND_MIN_LANES: usize = 8;
 
 impl ProofBindSpec {
-    /// A seam that pins NEITHER the program nor the commitment. Countable, so the number can
+    /// A seam that binds NEITHER half in-descriptor: both are ports. Countable, so the number can
     /// ratchet down; the Lean twin is `DescriptorIR2.ProofBind.isDeclarative`.
+    ///
+    /// ⚑ **WHAT CHANGED UNDER IT (2026-08-10).** This used to read
+    /// `vk_pin.is_none() && bound.is_none()`, and a `true` meant *the descriptor said nothing at
+    /// all* — the pair was free, and no name anywhere connected it to whatever was supposed to be
+    /// forcing it. It now means *both halves are ports*, and a port carries the name of its cover.
+    /// The census is the same number; what the number counts is no longer a silence.
     pub fn is_declarative(&self) -> bool {
-        self.vk_pin.is_none() && self.bound.is_none()
+        self.vk_pin.is_none() && self.bound.is_port()
+    }
+
+    /// Every port cover this seam declares, tagged by which half declared it. The registry gate
+    /// resolves these against `circuit/descriptors/seams/ports.json`.
+    pub fn ported_cover(&self) -> Vec<(&'static str, &PortCover)> {
+        let mut out = Vec::new();
+        if let Some(c) = self.bound.cover() {
+            out.push(("bound", c));
+        }
+        out
     }
 
     /// The number of lanes this seam ties.
@@ -983,14 +1102,16 @@ impl ProofBindSpec {
                 self.vk.len()
             ));
         }
-        if let Some(b) = &self.bound
-            && b.len() != self.commit.len()
-        {
-            return Err(format!(
-                "proof_bind bound names {} lanes against {} commit lanes: a pin is not a prefix",
-                b.len(),
-                self.commit.len()
-            ));
+        match &self.bound {
+            CommitBinding::Bound(b) if b.len() != self.commit.len() => {
+                return Err(format!(
+                    "proof_bind bound names {} lanes against {} commit lanes: a pin is not a prefix",
+                    b.len(),
+                    self.commit.len()
+                ));
+            }
+            CommitBinding::Bound(_) => {}
+            CommitBinding::Port(c) => c.names_ok("bound")?,
         }
         Ok(())
     }
@@ -1359,6 +1480,64 @@ pub(crate) fn parse_usize(c: &mut JsonCursor, what: &str) -> Result<usize, Strin
         return Err(format!("negative {what} {n}"));
     }
     Ok(n as usize)
+}
+
+/// ⚑ **THE OLD SHAPE REFUSES, IT DOES NOT REINTERPRET.** Both `proof_bind` halves used to be
+/// `null`-or-array. The `null` state is gone from the type ([`CommitBinding`]), so a wire carrying
+/// one is refused by name; and a BARE ARRAY is refused too, because quietly reading it as the
+/// bound/pinned arm would be the reinterpretation the flag-day rule exists to prevent — the same
+/// bytes would mean a different relation under the two readers.
+fn refuse_retired_bind_shape(c: &mut JsonCursor, half: &str) -> Result<(), String> {
+    if c.try_null()? {
+        return Err(format!(
+            "proof_bind {half} is `null`: the nullable shape is RETIRED (flag day 2026-08-10). A \
+             `null` here emitted zero polynomials over the lanes it named. Write either \
+             {{\"t\":\"{tag}\",\"lanes\":[..]}} or {{\"t\":\"port\",\"port\":\"..\",\"seam\":\"..\"}} \
+             — there is no third state",
+            tag = "bound"
+        ));
+    }
+    if c.peek() == Some(b'[') {
+        return Err(format!(
+            "proof_bind {half} is a bare array: the pre-flag-day grammar. It is REFUSED rather \
+             than read as {{\"t\":\"bound\"}}, because the same bytes must not mean a different \
+             relation under two readers"
+        ));
+    }
+    Ok(())
+}
+
+/// Parse the tagged `{"t":"port","port":..,"seam":..}` body, positioned just after `"port"`'s tag.
+fn parse_port_cover_tail(c: &mut JsonCursor) -> Result<PortCover, String> {
+    c.expect(b',')?;
+    c.expect_key("port")?;
+    let port = c.parse_string()?;
+    c.expect(b',')?;
+    c.expect_key("seam")?;
+    let seam = c.parse_string()?;
+    c.expect(b'}')?;
+    Ok(PortCover { port, seam })
+}
+
+/// `"bound"`: `{"t":"bound","lanes":[expr,..]}` or `{"t":"port","port":..,"seam":..}`.
+fn parse_commit_binding(c: &mut JsonCursor) -> Result<CommitBinding, String> {
+    refuse_retired_bind_shape(c, "bound")?;
+    c.expect(b'{')?;
+    c.expect_key("t")?;
+    let tag = c.parse_string()?;
+    match tag.as_str() {
+        "bound" => {
+            c.expect(b',')?;
+            c.expect_key("lanes")?;
+            let lanes = parse_array(c, parse_expr)?;
+            c.expect(b'}')?;
+            Ok(CommitBinding::Bound(lanes))
+        }
+        "port" => Ok(CommitBinding::Port(parse_port_cover_tail(c)?)),
+        other => Err(format!(
+            "proof_bind bound tag `{other}`: expected `bound` or `port`, and there is no third state"
+        )),
+    }
 }
 
 /// Validate the chip `params` object against the DEPLOYED Poseidon2 pins
@@ -1749,10 +1928,14 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
             c.expect(b',')?;
             c.expect_key("vk")?;
             let vk = parse_array(c, parse_expr)?;
-            // ⚑ The seam's two declared halves. Both are `null`-able: the Lean emitter renders
-            // `Option.none` as a bare `null`, which is how a descriptor SAYS it cannot pin that
-            // half rather than leaving the reader to infer it. When present they are lane arrays,
-            // one literal / one expression per lane.
+            // ⚑ **THE SEAM'S TWO HALVES ARE TAGGED OBJECTS NOW (FLAG DAY 2026-08-10).**
+            // They were `null`-or-array: `null` meant "this half is not bound", and the AIR's arm
+            // read `if let Some(..)`, so `null` emitted ZERO polynomials over the lanes it named.
+            // Both old shapes REFUSE here rather than being reinterpreted — a bare `null` because
+            // the state it encoded no longer exists, and a bare ARRAY because silently promoting it
+            // to the bound/pinned arm is precisely the "reinterpret" this repo's flag-day rule
+            // forbids. See [`CommitBinding`] for the migration: every old `null` is now either a
+            // real bind or a NAMED port, and there is no third state.
             c.expect(b',')?;
             c.expect_key("vk_pin")?;
             let vk_pin = if c.try_null()? {
@@ -1762,11 +1945,7 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
             };
             c.expect(b',')?;
             c.expect_key("bound")?;
-            let bound = if c.try_null()? {
-                None
-            } else {
-                Some(parse_array(c, parse_expr)?)
-            };
+            let bound = parse_commit_binding(c)?;
             let spec = ProofBindSpec {
                 guard,
                 commit,
@@ -2366,7 +2545,7 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
                 for e in m.commit.iter().chain(m.vk.iter()) {
                     chk(e, "proof_bind field", ci)?;
                 }
-                if let Some(b) = &m.bound {
+                if let CommitBinding::Bound(b) = &m.bound {
                     for e in b {
                         chk(e, "proof_bind bound", ci)?;
                     }
@@ -4004,6 +4183,13 @@ fn eval_row_local_constraints<AB, C>(
                 // of the PROGRAM IDENTITY; a 54-lane statement against a nine-lane `Faithful9`
                 // fingerprint is well-formed. Below, `zip` is the only length-sensitive operation
                 // left, and both pins have their OWN length check against the vector they pin.
+                // ⚑ **THE `if let Some(..)` THAT WAS THE DEFECT — 2026-08-10.** These two arms read
+                // `if let Some(b) = &p.bound` / `&p.vk_pin`, and EVERY deployed seam wrote `None`,
+                // so the deployed evaluator emitted zero polynomials over the very lanes the
+                // descriptor's prose said it joined. The `Option` is gone from the type: the
+                // ported arm is now an explicit state that NAMES its cover, and it still emits
+                // nothing — but the emitting nothing is what the descriptor SAYS, checked by the
+                // registry gate, not an absence a reader has to notice.
                 if let Some(pin) = &p.vk_pin {
                     if pin.len() != p.vk.len() {
                         builder.assert_zero(AB::Expr::ONE);
@@ -4014,16 +4200,20 @@ fn eval_row_local_constraints<AB, C>(
                         );
                     }
                 }
-                if let Some(b) = &p.bound {
-                    if b.len() != p.commit.len() {
-                        builder.assert_zero(AB::Expr::ONE);
+                match &p.bound {
+                    CommitBinding::Bound(b) => {
+                        if b.len() != p.commit.len() {
+                            builder.assert_zero(AB::Expr::ONE);
+                        }
+                        for (lane, expected) in p.commit.iter().zip(b.iter()) {
+                            builder.assert_zero(
+                                guard.clone()
+                                    * (lane.eval_expr::<AB>(local)
+                                        - expected.eval_expr::<AB>(local)),
+                            );
+                        }
                     }
-                    for (lane, expected) in p.commit.iter().zip(b.iter()) {
-                        builder.assert_zero(
-                            guard.clone()
-                                * (lane.eval_expr::<AB>(local) - expected.eval_expr::<AB>(local)),
-                        );
-                    }
+                    CommitBinding::Port(_) => {}
                 }
                 continue;
             }
@@ -4972,7 +5162,7 @@ pub fn read_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
                 for x in p.commit.iter().chain(p.vk.iter()) {
                     e(x, &mut out);
                 }
-                if let Some(b) = &p.bound {
+                if let CommitBinding::Bound(b) = &p.bound {
                     for x in b {
                         e(x, &mut out);
                     }
@@ -10206,7 +10396,7 @@ mod tests {
     /// The Lean-pinned demo-custom golden (`DescriptorIR2.demoC_wire_golden`, §10c): the widened
     /// `proof_bind` grammar — LANE ARRAYS for the commitment, the program VK, the program pin and
     /// the bound expression — byte-for-byte.
-    const DEMO_CUSTOM: &str = "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":17,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":16},\"commit\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7}],\"vk\":[{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}],\"vk_pin\":[45,46,47,48,49,50,51,52],\"bound\":[{\"t\":\"const\",\"v\":123},{\"t\":\"const\",\"v\":124},{\"t\":\"const\",\"v\":125},{\"t\":\"const\",\"v\":126},{\"t\":\"const\",\"v\":127},{\"t\":\"const\",\"v\":128},{\"t\":\"const\",\"v\":129},{\"t\":\"const\",\"v\":130}]}],\"hash_sites\":[],\"ranges\":[]}";
+    const DEMO_CUSTOM: &str = "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":17,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":16},\"commit\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7}],\"vk\":[{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}],\"vk_pin\":[45,46,47,48,49,50,51,52],\"bound\":{\"t\":\"bound\",\"lanes\":[{\"t\":\"const\",\"v\":123},{\"t\":\"const\",\"v\":124},{\"t\":\"const\",\"v\":125},{\"t\":\"const\",\"v\":126},{\"t\":\"const\",\"v\":127},{\"t\":\"const\",\"v\":128},{\"t\":\"const\",\"v\":129},{\"t\":\"const\",\"v\":130}]}}],\"hash_sites\":[],\"ranges\":[]}";
 
     /// The byte-pinned Lean proof-bind golden parses, decoding the accumulator constraint kind at
     /// EIGHT LANES.
@@ -10230,7 +10420,7 @@ mod tests {
             Some(&(45..53).collect::<Vec<i64>>()[..])
         );
         assert_eq!(
-            m.bound.as_deref(),
+            m.bound.lanes(),
             Some(&(123..131).map(LeanExpr::Const).collect::<Vec<_>>()[..])
         );
         // The binding rides the recursion argument, not a committed table — the descriptor
@@ -10243,7 +10433,7 @@ mod tests {
     /// widening structural rather than a convention: a four-lane artifact cannot be padded in.
     #[test]
     fn narrow_proof_bind_refuses() {
-        let narrow = "{\"name\":\"narrow\",\"ir\":2,\"trace_width\":4,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":4,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":[{\"t\":\"var\",\"v\":0}],\"vk\":[{\"t\":\"var\",\"v\":1}],\"vk_pin\":[45],\"bound\":[{\"t\":\"const\",\"v\":123}]}],\"hash_sites\":[],\"ranges\":[]}";
+        let narrow = "{\"name\":\"narrow\",\"ir\":2,\"trace_width\":4,\"public_input_count\":0,\"challenges\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":4,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":[{\"t\":\"var\",\"v\":0}],\"vk\":[{\"t\":\"var\",\"v\":1}],\"vk_pin\":[45],\"bound\":{\"t\":\"bound\",\"lanes\":[{\"t\":\"const\",\"v\":123}]}}],\"hash_sites\":[],\"ranges\":[]}";
         let err = parse_vm_descriptor2(narrow).expect_err("a one-lane seam must refuse");
         assert!(
             err.contains("below the floor"),
@@ -10270,7 +10460,7 @@ mod tests {
             vks.push_str(&format!("{{\"t\":\"var\",\"v\":{k}}}"));
         }
         let json = format!(
-            "{{\"name\":\"trunc\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\"challenges\":0,\"tables\":[{{\"id\":0,\"name\":\"main\",\"arity\":17,\"sem\":\"main\"}}],\"constraints\":[{{\"t\":\"proof_bind\",\"guard\":{{\"t\":\"var\",\"v\":16}},\"commit\":[{lanes}],\"vk\":[{vks}],\"vk_pin\":[45,46,47,48],\"bound\":null}}],\"hash_sites\":[],\"ranges\":[]}}"
+            "{{\"name\":\"trunc\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\"challenges\":0,\"tables\":[{{\"id\":0,\"name\":\"main\",\"arity\":17,\"sem\":\"main\"}}],\"constraints\":[{{\"t\":\"proof_bind\",\"guard\":{{\"t\":\"var\",\"v\":16}},\"commit\":[{lanes}],\"vk\":[{vks}],\"vk_pin\":[45,46,47,48],\"bound\":{{\"t\":\"port\",\"port\":\"demo\",\"seam\":\"dregg-seam-demo::v1\"}}}}],\"hash_sites\":[],\"ranges\":[]}}"
         );
         let err = parse_vm_descriptor2(&json).expect_err("a truncated pin must refuse");
         assert!(
@@ -10279,11 +10469,118 @@ mod tests {
         );
     }
 
+    /// A `proof_bind` wire body with `bound` spelled `{spelling}`, otherwise the golden's shape.
+    #[cfg(test)]
+    fn bound_spelling(spelling: &str) -> String {
+        let commit: Vec<String> = (0..8)
+            .map(|k| format!("{{\"t\":\"var\",\"v\":{k}}}"))
+            .collect();
+        let vk: Vec<String> = (8..16)
+            .map(|k| format!("{{\"t\":\"var\",\"v\":{k}}}"))
+            .collect();
+        format!(
+            "{{\"name\":\"spelling\",\"ir\":2,\"trace_width\":17,\"public_input_count\":0,\
+             \"challenges\":0,\"tables\":[{{\"id\":0,\"name\":\"main\",\"arity\":17,\
+             \"sem\":\"main\"}}],\"constraints\":[{{\"t\":\"proof_bind\",\"guard\":\
+             {{\"t\":\"var\",\"v\":16}},\"commit\":[{}],\"vk\":[{}],\"vk_pin\":null,\"bound\":{}}}],\
+             \"hash_sites\":[],\"ranges\":[]}}",
+            commit.join(","),
+            vk.join(","),
+            spelling
+        )
+    }
+
+    /// ⚑⚑ **THE RETIRED `null` REFUSES, AND SO DOES THE RETIRED BARE ARRAY — the 2026-08-10 flag
+    /// day's REFUSAL half.** Both are pre-flag-day spellings of `bound`. The `null` encoded a state
+    /// that no longer exists (emit nothing, name nothing); the bare array is the old *bound*
+    /// spelling, and it is refused rather than promoted, because reading the same bytes as a
+    /// different relation under two readers is exactly what a flag day exists to prevent.
+    ///
+    /// ⚠ The refusals are checked by their OWN message, not merely by `is_err`: a parse that failed
+    /// for an unrelated reason would otherwise read as this gate biting
+    /// (`minted-refusal-renders-as-the-expected-verdict`).
+    #[test]
+    fn the_retired_bound_spellings_refuse() {
+        let err = parse_vm_descriptor2(&bound_spelling("null"))
+            .expect_err("`bound: null` is retired and must not load");
+        assert!(
+            err.contains("nullable shape is RETIRED"),
+            "the refusal must name the flag day, got: {err}"
+        );
+
+        let err = parse_vm_descriptor2(&bound_spelling("[{\"t\":\"const\",\"v\":7}]"))
+            .expect_err("a bare `bound` array is the pre-flag-day grammar and must not load");
+        assert!(
+            err.contains("bare array"),
+            "the refusal must name the retired grammar, got: {err}"
+        );
+    }
+
+    /// ⚑ **A PORT THAT NAMES NOTHING IS THE `null` IN A COSTUME, AND IT DOES NOT LOAD.** Without
+    /// this, the two-state type would be a rename: `{"t":"port","port":"","seam":""}` emits exactly
+    /// what `null` emitted and resolves to exactly as much.
+    #[test]
+    fn a_port_naming_nothing_refuses() {
+        for (spelling, want) in [
+            (
+                "{\"t\":\"port\",\"port\":\"\",\"seam\":\"dregg-seam-demo::v1\"}",
+                "empty port name",
+            ),
+            (
+                "{\"t\":\"port\",\"port\":\"p\",\"seam\":\"\"}",
+                "names no covering seam",
+            ),
+        ] {
+            let err = parse_vm_descriptor2(&bound_spelling(spelling))
+                .expect_err("a port naming nothing must refuse");
+            assert!(
+                err.contains(want),
+                "the refusal must name the empty half ({want}), got: {err}"
+            );
+        }
+    }
+
+    /// ⚑ **AND THE HONEST POLE LOADS** — the two live spellings both parse and check, so the
+    /// refusals above are a door and not a wall.
+    #[test]
+    fn both_live_bound_spellings_load() {
+        let ported = parse_vm_descriptor2(&bound_spelling(
+            "{\"t\":\"port\",\"port\":\"demo-commitment\",\"seam\":\"dregg-seam-demo::v1\"}",
+        ))
+        .expect("a named port must load");
+        let VmConstraint2::ProofBind(m) = &ported.constraints[0] else {
+            panic!("one proof_bind");
+        };
+        let cover = m.bound.cover().expect("the ported half carries its cover");
+        assert_eq!(cover.port, "demo-commitment");
+        assert_eq!(cover.seam, "dregg-seam-demo::v1");
+        assert!(m.bound.lanes().is_none(), "a port names no lanes");
+        check_descriptor2(&ported).expect("a ported seam checks");
+
+        let lanes: Vec<String> = (0..8)
+            .map(|k| format!("{{\"t\":\"const\",\"v\":{}}}", 100 + k))
+            .collect();
+        let bound = parse_vm_descriptor2(&bound_spelling(&format!(
+            "{{\"t\":\"bound\",\"lanes\":[{}]}}",
+            lanes.join(",")
+        )))
+        .expect("a bound seam must load");
+        let VmConstraint2::ProofBind(m) = &bound.constraints[0] else {
+            panic!("one proof_bind");
+        };
+        assert_eq!(
+            m.bound.lanes().map(<[LeanExpr]>::len),
+            Some(8),
+            "the bound half carries eight lanes"
+        );
+        check_descriptor2(&bound).expect("a bound seam checks");
+    }
+
     /// A v1 wire (no `"ir"` key) carrying a `proof_bind` is REFUSED — the accumulator kind is
     /// v2-only, like every other new kind.
     #[test]
     fn proof_bind_in_v1_wire_refuses() {
-        let v1 = "{\"name\":\"x\",\"trace_width\":3,\"public_input_count\":0,\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":[{\"t\":\"var\",\"v\":0}],\"vk\":[{\"t\":\"var\",\"v\":1}],\"vk_pin\":null,\"bound\":null}],\"hash_sites\":[],\"ranges\":[]}";
+        let v1 = "{\"name\":\"x\",\"trace_width\":3,\"public_input_count\":0,\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":[{\"t\":\"var\",\"v\":0}],\"vk\":[{\"t\":\"var\",\"v\":1}],\"vk_pin\":null,\"bound\":{\"t\":\"port\",\"port\":\"demo\",\"seam\":\"dregg-seam-demo::v1\"}}],\"hash_sites\":[],\"ranges\":[]}";
         assert!(
             parse_vm_descriptor_any(v1).is_err(),
             "v1 wire carrying a proof_bind must refuse"

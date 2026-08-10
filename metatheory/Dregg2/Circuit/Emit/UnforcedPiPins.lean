@@ -586,12 +586,12 @@ theorem unforced_pin_row_admits_any_value
         show zeroLanes (m.guard.eval env'.loc) (m.vk.map (fun e => e.eval env'.loc)) vs
         rw [eg, ev]; exact h2
     · cases hbd : m.bound with
-      | none => show True; trivial
-      | some bs =>
+      | port _ => show True; trivial
+      | bound bs =>
         have eb : bs.map (fun e => e.eval env'.loc) = bs.map (fun e => e.eval env.loc) :=
           List.map_congr_left (fun e he => evalE_setCol e env.loc col v (fun hx =>
             href (by
-              simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]
+              simp only [refs2, hbd, CommitBindingOf.lanes, List.mem_append]
               exact Or.inr (List.mem_flatMap.mpr ⟨e, he, hx⟩))))
         rw [hbd] at h3
         show zeroLanes (m.guard.eval env'.loc) (m.commit.map (fun e => e.eval env'.loc))

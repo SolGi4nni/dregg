@@ -13,9 +13,9 @@
 use std::fmt;
 
 use crate::descriptor_ir2::{
-    ChalExpr, ChalGateSpec, EffectVmDescriptor2, LookupSpec, MapKind, MapOpSpec, MemKind,
-    MemOpSpec, ProofBindSpec, TableDef2, TableSem, UMemOpSpec, VACUOUS_RANGE_BITS, VmConstraint2,
-    WindowExpr, WindowGateSpec,
+    ChalExpr, ChalGateSpec, CommitBinding, EffectVmDescriptor2, LookupSpec, MapKind, MapOpSpec,
+    MemKind, MemOpSpec, PortCover, ProofBindSpec, TableDef2, TableSem, UMemOpSpec,
+    VACUOUS_RANGE_BITS, VmConstraint2, WindowExpr, WindowGateSpec,
 };
 use crate::lean_descriptor_air::{HashInput, LeanExpr, RangeSpec, VmConstraint, VmHashSite, VmRow};
 
@@ -36,7 +36,17 @@ pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_MAGIC: [u8; 8] = *b"DREGGIR2";
 /// `proof_bind` says a DIFFERENT relation under this reader — it ties one limb of an eight-felt
 /// object — so it is refused rather than decoded. Same consequence: every fingerprint moves, every
 /// welded-leg `vk_hash` rotates, every descriptor re-emits.
-pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_VERSION: u16 = 3;
+///
+/// ⚑ **BUMPED 3 → 4 on 2026-08-10** (the `proof_bind` NULLABILITY FLAG DAY). Tag byte `5`'s two
+/// declared halves changed STATE SPACE, not just shape: `vk_pin` and `bound` were
+/// `Option`s whose `None` emitted **no polynomial at all** over the lanes it named, and every
+/// deployed seam wrote `None`. They are now two-state sums — pinned/bound, or a PORT that carries
+/// the name of the seam covering it — so the "absent" tag no longer exists. A v3 record's tag `0`
+/// meant *absent*; under this reader tag `0` means *pinned/bound*, so a v3 record decodes to a
+/// DIFFERENT relation and is refused outright by [`decode_canonical_effect_vm_descriptor2`],
+/// never reinterpreted. Same consequence as the last two bumps: every semantic fingerprint moves,
+/// every welded-leg `vk_hash` rotates, every descriptor re-emits.
+pub const EFFECT_VM_DESCRIPTOR2_CANONICAL_VERSION: u16 = 4;
 /// BLAKE3 derive-key context for semantic relation fingerprints.
 pub const EFFECT_VM_DESCRIPTOR2_FINGERPRINT_CONTEXT: &str =
     "dregg.effect-vm-descriptor2.semantic-relation.v1";
@@ -556,6 +566,15 @@ fn write_constraint(
             // program pin or its bound expression must move its canonical digest — otherwise the
             // registry could not tell a bound seam from a declarative one, and "the seam landed"
             // would be a claim about a file rather than about the committed object.
+            //
+            // ⚑ **SCHEMA v4 (2026-08-10): `bound`'S ABSENT TAG IS GONE.** Its tag `0` used to mean
+            // "this half is `null`" — a state that emitted no polynomial and named nothing. Tag `0`
+            // now means BOUND and tag `1` means PORTED, and a ported half carries the two NAMES of
+            // its cover IN THE FINGERPRINT. So two descriptors differing only in which seam is
+            // claimed to cover a port have different canonical identities, and "the port is
+            // covered" is a property of the committed bytes rather than of a doc comment.
+            // ⚠ `vk_pin` keeps its `Option` and its old tag meanings — see `ProofBindSpec::vk_pin`
+            // for why, said as the undone work it is rather than as a design.
             match vk_pin {
                 None => writer.u8(0),
                 Some(p) => {
@@ -567,13 +586,14 @@ fn write_constraint(
                 }
             }
             match bound {
-                None => {
+                CommitBinding::Bound(b) => {
                     writer.u8(0);
-                    Ok(())
-                }
-                Some(b) => {
-                    writer.u8(1);
                     writer.sequence("ProofBindSpec.bound", b, |w, e| write_lean_expr(w, e, 0))
+                }
+                CommitBinding::Port(c) => {
+                    writer.u8(1);
+                    writer.string("ProofBindSpec.bound.port", &c.port)?;
+                    writer.string("ProofBindSpec.bound.seam", &c.seam)
                 }
             }
         }
@@ -988,15 +1008,23 @@ fn read_constraint(reader: &mut Reader<'_>) -> Result<VmConstraint2, CanonicalDe
                 guard: read_lean_expr(reader, 0)?,
                 commit: reader.sequence("ProofBindSpec.commit", |r| read_lean_expr(r, 0))?,
                 vk: reader.sequence("ProofBindSpec.vk", |r| read_lean_expr(r, 0))?,
+                // ⚑ Schema v4: tag `0` = pinned/bound, tag `1` = ported (two names). There is no
+                // "absent" tag any more; a v3 record's `0` meant `null` and decodes to a DIFFERENT
+                // relation here, which is why the version gate above refuses it outright.
                 vk_pin: if reader.boolean()? {
                     Some(reader.sequence("ProofBindSpec.vk_pin", |r| r.i64())?)
                 } else {
                     None
                 },
                 bound: if reader.boolean()? {
-                    Some(reader.sequence("ProofBindSpec.bound", |r| read_lean_expr(r, 0))?)
+                    CommitBinding::Port(PortCover {
+                        port: reader.string("ProofBindSpec.bound.port")?,
+                        seam: reader.string("ProofBindSpec.bound.seam")?,
+                    })
                 } else {
-                    None
+                    CommitBinding::Bound(
+                        reader.sequence("ProofBindSpec.bound", |r| read_lean_expr(r, 0))?,
+                    )
                 },
             };
             // ⚑ THE PROTOCOL-IDENTITY DOOR's half of the width refusal. This decoder takes
@@ -1231,7 +1259,7 @@ mod tests {
                 commit: (41..49).map(expr).collect(),
                 vk: (49..57).map(expr).collect(),
                 vk_pin: Some((-7..1).collect()),
-                bound: Some((57..65).map(expr).collect()),
+                bound: CommitBinding::Bound((57..65).map(expr).collect()),
             }),
             VmConstraint2::WindowGate(WindowGateSpec {
                 body: WindowExpr::Add(

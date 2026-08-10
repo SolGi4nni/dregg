@@ -110,7 +110,7 @@ def refs2 : VmConstraint2 → List Nat
   | .umemOp m => refsE m.guard ++ refsE m.key ++ refsE m.present ++ refsE m.value
       ++ refsE m.prevPresent ++ refsE m.prevValue ++ refsE m.prevSerial
   | .proofBind m => refsE m.guard ++ m.commit.flatMap refsE ++ m.vk.flatMap refsE
-      ++ (m.bound.map (fun bs => bs.flatMap refsE)).getD []
+      ++ m.bound.lanes.flatMap refsE
   | .windowGate w => refsW w.body
 
 /-- The columns a hash site reads or writes. -/
@@ -201,7 +201,7 @@ def mapC2 (g : Nat → Nat) : VmConstraint2 → VmConstraint2
         -- `bound` is an expression over the row and its columns must be renamed with everything
         -- else, or a compacted descriptor would bind a different column than it says.
       , vkPin := m.vkPin
-      , bound := m.bound.map (fun bs => bs.map (mapVarE g)) }
+      , bound := m.bound.map (mapVarE g) }
   | .windowGate w => .windowGate { body := mapVarW g w.body, onTransition := w.onTransition }
 
 /-! ## §2 — the S2 dead-column geometry and the index map. -/
@@ -822,13 +822,13 @@ theorem holdsAt_transport (hash : List ℤ → ℤ) (g : Nat → Nat)
         show zeroLanes (m.guard.eval EX.loc) (m.vk.map (fun e => e.eval EX.loc)) vs
         rw [← hg, ← hv]; exact h2
     · cases hbd : m.bound with
-      | none => show True; trivial
-      | some bs =>
+      | port _ => show True; trivial
+      | bound bs =>
         have hb : (bs.map (mapVarE g)).map (fun e => e.eval E.loc)
             = bs.map (fun e => e.eval EX.loc) :=
           evalE_map_agree_list g bs E.loc EX.loc
             (fun e he r hr => hloc r (by
-              simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]
+              simp only [refs2, hbd, CommitBindingOf.lanes, List.mem_append]
               exact Or.inr (List.mem_flatMap.mpr ⟨e, he, hr⟩)))
         simp only [mapC2, hbd, Option.map_some] at h3
         show zeroLanes (m.guard.eval EX.loc) (m.commit.map (fun e => e.eval EX.loc))

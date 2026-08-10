@@ -55,8 +55,8 @@
 
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, ProofBindSpec, TableDef2, TableSem, VmConstraint2,
-    prove_vm_descriptor2, verify_vm_descriptor2,
+    CommitBinding, EffectVmDescriptor2, MemBoundaryWitness, PortCover, ProofBindSpec, TableDef2,
+    TableSem, VmConstraint2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
@@ -98,9 +98,20 @@ fn lanes(base: usize) -> Vec<LeanExpr> {
     (0..LANES).map(|k| LeanExpr::Var(base + k)).collect()
 }
 
-/// The seam descriptor, parameterised by the two declared halves. `(None, None)` is the shape every
-/// `proof_bind` in the tree carried before 2026-08-04 and is the BEFORE pole of every tooth here.
-fn seam_desc(vk_pin: Option<Vec<i64>>, bound: Option<Vec<LeanExpr>>) -> EffectVmDescriptor2 {
+/// A ported commit half, naming a cover. ⚑ Since the 2026-08-10 flag day this is the ONLY way to
+/// say "this AIR does not force the commit lanes" — the retired `None` said it by emitting nothing
+/// and naming nothing.
+fn ported() -> CommitBinding {
+    CommitBinding::Port(PortCover {
+        port: "demo-commitment".into(),
+        seam: "dregg-seam-demo::v1".into(),
+    })
+}
+
+/// The seam descriptor, parameterised by the two declared halves. `(None, ported())` is the shape
+/// every `proof_bind` in the tree carried before 2026-08-04 and is the BEFORE pole of every tooth
+/// here.
+fn seam_desc(vk_pin: Option<Vec<i64>>, bound: CommitBinding) -> EffectVmDescriptor2 {
     EffectVmDescriptor2 {
         name: "ir2-proof-bind-seam".into(),
         trace_width: WIDTH,
@@ -126,13 +137,16 @@ fn seam_desc(vk_pin: Option<Vec<i64>>, bound: Option<Vec<LeanExpr>>) -> EffectVm
 
 /// The DECLARATIVE seam — both halves `null`. This is the object the whole tree shipped.
 fn declarative() -> EffectVmDescriptor2 {
-    seam_desc(None, None)
+    seam_desc(None, ported())
 }
 
 /// The PINNED seam — the program is `DECLARED_VK` on all eight lanes and the commitment must equal
 /// the row's anchor block, lane for lane.
 fn pinned() -> EffectVmDescriptor2 {
-    seam_desc(Some(DECLARED_VK.to_vec()), Some(lanes(ANCHOR_BASE)))
+    seam_desc(
+        Some(DECLARED_VK.to_vec()),
+        CommitBinding::Bound(lanes(ANCHOR_BASE)),
+    )
 }
 
 /// ⚑ **THE RETIRED ONE-FELT TIE, RECONSTRUCTED AT EIGHT LANES** — the containment this widening
@@ -149,7 +163,7 @@ fn limb0_only() -> EffectVmDescriptor2 {
     // The high VK lanes are pinned to their own honest values, so this seam is satisfied by any row
     // agreeing with the declaration on lane 0 alone — the pre-widening reach.
     vk_pin.extend(DECLARED_VK[1..].iter().copied());
-    seam_desc(Some(vk_pin), Some(bound))
+    seam_desc(Some(vk_pin), CommitBinding::Bound(bound))
 }
 
 fn row(
@@ -307,8 +321,9 @@ fn the_declared_halves_are_inside_the_canonical_fingerprint() {
     use dregg_circuit::descriptor_ir2_canonical::canonical_effect_vm_descriptor2_bytes as enc;
     let d0 = enc(&declarative()).expect("declarative seam encodes");
     let d1 = enc(&pinned()).expect("pinned seam encodes");
-    let d2 = enc(&seam_desc(Some(DECLARED_VK.to_vec()), None)).expect("vk-only encodes");
-    let d3 = enc(&seam_desc(None, Some(lanes(ANCHOR_BASE)))).expect("bound-only encodes");
+    let d2 = enc(&seam_desc(Some(DECLARED_VK.to_vec()), ported())).expect("vk-only encodes");
+    let d3 = enc(&seam_desc(None, CommitBinding::Bound(lanes(ANCHOR_BASE))))
+        .expect("bound-only encodes");
     let d4 = enc(&limb0_only()).expect("limb-0 seam encodes");
     for (a, an, b, bn) in [
         (&d0, "declarative", &d1, "pinned"),
@@ -335,8 +350,11 @@ fn is_declarative_reports_exactly_the_unpinned_seams() {
     let cases = [
         (declarative(), true),
         (pinned(), false),
-        (seam_desc(Some(DECLARED_VK.to_vec()), None), false),
-        (seam_desc(None, Some(lanes(ANCHOR_BASE))), false),
+        (seam_desc(Some(DECLARED_VK.to_vec()), ported()), false),
+        (
+            seam_desc(None, CommitBinding::Bound(lanes(ANCHOR_BASE))),
+            false,
+        ),
     ];
     for (d, want) in cases {
         let binds: Vec<&ProofBindSpec> = d
@@ -416,7 +434,7 @@ fn a_high_lane_program_swap_proves_at_one_felt_and_is_refused_at_eight() {
 fn limb0_only_vk_swapped() -> EffectVmDescriptor2 {
     seam_desc(
         Some(moved(DECLARED_VK, 7, 0xdead).to_vec()),
-        Some(lanes(ANCHOR_BASE)),
+        CommitBinding::Bound(lanes(ANCHOR_BASE)),
     )
 }
 
@@ -431,7 +449,7 @@ fn a_narrow_seam_is_refused_by_the_descriptor_check() {
         m.commit.truncate(1);
         m.vk.truncate(1);
         m.vk_pin = Some(vec![DECLARED_VK[0]]);
-        m.bound = Some(vec![LeanExpr::Var(ANCHOR_BASE)]);
+        m.bound = CommitBinding::Bound(vec![LeanExpr::Var(ANCHOR_BASE)]);
     }
     let err = check_descriptor2_wellformed(&d).expect_err("a one-lane seam must be refused");
     assert!(

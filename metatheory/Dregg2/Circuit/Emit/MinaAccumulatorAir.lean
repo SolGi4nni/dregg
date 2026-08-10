@@ -1963,7 +1963,7 @@ def headBindLeg (H : List ℤ) (C : Pt3) : AirLeg :=
         , commit := headCommitLanes
         , vk := (List.range HEAD_LANES).map (fun i => Dregg2.Circuit.Expr.var (HEAD_VK i))
         , vkPin := some MINA_HEAD_VK_LANES
-        , bound := some (headBoundLanes H C) }
+        , bound := .bound (headBoundLanes H C) }
 
 /-- The routed block's tables at the WIDENED main declaration. Only the main table's width moves;
 the three range tables and the addend manifest are `routedTables`' verbatim. -/
@@ -1997,7 +1997,7 @@ theorem accHeadAir_mainRailOk (As : List Pt3) (H : List ℤ) (C : Pt3) :
   refine ⟨⟨⟨accRoutedAir_mainRailOk [], by decide⟩, by decide⟩, ?_⟩
   simp only [List.all_cons, List.all_nil, Bool.and_true, AirLeg.mainRailOk, headBindLeg,
     Dregg2.Circuit.EffectAirIR.BindLeg.mainRailOk, headCommitLanes, headBoundLanes,
-    Option.isNone, List.length_append, List.length_map, List.length_range,
+    Option.isNone, Dregg2.Circuit.DescriptorIR2.CommitBindingOf.isPort, List.length_append, List.length_map, List.length_range,
     MINA_HEAD_VK_LANES]
   decide
 
@@ -2119,7 +2119,7 @@ def headProofBind (H : List ℤ) (C : Pt3) : Dregg2.Circuit.DescriptorIR2.ProofB
   , vk := ((List.range HEAD_LANES).map
       (fun i => Dregg2.Circuit.Expr.var (HEAD_VK i))).map Dregg2.Exec.CircuitEmit.emitExpr
   , vkPin := some MINA_HEAD_VK_LANES
-  , bound := some ((headBoundLanes H C).map Dregg2.Exec.CircuitEmit.emitExpr) }
+  , bound := .bound ((headBoundLanes H C).map Dregg2.Exec.CircuitEmit.emitExpr) }
 
 /-- ⚑ **THE EMITTED SEAM IS THE LOWERED LEG** — one object, two spellings, joined by `rfl`. -/
 theorem the_emitted_seam_is_the_lowered_leg (H : List ℤ) (C : Pt3) :

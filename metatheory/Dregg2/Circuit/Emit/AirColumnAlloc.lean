@@ -138,7 +138,7 @@ def renameLeg (σ : Nat → Nat) : AirLeg → AirLeg
                           guard  := renameExpr σ b.guard
                         , commit := b.commit.map (renameExpr σ)
                         , vk     := b.vk.map (renameExpr σ)
-                        , bound  := b.bound.map (List.map (renameExpr σ)) }
+                        , bound  := b.bound.map (renameExpr σ) }
 
 /-- Rename a one-wire range leg. -/
 def renameRange (σ : Nat → Nat) (r : RangeLeg) : RangeLeg := { r with wire := σ r.wire }
@@ -233,7 +233,9 @@ theorem renameLeg_mainRailOk (σ : Nat → Nat) (l : AirLeg) :
         simp [renameLeg, AirLeg.mainRailOk, ChalLeg.mainRailOk, renameChal_readsNext]
   | bind b =>
       cases hb : b.bound <;>
-        simp [renameLeg, AirLeg.mainRailOk, BindLeg.mainRailOk, hb]
+        simp [renameLeg, AirLeg.mainRailOk, BindLeg.mainRailOk, hb,
+          Dregg2.Circuit.DescriptorIR2.CommitBindingOf.map,
+          Dregg2.Circuit.DescriptorIR2.CommitBindingOf.isPort]
 
 /-- ⚑ **THE ALLOCATED BLOCK IS STILL MAIN-RAIL EXPRESSIBLE.** So `lowerTiedAir`/`lowerAirCertified`
 elaborate on it with the same `by decide` the unallocated block used. -/
@@ -273,8 +275,9 @@ theorem renameLeg_forces (σ : Nat → Nat) (tf : TraceFamily) (env : VmRowEnv)
   | chal c =>
       cases c.sel <;> simp [renameLeg, AirLeg.forces, renameChal_eval]
   | bind b =>
-      simp [renameLeg, AirLeg.forces, List.map_map, Function.comp_def, renameExpr_eval, renameEnv,
-        Option.map_eq_some_iff]
+      cases hb : b.bound <;>
+        simp [renameLeg, AirLeg.forces, List.map_map, Function.comp_def, renameExpr_eval, renameEnv,
+          hb, Dregg2.Circuit.DescriptorIR2.CommitBindingOf.map]
 
 /-- The whole leg list, one `∀` over the source's legs. -/
 theorem renameAir_forces (σ : Nat → Nat) (tf : TraceFamily) (env : VmRowEnv)

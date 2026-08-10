@@ -953,7 +953,9 @@ def wrapBindLeg : AirLeg :=
         , commit := (List.range 9).map (fun i => .var (SUB_PI i))
         , vk := (List.range 9).map (fun i => .var (SUB_VK i))
         , vkPin := some CHAINLINK_VK_LANES
-        , bound := none }
+        -- ⚑ 2026-08-10: the commit half is the head's `sub-proof-commitment` PORT, covered by
+        -- REFUSAL 4 (`subPiWeld`). It emits nothing here, and now SAYS so with a name.
+        , bound := .port ⟨"sub-proof-commitment", "dregg_turn::executor::mina_head_verifier::check_transcript_binding"⟩ }
 
 /-- The bind legs — now exactly one. -/
 def wrapBindLegs : List AirLeg := [wrapBindLeg]
@@ -1095,7 +1097,9 @@ def linkBindLeg : AirLeg :=
         , commit := (List.range 9).map (fun i => .var (TIP_STATE i))
         , vk := (List.range 9).map (fun i => .var (LINK_VK i))
         , vkPin := some LINK_VK_LANES
-        , bound := none }
+        -- ⚑ 2026-08-10: the commit half is the head's `tip-state` PORT, covered by the registered
+        -- `headTipSeam` (`tipPortCovered : CoveredPort`).
+        , bound := .port ⟨"tip-state", "dregg-seam-head-tip-to-link::v1"⟩ }
 
 /-- The segment-bind legs — exactly one. -/
 def linkBindLegs : List AirLeg := [linkBindLeg]
@@ -1183,7 +1187,9 @@ def conjBindLeg : AirLeg :=
         , commit := (List.range 9).map (fun i => .var (CONJ_PI i))
         , vk := (List.range 9).map (fun i => .var (CONJ_VK i))
         , vkPin := some CONJ_VK_LANES
-        , bound := none }
+        -- ⚑ 2026-08-10: the commit half is the head's `conjunction-commitment` PORT, covered by
+        -- REFUSAL 15 (`conjPiWeld`).
+        , bound := .port ⟨"conjunction-commitment", "dregg_turn::executor::mina_head_verifier::check_conjunction_binding"⟩ }
 
 /-- The finalize-bind legs — exactly one. -/
 def conjBindLegs : List AirLeg := [conjBindLeg]
@@ -1477,7 +1483,9 @@ theorem minaLcVerifyDesc_proof_binds :
                    , [.var (SUB_VK 0), .var (SUB_VK 1), .var (SUB_VK 2), .var (SUB_VK 3)
                      , .var (SUB_VK 4), .var (SUB_VK 5), .var (SUB_VK 6), .var (SUB_VK 7)
                      , .var (SUB_VK 8)]
-                   , some CHAINLINK_VK_LANES, none⟩ ] := rfl
+                   , some CHAINLINK_VK_LANES
+                   , .port ⟨"sub-proof-commitment",
+                       "dregg_turn::executor::mina_head_verifier::check_transcript_binding"⟩⟩ ] := rfl
 
 /-- ⚑ **AND NOT ONE OF THEM IS DECLARATIVE, MEASURED ON THE EMITTED DESCRIPTOR.**
 `proofBindDeclarative` is the tree's census of recursion seams that pin neither program nor
@@ -1503,7 +1511,8 @@ theorem minaLcVerifyDesc_link_bind :
                    , [.var (LINK_VK 0), .var (LINK_VK 1), .var (LINK_VK 2), .var (LINK_VK 3)
                      , .var (LINK_VK 4), .var (LINK_VK 5), .var (LINK_VK 6), .var (LINK_VK 7)
                      , .var (LINK_VK 8)]
-                   , some LINK_VK_LANES, none⟩ ] := rfl
+                   , some LINK_VK_LANES
+                   , .port ⟨"tip-state", "dregg-seam-head-tip-to-link::v1"⟩⟩ ] := rfl
 
 /-- ⚑⚑⚑ **THE FINALIZE BIND, AS THE COMPILER EMITTED IT** — the whole §2d declaration, on the bytes,
 at its emitted position (64; 63 is the `FINALIZE_XI_B_PROVED` gate, 65..73 the nine commitment pins).
@@ -1518,7 +1527,9 @@ theorem minaLcVerifyDesc_conj_bind :
                    , [.var (CONJ_VK 0), .var (CONJ_VK 1), .var (CONJ_VK 2), .var (CONJ_VK 3)
                      , .var (CONJ_VK 4), .var (CONJ_VK 5), .var (CONJ_VK 6), .var (CONJ_VK 7)
                      , .var (CONJ_VK 8)]
-                   , some CONJ_VK_LANES, none⟩ ]
+                   , some CONJ_VK_LANES
+                   , .port ⟨"conjunction-commitment",
+                       "dregg_turn::executor::mina_head_verifier::check_conjunction_binding"⟩⟩ ]
       ++ [ .base (.piBinding VmRow.first (CONJ_PI 0) (PI_CONJ_PI 0))
          , .base (.piBinding VmRow.first (CONJ_PI 1) (PI_CONJ_PI 1))
          , .base (.piBinding VmRow.first (CONJ_PI 2) (PI_CONJ_PI 2))
@@ -1538,7 +1549,7 @@ polynomial — the census now says which); stating it here too means a re-point 
 the commitment off `TIP_STATE` reds in the file that authored it, not only in the census. -/
 theorem mina_link_bind_commits_the_tip_lanes :
     ((Dregg2.Circuit.DescriptorIR2.proofBindsOf minaLcVerifyDesc).getD 1
-        ⟨.const 0, [], [], none, none⟩).commit
+        ⟨.const 0, [], [], none, .port ⟨"", ""⟩⟩).commit
       = (List.range 9).map (fun i => Dregg2.Exec.CircuitEmit.EmittedExpr.var (TIP_STATE i)) := rfl
 
 /-- ⚑ **AND THE SEAM DECLARES NINE LANES ON BOTH HALVES, PINNED ON EVERY ONE.** The width verdict on

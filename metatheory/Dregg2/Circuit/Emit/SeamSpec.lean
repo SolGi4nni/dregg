@@ -328,8 +328,8 @@ def legJoinsAcross (lo w : Nat) : AirLeg → Bool
               crosses (g ++ exprCols lane)))
         -- guard·(commitᵢ − boundᵢ), one polynomial per lane, only under a bound.
         || (match b.bound with
-            | none => false
-            | some bs => (b.commit.zip bs).any (fun cb =>
+            | .port _ => false
+            | .bound bs => (b.commit.zip bs).any (fun cb =>
                 crosses (g ++ exprCols cb.1
                            ++ exprCols cb.2)))
   | l =>

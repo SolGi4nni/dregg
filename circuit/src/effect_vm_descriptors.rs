@@ -4818,9 +4818,19 @@ mod tests {
                     .map(|k| LeanExpr::Var(PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k))
                     .chain((0..4).map(|k| LeanExpr::Var(4100 + k)))
                     .collect(),
-                // Custom declares both halves of the seam absent — see `ProofBindSpec`.
+                // ⚑ Custom PORTS both halves — see `CommitBinding`. The program really is the
+                // caller's to choose and the commitment really is derived off-row; what changed
+                // on 2026-08-10 is that saying so requires NAMING the weld that binds them at the
+                // fold, instead of writing `None` and emitting nothing.
                 vk_pin: None,
-                bound: None,
+                bound: crate::descriptor_ir2::CommitBinding::Port(
+                    crate::descriptor_ir2::PortCover {
+                        port: "custom-proof-commitment".to_owned(),
+                        seam:
+                            "dregg_circuit_prove::joint_turn_recursive::prove_custom_binding_node"
+                                .to_owned(),
+                    },
+                ),
             }));
             let short = mk("custom-subtracted-short-window", with_decl.clone(), 58);
             assert!(

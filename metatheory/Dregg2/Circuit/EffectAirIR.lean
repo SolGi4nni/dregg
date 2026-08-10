@@ -193,8 +193,8 @@ it, so the only `proofBind`s in the tree were in hand-written `VmConstraint2` li
 that wants its carrier to be the output of a sub-proof rather than a bit could therefore either give
 up the compiler (house law #1) or give up the seam. This is the source-language half.
 
-⚑ **AND IT REFUSES THE DECLARATIVE SHAPE.** `BindLeg.mainRailOk` is FALSE when both `vkPin` and
-`bound` are `none` — the shape `ProofBind.isDeclarative` counts and `proofBindDeclarative` exists to
+⚑ **AND IT REFUSES THE DECLARATIVE SHAPE.** `BindLeg.mainRailOk` is FALSE when `vkPin` is `none`
+AND `bound` is a PORT (2026-08-10: `bound`'s `none` became a NAMED port) — the shape `ProofBind.isDeclarative` counts and `proofBindDeclarative` exists to
 ratchet down. A compiled AIR cannot say "bound to a verifying proof of SOME program about SOMETHING";
 the unpinned form remains reachable only from the hand-written Custom descriptor, whose whole job is
 to dispatch an arbitrary registered cell program. A leg that named neither would lower to the
@@ -211,10 +211,13 @@ structure BindLeg where
   commit : List Expr
   /-- The row's sub-proof program-VK LANES, low limb first; same length as `commit`. -/
   vk     : List Expr
-  /-- ⚑ The DECLARED program VK LANES this row recursion-binds to, as literals. -/
+  /-- ⚑ The DECLARED program VK LANES this row recursion-binds to, as literals. ⚠ Still an
+  `Option`, and still the same defect the `bound` half shed on 2026-08-10 — see
+  `DescriptorIR2.ProofBind.vkPin`. -/
   vkPin  : Option (List ℤ)
-  /-- ⚑ The DECLARED row-local expressions the `commit` lanes must equal. -/
-  bound  : Option (List Expr)
+  /-- ⚑ What holds the `commit` lanes — row-local expressions, or a NAMED port
+  (`DescriptorIR2.CommitBinding` — read its docblock for the flag day). -/
+  bound  : DescriptorIR2.CommitBindingOf Expr
 
 /-- ⚑ **The main rail's verdict on ONE bind leg** — two refusals, and both are the same lesson.
 
@@ -236,11 +239,13 @@ and the block hash = 54 lanes) against a nine-lane `Faithful9` fingerprint, and 
 conjunct the only way to say it was to widen the fingerprint to 54 lanes — i.e. to lie about the
 program's identity in order to state the sentence. Both floors still bite; neither is relaxed. -/
 def BindLeg.mainRailOk (b : BindLeg) : Bool :=
-  !(b.vkPin.isNone && b.bound.isNone)
+  !(b.vkPin.isNone && b.bound.isPort)
     && decide (PROOF_BIND_MIN_LANES ≤ b.commit.length)
     && decide (PROOF_BIND_MIN_LANES ≤ b.vk.length)
     && (match b.vkPin with | none => true | some vs => vs.length == b.vk.length)
-    && (match b.bound with | none => true | some bs => bs.length == b.commit.length)
+    && (match b.bound with
+        | .port c   => c.namesOk
+        | .bound bs => bs.length == b.commit.length)
 
 /-- **A PI-PIN leg** — the (d) capability. `EffectSpec2`'s lowering could pin only FIRST-row PIs
 (the `PIBindsDigests` surface); a deployed boundary contract pins both ends. -/

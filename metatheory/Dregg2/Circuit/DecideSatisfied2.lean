@@ -117,9 +117,9 @@ def decideProofBind (env : VmRowEnv) (m : ProofBind) : Bool :=
    | none    => true
    | some vs => decideZeroLanes (m.guard.eval env.loc) (m.vk.map (·.eval env.loc)) vs) &&
   (match m.bound with
-   | none    => true
-   | some bs => decideZeroLanes (m.guard.eval env.loc) (m.commit.map (·.eval env.loc))
-                  (bs.map (·.eval env.loc)))
+   | .port _   => true
+   | .bound bs => decideZeroLanes (m.guard.eval env.loc) (m.commit.map (·.eval env.loc))
+                    (bs.map (·.eval env.loc)))
 
 theorem decideProofBind_iff (env : VmRowEnv) (m : ProofBind) :
     decideProofBind env m = true ↔ ProofBind.holdsAt env m := by

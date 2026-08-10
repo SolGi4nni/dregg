@@ -1011,7 +1011,9 @@ def deltaAbsorbBindLeg (st : Pt3) : AirLeg :=
         , commit := trInLanes st ++ deltaCommitLanes ++ trOutCommitLanes
         , vk     := fsVkLanes
         , vkPin  := some ABSORB_VK_LANES
-        , bound  := none }
+        -- ⚑ 2026-08-10: the `delta-absorb-pis` PORT. Its cover is the closing fold's connect,
+        -- named here so the registry gate resolves it rather than a docblock asserting it.
+        , bound  := .port ⟨"delta-absorb-pis", "dregg_circuit_prove::mina_wrap_closing_fold::connect_delta_absorb_pis"⟩ }
 
 /-- ⚑ **THE WELDED BLOCK** — the routed block VERBATIM, plus the weld. -/
 def closingFsAirOn (As : List Pt3) (d st : Pt3) : EffectAir :=
@@ -1040,6 +1042,8 @@ theorem closingFsAir_mainRailOk (As : List Pt3) (d st : Pt3) :
       Dregg2.Circuit.EffectAirIR.WindowLeg.mainRailOk,
       Dregg2.Circuit.EffectAirIR.BindLeg.mainRailOk,
       Dregg2.Circuit.TableAirIR.readsNext,
+      Dregg2.Circuit.DescriptorIR2.CommitBindingOf.isPort,
+      Dregg2.Circuit.DescriptorIR2.PortCover.namesOk,
       Dregg2.Circuit.DescriptorIR2.PROOF_BIND_MIN_LANES, SK]
 
 /-- ⚑⚑ **THE COMMITMENT IS THE SUB-PROGRAM'S PUBLIC-INPUT VECTOR, LANE FOR LANE.** `192` against

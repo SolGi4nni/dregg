@@ -128,7 +128,7 @@ def AirLeg.forces (tf : TraceFamily) (env : VmRowEnv) (isFirst isLast : Bool) : 
       (b.guard.eval env.loc * (b.guard.eval env.loc - 1) ≡ 0 [ZMOD PMOD])
       ∧ (∀ vs, b.vkPin = some vs →
             zeroLanes (b.guard.eval env.loc) (b.vk.map (fun e => e.eval env.loc)) vs)
-      ∧ (∀ bs, b.bound = some bs →
+      ∧ (∀ bs, b.bound = .bound bs →
             zeroLanes (b.guard.eval env.loc) (b.commit.map (fun e => e.eval env.loc))
               (bs.map (fun e => e.eval env.loc)))
 
@@ -193,8 +193,8 @@ def AirLeg.readCols : AirLeg → List Nat
       exprCols b.guard
         ++ (if b.vkPin.isSome then b.vk.flatMap exprCols else [])
         ++ (match b.bound with
-            | none => []
-            | some bs => b.commit.flatMap exprCols ++ bs.flatMap exprCols)
+            | .port _   => []
+            | .bound bs => b.commit.flatMap exprCols ++ bs.flatMap exprCols)
 
 /-- ⚑ **A leg JOINS iff it relates at least two distinct columns.** An arity-1 range lookup and a
 one-column forcing gate both fail this, and both should: neither ties its column to anything. -/
@@ -502,7 +502,7 @@ theorem lowerLeg_forces_bind (b : BindLeg) (hok : b.mainRailOk = true)
     (AirLeg.bind b).forces tf env isFirst isLast := by
   have hmem := h (VmConstraint2.proofBind
       ⟨emitExpr b.guard, b.commit.map emitExpr, b.vk.map emitExpr, b.vkPin,
-       b.bound.map (List.map emitExpr)⟩)
+       b.bound.map emitExpr⟩)
     (by simp [lowerLeg, lowerBindLeg, hok])
   simp only [VmConstraint2.holdsAt, ProofBind.holdsAt] at hmem
   obtain ⟨hg, hvk, hbd⟩ := hmem
@@ -515,7 +515,7 @@ theorem lowerLeg_forces_bind (b : BindLeg) (hok : b.mainRailOk = true)
   · intro bs hbs
     rw [hbs] at hbd
     rw [emitExpr_eval] at hbd
-    simpa only [Option.map_some, map_emit_eval] using hbd
+    simpa only [CommitBindingOf.map, map_emit_eval] using hbd
 
 /-- ⚑ **THE COMBINED PER-LEG LEMMA.** Every leg kind, one statement. -/
 theorem lowerLeg_forces (l : AirLeg) (hok : l.mainRailOk = true)

@@ -118,9 +118,24 @@ PROVENANCE_FILE = "PROVENANCE.json"                # lives inside circuit/descri
 #   * dregg-cert-qp-portfolio6-s3-ir2.json — regenerated + `--check`ed by regen-cert-qp.sh
 #     (`lake env lean --run EmitCertQpDescriptor.lean`, deliberately outside this driver's EMITTERS).
 #   * regen-cert-qp.sh — the regen SCRIPT itself (not a descriptor; it has no emitter by construction).
+#   * seams/*.json — the SeamSpec / PiPort registry, emitted by `metatheory/EmitSeamSpecs.lean`
+#     and drift-checked by `circuit-prove/tests/seam_specs.rs` (which REFUSES a seam end whose
+#     recomputed fingerprint lanes disagree with the descriptor actually loaded).
+#     ⚑ 2026-08-10, said plainly rather than hidden by this entry: these were checked in with NO
+#     emitter row at all, so this driver reported a routing gap and REFUSED EVERY INSTALL — which
+#     is how the `proof_bind` flag day found it. Routing `EmitSeamSpecs.lean` here is the real
+#     fix and was attempted; it imports `Dregg2/Circuit/Emit/MinaBodyPreimageSeams.lean`, which is
+#     UNTRACKED, outside the `Dregg2` umbrella, and currently RED on a sibling's in-flight rename
+#     (`MinaPhase1Chain.fpAbsorbProg`). Routing a red untracked module would block every future
+#     emit on another lane's working tree. Route it the day that module lands green.
 COVERAGE_EXEMPT = frozenset({
     "dregg-cert-qp-portfolio6-s3-ir2.json",
     "regen-cert-qp.sh",
+    "seams/ports.json",
+    "seams/seam-chain-fresh-sponge.json",
+    "seams/seam-chain-vprime-to-finalize.json",
+    "seams/seam-head-tip-to-link.json",
+    "seams/seam-xi-endo-to-conjunction.json",
 })
 AUDIT_LOG_REL = Path("docs") / "VK-REGEN-LOG.md"   # git-tracked append-only regen log
 ACK_ENV = "DREGG_VK_REGEN_ACK"

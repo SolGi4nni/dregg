@@ -1392,7 +1392,10 @@ def customProofBindAt (commitHi vkHi : Nat) : Dregg2.Circuit.DescriptorIR2.Proof
     -- ⚑ What DID change on 2026-08-05 is the WIDTH of what the fold has to connect to: eight
     -- declared lanes, not lane 0 with seven felts unnamed by any constraint.
   , vkPin  := none
-  , bound  := none }
+  -- ⚑ 2026-08-10: the commit half is the Custom effect's `custom-proof-commitment` PORT,
+  -- covered by the fold's lane-by-lane `connect`. The `none` that used to sit here emitted
+  -- nothing AND named nothing; the port emits nothing and NAMES the welder.
+  , bound  := .port ⟨"custom-proof-commitment", "dregg_circuit_prove::joint_turn_recursive::prove_custom_binding_node"⟩ }
 
 /-- The un-rotated graduated face's commit-teeth base: the HIGH four commitment limbs, appended at
 the END of the graduated width (the V2 twin of `EffectVmEmitRotationV3.CUSTOM_COMMIT_TEETH_COL`). -/

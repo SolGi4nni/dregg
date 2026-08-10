@@ -309,8 +309,11 @@ def relatedCols : VmConstraint2 → List Nat
         | some _ => m.vk.flatMap (fun lane => poly (g ++ exprCols lane))
       let boundPolys : List Nat :=
         match m.bound with
-        | none => []
-        | some bs => (m.commit.zip bs).flatMap
+        -- ⚑ A PORT emits nothing over `commit`, exactly as the retired `none` did. The difference
+        -- the 2026-08-10 flag day bought is upstream: the port NAMES its cover, so a reader can
+        -- resolve what forces these columns instead of inferring silence.
+        | .port _ => []
+        | .bound bs => (m.commit.zip bs).flatMap
             (fun cb => poly (g ++ exprCols cb.1 ++ exprCols cb.2))
       nub (poly g ++ pinPolys ++ boundPolys)
 
@@ -324,7 +327,7 @@ FORCES none of them, and the two readings must never share a name again. Used by
 def declaredCols : VmConstraint2 → List Nat
   | .proofBind m => nub ((exprCols m.guard) ++ (m.commit.flatMap exprCols) ++
                          (m.vk.flatMap exprCols) ++
-                         ((m.bound.getD []).flatMap exprCols))
+                         (m.bound.lanes.flatMap exprCols))
   | c            => relatedCols c
 
 /-- A constraint RELATES iff it names at least two distinct columns. ⚑ An arity-1 range lookup and a
