@@ -108,6 +108,45 @@ fn main() {
         s
     };
 
+    // ⚑⚑ **AND THE PRECHALLENGE FORM, WHICH IS WHAT A PACKED STATEMENT WORD HOLDS.**
+    // `DUMMY_PAD_CHALS` above is `Dummy.Ipa.Wrap.challenges_computed` — already endo-expanded, and
+    // the expansion is one-way, so it cannot be put in a statement word. `dummy_ipa_wrap_challenges()`
+    // (`unfinalized.rs:286-290`, `std::array::from_fn(|i| ro::chal(15 - i).inner)`) is
+    // `Dummy.Ipa.Wrap.challenges` — the fifteen 128-bit draws themselves, which IS the shape
+    // `spec.ml:374-392` packs and the shape `bin/pickles_kimchi_marshal`'s
+    // `step_statement_prechallenges` reads back out of the emitted step statement.
+    let pre = ledger::proofs::unfinalized::dummy_ipa_wrap_challenges();
+    let expanded_matches = {
+        use ledger::proofs::public_input::scalar_challenge::ScalarChallenge;
+        use ledger::proofs::transaction::endos;
+        let (_, endo) = endos::<mina_curves::pasta::Fp>();
+        pre.iter()
+            .map(|c| ScalarChallenge::from(*c).to_field(&endo))
+            .collect::<Vec<_>>()
+            == chals.to_vec()
+    };
+    println!(
+        "[dummy] Dummy.Ipa.Wrap.challenges (prechallenge form) endo-expands to \
+         challenges_computed : {expanded_matches}"
+    );
+    assert!(
+        expanded_matches,
+        "Dummy.Ipa.Wrap.challenges must be the preimage of Dummy.Ipa.Wrap.challenges_computed — \
+         if they are two unrelated constants, a statement word carrying the former does not \
+         reconstruct the latter and the pad slot cannot close"
+    );
+    let pre_list = {
+        let mut s = String::new();
+        for (i, c) in pre.iter().enumerate() {
+            let v = (u128::from(c[1]) << 64) | u128::from(c[0]);
+            s.push_str(if i == 0 { "  [ " } else { "  , " });
+            s.push_str(&v.to_string());
+            s.push('\n');
+        }
+        s.push_str("  ]");
+        s
+    };
+
     let body = format!(
         "/-\n\
          # MinaWrapHackDummySg — ⚑ THE WRAP RECORD'S PADDED SLOT, PREIMAGE AND DIGEST.\n\n\
@@ -153,6 +192,20 @@ fn main() {
          has no independent source for\" and declined to emit the `mlmb < 2` opening state because\n\
          of it. openmina carries them as literals; this is that source. -/\n\
          def DUMMY_PAD_CHALS : List Nat :=\n{chal_list}\n\n\
+         /-- ⚑⚑⚑ **`Dummy.Ipa.Wrap.challenges` — THE PRECHALLENGE FORM, AND THE ONE A PACKED\n\
+         STATEMENT WORD CAN HOLD.** `unfinalized.rs:286-290`, `from_fn(|i| ro::chal(15 - i).inner)`.\n\n\
+         `DUMMY_PAD_CHALS` above is the endo-EXPANDED vector and the expansion is one-way, so a\n\
+         statement word cannot carry it; these fifteen 128-bit draws are its preimage — asserted in\n\
+         the generator, not assumed — and they are what the padding block's fifteen\n\
+         `bpChallenge` words must be.\n\n\
+         ⚠ **THIS IS WHAT `KimchiStepMainCore.stmtDummyVal` DOES NOT YET EMIT.** It fills every\n\
+         128-bit padding slot with `(7 + 1000003·j) % 2^127` — 24-25 bits — so the wrap proof's\n\
+         PAD recursion slot commits a challenge polynomial that is not Mina's, while\n\
+         `prover.rs:130-140` front-pads the reader's list with `DUMMY_WRAP_SG`. `gate_a2` reports\n\
+         that slot RED, and `marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS` refuses the same shape\n\
+         wherever it reaches a slot the record PUBLISHES.\n\
+         -/\n\
+         def DUMMY_WRAP_PRECHALS : List Nat :=\n{pre_list}\n\n\
          /-- ⚑⚑ **`messages_for_next_wrap_proof_padding()`** (`transaction.rs:3691-3700`) — the\n\
          `hash()` of the padded record's slot-0 entry, i.e. the squeeze over\n\
          `DUMMY_PAD_CHALS ++ DUMMY_PAD_CHALS ++ [DUMMY_STEP_SG_X, DUMMY_STEP_SG_Y]`.\n\n\

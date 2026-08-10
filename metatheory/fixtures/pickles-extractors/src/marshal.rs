@@ -30,8 +30,36 @@
 //! | `proof.evaluations.X` | `evals.X.zeta[0]`, `evals.X.zeta_omega[0]` | wire carries one chunk per point |
 //! | `proof.ft_eval1` | `ft_eval1` | |
 //! | `proof.bulletproof.{lr,z_1,z_2,delta,challenge_polynomial_commitment}` | `proof.{lr,z1,z2,delta,sg}` | |
-//! | `…messages_for_next_step_proof.challenge_polynomial_commitments[i]` | `prev_challenges[i].comm.chunks[0]` | ⚑ see below |
+//! | `…messages_for_next_step_proof.challenge_polynomial_commitments[i]` | `prev_challenges[WRAP_PAD_SLOTS + i].comm.chunks[0]` | ⚑ see below |
 //! | `…messages_for_next_wrap_proof.old_bulletproof_challenges[i][j]` | caller, **CHECKED** against `prev_challenges[i].chals[j]` | ⚑ see below |
+//!
+//! ### ⚑⚑⚑ THE RECURSION PAIR — WHICH TWO FIELDS, MEASURED RATHER THAN ASSUMED
+//!
+//! Those two rows are **one object**, and it is not the object the field names suggest. The
+//! accumulator relation Mina's own reader reconstructs is
+//!
+//! ```text
+//! messages_for_next_step_proof.challenge_polynomial_commitments[i]
+//!     == ⟨ b_poly_coefficients( messages_for_next_wrap_proof.old_bulletproof_challenges[i] ),
+//!          pallas_srs.g ⟩                       -- FIFTEEN, Fq, over 2^15 Pallas generators
+//! ```
+//!
+//! — front-padded to `PROOFS_VERIFIED` with `dummy_ipa_wrap_sg()` and then `zip`ped, identically in
+//! the prover (`wrap.rs:729-748`) and the reader (`prover.rs:113-158
+//! make_padded_proof_from_p2p`, the map that feeds `kimchi::verifier::verify`).
+//!
+//! **Measured on devnet block 539508** by `bin/wire_recursion_pairing_probe`: that relation is
+//! `true` at both slots; the same commitment against `messages_for_next_step_proof
+//! .old_bulletproof_challenges` is `false` at fifteen rounds and `false` at sixteen; and the
+//! SWAPPED-index control is `false`, so slot order is load-bearing rather than incidental.
+//!
+//! ⚠ **So `messages_for_next_step_proof.old_bulletproof_challenges` is NOT the commitment's
+//! partner.** It is `PaddedSeq<…, 16>` — Tick rounds, `BACKEND_TICK_ROUNDS_N` — and the whole of it
+//! is consumed by exactly one thing, `MessagesForNextStepProof::to_fields`
+//! (`public_input/messages.rs:209-216`, `fields.extend_from_slice(old)`), i.e. the hash that is
+//! wrap public word 12. There is no fifteen-into-sixteen reconciliation to perform, and the
+//! sixteenth entry is not a pad: `PaddedSeq<T, N>` is `[T; N]` with every entry written, read and
+//! hashed (`pseq.rs`), the trailing binprot `()` being the OCaml `Vector` nil and not a slot.
 //! | `prev_evals.*` | the **step** proof's `ProofEvaluations` over `Fp` | `verification.rs:230 prev_evals_to_p2p` |
 //! | everything else in `statement.proof_state` | caller | `wrap_main`'s output, which we do not yet produce |
 //!
@@ -129,9 +157,49 @@ pub const PROOFS_VERIFIED: usize = 2;
 /// every wrap fixture below the `sg_old` block.
 pub const STEP_RECURSION_SLOTS: usize = 1;
 
+/// ⚑⚑ **HOW MANY OF THE WRAP PROOF'S RECURSION SLOTS ARE MINA'S OWN `Wrap_hack` PAD — AND THE PAD
+/// IS AT THE FRONT.**
+///
+/// `wrap.rs:729-737` is the wrap prover building its own kimchi `prev_challenges`:
+///
+/// ```text
+/// let mut vec = <the step record>.challenge_polynomial_commitments.clone();
+/// while vec.len() < MAX_PROOFS_VERIFIED_N { vec.insert(0, dummy_ipa_wrap_sg()); }
+/// vec.into_iter().zip(<the wrap record>.old_bulletproof_challenges)
+/// ```
+///
+/// and `prover.rs:130-140` is the READER doing the identical `push_front` before the identical
+/// `zip`. So on a rule with one `verify_one` the wrap proof's slots are `[pad, real]`, and the
+/// accumulator list the wire carries is the **trailing** [`STEP_RECURSION_SLOTS`] of them —
+/// `Wrap_hack.pad_vector` is `Vector.extend_front_exn` (`wrap_hack.ml:26-28`) and
+/// `KimchiWrapHackDigest`'s `whNPad WH_REAL_SLOTS = 1` is the same fact on the Lean side.
+///
+/// ⚠ **THIS WAS A `take(STEP_RECURSION_SLOTS)` UNTIL 2026-08-10, WHICH TOOK THE PAD AND DROPPED THE
+/// REAL SLOT.** Nothing could see it: the marshaller emitted a one-entry list, every parse gate
+/// accepted, `accumulator_check` is a different pair and stayed `Ok(true)`, and the mispairing only
+/// exists after a reader front-pads — which no gate in this tree ran. `gate_a2` is that reader,
+/// and it reports both slots.
+pub const WRAP_PAD_SLOTS: usize = PROOFS_VERIFIED - STEP_RECURSION_SLOTS;
+
+/// ⚑ **THE FLOOR A PUBLISHED SLOT'S PRECHALLENGES MUST CLEAR.** Measured on devnet block 539508
+/// (`bin/wire_recursion_pairing_probe.rs`): all 62 prechallenges in the object are **120–128 bits**
+/// — `wrap_record` slots at 124–128 and 125–128, `step_record` slots at 123–128 and 120–128,
+/// `deferred_values` at 127–128. `KimchiStepMainCore.stmtDummyVal`'s filler is 24–25.
+/// 100 sits under every real value with twenty bits of margin and over every ladder by seventy-five.
+pub const ACCUMULATOR_PRECHALLENGE_MIN_BITS: u32 = 100;
+
 /// A 128-bit scalar prechallenge, little-endian limbs — exactly what the wire's
 /// `Limb_vector.Constant.Hex64 * Hex64` carries.
 pub type PreChallenge = [u64; 2];
+
+/// Bit length of a two-limb prechallenge.
+pub fn prechallenge_bits(p: &PreChallenge) -> u32 {
+    if p[1] != 0 {
+        128 - p[1].leading_zeros()
+    } else {
+        64 - p[0].leading_zeros()
+    }
+}
 
 // ───────────────────────────── refusals ─────────────────────────────
 
@@ -190,6 +258,26 @@ pub enum MarshalError {
     },
     /// The step proof carried no public-input evaluation, or carried it chunked.
     PublicEval { got: Option<usize> },
+    /// ⚑⚑ **A SLOT THE ACCUMULATOR LIST SELECTS CARRIES A PRECHALLENGE THAT IS NOT A SQUEEZE.**
+    ///
+    /// `messages_for_next_step_proof.challenge_polynomial_commitments[i]` is the commitment to
+    /// `b_poly(messages_for_next_wrap_proof.old_bulletproof_challenges[i])` — measured true on both
+    /// slots of devnet block 539508, with the swapped-index control refuting
+    /// (`bin/wire_recursion_pairing_probe.rs`). A slot the marshaller PUBLISHES is therefore a
+    /// slot whose fifteen prechallenges Mina will endo-expand and fold, and each of them is an
+    /// `Ro.scalar_chal ()` draw: **120–128 bits on that block, minimum 120 over all 62 values in
+    /// it.** A structured filler is not one, and a filler is exactly what got published — the
+    /// padding block's fifteen were `KimchiStepMainCore.stmtDummyVal`, `(7 + 1000003·j) % 2^127`,
+    /// **24–25 bits.**
+    ///
+    /// [`ACCUMULATOR_PRECHALLENGE_MIN_BITS`] is the floor, set well under the 120 a real block
+    /// shows and far over anything a ladder produces.
+    AccumulatorPrechallengeTooSmall {
+        slot: usize,
+        round: usize,
+        bits: u32,
+        floor: u32,
+    },
 }
 
 impl std::fmt::Display for MarshalError {
@@ -246,6 +334,19 @@ impl std::fmt::Display for MarshalError {
                 None => write!(f, "step proof carries no public-input evaluation"),
                 Some(n) => write!(f, "step proof's public-input evaluation has {n} chunks, wire takes 1"),
             },
+            Self::AccumulatorPrechallengeTooSmall {
+                slot,
+                round,
+                bits,
+                floor,
+            } => write!(
+                f,
+                "wrap slot {slot} round {round}: the prechallenge is {bits} bits, under the {floor}-bit \
+                 floor — this slot's commitment is PUBLISHED as \
+                 messages_for_next_step_proof.challenge_polynomial_commitments, so these fifteen are \
+                 what Mina endo-expands and folds against it, and a squeeze is 120-128 bits on a real \
+                 block while a structured filler is not"
+            ),
         }
     }
 }
@@ -606,12 +707,18 @@ pub fn marshal(
     // length, so this walks the step record's arity rather than the wrap side's `Max_proofs_verified`.
     // A two-entry commitment vector beside a one-entry challenge vector is not a padded record; it
     // is a record `MessagesForNextStepProof::to_fields` would hash as neither shape.
+    //
+    // ⚑⚑⚑ **AND THEY ARE THE TRAILING SLOTS.** See [`WRAP_PAD_SLOTS`]: both the wrap prover
+    // (`wrap.rs:729-737`) and the reader (`prover.rs:130-140`) FRONT-pad this list back to
+    // `PROOFS_VERIFIED` and then `zip` it, in order, against
+    // `messages_for_next_wrap_proof.old_bulletproof_challenges` — the fifteen, not the sixteen.
+    // Publishing the leading slots hands Mina a proof whose every recursion pair is shifted by one.
     let mut cpc: Vec<(BigInt, BigInt)> = Vec::with_capacity(STEP_RECURSION_SLOTS);
     for (i, rc) in proof
         .prev_challenges
         .iter()
-        .take(STEP_RECURSION_SLOTS)
         .enumerate()
+        .skip(WRAP_PAD_SLOTS)
     {
         if rc.comm.chunks.len() != 1 {
             return Err(MarshalError::Chunks {
@@ -619,6 +726,21 @@ pub fn marshal(
                 got: rc.comm.chunks.len(),
                 want: 1,
             });
+        }
+        // ⚑⚑ **THE FLOOR, ON THE SLOTS THIS RECORD PUBLISHES AND ONLY THOSE.** A slot whose
+        // commitment reaches the wire is a slot whose fifteen prechallenges Mina endo-expands and
+        // folds against it. `ACCUMULATOR_PRECHALLENGE_MIN_BITS` is measured against a real block;
+        // the ladder this pipeline used to publish here is 24 bits and does not clear it.
+        for (j, p) in st.old_wrap_bulletproof_challenges[i].iter().enumerate() {
+            let bits = prechallenge_bits(p);
+            if bits < ACCUMULATOR_PRECHALLENGE_MIN_BITS {
+                return Err(MarshalError::AccumulatorPrechallengeTooSmall {
+                    slot: i,
+                    round: j,
+                    bits,
+                    floor: ACCUMULATOR_PRECHALLENGE_MIN_BITS,
+                });
+            }
         }
         cpc.push(point(
             &format!("prev_challenges[{i}].comm.chunks[0]"),

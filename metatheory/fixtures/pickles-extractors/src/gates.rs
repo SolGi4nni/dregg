@@ -116,6 +116,81 @@ pub fn gate_a(srs: &SRS<Vesta>, wire: &Wire) -> Result<bool, String> {
     accumulator_check(srs, &[wire]).map_err(|e| format!("{e:?}"))
 }
 
+// ───────────────────────────── Gate A2 ─────────────────────────────
+
+/// One reconstructed recursion slot: what a Mina reader will hand `kimchi::verifier::verify`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReconstructedSlot {
+    /// `true` when the commitment came from the wire, `false` when the reader had to invent it —
+    /// `dummy_ipa_wrap_sg()`, inserted at the front.
+    pub from_wire: bool,
+    pub comm: Pallas,
+    pub chals: [Fq; 15],
+}
+
+/// ⚑⚑⚑ **GATE A2 — THE RECURSION PAIR, AS MINA'S READER REBUILDS IT.**
+///
+/// `accumulator_check` (gate A) is a **different pair**: the Vesta `messages_for_next_wrap_proof
+/// .challenge_polynomial_commitment` against the sixteen `deferred_values.bulletproof_challenges`.
+/// It is `Ok(true)` on an object whose *other* accumulator — the Pallas one the wrap proof's own
+/// kimchi `prev_challenges` carries — is completely mispaired, because nothing in gate A touches
+/// it. That blind spot is what this rung exists for.
+///
+/// This is `prover.rs:113-158 make_padded_proof_from_p2p`'s recursion-slot assembly, reproduced
+/// (the function is private, and `mod prover` is not `pub`):
+///
+/// ```text
+/// let mut comms = statement.messages_for_next_step_proof.challenge_polynomial_commitments;
+/// while comms.len() < 2 { comms.push_front(get_challenge_polynomial_commitments_padding()); }
+/// zip(comms, extract_bulletproof(statement.proof_state
+///                                 .messages_for_next_wrap_proof.old_bulletproof_challenges))
+/// ```
+///
+/// The result is exactly what `verify_impl` gives o1-labs' verifier as `prev_challenges`. A caller
+/// compares it against the `RecursionChallenge`s the proof was actually made with; anything that
+/// does not match means Mina will verify a proof we did not produce.
+///
+/// ⚠ The padding constant is `prover.rs:13-28`, which is `dummy_ipa_wrap_sg()`
+/// (`wrap.rs:545-568`) as a literal — the same point `MinaWrapHackDummySg.DUMMY_WRAP_SG` exports,
+/// and the same point `wrap.rs:736` prepends on the PROVER side. Reader and prover pad with one
+/// constant; that is why the reconstruction is meant to be exact and not approximate.
+pub fn gate_a2(wire: &Wire) -> Result<Vec<ReconstructedSlot>, String> {
+    // `prover.rs:13-28 get_challenge_polynomial_commitments_padding()` — `dummy_ipa_wrap_sg()`.
+    let pad = ledger::proofs::wrap::dummy_ipa_wrap_sg();
+
+    let comms: Vec<InnerCurve<Fp>> = extract_polynomial_commitment(
+        &wire
+            .statement
+            .messages_for_next_step_proof
+            .challenge_polynomial_commitments,
+    )
+    .map_err(|e| format!("{e:?}"))?;
+    let mut comms: Vec<(bool, Pallas)> = comms
+        .iter()
+        .map(|c| (true, InnerCurve::to_affine(c)))
+        .collect();
+    while comms.len() < crate::marshal::PROOFS_VERIFIED {
+        comms.insert(0, (false, pad));
+    }
+
+    let old = &wire
+        .statement
+        .proof_state
+        .messages_for_next_wrap_proof
+        .old_bulletproof_challenges;
+    let chals: Vec<[Fq; 15]> = extract_bulletproof(&[old.0[0].0.clone(), old.0[1].0.clone()]);
+
+    Ok(comms
+        .into_iter()
+        .zip(chals)
+        .map(|((from_wire, comm), chals)| ReconstructedSlot {
+            from_wire,
+            comm,
+            chals,
+        })
+        .collect())
+}
+
 // ───────────────────────────── Gate B ─────────────────────────────
 
 /// **`compute_deferred_values`, reconstructed around Mina's own `expand_deferred`.**

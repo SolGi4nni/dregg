@@ -71,6 +71,39 @@ def DUMMY_PAD_CHALS : List Nat :=
   , 4799483385651443229337780097631636300491234601736019220096005875687579936102
   ]
 
+/-- ⚑⚑⚑ **`Dummy.Ipa.Wrap.challenges` — THE PRECHALLENGE FORM, AND THE ONE A PACKED
+STATEMENT WORD CAN HOLD.** `unfinalized.rs:286-290`, `from_fn(|i| ro::chal(15 - i).inner)`.
+
+`DUMMY_PAD_CHALS` above is the endo-EXPANDED vector and the expansion is one-way, so a
+statement word cannot carry it; these fifteen 128-bit draws are its preimage — asserted in
+the generator, not assumed — and they are what the padding block's fifteen
+`bpChallenge` words must be.
+
+⚠ **THIS IS WHAT `KimchiStepMainCore.stmtDummyVal` DOES NOT YET EMIT.** It fills every
+128-bit padding slot with `(7 + 1000003·j) % 2^127` — 24-25 bits — so the wrap proof's
+PAD recursion slot commits a challenge polynomial that is not Mina's, while
+`prover.rs:130-140` front-pads the reader's list with `DUMMY_WRAP_SG`. `gate_a2` reports
+that slot RED, and `marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS` refuses the same shape
+wherever it reaches a slot the record PUBLISHES.
+-/
+def DUMMY_WRAP_PRECHALS : List Nat :=
+  [ 161621990286339861369413299182831583087
+  , 294397517322790754025793051151124957079
+  , 10455894452509500744048069718178570187
+  , 224814704134265519234947971901913897491
+  , 330128161163701260858569889180053145483
+  , 102493828312258879830323023652412497031
+  , 215326567078568560823705023668614618897
+  , 120359744259981153545389569741970563149
+  , 221360828059242236386510005024107555656
+  , 257571901803291014519404945390244881518
+  , 209025140278641004900167089918138330057
+  , 201591733645229477386800950847198767694
+  , 318881875946480425567146057353930829431
+  , 198219236102229943192453714701868046676
+  , 122049445183499159876948789073679959987
+  ]
+
 /-- ⚑⚑ **`messages_for_next_wrap_proof_padding()`** (`transaction.rs:3691-3700`) — the
 `hash()` of the padded record's slot-0 entry, i.e. the squeeze over
 `DUMMY_PAD_CHALS ++ DUMMY_PAD_CHALS ++ [DUMMY_STEP_SG_X, DUMMY_STEP_SG_Y]`.

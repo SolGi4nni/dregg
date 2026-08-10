@@ -1196,6 +1196,174 @@ fn main() {
         ctl("the accumulator displaced by +G", &c3);
     }
 
+    // ═════════════════════════════════════════════════════════════════════════════════════
+    //  GATE A2 — the OTHER accumulator, the one gate A is structurally blind to.
+    // ═════════════════════════════════════════════════════════════════════════════════════
+    println!("\n== GATE A2 — the recursion pair, as Mina's own reader rebuilds it ==");
+    {
+        match gates::gate_a2(&wire) {
+            Err(e) => {
+                failed += 1;
+                println!("[gate A2] reconstruction REFUSED: {e}");
+            }
+            Ok(slots) => {
+                println!(
+                    "[gate A2] `make_padded_proof_from_p2p` rebuilds {} slot(s) from a {}-entry wire \
+                     list; {} front-padded with `dummy_ipa_wrap_sg()`",
+                    slots.len(),
+                    wire.statement
+                        .messages_for_next_step_proof
+                        .challenge_polynomial_commitments
+                        .len(),
+                    slots.iter().filter(|s| !s.from_wire).count()
+                );
+                assert_eq!(slots.len(), proof.prev_challenges.len());
+                for (i, s) in slots.iter().enumerate() {
+                    let rc = &proof.prev_challenges[i];
+                    let comm_ok = rc.comm.chunks[0] == s.comm;
+                    let chals_ok = rc.chals.as_slice() == s.chals.as_slice();
+                    // ⚑ The relation itself, not only the equality: is the reconstructed slot a
+                    // consistent (commitment, challenges) pair at all?
+                    let coeffs = poly_commitment::commitment::b_poly_coefficients(&s.chals);
+                    let poly = ark_poly::univariate::DensePolynomial::from_coefficients_vec(coeffs);
+                    let accumulates =
+                        wrap_index.srs.commit_non_hiding(&poly, 1).chunks[0] == s.comm;
+                    if !comm_ok || !chals_ok || !accumulates {
+                        failed += 1;
+                    }
+                    println!(
+                        "[gate A2] slot {i} ({}) : comm==the proof's={comm_ok} chals==the proof's={chals_ok} \
+                         ; comm == <b_poly(chals), pallas_srs.g> = {accumulates}",
+                        if s.from_wire {
+                            "from the wire"
+                        } else {
+                            "the reader's pad"
+                        }
+                    );
+                }
+            }
+        }
+        // ⚑⚑ BOTH POLARITIES OF THE FLOOR, on the settled invariant: a slot whose commitment is
+        // PUBLISHED must carry fifteen prechallenges of at least
+        // `ACCUMULATOR_PRECHALLENGE_MIN_BITS`. Real block 539508's are 120-128;
+        // `KimchiStepMainCore.stmtDummyVal`'s ladder is 24-25.
+        let published = marshal::PROOFS_VERIFIED - marshal::STEP_RECURSION_SLOTS;
+        let worst = (published..marshal::PROOFS_VERIFIED)
+            .flat_map(|s| st.old_wrap_bulletproof_challenges[s].iter())
+            .map(marshal::prechallenge_bits)
+            .min()
+            .unwrap_or(0);
+        println!(
+            "[floor] published slot(s) {published}..{} : smallest prechallenge is {worst} bits, floor is {} \
+             — ACCEPTED (the polarity that must not refuse)",
+            marshal::PROOFS_VERIFIED,
+            marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS
+        );
+        if worst < marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS {
+            failed += 1;
+        }
+        // ⚑⚑ **THE CONTROL THAT MAKES THE SELECTION A MEASUREMENT.** `marshal` published the
+        // LEADING `STEP_RECURSION_SLOTS` until 2026-08-10. Rebuild that object — the same wire with
+        // the leading slot's commitment in the accumulator list — and watch every reconstructed
+        // slot come apart, which is what nothing in this tree was looking at.
+        {
+            let mut old_shape = wire.clone();
+            let lead = &proof.prev_challenges[0].comm.chunks[0];
+            old_shape
+                .statement
+                .messages_for_next_step_proof
+                .challenge_polynomial_commitments = std::iter::once((
+                mina_p2p_messages::bigint::BigInt::from(lead.x),
+                mina_p2p_messages::bigint::BigInt::from(lead.y),
+            ))
+            .collect::<mina_p2p_messages::list::List<_>>();
+            match gates::gate_a2(&old_shape) {
+                Err(e) => println!(
+                    "[gate A2 control] the pre-08-10 selection: reconstruction refused: {e}"
+                ),
+                Ok(slots) => {
+                    let agree: Vec<bool> = slots
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| proof.prev_challenges[i].comm.chunks[0] == s.comm)
+                        .collect();
+                    let any = agree.iter().any(|b| *b);
+                    if any {
+                        failed += 1;
+                    }
+                    println!(
+                        "[gate A2 control] the pre-08-10 selection (leading slot published): \
+                         per-slot comm agreement {agree:?} — NOT ONE SLOT SURVIVES={}",
+                        !any
+                    );
+                }
+            }
+        }
+
+        // ⚠⚠ …and the polarity that must refuse. It must be built so that the FLOOR is the only
+        // rule left standing: shrinking the STATEMENT alone trips `PreChallengeMismatch` first, and
+        // a refusal by the wrong rule reads as protection while measuring nothing. So the ladder
+        // value goes into BOTH sides — the statement's prechallenge and the proof's expanded
+        // `chals` — leaving them in agreement and the width the only thing wrong.
+        let ladder: PreChallenge = [7 + 1000003u64 * 6, 0];
+        let mut small = st.clone();
+        let mut small_proof = proof.clone();
+        for s in
+            (marshal::PROOFS_VERIFIED - marshal::STEP_RECURSION_SLOTS)..marshal::PROOFS_VERIFIED
+        {
+            small.old_wrap_bulletproof_challenges[s][6] = ladder;
+            small_proof.prev_challenges[s].chals[6] = expand_prechallenge(&ladder);
+        }
+        match marshal(&small_proof, &prev, &small) {
+            Err(marshal::MarshalError::AccumulatorPrechallengeTooSmall {
+                slot,
+                round,
+                bits,
+                floor,
+            }) => println!(
+                "[floor] a PUBLISHED slot's round set to `stmtDummyVal`'s ladder, statement and \
+                     proof moved TOGETHER so nothing else can fire — REFUSED by the floor at slot \
+                     {slot} round {round}: {bits} bits < {floor}"
+            ),
+            other => {
+                failed += 1;
+                println!(
+                    "[floor] ⚠ a {}-bit prechallenge in a published slot was NOT refused by the floor: {other:?}",
+                    marshal::prechallenge_bits(&ladder)
+                );
+            }
+        }
+        // …and the control that says the floor is SCOPED: the same consistent shrink in a PAD slot
+        // is not this refusal's business, because the pad slot's commitment is not published. If
+        // this also refused, the floor would be measuring "some prechallenge somewhere is small"
+        // rather than the invariant it is named for.
+        if published > 0 {
+            let mut padsmall = st.clone();
+            let mut padsmall_proof = proof.clone();
+            padsmall.old_wrap_bulletproof_challenges[0][6] = ladder;
+            padsmall_proof.prev_challenges[0].chals[6] = expand_prechallenge(&ladder);
+            let r = marshal(&padsmall_proof, &prev, &padsmall);
+            let scoped = !matches!(
+                r,
+                Err(marshal::MarshalError::AccumulatorPrechallengeTooSmall { .. })
+            );
+            if !scoped {
+                failed += 1;
+            }
+            println!(
+                "[floor control] the same consistent shrink in PAD slot 0 → {} ; SCOPED={scoped}",
+                match &r {
+                    Err(marshal::MarshalError::AccumulatorPrechallengeTooSmall { .. }) =>
+                        "refused by the FLOOR".to_string(),
+                    Err(e) => format!("refused by another rule: {e}"),
+                    Ok(_) =>
+                        "accepted (the pad slot's width is GATE A2's business, not the floor's)"
+                            .to_string(),
+                }
+            );
+        }
+    }
+
     println!("\n== GATE B — expand_deferred (openmina's own, `pub`) ==");
     let dv = gates::gate_b(&wire);
     match &dv {
