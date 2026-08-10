@@ -280,10 +280,18 @@ machine's 451 and the boundary's 256 pins — is FORCED by the emitted descripto
 row window that satisfies them. `AirLeg.forces` is stated in the SOURCE's vocabulary and never
 mentions the lowering, so this is not `P → P`.
 
-⚠ **What it is not.** `the_chain_step_is_the_kimchi_permutation` and
-`the_emitted_claims_are_continuous` are statements about `runProgAt` / `chainState`, the
-INTERPRETER. This certificate joins the emitted constraints to the source LEGS, not to that run;
-the bridge between them is a separate, still-open obligation (`MinaWrapClosingAir` §b). -/
+`the_chain_step_is_the_kimchi_permutation` and `the_emitted_claims_are_continuous` are statements
+about `runProgAt` / `chainState`, the INTERPRETER; this certificate joins the emitted constraints to
+the source LEGS.
+
+⚑ **AND THE SECOND OBLIGATION IS NOW DISCHARGED TOO (2026-08-10).** `Emit.AirProgramRows` proves
+that a row window satisfying these forced legs IS a step of `runProgAt`, and inducts it over the
+rows (`step_of_row`, `rows_track_the_interpreter`, `runs_the_program`); this air is
+`programAir … ++ pins`, so `AirProgramRows.rowsForced_of_certified` turns THIS certificate into the
+`RowsForced` those theorems consume by one `mem_append_left`. ⚠ Under three NAMED premises —
+`RangeTablesHonest` (the inherited `PoolsRanged` floor), `RomFaithful`, and `Tracks` at row 0 (the
+boundary's job) — and one boundary: a `.transition` leg claims nothing at `isLast = true`, so the
+last instruction's write is forced only when a row follows it. -/
 theorem chainDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines chainDesc [] chainAir :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

@@ -443,8 +443,16 @@ def linkDesc : EffectVmDescriptor2 :=
 
 /-- ⚑ **THE WRAP LINK'S CERTIFICATE, PRODUCED BY THE EMIT.** Every leg of `linkAir` is FORCED by the
 emitted descriptor's constraints on any row window satisfying them, in the SOURCE's own vocabulary.
-⚠ It does NOT join those legs to `runProgAt` — `the_absorb_program_permutes_the_absorbed_state` is
-about the interpreter, and that bridge is a separate obligation. -/
+`the_absorb_program_permutes_the_absorbed_state` is about the interpreter.
+
+⚑ **AND THE SECOND OBLIGATION IS NOW DISCHARGED TOO (2026-08-10).** `Emit.AirProgramRows` proves
+that a row window satisfying these forced legs IS a step of `runProgAt`, and inducts it over the
+rows (`step_of_row`, `rows_track_the_interpreter`, `runs_the_program`); this air is
+`programAir … ++ pins`, so `AirProgramRows.rowsForced_of_certified` turns THIS certificate into the
+`RowsForced` those theorems consume by one `mem_append_left`. ⚠ Under three NAMED premises —
+`RangeTablesHonest` (the inherited `PoolsRanged` floor), `RomFaithful`, and `Tracks` at row 0 (the
+boundary's job) — and one boundary: a `.transition` leg claims nothing at `isLast = true`, so the
+last instruction's write is forced only when a row follows it. -/
 theorem linkDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines linkDesc [] linkAir :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

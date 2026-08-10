@@ -872,35 +872,41 @@ a. ⚑⚑ **`TR_IN` IS A DESCRIPTOR CONSTANT AND `TR_OUT` IS A PUBLISHED WITNESS
    scalar it squeezes."** The residue is `c`, ONE published field element, and the check that
    binds it is `c·Q` — `MinaAccumulatorAir` residual 1, the deferred MSM, CIRCUIT / EMITTER /
    NOWHERE with no fourth place. Say it that way; do not say `delta` is bound.
-b. **The absorb descriptor's own soundness is the standing every seam in this cone has.**
-   `MinaWrapVerifierSpongeFp.the_absorb_program_permutes_gen` is general and hypothesis-free but is
-   about the INTERPRETER (`runProgAt`), not about the 858 emitted constraints; nothing in this tree
-   joins those constraints to `Core.perm`. `PastaPoseidon.perm_forces` IS a constraint-level forcing
-   theorem, but for an UNEMITTED 9×30-limb gadget. That gap is inherited, not introduced here.
+b. ✅ **CLOSED 2026-08-10 — and read what "closed" costs before quoting it.** This residual was
+   *"the absorb descriptor's own soundness"*, and it was two obligations, not one.
 
-   ⚑ **2026-08-09 — HALF OF IT IS NOW DISCHARGED, AND ONLY HALF. SAY WHICH.** The named shape above
-   was *"a `CertifiedRefines` for `programAir`"*, and it exists:
-   `MinaWrapVerifierSpongeFp.fpAbsorbDesc_certified`, produced by `lowerTiedAir` at zero moved bytes.
-   That closes **obligation 1**: the 858 emitted constraints FORCE every leg of `fpAbsorbAir`, in
-   `AirLeg.forces` — the source's own vocabulary, never mentioning the lowering.
-   ⚠ **It does NOT close this residual**, and the reason is worth stating exactly rather than
-   inheriting: `CertifiedRefines` relates the DESCRIPTOR to the SOURCE LEGS.
-   `the_absorb_program_permutes_gen` relates `runProgAt` to `Core.perm`. Between them sits
-   **obligation 2, which nothing in this tree discharges**: that a row window satisfying all the
-   forced legs IS a step of `runProgAt` — the ALU relations, the one-hot routing, the register
-   window and the ROM lookup composed over 2 048 rows into the interpreter's transition function,
-   with the routing lemmas' `hsel` one-hot hypotheses supplied by the ROM manifest rather than
-   assumed. ⚑ What the certificate DOES buy toward it, said exactly: the per-row forcing lemmas
-   (`MinaWrapVerifierAir.alu_mul_forces`, `MinaWrapVerifierProgram.xRoute_forces_operand`,
-   `.yRoute_forces_immediate`, `.reg_window_leaves_nothing_free`, `.pc_thread_forces_successor`)
-   all take a hypothesis of the form `P ∣ <body>`, and `AirLeg.forces` on a `gate`/`window` leg
-   delivers `<body> ≡ 0 [ZMOD PMOD]` with `PMOD = P` by `rfl` — so the certificate now SUPPLIES
-   those hypotheses from the descriptor instead of leaving them assumed about a hand-named
-   constraint. **What is still absent is the composition**: no theorem assembles them into "row
-   `k+1`'s register file is `stepRegsAt` of row `k`'s", and none inducts that over 2 048 rows to
-   `runRowsAt`. The shape it would take is `AirCrossRow.rcbSat_of_rows` /
-   `scheduledRows_force_the_rcb_formula`, which does exactly this for the scheduled RCB row.
-   So: **the emitted constraints refine their AIR. The AIR is not yet proved to be the interpreter.**
+   **Obligation 1 — the descriptor refines its AIR — closed 2026-08-09.**
+   `MinaWrapVerifierSpongeFp.fpAbsorbDesc_certified`, produced by `lowerTiedAir` at zero moved
+   bytes: the 858 emitted constraints FORCE every leg of `fpAbsorbAir`, in `AirLeg.forces` — the
+   source's own vocabulary, never mentioning the lowering.
+
+   **Obligation 2 — the AIR is the interpreter — closed 2026-08-10**, in `Emit.AirProgramRows`.
+   The named absence was *"no theorem assembles them into 'row `k+1`'s register file is
+   `stepRegsAt` of row `k`'s', and none inducts that over 2 048 rows"*. `step_of_row` is that
+   theorem and `rows_track_the_interpreter` is that induction; `runs_the_program` is the
+   end-of-program form, and `absorb_rows_force_the_permutation` composes it with
+   `the_absorb_program_permutes_gen`, so **the emitted constraints — not `runProgAt` — reach
+   `PastaPoseidonFq.Core.perm`.** The shape is the one this note predicted:
+   `AirCrossRow.rcbSat_of_rows` / `scheduledRows_force_the_rcb_formula`.
+   ⚑ It is MODULUS-GENERAL in `(pl, N)`, so one theorem serves phase 1 and phase 2, and
+   `rowsForced_of_certified` connects any of the seven `programAir … ++ pins` descriptors to it by
+   one `mem_append_left`.
+
+   ⚠ **THREE PREMISES AND ONE BOUNDARY, and none of them is decoration.**
+   `RangeTablesHonest` — the inherited `AirCrossRow.PoolsRanged` floor, now stated once per
+   descriptor rather than per column pool, and still UNDONE WORK one rail below any leg;
+   `RomFaithful` — `TableDef.publicContentsFaithful` at the ROM, the deployed verifier's own check;
+   `Tracks` at row 0 — `programAir` pins no register column on the first row and a BOUNDARY must;
+   and `transition_legs_are_vacuous_on_the_last_row` — a `.transition` leg claims nothing at
+   `isLast = true`, so the last instruction's write is forced only when a row follows it.
+   ⚠ And `AirProgramRows.register_column_is_not_ranged`: the machine range-checks `x`, `y`, `z`,
+   the quotient and the two carry pools and NOT the register file, so a register column is pinned
+   only mod `P` — which is why the bridge reads it as `regVal` (through `· % P`) and never as
+   `sVal`. `PastaPoseidon.perm_forces` remains a constraint-level forcing theorem for an UNEMITTED
+   9×30-limb gadget, and is still not what runs.
+
+   So the verdict this note carried — *"the emitted constraints refine their AIR; the AIR is not
+   yet proved to be the interpreter"* — is **retired**. Both halves hold.
 c. **`z₁`, `z₂` and `b₀` are untouched, and that is not the same kind of gap.** A forger who moves
    `z₂` shifts the sum by `δ·H`; upstream refuses that by the dlog/extraction argument (P10), not by
    a transcript. P10 is a FLOOR and is undischarged here and everywhere in this stack. `delta`'s was

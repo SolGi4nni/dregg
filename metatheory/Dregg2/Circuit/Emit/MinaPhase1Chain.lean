@@ -436,8 +436,16 @@ def chainDesc : EffectVmDescriptor2 :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
     "dregg-pasta-fp-chainlink::v1" PROG_WIDTH CHAIN_PI_COUNT [] chainTiedAir).val
 
-/-- ⚑ **THE PHASE-1 CHAIN LINK'S CERTIFICATE.** ⚠ Forced LEGS, not the interpreter's run: the
-bridge from `AirLeg.forces` to `runProgAt` is a second obligation and is not claimed here. -/
+/-- ⚑ **THE PHASE-1 CHAIN LINK'S CERTIFICATE.** Forced LEGS, in the source's own vocabulary.
+
+⚑ **AND THE SECOND OBLIGATION IS NOW DISCHARGED TOO (2026-08-10).** `Emit.AirProgramRows` proves
+that a row window satisfying these forced legs IS a step of `runProgAt`, and inducts it over the
+rows (`step_of_row`, `rows_track_the_interpreter`, `runs_the_program`); this air is
+`programAir … ++ pins`, so `AirProgramRows.rowsForced_of_certified` turns THIS certificate into the
+`RowsForced` those theorems consume by one `mem_append_left`. ⚠ Under three NAMED premises —
+`RangeTablesHonest` (the inherited `PoolsRanged` floor), `RomFaithful`, and `Tracks` at row 0 (the
+boundary's job) — and one boundary: a `.transition` leg claims nothing at `isLast = true`, so the
+last instruction's write is forced only when a row follows it. -/
 theorem chainDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines chainDesc [] chainAir :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

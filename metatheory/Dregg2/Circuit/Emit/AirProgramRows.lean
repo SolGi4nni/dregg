@@ -963,6 +963,26 @@ theorem runs_the_program {N : Nat} {pl : Nat → ℤ} {prog : List Instr} {tr : 
     hcanon h0 prog.length (le_refl _)
   simpa using h
 
+/-! ### §9a — ⚑⚑ THE DEPLOYED DESCRIPTOR SUPPLIES `RowsForced`.
+
+The seven transcript descriptors' air is `programAir` **with a boundary appended** —
+`{ programAir pl prog with legs := (programAir pl prog).legs ++ pins }` — so their
+`CertifiedRefines` hands back `forces` for a SUPERSET of the machine's legs. One `mem_append_left`
+is the whole bridge, and it is stated here so a caller never has to re-derive it. -/
+
+/-- ⚑⚑ **A TRACE SATISFYING THE EMITTED CONSTRAINTS FORCES THE MACHINE'S LEGS.** -/
+theorem rowsForced_of_certified {pl : Nat → ℤ} {prog : List Instr} {tr : RowTrace}
+    {pub chal : Assignment} {tf : TraceFamily} {n : Nat} {pins : List AirLeg}
+    {d : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2}
+    {cs : Dregg2.Circuit.ConstraintSystem} {hash : List ℤ → ℤ}
+    (hcert : Dregg2.Circuit.Emit.EffectLower.CertifiedRefines d cs
+        { programAir pl prog with legs := (programAir pl prog).legs ++ pins })
+    (hsat : ∀ t, t < n → ∀ vc ∈ d.constraints,
+        vc.holdsAt hash tf (rowEnv tr pub chal t) (decide (t = 0)) false) :
+    RowsForced pl prog tr pub chal tf n := fun t ht l hl =>
+  (hcert hash tf (rowEnv tr pub chal t) (decide (t = 0)) false (hsat t ht)).1 l
+    (List.mem_append_left _ hl)
+
 /-! ## §10 — ⚑⚑ WHAT IT CLOSES, SAID EXACTLY.
 
 `MinaWrapVerifierSpongeFp.the_absorb_program_permutes_gen` is a statement about `runProgAt`. §9 is
@@ -1178,5 +1198,6 @@ theorem tracks_is_refutable : ¬ Tracks 5 (fun _ => (0 : ℤ)) (fun _ => 1) := b
 #assert_axioms register_column_is_not_ranged
 #assert_axioms aluRangedCols_are_the_limbs_legs_cols
 #assert_axioms tracks_is_refutable
+#assert_axioms rowsForced_of_certified
 
 end Dregg2.Circuit.Emit.AirProgramRows

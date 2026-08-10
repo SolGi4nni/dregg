@@ -504,9 +504,17 @@ def fpAbsorbDesc : EffectVmDescriptor2 :=
 
 /-- ⚑⚑ **THE DESCRIPTOR `MinaWrapClosingAir` §b NAMES AS THE STANDING GAP, CERTIFIED.** That note
 reads *"a `CertifiedRefines` for `programAir`"* — this is it, for `dregg-pasta-fp-absorb::v1`.
-⚠ And it closes the FIRST of two obligations only: it says the 858 emitted constraints force the
-source legs. `the_absorb_program_permutes_gen` is a theorem about `runProgAt`, the INTERPRETER;
-joining forced legs to that run is a second, still-open obligation. Do not read this as closing §b. -/
+It says the 858 emitted constraints force the source legs — the FIRST of the two obligations §b
+names.
+
+⚑ **AND THE SECOND OBLIGATION IS NOW DISCHARGED TOO (2026-08-10).** `Emit.AirProgramRows` proves
+that a row window satisfying these forced legs IS a step of `runProgAt`, and inducts it over the
+rows (`step_of_row`, `rows_track_the_interpreter`, `runs_the_program`); this air is
+`programAir … ++ pins`, so `AirProgramRows.rowsForced_of_certified` turns THIS certificate into the
+`RowsForced` those theorems consume by one `mem_append_left`. ⚠ Under three NAMED premises —
+`RangeTablesHonest` (the inherited `PoolsRanged` floor), `RomFaithful`, and `Tracks` at row 0 (the
+boundary's job) — and one boundary: a `.transition` leg claims nothing at `isLast = true`, so the
+last instruction's write is forced only when a row follows it. So §b's residual (b) is closed; (a) and (c) are not. -/
 theorem fpAbsorbDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fpAbsorbDesc [] fpAbsorbAir :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir

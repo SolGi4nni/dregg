@@ -815,10 +815,19 @@ def absorbDesc : EffectVmDescriptor2 :=
 
 /-- ⚑⚑ **THE ABSORPTION'S CERTIFICATE.** This is the descriptor `MinaWrapClosingAir` §b names as
 the standing gap ("a `CertifiedRefines` for `programAir`") on the Fq side; its Fp twin is
-`MinaWrapVerifierSpongeFp.fpAbsorbDesc_certified`. ⚠ Read what it does and does not close in that
-file's §b note: this certifies that the 858 emitted constraints FORCE the source legs. It does not
-join those legs to `Core.perm` — `the_absorb_program_permutes_gen` is about `runProgAt`, and the
-bridge from forced legs to the interpreter's run is a SECOND obligation, still open. -/
+`MinaWrapVerifierSpongeFp.fpAbsorbDesc_certified`. It certifies that the 858 emitted constraints
+FORCE the source legs.
+
+⚑ **AND THE SECOND OBLIGATION IS NOW DISCHARGED TOO (2026-08-10).** `Emit.AirProgramRows` proves
+that a row window satisfying these forced legs IS a step of `runProgAt`, and inducts it over the
+rows (`step_of_row`, `rows_track_the_interpreter`, `runs_the_program`); this air is
+`programAir … ++ pins`, so `AirProgramRows.rowsForced_of_certified` turns THIS certificate into the
+`RowsForced` those theorems consume by one `mem_append_left`. ⚠ Under three NAMED premises —
+`RangeTablesHonest` (the inherited `PoolsRanged` floor), `RomFaithful`, and `Tracks` at row 0 (the
+boundary's job) — and one boundary: a `.transition` leg claims nothing at `isLast = true`, so the
+last instruction's write is forced only when a row follows it. `AirProgramRows.absorb_rows_force_the_permutation` is the
+composition with `the_absorb_program_permutes_gen`, so the emitted constraints — not `runProgAt` —
+now reach `PastaPoseidonFq.Core.perm`. -/
 theorem absorbDesc_certified :
     Dregg2.Circuit.Emit.EffectLower.CertifiedRefines absorbDesc [] absorbAir :=
   (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
