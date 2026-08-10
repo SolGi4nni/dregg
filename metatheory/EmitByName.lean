@@ -283,6 +283,19 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.MinaWrapVerifierProgram.longDesc)
   , ("pasta-alu-fq-sound.json",
       Dregg2.Circuit.Emit.MinaWrapVerifierAir.fqAluDesc)
+    -- ⚑ 2026-08-09 — THE SAME ALU ROW WITH THE CHEAP MULTIPLY. `pastaAluSzAir` is `pastaAluAir`
+    -- leg for leg with the 63 selector-gated coefficient gates replaced by TWO selector-gated
+    -- `PastaSzMul.szBodyAt` challenge gates: 171 → 110 legs, 386 → 325 emitted constraints,
+    -- 2 269 → 444 multiplication nodes per row in the multiply block. ⚠ IDENTICAL LAYOUT — 226
+    -- declared columns, 794 committed, the same seven `limbs` legs, the same 32 `.transition`
+    -- chain legs, and the SAME honest fixture rows (`aluMulRow`/`aluAddRow`/`aluSubRow`), so the
+    -- artifact pair is a controlled before/after on one trace. At §5's census that is
+    -- `588 732 · 1 764 = 1.04 × 10⁹` multiplication nodes removed and **zero** committed cells:
+    -- `WRAP_CELLS` and `WRAP_ROWS_SOUND` do not move by one.
+  , ("pasta-alu-sz.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierAir.fpAluSzDesc)
+  , ("pasta-alu-fq-sz.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierAir.fqAluSzDesc)
   -- ⚑ 2026-08-05 — THE EIGHT-BLOCK PHASE-2 CHAIN LINK, routed so its bytes are re-derivable from
   -- Lean on a flag day. `MinaPhase2Chain.the_chain_air_extends_the_program_air`: this and
   -- `dregg-pasta-fq-wraplink::v1` are the SAME `programAir qLimb absorbProg` (2048-instruction
@@ -578,6 +591,24 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.PastaCurveSound.pallasCompleteAddSoundDesc)
   , ("pasta-vesta-complete-add-sound.json",
       Dregg2.Circuit.Emit.PastaCurveSound.vestaCompleteAddSoundDesc)
+    -- ⚑ 2026-08-09 — THE CHEAP MULTIPLY, ROUTED. The SAME RCB complete addition with each of the
+    -- twelve multiplies' 63 coefficient gates replaced by TWO relocated `PastaSzMul.szBodyAt`
+    -- challenge gates at `permutation_randomness()[0]` and `[1]`: 4 476 → 3 744 constraints, and
+    -- 12·2 206 → 12·442 multiplication nodes in the emitted bodies. ⚠ THE WIDTH DOES NOT MOVE —
+    -- 3 048 declared before and after, same range lookups, same honest witness
+    -- (`PastaCurveSound.szRcbWidthIsUnchanged`, `szMulCore_width_unchanged`), so the SAME emitted
+    -- trace fixture proves against both artifacts. That is the whole point of the pair: it is a
+    -- controlled before/after on one witness. ⚠ The sz row's soundness carries a LEDGER the
+    -- schoolbook row does not — it forces the congruence at `1 − 2^−197.0` over the draw
+    -- (`sz_two_point_clears_the_bar`), and the one-gate form would be `2^−98.5`, BELOW the bar
+    -- (`sz_single_challenge_is_below_the_bar`), which is why there are two draws and never one.
+    -- These are the first `chalGate`-carrying artifacts in `by-name/`: they declare
+    -- `"challenges":2`, they REFUSE the uni-stark route by construction (`Ir2UniAir::new`), and
+    -- `prove_vm_descriptor2` is the only prover that can carry them.
+  , ("pasta-pallas-complete-add-sz.json",
+      Dregg2.Circuit.Emit.PastaCurveSound.pallasCompleteAddSzDesc)
+  , ("pasta-vesta-complete-add-sz.json",
+      Dregg2.Circuit.Emit.PastaCurveSound.vestaCompleteAddSzDesc)
     -- ⚑ 2026-08-05 — THE THREADED SOUND ROW. The same RCB complete addition with the accumulator
     -- carried to the NEXT row by 96 `.transition` window legs, so a ladder's depth is ROWS and the
     -- width is a constant 3 048 at every depth. `PastaCurveSound.sound_ladder_does_not_fit_a_row`

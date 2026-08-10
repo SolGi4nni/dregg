@@ -1,5 +1,101 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 9 — THE CHEAP MULTIPLY IS ROUTED: the certified Schwartz–Zippel body lands in two deployed AIRs, and the win is stated in the currency that actually moved
+
+**SUBSTRATE: Lean.** Every constraint here is authored in
+`metatheory/Dregg2/Circuit/Emit/{PastaSzMul,PastaCurveSound,MinaWrapVerifierAir}.lean` and reaches
+the wire through `EffectLower.lowerAir` of an `EffectAir`. Rust parses and PROVES the artifact and
+authors nothing. House Law #1.
+
+**THE STANDING WAS "PROVED AND UNADOPTED", AND IT WAS EXACT.** `PastaSzMul` collapsed a foreign-field
+multiply from 63 algebraic gates to 2 on the faithful carrier, with an ε ledger of named theorems —
+and had **no Rust consumer, no witness generation, and no emitted artifact**. Its author priced the
+remainder as *"a statement-shape change, not a missing theorem."* That was right, and this is the
+change.
+
+### What landed
+
+* **`PastaCurveSound` §10.** `szMulCore` relocates `szBodyAt` to each multiply's own block bases —
+  two `.all` challenge legs at `permutation_randomness()[0]` and `[1]` where 63 coefficient gates
+  were. `swCompleteAddSoundLegs` was already generic over `SoundCore`, so the row is an
+  INSTANTIATION and not a second layout: `szLegs_layout_unchanged` is `rfl`.
+* **`MinaWrapVerifierAir` §7** — the row that carries **588 732** multiplies (`WRAP_MULS`, a
+  `decide`d theorem that did not move). `pastaAluSzAir` is `pastaAluAir` leg for leg with the 63
+  selector-gated `coefExpr` gates replaced by two selector-gated `szBodyAt` challenge legs.
+  `alu_sz_gate_strips_the_selector` is the one line of new algebra.
+* **Four artifacts, routed** in `EmitByName.lean`: `pasta-{pallas,vesta}-complete-add-sz.json`,
+  `pasta-alu-sz.json`, `pasta-alu-fq-sz.json`. ⚑ **They are the first `chal_gate`-carrying
+  descriptors in `by-name/`** — 127 checked-in artifacts and not one declared a challenge before
+  today. `Ir2UniAir::new` refuses them outright; only `prove_vm_descriptor2` can carry them.
+
+### The statement shape, which is the work
+
+Three things moved and `felt_gates_force_congruence` was not one of them — it is untouched and still
+terminal, exactly as the header predicted.
+
+1. **The carrier.** `MulSat` was `P ∣ (gate body).eval a`, a fact about one BabyBear lane over an
+   `Assignment`. `SzMulAt` is `ChalConstraint.holdsIn env z isLast ⟨szBodyAt …, false⟩` — the
+   `assert_zero_ext` denotation over an arbitrary `CommRing K`, which the deployed prover
+   instantiates at the quartic extension. Stating it on the base lane would have priced the draw at
+   `2^31` instead of `2^123.63`: the identity-carrier lesson, avoided by construction.
+2. **The disjunction.** Each of the twelve relocated multiplies carries `SzMulAt.nonexc` as a NAMED
+   STRUCTURE FIELD — `z CHAL_Z` or `z CHAL_Z2` outside that multiply's residual's `≤ 62`-root
+   exceptional set. A caller cannot leave it implicit. That field is the only place randomness
+   enters this cone.
+3. **The chain is the same chain.** `SzRcbSat.apply` is `RcbSat.apply`'s 33-link `CZm` argument link
+   for link; twelve links are now forced by a challenge gate at a non-exceptional draw instead of by
+   63 coefficient gates. `pallas/vestaCompleteAddSz_forces` reach the SAME conclusion as their
+   schoolbook twins.
+
+### ⚑ THE PRICE, RE-DERIVED ON THE EMITTED OBJECTS — and the 17% was not inherited
+
+| | schoolbook | sz | Δ |
+|---|---|---|---|
+| complete-add constraints | **4 476** | **3 744** | −732 = `12 × 61` |
+| ALU row constraints | **386** | **325** | −61 = `NG − 2` |
+| complete-add declared / committed columns | 3 048 / — | **3 048 / identical** | **0** |
+| ALU declared / committed columns | 226 / 794 | **226 / 794** | **0** |
+| mult nodes, one multiply | 2 206 | **442** | 4.99× |
+| mult nodes, ALU multiply block per row | 2 269 | **444** | 5.11× |
+
+⚠ **THE WIDTH DOES NOT MOVE, AND NEITHER DOES THE LDE DOMAIN.** `szRcbWidthIsUnchanged` and
+`fpAluSzDesc_trace_width` are theorems, and the Rust measurement asserts committed width and LDE
+cells EQUAL across each pair on the same binary, same box, same trace. 71.7% of the committed row is
+range-check decomposition and Schwartz–Zippel removes no range lookup. **Anyone selling sz as a
+trace-size fix is quoting the wrong currency.** What it buys at §5's census is
+`588 732 × 1 764 = 1.04 × 10⁹` multiplication nodes removed from the verifier's per-row constraint
+evaluation, and **zero** committed cells: `WRAP_CELLS = 161 308 368` and `WRAP_ROWS_SOUND = 279 016`
+do not move by one.
+
+### ⚠ The ledger rides along, and it is a HYPOTHESIS
+
+The sz row forces the congruence at `1 − 2^−197.0` over the draw where the schoolbook row forces it
+unconditionally. `sz_single_challenge_is_below_the_bar` is a theorem that ONE gate unions across this
+census to `2^−98.5` — **below this repo's own ~124-bit bar** — so the single-challenge form is not
+offered anywhere in this cone and the emitted bytes are asserted to carry BALANCED draws (12 gates at
+index 0 and 12 at index 1 on each curve row; 1 and 1 on each ALU row). The independence licence
+`chalIndicesDistinctOk` is discharged on all four emitted descriptors at `(0, 1)` — the `α`/`β` of
+one lookup context, the only pairing the measured sampler guarantees; a distinct-bus criterion is
+UNSATISFIABLE here because every range limb rides the one byte bus.
+
+⚠ **AND SAY WHAT THE DRAW RESTS ON.** That the challenges are uniform, post-commitment and drawn from
+`BinomialExtensionField<BabyBear,4>` is **READ off pinned Plonky3 `82cfad7`** and cited, not modelled.
+That a drawn point is non-exceptional is the one thing a Schwartz–Zippel argument NEVER discharges.
+Both enter every theorem here as hypotheses and neither is proved by anything.
+
+### What re-emits, and what this does NOT claim
+
+**Nothing re-emits and no VK rotates.** The four sz artifacts are NEW names; the schoolbook twins are
+byte-unchanged. Both rows stay emitted deliberately — they are two AIRs with two different soundness
+ledgers, and the before/after measurement is a measurement ON THE PAIR.
+
+⚠ **"Routed into a deployed proof" means the deployed PROVER proves them, not that a node does.**
+`pasta-alu-sound` and the complete-add rows have never had a production consumer either — they are
+proved by their own tests and referenced by `mina_kimchi_verifier_gadget.rs` only in a docblock. The
+sz rows land in exactly that standing, no better. The scalar-mul LADDER and the row-locality wall
+(`sound_ladder_does_not_fit_a_row`) are untouched.
+
+
 ## ⛑⛑⛑⛑ AUGUST 9 — R4's ROWS are upstream's fold now; `G` is still `solveG`'s, and the residue stopped being a shape
 
 **SUBSTRATE: Lean.** `KimchiStepMainCore` §7/§19d is the authored AIR and the emitter runs it. No

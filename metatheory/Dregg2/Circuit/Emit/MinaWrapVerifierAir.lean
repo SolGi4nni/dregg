@@ -68,6 +68,8 @@ proof of coverage.
 import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.EffectLowerCertified
 import Dregg2.Circuit.GateExpr
+-- ⚑ §7: the certified Schwartz–Zippel multiply body, relocated onto the ALU row's own layout.
+import Dregg2.Circuit.Emit.PastaSzMul
 
 namespace Dregg2.Circuit.Emit.MinaWrapVerifierAir
 
@@ -958,5 +960,331 @@ theorem aluChainRow1_canonical :
 #assert_axioms sg_side_is_surjective
 #assert_axioms opening_accepts_everything_while_sg_is_free
 #assert_axioms pinned_sg_makes_the_opening_refute
+
+/-! ## §7 — ⚑⚑ THE CHEAP MULTIPLY, ON THE ROW THAT CARRIES 588 732 OF THEM.
+
+`§5`'s census is why this section exists: `WRAP_MULS = 588 732` is a `decide`d theorem and it does
+NOT move — it is `WRAP_ADDSUBS` at `1 082 924` that moved when the Poseidon round was re-counted.
+The ALU row spends **63 of its 386 constraints** and **2 269 of its per-row multiplication nodes**
+on the multiply polarity, and `PastaSzMul` collapses exactly that block.
+
+⚑ **THE SELECTOR SURVIVES THE SWAP, AND IT IS THE ONLY NEW ALGEBRA.** `aluMulExpr` is
+`sMul · coefExpr m`; `aluSzBody` is `sMul · szBodyAt …`, the same multiplication by the same
+selector column, over a `ChalExpr` instead of an `Expr`. Trace degree is unchanged at **3** — the
+sz body is degree 2 in the trace and a challenge is DEGREE ZERO for quotient sizing
+(`p3-air/src/symbolic/variable.rs:67-72`, `ExtEntry::Challenge => 0`), so the 32-deep Horner chains
+cost nothing in the quotient and the row still sits exactly at `ir2_degree_budget = 3`.
+
+⚑ **THE LAYOUT DOES NOT MOVE AT ALL.** `szBodyAt` is relocated to `X_BASE / Y_BASE / Z_BASE /
+ALU_Q_BASE / ALU_C_BASE` — the SAME columns `alu_reuses_the_multiply_layout` pins — and it reads the
+carry block OFFSET-DECODED at `COFF`, which is what `aluMulRow` already writes. So `ALU_WIDTH` is
+still 226, the seven `limbs` legs are the same seven, the committed width is still 794, and **the
+honest fixture rows of §4b are the honest fixture rows of both AIRs.**
+
+⚠ **AND WHAT DOES NOT IMPROVE.** Columns, range lookups, committed width, trace height, LDE domain:
+all identical. The win is the AIR's constraint count (`386 → 325`) and the prover's and verifier's
+per-row evaluation arithmetic (`2 269 → 444` multiplication nodes in the multiply block). At the
+wrap workload that is `1.04 × 10⁹` multiplication nodes removed
+(`the_wrap_multiply_arithmetic_collapse`) and **zero committed cells**. Anyone selling this as a
+trace-size fix is quoting the wrong currency.
+
+⚠ **THE LEDGER RIDES ALONG, AND IT IS A HYPOTHESIS.** The sz polarity forces the congruence only at
+a NON-EXCEPTIONAL draw, and `PastaSzMul.sz_single_challenge_is_below_the_bar` is a theorem that ONE
+draw unions across this very census to `2^−98.5` — below the repo's ~124-bit bar. That is why
+`pastaAluSzAir` carries TWO challenge gates and why the single-challenge form is not offered here.
+The two-point form is `2^−197.0` (`sz_two_point_clears_the_bar`). That a drawn challenge is
+non-exceptional is the one thing Schwartz–Zippel never discharges; the transcript ordering and the
+per-context sampling that make the draw post-commitment are READ off pinned Plonky3 `82cfad7` and
+cited, not modelled. -/
+
+section SzAlu
+
+open Dregg2.Circuit.DescriptorIR2
+  (ChalExpr ChalConstraint challengeCount chalGateCount chalIndicesDistinctOk)
+open Dregg2.Circuit.EffectAirIR (ChalLeg)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.OodQuotientConsistency (exceptionalSet)
+open Dregg2.Circuit.Emit.PastaSzMul
+  (CHAL_Z CHAL_Z2 szBodyAt szResidual szGate_holdsIn_forces_congruence chalMuls exprMuls
+   schoolbookMuls)
+
+/-- ⚑ **THE SELECTOR-GATED SCHWARTZ–ZIPPEL BODY at draw `zi`** — `sMul · szBodyAt` at the ALU row's
+own bases. The multiplication by `SEL_MUL` is the only algebra this file adds to the certified
+body, exactly as `aluMulExpr` was the only algebra it added to `coefExpr`. -/
+def aluSzBody (pl : Nat → ℤ) (zi : Nat) : ChalExpr :=
+  .mul (.loc SEL_MUL) (szBodyAt pl zi X_BASE Y_BASE Z_BASE ALU_Q_BASE ALU_C_BASE)
+
+/-- The body's faithful `K`-denotation factors through the selector — the one step that turns a
+gated gate into the ungated one `PastaSzMul` quantifies over. -/
+theorem aluSzBody_evalIn {K : Type*} [CommRing K] (env : VmRowEnv) (z : Nat → K)
+    (pl : Nat → ℤ) (zi : Nat) :
+    (aluSzBody pl zi).evalIn env z
+      = ((env.loc SEL_MUL : ℤ) : K)
+        * (szBodyAt pl zi X_BASE Y_BASE Z_BASE ALU_Q_BASE ALU_C_BASE).evalIn env z := rfl
+
+/-- ⚑ **THE SOURCE AIR OF ONE SCHWARTZ–ZIPPEL PASTA ALU ROW.** Leg for leg `pastaAluAir`, with the
+63 multiply gates replaced by TWO challenge legs at two independent draws. Everything else — the 64
+add/sub gates, the 4 booleanity gates, the selector-sum gate, the 32 chain windows, the 7 limb legs
+— is the same object at the same index. -/
+def pastaAluSzAir (pl : Nat → ℤ) : EffectAir :=
+  { tables := [ mainTableDef ALU_WIDTH
+              , ⟨rangeTidW SB, "range_w8", 1, .rangeLimb SB⟩
+              , ⟨rangeTidW CB, "range_w16", 1, .rangeLimb CB⟩
+              , ⟨rangeTidW CBITS, "range_w1", 1, .rangeLimb CBITS⟩ ]
+  , legs :=
+      [ AirLeg.chal ⟨.all, aluSzBody pl CHAL_Z⟩
+      , AirLeg.chal ⟨.all, aluSzBody pl CHAL_Z2⟩ ]
+      ++ (List.range NA).map
+           (fun m => AirLeg.gate ⟨aluAddSubExpr SEL_ADD pl 1 (-1) m, .const 0⟩)
+      ++ (List.range NA).map
+           (fun m => AirLeg.gate ⟨aluAddSubExpr SEL_SUB pl (-1) 1 m, .const 0⟩)
+      ++ [ AirLeg.gate ⟨boolExpr SEL_MUL, .const 0⟩
+         , AirLeg.gate ⟨boolExpr SEL_ADD, .const 0⟩
+         , AirLeg.gate ⟨boolExpr SEL_SUB, .const 0⟩
+         , AirLeg.gate ⟨boolExpr SEL_CHAIN, .const 0⟩
+         , AirLeg.gate ⟨selSumExpr, .const 0⟩ ]
+      ++ (List.range SK).map (fun i => AirLeg.window ⟨RowSel.transition, chainWindowExpr i⟩)
+      ++ [ AirLeg.limbs ⟨limbCols X_BASE, SB, rangeTidW SB⟩
+         , AirLeg.limbs ⟨limbCols Y_BASE, SB, rangeTidW SB⟩
+         , AirLeg.limbs ⟨limbCols Z_BASE, SB, rangeTidW SB⟩
+         , AirLeg.limbs ⟨limbCols ALU_Q_BASE, SB, rangeTidW SB⟩
+         , AirLeg.limbs ⟨aluCarryCols, CB, rangeTidW CB⟩
+         , AirLeg.limbs ⟨[ALU_AC_COL], CBITS, rangeTidW CBITS⟩
+         , AirLeg.limbs ⟨aluAcarCols, ACB, rangeTidW SB⟩ ] }
+
+set_option maxHeartbeats 4000000 in
+/-- ⚑ **The compiler ACCEPTS this block, and for the two challenge legs the verdict is real.**
+`ChalLeg.mainRailOk` refuses `.first`/`.last` OUTRIGHT — the target's `chalGate` has no boundary
+form — and refuses an `.all` body that reads `nxt`. Both new legs are `.all` over bodies that read
+no `nxt`, so they lower to every-row `chalGate`s; the 32 window legs are still `.transition`. -/
+theorem pastaAluSzAir_mainRailOk (pl : Nat → ℤ) : (pastaAluSzAir pl).mainRailOk = true := by
+  unfold pastaAluSzAir EffectAir.mainRailOk
+  simp only [List.all_append, List.all_map, Bool.and_eq_true, List.all_eq_true]
+  repeat' apply And.intro
+  all_goals first
+    | decide
+    | (intro m _; rfl)
+    -- ⚑ The two challenge legs are a LITERAL list, not a `map`, so `List.all_eq_true` leaves a
+    -- two-element bounded `∀` that `decide` will not close (the bodies carry the free limb vector
+    -- `pl` under `.const`). Destructure it and check each leg's verdict.
+    | (intro x hx
+       simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+       rcases hx with rfl | rfl <;> rfl)
+
+/-- ⚑ **THE LEG SHAPE: 110 legs, against `pastaAluAir`'s 171.** `2` challenge gates `+ 32` add
+`+ 32` sub `+ 4` booleanity `+ 1` selector-sum `+ 32` chain windows `+ 7` limb legs. The 61 that
+came off are the 63 coefficient gates minus the 2 that replace them; the seven limb legs still
+carry `222` lookups between them, so the EMITTED constraint count is `110 − 7 + 222 = 325` against
+`386`. ⚠ That byte figure is asserted in Rust against the emitted JSON, for the same reason
+`pastaAluAir_leg_shape`'s is: kernel-reducing the assembled list did not terminate inside
+`maxHeartbeats 4000000`, and the deployed parser checks it far more cheaply than the kernel. -/
+theorem pastaAluSzAir_leg_shape (pl : Nat → ℤ) : (pastaAluSzAir pl).legs.length = 110 := by
+  simp [pastaAluSzAir, NA, SK]
+
+/-- The collapse against the row it replaces, on the two source objects. -/
+theorem alu_sz_leg_collapse (pl : Nat → ℤ) :
+    (pastaAluAir pl).legs.length = 171
+      ∧ (pastaAluSzAir pl).legs.length = 110
+      ∧ (pastaAluAir pl).legs.length - (pastaAluSzAir pl).legs.length = NG - 2 := by
+  refine ⟨pastaAluAir_leg_shape pl, pastaAluSzAir_leg_shape pl, ?_⟩
+  rw [pastaAluAir_leg_shape, pastaAluSzAir_leg_shape]
+  decide
+
+def fpAluSzTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (pastaAluSzAir pLimb)
+  ok  := pastaAluSzAir_mainRailOk pLimb
+
+/-- ⚑ **THE `fp` SCHWARTZ–ZIPPEL ALU ROW** — the deployed atom of the transcript stage, at 325
+constraints. -/
+def fpAluSzDesc : EffectVmDescriptor2 :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-alu-sz::v1" ALU_WIDTH 0 [] fpAluSzTiedAir).val
+
+theorem fpAluSzDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fpAluSzDesc [] (pastaAluSzAir pLimb) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-alu-sz::v1" ALU_WIDTH 0 [] fpAluSzTiedAir).property
+
+theorem fpAluSzDesc_eq_lowerAir :
+    fpAluSzDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-alu-sz::v1" ALU_WIDTH 0 [] (pastaAluSzAir pLimb) := rfl
+
+def fqAluSzTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := (pastaAluSzAir qLimb)
+  ok  := pastaAluSzAir_mainRailOk qLimb
+
+def fqAluSzDesc : EffectVmDescriptor2 :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-alu-fq-sz::v1" ALU_WIDTH 0 [] fqAluSzTiedAir).val
+
+theorem fqAluSzDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines fqAluSzDesc [] (pastaAluSzAir qLimb) :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-alu-fq-sz::v1" ALU_WIDTH 0 [] fqAluSzTiedAir).property
+
+theorem fqAluSzDesc_eq_lowerAir :
+    fqAluSzDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-alu-fq-sz::v1" ALU_WIDTH 0 [] (pastaAluSzAir qLimb) := rfl
+
+/-- ⚑ **THE WIDTH DOES NOT MOVE.** `226` declared before and after, so the committed `794` and the
+LDE domain do not move either — the saving is entirely in the algebra. -/
+theorem fpAluSzDesc_trace_width :
+    fpAluSzDesc.traceWidth = 226 ∧ fpAluSzDesc.traceWidth = fpAluDesc.traceWidth := ⟨rfl, rfl⟩
+
+/-! ### §7a — ⚑ WHAT AN SZ MULTIPLY ROW FORCES.
+
+Same conclusion as `alu_mul_forces`, in the shape `PastaSzMul` proves it in: the hypothesis is
+`ChalConstraint.holdsIn` — the `assert_zero_ext` denotation over an arbitrary `CommRing K`, which
+the deployed prover instantiates at `BinomialExtensionField<BabyBear,4>` — and not `P ∣ body` over
+the `2^31` base lane. Plus the disjunction, which is where the randomness lives. -/
+
+/-- ⚑ **THE SELECTOR COMES OFF, and it is one line.** With `sMul = 1` the gated gate's faithful
+denotation IS the ungated body's, so `PastaSzMul`'s theorems apply verbatim at the ALU's bases. -/
+theorem alu_sz_gate_strips_the_selector {K : Type*} [CommRing K] (env : VmRowEnv) (z : Nat → K)
+    (isLast : Bool) (pl : Nat → ℤ) (zi : Nat) (hsel : env.loc SEL_MUL = 1)
+    (h : ChalConstraint.holdsIn env z isLast ⟨aluSzBody pl zi, false⟩) :
+    ChalConstraint.holdsIn env z isLast
+      ⟨szBodyAt pl zi X_BASE Y_BASE Z_BASE ALU_Q_BASE ALU_C_BASE, false⟩ := by
+  have hv : (aluSzBody pl zi).evalIn env z = 0 := h
+  rw [aluSzBody_evalIn, hsel, Int.cast_one, one_mul] at hv
+  exact hv
+
+/-- ⚑ **THE SZ MULTIPLY POLARITY.** The row's multiply selector is on, the seven emitted `limbs`
+legs supply the ranges, BOTH emitted challenge gates hold at the drawn point, and EITHER draw is
+non-exceptional. Conclusion: the Pasta congruence at the real Pallas-base prime — the same
+conclusion `alu_mul_forces` reaches from 63 gates. -/
+theorem alu_sz_mul_forces {K : Type*} [CommRing K] [IsDomain K] [DecidableEq K]
+    [CharP K 2013265921]
+    (env : VmRowEnv) (z : Nat → K) (isLast : Bool) (hsel : env.loc SEL_MUL = 1)
+    (h1 : ChalConstraint.holdsIn env z isLast ⟨aluSzBody pLimb CHAL_Z, false⟩)
+    (h2 : ChalConstraint.holdsIn env z isLast ⟨aluSzBody pLimb CHAL_Z2, false⟩)
+    (hnonexc : z CHAL_Z ∉ exceptionalSet
+        ((szResidual env.loc X_BASE Y_BASE Z_BASE ALU_Q_BASE ALU_C_BASE pLimb).map
+          (Int.castRingHom K))
+      ∨ z CHAL_Z2 ∉ exceptionalSet
+        ((szResidual env.loc X_BASE Y_BASE Z_BASE ALU_Q_BASE ALU_C_BASE pLimb).map
+          (Int.castRingHom K)))
+    (hx : ∀ i, i < SK → 0 ≤ env.loc (X_BASE + i) ∧ env.loc (X_BASE + i) < 2 ^ SB)
+    (hy : ∀ i, i < SK → 0 ≤ env.loc (Y_BASE + i) ∧ env.loc (Y_BASE + i) < 2 ^ SB)
+    (hz : ∀ i, i < SK → 0 ≤ env.loc (Z_BASE + i) ∧ env.loc (Z_BASE + i) < 2 ^ SB)
+    (hq : ∀ i, i < SK → 0 ≤ env.loc (ALU_Q_BASE + i) ∧ env.loc (ALU_Q_BASE + i) < 2 ^ SB)
+    (hc : ∀ i, i < NG - 1 → 0 ≤ env.loc (ALU_C_BASE + i) ∧ env.loc (ALU_C_BASE + i) < 2 ^ CB) :
+    (pN : ℤ) ∣ (sVal env.loc X_BASE * sVal env.loc Y_BASE - sVal env.loc Z_BASE) := by
+  rcases hnonexc with h | h
+  · exact szGate_holdsIn_forces_congruence env z isLast CHAL_Z X_BASE Y_BASE Z_BASE
+      ALU_Q_BASE ALU_C_BASE pLimb (pN : ℤ)
+      (alu_sz_gate_strips_the_selector env z isLast pLimb CHAL_Z hsel h1) h
+      hx hy hz hq pLimb_bounds pLimb_recomposes hc
+  · exact szGate_holdsIn_forces_congruence env z isLast CHAL_Z2 X_BASE Y_BASE Z_BASE
+      ALU_Q_BASE ALU_C_BASE pLimb (pN : ℤ)
+      (alu_sz_gate_strips_the_selector env z isLast pLimb CHAL_Z2 hsel h2) h
+      hx hy hz hq pLimb_bounds pLimb_recomposes hc
+
+/-- The same at the Vesta-base / Pallas-scalar modulus — both, because the accumulator leg is
+Step/Tick on Vesta. -/
+theorem alu_sz_mul_forces_fq {K : Type*} [CommRing K] [IsDomain K] [DecidableEq K]
+    [CharP K 2013265921]
+    (env : VmRowEnv) (z : Nat → K) (isLast : Bool) (hsel : env.loc SEL_MUL = 1)
+    (h1 : ChalConstraint.holdsIn env z isLast ⟨aluSzBody qLimb CHAL_Z, false⟩)
+    (h2 : ChalConstraint.holdsIn env z isLast ⟨aluSzBody qLimb CHAL_Z2, false⟩)
+    (hnonexc : z CHAL_Z ∉ exceptionalSet
+        ((szResidual env.loc X_BASE Y_BASE Z_BASE ALU_Q_BASE ALU_C_BASE qLimb).map
+          (Int.castRingHom K))
+      ∨ z CHAL_Z2 ∉ exceptionalSet
+        ((szResidual env.loc X_BASE Y_BASE Z_BASE ALU_Q_BASE ALU_C_BASE qLimb).map
+          (Int.castRingHom K)))
+    (hx : ∀ i, i < SK → 0 ≤ env.loc (X_BASE + i) ∧ env.loc (X_BASE + i) < 2 ^ SB)
+    (hy : ∀ i, i < SK → 0 ≤ env.loc (Y_BASE + i) ∧ env.loc (Y_BASE + i) < 2 ^ SB)
+    (hz : ∀ i, i < SK → 0 ≤ env.loc (Z_BASE + i) ∧ env.loc (Z_BASE + i) < 2 ^ SB)
+    (hq : ∀ i, i < SK → 0 ≤ env.loc (ALU_Q_BASE + i) ∧ env.loc (ALU_Q_BASE + i) < 2 ^ SB)
+    (hc : ∀ i, i < NG - 1 → 0 ≤ env.loc (ALU_C_BASE + i) ∧ env.loc (ALU_C_BASE + i) < 2 ^ CB) :
+    (qN : ℤ) ∣ (sVal env.loc X_BASE * sVal env.loc Y_BASE - sVal env.loc Z_BASE) := by
+  rcases hnonexc with h | h
+  · exact szGate_holdsIn_forces_congruence env z isLast CHAL_Z X_BASE Y_BASE Z_BASE
+      ALU_Q_BASE ALU_C_BASE qLimb (qN : ℤ)
+      (alu_sz_gate_strips_the_selector env z isLast qLimb CHAL_Z hsel h1) h
+      hx hy hz hq qLimb_bounds qLimb_recomposes hc
+  · exact szGate_holdsIn_forces_congruence env z isLast CHAL_Z2 X_BASE Y_BASE Z_BASE
+      ALU_Q_BASE ALU_C_BASE qLimb (qN : ℤ)
+      (alu_sz_gate_strips_the_selector env z isLast qLimb CHAL_Z2 hsel h2) h
+      hx hy hz hq qLimb_bounds qLimb_recomposes hc
+
+/-- ⚑ **AND THE OTHER POLARITY OF THE SELECTOR, for the challenge gate too.** At `sMul = 0` the
+gated body is `0` in EVERY carrier at EVERY draw — so an add row's two challenge gates check
+nothing, exactly as its 63 coefficient gates checked nothing before. Stated so that "325
+constraints" is never read as "325 checks on every row". -/
+theorem alu_sz_selector_off_asserts_nothing {K : Type*} [CommRing K] (env : VmRowEnv)
+    (z : Nat → K) (pl : Nat → ℤ) (zi : Nat) (h : env.loc SEL_MUL = 0) :
+    (aluSzBody pl zi).evalIn env z = 0 := by
+  rw [aluSzBody_evalIn, h, Int.cast_zero, zero_mul]
+
+/-! ### §7b — ⚑ THE PRICE, AT THIS FILE'S OWN CENSUS. -/
+
+/-- Multiplication nodes in the SCHOOLBOOK multiply block of one ALU row: the 63 coefficient bodies
+plus the 63 selector multiplications. -/
+def ALU_SCHOOLBOOK_MULS : Nat := schoolbookMuls + NG
+
+/-- …and in the two-point sz block: two 221-node bodies plus their two selector multiplications. -/
+def ALU_SZ_MULS : Nat := 2 * 221 + 2
+
+/-- ⚑ **`2 269 → 444` PER ROW, 5.11×, at the SAME trace degree.** -/
+theorem alu_sz_arithmetic_collapse :
+    ALU_SCHOOLBOOK_MULS = 2269
+      ∧ ALU_SZ_MULS = 444
+      ∧ chalMuls (aluSzBody pLimb CHAL_Z) + chalMuls (aluSzBody pLimb CHAL_Z2) = ALU_SZ_MULS
+      ∧ 5 * ALU_SZ_MULS < ALU_SCHOOLBOOK_MULS ∧ ALU_SCHOOLBOOK_MULS < 6 * ALU_SZ_MULS := by
+  -- `schoolbookMuls` is `decide`d ONCE, in `PastaSzMul`; the inequalities are rewritten through it
+  -- rather than re-deciding a 63-body fold three more times.
+  have hs : ALU_SCHOOLBOOK_MULS = 2269 := by
+    unfold ALU_SCHOOLBOOK_MULS
+    rw [Dregg2.Circuit.Emit.PastaSzMul.schoolbook_arithmetic_is_quadratic]
+    decide
+  exact ⟨hs, by decide, by decide, by rw [hs]; decide, by rw [hs]; decide⟩
+
+/-- ⚑⚑ **THE WIN AT THE CENSUS, IN THE CURRENCY THAT MOVES.** Every one of `WRAP_MULS = 588 732`
+foreign-field multiplies drops `2 206 → 442` multiplication nodes in its emitted body:
+**`1 038 523 248` multiplication nodes removed** from the wrap verifier's per-row constraint
+evaluation.
+
+⚠ **AND ZERO COMMITTED CELLS.** `WRAP_CELLS = 161 308 368` does not move by one, because neither
+`RCB_ROW_COLS` nor `ALU_ROW_COLS` moves — `PastaSzMul.width_and_lookups_unchanged` and
+`PastaCurveSound.szRcbWidthIsUnchanged` are the two theorems that say so. The row count
+(`WRAP_ROWS_SOUND = 279 016`) does not move either. This is the whole honest statement of the
+saving: **evaluation arithmetic and recursion constraint count, not memory.** -/
+theorem the_wrap_multiply_arithmetic_collapse :
+    WRAP_MULS = 588732
+      ∧ WRAP_MULS * (2206 - 442) = 1038523248
+      ∧ WRAP_CELLS = 161308368
+      ∧ WRAP_ROWS_SOUND = 279016 := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
+set_option maxHeartbeats 8000000 in
+/-- ⚑ **THE INDEPENDENCE LICENCE, DISCHARGED ON THE EMITTED ALU ROW** at `(CHAL_Z, CHAL_Z2) =
+(0, 1)` — the `α` and `β` of the instance's first lookup context, the only pairing the MEASURED
+sampler guarantees is two distinct post-commitment draws. A same-slot pairing across two contexts
+is refused, and rightly: this row's 222 lookups are all range lookups and every one rides the one
+byte bus, so a "distinct bus" criterion would be unsatisfiable here. -/
+theorem fpAluSzDesc_chal_indices_distinct :
+    chalIndicesDistinctOk fpAluSzDesc CHAL_Z CHAL_Z2 = true := by
+  rw [fpAluSzDesc_eq_lowerAir]; decide
+
+set_option maxHeartbeats 8000000 in
+theorem fqAluSzDesc_chal_indices_distinct :
+    chalIndicesDistinctOk fqAluSzDesc CHAL_Z CHAL_Z2 = true := by
+  rw [fqAluSzDesc_eq_lowerAir]; decide
+
+end SzAlu
+
+#assert_axioms aluSzBody_evalIn
+#assert_axioms pastaAluSzAir_mainRailOk
+#assert_axioms pastaAluSzAir_leg_shape
+#assert_axioms alu_sz_leg_collapse
+#assert_axioms fpAluSzDesc_trace_width
+#assert_axioms alu_sz_gate_strips_the_selector
+#assert_axioms alu_sz_mul_forces
+#assert_axioms alu_sz_mul_forces_fq
+#assert_axioms alu_sz_selector_off_asserts_nothing
+#assert_axioms alu_sz_arithmetic_collapse
+#assert_axioms the_wrap_multiply_arithmetic_collapse
+#assert_axioms fpAluSzDesc_chal_indices_distinct
+#assert_axioms fqAluSzDesc_chal_indices_distinct
 
 end Dregg2.Circuit.Emit.MinaWrapVerifierAir

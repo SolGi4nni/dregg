@@ -102,6 +102,8 @@ now unblocked.
 import Dregg2.Circuit.Emit.PastaAddSubSound
 import Dregg2.Circuit.Emit.PastaCurveComplete
 import Dregg2.Circuit.Emit.EffectLowerCertified
+-- ⚑ §10: the certified Schwartz–Zippel multiply body, relocated into this row.
+import Dregg2.Circuit.Emit.PastaSzMul
 
 namespace Dregg2.Circuit.Emit.PastaCurveSound
 
@@ -721,39 +723,7 @@ structure RcbSat (a : Assignment) (pl : Nat → ℤ) (b3 : ℤ)
   hg31 : MulSat a pl (vBase fresh 21) (vBase fresh 12) (vBase fresh 31) (mWit fresh 11)
   hg32 : AddSubSat a pl 1 (-1) (vBase fresh 31) (vBase fresh 30) (vBase fresh 32) (aWit fresh 18)
 
-/-- ⚑ **THE   have f0 : CZm M (sVal a (vBase fresh 0)) T.t0a := mulCore_forces a pl M hpl hplM X1 X2 (vBase fresh 0) (mWit fresh 0) hX1 hX2 (hv 0 (by decide)) (hm 0 (by decide)) hG.hg0
-  have f1 : CZm M (sVal a (vBase fresh 1)) T.t1a := mulCore_forces a pl M hpl hplM Y1 Y2 (vBase fresh 1) (mWit fresh 1) hY1 hY2 (hv 1 (by decide)) (hm 1 (by decide)) hG.hg1
-  have f2 : CZm M (sVal a (vBase fresh 2)) T.t2a := mulCore_forces a pl M hpl hplM Z1 Z2 (vBase fresh 2) (mWit fresh 2) hZ1 hZ2 (hv 2 (by decide)) (hm 2 (by decide)) hG.hg2
-  have f3 : CZm M (sVal a (vBase fresh 3)) T.t3a := addCore_forces a pl M hpl hplM X1 Y1 (vBase fresh 3) (aWit fresh 0) hX1 hY1 (hv 3 (by decide)) (hb 0 (by decide)) hG.hg3
-  have f4 : CZm M (sVal a (vBase fresh 4)) T.t4a := addCore_forces a pl M hpl hplM X2 Y2 (vBase fresh 4) (aWit fresh 1) hX2 hY2 (hv 4 (by decide)) (hb 1 (by decide)) hG.hg4
-  have f5 : CZm M (sVal a (vBase fresh 5)) T.t3b := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 3) (vBase fresh 4) (vBase fresh 5) (mWit fresh 3) (hv 3 (by decide)) (hv 4 (by decide)) (hv 5 (by decide)) (hm 3 (by decide)) hG.hg5) (CZm.mul f3 f4)
-  have f6 : CZm M (sVal a (vBase fresh 6)) T.t4b := CZm.trans (addCore_forces a pl M hpl hplM (vBase fresh 0) (vBase fresh 1) (vBase fresh 6) (aWit fresh 2) (hv 0 (by decide)) (hv 1 (by decide)) (hv 6 (by decide)) (hb 2 (by decide)) hG.hg6) (CZm.add f0 f1)
-  have f7 : CZm M (sVal a (vBase fresh 7)) T.t3c := CZm.trans (subCore_forces a pl M hpl hplM (vBase fresh 5) (vBase fresh 6) (vBase fresh 7) (aWit fresh 3) (hv 5 (by decide)) (hv 6 (by decide)) (hv 7 (by decide)) (hb 3 (by decide)) hG.hg7) (CZm.sub f5 f6)
-  have f8 : CZm M (sVal a (vBase fresh 8)) T.t4c := addCore_forces a pl M hpl hplM Y1 Z1 (vBase fresh 8) (aWit fresh 4) hY1 hZ1 (hv 8 (by decide)) (hb 4 (by decide)) hG.hg8
-  have f9 : CZm M (sVal a (vBase fresh 9)) T.X3a := addCore_forces a pl M hpl hplM Y2 Z2 (vBase fresh 9) (aWit fresh 5) hY2 hZ2 (hv 9 (by decide)) (hb 5 (by decide)) hG.hg9
-  have f10 : CZm M (sVal a (vBase fresh 10)) T.t4d := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 8) (vBase fresh 9) (vBase fresh 10) (mWit fresh 4) (hv 8 (by decide)) (hv 9 (by decide)) (hv 10 (by decide)) (hm 4 (by decide)) hG.hg10) (CZm.mul f8 f9)
-  have f11 : CZm M (sVal a (vBase fresh 11)) T.X3b := CZm.trans (addCore_forces a pl M hpl hplM (vBase fresh 1) (vBase fresh 2) (vBase fresh 11) (aWit fresh 6) (hv 1 (by decide)) (hv 2 (by decide)) (hv 11 (by decide)) (hb 6 (by decide)) hG.hg11) (CZm.add f1 f2)
-  have f12 : CZm M (sVal a (vBase fresh 12)) T.t4e := CZm.trans (subCore_forces a pl M hpl hplM (vBase fresh 10) (vBase fresh 11) (vBase fresh 12) (aWit fresh 7) (hv 10 (by decide)) (hv 11 (by decide)) (hv 12 (by decide)) (hb 7 (by decide)) hG.hg12) (CZm.sub f10 f11)
-  have f13 : CZm M (sVal a (vBase fresh 13)) T.X3c := addCore_forces a pl M hpl hplM X1 Z1 (vBase fresh 13) (aWit fresh 8) hX1 hZ1 (hv 13 (by decide)) (hb 8 (by decide)) hG.hg13
-  have f14 : CZm M (sVal a (vBase fresh 14)) T.Y3a := addCore_forces a pl M hpl hplM X2 Z2 (vBase fresh 14) (aWit fresh 9) hX2 hZ2 (hv 14 (by decide)) (hb 9 (by decide)) hG.hg14
-  have f15 : CZm M (sVal a (vBase fresh 15)) T.X3d := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 13) (vBase fresh 14) (vBase fresh 15) (mWit fresh 5) (hv 13 (by decide)) (hv 14 (by decide)) (hv 15 (by decide)) (hm 5 (by decide)) hG.hg15) (CZm.mul f13 f14)
-  have f16 : CZm M (sVal a (vBase fresh 16)) T.Y3b := CZm.trans (addCore_forces a pl M hpl hplM (vBase fresh 0) (vBase fresh 2) (vBase fresh 16) (aWit fresh 10) (hv 0 (by decide)) (hv 2 (by decide)) (hv 16 (by decide)) (hb 10 (by decide)) hG.hg16) (CZm.add f0 f2)
-  have f17 : CZm M (sVal a (vBase fresh 17)) T.Y3c := CZm.trans (subCore_forces a pl M hpl hplM (vBase fresh 15) (vBase fresh 16) (vBase fresh 17) (aWit fresh 11) (hv 15 (by decide)) (hv 16 (by decide)) (hv 17 (by decide)) (hb 11 (by decide)) hG.hg17) (CZm.sub f15 f16)
-  have f18 : CZm M (sVal a (vBase fresh 18)) T.X3e := CZm.trans (addCore_forces a pl M hpl hplM (vBase fresh 0) (vBase fresh 0) (vBase fresh 18) (aWit fresh 12) (hv 0 (by decide)) (hv 0 (by decide)) (hv 18 (by decide)) (hb 12 (by decide)) hG.hg18) (CZm.add f0 f0)
-  have f19 : CZm M (sVal a (vBase fresh 19)) T.t0b := CZm.trans (addCore_forces a pl M hpl hplM (vBase fresh 18) (vBase fresh 0) (vBase fresh 19) (aWit fresh 13) (hv 18 (by decide)) (hv 0 (by decide)) (hv 19 (by decide)) (hb 13 (by decide)) hG.hg19) (CZm.add f18 f0)
-  have f20 : CZm M (sVal a (vBase fresh 20)) T.t2b := CZm.trans (smulCore_forces a pl M b3 hb3 hpl hplM (vBase fresh 2) (vBase fresh 20) (sWit fresh 0) (hv 2 (by decide)) (hv 20 (by decide)) (hs 0 (by decide)) hG.hg20) (CZm.mul (CZm.refl _) (f2))
-  have f21 : CZm M (sVal a (vBase fresh 21)) T.Z3a := CZm.trans (addCore_forces a pl M hpl hplM (vBase fresh 1) (vBase fresh 20) (vBase fresh 21) (aWit fresh 14) (hv 1 (by decide)) (hv 20 (by decide)) (hv 21 (by decide)) (hb 14 (by decide)) hG.hg21) (CZm.add f1 f20)
-  have f22 : CZm M (sVal a (vBase fresh 22)) T.t1b := CZm.trans (subCore_forces a pl M hpl hplM (vBase fresh 1) (vBase fresh 20) (vBase fresh 22) (aWit fresh 15) (hv 1 (by decide)) (hv 20 (by decide)) (hv 22 (by decide)) (hb 15 (by decide)) hG.hg22) (CZm.sub f1 f20)
-  have f23 : CZm M (sVal a (vBase fresh 23)) T.Y3d := CZm.trans (smulCore_forces a pl M b3 hb3 hpl hplM (vBase fresh 17) (vBase fresh 23) (sWit fresh 1) (hv 17 (by decide)) (hv 23 (by decide)) (hs 1 (by decide)) hG.hg23) (CZm.mul (CZm.refl _) (f17))
-  have f24 : CZm M (sVal a (vBase fresh 24)) T.X3f := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 12) (vBase fresh 23) (vBase fresh 24) (mWit fresh 6) (hv 12 (by decide)) (hv 23 (by decide)) (hv 24 (by decide)) (hm 6 (by decide)) hG.hg24) (CZm.mul f12 f23)
-  have f25 : CZm M (sVal a (vBase fresh 25)) T.t2c := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 7) (vBase fresh 22) (vBase fresh 25) (mWit fresh 7) (hv 7 (by decide)) (hv 22 (by decide)) (hv 25 (by decide)) (hm 7 (by decide)) hG.hg25) (CZm.mul f7 f22)
-  have f26 : CZm M (sVal a (vBase fresh 26)) T.X3g := CZm.trans (subCore_forces a pl M hpl hplM (vBase fresh 25) (vBase fresh 24) (vBase fresh 26) (aWit fresh 16) (hv 25 (by decide)) (hv 24 (by decide)) (hv 26 (by decide)) (hb 16 (by decide)) hG.hg26) (CZm.sub f25 f24)
-  have f27 : CZm M (sVal a (vBase fresh 27)) T.Y3e := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 23) (vBase fresh 19) (vBase fresh 27) (mWit fresh 8) (hv 23 (by decide)) (hv 19 (by decide)) (hv 27 (by decide)) (hm 8 (by decide)) hG.hg27) (CZm.mul f23 f19)
-  have f28 : CZm M (sVal a (vBase fresh 28)) T.t1c := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 22) (vBase fresh 21) (vBase fresh 28) (mWit fresh 9) (hv 22 (by decide)) (hv 21 (by decide)) (hv 28 (by decide)) (hm 9 (by decide)) hG.hg28) (CZm.mul f22 f21)
-  have f29 : CZm M (sVal a (vBase fresh 29)) T.Y3f := CZm.trans (addCore_forces a pl M hpl hplM (vBase fresh 28) (vBase fresh 27) (vBase fresh 29) (aWit fresh 17) (hv 28 (by decide)) (hv 27 (by decide)) (hv 29 (by decide)) (hb 17 (by decide)) hG.hg29) (CZm.add f28 f27)
-  have f30 : CZm M (sVal a (vBase fresh 30)) T.t0c := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 19) (vBase fresh 7) (vBase fresh 30) (mWit fresh 10) (hv 19 (by decide)) (hv 7 (by decide)) (hv 30 (by decide)) (hm 10 (by decide)) hG.hg30) (CZm.mul f19 f7)
-  have f31 : CZm M (sVal a (vBase fresh 31)) T.Z3b := CZm.trans (mulCore_forces a pl M hpl hplM (vBase fresh 21) (vBase fresh 12) (vBase fresh 31) (mWit fresh 11) (hv 21 (by decide)) (hv 12 (by decide)) (hv 31 (by decide)) (hm 11 (by decide)) hG.hg31) (CZm.mul f21 f12)
-  have f32 : CZm M (sVal a (vBase fresh 32)) T.Z3c := CZm.trans (addCore_forces a pl M hpl hplM (vBase fresh 31) (vBase fresh 30) (vBase fresh 32) (aWit fresh 18) (hv 31 (by decide)) (hv 30 (by decide)) (hv 32 (by decide)) (hb 18 (by decide)) hG.hg32) (CZm.add f31 f30).** The `CZm` algebra is `PastaCurve`'s, reused verbatim; what changed is that
+/-- ⚑ **THE COMPOSED THEOREM.** The `CZm` algebra is `PastaCurve`'s, reused verbatim; what changed is that
 every link is now a congruence forced by a MOD-`P` reading over range-pinned limbs rather than by
 an ℤ-equality nothing establishes. -/
 theorem RcbSat.apply {X1 Y1 Z1 X2 Y2 Z2 fresh : Nat} {b3 : ℤ}
@@ -1222,5 +1192,475 @@ theorem sound_ladder_does_not_fit_a_row :
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 #assert_axioms sound_ladder_does_not_fit_a_row
+
+/-! ## §10 — ⚑⚑ THE ADOPTION: the certified SCHWARTZ–ZIPPEL body, swapped into this row.
+
+§"WHY THE SCHOOLBOOK AND NOT SCHWARTZ–ZIPPEL" named the remaining work exactly — *"swapping each
+multiply core's 63 gate legs for two relocated challenge gates (`szBodyAt` at the core's bases) and
+restating the composed `_forces` theorems with `holdsIn`-at-a-draw hypotheses plus a per-row
+non-exceptionality disjunction — a statement-shape change for the whole row, not a leg splice."*
+This is that change, and `PastaSzMul`'s theorems are stated at GENERAL bases (`szBodyAt pl zi xB yB
+zB qB cB`) precisely so it is a relocation and not a re-proof.
+
+⚑ **THE STATEMENT SHAPE IS THE WORK, AND IT MOVES IN THREE PLACES.**
+
+1. **The carrier.** The schoolbook's `MulSat` is `P ∣ (gate body).eval a` — a fact about ONE
+   BabyBear lane, over an `Assignment`. The sz gate's DEPLOYED reading is
+   `ChalConstraint.holdsIn env z isLast` — the `assert_zero_ext` denotation over an arbitrary
+   `CommRing K`, which the deployed prover instantiates at `BinomialExtensionField<BabyBear,4>`.
+   Stating it on the base lane would silently price the draw at `2^31` instead of `2^123.63`; the
+   identity-carrier lesson, so the hypothesis carrier is `VmRowEnv` plus a draw `z : Nat → K`.
+2. **The disjunction.** Each relocated multiply carries its own NON-EXCEPTIONALITY hypothesis —
+   `z CHAL_Z` or `z CHAL_Z2` outside that multiply's residual's `≤ 62`-root exceptional set. That
+   is the ONLY place randomness enters this file, it is a hypothesis and not a lemma, and
+   `PastaSzMul` §6d is where it is priced. `sz_single_challenge_is_below_the_bar` is a theorem that
+   ONE draw unions to `2^−98.5` across the wrap workload — below this repo's ~124-bit bar — which is
+   why `szMulCore` carries TWO challenge gates and why the single-challenge form is not offered
+   here at all.
+3. **`felt_gates_force_congruence` is UNCHANGED and still terminal.** `szPoly_forces_congruence`
+   discharges into it. The swap is which certified body feeds it, exactly as the header said.
+
+⚑ **AND SAY WHAT IT BUYS, IN THE RIGHT CURRENCY.** `4 476 → 3 744` constraints (`12 × 61`), and
+`12 × 2 206 → 12 × 442` multiplication nodes in the emitted bodies. **The declared width does not
+move: `3 048` before and `3 048` after**, and neither does the range-lookup count — `szMulCore.width
+= mulCore.width` by `rfl`, and the three limbs legs are the same three. `PastaSzMul`'s
+`width_and_lookups_unchanged` says this one op at a time; `szRcbWidthIsUnchanged` below says it for
+the composed row. **Anyone selling this as a trace-size win is quoting the wrong currency:** the
+committed row is `10 756` cells of which 71.7% is range decomposition, and none of that moved.
+
+⚠ **WHAT THE DRAW RESTS ON, AND IT IS NOT PROVED HERE OR ANYWHERE.** That the two challenges are
+uniform, post-commitment and drawn from the quartic extension is READ off pinned Plonky3 `82cfad7`
+(`p3-batch-stark/src/{prover,transcript}.rs`), cited in `DescriptorIR2` §2.6, and modelled by
+nothing. `chalIndicesDistinctOk` is the decidable half of it — the `(α, β)` of ONE lookup context,
+the only pairing the measured sampler guarantees — and it is discharged on the emitted objects
+below at `(0, 1)`. The probability that a drawn point is non-exceptional is the one thing a
+Schwartz–Zippel argument NEVER discharges; it enters every theorem below as a HYPOTHESIS.
+
+⚠ **BOTH ROWS STAY EMITTED, and that is not a compatibility hedge.** They are two AIRs with two
+DIFFERENT soundness ledgers: the schoolbook row forces the congruence unconditionally given the
+range legs, the sz row forces it at `1 − 2^−197.0` over the draw. A reader who needs the
+unconditional statement uses `pallasCompleteAddSoundDesc`; a reader who wants the cheap one uses
+`pallasCompleteAddSzDesc` and inherits the ledger. The before/after cost comparison is a
+measurement ON THE PAIR, which is the second reason both exist. -/
+
+section SzAdoption
+
+open Dregg2.Circuit.DescriptorIR2
+  (ChalExpr ChalConstraint challengeCount chalGateCount chalIndicesDistinctOk)
+open Dregg2.Circuit.EffectAirIR (ChalLeg)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.OodQuotientConsistency (exceptionalSet)
+open Dregg2.Circuit.Emit.PastaSzMul
+  (CHAL_Z CHAL_Z2 szBodyAt szResidual szGate_holdsIn_forces_congruence chalMuls schoolbookMuls)
+
+/-! ### §10a — the core. -/
+
+/-- ⚑ **THE SCHWARTZ–ZIPPEL MULTIPLY AS A `SoundCore`** — the SAME columns, the SAME three range
+lookups, the SAME private-witness width as `mulCore`, and TWO relocated challenge gates where the
+schoolbook has 63 coefficient gates. `szBodyAt` is `PastaSzMul`'s emitted body at arbitrary block
+bases, which is why this is a relocation of a proved object and not a second authoring of it.
+
+⚑ The witness block is `(wB, wB + SK)` — quotient limbs then the 62 OFFSET-ENCODED carries — read
+by `szBodyAt`'s `hornerChalOff` at `COFF`, i.e. the same cells `mulCore`'s `coefExpr` reads and the
+same cells `rcbSoundRow` (§8) already writes. **The honest witness generator does not move.** -/
+def szMulCore (pl : Nat → ℤ) : SoundCore :=
+  { legs := fun xB yB zB wB =>
+      [ AirLeg.chal ⟨.all, szBodyAt pl CHAL_Z  xB yB zB wB (wB + SK)⟩
+      , AirLeg.chal ⟨.all, szBodyAt pl CHAL_Z2 xB yB zB wB (wB + SK)⟩
+      , AirLeg.limbs ⟨limbCols zB, SB, rangeTidW SB⟩
+      , AirLeg.limbs ⟨limbCols wB, SB, rangeTidW SB⟩
+      , AirLeg.limbs ⟨carryCols (wB + SK), CB, rangeTidW CB⟩ ]
+  , width := SK + (NG - 1) }
+
+/-- ⚑ **THE WITNESS BLOCK IS BYTE-IDENTICAL** — same width, so `mWit`/`sWit`/`aWit`, `RCB_FRESH`
+and `rcbSoundRow` are unchanged and the emitted honest row of §8 is the honest row of BOTH AIRs. -/
+theorem szMulCore_width_unchanged (pl : Nat → ℤ) :
+    (szMulCore pl).width = (mulCore pl).width := rfl
+
+/-- ⚑ **AND THE THREE RANGE LOOKUPS ARE THE SAME THREE.** The carries survive Schwartz–Zippel:
+lifting `𝔽_p[X] → ℤ[X]` needs the same per-coefficient felt-fitting bound the schoolbook needed. -/
+theorem szMulCore_keeps_the_lookups (pl : Nat → ℤ) (xB yB zB wB : Nat) :
+    ((szMulCore pl).legs xB yB zB wB).filter (fun l => match l with | .limbs _ => true | _ => false)
+      = ((mulCore pl).legs xB yB zB wB).filter
+          (fun l => match l with | .limbs _ => true | _ => false) := by
+  simp [szMulCore, mulCore, List.filter_append, List.filter_map]
+
+/-- The gate legs collapse `63 → 2`, on the cores themselves. -/
+theorem szMulCore_gate_collapse (pl : Nat → ℤ) (xB yB zB wB : Nat) :
+    ((mulCore pl).legs xB yB zB wB).length = 66
+      ∧ ((szMulCore pl).legs xB yB zB wB).length = 5 := ⟨rfl, rfl⟩
+
+/-! ### §10b — the emitted rows. The gadget is generic over `SoundCore`, so this is an
+instantiation and not a second layout: the same 33 ops in the same SSA order at the same bases. -/
+
+def pallasCompleteAddSzLegs : Nat → Nat → Nat → Nat → Nat → Nat → Nat →
+    List AirLeg × (Nat × Nat × Nat) × Nat :=
+  swCompleteAddSoundLegs (szMulCore pLimb) (addSubCore pLimb 1 (-1)) (addSubCore pLimb (-1) 1)
+    (smulCore pLimb (curveB3 : ℤ))
+
+def vestaCompleteAddSzLegs : Nat → Nat → Nat → Nat → Nat → Nat → Nat →
+    List AirLeg × (Nat × Nat × Nat) × Nat :=
+  swCompleteAddSoundLegs (szMulCore qLimb) (addSubCore qLimb 1 (-1)) (addSubCore qLimb (-1) 1)
+    (smulCore qLimb (curveB3 : ℤ))
+
+/-- ⚑ **THE LAYOUT IS THE SCHOOLBOOK ROW'S, COLUMN FOR COLUMN.** Same `fresh` arithmetic, same
+result bases, same next-free column — so a witness for one row is a witness for the other and the
+cost comparison is about two AIRs over ONE trace shape. -/
+theorem szLegs_layout_unchanged (X1 Y1 Z1 X2 Y2 Z2 fresh : Nat) :
+    (pallasCompleteAddSzLegs X1 Y1 Z1 X2 Y2 Z2 fresh).2
+      = (pallasCompleteAddSoundLegs X1 Y1 Z1 X2 Y2 Z2 fresh).2 := rfl
+
+def pallasCompleteAddSzAir : EffectAir :=
+  { tables := rcbTables
+  , legs := inputLimbLegs
+      ++ (pallasCompleteAddSzLegs 0 SK (2*SK) (3*SK) (4*SK) (5*SK) IN_BASE).1 }
+
+def vestaCompleteAddSzAir : EffectAir :=
+  { tables := rcbTables
+  , legs := inputLimbLegs
+      ++ (vestaCompleteAddSzLegs 0 SK (2*SK) (3*SK) (4*SK) (5*SK) IN_BASE).1 }
+
+set_option maxHeartbeats 4000000 in
+/-- ⚑ **THE COMPILER ACCEPTS BOTH BLOCKS — and for the challenge legs it is a REAL verdict.**
+`ChalLeg.mainRailOk` refuses `.first`/`.last` OUTRIGHT (the target's `chalGate` is two-row only)
+and refuses an `.all` body that reads `nxt`. All 24 relocated gates are `.all` over bodies that
+read no `nxt`, so they have a deployed image; a `.transition`-scoped one would lower to a gate that
+fires somewhere else. -/
+theorem pallasCompleteAddSzAir_mainRailOk : pallasCompleteAddSzAir.mainRailOk = true := by decide
+
+set_option maxHeartbeats 4000000 in
+theorem vestaCompleteAddSzAir_mainRailOk : vestaCompleteAddSzAir.mainRailOk = true := by decide
+
+def pallasCompleteAddSzTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := pallasCompleteAddSzAir
+  ok  := pallasCompleteAddSzAir_mainRailOk
+
+def pallasCompleteAddSzDesc : EffectVmDescriptor2 :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-pallas-complete-add-sz::v1" RCB_WIDTH 0 [] pallasCompleteAddSzTiedAir).val
+
+/-- ⚑ **THE CERTIFICATE, produced by the emit.** Every leg of the source — including the two
+relocated challenge gates of each multiply — is FORCED by the emitted descriptor's constraints on
+any row window that satisfies them, stated in the SOURCE's vocabulary. -/
+theorem pallasCompleteAddSzDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines pallasCompleteAddSzDesc []
+      pallasCompleteAddSzAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-pallas-complete-add-sz::v1" RCB_WIDTH 0 [] pallasCompleteAddSzTiedAir).property
+
+theorem pallasCompleteAddSzDesc_eq_lowerAir :
+    pallasCompleteAddSzDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-pallas-complete-add-sz::v1" RCB_WIDTH 0 [] pallasCompleteAddSzAir := rfl
+
+def vestaCompleteAddSzTiedAir : Dregg2.Circuit.Emit.EffectLower.TiedAir where
+  air := vestaCompleteAddSzAir
+  ok  := vestaCompleteAddSzAir_mainRailOk
+
+def vestaCompleteAddSzDesc : EffectVmDescriptor2 :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-vesta-complete-add-sz::v1" RCB_WIDTH 0 [] vestaCompleteAddSzTiedAir).val
+
+theorem vestaCompleteAddSzDesc_certified :
+    Dregg2.Circuit.Emit.EffectLower.CertifiedRefines vestaCompleteAddSzDesc []
+      vestaCompleteAddSzAir :=
+  (Dregg2.Circuit.Emit.EffectLower.lowerTiedAir
+    "dregg-pasta-vesta-complete-add-sz::v1" RCB_WIDTH 0 [] vestaCompleteAddSzTiedAir).property
+
+theorem vestaCompleteAddSzDesc_eq_lowerAir :
+    vestaCompleteAddSzDesc = Dregg2.Circuit.Emit.EffectLower.lowerAir "dregg-pasta-vesta-complete-add-sz::v1" RCB_WIDTH 0 [] vestaCompleteAddSzAir := rfl
+
+/-! ### §10c — ⚑ THE PRICE, RE-DERIVED ON THE EMITTED OBJECTS.
+
+⚠ **Nothing here is inherited from `PastaSzMul`'s one-multiply table.** `192 → 128` is that file's
+`253 → 192` restated at the composed row's marginal accounting (a chained row does not re-pay for
+its operands' limb lookups), and the row total is decided on the built descriptor by the same
+`lowered_length` bridge §7 uses. -/
+
+/-- The marginal price of ONE relocated multiply: 2 challenge gates + `32 + 32 + 62` lookups. -/
+def SZ_MUL_MARGINAL : Nat := 2 + SK + SK + (NG - 1)
+
+/-- ⚑ **`189 → 128` PER MULTIPLY, and the 61 that come off it are the 63 gates minus the 2.** -/
+theorem sz_mul_is_cheaper_by_sixty_one :
+    SZ_MUL_MARGINAL = 128
+      ∧ SOUND_MUL_MARGINAL - SZ_MUL_MARGINAL = 61
+      ∧ SOUND_MUL_MARGINAL - SZ_MUL_MARGINAL = NG - 2 := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE MEASURED COST OF A STANDALONE SZ PALLAS COMPLETE ADD: 3 744 constraints**, against the
+schoolbook row's 4 476. `6·32` input lookups `+ 12·128` multiplies `+ 2·96` constant-multiplies
+`+ 19·96` add/subs. -/
+theorem pallasCompleteAddSzDesc_constraint_count :
+    pallasCompleteAddSzDesc.constraints.length = 3744 := by
+  rw [pallasCompleteAddSzDesc_eq_lowerAir, lowered_length]; decide
+
+theorem vestaCompleteAddSzDesc_constraint_count :
+    vestaCompleteAddSzDesc.constraints.length = 3744 := by
+  rw [vestaCompleteAddSzDesc_eq_lowerAir, lowered_length]; decide
+
+/-- ⚑⚑ **AND THE WIDTH DOES NOT MOVE.** `3 048` before, `3 048` after — the number that decides
+trace size and the LDE domain. This theorem is the one that stops the constraint saving being
+read as a memory saving. -/
+theorem szRcbWidthIsUnchanged :
+    pallasCompleteAddSzDesc.traceWidth = 3048
+      ∧ vestaCompleteAddSzDesc.traceWidth = 3048
+      ∧ pallasCompleteAddSzDesc.traceWidth = pallasCompleteAddSoundDesc.traceWidth := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- ⚑ **THE TOTAL, DECOMPOSED** — a sum of named op prices, and the 732 it saves is `12 · 61`. -/
+theorem sz_rcb_price_decomposes :
+    SOUND_INPUT_BLOCKS + 12 * SZ_MUL_MARGINAL + 2 * SOUND_SMUL_MARGINAL
+        + 19 * SOUND_ADDSUB_MARGINAL = 3744
+      ∧ 4476 - 3744 = 12 * (SOUND_MUL_MARGINAL - SZ_MUL_MARGINAL)
+      ∧ 12 * (SOUND_MUL_MARGINAL - SZ_MUL_MARGINAL) = 732 := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE ARITHMETIC, WHICH IS THE CURRENCY THAT ACTUALLY MOVES.** Multiplication nodes in the
+twelve multiplies' emitted bodies: `12 · 2 206 = 26 472` for the schoolbook, `12 · 442 = 5 304` for
+the two-point sz row — **4.99×** less per-row evaluation arithmetic at the same constraint degree.
+Counted by `PastaSzMul`'s own two measures on the two emitted body families, so both sides of the
+comparison are counted by one rule. -/
+theorem sz_rcb_arithmetic_collapse :
+    12 * schoolbookMuls = 26472
+      ∧ 12 * (chalMuls (szBodyAt pLimb CHAL_Z X_BASE Y_BASE Z_BASE Q_BASE C_BASE)
+              + chalMuls (szBodyAt pLimb CHAL_Z2 X_BASE Y_BASE Z_BASE Q_BASE C_BASE)) = 5304
+      ∧ 4 * 5304 < 12 * schoolbookMuls ∧ 12 * schoolbookMuls < 5 * 5304 := by
+  refine ⟨by rw [Dregg2.Circuit.Emit.PastaSzMul.schoolbook_arithmetic_is_quadratic], ?_, ?_, ?_⟩
+    <;> decide
+
+/-- ⚑ **THE INDEPENDENCE LICENCE, DISCHARGED ON THE EMITTED COMPOSED ROW.** `(CHAL_Z, CHAL_Z2) =
+(0, 1)` are the `α` and `β` of the instance's FIRST lookup context — the one pairing the measured
+sampler guarantees is two distinct post-commitment draws, and the ONLY pairing
+`chalIndicesDistinctOk` licenses. A pairing like `(0, 2)` — same slot, different contexts — is
+REFUSED, and rightly: under global-bus sharing those can be the identical value, and every range
+limb of this row rides the one byte bus. -/
+theorem pallasCompleteAddSzDesc_chal_indices_distinct :
+    chalIndicesDistinctOk pallasCompleteAddSzDesc CHAL_Z CHAL_Z2 = true := by
+  rw [pallasCompleteAddSzDesc_eq_lowerAir]; decide
+
+theorem vestaCompleteAddSzDesc_chal_indices_distinct :
+    chalIndicesDistinctOk vestaCompleteAddSzDesc CHAL_Z CHAL_Z2 = true := by
+  rw [vestaCompleteAddSzDesc_eq_lowerAir]; decide
+
+/-- The row declares two challenges and carries 24 challenge gates — twelve multiplies, two draws
+each. A descriptor that read a challenge it did not declare is refused by `check_descriptor2`. -/
+theorem pallasCompleteAddSzDesc_declares_two_challenges :
+    challengeCount pallasCompleteAddSzDesc = 2
+      ∧ chalGateCount pallasCompleteAddSzDesc = 24 := by
+  rw [pallasCompleteAddSzDesc_eq_lowerAir]
+  constructor <;> decide
+
+/-! ### §10d — ⚑ THE COMPOSED FORCING THEOREM, in the new statement shape. -/
+
+/-- ⚑ **ONE RELOCATED MULTIPLY'S DEPLOYED HYPOTHESIS.** The two emitted challenge gates' FAITHFUL
+`K`-denotations at the drawn point — what `assert_zero_ext` asserts — plus the non-exceptionality
+DISJUNCTION. It is a structure and not a conjunction so that a caller supplying it has to name all
+three, and in particular cannot leave the disjunction implicit: that field is where the `2^−197.0`
+lives and it is the whole difference from the schoolbook's `MulSat`. -/
+structure SzMulAt {K : Type*} [CommRing K] [IsDomain K] [DecidableEq K]
+    (env : VmRowEnv) (z : Nat → K) (isLast : Bool) (pl : Nat → ℤ) (xB yB zB wB : Nat) : Prop where
+  /-- The gate at the FIRST draw, `permutation_randomness()[0]`. -/
+  gateZ  : ChalConstraint.holdsIn env z isLast ⟨szBodyAt pl CHAL_Z  xB yB zB wB (wB + SK), false⟩
+  /-- The gate at the SECOND draw, `permutation_randomness()[1]` — the same context's `β`. -/
+  gateZ2 : ChalConstraint.holdsIn env z isLast ⟨szBodyAt pl CHAL_Z2 xB yB zB wB (wB + SK), false⟩
+  /-- ⚑ EITHER draw lands outside this multiply's residual's `≤ 62`-root exceptional set. Failing
+  BOTH is the event `sz_two_point_clears_the_bar` prices at `2^−197.0`. -/
+  nonexc :
+    z CHAL_Z ∉ exceptionalSet
+        ((szResidual env.loc xB yB zB wB (wB + SK) pl).map (Int.castRingHom K))
+      ∨ z CHAL_Z2 ∉ exceptionalSet
+        ((szResidual env.loc xB yB zB wB (wB + SK) pl).map (Int.castRingHom K))
+
+/-- ⚑ **THE RELOCATED CORE FORCES THE CONGRUENCE** — the sz twin of `mulCore_forces`, with the
+same conclusion in the same `CZm` vocabulary, so the composed chain below is the SAME chain. -/
+theorem szMulCore_forces {K : Type*} [CommRing K] [IsDomain K] [DecidableEq K]
+    [CharP K 2013265921]
+    (env : VmRowEnv) (z : Nat → K) (isLast : Bool) (pl : Nat → ℤ) (M : ℤ)
+    (hpl : ∀ j, 0 ≤ pl j ∧ pl j < 2 ^ SB)
+    (hplM : sumL (List.range SK) (fun j => ((2 : ℤ) ^ SB) ^ j * pl j) = M)
+    (xB yB zB wB : Nat)
+    (hx : Ranged env.loc xB) (hy : Ranged env.loc yB) (hz : Ranged env.loc zB)
+    (hw : MulWitRanged env.loc wB) (hg : SzMulAt env z isLast pl xB yB zB wB) :
+    CZm M (sVal env.loc zB) (sVal env.loc xB * sVal env.loc yB) :=
+  CZm.symm (by
+    rcases hg.nonexc with h | h
+    · exact szGate_holdsIn_forces_congruence env z isLast CHAL_Z xB yB zB wB (wB + SK) pl M
+        hg.gateZ h hx hy hz hw.1 hpl hplM hw.2
+    · exact szGate_holdsIn_forces_congruence env z isLast CHAL_Z2 xB yB zB wB (wB + SK) pl M
+        hg.gateZ2 h hx hy hz hw.1 hpl hplM hw.2)
+
+/-- ⚑ **THE 33 LEG-BLOCK HYPOTHESES OF THE SZ ROW, as one named object.** Field `hgN` is op `N` of
+`swCompleteAddSoundLegs`, in the same SSA order at the same column bases as `RcbSat`'s — twelve of
+them now `SzMulAt` over a draw, twenty-one unchanged over `env.loc`. -/
+structure SzRcbSat {K : Type*} [CommRing K] [IsDomain K] [DecidableEq K]
+    (env : VmRowEnv) (z : Nat → K) (isLast : Bool) (pl : Nat → ℤ) (b3 : ℤ)
+    (X1 Y1 Z1 X2 Y2 Z2 fresh : Nat) : Prop where
+  hg0 : SzMulAt env z isLast pl X1 X2 (vBase fresh 0) (mWit fresh 0)
+  hg1 : SzMulAt env z isLast pl Y1 Y2 (vBase fresh 1) (mWit fresh 1)
+  hg2 : SzMulAt env z isLast pl Z1 Z2 (vBase fresh 2) (mWit fresh 2)
+  hg3 : AddSubSat env.loc pl 1 (-1) X1 Y1 (vBase fresh 3) (aWit fresh 0)
+  hg4 : AddSubSat env.loc pl 1 (-1) X2 Y2 (vBase fresh 4) (aWit fresh 1)
+  hg5 : SzMulAt env z isLast pl (vBase fresh 3) (vBase fresh 4) (vBase fresh 5) (mWit fresh 3)
+  hg6 : AddSubSat env.loc pl 1 (-1) (vBase fresh 0) (vBase fresh 1) (vBase fresh 6) (aWit fresh 2)
+  hg7 : AddSubSat env.loc pl (-1) 1 (vBase fresh 5) (vBase fresh 6) (vBase fresh 7) (aWit fresh 3)
+  hg8 : AddSubSat env.loc pl 1 (-1) Y1 Z1 (vBase fresh 8) (aWit fresh 4)
+  hg9 : AddSubSat env.loc pl 1 (-1) Y2 Z2 (vBase fresh 9) (aWit fresh 5)
+  hg10 : SzMulAt env z isLast pl (vBase fresh 8) (vBase fresh 9) (vBase fresh 10) (mWit fresh 4)
+  hg11 : AddSubSat env.loc pl 1 (-1) (vBase fresh 1) (vBase fresh 2) (vBase fresh 11) (aWit fresh 6)
+  hg12 : AddSubSat env.loc pl (-1) 1 (vBase fresh 10) (vBase fresh 11) (vBase fresh 12) (aWit fresh 7)
+  hg13 : AddSubSat env.loc pl 1 (-1) X1 Z1 (vBase fresh 13) (aWit fresh 8)
+  hg14 : AddSubSat env.loc pl 1 (-1) X2 Z2 (vBase fresh 14) (aWit fresh 9)
+  hg15 : SzMulAt env z isLast pl (vBase fresh 13) (vBase fresh 14) (vBase fresh 15) (mWit fresh 5)
+  hg16 : AddSubSat env.loc pl 1 (-1) (vBase fresh 0) (vBase fresh 2) (vBase fresh 16) (aWit fresh 10)
+  hg17 : AddSubSat env.loc pl (-1) 1 (vBase fresh 15) (vBase fresh 16) (vBase fresh 17) (aWit fresh 11)
+  hg18 : AddSubSat env.loc pl 1 (-1) (vBase fresh 0) (vBase fresh 0) (vBase fresh 18) (aWit fresh 12)
+  hg19 : AddSubSat env.loc pl 1 (-1) (vBase fresh 18) (vBase fresh 0) (vBase fresh 19) (aWit fresh 13)
+  hg20 : SmulSat env.loc pl b3 (vBase fresh 2) (vBase fresh 20) (sWit fresh 0)
+  hg21 : AddSubSat env.loc pl 1 (-1) (vBase fresh 1) (vBase fresh 20) (vBase fresh 21) (aWit fresh 14)
+  hg22 : AddSubSat env.loc pl (-1) 1 (vBase fresh 1) (vBase fresh 20) (vBase fresh 22) (aWit fresh 15)
+  hg23 : SmulSat env.loc pl b3 (vBase fresh 17) (vBase fresh 23) (sWit fresh 1)
+  hg24 : SzMulAt env z isLast pl (vBase fresh 12) (vBase fresh 23) (vBase fresh 24) (mWit fresh 6)
+  hg25 : SzMulAt env z isLast pl (vBase fresh 7) (vBase fresh 22) (vBase fresh 25) (mWit fresh 7)
+  hg26 : AddSubSat env.loc pl (-1) 1 (vBase fresh 25) (vBase fresh 24) (vBase fresh 26) (aWit fresh 16)
+  hg27 : SzMulAt env z isLast pl (vBase fresh 23) (vBase fresh 19) (vBase fresh 27) (mWit fresh 8)
+  hg28 : SzMulAt env z isLast pl (vBase fresh 22) (vBase fresh 21) (vBase fresh 28) (mWit fresh 9)
+  hg29 : AddSubSat env.loc pl 1 (-1) (vBase fresh 28) (vBase fresh 27) (vBase fresh 29) (aWit fresh 17)
+  hg30 : SzMulAt env z isLast pl (vBase fresh 19) (vBase fresh 7) (vBase fresh 30) (mWit fresh 10)
+  hg31 : SzMulAt env z isLast pl (vBase fresh 21) (vBase fresh 12) (vBase fresh 31) (mWit fresh 11)
+  hg32 : AddSubSat env.loc pl 1 (-1) (vBase fresh 31) (vBase fresh 30) (vBase fresh 32) (aWit fresh 18)
+
+/-- ⚑ **THE COMPOSED THEOREM, IN THE NEW SHAPE.** The `CZm` chain is `PastaCurve`'s, link for link
+the same as `RcbSat.apply`'s; what changed is that twelve of its links are now forced by a
+challenge gate at a non-exceptional draw instead of by 63 coefficient gates. -/
+theorem SzRcbSat.apply {K : Type*} [CommRing K] [IsDomain K] [DecidableEq K] [CharP K 2013265921]
+    {X1 Y1 Z1 X2 Y2 Z2 fresh : Nat} {b3 : ℤ}
+    {env : VmRowEnv} {z : Nat → K} {isLast : Bool} {pl : Nat → ℤ}
+    (hG : SzRcbSat env z isLast pl b3 X1 Y1 Z1 X2 Y2 Z2 fresh) (M : ℤ)
+    (hb3 : 0 ≤ b3 ∧ b3 < 2 ^ SB)
+    (hpl : ∀ j, 0 ≤ pl j ∧ pl j < 2 ^ SB)
+    (hplM : sumL (List.range SK) (fun j => ((2 : ℤ) ^ SB) ^ j * pl j) = M)
+    (hX1 : Ranged env.loc X1) (hY1 : Ranged env.loc Y1) (hZ1 : Ranged env.loc Z1)
+    (hX2 : Ranged env.loc X2) (hY2 : Ranged env.loc Y2) (hZ2 : Ranged env.loc Z2)
+    (hv : ∀ i, i < 33 → Ranged env.loc (vBase fresh i))
+    (hm : ∀ k, k < 12 → MulWitRanged env.loc (mWit fresh k))
+    (hs : ∀ k, k < 2 → SmulWitRanged env.loc (sWit fresh k))
+    (hb : ∀ k, k < 19 → AddSubWitRanged env.loc (aWit fresh k)) :
+    CZm M (sVal env.loc (vBase fresh 26))
+        (rcbTraceZ b3 (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                      (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).X3g
+      ∧ CZm M (sVal env.loc (vBase fresh 29))
+        (rcbTraceZ b3 (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                      (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).Y3f
+      ∧ CZm M (sVal env.loc (vBase fresh 32))
+        (rcbTraceZ b3 (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                      (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).Z3c := by
+  let T := rcbTraceZ b3 (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+             (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)
+  have f0 : CZm M (sVal env.loc (vBase fresh 0)) T.t0a := szMulCore_forces env z isLast pl M hpl hplM X1 X2 (vBase fresh 0) (mWit fresh 0) hX1 hX2 (hv 0 (by decide)) (hm 0 (by decide)) hG.hg0
+  have f1 : CZm M (sVal env.loc (vBase fresh 1)) T.t1a := szMulCore_forces env z isLast pl M hpl hplM Y1 Y2 (vBase fresh 1) (mWit fresh 1) hY1 hY2 (hv 1 (by decide)) (hm 1 (by decide)) hG.hg1
+  have f2 : CZm M (sVal env.loc (vBase fresh 2)) T.t2a := szMulCore_forces env z isLast pl M hpl hplM Z1 Z2 (vBase fresh 2) (mWit fresh 2) hZ1 hZ2 (hv 2 (by decide)) (hm 2 (by decide)) hG.hg2
+  have f3 : CZm M (sVal env.loc (vBase fresh 3)) T.t3a := addCore_forces env.loc pl M hpl hplM X1 Y1 (vBase fresh 3) (aWit fresh 0) hX1 hY1 (hv 3 (by decide)) (hb 0 (by decide)) hG.hg3
+  have f4 : CZm M (sVal env.loc (vBase fresh 4)) T.t4a := addCore_forces env.loc pl M hpl hplM X2 Y2 (vBase fresh 4) (aWit fresh 1) hX2 hY2 (hv 4 (by decide)) (hb 1 (by decide)) hG.hg4
+  have f5 : CZm M (sVal env.loc (vBase fresh 5)) T.t3b := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 3) (vBase fresh 4) (vBase fresh 5) (mWit fresh 3) (hv 3 (by decide)) (hv 4 (by decide)) (hv 5 (by decide)) (hm 3 (by decide)) hG.hg5) (CZm.mul f3 f4)
+  have f6 : CZm M (sVal env.loc (vBase fresh 6)) T.t4b := CZm.trans (addCore_forces env.loc pl M hpl hplM (vBase fresh 0) (vBase fresh 1) (vBase fresh 6) (aWit fresh 2) (hv 0 (by decide)) (hv 1 (by decide)) (hv 6 (by decide)) (hb 2 (by decide)) hG.hg6) (CZm.add f0 f1)
+  have f7 : CZm M (sVal env.loc (vBase fresh 7)) T.t3c := CZm.trans (subCore_forces env.loc pl M hpl hplM (vBase fresh 5) (vBase fresh 6) (vBase fresh 7) (aWit fresh 3) (hv 5 (by decide)) (hv 6 (by decide)) (hv 7 (by decide)) (hb 3 (by decide)) hG.hg7) (CZm.sub f5 f6)
+  have f8 : CZm M (sVal env.loc (vBase fresh 8)) T.t4c := addCore_forces env.loc pl M hpl hplM Y1 Z1 (vBase fresh 8) (aWit fresh 4) hY1 hZ1 (hv 8 (by decide)) (hb 4 (by decide)) hG.hg8
+  have f9 : CZm M (sVal env.loc (vBase fresh 9)) T.X3a := addCore_forces env.loc pl M hpl hplM Y2 Z2 (vBase fresh 9) (aWit fresh 5) hY2 hZ2 (hv 9 (by decide)) (hb 5 (by decide)) hG.hg9
+  have f10 : CZm M (sVal env.loc (vBase fresh 10)) T.t4d := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 8) (vBase fresh 9) (vBase fresh 10) (mWit fresh 4) (hv 8 (by decide)) (hv 9 (by decide)) (hv 10 (by decide)) (hm 4 (by decide)) hG.hg10) (CZm.mul f8 f9)
+  have f11 : CZm M (sVal env.loc (vBase fresh 11)) T.X3b := CZm.trans (addCore_forces env.loc pl M hpl hplM (vBase fresh 1) (vBase fresh 2) (vBase fresh 11) (aWit fresh 6) (hv 1 (by decide)) (hv 2 (by decide)) (hv 11 (by decide)) (hb 6 (by decide)) hG.hg11) (CZm.add f1 f2)
+  have f12 : CZm M (sVal env.loc (vBase fresh 12)) T.t4e := CZm.trans (subCore_forces env.loc pl M hpl hplM (vBase fresh 10) (vBase fresh 11) (vBase fresh 12) (aWit fresh 7) (hv 10 (by decide)) (hv 11 (by decide)) (hv 12 (by decide)) (hb 7 (by decide)) hG.hg12) (CZm.sub f10 f11)
+  have f13 : CZm M (sVal env.loc (vBase fresh 13)) T.X3c := addCore_forces env.loc pl M hpl hplM X1 Z1 (vBase fresh 13) (aWit fresh 8) hX1 hZ1 (hv 13 (by decide)) (hb 8 (by decide)) hG.hg13
+  have f14 : CZm M (sVal env.loc (vBase fresh 14)) T.Y3a := addCore_forces env.loc pl M hpl hplM X2 Z2 (vBase fresh 14) (aWit fresh 9) hX2 hZ2 (hv 14 (by decide)) (hb 9 (by decide)) hG.hg14
+  have f15 : CZm M (sVal env.loc (vBase fresh 15)) T.X3d := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 13) (vBase fresh 14) (vBase fresh 15) (mWit fresh 5) (hv 13 (by decide)) (hv 14 (by decide)) (hv 15 (by decide)) (hm 5 (by decide)) hG.hg15) (CZm.mul f13 f14)
+  have f16 : CZm M (sVal env.loc (vBase fresh 16)) T.Y3b := CZm.trans (addCore_forces env.loc pl M hpl hplM (vBase fresh 0) (vBase fresh 2) (vBase fresh 16) (aWit fresh 10) (hv 0 (by decide)) (hv 2 (by decide)) (hv 16 (by decide)) (hb 10 (by decide)) hG.hg16) (CZm.add f0 f2)
+  have f17 : CZm M (sVal env.loc (vBase fresh 17)) T.Y3c := CZm.trans (subCore_forces env.loc pl M hpl hplM (vBase fresh 15) (vBase fresh 16) (vBase fresh 17) (aWit fresh 11) (hv 15 (by decide)) (hv 16 (by decide)) (hv 17 (by decide)) (hb 11 (by decide)) hG.hg17) (CZm.sub f15 f16)
+  have f18 : CZm M (sVal env.loc (vBase fresh 18)) T.X3e := CZm.trans (addCore_forces env.loc pl M hpl hplM (vBase fresh 0) (vBase fresh 0) (vBase fresh 18) (aWit fresh 12) (hv 0 (by decide)) (hv 0 (by decide)) (hv 18 (by decide)) (hb 12 (by decide)) hG.hg18) (CZm.add f0 f0)
+  have f19 : CZm M (sVal env.loc (vBase fresh 19)) T.t0b := CZm.trans (addCore_forces env.loc pl M hpl hplM (vBase fresh 18) (vBase fresh 0) (vBase fresh 19) (aWit fresh 13) (hv 18 (by decide)) (hv 0 (by decide)) (hv 19 (by decide)) (hb 13 (by decide)) hG.hg19) (CZm.add f18 f0)
+  have f20 : CZm M (sVal env.loc (vBase fresh 20)) T.t2b := CZm.trans (smulCore_forces env.loc pl M b3 hb3 hpl hplM (vBase fresh 2) (vBase fresh 20) (sWit fresh 0) (hv 2 (by decide)) (hv 20 (by decide)) (hs 0 (by decide)) hG.hg20) (CZm.mul (CZm.refl _) (f2))
+  have f21 : CZm M (sVal env.loc (vBase fresh 21)) T.Z3a := CZm.trans (addCore_forces env.loc pl M hpl hplM (vBase fresh 1) (vBase fresh 20) (vBase fresh 21) (aWit fresh 14) (hv 1 (by decide)) (hv 20 (by decide)) (hv 21 (by decide)) (hb 14 (by decide)) hG.hg21) (CZm.add f1 f20)
+  have f22 : CZm M (sVal env.loc (vBase fresh 22)) T.t1b := CZm.trans (subCore_forces env.loc pl M hpl hplM (vBase fresh 1) (vBase fresh 20) (vBase fresh 22) (aWit fresh 15) (hv 1 (by decide)) (hv 20 (by decide)) (hv 22 (by decide)) (hb 15 (by decide)) hG.hg22) (CZm.sub f1 f20)
+  have f23 : CZm M (sVal env.loc (vBase fresh 23)) T.Y3d := CZm.trans (smulCore_forces env.loc pl M b3 hb3 hpl hplM (vBase fresh 17) (vBase fresh 23) (sWit fresh 1) (hv 17 (by decide)) (hv 23 (by decide)) (hs 1 (by decide)) hG.hg23) (CZm.mul (CZm.refl _) (f17))
+  have f24 : CZm M (sVal env.loc (vBase fresh 24)) T.X3f := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 12) (vBase fresh 23) (vBase fresh 24) (mWit fresh 6) (hv 12 (by decide)) (hv 23 (by decide)) (hv 24 (by decide)) (hm 6 (by decide)) hG.hg24) (CZm.mul f12 f23)
+  have f25 : CZm M (sVal env.loc (vBase fresh 25)) T.t2c := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 7) (vBase fresh 22) (vBase fresh 25) (mWit fresh 7) (hv 7 (by decide)) (hv 22 (by decide)) (hv 25 (by decide)) (hm 7 (by decide)) hG.hg25) (CZm.mul f7 f22)
+  have f26 : CZm M (sVal env.loc (vBase fresh 26)) T.X3g := CZm.trans (subCore_forces env.loc pl M hpl hplM (vBase fresh 25) (vBase fresh 24) (vBase fresh 26) (aWit fresh 16) (hv 25 (by decide)) (hv 24 (by decide)) (hv 26 (by decide)) (hb 16 (by decide)) hG.hg26) (CZm.sub f25 f24)
+  have f27 : CZm M (sVal env.loc (vBase fresh 27)) T.Y3e := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 23) (vBase fresh 19) (vBase fresh 27) (mWit fresh 8) (hv 23 (by decide)) (hv 19 (by decide)) (hv 27 (by decide)) (hm 8 (by decide)) hG.hg27) (CZm.mul f23 f19)
+  have f28 : CZm M (sVal env.loc (vBase fresh 28)) T.t1c := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 22) (vBase fresh 21) (vBase fresh 28) (mWit fresh 9) (hv 22 (by decide)) (hv 21 (by decide)) (hv 28 (by decide)) (hm 9 (by decide)) hG.hg28) (CZm.mul f22 f21)
+  have f29 : CZm M (sVal env.loc (vBase fresh 29)) T.Y3f := CZm.trans (addCore_forces env.loc pl M hpl hplM (vBase fresh 28) (vBase fresh 27) (vBase fresh 29) (aWit fresh 17) (hv 28 (by decide)) (hv 27 (by decide)) (hv 29 (by decide)) (hb 17 (by decide)) hG.hg29) (CZm.add f28 f27)
+  have f30 : CZm M (sVal env.loc (vBase fresh 30)) T.t0c := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 19) (vBase fresh 7) (vBase fresh 30) (mWit fresh 10) (hv 19 (by decide)) (hv 7 (by decide)) (hv 30 (by decide)) (hm 10 (by decide)) hG.hg30) (CZm.mul f19 f7)
+  have f31 : CZm M (sVal env.loc (vBase fresh 31)) T.Z3b := CZm.trans (szMulCore_forces env z isLast pl M hpl hplM (vBase fresh 21) (vBase fresh 12) (vBase fresh 31) (mWit fresh 11) (hv 21 (by decide)) (hv 12 (by decide)) (hv 31 (by decide)) (hm 11 (by decide)) hG.hg31) (CZm.mul f21 f12)
+  have f32 : CZm M (sVal env.loc (vBase fresh 32)) T.Z3c := CZm.trans (addCore_forces env.loc pl M hpl hplM (vBase fresh 31) (vBase fresh 30) (vBase fresh 32) (aWit fresh 18) (hv 31 (by decide)) (hv 30 (by decide)) (hv 32 (by decide)) (hb 18 (by decide)) hG.hg32) (CZm.add f31 f30)
+  exact ⟨f26, f29, f32⟩
+
+/-- ⚑ **`pallasCompleteAddSz_forces`** — the DEPLOYED satisfaction of the sz row's 33 leg blocks,
+at a draw whose twelve non-exceptionality disjunctions hold, forces
+`(X3,Y3,Z3) ≡ rcbTraceZ 15 (P,Q)` mod the real Pallas-base prime `p`. Same conclusion as
+`pallasCompleteAddSound_forces`, at 3 744 constraints instead of 4 476 and at
+`1 − 2^−197.0` over the draw instead of unconditionally. -/
+theorem pallasCompleteAddSz_forces {K : Type*} [CommRing K] [IsDomain K] [DecidableEq K]
+    [CharP K 2013265921]
+    (env : VmRowEnv) (z : Nat → K) (isLast : Bool) (X1 Y1 Z1 X2 Y2 Z2 fresh : Nat)
+    (hX1 : Ranged env.loc X1) (hY1 : Ranged env.loc Y1) (hZ1 : Ranged env.loc Z1)
+    (hX2 : Ranged env.loc X2) (hY2 : Ranged env.loc Y2) (hZ2 : Ranged env.loc Z2)
+    (hv : ∀ i, i < 33 → Ranged env.loc (vBase fresh i))
+    (hm : ∀ k, k < 12 → MulWitRanged env.loc (mWit fresh k))
+    (hs : ∀ k, k < 2 → SmulWitRanged env.loc (sWit fresh k))
+    (hb : ∀ k, k < 19 → AddSubWitRanged env.loc (aWit fresh k))
+    (hG : SzRcbSat env z isLast pLimb (curveB3 : ℤ) X1 Y1 Z1 X2 Y2 Z2 fresh) :
+    CZp (sVal env.loc (vBase fresh 26))
+        (rcbTraceZ (curveB3 : ℤ) (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                   (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).X3g
+    ∧ CZp (sVal env.loc (vBase fresh 29))
+        (rcbTraceZ (curveB3 : ℤ) (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                   (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).Y3f
+    ∧ CZp (sVal env.loc (vBase fresh 32))
+        (rcbTraceZ (curveB3 : ℤ) (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                   (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).Z3c :=
+  hG.apply (pN : ℤ) (by decide) pLimb_bounds pLimb_recomposes
+    hX1 hY1 hZ1 hX2 hY2 hZ2 hv hm hs hb
+
+/-- ⚑ **`vestaCompleteAddSz_forces`** — the same at the Vesta-base / Pallas-scalar prime `q`. Both,
+because the accumulator leg is Step/Tick on Vesta: a Pallas-only adoption would leave half the
+recursion boundary on the expensive row. -/
+theorem vestaCompleteAddSz_forces {K : Type*} [CommRing K] [IsDomain K] [DecidableEq K]
+    [CharP K 2013265921]
+    (env : VmRowEnv) (z : Nat → K) (isLast : Bool) (X1 Y1 Z1 X2 Y2 Z2 fresh : Nat)
+    (hX1 : Ranged env.loc X1) (hY1 : Ranged env.loc Y1) (hZ1 : Ranged env.loc Z1)
+    (hX2 : Ranged env.loc X2) (hY2 : Ranged env.loc Y2) (hZ2 : Ranged env.loc Z2)
+    (hv : ∀ i, i < 33 → Ranged env.loc (vBase fresh i))
+    (hm : ∀ k, k < 12 → MulWitRanged env.loc (mWit fresh k))
+    (hs : ∀ k, k < 2 → SmulWitRanged env.loc (sWit fresh k))
+    (hb : ∀ k, k < 19 → AddSubWitRanged env.loc (aWit fresh k))
+    (hG : SzRcbSat env z isLast qLimb (curveB3 : ℤ) X1 Y1 Z1 X2 Y2 Z2 fresh) :
+    CZq (sVal env.loc (vBase fresh 26))
+        (rcbTraceZ (curveB3 : ℤ) (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                   (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).X3g
+    ∧ CZq (sVal env.loc (vBase fresh 29))
+        (rcbTraceZ (curveB3 : ℤ) (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                   (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).Y3f
+    ∧ CZq (sVal env.loc (vBase fresh 32))
+        (rcbTraceZ (curveB3 : ℤ) (sVal env.loc X1) (sVal env.loc Y1) (sVal env.loc Z1)
+                   (sVal env.loc X2) (sVal env.loc Y2) (sVal env.loc Z2)).Z3c :=
+  hG.apply (qN : ℤ) (by decide) qLimb_bounds qLimb_recomposes
+    hX1 hY1 hZ1 hX2 hY2 hZ2 hv hm hs hb
+
+end SzAdoption
+
+#assert_axioms szMulCore_width_unchanged
+#assert_axioms szMulCore_keeps_the_lookups
+#assert_axioms szMulCore_gate_collapse
+#assert_axioms szLegs_layout_unchanged
+#assert_axioms pallasCompleteAddSzAir_mainRailOk
+#assert_axioms vestaCompleteAddSzAir_mainRailOk
+#assert_axioms pallasCompleteAddSzDesc_constraint_count
+#assert_axioms vestaCompleteAddSzDesc_constraint_count
+#assert_axioms szRcbWidthIsUnchanged
+#assert_axioms sz_mul_is_cheaper_by_sixty_one
+#assert_axioms sz_rcb_price_decomposes
+#assert_axioms sz_rcb_arithmetic_collapse
+#assert_axioms pallasCompleteAddSzDesc_chal_indices_distinct
+#assert_axioms vestaCompleteAddSzDesc_chal_indices_distinct
+#assert_axioms pallasCompleteAddSzDesc_declares_two_challenges
+#assert_axioms szMulCore_forces
+#assert_axioms SzRcbSat.apply
+#assert_axioms pallasCompleteAddSz_forces
+#assert_axioms vestaCompleteAddSz_forces
 
 end Dregg2.Circuit.Emit.PastaCurveSound

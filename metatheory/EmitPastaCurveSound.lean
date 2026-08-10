@@ -4,6 +4,8 @@ honest Lean-generated trace rows.
 
   lake env lean --run EmitPastaCurveSound.lean pallas > ../circuit/descriptors/by-name/pasta-pallas-complete-add-sound.json
   lake env lean --run EmitPastaCurveSound.lean vesta  > ../circuit/descriptors/by-name/pasta-vesta-complete-add-sound.json
+  lake env lean --run EmitPastaCurveSound.lean pallassz > ../circuit/descriptors/by-name/pasta-pallas-complete-add-sz.json
+  lake env lean --run EmitPastaCurveSound.lean vestasz  > ../circuit/descriptors/by-name/pasta-vesta-complete-add-sz.json
   lake env lean --run EmitPastaCurveSound.lean pallastrace > ../circuit/tests/fixtures/pasta-pallas-complete-add-sound-trace.txt
   lake env lean --run EmitPastaCurveSound.lean vestatrace  > ../circuit/tests/fixtures/pasta-vesta-complete-add-sound-trace.txt
 
@@ -31,6 +33,10 @@ def main (args : List String) : IO Unit :=
   match args with
   | ["pallas"]      => IO.println (emitVmJson2 pallasCompleteAddSoundDesc)
   | ["vesta"]       => IO.println (emitVmJson2 vestaCompleteAddSoundDesc)
+  -- ⚑ The SZ rows. Same width, same lookups, same honest trace — only the twelve multiplies'
+  -- algebra differs, so `pallastrace`/`vestatrace` serve both artifacts.
+  | ["pallassz"]    => IO.println (emitVmJson2 pallasCompleteAddSzDesc)
+  | ["vestasz"]     => IO.println (emitVmJson2 vestaCompleteAddSzDesc)
   | ["pallastrace"] => IO.print (traceText pallasHonestRow)
   | ["vestatrace"]  => IO.print (traceText vestaHonestRow)
-  | _ => IO.eprintln "usage: EmitPastaCurveSound.lean (pallas|vesta|pallastrace|vestatrace)"
+  | _ => IO.eprintln "usage: EmitPastaCurveSound.lean (pallas|vesta|pallassz|vestasz|pallastrace|vestatrace)"

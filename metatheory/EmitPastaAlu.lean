@@ -4,6 +4,8 @@ honest three-operation trace fixture.
 
   lake env lean --run EmitPastaAlu.lean fp    > ../circuit/descriptors/by-name/pasta-alu-sound.json
   lake env lean --run EmitPastaAlu.lean fq    > ../circuit/descriptors/by-name/pasta-alu-fq-sound.json
+  lake env lean --run EmitPastaAlu.lean fpsz  > ../circuit/descriptors/by-name/pasta-alu-sz.json
+  lake env lean --run EmitPastaAlu.lean fqsz  > ../circuit/descriptors/by-name/pasta-alu-fq-sz.json
   lake env lean --run EmitPastaAlu.lean trace > ../circuit/tests/fixtures/pasta-alu-sound-trace.txt
 
 The descriptors are `Dregg2.Circuit.Emit.MinaWrapVerifierAir.{fpAluDesc, fqAluDesc}`, each
@@ -191,6 +193,9 @@ def main (args : List String) : IO Unit :=
   match args with
   | ["fp"]         => IO.println (emitVmJson2 fpAluDesc)
   | ["fq"]         => IO.println (emitVmJson2 fqAluDesc)
+  -- ⚑ The SZ ALU rows. Identical layout and identical honest trace — `trace` serves both.
+  | ["fpsz"]       => IO.println (emitVmJson2 fpAluSzDesc)
+  | ["fqsz"]       => IO.println (emitVmJson2 fqAluSzDesc)
   | ["trace"]      => IO.print traceText
   | ["chaintrace"] => IO.print chainTraceText
   | ["sbox"]       => IO.println (emitVmJson2 Dregg2.Circuit.Emit.MinaWrapVerifierProgram.sboxDesc)
@@ -222,7 +227,7 @@ def main (args : List String) : IO Unit :=
   | ["fpchainpis", j]  => IO.print (fpChainPisText j.toNat!)
   | ["fpchaintrace", j] => IO.print (fpChainTraceText j.toNat!)
   | _              => IO.eprintln
-      "usage: EmitPastaAlu.lean (fp|fq|trace|chaintrace|sbox|sboxtrace|sboxpis|long|longtrace\n\
+      "usage: EmitPastaAlu.lean (fp|fq|fpsz|fqsz|trace|chaintrace|sbox|sboxtrace|sboxpis|long|longtrace\n\
        |fqround|fqroundtrace|fqroundpis|fqabsorb|fqabsorbtrace|fqabsorbpis\n\
        |fqlink|fqlinktrace|fqlinkpis\n\
        |fqchain|fqchainpisall|fqchainpis <j>|fqchaintrace <j>\n\
