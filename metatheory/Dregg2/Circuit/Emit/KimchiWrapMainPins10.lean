@@ -136,8 +136,17 @@ the other.
   * **AGREED: 29 of 30, and 39 of 40 counting the padding.** Measured slot by slot over
     `wrapPublicAt tChain .close` — `tChain = mkWrap shapeWrap`, the shape this ladder is about —
     against `WRAP_PUBLIC_INPUT_MEASURED`. It was 28 of 30 before slot 11 closed.
-    `KimchiStepWrapChain.the_emitted_forty_agree_with_minas_at_every_slot_but_twelve` is the count as
-    a theorem, with the disagreeing slot EXHIBITED rather than subtracted.
+    `KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve` is the count as a theorem, with the
+    disagreeing slot EXHIBITED rather than subtracted. ⚠ The citation here named
+    `KimchiStepWrapChain.the_emitted_forty_agree_with_minas_at_every_slot_but_twelve` until
+    2026-08-09; that theorem was DELETED as a duplicate the hour it was written
+    (`KimchiStepWrapChain` §-, "deletion rather than a second copy"), and the name outlived it.
+  * ⚑ **AND THE 39 IS RE-MEASURED, NOT CARRIED.** `0047cb876` rewired `runIpa` onto §19d's fold and
+    `0aa6f7d49` re-baked `WRAP_PUBLIC_INPUT_MEASURED` from the re-proved step proof — **28 of the 40
+    slots moved on MINA'S side**, so every count graded against the old referee was about an object
+    that no longer exists. Re-run 2026-08-09 (`EmitWrapFortyAgreement`, both shapes): **still 39 of
+    40, still missing at 12 alone.** The two sides moved TOGETHER at all 28, which is the fact the
+    number now records — ours derive from the same re-proved step proof Mina's forty were read from.
 
 ⚠ ⚑⚑ **AND THE "SIX OF FORTY" THIS DOCBLOCK USED TO QUOTE WAS THE SMOKE SHAPE'S, WHICH IS NOT THE
 SHAPE THE LADDER IS ABOUT.** `tWh` is `mkWrap shapeSmoke`: its `wrapSlots` is `.take

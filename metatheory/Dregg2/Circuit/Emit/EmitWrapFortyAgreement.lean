@@ -70,6 +70,13 @@ def main : IO Unit := do
   IO.println s!"== §20 DERIVED WORDS (smoke) = {finSpDerivedWords tWSmoke}"
   probe "smoke" tWSmoke FIN_LIVE_BLOCK
   probe "smoke" tWSmoke (1 - FIN_LIVE_BLOCK)
-  forty "shapeWrap / w12_close" (mkWrap shapeWrap) .close
+  -- ⚑ **BOTH SHAPES, IN ONE RUN, SMOKE FIRST.** The driver printed only `shapeWrap`'s until
+  -- 2026-08-09, which is precisely how the two get confused: `KimchiWrapMainPins12`'s docblock
+  -- warns that quoting the smoke count as "the agreement" is a misquote, and its theorem carries
+  -- both conjuncts *so a reader who finds one also finds the other* — while the instrument that
+  -- re-derives them showed one. It is not a worse measurement of the same thing; it is a
+  -- measurement of a different, smaller circuit, and it is labelled here.
+  forty "shapeSmoke / w12_close  ⚠ NOT the ladder's number" tWSmoke .close
+  forty "shapeWrap / w12_close  ⚑ THE NUMBER THE LADDER IS GRADED ON" (mkWrap shapeWrap) .close
 where
   tWSmoke : WrapData := mkWrap shapeSmoke

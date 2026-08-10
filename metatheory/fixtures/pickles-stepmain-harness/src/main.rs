@@ -350,6 +350,43 @@ fn main() {
         ),
     };
 
+    // ⚑ `DREGG_SM_RUNGS` — a comma list that RESTRICTS the run to those rungs, the exact twin of
+    // the wrap harness's `DREGG_WM_RUNGS` and additive in the same way: unset, the behaviour is
+    // exactly what it was.
+    //
+    // ⚠ ⚑ **IT EXISTS TO REACH THE `endo_inv` WITNESSES, WHICH NOTHING WITH A POLARITY GATE COULD
+    // REACH.** §19d's rewire of `runIpa` onto `combine_split_commitments` + `Scalar_challenge.
+    // endo_inv` added `nBulletPairs` WITNESSED curve points — fifteen at `shapeStep`. It is
+    // ROW-COUNT-NEUTRAL wherever `nBulletPairs = 0`, and `nBulletPairs shapeSmoke = 0`
+    // (`KimchiStepMainPins01`, `…Pins03`), so **the smoke fixtures exercise none of them**: the only
+    // tracked artifact that contains an `endo_inv` witness at all is `stepmain_step_r8_finalize`
+    // (10 753 rows, `shapeStep`), and its only consumer was `pickles_kimchi_marshal`, which PROVES
+    // it and marshals it but runs no sigma leg, no unwired control and no unread-cell leg.
+    // `RUNGS` is a fixed nine and only `r8_finalize` is emitted at the step tag, so
+    // `harness <dir> step` died on the eight absent files — the coverage was unreachable by
+    // arithmetic, not by choice. With the filter:
+    //
+    //     DREGG_SM_RUNGS=r8_finalize cargo run --release -- \
+    //       metatheory/fixtures/pickles-stepmain-harness/fixtures step 8
+    let filt = std::env::var("DREGG_SM_RUNGS").ok();
+    let rungs: Vec<&str> = match &filt {
+        None => rungs,
+        Some(f) => {
+            let want: Vec<&str> = f
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let sel: Vec<&str> = rungs.into_iter().filter(|r| want.contains(r)).collect();
+            assert!(
+                !sel.is_empty(),
+                "DREGG_SM_RUNGS={f:?} selected NO rung out of {RUNGS:?} - refusing to report a \
+                 green run that proved nothing"
+            );
+            sel
+        }
+    };
+
     println!("== step_main harness: the LEAN-ASSEMBLED `verify_one` RECURSIVE VERIFIER ==");
     println!("   dir={} tag={tag}", dir.display());
     let mut summary = Vec::new();

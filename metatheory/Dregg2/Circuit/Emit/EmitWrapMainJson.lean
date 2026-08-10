@@ -46,6 +46,80 @@ def writeAtomic (path contents : String) : IO Unit := do
   IO.FS.writeFile staged contents
   IO.FS.rename staged path
 
+/-- The thirty tracked smoke fixtures' directory, relative to `metatheory/` — the cwd every
+documented invocation of this driver uses. -/
+def TRACKED_SMOKE_DIR : String := "fixtures/pickles-wrapmain-harness/fixtures"
+
+/-- ⚑⚑ **"INSTALL WHAT YOU EMIT", AS A RED INSTEAD OF AS A COMMENT** — the wrap side's twin of
+`pickles_kimchi_marshal::installed_gate`, and it exists because this route had **no refusal at
+all**.
+
+`scripts/check-emitter-routing.sh` said so in as many words: *"the thirty tracked
+`wrapmain_smoke_*.json` are copied in BY HAND (no route to grade)"*. The `/tmp → fixtures/` hop is a
+manual `cp` no script performs, so nothing anywhere compared the tracked bytes against what the Lean
+currently emits, and the only stated grade was "the harness proves each rung" — which grades whatever
+JSON is on disk, not whether that JSON is this assembly.
+
+⚠ **AND IT HAD STOPPED BEING TRUE.** Measured 2026-08-09: the tracked thirty were last written at
+`93bca7b7a` (08-08 07:28) and three later commits moved the wrap assembly under them — the last,
+`0047cb876`, rewired `runIpa` onto §19d's fold. The harness had been proving a two-day-old circuit
+and reporting green, because a stale fixture is a perfectly provable circuit; it is just not the one
+the Lean says.
+
+**The gate is here rather than in a script for the reason `installed_gate` is inside the marshaller:
+it fires in the same process that produced the bytes, so re-emitting and not installing is the one
+thing it cannot miss.** A gate that lives anywhere else can be skipped by not running it.
+
+`DREGG_WM_INSTALL=1` performs the copy instead of refusing — one command that emits AND installs,
+so "re-emit and install" stops being two steps with a human between them. There is deliberately **no
+switch that disables the comparison**: a tracked file that is missing or unreadable counts as drift,
+so a run from the wrong cwd reds rather than passing vacuously.
+
+Returns the number of tracked files that differ. -/
+def installedGate (dir tag : String) (rungs : List Rung) : IO Nat := do
+  if tag != "smoke" then
+    IO.println s!"[install] tag={tag}: the thirty tracked fixtures are the SMOKE shape's — \
+      nothing tracked to grade at this tag."
+    return 0
+  let tracked := (← IO.getEnv "DREGG_WM_TRACKED").getD TRACKED_SMOKE_DIR
+  let doInstall := ((← IO.getEnv "DREGG_WM_INSTALL").getD "") == "1"
+  let names := rungs.flatMap (fun k =>
+    [s!"wrapmain_{tag}_{k.tag}.json", s!"wrapmain_{tag}_{k.tag}_unwired.json"])
+  let mut drift := 0
+  for n in names do
+    let emitted ← IO.FS.readFile s!"{dir}/{n}"
+    let path := s!"{tracked}/{n}"
+    if ← System.FilePath.pathExists path then
+      let s ← IO.FS.readFile path
+      if s == emitted then
+        IO.println s!"[install] {n}: byte-identical to the tracked fixture ({s.length} bytes)"
+      else if doInstall then
+        writeAtomic path emitted
+        IO.println s!"[install] * {n}: INSTALLED — {s.length} tracked bytes replaced by \
+          {emitted.length} emitted ones"
+      else
+        drift := drift + 1
+        IO.println s!"[install] ⚑ {n}: THE TRACKED FIXTURE IS NOT WHAT THIS RUN EMITS \
+          (tracked {s.length} bytes, emitted {emitted.length})"
+    else if doInstall then
+      writeAtomic path emitted
+      IO.println s!"[install] * {n}: INSTALLED (was absent) — {emitted.length} bytes"
+    else
+      drift := drift + 1
+      IO.println s!"[install] ⚑ {n}: MISSING at {path} — nothing consumes what was emitted"
+  if drift != 0 && !doInstall then
+    throw (IO.userError s!"⚑ THE TRACKED SMOKE FIXTURES ARE STALE: {drift} of {names.length} \
+      differ from what this run emits. `pickles-wrapmain-harness` proves whatever JSON is on disk, \
+      so a stale fixture is a green run about a circuit the Lean no longer describes. Re-run with \
+      DREGG_WM_INSTALL=1 to install them, and carry the consequence chain: every rung's witness \
+      moves, the five-polarity sweep must be re-run, and any count graded against these fixtures \
+      (`the_forty_agree_but_for_slot_twelve`'s smoke conjunct among them) is about the old shape.")
+  if doInstall then
+    IO.println s!"[install] {names.length} tracked fixtures INSTALLED from this emission"
+  else
+    IO.println s!"[install] {names.length} tracked fixtures are byte-identical to this emission"
+  pure drift
+
 def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := do
   let t0 ← IO.monoMsNow
   let rowsW := rungRows t k true
@@ -280,3 +354,7 @@ def main : IO Unit := do
     let _ ← emitRung dir tag t k
     pure ()
   IO.println s!"wrote {dir}/wrapmain_{tag}_*.json"
+  -- ⚑ …and the tracked twins are graded against what was just written. This is the LAST thing the
+  -- driver does, deliberately: the bytes are on disk before the refusal, so a lane doing a
+  -- before/after byte-diff still gets its artifacts and the nonzero exit is the honest signal.
+  let _ ← installedGate dir tag rungs

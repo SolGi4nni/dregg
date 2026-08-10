@@ -701,6 +701,34 @@ moved is the residue's SHAPE, not its size: fifty-eight of slot 12's seventy-six
 — the `[Gx; Gy]` pair and the sixteen challenges, the two families named above. So the stale key was
 a real defect and a real referee failure, and it was **not** the thing holding slot 12.
 
+⚑⚑⚑ **RE-MEASURED 2026-08-09 AGAINST A REFEREE THAT MOVED AT 28 OF 40 SLOTS, AND THE ANSWER IS THE
+SAME NUMBER FOR A DIFFERENT REASON.** `0047cb876` rewired `runIpa` onto §19d's
+`combine_split_commitments` + `endo_inv` fold, which moved `lhs`, hence `G = solveG lhs …`, hence
+segment D's squeeze, hence the step statement — so the step proof changed and
+`PreparedStatement::to_public_input(40)` with it. `0aa6f7d49` re-baked
+`WRAP_PUBLIC_INPUT_MEASURED` from that run and recorded exactly which slots moved: **0–11 and
+13–28, twenty-eight of the forty.** ⚠ A count graded before that re-bake is a count about an object
+that no longer exists, and `0aa6f7d49` said so in its own message rather than leaving the 39 to be
+read forward.
+
+**Re-run at HEAD**, `EmitWrapFortyAgreement` over `mkWrap shapeWrap` at `.close`: **AGREE at 39 of
+40, disagreeing at 12 alone** — the same four numbers this theorem asserts. The 39 does not survive
+because nothing moved; it survives because **both sides moved together at all 28.** Ours are derived
+from the same re-proved step proof Mina's forty were read out of, so a rewire that moves the step
+statement moves the emitted transcript and the referee in lockstep. The emitted slot 12 moved
+`3396651593… → 1053080512…` exactly as §17(d) requires and Mina's stayed `5075616743…`; the residue
+is the same two families and the same size. ⚠ **"58 → 60" is NOT this pass's to quote** — the
+seventy-six-cell split is `segd_slot12_probe`'s, and that probe REFUSED on its own freshness assert
+when word 54 moved.
+
+⚑ **AND THE ROUTE TO THE SMOKE CONJUNCT WAS BLOCKED, WHICH IS WHY THAT NUMBER IS ALSO RE-RUN.** The
+thirty tracked wrap fixtures were not merely stale — they were UNEMITTABLE: `shapeSmoke.xhatXY` is a
+literal pair and entry 64 is one of `xhatSel 5`'s five, so the same word-54 move that re-baked this
+referee left the memo naming a point the MSM no longer produces.
+`xhat_smoke_shape_absorbs_the_msm_output` (`KimchiWrapMainPins05`, a kernel `rfl`) was **red at
+HEAD** for exactly that reason, and `EmitWrapMainJson`'s `⚑ xhatXY IS NOT THE MSM'S OUTPUT` refusal
+— the fourth time it has caught this memo — is what surfaced it.
+
 ⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY**, and it is what makes this a fact about VALUES rather
 than about a list of zeros: ten of the forty are `Spec.T.Constant` padding and the lookup `Opt` and
 are zero on both sides, so an all-zero emission would satisfy the first conjunct at those ten.

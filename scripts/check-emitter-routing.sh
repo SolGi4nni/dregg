@@ -175,8 +175,22 @@ declare -A UNROUTED_OK=(
   # being anybody's job.
   [EmitStepMainJson.lean]="no-artifact|writes \$DREGG_SM_OUT (default /tmp/pickles-stepmain)/*.json for pickles-stepmain-harness; the tracked stepmain_step_r8_finalize.json is copied in BY HAND (no route to grade) and is guarded by pickles_kimchi_marshal's name/width refusal"
   [EmitStepWrapChainJson.lean]="no-artifact|writes /tmp/pickles-chain/chain{,bent,unread}_w*.json for pickles-chain-harness; nothing is checked in"
-  [EmitWrapMainJson.lean]="no-artifact|writes \$DREGG_WM_OUT (default /tmp/pickles-wrapmain)/wrapmain_*.json for pickles-wrapmain-harness; the thirty tracked wrapmain_smoke_*.json are copied in BY HAND (no route to grade) and are graded by the harness proving each rung"
+  # ⚑ **THIS ROW SAID `no-artifact` AND "no route to grade" UNTIL 2026-08-09, AND THE HOLE IT NAMED
+  # WAS OPEN AT THAT MOMENT.** Thirty artifacts ARE tracked; the row's own grade — "the harness
+  # proves each rung" — grades whatever JSON is on disk, not whether that JSON is this assembly, and
+  # a stale fixture is a perfectly provable circuit. Measured: the tracked thirty were last written
+  # at 93bca7b7a and three later commits (through 0047cb876's runIpa rewire) moved the wrap assembly
+  # under them, so the harness had been proving a two-day-old circuit and reporting GREEN.
+  # The refusal is `EmitWrapMainJson.installedGate`, INSIDE the emitter, so a re-emit that does not
+  # install cannot slip past it; the script below is the named route and its `--check`.
+  [EmitWrapMainJson.lean]="regen:scripts/regen-wrapmain-fixtures.sh|the thirty tracked metatheory/fixtures/pickles-wrapmain-harness/fixtures/wrapmain_smoke_*.json; that script re-emits them and EmitWrapMainJson.installedGate REFUSES when a tracked file is not what the run emits (--check turns the drift into an exit code, DREGG_WM_INSTALL=1 installs). The wrap-scale (DREGG_WM=wrap) emission has no tracked twin"
   [EmitWrapFinDeferred.lean]="no-artifact|prints the three §15c‴ deferred words to stdout; they are typed INTO Lean (KimchiWrapMainCore's FIN_DEFERRED_CIP/_B/_XI) and discharged there by fin_deferred_words_are_the_derivation — no file"
+  # ⚑ A DRIVER, NOT AN EMITTER — its own docblock says so ("IT IS A DRIVER, NOT A GATE. Nothing here
+  # is a theorem and nothing here can go red"). It prints the emitted forty against
+  # WRAP_PUBLIC_INPUT_MEASURED slot by slot at BOTH shapes, and writes no file at all; the gates it
+  # re-derives are `the_forty_agree_but_for_slot_twelve` (KimchiWrapMainPins12) and
+  # `slot_eleven_agrees_and_slot_twelve_still_disagrees` (KimchiWrapMainPins10).
+  [EmitWrapFortyAgreement.lean]="no-artifact|prints the emitted forty against MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED, slot by slot, at shapeSmoke AND shapeWrap; a re-derivation driver for the two Pins theorems, no file"
 
   # ---- covered: the by-name route already re-emits these bytes off the SAME Lean def. -----------
   # Each prints `emitVmJson2` of a descriptor `EmitByName.lean` also renders, and `EmitByName` IS

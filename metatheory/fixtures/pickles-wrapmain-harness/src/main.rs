@@ -125,11 +125,25 @@
 // rather than a half-updated fixture directory: mixing two emissions in one directory is worse
 // than a red, because every cross-rung ladder assertion silently compares different circuits.
 //
-// REGENERATE the fixtures (only when the Lean assembly changes):
-//   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMain \
-//     && DREGG_WM=smoke lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean \
-//     && cp /tmp/pickles-wrapmain/wrapmain_smoke_*.json \
-//           fixtures/pickles-wrapmain-harness/fixtures/
+// ⚑⚑ **AND "ONLY WHEN THE LEAN ASSEMBLY CHANGES" WAS NOT A CHECK — IT WAS A HOPE.** The
+// `/tmp -> fixtures/` hop below was a manual `cp` no script performed, so nothing compared these
+// thirty against what the Lean currently emits; `check-emitter-routing.sh` recorded the route as
+// "copied in BY HAND (no route to grade)". Measured 2026-08-09: they had gone stale by three
+// commits and this harness had been proving a two-day-old circuit and reporting GREEN, because a
+// stale fixture is a perfectly provable circuit — it is just not the one the Lean says. The
+// refusal is `EmitWrapMainJson.installedGate`, inside the emitter, and the route is:
+//
+// REGENERATE the fixtures:
+//   scripts/regen-wrapmain-fixtures.sh            # re-emit AND install
+//   scripts/regen-wrapmain-fixtures.sh --check    # exit nonzero if the tracked thirty are stale
+//
+// which is the two-line form of:
+//   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMainCore \
+//     && DREGG_WM=smoke DREGG_WM_INSTALL=1 lake env lean --run \
+//          Dregg2/Circuit/Emit/EmitWrapMainJson.lean
+//
+// ⚠ Installing is a flag day for this file: every rung's witness moves, so the five-polarity sweep
+// must be re-run and every count graded against these fixtures re-measured.
 //
 // RUN the committed gate (RELEASE — a debug prove is minutes):
 //   cargo test --release --manifest-path metatheory/fixtures/pickles-wrapmain-harness/Cargo.toml

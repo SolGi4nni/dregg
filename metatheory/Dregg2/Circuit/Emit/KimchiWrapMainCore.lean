@@ -6271,8 +6271,16 @@ def shapeSmoke : WrapShape :=
   -- was hashing under a superseded key; installing the emitted one moved word 54, hence published
   -- entry **64** — which is one of this selection's five (`xhatSel 5 = [0, 1, 11, 64, 31]`) — hence
   -- this fold's output. The refusal fired again, and again it is the only thing that would have.
+  -- ⚑⚑ **AND A FOURTH TIME ON 2026-08-09, FOR §19d's REWIRE OF `runIpa`** (`0047cb876`). The fold
+  -- became `combine_split_commitments` + `endo_inv`, which moved `lhs`, hence `G = solveG lhs …`,
+  -- hence segment D's squeeze, hence packed statement word 54 and published entry **64** again —
+  -- the same one of this selection's five. `0aa6f7d49` re-baked `WRAP_PUBLIC_INPUT_MEASURED` and
+  -- re-installed `KimchiStepWrapChain{Fixture,Key}` for that move and did NOT re-derive this pair,
+  -- and it said so ("the 30 wrap fixtures are not re-emitted"). ⚑ **So the thirty fixtures were not
+  -- merely stale — they were UNEMITTABLE**, and every attempt would have hit this refusal. It fired
+  -- for the fourth time and is still the only thing that would have.
   , xhatXY :=
-      (8170586116940669537096994111154078258233118444357711733673555607637982266177,
-       25326643678354152834376068749547717264127276036250175964846866143073819442772) }
+      (3089256916528585213403184970640774851200302182250348632858195762843838864972,
+       26320744053102272168591889516004757536017016268432223208932774444918340889148) }
 
 end Dregg2.Circuit.Emit.KimchiWrapMain
