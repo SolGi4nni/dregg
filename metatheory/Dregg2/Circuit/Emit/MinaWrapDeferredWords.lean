@@ -65,7 +65,28 @@ set_option autoImplicit false
 /-! ## §1 -- the measurement -/
 
 /-- `PreparedStatement::to_public_input(40)` on the step proof `pickles_kimchi_marshal` produces,
-in Mina's own slot order. Every entry is an `Fq` element (the wrap circuit's native field). -/
+in Mina's own slot order. Every entry is an `Fq` element (the wrap circuit's native field).
+
+⚑⚑⚑ **SLOT 12 MOVED ON 2026-08-10 AND THE OLD VALUE WAS NEVER A LEGITIMATE TARGET.** It read
+`5075616743…` from the day it was baked, and several passes graded the emitted side against it and
+reported the miss as the assembly's. It was the referee that was wrong: `marshal` published the
+**leading** `STEP_RECURSION_SLOTS` of the wrap proof's kimchi recursion slots into
+`messages_for_next_step_proof.challenge_polynomial_commitments`, and on a one-`verify_one` rule the
+leading slot is `Wrap_hack`'s **PAD**. So slot 12 was the hash of a record naming the pad slot's
+commitment where the real accumulator belongs.
+
+Both the wrap prover (`wrap.rs:729-748`) and the reader (`prover.rs:130-140`) FRONT-pad that list
+back to `Max_proofs_verified` with `dummy_ipa_wrap_sg()` and then `zip` it against
+`messages_for_next_wrap_proof.old_bulletproof_challenges` — the **fifteen**, measured true at both
+slots of devnet block 539508 by `pickles-extractors/src/bin/wire_recursion_pairing_probe`, with the
+swapped-index control refuting. `gates::gate_a2` is that reconstruction as a rung, and its control
+reports per-slot commitment agreement `[false, false]` on the pre-repair object: not one slot
+survived a Mina reader.
+
+⚠ **RE-BAKED FROM THE REPAIRED RUN, AND ONLY SLOT 12 MOVED** — the run's `wrap-public-input.json`
+was diffed against this list slot by slot and the other **thirty-nine are identical**. Any agreement
+count taken against the old slot 12 is void; `EmitWrapFortyAgreement` must be re-run rather than
+quoted forward. -/
 def WRAP_PUBLIC_INPUT_MEASURED : List Nat :=
   [
    26017410741744045290829070934559254703824283083743940023899019051732797073986, --  0  combined_inner_product
@@ -80,7 +101,7 @@ def WRAP_PUBLIC_INPUT_MEASURED : List Nat :=
    40819773011252951965786591925170351189, --  9  xi
    24509190134669189350932271077153458845637581841237292827998761298607409051321, -- 10  sponge_digest_before_evaluations
    16771708822857331661525096137736744731126618791327772885044186664956312760377, -- 11  messages_for_next_wrap_proof(hash)
-   5075616743370297810406666318844718818550155010575757289191030751375996038397, -- 12  messages_for_next_step_proof(hash)
+   2685766687183477451051802608242803724569836825058666298408010832920491446954, -- 12  messages_for_next_step_proof(hash)
    311233733838359755360644113088035028715, -- 13  bulletproof_challenges[0]
    336132515510395718973214350458442654518, -- 14  bulletproof_challenges[1]
    316566569917884704080835030316815679933, -- 15  bulletproof_challenges[2]
