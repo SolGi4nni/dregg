@@ -151,7 +151,20 @@ echo "==> Repacking: $obj_count in-tree (was $before_intree) + $non_intree depen
 
 rm -f "$ARCH.new"
 # find/xargs, NOT a glob: ~3300 full paths blows ARG_MAX on Darwin.
-( cd "$work" && find . -maxdepth 1 -name '*.o' -print0 | sort -z | xargs -0 ar q "$ARCH.new" >/dev/null 2>&1 )
+# ⚑ `U` = NON-DETERMINISTIC: keep each member's real mtime. GNU binutils on Debian/Ubuntu is
+# built `--enable-deterministic-archives`, so a bare `ar q` there zeroes every member timestamp;
+# BSD `ar` on Darwin does not. That difference made the seed publish fail on the Linux runner and
+# nowhere else: `check-lean-seed-member-freshness` refused the archive it had just built —
+# "every member carries mtime 0 … an archive with no evidence must not read as fresh" — which is
+# the RIGHT refusal. The archive's own age is the only evidence that gate has, and determinism
+# strips exactly that. `U` is a GNU modifier and BSD `ar` rejects it, so probe rather than assume.
+ar_mods=q
+if printf '' > /tmp/.ar_probe_$$.o 2>/dev/null && ar qU /tmp/.ar_probe_$$.a /tmp/.ar_probe_$$.o >/dev/null 2>&1; then
+  ar_mods=qU
+fi
+rm -f /tmp/.ar_probe_$$.o /tmp/.ar_probe_$$.a
+echo "==> Packing with \`ar $ar_mods\` ($([ "$ar_mods" = qU ] && echo 'real mtimes preserved' || echo 'BSD ar: non-deterministic by default'))"
+( cd "$work" && find . -maxdepth 1 -name '*.o' -print0 | sort -z | xargs -0 ar "$ar_mods" "$ARCH.new" >/dev/null 2>&1 )
 ranlib "$ARCH.new"
 
 # ── 4b · DEPENDENCY CLOSURE COMPLETION ───────────────────────────────────────────────────────
