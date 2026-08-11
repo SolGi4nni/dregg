@@ -1004,6 +1004,41 @@ GATES=(
   "prose-claims|300|python3 scripts/check-prose-claims.py"
   "prose-claims-red|180|python3 scripts/check-prose-claims.py --self-test"
   "prose-claims-historical|180|python3 scripts/check-prose-claims.py --historical"
+  # ⚑⚑ THIS ROW IS RED AT LANDING, AND THE RED IS THE POINT. Measured 2026-08-10 against HEAD
+  # materialised out of the object store: **7 of 7 `vk_pin`s served by this tree name a program NO
+  # descriptor in this tree has.** Not one resolves. Every recursion bind in the Mina light-client
+  # chain — link's absorb and body-chain seams, verify's chainlink/link/conjunction binds, and both
+  # accumulator heads — attests a fingerprint nothing here produces. Fixing the seven VALUES is a
+  # re-emit + VK rotation owned by the lanes currently holding `circuit/descriptors/` open; this row
+  # is not waiting for them, because a documented wound is not a detected one and a gate held back
+  # until its finding is repaired is the failure mode, not the courtesy.
+  # ⚑ WHY IT CATCHES WHAT THE PER-PIN GATES CANNOT. A `vk_pin` is nine `Faithful9` lanes of the
+  # bound program's semantic fingerprint — `blake3::derive_key` over the canonical descriptor
+  # encoding — so an AIR author reads it off a Rust tool and TYPES IT INTO LEAN. Every existing gate
+  # for that is hand-written for ONE pin and carries its own target name and its own copy of
+  # `key_lanes9` (six such copies in the tree). A pin added after its gate was written is ungated by
+  # construction, and nothing had ever asked the question of the whole tree. This asks it with NO
+  # pin-to-target map: fingerprint every served descriptor, then resolve every served pin BY SEARCH
+  # through that table. There is nothing in it to keep in sync and no pin it can miss.
+  # ⚠ IT SAYS "SOME descriptor", NOT "the INTENDED one" — a pin resolving to the wrong descriptor is
+  # a semantic error this cannot see, so the per-pin gates above stay load-bearing. Its companion
+  # `distinct_descriptors_do_not_share_pin_lanes` is what makes "resolves" mean *identifies*;
+  # without injectivity the headline would not be the claim it reads as.
+  # ⚑ AND IT CARRIES THE REFUTATION OF A FALSE COST ESTIMATE.
+  # `a_trailing_newline_does_not_move_a_descriptors_fingerprint` proves over all 158 served
+  # descriptors, both directions, that the fingerprint is invariant under trailing whitespace —
+  # because it is taken over the PARSED descriptor and never sees file bytes. That refutes
+  # `emit_descriptors.py`'s `BY_NAME_NEWLINE_TERMINATED` frozenset, whose stated reason for existing
+  # is that normalising "would re-key those 5 descriptors". It cannot: normalising is a PROVENANCE
+  # re-stamp, no VK rotation, no consumer re-emit. That frozenset is the only thing reconciling
+  # `MinaChainEmit.lean:48` (appends "\n") with `EmitByName.lean:788` (does not) — two emitters, two
+  # byte streams, one object — and determinism restored by a hand-maintained lookup of 30 filenames
+  # is not determinism.
+  # ~3s, no Lean, no node; reads `circuit/descriptors/` and compiles no circuit. Point it at a rev
+  # with `DREGG_DESCRIPTOR_ROOT=$(scripts/materialise-descriptors-at.sh HEAD)` — in a shared working
+  # tree an uncommitted sibling re-emit otherwise flatters the verdict, and this tree has a recorded
+  # case of exactly that reading outliving the tree it was measured on.
+  "vk-pin-closure|300|cargo test -p dregg-circuit --test vk_pin_closure_over_the_served_tree"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(

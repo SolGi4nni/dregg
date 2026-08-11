@@ -168,7 +168,50 @@ theorem poseidon2_floor_cr {Digest : Type u} [K : Poseidon2Kernel Digest]
 The domain-separated transcript/attribute hash. A distinct CR primitive from Poseidon2 — different
 construction, separate obligation. -/
 
-/-- `@[extern "dregg_blake3_hash"]` — binding symbol for `blake3::hash` over a byte list. -/
+/-- `@[extern "dregg_blake3_hash"]` — binding symbol for `blake3::hash` over a byte list.
+
+⚠⚠ **THIS PORTAL DOES NOT RESOLVE IN THE LEAN BUILD, AND NEITHER DOES ANY OTHER IN THIS FILE.**
+Measured 2026-08-10 — `#eval blake3HashExtern [1,2,3]` under `lake env lean`:
+
+    error: Could not find native implementation of external declaration
+    'Dregg2.Crypto.PortalFloor.blake3HashExtern' (symbols
+    'lp_Dregg2_Dregg2_Crypto_PortalFloor_blake3HashExtern___boxed' or '…')
+
+The eighteen `@[extern]` declarations here are **binding symbols for a DIFFERENT consumer**. Their
+only Rust implementation is `sel4/dregg-pd/executor-pd/crypto-floor/` — a `no_std`
+`crate-type = ["staticlib"]` cross-built for a seL4 protection domain — and `metatheory/lakefile.toml`
+has **no `extern_lib` and no `moreLinkArgs`**, so nothing links it into Lean. As *floor declarations*
+that is correct and costs nothing: the kernel class below is uninterpreted on purpose, the `Prop`
+carriers are what the proofs use, and **a floor must stay uninterpreted** — making it computable
+would put hash evaluation inside proofs, which is the Poseidon2 reduction-bomb shape (one perm =
+47.6 GB / 68 min).
+
+⚑ **What this note exists to stop.** "Lean already has blake3, route it through the portal" reads
+true from a grep — blake3 appears in eight Lean files and `dregg-lean-ffi` already calls the exact
+`blake3::Hasher::new_derive_key` a descriptor fingerprint needs — and it is **false**. Every one of
+those Lean sites is this uninterpreted floor or a `Prop` about it, and all 494 `@[export]`s in the
+tree run **Rust → Lean**. There is no working Lean → Rust call here to reuse. `Crypto/MlDsaRing.lean`'s
+`@[implemented_by]` twins are sometimes cited as the precedent; they route **Lean → Lean** (a fast
+`Array UInt32` twin of a pure `Nat` def) and involve no native symbol at all.
+
+So making `fingerprintOf someDescriptor` evaluate — the thing that would let a `vk_pin` stop being a
+transcribed literal (`circuit/tests/vk_pin_closure_over_the_served_tree.rs`: **7 of 7 dangling at
+HEAD**) — is a BUILD, not a call. The two honest routes, neither started:
+
+1. **Link a staticlib.** Add an `extern_lib` that cargo-builds a host `staticlib` exporting
+   `dregg_blake3_derive_key`, plus `List Nat`/`ByteArray` marshalling. Makes the Lean build depend on
+   cargo, and the seL4 crate is cross-built for another target so it is not reusable as-is.
+2. **A pure-Lean `blake3Derive` + `@[implemented_by]` fast twin.** No linkage, no cargo in the Lean
+   build. BLAKE3 is ARX over `UInt32`, which is exactly what Lean's machine words do well — unlike
+   Poseidon2's field arithmetic, this one ports cleanly.
+
+⚑ Either way it is a **SEPARATE computable definition sitting BESIDE this floor, never in place of
+it**, used only at emit/check time and never inside a proof. And it must be labelled for what it is:
+`@[implemented_by]`/`@[extern]` is **compiler-trusted, not kernel-trusted**, so a computed pin is an
+IDENTITY claim, not a soundness one, and belongs under `#assert_compiled` rather than reading as a
+kernel fact. Route 2 carries a real correctness risk a wrong implementation would hide silently —
+the differential that closes it is ready-made: the 158 served descriptors have known Rust-computed
+fingerprints, plus the official BLAKE3 KATs. -/
 @[extern "dregg_blake3_hash"]
 opaque blake3HashExtern : List Nat → Nat
 
