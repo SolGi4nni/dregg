@@ -921,15 +921,38 @@ something recomputes it — `circuit/tests/mina_wrap_closing_air_proves.rs` reco
 ⚠ **FLAG DAY COUPLING:** re-emitting `pasta-fp-absorb.json` moves this literal and re-emits every
 `-fs` descriptor. It is the same coupling `LINK_VK_LANES` and `CHAINLINK_VK_LANES` carry.
 
-⚑⚑ **AND THIS IS NOT THE NUMBER `LightClientMinaLinkAir.ABSORB_VK_LANES` CARRIES — measured
-2026-08-08, and that one is STALE.** Its literal is `[446814635, 83884421, …]`; the recomputed
-fingerprint of the descriptor in the tree is the nine below. `circuit/tests/mina_statehash_seam_
-proves.rs::the_seam_pins_the_real_absorb_program` is ALREADY RED at HEAD on exactly that
-comparison, independently of this file — so the link descriptor's state-hash seam currently names a
-program no descriptor here has, which is the wraplink drift the seam test exists to detect,
-detected. ⚠ Fixing it is `LightClientMinaLinkAir`'s work and a re-emit + VK rotation of the link,
-the head and the conjunction chain; it is NOT done here and this file does not copy the stale
-number in order to agree with it. -/
+⚑⚑ **CORRECTED 2026-08-10 — THE DIVERGENCE THIS BLOCK WARNED ABOUT IS GONE, AND WHAT REPLACED IT IS
+WORSE.**
+
+Until today this block read *"AND THIS IS NOT THE NUMBER `LightClientMinaLinkAir.ABSORB_VK_LANES`
+CARRIES — measured 2026-08-08, and that one is STALE. Its literal is `[446814635, 83884421, …]`"*.
+`LightClientMinaLinkAir` has since moved to the nine below, so the two copies now AGREE — and the
+warning became a statement about a tree that no longer existed, still sitting here asserting a
+divergence no reader could reproduce. **A dated verdict about someone else's literal outlives the
+literal**, which is the same failure the block was written to describe.
+
+⚠ **BOTH COPIES ARE NOW STALE TOGETHER.** Measured 2026-08-10 against HEAD (materialised with
+`scripts/materialise-descriptors-at.sh HEAD`, so this is not a working-tree artifact):
+
+    dregg-pasta-fp-absorb::v1   w=469 pi=192 cons=858
+      fp=5c0973624f0a1686966e8d1e0c16894279154bfb98c14edaf51d268c61e2fd18
+      lanes=[41093468, 279990907, 56337825, 304879677, 290952232, 13401509, 399993147,
+             204571843, 1637858]
+
+— not the nine below. Two agreeing transcriptions of a value that matches neither the artifact nor
+each other's source are strictly LESS informative than one disagreeing pair, because the agreement
+reads as corroboration. **Two sources for one derived value are not two witnesses; they are one
+witness copied.**
+
+⚑ This is not a local defect. `circuit/tests/vk_pin_closure_over_the_served_tree.rs` resolves EVERY
+`vk_pin` the tree serves against the fingerprints of EVERY descriptor the tree serves — it needs no
+per-pin map, so it cannot go stale by omission — and at HEAD **7 of 7 dangle**: every recursion bind
+in the Mina chain attests a program no descriptor here has. The per-pin gates named above are real
+but partial, each hand-written for one pin, so a pin added after its gate was written is ungated by
+construction.
+
+⚠ Fixing the VALUE is a re-emit + VK rotation of the link, the head and the conjunction chain, and
+it is NOT done here — sibling lanes hold `circuit/descriptors/` open. -/
 def ABSORB_VK_LANES : List ℤ :=
   [484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268]
 

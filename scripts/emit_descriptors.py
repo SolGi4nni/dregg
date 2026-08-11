@@ -177,11 +177,43 @@ CERT_F_FILE = "dregg-cert-f-ir2.json"
 # authored as `certFDescriptorOf market4Prog` in Market/CertFDescriptor.lean §4b).
 CERT_F_MARKET4_FILE = "dregg-cert-f-market4-ir2.json"
 
-# The by-name descriptors that are checked in WITH a trailing newline. The directory's convention is
-# mixed (21 bare, 5 newline-terminated) and it is purely cosmetic — JSON does not care — but the
-# bytes are FP/VK-pinned, so NORMALIZING the convention would re-key those 5 descriptors for a
-# whitespace change. We reproduce each file's existing convention exactly instead, which keeps the
-# emit a true no-op on a clean tree. Retire this set only as part of a deliberate regen.
+# The by-name descriptors that are checked in WITH a trailing newline.
+#
+# ⚑⚑ THIS SET'S STATED JUSTIFICATION IS FALSE, AND THE SET IS SCHEDULED FOR DELETION.
+#
+# It used to read: "it is purely cosmetic — JSON does not care — but the bytes are FP/VK-pinned, so
+# NORMALIZING the convention would re-key those 5 descriptors for a whitespace change."
+#
+# A descriptor's semantic fingerprint — the thing a `vk_pin` names and the thing that feeds the
+# recursive VK hash — is `effect_vm_descriptor2_semantic_fingerprint(&EffectVmDescriptor2)`: it
+# canonically re-encodes the PARSED descriptor and never hashes the file bytes. A trailing newline is
+# discarded by the parser before the fingerprint is taken.
+#
+# PROVED over all 158 served descriptors, both directions (add to bare, strip from terminated), by
+#   circuit/tests/vk_pin_closure_over_the_served_tree.rs
+#     ::a_trailing_newline_does_not_move_a_descriptors_fingerprint
+#
+# So normalising the convention is a PROVENANCE RE-STAMP, not a re-key: it moves each file's sha256
+# and moves no `vk_pin`, no VK and no federation key. The cost estimate that froze this set was
+# pricing a flag day that does not exist.
+#
+# Why it must go rather than stay correct-but-cosmetic: while it stands, ONE object has TWO byte
+# streams. `metatheory/MinaChainEmit.lean:48` writes `emitVmJson2 chainDesc ++ "\n"`;
+# `metatheory/EmitByName.lean:788` writes the same descriptor with no trailing byte; and this table
+# reconciles them per-filename. Determinism that is restored by a hand-maintained lookup of 30 names
+# is not determinism, and it is the precondition for descriptors becoming build artifacts at all —
+# a generated file cannot be reproducible if its producer's byte stream depends on which driver ran.
+#
+# THE MOVE (not done here — it needs a full regen, and this must not fire while sibling lanes hold
+# `circuit/descriptors/` open):
+#   1. make the payload newline-terminated UNIFORMLY at the writer in `install_and_stamp`;
+#   2. drop the `blob += "\n"` special-case below and delete this frozenset;
+#   3. give `EmitByName` and `MinaChainEmit` one shared writer so neither decides the convention;
+#   4. re-stamp PROVENANCE.json. No VK rotation, no re-emit of any consumer.
+#
+# ⚠ The census in the old comment was itself stale — it said "21 bare, 5 newline-terminated"; the
+# directory is 94 bare and 37 newline-terminated. A transcribed count went stale inside the comment
+# explaining why a transcribed convention had to be preserved.
 BY_NAME_NEWLINE_TERMINATED = frozenset({
     # The Lean-authored Pasta AIRs. Emitted by `lake env lean --run … > file`, so newline-
     # terminated like every other redirect-emitted artifact. Declared here because omitting a
