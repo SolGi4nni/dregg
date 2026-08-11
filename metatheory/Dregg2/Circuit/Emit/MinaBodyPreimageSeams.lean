@@ -157,44 +157,6 @@ same commit and the fingerprint had not been re-measured, so **no artifact of th
 emitted**, which is the honest state rather than a hidden one. -/
 def leftLanesAreUnmeasured : Bool := BODY_BITS_VK_LANES == List.replicate 9 (0 : ℤ)
 
-/-- ⚑⚑ **THE RIGHT END'S FINGERPRINT — MEASURED ON THE BYTES `seam.rs` ACTUALLY LOADS.**
-
-`SeamEnd.require_matches` recomputes `effect_vm_descriptor2_semantic_fingerprint` from the
-descriptor the adapter LOADED — `circuit/descriptors/by-name/pasta-fp-chainlink.json`, through
-`mina_phase2_chain_leaf::fp_chain_link_descriptor`. So the only value that can stand here is that
-file's fingerprint, and this is it: measured 2026-08-10 by `conj_fingerprint` over
-`w=469 pi=256 cons=922`,
-`fp=489dd5b7d14ba474912780b5c03af4f4d1076207fed8a46be8a4b4d5ebd10692`.
-
-⚠⚠ **AND IT IS NOT `LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES`, WHICH IS THE SAME FACT AND IS
-STALE.** That literal is the `vkPin` baked into `dregg-mina-lightclient-link::v1`'s body-chain
-`proofBind`; its docblock says it is this descriptor's fingerprint transcribed, and on 2026-08-10 it
-is not — `2ad7e48c8` ("a bind that binds nothing is unrepresentable — `bound` stops being nullable")
-moved the CANONICAL ENCODING and therefore every descriptor's fingerprint, including descriptors
-that carry no bind at all. `pasta-fp-chainlink.json` has neither a `proof_bind` nor a `bound` field
-and its bytes did not move; its FINGERPRINT did. The same drift is measurable on
-`pasta-fq-chainlink` and `pasta-fp-absorb`, and it is why all four previously-emitted seam artifacts
-fail `require_matches` today. **This is a tree-wide staleness a live VK-regen lane owns, not this
-family's** — and this file does not reach into `LightClientMinaLinkAir` to fix it, because that
-module is that lane's in-flight working surface.
-
-⚑ Two constants for one fact is the twin this repo forbids, so the divergence is not left as prose:
-`the_link_airs_chainlink_pin_is_stale_against_the_served_bytes` states it as a REFUTABLE theorem
-that goes RED the day the regen lane re-measures. At that point these two collapse to one and the
-theorem is deleted with them — that is the reconciliation, forced rather than remembered. -/
-def FP_CHAINLINK_LANES_MEASURED : List ℤ :=
-  [399875400, 86138509, 648285, 141918571, 8200015, 209650609, 329363091, 494581396, 9570001]
-
-/-- ⚑⚑ **THE TRIPWIRE, AND IT CAN GO RED IN BOTH DIRECTIONS.** Today the served bytes and the link
-AIR's `vkPin` name two different programs. A gate that cannot go red is not a gate: this one FAILS
-the moment they agree, which is exactly when `FP_CHAINLINK_LANES_MEASURED` must be deleted and this
-family's right end must read the single surviving constant. ⚠ Do not "fix" a red here by editing
-the literal above — a red here means the regen landed, and the fix is the merge. -/
-theorem the_link_airs_chainlink_pin_is_stale_against_the_served_bytes :
-    (FP_CHAINLINK_LANES_MEASURED
-      == Dregg2.Circuit.Emit.LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES) = false := by
-  decide
-
 /-- The pins welding absorbed element `n`'s published limbs onto the chain claim's block at
 `base` — `absorbedLimbCount n` of them: `SK` for a whole field element, `⌈W_e/8⌉` for a packed one,
 and NONE for the odd tail's padding element (`absorbedLimbCount 49 = 0`). -/
@@ -216,7 +178,7 @@ def bodyPreimageSeam (j : Nat) : SeamSpec :=
              , descName := "dregg-mina-body-preimage-bits::v1", descLanes := BODY_BITS_VK_LANES }
   , right := { claim := "mina-body-chain-leaf", claimLen := CHAIN_CLAIM_LEN
              , descName := "dregg-pasta-fp-chainlink::v1"
-             , descLanes := FP_CHAINLINK_LANES_MEASURED }
+             , descLanes := Dregg2.Circuit.Emit.LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES }
   , pins := sidePins (2 * j) CHAIN_ABSORBED_0 ++ sidePins (2 * j + 1) CHAIN_ABSORBED_1
   , zeroLeft := []
   , zeroRight := sideZeros (2 * j) CHAIN_ABSORBED_0 ++ sideZeros (2 * j + 1) CHAIN_ABSORBED_1 }
@@ -668,7 +630,6 @@ theorem the_real_welds_are_non_zero_except_at_the_two_local_state_links :
 -/
 
 #assert_axioms the_claim_shapes_are_the_deployed_ones
-#assert_axioms the_link_airs_chainlink_pin_is_stale_against_the_served_bytes
 #assert_axioms bodyPreimageSeams_length
 #assert_axioms preimage_field_slot_is_published
 #assert_axioms preimage_packed_slot_is_published

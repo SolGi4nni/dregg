@@ -647,10 +647,16 @@ docblock or copied to make a check agree:
 
 Second source, independently: `MinaWrapClosingAir.ABSORB_VK_LANES` carries the same nine, and
 `circuit/tests/mina_wrap_closing_air_proves.rs::the_weld_pins_the_real_absorb_program_and_names_its_pi_vector`
-recomputes them from the same bytes and PASSES. That file deliberately refused to copy the stale
-number in order to agree with this one; this is the half that owed the move. -/
+recomputes them from the same bytes.
+
+⚑ **RE-MEASURED 2026-08-11 AFTER THE CANONICAL-RECORD CHANGE.** `2ad7e48c8` changed the binary
+record hashed for every descriptor even when its JSON did not move. The unchanged served
+`pasta-fp-absorb.json` now fingerprints to
+`5c0973624f0a1686966e8d1e0c16894279154bfb98c14edaf51d268c61e2fd18`, i.e. the nine lanes below.
+Both Lean consumers move in this flag day; the all-pin resolver and the two Rust gates recompute the
+value rather than accepting agreement between the copies. -/
 def ABSORB_VK_LANES : List ℤ :=
-  [484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268]
+  [41093468, 279990907, 56337825, 304879677, 290952232, 13401509, 399993147, 204571843, 1637858]
 
 /-- The nine `Faithful9` lanes of a row's PARENT nonet, as commit expressions. -/
 def parentCommitLanes : List Expr :=
@@ -747,10 +753,16 @@ def MINA_PROTO_STATE_BODY_SALT_LANES : List ℤ :=
 
 ⚠ **FLAG DAY COUPLING:** re-emitting `pasta-fp-chainlink.json` moves this literal and therefore
 re-emits and re-VKs `dregg-mina-lightclient-link::v1`, which moves
-`LightClientMinaAir.LINK_VK_LANES` and re-VKs the head. Lean cannot compute blake3, so this is a
-TRANSCRIPTION and `circuit/tests/mina_statehash_seam_proves.rs` is what makes it a gate. -/
+`LightClientMinaAir.LINK_VK_LANES` and re-VKs the head.
+
+⚑ **RE-MEASURED 2026-08-10 AFTER THE CANONICAL-RECORD CHANGE.** `2ad7e48c8` made `bound`
+non-nullable in the binary fingerprint record, so every descriptor fingerprint moved even when its
+JSON bytes did not. The unchanged served `pasta-fp-chainlink.json` now fingerprints to
+`489dd5b7d14ba474912780b5c03af4f4d1076207fed8a46be8a4b4d5ebd10692`, i.e. the nine lanes below.
+`scripts/check-vk-pin-literals.sh` recomputes the whole term/bytes/BLAKE3/lane chain in pure Lean;
+the seam registry reads this same definition rather than carrying a second measured literal. -/
 def FP_CHAINLINK_VK_LANES : List ℤ :=
-  [331349446, 492579056, 87664392, 244507792, 473722701, 515537956, 384678982, 534069614, 6023200]
+  [399875400, 86138509, 648285, 141918571, 8200015, 209650609, 329363091, 494581396, 9570001]
 
 /-- The eight `BODY_ACC` columns, as commit expressions. -/
 def bodyAccCommitLanes : List Expr :=

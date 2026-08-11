@@ -125,11 +125,16 @@ lanes. Measured 2026-08-08 by `circuit/examples/conj_fingerprint.rs` over the se
     w=687  pi=64  cons=948
     fp=e3c8fbc7cb13d751cd4fb857e9aa097b4c550561cc84ca779650fbc03c8d231a
 
+⚑ **RE-MEASURED 2026-08-11 AFTER THE CANONICAL-RECORD CHANGE.** `2ad7e48c8` changed the binary
+record hashed for every descriptor even when its JSON did not move. The same served artifact now
+fingerprints to `31ba24ea8831694c3c1b963fc8f2d12d93600680734eaa966ef93c31872b2ebf`, i.e. the
+nine lanes below; the pure-Lean all-pin resolver independently reaches the same served descriptor.
+
 ⚠ FLAG DAY coupling: re-emitting `mina-xi-endo-lift.json` moves this literal and re-emits every
 seam JSON that names it. The Rust reader (`seam.rs`) RECOMPUTES the lanes from the descriptor it
 loads and refuses a mismatch, so a stale literal here is a loud red, not a silent misname. -/
 def ENDO_VK_LANES : List ℤ :=
-  [133941475, 246980190, 236188500, 324391599, 357877680, 40251522, 39444266, 127410026, 1713037]
+  [170179121, 55151687, 92720915, 65376383, 101266141, 121225219, 96098985, 283518879, 12529195]
 
 /-! ## §2 — THE THREE SEAMS. -/
 

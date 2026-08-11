@@ -931,7 +931,7 @@ warning became a statement about a tree that no longer existed, still sitting he
 divergence no reader could reproduce. **A dated verdict about someone else's literal outlives the
 literal**, which is the same failure the block was written to describe.
 
-⚠ **BOTH COPIES ARE NOW STALE TOGETHER.** Measured 2026-08-10 against HEAD (materialised with
+⚠ **BOTH COPIES WERE STALE TOGETHER.** Measured 2026-08-10 against HEAD (materialised with
 `scripts/materialise-descriptors-at.sh HEAD`, so this is not a working-tree artifact):
 
     dregg-pasta-fp-absorb::v1   w=469 pi=192 cons=858
@@ -939,10 +939,11 @@ literal**, which is the same failure the block was written to describe.
       lanes=[41093468, 279990907, 56337825, 304879677, 290952232, 13401509, 399993147,
              204571843, 1637858]
 
-— not the nine below. Two agreeing transcriptions of a value that matches neither the artifact nor
+— not the old nine. Two agreeing transcriptions of a value that matches neither the artifact nor
 each other's source are strictly LESS informative than one disagreeing pair, because the agreement
 reads as corroboration. **Two sources for one derived value are not two witnesses; they are one
-witness copied.**
+witness copied.** The literal below is that re-measurement, landed in the same flag day as
+`LightClientMinaLinkAir.ABSORB_VK_LANES` and independently resolved by the pure-Lean all-pin gate.
 
 ⚑ This is not a local defect. `circuit/tests/vk_pin_closure_over_the_served_tree.rs` resolves EVERY
 `vk_pin` the tree serves against the fingerprints of EVERY descriptor the tree serves — it needs no
@@ -951,10 +952,11 @@ in the Mina chain attests a program no descriptor here has. The per-pin gates na
 but partial, each hand-written for one pin, so a pin added after its gate was written is ungated by
 construction.
 
-⚠ Fixing the VALUE is a re-emit + VK rotation of the link, the head and the conjunction chain, and
-it is NOT done here — sibling lanes hold `circuit/descriptors/` open. -/
+⚠ Fixing the VALUE requires the re-emit + VK rotation of the link, the head and the conjunction
+chain performed by this flag day; changing the literal without that derived-artifact step would
+leave the opposite half stale. -/
 def ABSORB_VK_LANES : List ℤ :=
-  [484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268]
+  [41093468, 279990907, 56337825, 304879677, 290952232, 13401509, 399993147, 204571843, 1637858]
 
 /-- The bind's guard column — one past the routing's row index. -/
 def DBIND : Nat := ROUTED_WIDTH

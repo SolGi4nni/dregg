@@ -118,24 +118,13 @@ PROVENANCE_FILE = "PROVENANCE.json"                # lives inside circuit/descri
 #   * dregg-cert-qp-portfolio6-s3-ir2.json — regenerated + `--check`ed by regen-cert-qp.sh
 #     (`lake env lean --run EmitCertQpDescriptor.lean`, deliberately outside this driver's EMITTERS).
 #   * regen-cert-qp.sh — the regen SCRIPT itself (not a descriptor; it has no emitter by construction).
-#   * seams/*.json — the SeamSpec / PiPort registry, emitted by `metatheory/EmitSeamSpecs.lean`
-#     and drift-checked by `circuit-prove/tests/seam_specs.rs` (which REFUSES a seam end whose
-#     recomputed fingerprint lanes disagree with the descriptor actually loaded).
-#     ⚑ 2026-08-10, said plainly rather than hidden by this entry: these were checked in with NO
-#     emitter row at all, so this driver reported a routing gap and REFUSED EVERY INSTALL — which
-#     is how the `proof_bind` flag day found it. Routing `EmitSeamSpecs.lean` here is the real
-#     fix and was attempted; it imports `Dregg2/Circuit/Emit/MinaBodyPreimageSeams.lean`, which is
-#     UNTRACKED, outside the `Dregg2` umbrella, and currently RED on a sibling's in-flight rename
-#     (`MinaPhase1Chain.fpAbsorbProg`). Routing a red untracked module would block every future
-#     emit on another lane's working tree. Route it the day that module lands green.
+# The SeamSpec / PiPort registry used to be exempt while `EmitSeamSpecs.lean` was untracked and
+# red on an in-flight rename. That condition ended when the module landed green. It is routed below
+# now, so a flag day re-emits the seam ends in the same buffered, all-or-nothing pass as the
+# descriptors they name; keeping the exemption would preserve two ceremonies for one object.
 COVERAGE_EXEMPT = frozenset({
     "dregg-cert-qp-portfolio6-s3-ir2.json",
     "regen-cert-qp.sh",
-    "seams/ports.json",
-    "seams/seam-chain-fresh-sponge.json",
-    "seams/seam-chain-vprime-to-finalize.json",
-    "seams/seam-head-tip-to-link.json",
-    "seams/seam-xi-endo-to-conjunction.json",
 })
 AUDIT_LOG_REL = Path("docs") / "VK-REGEN-LOG.md"   # git-tracked append-only regen log
 ACK_ENV = "DREGG_VK_REGEN_ACK"
@@ -163,6 +152,7 @@ EMITTERS = [
     "EmitWideUMemWeldRegistryProbe.lean",    # ADDITIVE/STAGED: the WIDE+umem welded registry (covers wide V3)
     "EmitLayoutManifest.lean",               # the rotated COLUMN LAYOUT, exported from Lean AS RUST
     "EmitByName.lean",                       # the by-name/ dispatch surface descriptor_by_name() serves
+    "EmitSeamSpecs.lean",                    # recursion SeamSpec / declared PiPort registry
     "EmitTableAirs.lean",                    # the table-airs/ SHARED table AIRs (see below)
     "EmitCertF.lean",                        # the ring-3 Cert-F IR2 descriptor (cert_f_air.rs include_str!s it)
     "EmitCertFMarket4.lean",                 # the market4 (3-asset/4-order, ε>0) Cert-F IR2 descriptor
@@ -2921,6 +2911,52 @@ def split_by_name(stdout: str, written):
         write_file(f"by-name/{filename}", blob, written)
 
 
+def split_seam_specs(stdout: str, written):
+    """`EmitSeamSpecs.lean` prints one `<filename>\tjson` line per checked-in SeamSpec or
+    PiPort census, routed to `circuit/descriptors/seams/<filename>`.
+
+    These artifacts were once deliberately outside the whole-surface regen while the emitter's
+    imported seam family was untracked and did not elaborate. The family is now landed and proved;
+    leaving its renderer outside `EMITTERS` makes every descriptor flag day either a manual second
+    ceremony or a routing-gap refusal. Buffering the rows here also preserves the regen driver's
+    important property: no descriptor or seam byte reaches disk until the complete emission has
+    succeeded and the authorization gate has passed.
+
+    The checked-in convention is bare JSON with no trailing newline. Parse every payload before
+    preserving those exact bytes: `ports.json` is a non-empty array and every other row is a seam
+    object with two named ends. Structural and fingerprint-level validation remains in
+    `circuit-prove/tests/seam_specs.rs`; this is the routing/type wall, not its twin.
+    """
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    if not lines:
+        sys.exit("emit_descriptors: seam emitter produced no lines")
+    for ln in lines:
+        if ln.count("\t") != 1:
+            sys.exit(f"emit_descriptors: seam line malformed (want `file\\tjson`): {ln[:80]!r}")
+        filename, blob = ln.split("\t", 1)
+        if Path(filename).name != filename or not filename.endswith(".json"):
+            sys.exit(f"emit_descriptors: seam key is not a plain .json filename: {filename!r}")
+        try:
+            payload = json.loads(blob)
+        except json.JSONDecodeError as e:
+            sys.exit(
+                f"emit_descriptors: seam {filename} payload is not JSON ({e}): {blob[:60]!r}"
+            )
+        if filename == "ports.json":
+            if not isinstance(payload, list) or not payload:
+                sys.exit("emit_descriptors: seams/ports.json must be a non-empty JSON array")
+        elif not (
+            isinstance(payload, dict)
+            and isinstance(payload.get("name"), str)
+            and isinstance(payload.get("left"), dict)
+            and isinstance(payload.get("right"), dict)
+        ):
+            sys.exit(
+                f"emit_descriptors: seam {filename} is not a SeamSpec object with named ends"
+            )
+        write_file(f"seams/{filename}", blob, written)
+
+
 def split_table_airs(stdout: str, written):
     """`EmitTableAirs.lean` prints one `<filename>\tjson` line per checked-in SHARED table AIR —
     the same `<file>\tjson` shape as `EmitByName.lean` — routed to
@@ -3669,6 +3705,8 @@ def main():
             split_wide_umem_weld(out, written)
         elif lean.endswith("EmitByName.lean"):
             split_by_name(out, written)
+        elif lean.endswith("EmitSeamSpecs.lean"):
+            split_seam_specs(out, written)
         elif lean.endswith("EmitTableAirs.lean"):
             split_table_airs(out, written)
         elif lean.endswith("EmitCertFMarket4.lean"):

@@ -158,7 +158,7 @@ def bodyHashByteSeam : SeamSpec :=
              , descName := "dregg-mina-bodyhash-relimb::v1", descLanes := RELIMB_VK_LANES }
   , right := { claim := "mina-body-chain-leaf", claimLen := CHAIN_CLAIM_LEN
              , descName := "dregg-pasta-fp-chainlink::v1"
-             , descLanes := Dregg2.Circuit.Emit.MinaBodyPreimageSeams.FP_CHAINLINK_LANES_MEASURED }
+             , descLanes := Dregg2.Circuit.Emit.LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES }
   , pins := (List.range NBYTE).map (fun i => (PI_BYTE i, CHAIN_OUT_LANE0 + i))
   , zeroLeft := []
   , zeroRight := [] }
@@ -185,9 +185,9 @@ def relimbSeams : List SeamSpec := [bodyHashByteSeam, bodyHashLaneSeam]
 `fp=1e908aa5...`) it AGREES, so this family carries no second literal.
 `the_link_end_is_the_link_airs_own_pin` is the `rfl` that keeps it that way.
 
-⚠ Contrast `MinaBodyPreimageSeams.FP_CHAINLINK_LANES_MEASURED`, which exists precisely because
-`LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES` does NOT agree with its served bytes. The chainlink
-end below reuses that measured constant rather than minting a third. -/
+⚑ The chainlink end likewise reads `LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES`: the temporary
+second measured literal used while the canonical-record flag day was pending has been merged, so
+both seam families and the link AIR now name one fact. -/
 theorem the_link_end_is_the_link_airs_own_pin :
     bodyHashLaneSeam.right.descLanes
       = Dregg2.Circuit.Emit.LightClientMinaAir.LINK_VK_LANES := rfl

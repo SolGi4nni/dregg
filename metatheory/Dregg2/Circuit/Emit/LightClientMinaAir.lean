@@ -927,15 +927,22 @@ test is RED, and against HEAD it is GREEN … it is not this file's to chase"*. 
 the moment the batch landed, and nothing re-asked the question. **A dated verdict about a working
 tree outlives the tree it was measured on.**
 
-⚠ The nine digits below are RECOMPUTED FROM THE EMITTED BYTES:
+⚠ The nine digits below are RECOMPUTED FROM THE EMITTED BYTES. The 2026-08-08 measurement
+immediately below is retained as history because it was the repair at that descriptor epoch; it is
+not the current fingerprint after the canonical-record change.
 
     cargo run -p dregg-circuit --example conj_fingerprint -- \
       circuit/descriptors/by-name/pasta-fq-chainlink.json
     → fp=85d377c9e76cb31fb31885773e3c7436f28ca8588b2db482e31fb5e4e40abf23
       lanes=[158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576,
-             480024227, 2342666] -/
+             480024227, 2342666]
+
+⚑ **RE-MEASURED 2026-08-11 AFTER THE CANONICAL-RECORD CHANGE.** `2ad7e48c8` made `bound`
+non-nullable in the binary fingerprint record, so the unchanged served JSON now fingerprints to
+`33040b37662bc5c86ffa5b161d4fb057e6c5c56328e57b97671b2c43b53a4beb`, i.e. the nine lanes below.
+`scripts/check-vk-pin-literals.sh` independently recomputes this resolution in pure Lean. -/
 def CHAINLINK_VK_LANES : List ℤ :=
-  [158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666]
+  [386597939, 103373617, 385784818, 10369580, 475948411, 311701986, 228482543, 380134787, 15420218]
 
 /-- The `i`-th pinned program lane, as the `vkPin` literal the leg carries. -/
 def chainlinkVkLane (i : Nat) : ℤ := CHAINLINK_VK_LANES.getD i 0
@@ -1178,10 +1185,14 @@ identical output), against the file on disk rather than a re-emit:
              176046258, 561245]
 
 `w=2536 / pi=160 / cons=4317` is the shape `MinaWrapConjunctionAir` §9b's own flag day states, so the
-bytes fingerprinted here are the post-`piCount` object and not the 0-PI one that preceded it. Lane 8
-is `561245 < 2^24`, as `Faithful9` requires. -/
+bytes fingerprinted here are the post-`piCount` object and not the 0-PI one that preceded it.
+
+⚑ **RE-MEASURED 2026-08-11 AFTER THE CANONICAL-RECORD CHANGE.** `2ad7e48c8` changed the binary
+record hashed for every descriptor even when its JSON did not move. The same served artifact now
+fingerprints to `3828888111e1d883293c5a4c30d252572797044e55e38aad92b520a35d2e0ff2`, i.e. the
+nine lanes below; `scripts/check-vk-pin-literals.sh` independently resolves them in pure Lean. -/
 def CONJ_VK_LANES : List ℤ :=
-  [447620828, 118399956, 332150941, 529607877, 314255522, 98355104, 173079149, 176046258, 561245]
+  [25700408, 516360332, 378473056, 94658712, 158496117, 296396546, 373995051, 196371478, 15863598]
 
 /-- The `i`-th pinned conjunction-program lane, as the `vkPin` literal the leg carries. -/
 def conjVkLane (i : Nat) : ℤ := CONJ_VK_LANES.getD i 0
@@ -2862,7 +2873,7 @@ placeholder. -/
 
 /-- The forged conjunction-program lanes: the real fingerprint with lane 0 bumped by one. -/
 def FORGED_CONJ_VK_LANES : List ℤ :=
-  [447620829, 118399956, 332150941, 529607877, 314255522, 98355104, 173079149, 176046258, 561245]
+  [25700409, 516360332, 378473056, 94658712, 158496117, 296396546, 373995051, 196371478, 15863598]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT CONJUNCTION PROGRAM.** -/
 def forgedConjProgramRow : Assignment :=
