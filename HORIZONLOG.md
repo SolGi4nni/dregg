@@ -1,5 +1,153 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 11 — THE BODY-PREIMAGE WELD IS ROUTED: a production fold, a ceremony that did not exist, and an anchor rename that makes an unwelded root refuse
+
+**SUBSTRATE: recursion wiring, and it is labelled as such.** No AIR moved, no descriptor re-emits.
+The seams are `Dregg2/Circuit/Emit/MinaBodyPreimageSeams.lean`'s; Rust proves, folds, verifies and
+refuses. House Law #1.
+
+### ⚑⚑ THE GAP WAS ROUTING, AND ROUTING HAD THREE PIECES
+
+08-10 named it exactly — *"the remaining gap is ROUTING — real prover/executor wiring to build, not
+a missing theorem"* — with the 25-adapter root in an `#[ignore]`d test, **two test consumers and
+zero production consumers**. Three things were missing:
+
+1. **A production prover.** The whole-chain welded fold WAS the test body.
+   `mina_body_preimage_adapter::prove_welded_body_hash_chain_fold` is now the function — the twin of
+   `prove_chain_fold_with` with the adapter where the plain leaf was — and the test's §4 drives it
+   instead of reconstructing it. ⚑ It **refuses `k ≠ 25` links before proving anything**: the 25
+   seams PARTITION the 1 518-slot preimage claim (`every_published_slot_is_welded_exactly_once`), so
+   a short fold welds `1 518·k/25` limbs, leaves the rest free, and publishes a claim nothing
+   downstream can distinguish from the whole one's.
+2. **A ceremony.** It was documented and did not exist — below.
+3. **A node that will not take the unwelded root.** The flag day, below.
+
+### ⚑⚑⚑ THE BODY ANCHOR'S EXTRACTION CEREMONY WAS DOCUMENTED AND DID NOT EXIST
+
+`node/src/mina_chain_root_backend.rs` told an operator the body anchor *"is printed by
+`circuit-prove/tests/mina_body_hash_chain_fold.rs`'s root section"*. **Measured 2026-08-11: it is
+not, and never was.** That file calls `recursion_vk_fingerprint` in **§3 only**, over a **two-leaf**
+fold built to assert determinism; its §4 root section prints the claim and no fingerprint at all. So
+the value `DREGG_MINA_BODY_ROOT_VK` wanted had **no reachable source** — an operator following the
+docs pinned nothing, or pinned a two-leaf fingerprint that refuses every real 25-link root. The
+phase-2 pointer was false the same way; that anchor at least has a real second source
+(`recursion-verify/tests/mina_chain_root_seam.rs`), and the false half of the pointer is deleted
+rather than kept.
+
+`circuit-prove/src/bin/mina_body_root_anchor.rs` is the ceremony as an artifact. It mints the root
+through the production function, **verifies it under `chain_root_config()`** — the node's own engine
+— asserts the claim's head is the `MinaProtoStateBody` salt and its outgoing lane 0 recomposes to
+block 540221's `state_body_hash`, and prints the fingerprint as the `export` line. `--plain` mints
+the unwelded tower for comparison, labelled as not-for-pinning.
+
+### ⚑⚑ THE FLAG DAY — `DREGG_MINA_BODY_ROOT_VK` → `DREGG_MINA_BODY_WELDED_ROOT_VK`
+
+The old name is **not a fallback**. A node still setting it installs NO backend and refuses every
+Mina anchored head, naming the rename and the ceremony. The reason is the adapter's drop-in property
+turned around: welded and unwelded roots publish the **identical 200-lane claim**, so
+`verify_chain_root`, `read_chain_claim_from_proof` and all four REFUSAL 16 sub-checks are blind to
+the difference. Reading the old pin as a fallback would silently keep a node on a body root whose
+absorbed stream is whatever the prover said.
+
+⚑ Two further install-time refusals, both structural and both loud: the two anchors must be
+**distinct** (one fingerprint in both slots pins one circuit for two roles, and the fingerprint is
+the only thing separating `check_chain_root_binding` from `check_body_chain_binding`), and
+half-pinned is refused naming the missing variable. The decision is now a pure function
+(`anchors_from_raw`), so its five refusals and its positive pole are tested without a test mutating
+a process-global its siblings also read.
+
+### ⚑ REFUSAL 16 IS **KEPT** — and it is not a second check of the same thing
+
+The two objects weld **different pairs**:
+
+* the adapter's seam welds *(preimage descriptor's 1 518 published limbs)* ↔ *(chain link's 64
+  absorbed limbs)* — what the chain ABSORBED;
+* `check_body_chain_binding` welds *(root's `transcript_acc` and squeezed lane 0)* ↔ *(segment
+  proof's `BODY_ACC` and `BODYHASH`)* — what the segment proof PUBLISHED.
+
+`MinaSeams.the_link_body_ports_are_weld_covered = []` is discharged by naming
+`bodyHashWeld`/`bodyAccWeld` — this executor comparison — and the adapter's seam is not in that
+disjunct and could not be: it never touches `minaLinkDesc`. ⚠ And the `BODYHASH` half **cannot
+become a seam** as the two objects are encoded — thirty-two 8-bit limbs against nine 29-bit
+`Faithful9` lanes, coefficients to `2^248` against a modulus below `2^31`. §7.2's bit-level
+re-limbing descriptor is the transmutable fix and is **undone work**. Retiring the refusal today
+would delete a check whose replacement does not exist.
+
+### ⚑ MEASURED — persvati (24 cores / 83 GB, idle), `--release`, `--test-threads=1`, ONE build, ONE box
+
+| | ms | s |
+|---|---|---|
+| plain 25 leaves + 24 folds — today's deployed shape | 381 099 | 381 |
+| welded 25 adapters + 24 folds — what a node anchors now | 1 007 763 | 1 007 |
+| **routing cost** | **+626 664** | **+626 s, 2.64×** |
+
+⚑ **2.64×, not the 3.8× the leaf ratio implies.** 08-10's `45 482 ms` adapter against `12 028 ms`
+plain leaf is a SINGLE-LEAF pair taken under contention and it does not survive to the tower — the
+24 folds are shared cost, and `25 × 45.5 s = 1 137 s` already exceeds the 695 s that same write-up
+reports for the whole welded chain. Both rows here are the same interval printed in ms **and** in s,
+from one process on one idle box, because a mixed-unit pair is exactly how that inconsistency lived.
+
+⚑⚑⚑ **AND THE FACT THE WHOLE ROUTING RESTS ON, MEASURED FOR THE FIRST TIME:**
+
+```text
+claim      IDENTICAL  — nothing downstream can tell the two towers apart
+plain  vk  7d3b5e980ceeb69278935a439a281e7ab6a5ecc19803f9adf10a9d9652be265f
+welded vk  b23950d52b369b34a4d148b768c2758ae142a50bc6b0ca2af5665b996ad7f53a
+```
+
+Had these been EQUAL the routing would be **impossible** — no value would name the welded tower, and
+a node pinned to it would accept an unwelded root with every check green. `fold_vk_pin`'s "WHAT THE
+PIN BUYS (2)" is the mechanism: `FoldVkPins::tracked` puts each child's preprocessed commitment into
+the parent's, and `recursion_vk_fingerprint` hashes it. ⚠ Both strings are **this build's**, printed
+and not checked in, for the reason the module has always given — a default anchor is a fingerprint
+nobody chose. Re-mint after any change to either descriptor, the seams, the fold engine or the fork.
+
+**Both polarities at the production entry point, release:** the production welded fold REFUSED a
+forged preimage — one that **proves AND verifies against its own descriptor** on the checked rail
+(`prove_vm_descriptor2` + `verify_vm_descriptor2`, never the `_unchecked` twin) — with
+`WitnessConflict { witness_id: WitnessId(116) }`, i.e. the seam's own `cb.connect`. Alongside:
+`dregg-node` anchor teeth **7 passed / 0 failed**; the adapter's non-ignored suite **6 passed / 0
+failed / 4 ignored**; `cargo check --all-targets` PASS for `dregg-node`, `dregg-turn`,
+`dregg-circuit-prove`.
+
+### ⚑ WHAT A PROVER STILL CHOOSES — the choice did not move a fourth time
+
+08-10 moved it to *"nothing below the chain's own 2 381-bit preimage residual"*, in the recursion
+circuit. **Today's change does not narrow that further.** It moves WHICH root a node will take, and
+nothing else. **SHAPE and AGREEMENT are constrained; CONTENT is not** — the whole
+`Protocol_state.Body`, 2 381 bits and 38 field elements, is still whatever a prover says it is.
+Nothing here says the epoch ledger hash is one, that the VRF output verifies, or that the global
+slot is consistent; those 857 pieces are Mina daemon consensus obligations.
+`PICKLES_OPENING_WITNESSED` is unchanged.
+
+⚠⚠ **AND THE HONEST SHAPE OF "ROUTED".** The node cannot verify that the value an operator pinned
+came from the welded ceremony — the towers are claim-identical and the fingerprint is an operator
+input. What the repo can do, and now does: ship the welded fold as its only ceremony, make the old
+anchor name refuse rather than carry across, and refuse an unwelded root at REFUSAL 16b once the
+welded anchor is pinned. ⚠ And nothing in this repo produces a `MinaHeadProofWire` at all, and no
+deployment sets either anchor (measured against `~/dregg-infra`, zero `DREGG_MINA*` references), so
+no live node exercises this path today. **The weld is what a node WILL run; it is not yet what any
+node HAS run.**
+
+### ⚠ NAMED FOLLOW-UP — the `unrouted` ratchet is now over its ceiling, and I did not move it
+
+The four `#[ignore]`d tests of `mina_body_preimage_adapter.rs` gained rows in
+`.github/ignored-test-routes.txt`; `unrouted` is now **156 against a ceiling of 152**. It was already
+red for these four under the *other* error ("an ignored test with no route"), so this trades a less
+informative red for a more informative one — but the ceiling is a ratchet and **raising it is the
+operator's call, not a lane's**. The real blocker is that these tests need the **untracked ~80 MB
+`pasta-fp-bodyhash` witnesses**, so no scheduled lane *can* run them. Three answers exist: track the
+witnesses, mint them in the lane, or accept the ceiling move. None is taken here.
+
+### WHAT BREAKS
+
+* **`DREGG_MINA_BODY_ROOT_VK` no longer exists.** A node setting it installs no backend and refuses
+  every Mina anchored head. Nothing in `~/dregg-infra` sets it or `DREGG_MINA_CHAIN_ROOT_VK`, so no
+  deployed node loses a capability — none had it.
+* **The body anchor value rotates**, because the tower it names is a different circuit. Re-mint with
+  `mina_body_root_anchor`.
+* No descriptor moved, no descriptor VK rotates, nothing re-genesises, no fixture re-emits.
+
 ## ⛑⛑⛑⛑ AUGUST 10 — TIE 1 IS A WELD: the leaf adapter exists, the twenty-five seams are APPLIED, and the two things the brief called "authored and proved" were neither
 
 **SUBSTRATE: Lean-authored AIR + recursion wiring, and the two are labelled separately.**
