@@ -78,14 +78,20 @@ would delete a check whose replacement does not exist.
 | | ms | s |
 |---|---|---|
 | plain 25 leaves + 24 folds — today's deployed shape | 381 099 | 381 |
-| welded 25 adapters + 24 folds — what a node anchors now | 1 007 763 | 1 007 |
-| **routing cost** | **+626 664** | **+626 s, 2.64×** |
+| welded 25 adapters + 24 folds — what a node anchors now | 1 007 763 · 1 119 000 | 1 007 · 1 119 |
+| **routing cost** | **+626 664 … +738 000** | **+626 … +738 s, 2.64–2.94×** |
 
-⚑ **2.64×, not the 3.8× the leaf ratio implies.** 08-10's `45 482 ms` adapter against `12 028 ms`
-plain leaf is a SINGLE-LEAF pair taken under contention and it does not survive to the tower — the
-24 folds are shared cost, and `25 × 45.5 s = 1 137 s` already exceeds the 695 s that same write-up
-reports for the whole welded chain. Both rows here are the same interval printed in ms **and** in s,
-from one process on one idle box, because a mixed-unit pair is exactly how that inconsistency lived.
+⚠ **TWO NUMBERS FOR THE WELDED TOWER, AND THE BAND IS THE ANSWER.** §6 and §4 build the SAME object
+in the SAME process on the SAME box minutes apart and land 112 s (11%) apart — `fold_vk_pin`'s own
+docblock already says why (*"TWO RUNS, TWENTY MINUTES APART, A FACTOR OF TWO … Quote the BAND or
+re-measure"*), and the second one runs with the box warmer. A point value here would be the same
+mistake, one order smaller, as the figure this entry corrects below.
+
+⚑ **2.64–2.94×, not the 3.8× the leaf ratio implies.** 08-10's `45 482 ms` adapter against
+`12 028 ms` plain leaf is a SINGLE-LEAF pair taken under contention and it does not survive to the
+tower — the 24 folds are shared cost, and `25 × 45.5 s = 1 137 s` already exceeds the 695 s that same
+write-up reports for the whole welded chain. Every row here is the same interval printed in ms **and**
+in s, from one process on one idle box, because a mixed-unit pair is exactly how that lived.
 
 ⚑⚑⚑ **AND THE FACT THE WHOLE ROUTING RESTS ON, MEASURED FOR THE FIRST TIME:**
 
@@ -102,10 +108,18 @@ the parent's, and `recursion_vk_fingerprint` hashes it. ⚠ Both strings are **t
 and not checked in, for the reason the module has always given — a default anchor is a fingerprint
 nobody chose. Re-mint after any change to either descriptor, the seams, the fold engine or the fork.
 
-**Both polarities at the production entry point, release:** the production welded fold REFUSED a
-forged preimage — one that **proves AND verifies against its own descriptor** on the checked rail
-(`prove_vm_descriptor2` + `verify_vm_descriptor2`, never the `_unchecked` twin) — with
-`WitnessConflict { witness_id: WitnessId(116) }`, i.e. the seam's own `cb.connect`. Alongside:
+**Both polarities at the production entry point, release** — `3 passed; 0 failed` in **2 518.85 s**,
+`MEASURE_EXIT=0`, `pbuild VERDICT outcome=PASS`, and the COUNT is read rather than the exit code:
+
+* **positive** — the production fold minted the whole 25-link welded root in **1 119 s**, landing on
+  block 540221's own `state_body_hash` with **1 600 in-circuit merges** across the 25 adapters;
+* **negative** — the same function REFUSED a forged preimage, one that **proves AND verifies against
+  its own descriptor** on the checked rail (`prove_vm_descriptor2` + `verify_vm_descriptor2`, never
+  the `_unchecked` twin, which gates the pre-flight and the self-check on one flag), with
+  `WitnessConflict { witness_id: WitnessId(116) }` — the seam's own `cb.connect`, not a shape guard,
+  not FRI, not a range verdict.
+
+Alongside:
 `dregg-node` anchor teeth **7 passed / 0 failed**; the adapter's non-ignored suite **6 passed / 0
 failed / 4 ignored**; `cargo check --all-targets` PASS for `dregg-node`, `dregg-turn`,
 `dregg-circuit-prove`.
