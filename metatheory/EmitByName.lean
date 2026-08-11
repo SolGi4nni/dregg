@@ -60,6 +60,7 @@ import Dregg2.Circuit.Emit.MinaFixtureEmit
 import Dregg2.Circuit.Emit.LightClientMinaAir
 import Dregg2.Circuit.Emit.LightClientMinaLinkAir
 import Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir
+import Dregg2.Circuit.Emit.MinaBodyHashRelimbAir
 import Dregg2.Circuit.Emit.MinaPreambleLegsAir
 import Dregg2.Circuit.Emit.LightClientSolStakeFoldAir
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
@@ -499,6 +500,18 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- link honest. ⚑ NO TABLE AND NO LOOKUP: committed width = declared width.
   , ("dregg-mina-body-preimage-bits-v1.json",
       Dregg2.Circuit.Emit.MinaBodyPreimageBitsAir.bodyBitsDesc)
+    -- ⚑⚑ THE BODY-HASH RE-LIMBING (2026-08-10): `dregg-mina-bodyhash-relimb::v1`, ONE ROW,
+    -- 254 booleanity gates over one bit block plus 32 byte-composition gates (coefficients top
+    -- out at 2^7) and 9 lane-composition gates (2^28) — the two spellings the body-hash tie has
+    -- to relate. `relimbDesc` is COMPILER OUTPUT — `EffectLower.lowerTiedAir` of the `EffectAir`
+    -- source `relimbAir`, no hand-written `VmConstraint2` in its module. It removes a MEASURED
+    -- blocker: a direct 32-limb ↔ 9-lane identity carries coefficients to 2^248 against BabyBear's
+    -- 2^31 and is not a linear gate, so tie 2 could not be a `SeamSpec` at all; read off ONE bit
+    -- block both spellings are in-field and the identity is a REGROUPING theorem
+    -- (`the_two_spellings_denote_one_value`), not a gate. ⚑ NO TABLE AND NO LOOKUP: committed
+    -- width = declared width, 295 → 295, 1.00×.
+  , ("dregg-mina-bodyhash-relimb-v1.json",
+      Dregg2.Circuit.Emit.MinaBodyHashRelimbAir.relimbDesc)
     -- ⚑ THE PREAMBLE LEGS (2026-08-08): `dregg-mina-preamble-legs::v1`, ONE ROW, 30 columns,
     -- 38 constraints — five `verify_block` preamble legs (B1 non-chunking + non-empty walk,
     -- B3 step-domain ≤ 16, C3's packing length, D1a/D1b's two count equalities) rendered as
@@ -780,8 +793,11 @@ Both directions are gated outside Lean:
 -- and the `provenance` local-gates row reported NOTHING rather than a pass or a fail. The pin is
 -- not a cap on the table; it is the parser's independent ground truth. 131 is the measured count:
 -- 131 rows, 131 tracked `circuit/descriptors/by-name/*.json`, no duplicates.
+-- ⚑ 2026-08-10: 132 = 131 + `dregg-mina-bodyhash-relimb-v1.json` (the bit-level re-limbing that
+-- makes tie 2 expressible as two descriptor-ended seams). Rows and pin are one atom — bumped in
+-- the same edit as the row, which is the discipline the six notes above were each paid for.
 set_option maxRecDepth 8000 in
-theorem byNameDescriptors_length : byNameDescriptors.length = 131 := rfl
+theorem byNameDescriptors_length : byNameDescriptors.length = 132 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

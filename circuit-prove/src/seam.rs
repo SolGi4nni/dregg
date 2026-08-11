@@ -222,3 +222,33 @@ pub fn head_tip_seam() -> Result<SeamSpec, String> {
         "../../circuit/descriptors/seams/seam-head-tip-to-link.json"
     ))
 }
+
+/// ⚑⚑ **THE TIE-2 BYTE SEAM** — the re-limb claim's 32 byte slots against
+/// `dregg-pasta-fp-chainlink::v1`'s outgoing lane 0 (PI `[96, 128)`, register 4's LAST-row block),
+/// the squeezed `state_body_hash`.
+///
+/// Lean: `MinaBodyHashRelimbSeams.bodyHashByteSeam`; S1
+/// `the_relimb_seams_weld_published_slots`; S2 `bodyHashByteSeamCertifies`, refuted without its
+/// hypothesis by `byte_seam_S2_needs_the_seam`.
+pub fn bodyhash_bytes_to_chain_seam() -> Result<SeamSpec, String> {
+    SeamSpec::parse(include_str!(
+        "../../circuit/descriptors/seams/seam-bodyhash-bytes-to-chain.json"
+    ))
+}
+
+/// ⚑⚑ **THE TIE-2 LANE SEAM** — the re-limb claim's 9 lane slots against
+/// `dregg-mina-lightclient-link::v1`'s `BODYHASH` nonet (PI `[20, 29)`).
+///
+/// Lean: `MinaBodyHashRelimbSeams.bodyHashLaneSeam`; S2 `bodyHashLaneSeamCertifies`, refuted by
+/// `lane_seam_S2_needs_the_seam`. The two seams compose in
+/// `the_chains_body_hash_is_the_links_body_hash`: the felt the chain squeezed IS the felt this
+/// nonet denotes.
+///
+/// ⚠ NOT ROUTED. No fold applies either seam yet; `check_body_chain_binding` (REFUSAL 16) is what a
+/// node runs. These readers exist so the emitted bytes are gated
+/// (`circuit-prove/tests/seam_specs.rs`) rather than merely present.
+pub fn bodyhash_lanes_to_link_seam() -> Result<SeamSpec, String> {
+    SeamSpec::parse(include_str!(
+        "../../circuit/descriptors/seams/seam-bodyhash-lanes-to-link.json"
+    ))
+}

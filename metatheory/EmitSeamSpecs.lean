@@ -25,6 +25,7 @@ descriptor it names. A drifted artifact is a named red there; a drifted Lean obj
 -/
 import Dregg2.Circuit.Emit.MinaSeams
 import Dregg2.Circuit.Emit.MinaBodyPreimageSeams
+import Dregg2.Circuit.Emit.MinaBodyHashRelimbSeams
 
 open Dregg2.Circuit.Emit.Seam
 open Dregg2.Circuit.Emit.MinaSeams
@@ -42,6 +43,18 @@ def bodyPreimageRows : List (String × String) :=
   else (List.range Dregg2.Circuit.Emit.MinaBodyPreimageSeams.BODY_LINKS).map
     (fun j => ("seam-body-preimage-link-" ++ toString j ++ ".json",
       (Dregg2.Circuit.Emit.MinaBodyPreimageSeams.bodyPreimageSeam j).toJson))
+
+/-- ⚑⚑ **THE TWO TIE-2 SEAM ROWS — emitted only once the re-limb descriptor's fingerprint is
+MEASURED.** Same measured-or-nothing discipline as `bodyPreimageRows`: while
+`RELIMB_VK_LANES` is the all-zero sentinel this list is EMPTY, so an unmeasured lane vector produces
+no artifact rather than a plausible one `seam.rs::SeamEnd::require_matches` would reject at load. -/
+def relimbRows : List (String × String) :=
+  if Dregg2.Circuit.Emit.MinaBodyHashRelimbSeams.theRelimbLanesAreUnmeasured then []
+  else
+    [ ("seam-bodyhash-bytes-to-chain.json",
+        Dregg2.Circuit.Emit.MinaBodyHashRelimbSeams.bodyHashByteSeam.toJson)
+    , ("seam-bodyhash-lanes-to-link.json",
+        Dregg2.Circuit.Emit.MinaBodyHashRelimbSeams.bodyHashLaneSeam.toJson) ]
 
 def rows : List (String × String) :=
   [ ("seam-xi-endo-to-conjunction.json", xiSeam.toJson)
@@ -67,5 +80,5 @@ def rows : List (String × String) :=
   ]
 
 def main : IO Unit := do
-  for (f, j) in rows ++ bodyPreimageRows do
+  for (f, j) in rows ++ bodyPreimageRows ++ relimbRows do
     IO.println s!"{f}\t{j}"

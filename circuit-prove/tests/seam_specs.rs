@@ -19,16 +19,16 @@
 //! `apply_seam` on every run.
 
 use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, parse_vm_descriptor2};
+use dregg_circuit_prove::mina_body_preimage_adapter::{
+    BODY_BITS_PI_COUNT, BODY_LINKS, body_preimage_descriptor, body_preimage_seam,
+};
 use dregg_circuit_prove::mina_kimchi_verifier_gadget::GADGET_CONNECTS;
 use dregg_circuit_prove::mina_phase2_chain_leaf::chain_link_descriptor;
+use dregg_circuit_prove::mina_phase2_chain_leaf::{ABSORBED_PI_LO, CHAIN_PI_COUNT};
 use dregg_circuit_prove::mina_wrap_finalize_fold::{
     CONJ_PI_COUNT, CONJ_PI_XI, ENDO_PI_COUNT, ENDO_PI_XI, SK, V_PRIME_LIMBS,
     conjunction_descriptor, endo_lift_descriptor,
 };
-use dregg_circuit_prove::mina_body_preimage_adapter::{
-    BODY_BITS_PI_COUNT, BODY_LINKS, body_preimage_descriptor, body_preimage_seam,
-};
-use dregg_circuit_prove::mina_phase2_chain_leaf::{ABSORBED_PI_LO, CHAIN_PI_COUNT};
 use dregg_circuit_prove::seam::{
     SeamSpec, fresh_sponge_seam, head_tip_seam, v_prime_seam, xi_seam,
 };
@@ -365,4 +365,104 @@ fn every_declared_port_is_covered_by_an_emitted_seam() {
             .iter()
             .any(|p| p.name == "tip-state" && p.lo == 9 && p.width == 9)
     );
+}
+
+/// ⚑⚑ Gate for the TIE-2 family: the two re-limbing seams parse, validate, weld the whole 41-slot
+/// re-limb claim exactly once between them, and land on the slots the deployed layouts publish.
+///
+/// Lean counterparts: `MinaBodyHashRelimbSeams.both_relimb_seams_are_wf`,
+/// `the_two_seams_weld_every_published_slot_exactly_once`, `the_claim_shapes_are_the_deployed_ones`.
+#[test]
+fn the_two_relimb_seams_cover_the_claim_exactly_once() {
+    let byte_seam = dregg_circuit_prove::seam::bodyhash_bytes_to_chain_seam()
+        .expect("the byte seam artifact parses and validates");
+    let lane_seam = dregg_circuit_prove::seam::bodyhash_lanes_to_link_seam()
+        .expect("the lane seam artifact parses and validates");
+
+    // Shapes, against the deployed claim lengths.
+    assert_eq!(
+        byte_seam.left.claim_len, 41,
+        "the re-limb claim is 41 slots"
+    );
+    assert_eq!(lane_seam.left.claim_len, 41);
+    assert_eq!(byte_seam.right.claim_len, CHAIN_PI_COUNT, "the chain claim");
+    assert_eq!(
+        lane_seam.right.claim_len, 46,
+        "the link claim, 46 since PI_HEAD_OWN"
+    );
+    assert_eq!(byte_seam.pins.len(), 32, "thirty-two 8-bit limbs");
+    assert_eq!(lane_seam.pins.len(), 9, "nine 29-bit Faithful9 lanes");
+
+    // ⚑ The chain end is the OUTGOING lane 0 block, not an absorbed one — the row-selector
+    // discriminator Lean names in `chain_out_lane0_is_register_four_last_row`.
+    for (i, &(l, r)) in byte_seam.pins.iter().enumerate() {
+        assert_eq!(l, i, "byte pin {i} welds claim slot {i}");
+        assert_eq!(r, 96 + i, "byte pin {i} lands on chain PI {}", 96 + i);
+    }
+    assert!(
+        byte_seam.pins.iter().all(|&(_, r)| r < ABSORBED_PI_LO),
+        "the byte seam must land on the OUTGOING block, never the absorbed stream"
+    );
+    for (l, &(a, b)) in lane_seam.pins.iter().enumerate() {
+        assert_eq!(a, 32 + l, "lane pin {l} welds claim slot {}", 32 + l);
+        assert_eq!(
+            b,
+            20 + l,
+            "lane pin {l} lands on link BODYHASH slot {}",
+            20 + l
+        );
+    }
+
+    // The two together weld every published slot exactly once, and neither zero-pins anything.
+    let mut welded: Vec<usize> = byte_seam
+        .pins
+        .iter()
+        .chain(lane_seam.pins.iter())
+        .map(|&(l, _)| l)
+        .collect();
+    welded.sort_unstable();
+    assert_eq!(
+        welded,
+        (0..41).collect::<Vec<_>>(),
+        "every slot, exactly once"
+    );
+    for s in [&byte_seam, &lane_seam] {
+        assert!(
+            s.zero_left.is_empty() && s.zero_right.is_empty(),
+            "both partitions cover the same 254 bits, so no zero-pin has a column to name"
+        );
+    }
+}
+
+/// ⚑ Gate 2 for the TIE-2 family: every end against its served descriptor, by RECOMPUTED
+/// fingerprint. Kept separate from the older four for the same reason the body-preimage family is.
+#[test]
+fn every_relimb_seam_end_matches_its_served_descriptor() {
+    let relimb = parse_vm_descriptor2(include_str!(
+        "../../circuit/descriptors/by-name/dregg-mina-bodyhash-relimb-v1.json"
+    ))
+    .expect("the served re-limbing descriptor parses");
+    let chain = dregg_circuit_prove::mina_phase2_chain_leaf::fp_chain_link_descriptor()
+        .expect("the served Fp chain-link descriptor parses");
+    let link = link_segment_descriptor();
+
+    let byte_seam = dregg_circuit_prove::seam::bodyhash_bytes_to_chain_seam().unwrap();
+    let lane_seam = dregg_circuit_prove::seam::bodyhash_lanes_to_link_seam().unwrap();
+
+    byte_seam
+        .left
+        .require_matches(&relimb)
+        .unwrap_or_else(|e| panic!("byte seam left end: {e}"));
+    byte_seam
+        .right
+        .require_matches(&chain)
+        .unwrap_or_else(|e| panic!("byte seam right end: {e}"));
+    lane_seam
+        .left
+        .require_matches(&relimb)
+        .unwrap_or_else(|e| panic!("lane seam left end: {e}"));
+    lane_seam
+        .right
+        .require_matches(&link)
+        .unwrap_or_else(|e| panic!("lane seam right end: {e}"));
 }

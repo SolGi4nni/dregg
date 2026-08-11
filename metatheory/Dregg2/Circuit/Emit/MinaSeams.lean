@@ -1351,10 +1351,15 @@ theorem the_head_commitment_ports_are_weld_covered :
 
 /-- ⚑ The body-hash port's cover: `check_body_chain_binding`'s second half (REFUSAL 16d), the
 `Faithful9` re-limbing of the body-chain root's squeezed `state_body_hash` against the link's
-published nonet. NOT expressible as a `SeamSpec`: nine 29-bit lanes against thirty-two 8-bit limbs
-is a re-limbing, not an elementwise pin list — which is exactly the port shape `WeldCover` exists
-for. `subProgram` is the body chain's program (`dregg-pasta-fp-chainlink::v1`), THE seam's own
-`vkPin` literal (one source). -/
+published nonet. `subProgram` is the body chain's program (`dregg-pasta-fp-chainlink::v1`), THE
+seam's own `vkPin` literal (one source).
+
+⚠ **THIS IS THE EXECUTOR'S COVER, AND THE PORT ALSO HAS A SEAM.**
+`MinaBodyHashRelimbSeams.bodyHashPortCovered` covers the same nine slots with a `CoveredPort` over
+`bodyHashLaneSeam` — a stronger census object, since its `covers` obligation is decided rather than
+a Rust string Lean cannot check. Both exist because they close different things: the seam is an
+emitted artifact no fold applies yet, and REFUSAL 16d is what a NODE runs today. When the fold
+lands, this value and `the_link_body_ports_are_weld_covered` go together. -/
 def bodyHashWeld : WeldCover :=
   { descName := "dregg-mina-lightclient-link::v1", port := bodyHashPort
   , welder := "dregg_turn::executor::mina_head_verifier::check_body_chain_binding"
