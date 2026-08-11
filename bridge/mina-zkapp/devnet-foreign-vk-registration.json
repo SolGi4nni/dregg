@@ -2,43 +2,43 @@
   "what": "A verification key DERIVED from Lean-emitted KimchiWrapMain gates is account state on the Mina devnet. Not a key o1js `.compile()` produced — the gate list, coefficients and cross-gate placement come from `Dregg2.Circuit.Emit.KimchiWrapMain`, and `metatheory/fixtures/pickles-vk-derive` encodes them as a `Side_loaded_verification_key.Stable.V2`.",
   "network": "mina-devnet",
   "endpoint": "https://api.minascan.io/node/devnet/v1/graphql",
-  "registeredAt": "2026-08-03T12:15:00Z",
-
+  "registeredAt": "2026-08-11T06:05:00Z",
   "account": "B62qrKdXQqNnhmszatQHMX9cLTKZUSYqadrBcmAHGAHQANm2b7Td1rm",
   "feePayer": "B62qqqmJk56HN9YJmV9hAFZQRuYshGTjr26mbzZY7dbPN4iHynUfDs7",
-  "tx": "5JuWfccHVCjdiNwAjAqdX8pubUc6ZKBwanz3hC8zz6jmjNn9kH9A",
-  "includedInBlock": 541181,
-  "blockStateHash": "3NKvQgGu22q6mrWUjhCGLaH45GYZLiLhnSHBnneKVkayWjoM9RLm",
+  "tx": "5JvPhT5DkyrhjEEn85ccCqfe38LZy14NTtRbzczLdK2eELjAAm2V",
+  "includedInBlock": 543252,
+  "blockStateHash": "3NKqPm5UaAQtKZZUKECb61RwPNXU8UBLSXLx5g9Zxjh3xdZzgaDE",
   "failureReason": null,
   "explorer": "https://minascan.io/devnet/account/B62qrKdXQqNnhmszatQHMX9cLTKZUSYqadrBcmAHGAHQANm2b7Td1rm",
-
   "vk": {
     "rung": "w4_bind",
-    "hash": "3406194937895477457970245030395621250788267645790344513677408083740320002590",
+    "hash": "9872307806280762062623577706848308391821073034081017946698493910362483606558",
     "wireBytes": 1796,
     "base64Chars": 2396,
-    "dataSha256": "f495c530c7109356286f431c8ddc56d430df60a29a207f5232787505d597a420",
-    "circuit": "498 Lean rows (+15883 Zero pad) -> domain 2^14, public input 6",
+    "dataSha256": "c57733185b6ef2e3875c18404971f6da745f9f5913ed495ddbf27d24c47c282d",
+    "circuit": "519 Lean rows (+15862 Zero pad) -> domain 2^14, public input 40",
     "note": "The base64 `data` is deliberately NOT recorded here. Re-checking must RE-DERIVE it, not diff against a copy stored beside the claim; a record that carries the artifact invites verifying the artifact against itself."
   },
-
   "derivedFrom": {
     "leanModule": "Dregg2.Circuit.Emit.KimchiWrapMain",
     "crate": "metatheory/fixtures/pickles-vk-derive",
     "emissionFixture": "metatheory/fixtures/pickles-vk-derive/fixtures/wrapmain_smoke_w4_bind.json",
-    "emissionSha256": "d6d3bc718b2807eb9eb42297790ea9f06a11eb51b7d36a55f1b01525fb8d2674",
-    "gitCommit": "d245921c7c8b58839c57560f119e4b1884c398a7",
-    "commitNote": "HEAD at the moment of derivation. A sibling landed 7411b4241 during the run; it touched TurnAuthGuards, ShieldedRingEndpointDescriptor, lakefile and the orphan gate, and NOTHING on the derivation path, so the key is the same at either commit. The emission fixture was clean against HEAD when read.",
+    "emissionSha256": "14f0ea16aff0413c400a70a552e8b83965a15a208fc367108fbec4576a327a5b",
+    "gitCommit": "da1a750efccaa160c0d9d5ea8c8440da64709ac2",
+    "commitNote": "HEAD at the moment of derivation — the commit that closed slot 12 of the forty and re-emitted the thirty wrap fixtures. MEASURED across that re-emit: 0 of 519 gate rows differ in `typ`, `wires` or `coeffs`, so the WITNESS moved and the key did not; the derived hash is byte-identical before and after installing the re-emitted fixture.",
     "⚑ theHashIsNotStableAcrossCommits": "THE DERIVED HASH MOVES WHEN THE LEAN ASSEMBLY MOVES, and it has moved before within a single day. `emissionSha256` is the real anchor: if a future re-derivation disagrees with `vk.hash`, check that sha FIRST. Equal sha + different hash is a derivation bug; different sha means the circuit changed and the chain is simply holding an older key. Neither is 'the chain drifted'."
   },
-
   "howItWasAuthorized": {
     "authorization": "signature (fee payer and target account both signed)",
-    "why": "The FIRST key on an account can only go on by signature. `set_verification_key` on a fresh account is `(Signature, Txn_version.current)` (permissions.ml:580-594), and a proof is not merely unnecessary but impossible: the VK that would verify a proof on a VK-setting update is the account's OLD one, explicitly excluding the key being set (zkapp_command.ml:1200-1232), and a virgin account has none.",
-    "cost": "1 MINA account creation fee + 0.1 MINA transaction fee, paid by the fee payer.",
-    "targetWasVirgin": "confirmed by reading the account before sending: `account: null`"
+    "why": "A RE-registration, not a first one. The account already held hash 3406194937… and its `set_verification_key` permission still admitted signature, so the same route worked. ⚠ The `targetWasVirgin` claim below belonged to the 2026-08-03 registration and is NOT true of this one — it is kept under `supersededRegistration` rather than silently reused.",
+    "cost": "0.1 MINA transaction fee. No account creation fee: the account already existed.",
+    "firstRegistrationNote": {
+      "authorization": "signature (fee payer and target account both signed)",
+      "why": "The FIRST key on an account can only go on by signature. `set_verification_key` on a fresh account is `(Signature, Txn_version.current)` (permissions.ml:580-594), and a proof is not merely unnecessary but impossible: the VK that would verify a proof on a VK-setting update is the account's OLD one, explicitly excluding the key being set (zkapp_command.ml:1200-1232), and a virgin account has none.",
+      "cost": "1 MINA account creation fee + 0.1 MINA transaction fee, paid by the fee payer.",
+      "targetWasVirgin": "confirmed by reading the account before sending: `account: null`"
+    }
   },
-
   "howToRecheck": [
     "cargo run --release --manifest-path metatheory/fixtures/pickles-vk-derive/Cargo.toml -- <outdir> --log2-domain 14",
     "cd bridge/mina-zkapp && MINA_ENDPOINT=https://api.minascan.io/node/devnet/v1/graphql TS_NODE_TRANSPILE_ONLY=true node --loader ts-node/esm --no-warnings scripts/devnet-verify-foreign-vk.ts --vk <outdir>/vk-wrapmain-w4_bind.json"
@@ -51,9 +51,9 @@
       "Mina's own binprot reader re-parses the ON-CHAIN BYTES and their digest equals the hash stored beside them — the account holds a CONSISTENT pair"
     ],
     "whyTheThirdCheck": "The registration gate MEASURED that Mina's JSON/GraphQL ingest performs no data↔hash validation (fields_derivers_zkapps.ml:555-574 reads the two as independent fields); a bent tag byte and a lying hash were both ACCEPTED. So 'the stored hash equals ours' is satisfiable by a blob with a label. Re-deriving the digest from the returned bytes is what makes the first two checks mean something.",
-    "redProof": "The same verifier run against `vk-wrapmain-w4_bind-perturbed.json` — the SAME circuit with ONE coefficient at gate row 9 bumped by 1, moving exactly 1 of 28 commitments — goes RED on both comparisons. The verifier discriminates the registered key from its nearest neighbour, so its green is not vacuous."
+    "redProof": "The same verifier run against `vk-wrapmain-w4_bind-perturbed.json` — the SAME circuit with ONE coefficient at gate row 9 bumped by 1, moving exactly 1 of 28 commitments — goes RED on both comparisons. The verifier discriminates the registered key from its nearest neighbour, so its green is not vacuous.",
+    "recheckedForThisKey": "2026-08-11, `devnet-verify-foreign-vk.ts` against the re-derived key: on-chain hash === derived hash 9872307806…, on-chain data === derived data across all 2396 base64 chars / 1796 bytes (sha256 c5773318…), and Mina's own reader re-parses the ON-CHAIN bytes to that same digest."
   },
-
   "recheckedOn": {
     "date": "2026-08-05",
     "keyStillOnChain": "yes — re-fetched over GraphQL, hash and the 1796 bytes both match this record exactly (sha256 f495c530…a420)",
@@ -79,10 +79,14 @@
       "trail": "GOAL-MINA-SEMANTIC-LIGHTCLIENTS.md, section 2026-08-05"
     }
   },
-  "⚠ whatThisIsNot": {
-    "notAWorkingBridge": "Registering a key means a node will STORE it and check proofs against it. It does NOT mean any proof verifies under it. ⚑ SUPERSEDED IN PART 2026-08-05 — see `recheckedOn.aProofHasNowBeenProduced`; a proof now exists and Mina's kimchi verifier accepts it under the index built from these bytes, while Mina's PICKLES verifier still refuses. `KimchiWrapMain` §13 still names eight unassembled sub-circuits; the wrap assembly does not emit them.",
-    "notAContract": "This account carries a verification key and nothing else. There is no zkApp method, no state, no deployed logic. It is a key at an address.",
-    "notRelatedToTheAttestedGate": "Distinct from `devnet-deployment.json`'s DreggAttestedGate, whose key came from o1js `.compile()` and whose live anchor is SIGNATURE-ONLY (see that file's `sourcesMovedPast`). Nothing here changes that.",
-    "notVerified": "The key encodes a circuit; that the circuit is the one Lean specifies rests on the emission path, not on a machine-checked refinement of this artifact. Devnet acceptance is evidence about ENCODING — that the object is a well-formed Side_loaded_verification_key Mina will hold — and about nothing else."
+  "⚠ whatThisIsNot": "A registered key is account state, not a verdict on a proof. It says a node will STORE this key and check side-loaded proofs against it. ⚠ NO PROOF HAS BEEN VERIFIED UNDER IT: the wrap proof `pickles_kimchi_marshal` produces is a kimchi proof of the Lean `w4_bind` sub-circuit, not a `Pickles.Side_loaded.Proof`, and those are different objects. `KimchiWrapMainPins12.the_forty_agree_at_every_slot` is about the PUBLIC INPUT this key would be handed — it says our forty ARE openmina's forty — not about a proof existing for it. OrderedDict({'notAWorkingBridge': \"Registering a key means a node will STORE it and check proofs against it. It does NOT mean any proof verifies under it. ⚑ SUPERSEDED IN PART 2026-08-05 — see `recheckedOn.aProofHasNowBeenProduced`; a proof now exists and Mina's kimchi verifier accepts it under the index built from these bytes, while Mina's PICKLES verifier still refuses. `KimchiWrapMain` §13 still names eight unassembled sub-circuits; the wrap assembly does not emit them.\", 'notAContract': 'This account carries a verification key and nothing else. There is no zkApp method, no state, no deployed logic. It is a key at an address.', 'notRelatedToTheAttestedGate': \"Distinct from `devnet-deployment.json`'s DreggAttestedGate, whose key came from o1js `.compile()` and whose live anchor is SIGNATURE-ONLY (see that file's `sourcesMovedPast`). Nothing here changes that.\", 'notVerified': 'The key encodes a circuit; that the circuit is the one Lean specifies rests on the emission path, not on a machine-checked refinement of this artifact. Devnet acceptance is evidence about ENCODING — that the object is a well-formed Side_loaded_verification_key Mina will hold — and about nothing else.'})",
+  "supersededRegistration": {
+    "registeredAt": "2026-08-03T12:15:00Z",
+    "tx": "5JuWfccHVCjdiNwAjAqdX8pubUc6ZKBwanz3hC8zz6jmjNn9kH9A",
+    "includedInBlock": 541181,
+    "blockStateHash": "3NKvQgGu22q6mrWUjhCGLaH45GYZLiLhnSHBnneKVkayWjoM9RLm",
+    "vkHash": "3406194937895477457970245030395621250788267645790344513677408083740320002590",
+    "circuit": "498 Lean rows (+15883 Zero pad) -> domain 2^14, public input 6",
+    "whyItWasSuperseded": "It was the circuit from BEFORE the commit that found the wrap public vector held the ENDO LIFT where the wrap statement holds the RAW PRECHALLENGE, and before `public_input_size` went 0 -> 40. `recheckedOn` below is the 2026-08-05 record that spotted it and left re-registering as the operator's call; this file is that call, taken on 2026-08-11."
   }
 }
