@@ -1910,13 +1910,13 @@ theorem headStatePinLegs_length : headStatePinLegs.length = 9 := by decide
 /-- ⚑⚑ **THE HEAD PROGRAM'S IDENTITY, AS NINE LANES — MEASURED, NEVER INVENTED.** The `Faithful9`
 key lanes of `effect_vm_descriptor2_semantic_fingerprint(dregg-mina-lightclient-verify::v1)` —
 blake3 (derive-key, context `EFFECT_VM_DESCRIPTOR2_FINGERPRINT_CONTEXT`) over that descriptor's
-CANONICAL bytes, `923bcba9…` at `w=77, pi=39, cons=74`. In this tree the descriptor IS the verifying
+CANONICAL bytes at `w=77, pi=39, cons=74`. In this tree the descriptor IS the verifying
 key: `verify_vm_descriptor2(&desc, &proof, &pis)` takes no other key material.
 
-⚠ These digits cannot be computed in Lean (the fingerprint is blake3 over emitted bytes), so they
-are read from the served artifact by `circuit/examples/conj_fingerprint.rs` and re-derived as a GATE
-by `mina_accumulator_head_proves.rs::the_pinned_head_program_is_the_served_head_descriptor`. That
-gate exists because `75df624cf` once re-emitted a descriptor and left a `vkPin` naming a program no
+⚑ These digits are measured from the served artifact by `circuit/examples/conj_fingerprint.rs` and
+independently re-derived in pure Lean by `scripts/check-vk-pin-literals.sh`, as well as by
+`mina_accumulator_head_proves.rs::the_pinned_head_program_is_the_served_head_descriptor`. Those gates
+exist because `75df624cf` once re-emitted a descriptor and left a `vkPin` naming a program no
 descriptor in this tree had. -/
 def MINA_HEAD_VK_LANES : List ℤ :=
   -- ⚑ MOVED 2026-08-08. `dregg-mina-lightclient-verify-v1.json` re-emitted twice over on that day's
@@ -1928,7 +1928,12 @@ def MINA_HEAD_VK_LANES : List ℤ :=
   --   cargo run -p dregg-circuit --example conj_fingerprint -- \
   --     circuit/descriptors/by-name/dregg-mina-lightclient-verify-v1.json
   --   fp=e64df5b684619a0fe22cafe11fd0115298591fa37212848e638e6a6a25599f7e
-  [385175014, 483593253, 197867651, 60833731, 362382625, 154751375, 428751376, 78466385, 8298329]
+  --
+  -- ⚑ FINAL CASCADE RUNG, 2026-08-11. After the canonical-record flag day widened the three
+  -- Pasta leaf programs and their final fingerprints propagated through the link, the emitted head
+  -- retained geometry `77/39/74` and fingerprints to:
+  --   fp=2a431795898a925498fff71d753050c3303f83a4ce5fd0f09ba5db35787c2d32
+  [353846058, 76829772, 503309845, 6351419, 334695477, 266818113, 376423233, 252099444, 3288444]
 
 theorem the_head_vk_pin_is_nine_lanes : MINA_HEAD_VK_LANES.length = HEAD_LANES := by decide
 

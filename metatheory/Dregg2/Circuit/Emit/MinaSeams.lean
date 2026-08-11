@@ -999,9 +999,13 @@ import cone evaluate the whole 3 068-column accumulator at initialization (measu
 `emit_seam_specs` ran for minutes instead of milliseconds). `seam_specs.rs` recomputes these lanes
 from the served bytes and refuses drift, so a stale literal here is a loud red, not a silent
 misname. ⚠ FLAG DAY coupling: re-emitting `dregg-mina-lightclient-verify-v1.json` moves this
-literal, the accumulator's pin, and this seam's JSON. -/
+literal, the accumulator's pin, and this seam's JSON.
+
+⚑ Final cascade measurement, 2026-08-11: the canonical-record leaf widening propagated through
+the link into a `77/39/74` head whose fingerprint is
+`2a431795898a925498fff71d753050c3303f83a4ce5fd0f09ba5db35787c2d32`. -/
 def HEAD_VK_LANES : List ℤ :=
-  [385175014, 483593253, 197867651, 60833731, 362382625, 154751375, 428751376, 78466385, 8298329]
+  [353846058, 76829772, 503309845, 6351419, 334695477, 266818113, 376423233, 252099444, 3288444]
 
 /-- ⚑⚑ **THE HEAD↔LINK SEAM — the executor's REFUSAL 13/14a/14b as an object.** Nineteen pins:
 the nine tip lanes (REFUSAL 13 — these ARE the head seam's `commit` vector, welded elementwise at
