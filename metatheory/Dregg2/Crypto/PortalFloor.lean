@@ -196,22 +196,35 @@ tree run **Rust → Lean**. There is no working Lean → Rust call here to reuse
 
 So making `fingerprintOf someDescriptor` evaluate — the thing that would let a `vk_pin` stop being a
 transcribed literal (`circuit/tests/vk_pin_closure_over_the_served_tree.rs`: **7 of 7 dangling at
-HEAD**) — is a BUILD, not a call. The two honest routes, neither started:
+HEAD**) — was a BUILD, not a call. Two honest routes existed:
 
 1. **Link a staticlib.** Add an `extern_lib` that cargo-builds a host `staticlib` exporting
    `dregg_blake3_derive_key`, plus `List Nat`/`ByteArray` marshalling. Makes the Lean build depend on
    cargo, and the seL4 crate is cross-built for another target so it is not reusable as-is.
-2. **A pure-Lean `blake3Derive` + `@[implemented_by]` fast twin.** No linkage, no cargo in the Lean
-   build. BLAKE3 is ARX over `UInt32`, which is exactly what Lean's machine words do well — unlike
-   Poseidon2's field arithmetic, this one ports cleanly.
+2. **A pure-Lean `blake3Derive`.** No linkage, no cargo in the Lean build. BLAKE3 is ARX over
+   `UInt32`, which is exactly what Lean's machine words do well — unlike Poseidon2's field
+   arithmetic, this one ports cleanly.
 
-⚑ Either way it is a **SEPARATE computable definition sitting BESIDE this floor, never in place of
-it**, used only at emit/check time and never inside a proof. And it must be labelled for what it is:
-`@[implemented_by]`/`@[extern]` is **compiler-trusted, not kernel-trusted**, so a computed pin is an
-IDENTITY claim, not a soundness one, and belongs under `#assert_compiled` rather than reading as a
-kernel fact. Route 2 carries a real correctness risk a wrong implementation would hide silently —
-the differential that closes it is ready-made: the 158 served descriptors have known Rust-computed
-fingerprints, plus the official BLAKE3 KATs. -/
+⚑ **ROUTE 2 LANDED 2026-08-10: `Dregg2.Crypto.Blake3Compute`.** `blake3Derive` is
+`blake3::Hasher::new_derive_key(ctx)` in pure Lean — hash, keyed and derive-key modes, chunk
+chaining, the subtree-merge stack and the XOF root. `Dregg2.Crypto.Blake3Kat` pins it against all 35
+official BLAKE3 vectors in all three modes, and `scripts/check-blake3-differential.sh` re-checks it
+against the deployed Rust hash over every one of the **158** descriptors this tree serves, both
+sides recomputed on every run. It needed **no `@[implemented_by]` twin** — the machine-word
+definition *is* the fast one, so there is no second object to drift from.
+
+⚑ It is a **SEPARATE computable definition sitting BESIDE this floor, never in place of it**, used
+only at emit/check time and never inside a proof — this file is unchanged below and stays what
+proofs use. And it is labelled for what it is: `native_decide` is **compiler-trusted, not
+kernel-trusted**, so a computed pin is an IDENTITY claim, not a soundness one, and lives under
+`#assert_compiled` rather than reading as a kernel fact.
+
+⚠ **WHAT IS STILL TRANSCRIBED, SAID PLAINLY.** The *hash* is now computable in Lean; the canonical
+*encoder* (`circuit/src/descriptor_ir2_canonical.rs::canonical_effect_vm_descriptor2_bytes`, ~700
+lines of tagged record writing over `EffectVmDescriptor2`) has no Lean counterpart, so a Lean
+descriptor term still cannot be fingerprinted end-to-end without Rust producing its bytes. That
+encoder is the remaining hop and it is named in `Blake3Compute.descriptor2Fingerprint`'s docblock,
+not hidden behind a green gate. -/
 @[extern "dregg_blake3_hash"]
 opaque blake3HashExtern : List Nat → Nat
 

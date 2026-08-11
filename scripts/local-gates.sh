@@ -1039,9 +1039,52 @@ GATES=(
   # tree an uncommitted sibling re-emit otherwise flatters the verdict, and this tree has a recorded
   # case of exactly that reading outliving the tree it was measured on.
   "vk-pin-closure|300|cargo test -p dregg-circuit --test vk_pin_closure_over_the_served_tree"
+  # ⚑⚑ THE TRANSCRIPTION ARMS OF THE BLAKE3 DIFFERENTIAL — the answer to the row above.
+  # `vk-pin-closure` is red because a `vk_pin` is a derived value a human TYPES IN: nine `Faithful9`
+  # lanes of `blake3::derive_key` over a descriptor's canonical encoding, obtained from a Rust tool
+  # and written into a Lean file. `Dregg2.Crypto.Blake3Compute.blake3Derive` is that hash in pure
+  # Lean, so the value can be COMPUTED where it is used instead of copied to where it is needed.
+  # ⚠ THE DANGER OF THAT MOVE IS THAT A WRONG `blake3Derive` FAILS SILENTLY — every pin it computes
+  # would be self-consistent and wrong, which is "two agreeing transcriptions are not two witnesses;
+  # they are one witness copied", generated at scale. So the differential is a STANDING gate, four
+  # arms, and this row is the two that cost nothing: the two derive-key CONTEXT STRINGS read out of
+  # `circuit/src/{descriptor_ir2_canonical,air_descriptor}.rs` and compared against the Lean
+  # constants (derive-key folds the context into the KEY, so one character moves every fingerprint
+  # and nothing else would notice), and the 35 official BLAKE3 vectors transcribed into
+  # `Blake3Kat.lean` re-derived from the BLAKE3 team's own committed `test_vectors.json`. Both are
+  # things a human typed; both are therefore what rots. ~0.1s, no Lean, no cargo.
+  # ⚑ ARM 3 NEEDS NO ROW: `Dregg2.Crypto.Blake3Kat` is rooted in `Dregg2.lean`, so its 35-vector ×
+  # 3-mode theorems (`native_decide` + `#assert_compiled`) and its falsifiers run in every
+  # `lake build`. ARM 4 — 158 served descriptors, both sides recomputed — is under --all below.
+  "blake3-transcription|120|bash scripts/check-blake3-differential.sh --fast"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
+  # ⚑⚑ THE DEPLOYED-INPUT ARM OF THE BLAKE3 DIFFERENTIAL, and it covers the WHOLE `vk_pin`
+  # computation — `canonical bytes → BLAKE3 derive-key fingerprint → nine base-2^29 lanes` — over
+  # EVERY DescriptorIR-v2 record this tree serves: 158 at landing, 17,990,701 canonical bytes, ALL
+  # of them and not a sample. HOP 1 is pure-Lean `blake3Derive` against the `blake3` crate's
+  # `new_derive_key`. HOP 2 is `Dregg2.Circuit.KeyLanes9.keyToLanes9` — the LEAN-AUTHORED encoder
+  # the AIRs are proved against — versus Rust `key_limbs9`, on those same 158 fingerprints. Hop 2 is
+  # NOT implied by hop 1: equal digests say nothing about two lane encoders agreeing, and six files
+  # in this tree each carried their own copy of that packing on the assumption that they did.
+  # Both sides are recomputed on every run (`cargo run -p dregg-circuit --example
+  # descriptor_canonical_dump` re-encodes and re-hashes what is on disk; the Lean driver re-derives
+  # from the same bytes). NOTHING here is a committed fixture, deliberately: a stored expectation is
+  # the exact defect the pass exists to kill. Measured 2026-08-10 at landing: PASS on all 158, both
+  # hops.
+  # ⚠ WHY NOT THE CHEAP SET — ~1 min of interpreted Lean plus a cargo example build, and it needs
+  # `lake build`, which no cheap row does. The cheap half is `blake3-transcription` above and the
+  # 35 official vectors ride the ordinary Lean build; what is deferred here is the DEPLOYED-INPUT
+  # question, not the correctness question.
+  "blake3-differential|1500|bash scripts/check-blake3-differential.sh"
+  # The -red row, ONE MUTATION PER HOP: row 0's fingerprint and row 1's first lane, in an in-memory
+  # copy of the fresh dump. It FAILS if the differential stays green, it asserts each mutation
+  # LANDED before reading any verdict (a mutation that quietly became a no-op is how an adversary
+  # dies while its gate stays green), and it requires BOTH hop failures to be NAMED in the log — a
+  # red that only reported hop 1 would leave the lane encoder unfalsified, and a refusal rendering
+  # as the expected verdict is its own defect class. The tree is never mutated.
+  "blake3-differential-red|1500|bash scripts/check-blake3-differential.sh --self-test"
   # ⚑ THE ONLY GO MODULE IN THE REPOSITORY, AND UNTIL 2026-08-08 IT WAS IN NO WORKFLOW AND NO
   # RUNNER. `chain/gnark` holds the BN254 settlement wrap: the Lean-emitted R1CS templates under
   # `chain/gnark/emitted/`, the apex-VK governance pin the `SettlementCircuit` bakes, and the
