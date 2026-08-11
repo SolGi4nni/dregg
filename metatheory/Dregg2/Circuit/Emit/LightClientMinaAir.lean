@@ -1090,7 +1090,12 @@ def LINK_VK_LANES : List ℤ :=
   -- absorb and Fp-chainlink children changed the emitted link program without changing its
   -- geometry (`w=57 pi=46 cons=108`). Measured from the authorized rung-one emitted bytes:
   --   fp=bd9ec936199ec9f6696af47d6793bccedeaa2d7bd45f27c3c29081c99015b9d0
-  [382312125, 374141129, 488282749, 421973755, 447605995, 267009430, 51055773, 303640626, 13678869]
+  --
+  -- ⚑ FINAL CHILD-PIN RUNG, 2026-08-11. The first authorized emit also widened the three child
+  -- descriptors, so their bridge fingerprints above moved once more. After pinning those final
+  -- emitted children, the link's unchanged `57/46/108` geometry fingerprints to:
+  --   fp=eb124bb648b6a18d8ede88c87991f6da5d3abe3a6ae45b05a45a0a50007826e2
+  [374018795, 219001413, 37200803, 220394385, 61201839, 305470815, 177214831, 655691, 14820984]
 
 /-- The `i`-th pinned segment-program lane, as the `vkPin` literal the leg carries. -/
 def linkVkLane (i : Nat) : ℤ := LINK_VK_LANES.getD i 0
@@ -2818,7 +2823,8 @@ def FORGED_LINK_VK_LANES : List ℤ :=
   -- conjuncts and no prompting. A falsifier that stops falsifying is this repo's own minted
   -- failure class; this one is built so that it CANNOT go quietly stale.
   -- ⚑ It caught the 2026-08-11 leaf-pin flag day too; lane zero follows the new link pin + 1.
-  [382312126, 374141129, 488282749, 421973755, 447605995, 267009430, 51055773, 303640626, 13678869]
+  -- ⚑ And it follows the final emitted-child rung here, again with lane zero + 1 and identical tail.
+  [374018796, 219001413, 37200803, 220394385, 61201839, 305470815, 177214831, 655691, 14820984]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT SEGMENT PROGRAM.** -/
 def forgedLinkProgramRow : Assignment :=
