@@ -5,6 +5,12 @@ to waste an hour here is running the whole test gauntlet in debug mode. Don't.
 Read this first. Deeper state lives in `HORIZONLOG.md`; this is just "how do I run
 things.")*
 
+> ⚑ **HANDOFF IN EFFECT (2026-08-11):** a Claude session wrapped ~53 commits and
+> left a measured handoff at **`HANDOFF-2026-08-11-codex.md`** — current state of
+> both Mina directions (40/40, key on devnet, and what that does NOT mean), the
+> known-red ledger, the trap list, decisions reserved for ember, and ranked next
+> work. **Read it before trusting any docblock or "fixing" any red.**
+
 ## Orient before you answer — the durable record, not the summary
 
 The other expensive mistake (beside the debug-mode gauntlet): in a fresh or
