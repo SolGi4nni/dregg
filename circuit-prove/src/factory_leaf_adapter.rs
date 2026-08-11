@@ -311,16 +311,16 @@ pub const FACTORY_BINDING_NODE_SEGMENTED_ARM: &str =
 /// [`crate::joint_turn_recursive::prove_sovereign_binding_node_segmented`]).** Aggregate a factory
 /// turn's DUAL-EXPOSE `EFFECT_CREATE_CELL` leg leaf (whose single `expose_claim` carries the chain
 /// SEGMENT in lanes `[0 .. SEG_WIDTH)` and the CLAIMED `CHILD_VK` teeth in lanes
-/// `[SEG_WIDTH .. SEG_WIDTH+FACTORY_CHILD_VK_CLAIM_LEN)`) WITH the re-proved factory-backing leaf
+/// `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+FACTORY_CHILD_VK_CLAIM_LEN)`) WITH the re-proved factory-backing leaf
 /// ([`prove_factory_leaf_with_child_vk_claim`], whose `expose_claim` is the in-circuit-bound
 /// `child_vk` in lanes `[0 .. FACTORY_CHILD_VK_CLAIM_LEN)`), and:
 ///
 ///   1. `connect`s the leg's claimed `child_vk` lanes to the backing leaf's bound `child_vk` (the
 ///      binding tooth — a forged factory cell whose teeth name a `child_vk` no backing leaf binds is
 ///      a conflict ⇒ UNSAT ⇒ no root), and
-///   2. RE-EXPOSES the leg's SEGMENT lanes `[0 .. SEG_WIDTH)` as the parent claim.
+///   2. RE-EXPOSES `[the leg's SEGMENT lanes [0 .. SEG_WIDTH) ‖ a folded vk_spine]` as the parent claim.
 ///
-/// The output exposes an ordinary `SEG_WIDTH`-lane chain segment, so it folds into
+/// The output exposes an ordinary `SEG_SPINE_WIDTH`-lane `[segment ‖ vk_spine]` claim, so it folds into
 /// [`crate::ivc_turn_chain::aggregate_tree`] like any other per-turn segment leaf. This is what makes
 /// the factory backing REAL for a pure light client: the `child_vk` the deployed leg claims is bound
 /// IN the deployed recursion tree the light client folds, to the backing tuple the factory leaf
@@ -328,7 +328,7 @@ pub const FACTORY_BINDING_NODE_SEGMENTED_ARM: &str =
 /// root.
 ///
 /// THE NAMED SEAMS (honest):
-///   * The deployed factory leg must DUAL-EXPOSE its `CHILD_VK` teeth (lanes `[SEG_WIDTH ..)`).
+///   * The deployed factory leg must DUAL-EXPOSE its `CHILD_VK` teeth (lanes `[SEG_SPINE_WIDTH ..)`).
 ///     Today the generic `EFFECT_CREATE_CELL` row carries the claimed `child_vk` ungated; the
 ///     teeth-fill on the rotated producer + the leg's dual-expose of them is **THE BIG-BANG
 ///     DESCRIPTOR PIECE** (a PI-exposure change, owned by the descriptor lane). This node is its
@@ -354,7 +354,9 @@ pub fn prove_factory_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use p3_circuit::CircuitBuilder;
 
     let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
@@ -381,8 +383,8 @@ pub fn prove_factory_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose factory leg's claim instance present");
@@ -390,20 +392,20 @@ pub fn prove_factory_binding_node_segmented(
             .get(fa_idx)
             .expect("factory-backing leaf's exposed child_vk instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + FACTORY_CHILD_VK_CLAIM_LEN
+            ev.len() >= SEG_SPINE_WIDTH + FACTORY_CHILD_VK_CLAIM_LEN
                 && fa.len() >= FACTORY_CHILD_VK_CLAIM_LEN,
             "dual-expose claim must carry segment ++ child_vk; backing leaf carries child_vk"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's CLAIMED child_vk (lanes
-        // [SEG_WIDTH .. SEG_WIDTH+CHILD_VK_LEN)) must equal the backing leaf's BOUND child_vk, lane by
+        // [SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+CHILD_VK_LEN)) must equal the backing leaf's BOUND child_vk, lane by
         // lane. A factory cell whose teeth name a child_vk no backing leaf binds is a conflict here ⇒
         // UNSAT ⇒ no root.
         for k in 0..FACTORY_CHILD_VK_CLAIM_LEN {
-            cb.connect(ev[SEG_WIDTH + k], fa[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], fa[k]);
         }
-        // RE-EXPOSE ONLY THE SEGMENT (lanes [0 .. SEG_WIDTH)) as the parent claim.
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<
@@ -423,7 +425,8 @@ mod tests {
     use super::*;
     use crate::binding_tooth::{assert_node_refused_by_binding_connect, report_refusal};
     use crate::ivc_turn_chain::{
-        SEG_WIDTH, ir2_leaf_wrap_config, prove_descriptor_leaf_with_pi_slice_expose,
+        SEG_SPINE_WIDTH, SEG_VK_SPINE_FIRST, SEG_WIDTH, ir2_leaf_wrap_config, leaf_vk_spine_host,
+        prove_descriptor_leaf_with_pi_slice_expose,
     };
     use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
 
@@ -503,10 +506,12 @@ mod tests {
         assert_violated_constraint_not_bus(what, &err);
     }
 
-    /// Build a factory `EFFECT_CREATE_CELL` leg leaf that PUBLISHES `[segment ‖ child_vk]` as a
-    /// contiguous IR2 PI slice `[0 .. SEG_WIDTH+VK_DIGEST_LEN)` and re-exposes it for the fold — a
-    /// minimal stand-in for the deployed trace at the SAME dual-expose surface (the BIG-BANG
-    /// descriptor piece's consumer side).
+    /// Build a factory `EFFECT_CREATE_CELL` leg leaf that PUBLISHES
+    /// `[segment ‖ vk_spine ‖ child_vk]` as a contiguous IR2 PI slice
+    /// `[0 .. SEG_SPINE_WIDTH+VK_DIGEST_LEN)` and re-exposes it for the fold — a minimal stand-in
+    /// for the deployed trace at the SAME dual-expose surface (the BIG-BANG descriptor piece's
+    /// consumer side). The spine block carries the honest [`leaf_vk_spine_host`] value, so the row
+    /// mirrors what `prove_descriptor_leaf_dual_expose_at` mints, not just its width.
     fn factory_leg_leaf(
         segment: &[BabyBear],
         claimed_child_vk: [BabyBear; VK_DIGEST_LEN],
@@ -515,7 +520,7 @@ mod tests {
         use dregg_circuit::descriptor_ir2::{
             MemBoundaryWitness, UMemBoundaryWitness, prove_vm_descriptor2_for_config,
         };
-        let claim_width = SEG_WIDTH + VK_DIGEST_LEN;
+        let claim_width = SEG_SPINE_WIDTH + VK_DIGEST_LEN;
         let pi_count = claim_width;
         // Pin the contiguous claim slice [0 .. claim_width) to row 0 via PiBinding.first.
         let constraints: Vec<VmConstraint2> = (0..claim_width)
@@ -539,7 +544,8 @@ mod tests {
         };
         let mut row = vec![BabyBear::new(0); claim_width];
         row[..SEG_WIDTH].copy_from_slice(segment);
-        row[SEG_WIDTH..claim_width].copy_from_slice(&claimed_child_vk);
+        row[SEG_VK_SPINE_FIRST..SEG_SPINE_WIDTH].copy_from_slice(&leaf_vk_spine_host());
+        row[SEG_SPINE_WIDTH..claim_width].copy_from_slice(&claimed_child_vk);
         let trace: Vec<Vec<BabyBear>> = vec![row.clone(), row.clone()];
         let pis = row;
         let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(

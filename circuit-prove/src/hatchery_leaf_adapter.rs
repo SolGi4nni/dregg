@@ -316,16 +316,16 @@ pub const HATCHERY_BINDING_NODE_SEGMENTED_ARM: &str =
 /// [`crate::joint_turn_recursive::prove_sovereign_binding_node_segmented`]).** Aggregate a hatchery
 /// mint's DUAL-EXPOSE effect-vm leg leaf (whose single `expose_claim` carries the chain SEGMENT in
 /// lanes `[0 .. SEG_WIDTH)` and the CLAIMED `contract_hash` teeth in lanes
-/// `[SEG_WIDTH .. SEG_WIDTH+HATCHERY_CONTRACT_CLAIM_LEN)`) WITH the re-proved contract-attestation
+/// `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+HATCHERY_CONTRACT_CLAIM_LEN)`) WITH the re-proved contract-attestation
 /// leaf ([`prove_hatchery_leaf_with_contract_claim`], whose `expose_claim` is the in-circuit-bound
 /// `contract_hash` in lanes `[0 .. HATCHERY_CONTRACT_CLAIM_LEN)`), and:
 ///
 ///   1. `connect`s the leg's claimed `contract_hash` lanes to the attestation leaf's bound
 ///      `contract_hash` (the binding tooth — a forged hatchery mint whose teeth name a
 ///      `contract_hash` no attestation leaf binds is a conflict ⇒ UNSAT ⇒ no root), and
-///   2. RE-EXPOSES the leg's SEGMENT lanes `[0 .. SEG_WIDTH)` as the parent claim.
+///   2. RE-EXPOSES `[the leg's SEGMENT lanes [0 .. SEG_WIDTH) ‖ a folded vk_spine]` as the parent claim.
 ///
-/// The output exposes an ordinary `SEG_WIDTH`-lane chain segment, so it folds into
+/// The output exposes an ordinary `SEG_SPINE_WIDTH`-lane `[segment ‖ vk_spine]` claim, so it folds into
 /// [`crate::ivc_turn_chain::aggregate_tree`] like any other per-turn segment leaf. This is what
 /// makes the hatchery forever-crown REAL for a pure light client: the `contract_hash` the deployed
 /// leg claims is bound IN the deployed recursion tree the light client folds, to the attestation
@@ -334,7 +334,7 @@ pub const HATCHERY_BINDING_NODE_SEGMENTED_ARM: &str =
 ///
 /// THE NAMED SEAMS (honest):
 ///   * **THE BIG-BANG DESCRIPTOR PIECE.** The deployed hatchery mint leg must DUAL-EXPOSE its
-///     `contract_hash` teeth (lanes `[SEG_WIDTH ..)`). Today the `contract_hash` is only STORED
+///     `contract_hash` teeth (lanes `[SEG_SPINE_WIDTH ..)`). Today the `contract_hash` is only STORED
 ///     (`hatchery_mint.rs::attest_hpres`), read by no constraint; the teeth-fill on the rotated
 ///     mint producer + the leg's dual-expose of them is the BIG-BANG PI-EXPOSURE change, owned by
 ///     the descriptor lane (the same lane the sovereign/custom teeth-fill rides). This node is its
@@ -360,7 +360,9 @@ pub fn prove_hatchery_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use p3_circuit::CircuitBuilder;
     use p3_recursion::{BatchOnly, build_and_prove_aggregation_layer_with_expose};
 
@@ -389,8 +391,8 @@ pub fn prove_hatchery_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose hatchery leg's claim instance present");
@@ -398,21 +400,21 @@ pub fn prove_hatchery_binding_node_segmented(
             .get(ha_idx)
             .expect("hatchery-attestation leaf's exposed contract_hash instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + HATCHERY_CONTRACT_CLAIM_LEN
+            ev.len() >= SEG_SPINE_WIDTH + HATCHERY_CONTRACT_CLAIM_LEN
                 && ha.len() >= HATCHERY_CONTRACT_CLAIM_LEN,
             "dual-expose claim must carry segment ++ contract_hash; attestation leaf carries \
              contract_hash"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's CLAIMED contract_hash (lanes
-        // [SEG_WIDTH .. SEG_WIDTH+CLAIM_LEN)) must equal the attestation leaf's BOUND contract_hash,
+        // [SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+CLAIM_LEN)) must equal the attestation leaf's BOUND contract_hash,
         // lane by lane. A hatchery mint whose teeth name a contract_hash no attestation leaf binds
         // is a conflict here ⇒ UNSAT ⇒ no root.
         for k in 0..HATCHERY_CONTRACT_CLAIM_LEN {
-            cb.connect(ev[SEG_WIDTH + k], ha[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], ha[k]);
         }
-        // RE-EXPOSE ONLY THE SEGMENT (lanes [0 .. SEG_WIDTH)) as the parent claim.
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<
@@ -432,7 +434,8 @@ mod tests {
     use super::*;
     use crate::binding_tooth::{assert_node_refused_by_binding_connect, report_refusal};
     use crate::ivc_turn_chain::{
-        SEG_WIDTH, ir2_leaf_wrap_config, prove_descriptor_leaf_with_pi_slice_expose,
+        SEG_SPINE_WIDTH, SEG_VK_SPINE_FIRST, SEG_WIDTH, ir2_leaf_wrap_config, leaf_vk_spine_host,
+        prove_descriptor_leaf_with_pi_slice_expose,
     };
     use dregg_circuit::field::BABYBEAR_P;
     use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse};
@@ -510,17 +513,19 @@ mod tests {
         assert_violated_constraint_not_bus(what, &err);
     }
 
-    /// Build a minimal effect-vm leg leaf that PUBLISHES `segment ++ contract_hash` in IR2 PIs
-    /// `[0 .. SEG_WIDTH+CLAIM_LEN)` (PiBinding pins) and DUAL-EXPOSES that whole slice — a stand-in
-    /// for the deployed mint leg at the SAME exposure surface the BIG-BANG descriptor piece will
-    /// produce. The segment lanes are arbitrary (the fold tooth checks the contract_hash bind, not
-    /// a real chain).
+    /// Build a minimal effect-vm leg leaf that PUBLISHES `segment ++ vk_spine ++ contract_hash` in
+    /// IR2 PIs `[0 .. SEG_SPINE_WIDTH+CLAIM_LEN)` (PiBinding pins) and DUAL-EXPOSES that whole
+    /// slice — a stand-in for the deployed mint leg at the SAME exposure surface the BIG-BANG
+    /// descriptor piece will produce. The segment lanes are arbitrary (the fold tooth checks the
+    /// contract_hash bind, not a real chain); the SPINE block is the honest
+    /// [`leaf_vk_spine_host`] value, so this row mirrors what
+    /// `prove_descriptor_leaf_dual_expose_at` mints rather than merely matching its width.
     fn hatchery_leg_leaf(
         segment: &[BabyBear],
         contract_hash: [BabyBear; HATCHERY_CONTRACT_CLAIM_LEN],
         config: &DreggRecursionConfig,
     ) -> RecursionOutput<DreggRecursionConfig> {
-        let width = SEG_WIDTH + HATCHERY_CONTRACT_CLAIM_LEN;
+        let width = SEG_SPINE_WIDTH + HATCHERY_CONTRACT_CLAIM_LEN;
         assert_eq!(segment.len(), SEG_WIDTH);
         let constraints: Vec<VmConstraint2> = (0..width)
             .map(|k| {
@@ -543,7 +548,8 @@ mod tests {
         };
         let mut pis = vec![BabyBear::new(0); width];
         pis[..SEG_WIDTH].copy_from_slice(segment);
-        pis[SEG_WIDTH..].copy_from_slice(&contract_hash);
+        pis[SEG_VK_SPINE_FIRST..SEG_SPINE_WIDTH].copy_from_slice(&leaf_vk_spine_host());
+        pis[SEG_SPINE_WIDTH..].copy_from_slice(&contract_hash);
         let trace: Vec<Vec<BabyBear>> = vec![pis.clone(), pis.clone()];
         let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
             &desc,
@@ -583,7 +589,8 @@ mod tests {
             &config,
         )
         .expect("an honest hatchery mint binds in the fold");
-        // The node re-exposes the SEGMENT (the chain claim a light client folds onward).
+        // The node re-exposes `[segment ‖ vk_spine]` (the chain claim a light client folds onward,
+        // plus the spine block `exposed_board_window` requires of every fold child).
         let exposed: Vec<BabyBear> = node
             .0
             .non_primitives
@@ -596,11 +603,12 @@ mod tests {
             .collect();
         assert_eq!(
             exposed.len(),
-            SEG_WIDTH,
-            "the node re-exposes a SEG_WIDTH segment"
+            SEG_SPINE_WIDTH,
+            "the node re-exposes a segment AND a VK spine"
         );
         assert_eq!(
-            exposed, segment,
+            exposed[..SEG_WIDTH],
+            segment[..],
             "the re-exposed segment is the leg's bound segment"
         );
     }

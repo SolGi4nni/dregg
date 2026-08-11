@@ -412,7 +412,9 @@ pub fn prove_deco_payment_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend;
     use p3_circuit::CircuitBuilder;
     use p3_recursion::{BatchOnly, Target, build_and_prove_aggregation_layer_with_expose};
@@ -443,8 +445,8 @@ pub fn prove_deco_payment_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("dual-expose deco leg's claim instance present");
@@ -452,15 +454,16 @@ pub fn prove_deco_payment_binding_node_segmented(
             .get(cs_idx)
             .expect("deco sub-proof's exposed tuple instance present");
         debug_assert!(
-            lg.len() >= SEG_WIDTH + 1 && cs.len() >= DECO_CLAIM_LEN,
+            lg.len() >= SEG_SPINE_WIDTH + 1 && cs.len() >= DECO_CLAIM_LEN,
             "dual-expose claim must carry segment ++ the payment-hash lane; deco leaf \
              carries the {DECO_CLAIM_LEN}-lane tuple"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's published payment identity must equal the
         // deco leaf's in-AIR-recomputed identity over its genuine verified commitment.
-        cb.connect(lg[SEG_WIDTH], cs[DECO_LEAF_PAYMENT_HASH_PI]);
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| lg[k]).collect();
-        cb.expose_as_public_output(&seg);
+        cb.connect(lg[SEG_SPINE_WIDTH], cs[DECO_LEAF_PAYMENT_HASH_PI]);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, lg, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(

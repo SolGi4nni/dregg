@@ -737,7 +737,7 @@ pub fn prove_note_spend_binding_node(
 /// **THE SEGMENT-PRESERVING NOTE-SPEND BINDING NODE (deployed-path shape, VK-gated
 /// consumer).** The leg is a
 /// DUAL-EXPOSE leaf (`expose_claim` = segment lanes `[0 .. SEG_WIDTH)` ++ the claimed
-/// tuple lanes `[SEG_WIDTH ..)`), the sub-proof leaf is
+/// tuple lanes `[SEG_SPINE_WIDTH ..)`), the sub-proof leaf is
 /// [`prove_note_spend_leaf_with_claim`]; the node `connect`s the tuple lanes and
 /// re-exposes the segment so the result folds into `aggregate_tree` like any per-turn
 /// segment leaf. The dual-expose leg requires the `mintV3` PI-emit (the named
@@ -754,7 +754,9 @@ pub fn prove_note_spend_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend;
     use p3_circuit::CircuitBuilder;
     use p3_recursion::{BatchOnly, Target, build_and_prove_aggregation_layer_with_expose};
@@ -785,8 +787,8 @@ pub fn prove_note_spend_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("dual-expose note-spend leg's claim instance present");
@@ -794,14 +796,15 @@ pub fn prove_note_spend_binding_node_segmented(
             .get(cs_idx)
             .expect("note-spend sub-proof's exposed tuple instance present");
         debug_assert!(
-            lg.len() >= SEG_WIDTH + NOTE_SPEND_CLAIM_LEN && cs.len() >= NOTE_SPEND_CLAIM_LEN,
+            lg.len() >= SEG_SPINE_WIDTH + NOTE_SPEND_CLAIM_LEN && cs.len() >= NOTE_SPEND_CLAIM_LEN,
             "dual-expose claim must carry segment ++ tuple; note-spend leaf carries the tuple"
         );
         for k in 0..NOTE_SPEND_CLAIM_LEN {
-            cb.connect(lg[SEG_WIDTH + k], cs[k]);
+            cb.connect(lg[SEG_SPINE_WIDTH + k], cs[k]);
         }
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| lg[k]).collect();
-        cb.expose_as_public_output(&seg);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, lg, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
@@ -845,7 +848,9 @@ pub fn prove_note_spend_mint_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend;
     use p3_circuit::CircuitBuilder;
     use p3_recursion::{BatchOnly, Target, build_and_prove_aggregation_layer_with_expose};
@@ -876,8 +881,8 @@ pub fn prove_note_spend_mint_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("dual-expose bridge-mint leg's claim instance present");
@@ -885,15 +890,16 @@ pub fn prove_note_spend_mint_binding_node_segmented(
             .get(cs_idx)
             .expect("note-spend sub-proof's exposed tuple instance present");
         debug_assert!(
-            lg.len() >= SEG_WIDTH + 1 && cs.len() >= NOTE_SPEND_CLAIM_LEN,
+            lg.len() >= SEG_SPINE_WIDTH + 1 && cs.len() >= NOTE_SPEND_CLAIM_LEN,
             "dual-expose claim must carry segment ++ the mint-hash lane; note-spend leaf \
              carries the 7-lane tuple"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's published mint identity must equal the
         // note-spend leaf's in-AIR-recomputed identity over its genuine verified spend.
-        cb.connect(lg[SEG_WIDTH], cs[NOTE_SPEND_MINT_HASH_PI]);
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| lg[k]).collect();
-        cb.expose_as_public_output(&seg);
+        cb.connect(lg[SEG_SPINE_WIDTH], cs[NOTE_SPEND_MINT_HASH_PI]);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, lg, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(

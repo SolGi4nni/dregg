@@ -137,7 +137,7 @@ pub fn prove_dsl_leaf_with_commitment(
 /// UNCHANGED by that flag day: the caveat-region `dfa_rc` carrier is 4 felts (`DFA_RC_LEN`), and
 /// `dfa_route_commitment` is byte-identical to the FIRST squeeze block — i.e. lanes `[0..4)` of
 /// the sub-proof leaf's 8-felt exposed commitment. So this node `connect`s the leg's 4 CLAIMED
-/// rc lanes (dual-expose lanes `[SEG_WIDTH .. SEG_WIDTH+4)`) to the sub-proof's commitment
+/// rc lanes (dual-expose lanes `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+4)`) to the sub-proof's commitment
 /// lanes `[0..4)`, and RE-EXPOSES the segment so the node folds into `aggregate_tree` like any
 /// per-turn segment leaf. A leg that claims a route-commitment no verifying DSL sub-proof backs
 /// is UNSAT (the `connect` is a conflict ⇒ no root), so a pure light client never receives a

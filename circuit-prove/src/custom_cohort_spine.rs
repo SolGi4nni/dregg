@@ -14,17 +14,22 @@
 //! claim, so no ordinary SetField descriptor needs a new exposure epoch:
 //!
 //! ```text
-//! ordinary write prefix: segment
-//! terminal Custom:       segment || proof_commitment8 || program_vk8
+//! ordinary write prefix: segment || vk_spine8
+//! terminal Custom:       segment || vk_spine8 || proof_commitment8 || program_vk8
 //!                                || final_app_fields(L) || final_fields_root8
 //!                         \                     /
 //!                    claim-preserving segment spine
 //!                                  |
-//! whole carrier: segment || proof_commitment8 || program_vk8
+//! whole carrier: segment || vk_spine8 || proof_commitment8 || program_vk8
 //!                        || final_app_fields(L) || final_fields_root8
 //!                                  |
 //!                           direct IR2 proof leaf
 //! ```
+//!
+//! ⚑ `vk_spine8` is the VK SPINE every segment carrier owes the fold: eight lanes carrying the
+//! circuit identity of everything folded beneath it. Each merge here folds BOTH children's real
+//! spines; the final binding node's direct-IR2 child is a bare LEAF, so its operand is the
+//! constant leaf seed and its identity enters through its cap.
 //!
 //! Every merge verifies both child proofs, connects the two adjacent state
 //! anchors, recomputes the ordered segment digest, and re-exposes the selected
@@ -47,7 +52,8 @@ use crate::custom_leaf_adapter::custom_app_root_claim_len;
 use crate::fold_vk_pin::FoldVkPins;
 use crate::ivc_turn_chain::{
     SEG_ANCHOR_WIDTH, SEG_COUNT, SEG_DIGEST_FIRST, SEG_DIGEST_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW,
-    SEG_WIDTH, expose_claim_instance_index, seg_poseidon_commit,
+    SEG_SPINE_WIDTH, SEG_VK_SPINE_FIRST, SEG_WIDTH, binding_node_segment_and_spine,
+    combine_vk_spine, expose_claim_instance_index, seg_poseidon_commit,
 };
 use crate::joint_turn_aggregation::JointAggError;
 use crate::joint_turn_recursive::{CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO};
@@ -129,10 +135,14 @@ fn combine_segment_targets(
 /// Merge two adjacent segment proofs while retaining explicitly-sized claim
 /// suffixes from both children.
 ///
-/// Each child must expose exactly `segment || suffix`.  The parent exposes
-/// `combined_segment || left_suffix || right_suffix`.  Exact lengths are
+/// Each child must expose exactly `segment || vk_spine || suffix`.  The parent exposes
+/// `combined_segment || combined_vk_spine || left_suffix || right_suffix`.  Exact lengths are
 /// mandatory: silently ignoring a lane would make later offsets mean something
 /// different under the same host call.
+///
+/// Both children here are genuine segment carriers, so the spine fold is the ordinary
+/// [`combine_vk_spine`] over both children's real spine blocks — not the leaf base case a
+/// binding node's sub-proof child gets.
 ///
 /// The intended whole-turn construction folds an ordinary write prefix
 /// (`left_suffix_len = 0`) into a terminal Custom carrying
@@ -151,8 +161,16 @@ pub fn prove_segment_merge_preserving_claims(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    let left_idx = require_claim_len(left, SEG_WIDTH + left_suffix_len, "left cohort segment")?;
-    let right_idx = require_claim_len(right, SEG_WIDTH + right_suffix_len, "right cohort segment")?;
+    let left_idx = require_claim_len(
+        left,
+        SEG_SPINE_WIDTH + left_suffix_len,
+        "left cohort segment",
+    )?;
+    let right_idx = require_claim_len(
+        right,
+        SEG_SPINE_WIDTH + right_suffix_len,
+        "right cohort segment",
+    )?;
 
     let left_input = left.into_recursion_input_pinned::<BatchOnly>(pins.left.clone());
     let right_input = right.into_recursion_input_pinned::<BatchOnly>(pins.right.clone());
@@ -162,20 +180,30 @@ pub fn prove_segment_merge_preserving_claims(
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let left_claim = left_apt
             .get(left_idx)
             .expect("left cohort expose_claim instance present");
         let right_claim = right_apt
             .get(right_idx)
             .expect("right cohort expose_claim instance present");
-        debug_assert_eq!(left_claim.len(), SEG_WIDTH + left_suffix_len);
-        debug_assert_eq!(right_claim.len(), SEG_WIDTH + right_suffix_len);
+        debug_assert_eq!(left_claim.len(), SEG_SPINE_WIDTH + left_suffix_len);
+        debug_assert_eq!(right_claim.len(), SEG_SPINE_WIDTH + right_suffix_len);
 
+        let vk_spine = combine_vk_spine(
+            cb,
+            left_claim,
+            right_claim,
+            left_vk_cap,
+            right_vk_cap,
+            SEG_VK_SPINE_FIRST,
+        );
         let mut parent = combine_segment_targets(cb, left_claim, right_claim);
-        parent.extend_from_slice(&left_claim[SEG_WIDTH..]);
-        parent.extend_from_slice(&right_claim[SEG_WIDTH..]);
+        parent.extend_from_slice(&vk_spine);
+        debug_assert_eq!(parent.len(), SEG_SPINE_WIDTH);
+        parent.extend_from_slice(&left_claim[SEG_SPINE_WIDTH..]);
+        parent.extend_from_slice(&right_claim[SEG_SPINE_WIDTH..]);
         cb.expose_as_public_output(&parent);
     };
 
@@ -207,7 +235,7 @@ pub const WHOLE_TURN_DIRECT_IR2_NODE_ARM: &str = "whole-turn direct-IR2 binding 
 /// expose exactly:
 ///
 /// ```text
-/// segment || custom_proof_commitment8 || program_vk8
+/// segment || vk_spine8 || custom_proof_commitment8 || program_vk8
 ///         || final_app_fields(app_root_len) || final_fields_root8
 /// ```
 ///
@@ -241,7 +269,7 @@ pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
     }
 
     let carrier_len =
-        SEG_WIDTH + CUSTOM_COMMIT_LEN + PROGRAM_VK_LEN + app_root_len + POST_FIELDS_ROOT_LEN;
+        SEG_SPINE_WIDTH + CUSTOM_COMMIT_LEN + PROGRAM_VK_LEN + app_root_len + POST_FIELDS_ROOT_LEN;
     let direct_len =
         custom_app_root_claim_len(app_root_len) + POST_FIELDS_ROOT_LEN + PROGRAM_VK_LEN;
     let carrier_idx =
@@ -263,8 +291,8 @@ pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        carrier_apt: &[Vec<Target>],
                        direct_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let carrier = carrier_apt
             .get(carrier_idx)
             .expect("whole-turn carrier expose_claim instance present");
@@ -274,7 +302,7 @@ pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
         debug_assert_eq!(carrier.len(), carrier_len);
         debug_assert_eq!(direct.len(), direct_len);
 
-        let carrier_commit = SEG_WIDTH;
+        let carrier_commit = SEG_SPINE_WIDTH;
         let carrier_vk = carrier_commit + CUSTOM_COMMIT_LEN;
         let carrier_app = carrier_vk + PROGRAM_VK_LEN;
         let carrier_fields_root = carrier_app + l;
@@ -311,7 +339,10 @@ pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
             );
         }
 
-        cb.expose_as_public_output(&carrier[..SEG_WIDTH]);
+        // RE-EXPOSE `[segment ‖ vk_spine]`. The direct-IR2 sub-proof child is a LEAF, so its spine
+        // is the constant leaf seed; its identity still reaches the parent through its cap.
+        let parent = binding_node_segment_and_spine(cb, carrier, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     p3_recursion::build_and_prove_aggregation_layer_with_expose::<
@@ -369,12 +400,15 @@ mod tests {
         assert_eq!(whole_turn_carrier_suffix_len(l), 30);
         assert_eq!(terminal_custom_suffix_len(l), 30);
 
-        let carrier_commit = SEG_WIDTH;
+        let carrier_commit = SEG_SPINE_WIDTH;
         let carrier_vk = carrier_commit + CUSTOM_COMMIT_LEN;
         let carrier_app = carrier_vk + PROGRAM_VK_LEN;
         let carrier_fields_root = carrier_app + l;
         let carrier_end = carrier_fields_root + POST_FIELDS_ROOT_LEN;
-        assert_eq!(carrier_end, SEG_WIDTH + whole_turn_carrier_suffix_len(l));
+        assert_eq!(
+            carrier_end,
+            SEG_SPINE_WIDTH + whole_turn_carrier_suffix_len(l)
+        );
 
         let direct_app = custom_app_root_claim_len(0);
         let direct_fields_root = custom_app_root_claim_len(l);

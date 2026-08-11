@@ -888,16 +888,28 @@ fn a_mismatched_mid_does_not_fold_on_the_deployed_prover() {
 // SHAPE — the fail-closed verifier extension
 // ============================================================================
 
-/// The two-leg root exposes `25 + 2*11 = 47` lanes, and the leaf `24 + 2*11 = 46`. Today's
-/// 25-lane verifier would REJECT a 47-lane root — the correct fail-closed default, which is why
-/// the artifact carries the window explicitly and the verifier appends it to the SAME
-/// exact-equality comparison (so both shape mismatches fall out of it, in both directions).
+/// The two-leg root exposes `(25 + 8) + 2*11 = 55` lanes — segment ‖ VK spine ‖ IN ‖ OUT — and the
+/// leaf `24 + 2*11 = 46`. A plain-segment verifier would REJECT a 55-lane root — the correct
+/// fail-closed default, which is why the artifact carries the window explicitly and the verifier
+/// appends it to the SAME exact-equality comparison (so both shape mismatches fall out of it, in
+/// both directions).
+///
+/// ⚑ The `47` this asserted before the VK spine landed was the pre-spine width. A stale literal
+/// here is not cosmetic: it is the shape a fold child must have to be foldable at all.
 #[test]
 fn the_two_leg_claim_widths_are_the_ones_the_verifier_was_extended_to() {
-    use dregg_circuit_prove::ivc_turn_chain::SEG_WIDTH;
+    use dregg_circuit_prove::ivc_turn_chain::{SEG_SPINE_WIDTH, SEG_WIDTH};
     const W: usize = 11;
     assert_eq!(SEG_WIDTH, 25, "the deployed segment is 25 lanes");
-    assert_eq!(SEG_WIDTH + 2 * W, 47, "the board-window root exposes 47");
+    assert_eq!(
+        SEG_SPINE_WIDTH, 33,
+        "the deployed segment + VK spine is 33 lanes"
+    );
+    assert_eq!(
+        SEG_SPINE_WIDTH + 2 * W,
+        55,
+        "the board-window root exposes 55"
+    );
     assert_eq!(
         dregg_circuit_prove::custom_leaf_adapter::custom_board_window_claim_len(W),
         46,

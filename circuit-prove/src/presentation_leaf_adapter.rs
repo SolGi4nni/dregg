@@ -58,7 +58,7 @@
 //! [`prove_presentation_binding_node_segmented`] consumes a DUAL-EXPOSE leg leaf whose
 //! `expose_claim` carries the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` AND the claimed
 //! `(action_binding, revealed_facts, tag)` in lanes
-//! `[SEG_WIDTH .. SEG_WIDTH+PRESENTATION_CLAIM_LEN)`. **Adding that presentation-claim PI
+//! `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+PRESENTATION_CLAIM_LEN)`. **Adding that presentation-claim PI
 //! exposure to the deployed turn leg descriptor is the BIG-BANG DESCRIPTOR PIECE (a
 //! PI-exposure change that moves the VK, owned by the descriptor lane).** This node + its
 //! mechanism (and the leaf below) are READY for it; the mechanism node
@@ -400,22 +400,22 @@ pub fn prove_presentation_binding_node(
 /// [`crate::membership_leaf_adapter::prove_membership_binding_node_segmented`]).** Aggregate a
 /// presentation turn's DUAL-EXPOSE effect-vm leg leaf (whose single `expose_claim` carries the
 /// chain SEGMENT in lanes `[0 .. SEG_WIDTH)` and the CLAIMED `(action_binding, revealed_facts,
-/// tag)` in lanes `[SEG_WIDTH .. SEG_WIDTH+PRESENTATION_CLAIM_LEN)`) WITH the re-proved
+/// tag)` in lanes `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+PRESENTATION_CLAIM_LEN)`) WITH the re-proved
 /// bound-presentation leaf ([`prove_presentation_leaf_with_claim`], whose `expose_claim` is the
 /// in-circuit-bound claim in lanes `[0 .. PRESENTATION_CLAIM_LEN)`), and:
 ///
 ///   1. `connect`s the leg's claimed lanes to the bound-presentation leaf's bound claim (the
 ///      binding tooth — a turn whose teeth name a presentation no bound-presentation leaf binds
 ///      is a conflict ⇒ UNSAT ⇒ no root), and
-///   2. RE-EXPOSES the leg's SEGMENT lanes `[0 .. SEG_WIDTH)` as the parent claim.
+///   2. RE-EXPOSES `[the leg's SEGMENT lanes [0 .. SEG_WIDTH) ‖ a folded vk_spine]` as the parent claim.
 ///
-/// The output exposes an ordinary `SEG_WIDTH`-lane chain segment, so it folds into
+/// The output exposes an ordinary `SEG_SPINE_WIDTH`-lane `[segment ‖ vk_spine]` claim, so it folds into
 /// [`crate::ivc_turn_chain::aggregate_tree`] like any other per-turn segment leaf — making the
 /// presentation authorization REAL for a pure light client while preserving the chain
 /// endpoints/digest.
 ///
 /// THE NAMED SEAM (honest): the deployed presentation leg must DUAL-EXPOSE its
-/// `(action_binding, revealed_facts, tag)` teeth (lanes `[SEG_WIDTH ..)`). That leg dual-expose
+/// `(action_binding, revealed_facts, tag)` teeth (lanes `[SEG_SPINE_WIDTH ..)`). That leg dual-expose
 /// is the BIG-BANG DESCRIPTOR PIECE (a PI-exposure change, owned by the descriptor lane). This
 /// node is its consumer.
 ///
@@ -431,7 +431,9 @@ pub fn prove_presentation_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use p3_circuit::CircuitBuilder;
 
     let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
@@ -458,8 +460,8 @@ pub fn prove_presentation_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose presentation leg's claim instance present");
@@ -467,19 +469,20 @@ pub fn prove_presentation_binding_node_segmented(
             .get(pr_idx)
             .expect("bound-presentation leaf's exposed claim instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + PRESENTATION_CLAIM_LEN && pr.len() >= PRESENTATION_CLAIM_LEN,
+            ev.len() >= SEG_SPINE_WIDTH + PRESENTATION_CLAIM_LEN
+                && pr.len() >= PRESENTATION_CLAIM_LEN,
             "dual-expose claim must carry segment ++ presentation claim; leaf carries the claim"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's CLAIMED presentation (lanes
-        // [SEG_WIDTH .. SEG_WIDTH+PRESENTATION_CLAIM_LEN)) must equal the bound-presentation
+        // [SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+PRESENTATION_CLAIM_LEN)) must equal the bound-presentation
         // leaf's BOUND claim, lane by lane. A turn whose teeth name a presentation no leaf
         // binds is a conflict here ⇒ UNSAT ⇒ no root.
         for k in 0..PRESENTATION_CLAIM_LEN {
-            cb.connect(ev[SEG_WIDTH + k], pr[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], pr[k]);
         }
-        // RE-EXPOSE ONLY THE SEGMENT (lanes [0 .. SEG_WIDTH)) as the parent claim.
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<

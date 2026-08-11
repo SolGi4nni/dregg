@@ -672,20 +672,20 @@ pub fn prove_caveat_admission_binding_node(
 /// of [`crate::membership_leaf_adapter::prove_membership_binding_node_segmented`]).** Aggregate a
 /// deployed TRADE turn's DUAL-EXPOSE effect-vm leg leaf (whose single `expose_claim` carries the
 /// chain SEGMENT in lanes `[0 .. SEG_WIDTH)` and the CLAIMED bignum `(trade fields ++ caveat
-/// params)` in lanes `[SEG_WIDTH .. SEG_WIDTH+CAVEAT_ADMISSION_CLAIM_LEN)`) WITH the re-proved
+/// params)` in lanes `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+CAVEAT_ADMISSION_CLAIM_LEN)`) WITH the re-proved
 /// caveat-admission leaf ([`prove_caveat_admission_leaf_with_claim`]), and:
 ///
 ///   1. `connect`s the leg's claimed operands to the admission leaf's range-checked BOUND tuple
 ///      (the binding tooth — a trade the caveat gadget did NOT admit has no admission leaf to
 ///      bind ⇒ conflict ⇒ UNSAT ⇒ no root), and
-///   2. RE-EXPOSES the leg's SEGMENT lanes `[0 .. SEG_WIDTH)` as the parent claim.
+///   2. RE-EXPOSES `[the leg's SEGMENT lanes [0 .. SEG_WIDTH) ‖ a folded vk_spine]` as the parent claim.
 ///
-/// The output exposes an ordinary `SEG_WIDTH`-lane chain segment, so it folds into
+/// The output exposes an ordinary `SEG_SPINE_WIDTH`-lane `[segment ‖ vk_spine]` claim, so it folds into
 /// [`crate::ivc_turn_chain::aggregate_tree`] like any other per-turn segment leaf — making the
 /// caveat admission REAL for a pure light client while preserving the chain endpoints/digest.
 ///
 /// THE NAMED BIG-BANG SEAM (honest, mirroring membership): the deployed trade leg must
-/// DUAL-EXPOSE its `(trade fields ++ caveat params)` bignum limbs (lanes `[SEG_WIDTH ..)`) at
+/// DUAL-EXPOSE its `(trade fields ++ caveat params)` bignum limbs (lanes `[SEG_SPINE_WIDTH ..)`) at
 /// fixed PI slots — the effect-vm Transfer/settle descriptor must PUBLISH the trade's `(time,
 /// height, value, asset)` and the mandate caveat's `(validUntil, heightLt, budget, asset)` as
 /// teeth. That PI-exposure is the VK-affecting descriptor-lane piece (the caveat twin of the
@@ -703,7 +703,9 @@ pub fn prove_caveat_admission_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use p3_circuit::CircuitBuilder;
 
     let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
@@ -730,8 +732,8 @@ pub fn prove_caveat_admission_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose caveat leg's claim instance present");
@@ -739,19 +741,19 @@ pub fn prove_caveat_admission_binding_node_segmented(
             .get(adm_idx)
             .expect("caveat-admission leaf's exposed tuple instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + CAVEAT_ADMISSION_CLAIM_LEN
+            ev.len() >= SEG_SPINE_WIDTH + CAVEAT_ADMISSION_CLAIM_LEN
                 && adm.len() >= CAVEAT_ADMISSION_CLAIM_LEN,
             "dual-expose claim must carry segment ++ operand tuple; admission leaf carries the tuple"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's CLAIMED operands (lanes
-        // [SEG_WIDTH .. SEG_WIDTH+CAVEAT_ADMISSION_CLAIM_LEN)) must equal the admission leaf's
+        // [SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+CAVEAT_ADMISSION_CLAIM_LEN)) must equal the admission leaf's
         // range-checked BOUND tuple, lane by lane.
         for k in 0..CAVEAT_ADMISSION_CLAIM_LEN {
-            cb.connect(ev[SEG_WIDTH + k], adm[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], adm[k]);
         }
-        // RE-EXPOSE ONLY THE SEGMENT (lanes [0 .. SEG_WIDTH)) as the parent claim.
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<

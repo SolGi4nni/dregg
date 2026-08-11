@@ -97,7 +97,7 @@ pub const SOVEREIGN_BINDING_NODE_SEGMENTED_ARM: &str =
 //   * the effect-vm leg leaf as a DUAL-EXPOSE leaf
 //     ([`crate::ivc_turn_chain::prove_descriptor_leaf_dual_expose`]) — ONE `expose_claim` carrying
 //     the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` AND the claimed 8-felt commitment (PI 46..53)
-//     in lanes `[SEG_WIDTH ..)`; the inner PIs are otherwise consumed into the primitive `Public`
+//     in lanes `[SEG_SPINE_WIDTH ..)`; the inner PIs are otherwise consumed into the primitive `Public`
 //     table and never reach a combine hook, so the re-expose is mandatory;
 //   * the custom SUB-PROOF leaf, exposing its GENUINE in-circuit-computed PI-commitment AND its
 //     declared `[old8 ‖ new8]` state prefix — the 24-lane
@@ -226,15 +226,15 @@ pub fn prove_custom_binding_node(
 /// custom turn's DUAL-EXPOSE effect-vm leg leaf (minted by
 /// [`crate::ivc_turn_chain::prove_descriptor_leaf_dual_expose`] — its single `expose_claim` carries
 /// the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` and the CLAIMED `custom_proof_commitment` in lanes
-/// `[SEG_WIDTH .. SEG_WIDTH+CUSTOM_COMMIT_LEN)`) WITH the custom sub-proof leaf
+/// `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+CUSTOM_COMMIT_LEN)`) WITH the custom sub-proof leaf
 /// ([`crate::custom_leaf_adapter::prove_custom_leaf_with_commitment`], whose `expose_claim` is the
 /// genuine in-circuit commitment in lanes `[0 .. CUSTOM_COMMIT_LEN)`), and:
 ///
 ///   1. `connect`s the leg's claimed commitment lanes to the sub-proof's genuine commitment lanes
 ///      (the binding tooth — a forged claim no sub-proof backs is a conflict ⇒ UNSAT ⇒ no root), and
-///   2. RE-EXPOSES the leg's SEGMENT lanes `[0 .. SEG_WIDTH)` as the parent claim.
+///   2. RE-EXPOSES `[the leg's SEGMENT lanes [0 .. SEG_WIDTH) ‖ a folded vk_spine]` as the parent claim.
 ///
-/// The output therefore exposes an ordinary `SEG_WIDTH`-lane chain segment — byte-identical to what
+/// The output therefore exposes an ordinary `SEG_SPINE_WIDTH`-lane `[segment ‖ vk_spine]` claim — byte-identical to what
 /// a plain [`crate::ivc_turn_chain::prove_descriptor_leaf_rotated_with_segment`] leaf for the same
 /// turn would expose — so it folds into [`crate::ivc_turn_chain::aggregate_tree`] like any other
 /// per-turn segment leaf. This is what makes the custom binding REAL for a pure light client: the
@@ -283,7 +283,7 @@ pub fn prove_custom_binding_node_segmented(
 /// them:
 ///
 /// ```text
-///   ev[SEG_WIDTH + k]        == cs[k]                        k in 0..8   the commitment (as before)
+///   ev[SEG_SPINE_WIDTH + k]        == cs[k]                        k in 0..8   the commitment (as before)
 ///   ev[SEG_FIRST_OLD + k]    == cs[CUSTOM_COMMIT_LEN + k]     k in 0..8   REAL old root == claimed old
 ///   ev[SEG_LAST_NEW  + k]    == cs[CUSTOM_COMMIT_LEN + 8 + k] k in 0..8   REAL new root == claimed new
 /// ```
@@ -317,7 +317,8 @@ pub fn prove_custom_binding_node_state_segmented(
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::custom_leaf_adapter::CUSTOM_STATE_CLAIM_LEN;
     use crate::ivc_turn_chain::{
-        SEG_ANCHOR_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_WIDTH, expose_claim_instance_index,
+        SEG_ANCHOR_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_SPINE_WIDTH,
+        binding_node_segment_and_spine, expose_claim_instance_index,
     };
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend_with_coeff_lookups;
     use p3_circuit::CircuitBuilder;
@@ -376,8 +377,8 @@ pub fn prove_custom_binding_node_state_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose leg's claim instance present");
@@ -385,14 +386,15 @@ pub fn prove_custom_binding_node_state_segmented(
             .get(cs_idx)
             .expect("custom sub-proof's exposed claim instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + CUSTOM_COMMIT_LEN && cs.len() >= CUSTOM_STATE_CLAIM_LEN,
-            "leg must carry segment ++ commitment; custom leaf must carry commitment ++ [old8 ‖ new8]"
+            ev.len() >= SEG_SPINE_WIDTH + CUSTOM_COMMIT_LEN && cs.len() >= CUSTOM_STATE_CLAIM_LEN,
+            "leg must carry segment ++ spine ++ commitment; custom leaf must carry commitment ++ \
+             [old8 ‖ new8]"
         );
 
         // 1. THE COMMITMENT TOOTH (unchanged): the leg's CLAIMED commitment must equal the
         //    sub-proof's GENUINE in-circuit commitment.
         for k in 0..CUSTOM_COMMIT_LEN {
-            cb.connect(ev[SEG_WIDTH + k], cs[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], cs[k]);
         }
         // 2. THE STATE TOOTH (new): the sub-proof's CLAIMED pre/post roots must equal the leg's
         //    REAL descriptor-bound rotated roots. This is what makes the light client's fold say
@@ -406,10 +408,10 @@ pub fn prove_custom_binding_node_state_segmented(
             );
         }
 
-        // RE-EXPOSE ONLY THE SEGMENT, so this node folds into `aggregate_tree` exactly like a
+        // RE-EXPOSE `[segment ‖ vk_spine]`, so this node folds into `aggregate_tree` exactly like a
         // plain per-turn segment leaf (identical parent shape to the commitment-only node).
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<
@@ -426,12 +428,13 @@ pub fn prove_custom_binding_node_state_segmented(
 
 /// **THE BOARD-WINDOW BINDING NODE (the two-leg fold's per-turn half)** — identical to
 /// [`prove_custom_binding_node_state_segmented`] in every connect it makes, but it re-exposes
-/// `[segment(SEG_WIDTH) ‖ IN(W) ‖ OUT(W)]` instead of `[segment(SEG_WIDTH)]`.
+/// `[segment(SEG_WIDTH) ‖ vk_spine(8) ‖ IN(W) ‖ OUT(W)]` instead of the bare
+/// `[segment ‖ vk_spine]`.
 ///
 /// ## Why the RE-EXPOSURE is the whole point
 ///
-/// The deployed state node ends with `let seg = (0..SEG_WIDTH).map(|k| ev[k]); expose(seg)` — it
-/// DROPS the sub-proof's application PIs before the aggregation tree ever sees them. So two
+/// The deployed state node ends with `expose([segment ‖ vk_spine])` — it DROPS the sub-proof's
+/// application PIs before the aggregation tree ever sees them. So two
 /// adjacent turns' board publications are, in the fold, unrelated numbers: a folded automatafl
 /// match attests K INDEPENDENT transitions, not one trajectory, and the `hseamPack` /
 /// `hseamAutoX` / `hseamAutoY` hypotheses of the Lean whole-turn theorem
@@ -466,7 +469,8 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::custom_leaf_adapter::{CUSTOM_STATE_CLAIM_LEN, custom_board_window_claim_len};
     use crate::ivc_turn_chain::{
-        SEG_ANCHOR_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_WIDTH, expose_claim_instance_index,
+        SEG_ANCHOR_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_SPINE_WIDTH,
+        binding_node_segment_and_spine, expose_claim_instance_index,
     };
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend_with_coeff_lookups;
     use p3_circuit::CircuitBuilder;
@@ -529,8 +533,8 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose leg's claim instance present");
@@ -538,14 +542,14 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
             .get(cs_idx)
             .expect("custom sub-proof's exposed claim instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + CUSTOM_COMMIT_LEN && cs.len() >= cs_want,
-            "leg must carry segment ++ commitment; custom leaf must carry commitment ++ \
+            ev.len() >= SEG_SPINE_WIDTH + CUSTOM_COMMIT_LEN && cs.len() >= cs_want,
+            "leg must carry segment ++ spine ++ commitment; custom leaf must carry commitment ++ \
              [old8 ‖ new8] ++ IN ++ OUT"
         );
 
         // 1. THE COMMITMENT TOOTH (unchanged).
         for k in 0..CUSTOM_COMMIT_LEN {
-            cb.connect(ev[SEG_WIDTH + k], cs[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], cs[k]);
         }
         // 2. THE STATE TOOTH (unchanged).
         for k in 0..SEG_ANCHOR_WIDTH {
@@ -556,11 +560,14 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
             );
         }
 
-        // RE-EXPOSE `[segment ‖ IN ‖ OUT]`. The windows ride the leaf's own bound PI targets, so
-        // the parent sees the board this leaf actually proved — the seam the merge connects.
-        let mut out: Vec<Target> = Vec::with_capacity(SEG_WIDTH + 2 * window);
-        out.extend((0..SEG_WIDTH).map(|k| ev[k]));
+        // RE-EXPOSE `[segment ‖ vk_spine ‖ IN ‖ OUT]` — the shape
+        // `segment_combine_expose_with_board_window` reads (`SEG_SPINE_WIDTH + 2W`). The windows
+        // ride the leaf's own bound PI targets, so the parent sees the board this leaf actually
+        // proved — the seam the merge connects.
+        let mut out = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        out.reserve(2 * window);
         out.extend((0..2 * window).map(|k| cs[CUSTOM_STATE_CLAIM_LEN + k]));
+        debug_assert_eq!(out.len(), SEG_SPINE_WIDTH + 2 * window);
         cb.expose_as_public_output(&out);
     };
 
@@ -601,10 +608,10 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
 /// [`crate::custom_leaf_adapter::prove_custom_leaf_with_app_root_commitment`]). This node welds:
 ///
 /// ```text
-///   ev[SEG_WIDTH + k]        == cs[k]                  k in 0..8   the commitment (as before)
+///   ev[SEG_SPINE_WIDTH + k]        == cs[k]                  k in 0..8   the commitment (as before)
 ///   ev[SEG_FIRST_OLD + k]    == cs[8 + k]              k in 0..8   REAL old root == claimed old
 ///   ev[SEG_LAST_NEW  + k]    == cs[16 + k]             k in 0..8   REAL new root == claimed new
-///   ev[SEG_WIDTH + 8 + k]    == cs[24 + k]             k in 0..L   REAL field[K] == published R  ← keystone
+///   ev[SEG_SPINE_WIDTH + 8 + k]    == cs[24 + k]             k in 0..L   REAL field[K] == published R  ← keystone
 /// ```
 ///
 /// Because `field_K` is FRI-bound to the same rotated pre-limbs the `new8` commitment absorbs (a
@@ -702,7 +709,8 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::custom_leaf_adapter::custom_app_root_claim_len;
     use crate::ivc_turn_chain::{
-        SEG_ANCHOR_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_WIDTH, expose_claim_instance_index,
+        SEG_ANCHOR_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_SPINE_WIDTH,
+        binding_node_segment_and_spine, expose_claim_instance_index,
     };
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend_with_coeff_lookups;
     use p3_circuit::CircuitBuilder;
@@ -729,7 +737,7 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
     let cs_want = custom_app_root_claim_len(app_root_len) + post_fields_root_len + program_vk_len;
     // The leg must carry: segment ++ commitment8 ++ field_K(L) ++ optional fields_root8 ++ VK8.
     let ev_want =
-        SEG_WIDTH + CUSTOM_COMMIT_LEN + app_root_len + post_fields_root_len + program_vk_len;
+        SEG_SPINE_WIDTH + CUSTOM_COMMIT_LEN + app_root_len + post_fields_root_len + program_vk_len;
 
     let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
         JointAggError::AggregationProofInvalid {
@@ -780,8 +788,8 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
         return Err(JointAggError::AggregationProofInvalid {
             reason: format!(
                 "app-root leg leaf exposes {ev_lanes} claim lane(s) but the app-root weld fold \
-                 requires {ev_want} (segment({SEG_WIDTH}) ‖ commitment({CUSTOM_COMMIT_LEN}) ‖ \
-                 field_K({app_root_len})) — mint it with \
+                 requires {ev_want} (segment+spine({SEG_SPINE_WIDTH}) ‖ \
+                 commitment({CUSTOM_COMMIT_LEN}) ‖ field_K({app_root_len})) — mint it with \
                  prove_descriptor_leaf_expose_segment_and_claims([(commit_pi,8),(field_pi,{app_root_len})])."
             ),
         });
@@ -797,8 +805,8 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("app-root leg's claim instance present");
@@ -806,14 +814,14 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
             .get(cs_idx)
             .expect("custom sub-proof's exposed claim instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + CUSTOM_COMMIT_LEN + l && cs.len() >= cs_want,
-            "leg must carry segment ++ commitment ++ field_K; custom leaf must carry commitment ++ \
-             [old8 ‖ new8] ++ R"
+            ev.len() >= SEG_SPINE_WIDTH + CUSTOM_COMMIT_LEN + l && cs.len() >= cs_want,
+            "leg must carry segment ++ spine ++ commitment ++ field_K; custom leaf must carry \
+             commitment ++ [old8 ‖ new8] ++ R"
         );
 
         // 1. THE COMMITMENT TOOTH.
         for k in 0..CUSTOM_COMMIT_LEN {
-            cb.connect(ev[SEG_WIDTH + k], cs[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], cs[k]);
         }
         // 2. THE STATE TOOTH: the sub-proof's declared pre/post roots == the leg's real roots.
         for k in 0..SEG_ANCHOR_WIDTH {
@@ -825,10 +833,11 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
         }
         // 3. THE APP-ROOT TOOTH (the keystone): the sub-proof's PUBLISHED root R == the leg's
         //    EXPOSED committed field value for the declared key K. R is at custom-claim lanes
-        //    [24 .. 24+L); the leg's field_K is at leg-claim lanes [SEG_WIDTH+8 .. SEG_WIDTH+8+L).
+        //    [24 .. 24+L); the leg's field_K is at leg-claim lanes
+        //    [SEG_SPINE_WIDTH+8 .. SEG_SPINE_WIDTH+8+L).
         for k in 0..l {
             cb.connect(
-                ev[SEG_WIDTH + CUSTOM_COMMIT_LEN + k],
+                ev[SEG_SPINE_WIDTH + CUSTOM_COMMIT_LEN + k],
                 cs[custom_app_root_claim_len(0) + k],
             );
         }
@@ -836,7 +845,7 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
         //    field slice; the direct leaf's authenticated root follows its app-root claim.
         for k in 0..post_fields_root_len {
             cb.connect(
-                ev[SEG_WIDTH + CUSTOM_COMMIT_LEN + l + k],
+                ev[SEG_SPINE_WIDTH + CUSTOM_COMMIT_LEN + l + k],
                 cs[custom_app_root_claim_len(l) + k],
             );
         }
@@ -845,15 +854,15 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
         // descriptor/program behind the same state/app-root claims.
         for k in 0..program_vk_len {
             cb.connect(
-                ev[SEG_WIDTH + CUSTOM_COMMIT_LEN + l + post_fields_root_len + k],
+                ev[SEG_SPINE_WIDTH + CUSTOM_COMMIT_LEN + l + post_fields_root_len + k],
                 cs[custom_app_root_claim_len(l) + post_fields_root_len + k],
             );
         }
 
-        // RE-EXPOSE ONLY THE SEGMENT, so this node folds into `aggregate_tree` exactly like a
+        // RE-EXPOSE `[segment ‖ vk_spine]`, so this node folds into `aggregate_tree` exactly like a
         // plain per-turn segment leaf (identical parent shape to the state node).
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<
@@ -887,7 +896,9 @@ pub fn prove_claim_binding_node_segmented(
     config: &DreggRecursionConfig,
     claim_len: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend_with_coeff_lookups;
     use p3_circuit::CircuitBuilder;
     use p3_recursion::{Target, build_and_prove_aggregation_layer_with_expose};
@@ -897,7 +908,7 @@ pub fn prove_claim_binding_node_segmented(
     let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
         JointAggError::AggregationProofInvalid {
             reason: "dual-expose custom leg leaf carries no expose_claim table — it must be \
-                     wrapped via prove_descriptor_leaf_dual_expose (segment ++ commitment)"
+                     wrapped via prove_descriptor_leaf_dual_expose (segment ++ spine ++ commitment)"
                 .to_string(),
         }
     })?;
@@ -918,8 +929,8 @@ pub fn prove_claim_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose leg's claim instance present");
@@ -927,20 +938,21 @@ pub fn prove_claim_binding_node_segmented(
             .get(cs_idx)
             .expect("custom sub-proof's exposed commitment instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + claim_len && cs.len() >= claim_len,
-            "dual-expose claim must carry segment ++ commitment; custom leaf carries commitment"
+            ev.len() >= SEG_SPINE_WIDTH + claim_len && cs.len() >= claim_len,
+            "dual-expose claim must carry segment ++ spine ++ commitment; custom leaf carries \
+             commitment"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's CLAIMED commitment (dual-expose lanes
-        // [SEG_WIDTH .. SEG_WIDTH+claim_len)) must equal the sub-proof's GENUINE in-circuit
-        // commitment, lane by lane. A forged claim with no backing sub-proof is a conflict
-        // here ⇒ UNSAT ⇒ no root.
+        // [SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+claim_len)) must equal the sub-proof's GENUINE
+        // in-circuit commitment, lane by lane. A forged claim with no backing sub-proof is a
+        // conflict here ⇒ UNSAT ⇒ no root.
         for k in 0..claim_len {
-            cb.connect(ev[SEG_WIDTH + k], cs[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], cs[k]);
         }
-        // RE-EXPOSE ONLY THE SEGMENT (lanes [0 .. SEG_WIDTH)) as the parent claim, so this node
-        // folds into `aggregate_tree` exactly like a plain per-turn segment leaf.
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim, so this node folds into
+        // `aggregate_tree` exactly like a plain per-turn segment leaf.
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<
@@ -972,7 +984,7 @@ pub fn prove_claim_binding_node_segmented(
 /// **THE SEGMENT-PRESERVING SOVEREIGN BINDING NODE (the sovereign analog of
 /// [`prove_custom_binding_node_segmented`]).** Aggregate a sovereign turn's DUAL-EXPOSE effect-vm leg
 /// leaf (whose single `expose_claim` carries the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` and the
-/// CLAIMED `SOVEREIGN_WITNESS_KEY_COMMIT` teeth in lanes `[SEG_WIDTH .. SEG_WIDTH+KEY_CLAIM_LEN)`)
+/// CLAIMED `SOVEREIGN_WITNESS_KEY_COMMIT` teeth in lanes `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+KEY_CLAIM_LEN)`)
 /// WITH the re-proved sovereign-authority leaf
 /// ([`crate::sovereign_leaf_adapter::prove_sovereign_leaf_with_key_claim`], whose `expose_claim` is
 /// the in-circuit-bound `key_commit` in lanes `[0 .. KEY_CLAIM_LEN)`), and:
@@ -980,9 +992,9 @@ pub fn prove_claim_binding_node_segmented(
 ///   1. `connect`s the leg's claimed `key_commit` lanes to the authority leaf's bound `key_commit`
 ///      (the binding tooth — a forged sovereign turn whose teeth name a `key_commit` no authority
 ///      leaf binds is a conflict ⇒ UNSAT ⇒ no root), and
-///   2. RE-EXPOSES the leg's SEGMENT lanes `[0 .. SEG_WIDTH)` as the parent claim.
+///   2. RE-EXPOSES `[the leg's SEGMENT lanes [0 .. SEG_WIDTH) ‖ a folded vk_spine]` as the parent claim.
 ///
-/// The output exposes an ordinary `SEG_WIDTH`-lane chain segment, so it folds into
+/// The output exposes an ordinary `SEG_SPINE_WIDTH`-lane `[segment ‖ vk_spine]` claim, so it folds into
 /// [`crate::ivc_turn_chain::aggregate_tree`] like any other per-turn segment leaf. This is what makes
 /// the sovereign authority REAL for a pure light client: the owner-key digest the deployed leg claims
 /// is bound IN the deployed recursion tree the light client folds, to the authority tuple the
@@ -991,7 +1003,7 @@ pub fn prove_claim_binding_node_segmented(
 ///
 /// THE NAMED SEAMS (honest):
 ///   * The deployed sovereign leg must DUAL-EXPOSE its `SOVEREIGN_WITNESS_KEY_COMMIT` teeth (lanes
-///     `[SEG_WIDTH ..)`). Today the teeth are dead-zero (`EffectVmContext::default`); the teeth-fill
+///     `[SEG_SPINE_WIDTH ..)`). Today the teeth are dead-zero (`EffectVmContext::default`); the teeth-fill
 ///     on the rotated producer + the leg's dual-expose of them is the BIG-BANG DESCRIPTOR PIECE (a
 ///     PI-exposure change, owned by the descriptor lane). This node is its consumer.
 ///   * The node binds `key_commit` (the owner digest, leg (b)). Connecting the anchor (leg (a)) +
@@ -1013,7 +1025,9 @@ pub fn prove_sovereign_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend;
     use crate::sovereign_leaf_adapter::SOVEREIGN_KEY_CLAIM_LEN;
     use p3_circuit::CircuitBuilder;
@@ -1047,8 +1061,8 @@ pub fn prove_sovereign_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose sovereign leg's claim instance present");
@@ -1056,19 +1070,21 @@ pub fn prove_sovereign_binding_node_segmented(
             .get(sa_idx)
             .expect("sovereign-authority leaf's exposed key_commit instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + SOVEREIGN_KEY_CLAIM_LEN && sa.len() >= SOVEREIGN_KEY_CLAIM_LEN,
-            "dual-expose claim must carry segment ++ key_commit; authority leaf carries key_commit"
+            ev.len() >= SEG_SPINE_WIDTH + SOVEREIGN_KEY_CLAIM_LEN
+                && sa.len() >= SOVEREIGN_KEY_CLAIM_LEN,
+            "dual-expose claim must carry segment ++ spine ++ key_commit; authority leaf carries \
+             key_commit"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's CLAIMED key_commit (lanes
-        // [SEG_WIDTH .. SEG_WIDTH+KEY_CLAIM_LEN)) must equal the authority leaf's BOUND key_commit,
-        // lane by lane. A sovereign turn whose teeth name an owner digest no authority leaf binds is a
-        // conflict here ⇒ UNSAT ⇒ no root.
+        // [SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+KEY_CLAIM_LEN)) must equal the authority leaf's BOUND
+        // key_commit, lane by lane. A sovereign turn whose teeth name an owner digest no authority
+        // leaf binds is a conflict here ⇒ UNSAT ⇒ no root.
         for k in 0..SOVEREIGN_KEY_CLAIM_LEN {
-            cb.connect(ev[SEG_WIDTH + k], sa[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], sa[k]);
         }
-        // RE-EXPOSE ONLY THE SEGMENT (lanes [0 .. SEG_WIDTH)) as the parent claim.
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<

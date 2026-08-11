@@ -677,7 +677,8 @@ fn canary__the_pre_flip_deployed_pair_accepts_the_forged_root_the_state_node_ref
 ///   * the pre-flip pair: 8-lane leaf  + commitment-only node (8 connects)
 ///   * the deployed pair: 24-lane leaf + state node           (24 connects)
 /// with exposed claim-lane counts and wall-clock per stage. The node's PARENT shape is identical in
-/// both (it re-exposes only the `SEG_WIDTH` segment) — ASSERTED below — so any delta is the leaf's
+/// both (it re-exposes `[segment ‖ vk_spine]`, `SEG_SPINE_WIDTH` lanes) — ASSERTED below — so any
+/// delta is the leaf's
 /// 16 extra exposed lanes + the node's 16 extra connects, NOT a change to what folds onward.
 ///
 /// ⚠ ONE SAMPLE, COLD. The stage timings are a single un-warmed run in the same process, so the
@@ -735,7 +736,7 @@ fn budget__the_state_weld_costs_this_much() {
          node fold   (ms) : {thin_node_ms} -> {wide_node_ms}\n\
          total       (ms) : {} -> {}\n\
          parent claim lanes (what folds onward): {} -> {}  (MUST be equal — the node re-exposes \
-         only the segment)\n",
+         [segment ‖ vk_spine])\n",
         exposed_claim_lanes(&thin),
         exposed_claim_lanes(&wide),
         exposed_claim_lanes(&wide).saturating_sub(exposed_claim_lanes(&thin)),

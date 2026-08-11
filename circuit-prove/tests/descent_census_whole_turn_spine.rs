@@ -30,7 +30,7 @@ use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
 use dregg_circuit_prove::descent_census;
 use dregg_circuit_prove::ivc_turn_chain::{
     CUSTOM_APP_FIELD_OCTET_LEN, CUSTOM_POST_FIELDS_ROOT_LEN, CUSTOM_PROGRAM_VK_PI_LO,
-    DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN, SEG_ANCHOR_WIDTH, SEG_WIDTH, ir2_leaf_wrap_config,
+    DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN, SEG_ANCHOR_WIDTH, SEG_SPINE_WIDTH, ir2_leaf_wrap_config,
     prove_descriptor_leaf_expose_segment_and_claims, prove_descriptor_leaf_rotated_with_segment,
 };
 use dregg_circuit_prove::joint_turn_recursive::{CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO};
@@ -282,7 +282,9 @@ fn exact_census_binds_to_setfield_prefix_and_terminal_custom() {
         .iter()
         .find(|entry| entry.op_type.as_str() == "expose_claim")
         .expect("bound whole turn re-exposes its ordinary chain segment");
-    assert_eq!(exposed.public_values.len(), SEG_WIDTH);
+    // `[segment(SEG_WIDTH) ‖ vk_spine(8)]` — the shape every fold child owes `exposed_board_window`
+    // since the VK spine landed; a bare 25 here is the PRE-SPINE artifact that cannot be folded.
+    assert_eq!(exposed.public_values.len(), SEG_SPINE_WIDTH);
     let lanes = exposed
         .public_values
         .iter()

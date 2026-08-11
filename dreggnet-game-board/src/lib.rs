@@ -642,7 +642,7 @@ impl AutomataflMatch {
 /// ([`leg_c_roundstate_window_n11`](dregg_circuit::effect_vm::custom_state_binding::leg_c_roundstate_window_n11)).
 /// The ONLY cross-leaf rule is `C_i.OUT == C_{i+1}.IN`, which the DEPLOYED `aggregate_tree`
 /// connects lane-by-lane — the merge auto-derives the width from the exposed shape
-/// (`SEG_WIDTH + 2·32 = 89`), so a same-width Leg C chain folds through the existing
+/// (`SEG_SPINE_WIDTH + 2·32 = 97`), so a same-width Leg C chain folds through the existing
 /// [`prove_match`] path with NO M7-specific prover code. The chain accumulates the marks overlay:
 /// `marksIn_0 = ∅` and `marksIn_{i+1}` is the marks `C_i` produced (`marksOut = marksIn ∨ clash`,
 /// read back from the Leg C trace itself, not re-derived). Because `pack` is injective and the

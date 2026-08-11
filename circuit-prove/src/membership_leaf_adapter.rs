@@ -72,7 +72,7 @@
 //!
 //! [`prove_membership_binding_node_segmented`] consumes a DUAL-EXPOSE leg leaf whose
 //! `expose_claim` carries the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` AND the claimed
-//! `(sender_leaf, authorized_root)` in lanes `[SEG_WIDTH .. SEG_WIDTH+MEMBERSHIP_CLAIM_LEN)`.
+//! `(sender_leaf, authorized_root)` in lanes `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+MEMBERSHIP_CLAIM_LEN)`.
 //! Today the deployed effect-vm leg publishes NEITHER — its "membership" column is the
 //! unrelated `cap_root`, and no row publishes `(sender_leaf, authorized_root)` as PIs at
 //! fixed slots. **Adding that PI exposure to the deployed `SenderAuthorized` leg
@@ -436,7 +436,7 @@ pub fn prove_membership_binding_node(
 /// [`crate::joint_turn_recursive::prove_sovereign_binding_node_segmented`]).** Aggregate
 /// a `SenderAuthorized` turn's DUAL-EXPOSE effect-vm leg leaf (whose single
 /// `expose_claim` carries the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` and the CLAIMED
-/// `(sender_leaf, authorized_root)` in lanes `[SEG_WIDTH .. SEG_WIDTH+MEMBERSHIP_CLAIM_LEN)`)
+/// `(sender_leaf, authorized_root)` in lanes `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+MEMBERSHIP_CLAIM_LEN)`)
 /// WITH the re-proved membership leaf ([`prove_membership_leaf_with_claim`], whose
 /// `expose_claim` is the in-circuit-bound tuple in lanes `[0 .. MEMBERSHIP_CLAIM_LEN)`),
 /// and:
@@ -445,16 +445,16 @@ pub fn prove_membership_binding_node(
 ///      (the binding tooth — a forged `SenderAuthorized` turn whose teeth name a
 ///      `(sender_leaf, authorized_root)` no membership leaf binds is a conflict ⇒ UNSAT
 ///      ⇒ no root), and
-///   2. RE-EXPOSES the leg's SEGMENT lanes `[0 .. SEG_WIDTH)` as the parent claim.
+///   2. RE-EXPOSES `[the leg's SEGMENT lanes [0 .. SEG_WIDTH) ‖ a folded vk_spine]` as the parent claim.
 ///
-/// The output exposes an ordinary `SEG_WIDTH`-lane chain segment, so it folds into
+/// The output exposes an ordinary `SEG_SPINE_WIDTH`-lane `[segment ‖ vk_spine]` claim, so it folds into
 /// [`crate::ivc_turn_chain::aggregate_tree`] like any other per-turn segment leaf — making
 /// the set-membership REAL for a pure light client while preserving the chain
 /// endpoints/digest.
 ///
 /// THE NAMED SEAMS (honest):
 ///   * The deployed `SenderAuthorized` leg must DUAL-EXPOSE its `(sender_leaf,
-///     authorized_root)` teeth (lanes `[SEG_WIDTH ..)`). Today the effect-vm "membership"
+///     authorized_root)` teeth (lanes `[SEG_SPINE_WIDTH ..)`). Today the effect-vm "membership"
 ///     column is the unrelated `cap_root`; no row publishes these as PIs. The leg's
 ///     dual-expose of them is the BIG-BANG DESCRIPTOR PIECE (a PI-exposure change, owned
 ///     by the descriptor lane). This node is its consumer.
@@ -476,7 +476,9 @@ pub fn prove_membership_binding_node_segmented(
     pins: &FoldVkPins,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
+    use crate::ivc_turn_chain::{
+        SEG_SPINE_WIDTH, binding_node_segment_and_spine, expose_claim_instance_index,
+    };
     use p3_circuit::CircuitBuilder;
 
     let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
@@ -503,8 +505,8 @@ pub fn prove_membership_binding_node_segmented(
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
                        right_apt: &[Vec<Target>],
-                       _left_vk_cap: &[Target],
-                       _right_vk_cap: &[Target]| {
+                       left_vk_cap: &[Target],
+                       right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose membership leg's claim instance present");
@@ -512,19 +514,19 @@ pub fn prove_membership_binding_node_segmented(
             .get(ms_idx)
             .expect("membership leaf's exposed tuple instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + MEMBERSHIP_CLAIM_LEN && ms.len() >= MEMBERSHIP_CLAIM_LEN,
+            ev.len() >= SEG_SPINE_WIDTH + MEMBERSHIP_CLAIM_LEN && ms.len() >= MEMBERSHIP_CLAIM_LEN,
             "dual-expose claim must carry segment ++ tuple; membership leaf carries the tuple"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's CLAIMED tuple (lanes
-        // [SEG_WIDTH .. SEG_WIDTH+MEMBERSHIP_CLAIM_LEN)) must equal the membership leaf's
+        // [SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+MEMBERSHIP_CLAIM_LEN)) must equal the membership leaf's
         // BOUND tuple, lane by lane. A turn whose teeth name a (sender_leaf, authorized_root)
         // no membership leaf binds is a conflict here ⇒ UNSAT ⇒ no root.
         for k in 0..MEMBERSHIP_CLAIM_LEN {
-            cb.connect(ev[SEG_WIDTH + k], ms[k]);
+            cb.connect(ev[SEG_SPINE_WIDTH + k], ms[k]);
         }
-        // RE-EXPOSE ONLY THE SEGMENT (lanes [0 .. SEG_WIDTH)) as the parent claim.
-        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
-        cb.expose_as_public_output(&seg);
+        // RE-EXPOSE `[segment ‖ vk_spine]` as the parent claim.
+        let parent = binding_node_segment_and_spine(cb, ev, left_vk_cap, right_vk_cap);
+        cb.expose_as_public_output(&parent);
     };
 
     build_and_prove_aggregation_layer_with_expose::<

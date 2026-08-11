@@ -331,6 +331,18 @@
 //!      ([`prove_descriptor_leaf_rotated_with_segment`]) exposes
 //!      `vk_spine = seg_poseidon_commit([VK_SPINE_LEAF_TAG])`; a leaf's own identity IS its cap,
 //!      which its parent absorbs, so the leaf sentinel need not itself be identity-bound.
+//!
+//!      ⚑ **THAT LIST WAS SHORT BY THE WHOLE CARRIER FAMILY, and the deployed custom turn broke on
+//!      the omission.** Every segment carrier owes the fold a spine, not just the three merge
+//!      nodes: the DUAL-EXPOSE leaf minters ([`prove_descriptor_leaf_dual_expose_at`],
+//!      [`prove_descriptor_leaf_expose_segment_and_claims`]) expose the leaf seed at
+//!      [`SEG_VK_SPINE_FIRST`] with their claim slices pushed out to [`SEG_SPINE_WIDTH`], and the
+//!      ~14 `*_segmented` carrier BINDING NODES re-expose `[segment ‖ vk_spine]` via
+//!      [`binding_node_segment_and_spine`]. Those nodes are asymmetric — the leg child is a
+//!      segment carrier, the sub-proof child is a bare LEAF — so the right operand of their fold is
+//!      the leaf base case, which is the design answer and not a fork ([`combine_vk_spine_parts`]).
+//!      Until they moved, every carrier turn minted a 25-lane parent and
+//!      [`exposed_board_window`] refused it as a pre-spine artifact.
 //!   3. **the anchor.** [`RecursionVk`] is joined by an 8-felt `VkSpine`, minted by the SAME honest
 //!      setup fold (`WholeChainProof::root_vk_fingerprint` gains a `root_vk_spine` sibling), and
 //!      verify tooth (1) compares BOTH, fail-closed. ⚑ This costs the client nothing
@@ -606,6 +618,16 @@ pub(crate) fn leaf_vk_spine(
     seg_poseidon_commit(cb, &[tag])
 }
 
+/// Host-side dual of [`leaf_vk_spine`] — the eight lanes an honest leaf's spine block holds.
+///
+/// A host that hand-builds a `[segment ‖ vk_spine ‖ claims]` row (the stand-in leg leaves the
+/// carrier adapters' teeth mint through [`prove_descriptor_leaf_with_pi_slice_expose`]) must fill
+/// the spine block with THIS value, or its row is a shape mirror carrying a lie in the lanes a
+/// parent folds.
+pub fn leaf_vk_spine_host() -> [BabyBear; VK_SPINE_WIDTH] {
+    seg_poseidon_commit_host(&[BabyBear::new(VK_SPINE_LEAF_TAG)])
+}
+
 /// **THE SPINE FOLD — the one place a child's circuit identity enters the parent's claim.**
 ///
 /// `vk_spine = commit(L.cap8 ‖ L.vk_spine8 ‖ R.cap8 ‖ R.vk_spine8)`, over the SAME isolated
@@ -629,6 +651,39 @@ pub(crate) fn combine_vk_spine(
     r_cap: &[p3_recursion::Target],
     spine_first: usize,
 ) -> [p3_recursion::Target; VK_SPINE_WIDTH] {
+    let need = spine_first + VK_SPINE_WIDTH;
+    assert!(
+        l.len() >= need && r.len() >= need,
+        "both children must expose a segment AND a VK spine ({need} lanes); got {} and {} — a \
+         pre-spine artifact cannot be folded",
+        l.len(),
+        r.len()
+    );
+    combine_vk_spine_parts(
+        cb,
+        l_cap,
+        &l[spine_first..spine_first + VK_SPINE_WIDTH],
+        r_cap,
+        &r[spine_first..spine_first + VK_SPINE_WIDTH],
+    )
+}
+
+/// **THE SPINE FOLD, over EXPLICIT spine blocks** — the core [`combine_vk_spine`] reads its two
+/// blocks out of segment-carrying claims at a fixed offset.
+///
+/// Split out because a SEGMENT-PRESERVING BINDING NODE has an asymmetric pair: its LEFT child is a
+/// dual-expose leg leaf (a segment carrier, so its spine sits at [`SEG_VK_SPINE_FIRST`]) while its
+/// RIGHT child is a bare sub-proof LEAF whose `expose_claim` is the claim alone — a commitment, a
+/// `child_vk`, a `key_commit` — with no segment and therefore no spine lane to read. That child IS
+/// a leaf, so its spine is the leaf base case [`leaf_vk_spine`]: the design answer, not a fork of
+/// the fold. Its own identity still enters the parent, through its cap.
+pub(crate) fn combine_vk_spine_parts(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    l_cap: &[p3_recursion::Target],
+    l_spine: &[p3_recursion::Target],
+    r_cap: &[p3_recursion::Target],
+    r_spine: &[p3_recursion::Target],
+) -> [p3_recursion::Target; VK_SPINE_WIDTH] {
     assert_eq!(
         l_cap.len(),
         VK_CAP_TARGET_LEN,
@@ -643,20 +698,55 @@ pub(crate) fn combine_vk_spine(
         "right child exposes {} VK-cap target(s), expected {VK_CAP_TARGET_LEN}",
         r_cap.len()
     );
-    let need = spine_first + VK_SPINE_WIDTH;
-    assert!(
-        l.len() >= need && r.len() >= need,
-        "both children must expose a segment AND a VK spine ({need} lanes); got {} and {} — a \
-         pre-spine artifact cannot be folded",
-        l.len(),
-        r.len()
-    );
+    assert_eq!(l_spine.len(), VK_SPINE_WIDTH, "left spine block width");
+    assert_eq!(r_spine.len(), VK_SPINE_WIDTH, "right spine block width");
     let mut inputs = Vec::with_capacity(2 * (VK_CAP_TARGET_LEN + VK_SPINE_WIDTH));
     inputs.extend_from_slice(l_cap);
-    inputs.extend_from_slice(&l[spine_first..spine_first + VK_SPINE_WIDTH]);
+    inputs.extend_from_slice(l_spine);
     inputs.extend_from_slice(r_cap);
-    inputs.extend_from_slice(&r[spine_first..spine_first + VK_SPINE_WIDTH]);
+    inputs.extend_from_slice(r_spine);
     seg_poseidon_commit(cb, &inputs)
+}
+
+/// **THE PARENT CLAIM OF A SEGMENT-PRESERVING BINDING NODE** — `[segment(SEG_WIDTH) ‖
+/// vk_spine(VK_SPINE_WIDTH)]`, i.e. exactly [`SEG_SPINE_WIDTH`] lanes, the shape
+/// [`exposed_board_window`] reads as a plain (window-0) segment carrier.
+///
+/// Single-sourced because ~14 carrier binding nodes (custom / state / app-root / sovereign /
+/// factory / hatchery / membership / blinded-membership / presentation / caveat-admission / deco /
+/// note-spend ×2 / whole-turn cohort) all owe the fold the same two things and must not drift:
+///
+///   1. the leg's segment lanes `[0 .. SEG_WIDTH)`, carried through verbatim, and
+///   2. a REAL spine over BOTH children — the leg's own spine block folded with the sub-proof
+///      leaf's constant leaf seed, under both children's caps.
+///
+/// Before this existed each node re-exposed the bare 25-lane segment, and [`exposed_board_window`]
+/// refused every one of them as a pre-spine artifact — which is what the deployed custom turn hit.
+pub(crate) fn binding_node_segment_and_spine(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    leg_claim: &[p3_recursion::Target],
+    leg_vk_cap: &[p3_recursion::Target],
+    subproof_vk_cap: &[p3_recursion::Target],
+) -> Vec<p3_recursion::Target> {
+    assert!(
+        leg_claim.len() >= SEG_SPINE_WIDTH,
+        "the leg leaf must expose a segment AND a VK spine ({SEG_SPINE_WIDTH} lanes); got {} — a \
+         pre-spine dual-expose leaf cannot be bound",
+        leg_claim.len()
+    );
+    let subproof_spine = leaf_vk_spine(cb);
+    let vk_spine = combine_vk_spine_parts(
+        cb,
+        leg_vk_cap,
+        &leg_claim[SEG_VK_SPINE_FIRST..SEG_VK_SPINE_FIRST + VK_SPINE_WIDTH],
+        subproof_vk_cap,
+        &subproof_spine,
+    );
+    let mut parent = Vec::with_capacity(SEG_SPINE_WIDTH);
+    parent.extend_from_slice(&leg_claim[..SEG_WIDTH]);
+    parent.extend_from_slice(&vk_spine);
+    debug_assert_eq!(parent.len(), SEG_SPINE_WIDTH);
+    parent
 }
 
 fn to_p3(v: BabyBear) -> P3BabyBear {
@@ -1975,15 +2065,18 @@ pub fn prove_descriptor_leaf_rotated_with_segment(
 /// BOTH:
 ///
 ///   * the constant-size ordered chain SEGMENT `[first_old8, last_new8, count, acc]` (lanes
-///     `[0 .. SEG_WIDTH)`), bound in-circuit to the descriptor's real rotated roots, and
+///     `[0 .. SEG_WIDTH)`), bound in-circuit to the descriptor's real rotated roots,
+///   * the LEAF VK SPINE seed (lanes `[SEG_VK_SPINE_FIRST .. SEG_SPINE_WIDTH)`), byte-identical to
+///     the one [`prove_descriptor_leaf_rotated_with_segment`] exposes, and
 ///   * the leg's CLAIMED `custom_proof_commitment` at IR2 PI
 ///     `[CUSTOM_COMMIT_PI_LO .. CUSTOM_COMMIT_PI_LO+CUSTOM_COMMIT_LEN)` (lanes
-///     `[SEG_WIDTH .. SEG_WIDTH+CUSTOM_COMMIT_LEN)`), read from the same FRI-bound
+///     `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+CUSTOM_COMMIT_LEN)`), read from the same FRI-bound
 ///     `air_public_targets` the segment endpoints come from.
 ///
-/// The commitment lanes are APPENDED AFTER the segment, so a downstream segment consumer that
-/// reads only `[0 .. SEG_WIDTH)` (the host segment tooth, the plain `aggregate_tree` combine)
-/// sees the identical segment a [`prove_descriptor_leaf_rotated_with_segment`] leaf would expose.
+/// The commitment lanes are APPENDED AFTER the segment AND the spine, so a downstream segment
+/// consumer that reads only `[0 .. SEG_SPINE_WIDTH)` (the host segment tooth, the plain
+/// `aggregate_tree` combine) sees the identical claim a
+/// [`prove_descriptor_leaf_rotated_with_segment`] leaf would expose.
 /// The appended commitment is consumed by exactly one parent —
 /// [`crate::joint_turn_recursive::prove_custom_binding_node_segmented`] — which `connect`s it to
 /// the custom sub-proof leaf's genuine commitment and RE-EXPOSES only the segment, so the binding
@@ -2018,9 +2111,11 @@ pub fn prove_descriptor_leaf_dual_expose(
 /// custom commitment lanes. It exposes, through ONE `expose_claim` table, BOTH:
 ///
 ///   * the constant-size ordered chain SEGMENT `[first_old8, last_new8, count, acc]` (lanes
-///     `[0 .. SEG_WIDTH)`), bound in-circuit to the descriptor's real rotated roots, and
+///     `[0 .. SEG_WIDTH)`), bound in-circuit to the descriptor's real rotated roots,
+///   * the LEAF VK SPINE seed (lanes `[SEG_VK_SPINE_FIRST .. SEG_SPINE_WIDTH)`), and
 ///   * the leg's CLAIMED teeth at IR2 PI `[claim_pi_lo .. claim_pi_lo+claim_len)` (lanes
-///     `[SEG_WIDTH .. SEG_WIDTH+claim_len)`), read from the same FRI-bound `air_public_targets`.
+///     `[SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+claim_len)`), read from the same FRI-bound
+///     `air_public_targets`.
 ///
 /// The custom carrier passes `(CUSTOM_COMMIT_PI_LO, CUSTOM_COMMIT_LEN)`; the FACTORY carrier passes
 /// its `child_vk[8]` tail-PI offset; the HATCHERY carrier passes its `contract_hash[8]` tail-PI
@@ -2115,18 +2210,25 @@ pub fn prove_descriptor_leaf_dual_expose_at(
         acc_inputs.extend_from_slice(&first_old8);
         acc_inputs.extend_from_slice(&last_new8);
         let acc = seg_poseidon_commit(cb, &acc_inputs);
-        let mut claim = Vec::with_capacity(SEG_WIDTH + claim_len);
+        let mut claim = Vec::with_capacity(SEG_SPINE_WIDTH + claim_len);
         claim.extend_from_slice(&first_old8);
         claim.extend_from_slice(&last_new8);
         claim.push(count);
         claim.extend_from_slice(&acc);
         debug_assert_eq!(claim.len(), SEG_WIDTH);
-        // -- The CLAIMED teeth (lanes [SEG_WIDTH .. SEG_WIDTH+claim_len)), read from the leaf's
-        // own FRI-bound descriptor PIs (not free scalars).
+        // -- THE SPINE BASE CASE (lanes [SEG_VK_SPINE_FIRST .. +VK_SPINE_WIDTH)). Identical to the
+        // plain segment leaf's: this IS a leaf, so its spine is the constant seed and its own
+        // identity reaches the root through the cap its parent absorbs. Without it the binding
+        // node above has no spine block to fold and every `*_segmented` parent re-exposes a
+        // 25-lane pre-spine claim that `exposed_board_window` refuses.
+        claim.extend_from_slice(&leaf_vk_spine(cb));
+        debug_assert_eq!(claim.len(), SEG_SPINE_WIDTH);
+        // -- The CLAIMED teeth (lanes [SEG_SPINE_WIDTH .. SEG_SPINE_WIDTH+claim_len)), read from
+        // the leaf's own FRI-bound descriptor PIs (not free scalars).
         for k in 0..claim_len {
             claim.push(main[claim_pi_lo + k]);
         }
-        debug_assert_eq!(claim.len(), SEG_WIDTH + claim_len);
+        debug_assert_eq!(claim.len(), SEG_SPINE_WIDTH + claim_len);
         cb.expose_as_public_output(&claim);
     };
 
@@ -2138,10 +2240,11 @@ pub fn prove_descriptor_leaf_dual_expose_at(
 /// append MORE THAN ONE claim slice after the segment. Exposes, through ONE `expose_claim` table:
 ///
 ///   * the constant-size ordered chain SEGMENT `[first_old8, last_new8, count, acc]` (lanes
-///     `[0 .. SEG_WIDTH)`), bound in-circuit to the descriptor's real rotated roots, and
+///     `[0 .. SEG_WIDTH)`), bound in-circuit to the descriptor's real rotated roots,
+///   * the LEAF VK SPINE seed (lanes `[SEG_VK_SPINE_FIRST .. SEG_SPINE_WIDTH)`), and
 ///   * each claim slice `claims[i] = (lo_i, len_i)` read from the leaf's FRI-bound descriptor PIs,
-///     concatenated in order after the segment: slice `i` at lanes
-///     `[SEG_WIDTH + Σ_{k<i} len_k .. + len_i)`.
+///     concatenated in order after the segment AND the spine: slice `i` at lanes
+///     `[SEG_SPINE_WIDTH + Σ_{k<i} len_k .. + len_i)`.
 ///
 /// The keystone app-root leg passes `[(CUSTOM_COMMIT_PI_LO, CUSTOM_COMMIT_LEN), (field_pi_lo,
 /// field_len)]` — the claimed `custom_proof_commitment` AND the leg's committed value for the
@@ -2226,19 +2329,23 @@ pub fn prove_descriptor_leaf_expose_segment_and_claims(
         acc_inputs.extend_from_slice(&first_old8);
         acc_inputs.extend_from_slice(&last_new8);
         let acc = seg_poseidon_commit(cb, &acc_inputs);
-        let mut claim = Vec::with_capacity(SEG_WIDTH + total_claim_len);
+        let mut claim = Vec::with_capacity(SEG_SPINE_WIDTH + total_claim_len);
         claim.extend_from_slice(&first_old8);
         claim.extend_from_slice(&last_new8);
         claim.push(count);
         claim.extend_from_slice(&acc);
         debug_assert_eq!(claim.len(), SEG_WIDTH);
+        // -- THE SPINE BASE CASE — see `prove_descriptor_leaf_dual_expose_at`; the claim slices sit
+        // AFTER it, so every consumer reads them at `SEG_SPINE_WIDTH + offset`.
+        claim.extend_from_slice(&leaf_vk_spine(cb));
+        debug_assert_eq!(claim.len(), SEG_SPINE_WIDTH);
         // -- Each CLAIM slice (in order), read from the leaf's own FRI-bound descriptor PIs.
         for &(lo, len) in &claims {
             for k in 0..len {
                 claim.push(main[lo + k]);
             }
         }
-        debug_assert_eq!(claim.len(), SEG_WIDTH + total_claim_len);
+        debug_assert_eq!(claim.len(), SEG_SPINE_WIDTH + total_claim_len);
         cb.expose_as_public_output(&claim);
     };
 
@@ -2298,12 +2405,12 @@ pub struct WholeChainProof {
     pub num_turns: usize,
     /// **THE BOARD WINDOW** — `[first.IN ‖ last.OUT]`, present iff every turn declared a state
     /// window (the two-leg automatafl fold). `None` for every other chain, and then the root
-    /// exposes exactly `SEG_WIDTH` lanes as it always did.
+    /// exposes exactly `SEG_SPINE_WIDTH` lanes as it always did.
     ///
     /// This is a CARRIED CLAIM, checked for exact equality against the root's exposure by
     /// [`verify_turn_chain_recursive_from_parts_with_board_window`] — in BOTH directions: a
-    /// 47-lane root with no carried window is refused, and a carried window against a 25-lane
-    /// root is refused.
+    /// 55-lane root (`SEG_SPINE_WIDTH + 2·11`) with no carried window is refused, and a carried
+    /// window against a 33-lane root is refused.
     pub board_window: Option<BoardWindow>,
 }
 
@@ -2402,8 +2509,8 @@ pub struct WholeChainProofBytes {
     pub num_turns: u32,
     /// **THE BOARD WINDOW** (`v5`) — `[first.IN ‖ last.OUT]` as canonical `u32` lanes, `None` for
     /// every chain that declares no state window. The verifier appends it to the expected root
-    /// exposure, so a board-window root shipped WITHOUT it is refused (25-lane `expected` vs a
-    /// 47-lane exposure) and a window carried against a plain root is refused too.
+    /// exposure, so a board-window root shipped WITHOUT it is refused (a 25-lane `expected` vs a
+    /// 55-lane exposure at W = 11) and a window carried against a plain root is refused too.
     pub board_window: Option<(Vec<u32>, Vec<u32>)>,
 }
 
@@ -6220,10 +6327,10 @@ pub fn verify_turn_chain_recursive_from_parts(
 /// The segment tooth compares the root's exposure for EXACT equality against the carried claim, so
 /// the shape is fail-closed in BOTH directions by construction:
 ///
-///   * a board-window root (47 lanes at W = 11) presented with `board_window: None` builds a
+///   * a board-window root (55 lanes at W = 11) presented with `board_window: None` builds a
 ///     25-lane `expected` and is REFUSED — which is precisely why the deployed verifier could not
 ///     silently ship lanes nobody checks;
-///   * a carried window against a plain 25-lane root is REFUSED too (the exposure is short).
+///   * a carried window against a plain 33-lane root is REFUSED too (the exposure is short).
 ///
 /// When the window IS carried and matches, the light client has, in addition to the four chain
 /// claims: the state the chain STARTED from and the state it REACHED, as bound lanes of the same
@@ -6363,7 +6470,7 @@ pub fn verify_turn_chain_recursive_from_parts_with_board_window(
     expected.push(BabyBear::new(num_turns as u32));
     expected.extend_from_slice(&chain_digest);
     // (5) THE BOARD-WINDOW TOOTH. Appended to the SAME exact-equality comparison, so both
-    // shape mismatches (47-lane root / no carried window, and carried window / 25-lane root)
+    // shape mismatches (55-lane root / no carried window, and carried window / 33-lane root)
     // fall out of it fail-closed rather than needing their own conditional.
     if let Some(w) = board_window {
         // A UNIFORM two-leg / conflict root carries equal-width halves; a MIXED clean-handoff root
