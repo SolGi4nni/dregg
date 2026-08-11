@@ -2552,7 +2552,7 @@ drwxr-xr-x@ 132 ember  staff    4224 Jun 25 14:45 ..
 
 ## REFERENCE (operational)
 - [AGPL Relicense (2026-06-15)](project-agpl-relicense.md) — repo is AGPL-3.0-or-later via a STEALTH full-history rewrite (LICENSE woven at root, NO announce commit) + build-artifact strip (4.0G→276M; pdfs kept); ALL hashes changed; vendored pathfinder + lockfiles deliberately untouched. Don't panic at the reflog.
-- [Canonical Domain: fg-goose](project-domain-fg-goose.md) — **dregg.fg-goose.online** is the real domain (dregg.dev NEVER existed); genuine refs fixed in `5e14d8add`, ~125 macaroon-location test fixtures deferred (signed → hash-risky to sweep).
+- [Canonical Domain: fg-goose](project-domain-fg-goose.md) — **dregg.fg-goose.online** was the devnet-era domain (dregg.dev NEVER existed; product surface is now dregg.net); genuine refs fixed in `5e14d8add`, and the ~125 macaroon-location fixtures were SWEPT in `baabf8575` (the feared hash-risk was disproven: the location never enters the HMAC tail).
 - **DEVNET: GONE (2026-06-22, ember).** The servers are down/decommissioned — there is NO live devnet to redeploy and it must NOT be mentioned in outward docs (README scrubbed). The old box (`34.224.208.52`) had already gone dark 2026-06-19. The redeploy directive is MOOT; don't chase a dead server.
 - [Persvati Remote Build](reference-persvati-remote-build.md) — `ssh persvati` (24-core) / `git push persvati main`; `scripts/pbuild <lane> <cmd>` for workspace-scale cargo; Lean stays LOCAL (warm mathlib).
 - [Kagi Paper Search](reference-kagi-paper-search.md) — `KAGI_API_KEY` in `~/dev/allgame/.env`; `$ANNAS_SECRET_KEY` for papers.
