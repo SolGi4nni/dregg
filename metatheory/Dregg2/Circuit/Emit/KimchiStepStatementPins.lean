@@ -20,6 +20,11 @@ open Dregg2.Circuit.Emit.WitnessBuilder (envIndex envLookupAt)
 open Dregg2.Circuit.Emit.PastaField (pN qN)
 open Dregg2.Circuit.Emit.PicklesStepStatement
   (PP_WORDS STMT_WORDS STMT_PREVS PP_FIELDS PP_BP_LOG2 SLOT_MSG_NEXT_STEP
+   -- ⚑ the three counts BEFORE `bulletproof_challenges` in a `per_proof` block, and the challenge
+   -- width — §24's padding-block pin computes the first `.bpChallenge` slot from them rather than
+   -- writing the 16 it works out to. This `open` is an ALLOW-LIST, so a name used but not listed is
+   -- `Unknown identifier` and not a silent fallback.
+   PP_DIGESTS PP_CHALLENGES PP_SCALAR_CHALLENGES W_CHAL
    Slot slotOf slotBits realBlocks)
 
 set_option autoImplicit false
@@ -338,32 +343,36 @@ The legs, in order, and each one is a way the repair could have been done wrongl
 * ⚑⚑ **THE REFUSAL, and it is the reason the discrimination is on `slotOf`:** no OTHER 128-bit slot
   of either block carries one of these fifteen. `W_CHAL` also covers `beta`/`gamma` and
   `alpha`/`zeta`/`xi`, five slots per block that no commitment is paired with; a width-keyed rule
-  would have filled them with `DUMMY_WRAP_PRECHALS` too and this conjunct would be false. -/
+  would have filled them with `DUMMY_WRAP_PRECHALS` too and this conjunct would be false.
+
+⚠ ⚑ **`pub` AND `mina` ARE BOUND ONCE, OUTSIDE THE `.all`s, AND THAT IS NOT COSMETIC.** Written
+inline, `stepPublic tStep` sits inside each lambda and the compiled evaluator re-derives the whole
+10 753-row circuit PER ITERATION — 82 evaluations across the legs below, measured as an elaboration
+that had not finished in over two hours. `native_decide` shares a `let`; it does not float a closed
+term out of a loop for you. This is the same trap the guard-discipline note records, in a theorem
+rather than a `#guard`. -/
 theorem the_padding_blocks_fifteen_are_minas_own_dummy_wrap_prechallenges :
-    -- the emitted words, in order, ARE Mina's own dummy prechallenges
-    (((List.range PP_BP_LOG2).all (fun k =>
-        (stepPublic tStep).getD (2 * PP_FIELDS + PP_DIGESTS + PP_CHALLENGES
-                                   + PP_SCALAR_CHALLENGES + k) 0
-          == (Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.getD k 0 : Int)))
+    (let pub := stepPublic tStep
+     let mina := Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS
+     -- the emitted words, in order, ARE Mina's own dummy prechallenges
+     ((List.range PP_BP_LOG2).all (fun k =>
+        pub.getD (2 * PP_FIELDS + PP_DIGESTS + PP_CHALLENGES + PP_SCALAR_CHALLENGES + k) 0
+          == (mina.getD k 0 : Int)))
      -- …the `getD` fallback in `stmtDummyVal` is unreachable: the list is exactly as long as the
      -- vector it fills, so no slot publishes a silent `0`
-     && Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.length == PP_BP_LOG2
-     && !Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.contains 0
+     && mina.length == PP_BP_LOG2
+     && !mina.contains 0
      -- ⚑ …and the window the MARSHALLER reads is exactly those slots: entry `32·p + 16 + j`
      && ((List.range PP_BP_LOG2).all (fun j => slotOf (PP_WORDS * 0 + 16 + j) == .bpChallenge 0 j))
      && ((List.range PP_BP_LOG2).all (fun j => slotOf (PP_WORDS * 1 + 16 + j) == .bpChallenge 1 j))
      -- …every one clears the floor a PUBLISHED accumulator slot's prechallenges must clear
      && ((List.range PP_BP_LOG2).all (fun k =>
-          decide (2 ^ 99 ≤ Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.getD k 0)
-            && decide (Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.getD k 0
-                         < 2 ^ W_CHAL)))
+          decide (2 ^ 99 ≤ mina.getD k 0) && decide (mina.getD k 0 < 2 ^ W_CHAL)))
      -- ⚑⚑ THE REFUSAL: no OTHER 128-bit slot of either block carries one of the fifteen. This is
      -- the conjunct a `slotBits`-keyed repair makes false.
      && ((List.range STMT_WORDS).all (fun i =>
           match slotOf i with
-          | .challenge _ _ | .scalarChallenge _ _ =>
-              !Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.contains
-                ((stepPublic tStep).getD i 0).toNat
+          | .challenge _ _ | .scalarChallenge _ _ => !mina.contains (pub.getD i 0).toNat
           | _ => true))) = true := by
   native_decide
 
