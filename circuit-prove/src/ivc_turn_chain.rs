@@ -5166,7 +5166,17 @@ pub(crate) type RecursionCommit =
 /// (`count = L.count + R.count`), the ordered multi-felt digest fold (`acc = commit(L.acc ++ R.acc)`,
 /// L absorbed before R ⇒ order-sensitive), then expose the parent `[first_old, last_new, count, acc]`.
 /// Because both paths call this ONE function, the parallel root is byte-identical to the serial root.
-pub(crate) fn segment_combine_expose(
+///
+/// ⚑⚑ **`pub` SINCE 2026-08-11, AND THE REASON IS A MEASURED TEST DEFECT.** While this was
+/// `pub(crate)`, `circuit-prove/tests/ivc_turn_chain_rotated.rs` — an integration test, which links
+/// this crate as an external rlib and so cannot see `pub(crate)` — carried THREE hand-rolled
+/// mirrors of the body below. They could not track it, and they did not: every one still built a
+/// `SEG_WIDTH`-lane parent after the VK spine widened the exposure to `SEG_SPINE_WIDTH`, so
+/// `mixed_root_forgery_executes_A_claims_B` was passing on the verifier's *pre-spine artifact*
+/// SHAPE GUARD rather than on the segment tooth its name and its whole docblock claim. A mirror of
+/// a `pub(crate)` function is not a copy, it is a fork with a deadline; the visibility was the
+/// cheaper thing to change.
+pub fn segment_combine_expose(
     cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
     left_apt: &[Vec<p3_recursion::Target>],
     right_apt: &[Vec<p3_recursion::Target>],

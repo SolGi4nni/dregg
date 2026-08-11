@@ -41,9 +41,32 @@
 //! to nothing — provided the descriptor was re-emitted. Gating the *literal* against the *bytes* is
 //! `descriptor_pin_literals_are_not_transcriptions.rs`.
 //!
+//! ⚠ **AND UNTIL 2026-08-11 THAT LAST SENTENCE NAMED A FILE THAT DID NOT EXIST.** The citation was
+//! its only occurrence anywhere in the tree, so the literal side was gated by nothing while reading
+//! as gated — and the words *"provided the descriptor was re-emitted"* are exactly the hole it was
+//! pointing away from. The file exists now. What it asks, so the division of labour is readable from
+//! either end:
+//!
+//! ```text
+//!   descriptor_pin_literals_… : Lean `vkPin`/`descLanes` literal  ==  some emitted pin  (+ intent:
+//!                               a seam end's literal is served under the name Lean pairs it with)
+//!   THIS FILE                 : emitted pin  ∈  fingerprints(served tree)
+//!   nobody, and it is blocked : fingerprint(a Lean descriptor TERM)  ==  its own literal
+//! ```
+//!
+//! The third line is why the pin constants are still constants, and it is a real blocker rather than
+//! a deferral: `Dregg2.Crypto.Blake3Compute.blake3Derive` and `VkPinCompute.vkPinLanes` are pure
+//! Lean and differentially checked against the deployed Rust at BOTH hops over every served
+//! descriptor, but they take canonical BYTES, and the canonical encoder
+//! (`descriptor_ir2_canonical.rs::canonical_effect_vm_descriptor2_bytes`, 534 lines of mutually
+//! recursive writers) exists only in Rust. Authoring it in Lean is what closes line three.
+//!
 //! ⚠ **What this gate does NOT say.** It says each pin names *some* descriptor here. It does not say
 //! it names the *intended* one — a pin that resolves to the wrong descriptor is a semantic error
 //! this cannot see, and the per-pin gates above are what pin intent. Those remain load-bearing.
+//! (`descriptor_pin_literals_…`'s second tooth recovers intent on the SEAM surface, where the
+//! artifact carries the name and the lanes in one object; an AIR's own `vk_pin` carries no name, so
+//! for those the sentence above still stands.)
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

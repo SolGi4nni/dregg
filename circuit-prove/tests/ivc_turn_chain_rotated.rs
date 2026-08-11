@@ -1054,8 +1054,13 @@ fn expose_claim_idx(
         .map(|pos| num_primitive + pos)
 }
 
-// The in-circuit segment digest is the lib's `pub seg_poseidon_commit` (a multi-felt
-// Poseidon2 sponge); the test calls it DIRECTLY so its combine matches the lib EXACTLY.
+// ⚑⚑ **THE COMBINE IS THE LIB'S, CALLED — and the comment that stood here is worth keeping as an
+// exhibit.** It read: *"the test calls [`seg_poseidon_commit`] DIRECTLY so its combine matches the
+// lib EXACTLY."* Calling one PRIMITIVE of a combine and re-writing the rest around it is not
+// matching the lib; it is a fork whose only tie to the original is a shared hash. It drifted
+// exactly as a fork does — the lib grew a VK spine, the three copies here did not, and every root
+// this file built was a `SEG_WIDTH`-lane pre-spine artifact the verifier refused on SHAPE. The
+// mirrors are gone; `segment_combine_expose` is `pub` and is what runs.
 
 /// **CODEX RE-REVIEW #2 — THE MIXED-ROOT FORGERY, REJECTED (the close).**
 ///
@@ -1074,11 +1079,11 @@ fn mixed_root_forgery_executes_A_claims_B() {
         MemBoundaryWitness, prove_vm_descriptor2, verify_vm_descriptor2,
     };
     use dregg_circuit::turn_chain_witness::TURN_CHAIN_BINDING_NAME;
+    // ⚑ The eight `SEG_*` / `seg_poseidon_commit` imports that stood here are GONE with the mirror
+    // they fed. A test that names the fold's field offsets is a test that can be wrong about them.
     use dregg_circuit_prove::ivc_turn_chain::{
-        SEG_ANCHOR_WIDTH, SEG_COUNT, SEG_DIGEST_FIRST, SEG_DIGEST_WIDTH, SEG_FIRST_OLD,
-        SEG_LAST_NEW, SEG_WIDTH, TurnChainBindingProof, ir2_leaf_wrap_config,
-        prove_descriptor_leaf_rotated_with_segment, seg_poseidon_commit,
-        verify_turn_chain_recursive_from_parts,
+        SEG_DIGEST_WIDTH, TurnChainBindingProof, ir2_leaf_wrap_config,
+        prove_descriptor_leaf_rotated_with_segment, verify_turn_chain_recursive_from_parts,
     };
     use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
         DreggRecursionConfig, create_recursion_backend, recursion_vk_fingerprint,
@@ -1174,29 +1179,22 @@ fn mixed_root_forgery_executes_A_claims_B() {
             let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
                                left_apt: &[Vec<p3_recursion::Target>],
                                right_apt: &[Vec<p3_recursion::Target>],
-                               _left_vk_cap: &[p3_recursion::Target],
-                               _right_vk_cap: &[p3_recursion::Target]| {
-                let l = left_apt.get(left_idx).expect("left seg present");
-                let r = right_apt.get(right_idx).expect("right seg present");
-                assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
-                // Continuity via direct connect (mirrors the lib `aggregate_tree`): avoids the
-                // `sub`+`assert_zero` backward-add that would clobber the shared `WitnessId(0)`.
-                for __k in 0..SEG_ANCHOR_WIDTH {
-                    cb.connect(l[SEG_LAST_NEW + __k], r[SEG_FIRST_OLD + __k]);
-                }
-                let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
-                let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
-                acc_inputs
-                    .extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
-                acc_inputs
-                    .extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
-                let acc = seg_poseidon_commit(cb, &acc_inputs);
-                let mut parent = Vec::with_capacity(SEG_WIDTH);
-                parent.extend_from_slice(&l[SEG_FIRST_OLD..SEG_FIRST_OLD + SEG_ANCHOR_WIDTH]);
-                parent.extend_from_slice(&r[SEG_LAST_NEW..SEG_LAST_NEW + SEG_ANCHOR_WIDTH]);
-                parent.push(count);
-                parent.extend_from_slice(&acc);
-                cb.expose_as_public_output(&parent);
+                               left_vk_cap: &[p3_recursion::Target],
+                               right_vk_cap: &[p3_recursion::Target]| {
+                // ⚑ THE LIB'S OWN COMBINE, CALLED — not mirrored. `segment_combine_expose` became
+                // `pub` on 2026-08-11 for exactly this: the three hand-rolled copies that stood here
+                // all still built a `SEG_WIDTH`-lane parent after the VK spine widened the exposure to
+                // `SEG_SPINE_WIDTH`, so every root this file produced was a PRE-SPINE artifact and the
+                // verifier's shape guard, not its segment tooth, is what refused the forgery below.
+                dregg_circuit_prove::ivc_turn_chain::segment_combine_expose(
+                    cb,
+                    left_apt,
+                    right_apt,
+                    left_idx,
+                    right_idx,
+                    left_vk_cap,
+                    right_vk_cap,
+                );
             };
             let out = build_and_prove_aggregation_layer_with_expose::<
                 DreggRecursionConfig,
@@ -1246,11 +1244,42 @@ fn mixed_root_forgery_executes_A_claims_B() {
     // THE CLOSE: a whole-chain claim for B against a root that executed A is REJECTED. The
     // ordered segment-accumulator binds the root-exposed [genesis, final, num_turns,
     // digest] to the REAL descriptor leaves, so the B-claim cannot ride an A-execution.
+    //
+    // ⚑⚑ **`verdict.is_err()` ALONE WAS THE WRONG ASSERTION, AND IT WAS PASSING FOR THE WRONG
+    // REASON.** Measured 2026-08-11: while the fold above was a hand-rolled mirror building a
+    // `SEG_WIDTH`-lane parent, this root was a PRE-SPINE artifact, and
+    // `verify_turn_chain_recursive_from_parts` refused it at
+    //
+    // ```text
+    //   root exposes N claim lane(s), fewer than the SEG_SPINE_WIDTH a segment + VK spine
+    //   needs — pre-spine artifact, refused          (ivc_turn_chain.rs:6457)
+    // ```
+    //
+    // — a SHAPE guard that fires four lines before the segment tooth reads a single lane. So a
+    // bare `is_err()` recorded "the mixed-root hole is closed" on the strength of the artifact
+    // being malformed, which would have held just as well if the segment tooth had been deleted.
+    // The fold now calls the lib's `segment_combine_expose` and the assertion names the tooth.
+    let reason = format!("{verdict:?}");
     assert!(
         verdict.is_err(),
         "MIXED-ROOT HOLE CLOSED (codex re-review #2): a root that folded A's descriptor \
          leaves carrying a B whole-chain claim MUST be REJECTED by the segment tooth — A's \
-         root exposes A's endpoints, not B's. got: {verdict:?}"
+         root exposes A's endpoints, not B's. got: {reason}"
+    );
+    assert!(
+        !reason.contains("pre-spine artifact"),
+        "the root was refused as a PRE-SPINE ARTIFACT — the verifier's exposure-width SHAPE guard \
+         (ivc_turn_chain.rs:6457), which fires BEFORE the segment tooth compares one lane. This \
+         tooth then witnesses nothing about the mixed-root hole: the fold above is not producing \
+         the exposure the deployed `aggregate_tree` produces. got: {reason}"
+    );
+    assert!(
+        reason.contains("root-exposed segment") && reason.contains("carried claim"),
+        "the refusal must be THE SEGMENT TOOTH — `root-exposed segment {{…}} != carried claim \
+         {{…}}` (ivc_turn_chain.rs:6500) — and not one of the other refusals this verifier can \
+         return (a VK fingerprint mismatch, the binding descriptor's own publics, a \
+         `RecursionFailed` FRI/shape fault). Any of those would mean B's claim was stopped \
+         somewhere other than by A's execution being exposed at the root. got: {reason}"
     );
 }
 
@@ -1316,9 +1345,7 @@ fn mixed_root_forgery_executes_A_claims_B() {
 #[ignore = "SLOW: a real segment fold (~minutes); run with --ignored — fork follow-up (a) close"]
 fn pinned_leaf_identity_rejects_foreign_child_in_band() {
     use dregg_circuit_prove::ivc_turn_chain::{
-        SEG_ANCHOR_WIDTH, SEG_COUNT, SEG_DIGEST_FIRST, SEG_DIGEST_WIDTH, SEG_FIRST_OLD,
-        SEG_LAST_NEW, SEG_WIDTH, ir2_leaf_wrap_config, prove_descriptor_leaf_rotated_with_segment,
-        seg_poseidon_commit,
+        ir2_leaf_wrap_config, prove_descriptor_leaf_rotated_with_segment,
     };
     use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
         DreggRecursionConfig, create_recursion_backend,
@@ -1371,25 +1398,22 @@ fn pinned_leaf_identity_rejects_foreign_child_in_band() {
         let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
                            left_apt: &[Vec<p3_recursion::Target>],
                            right_apt: &[Vec<p3_recursion::Target>],
-                           _left_vk_cap: &[p3_recursion::Target],
-                           _right_vk_cap: &[p3_recursion::Target]| {
-            let l = left_apt.get(left_idx).expect("left seg present");
-            let r = right_apt.get(right_idx).expect("right seg present");
-            assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
-            for __k in 0..SEG_ANCHOR_WIDTH {
-                cb.connect(l[SEG_LAST_NEW + __k], r[SEG_FIRST_OLD + __k]);
-            }
-            let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
-            let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
-            acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
-            acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
-            let acc = seg_poseidon_commit(cb, &acc_inputs);
-            let mut parent = Vec::with_capacity(SEG_WIDTH);
-            parent.extend_from_slice(&l[SEG_FIRST_OLD..SEG_FIRST_OLD + SEG_ANCHOR_WIDTH]);
-            parent.extend_from_slice(&r[SEG_LAST_NEW..SEG_LAST_NEW + SEG_ANCHOR_WIDTH]);
-            parent.push(count);
-            parent.extend_from_slice(&acc);
-            cb.expose_as_public_output(&parent);
+                           left_vk_cap: &[p3_recursion::Target],
+                           right_vk_cap: &[p3_recursion::Target]| {
+            // ⚑ THE LIB'S OWN COMBINE, CALLED — not mirrored. `segment_combine_expose` became
+            // `pub` on 2026-08-11 for exactly this: the three hand-rolled copies that stood here
+            // all still built a `SEG_WIDTH`-lane parent after the VK spine widened the exposure to
+            // `SEG_SPINE_WIDTH`, so every root this file produced was a PRE-SPINE artifact and the
+            // verifier's shape guard, not its segment tooth, is what refused the forgery below.
+            dregg_circuit_prove::ivc_turn_chain::segment_combine_expose(
+                cb,
+                left_apt,
+                right_apt,
+                left_idx,
+                right_idx,
+                left_vk_cap,
+                right_vk_cap,
+            );
         };
         let left = leaves[0].into_recursion_input_pinned::<BatchOnly>(left_commit.clone());
         let right = leaves[1].into_recursion_input_pinned::<BatchOnly>(right_commit.clone());
@@ -1423,25 +1447,22 @@ fn pinned_leaf_identity_rejects_foreign_child_in_band() {
         let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
                            left_apt: &[Vec<p3_recursion::Target>],
                            right_apt: &[Vec<p3_recursion::Target>],
-                           _left_vk_cap: &[p3_recursion::Target],
-                           _right_vk_cap: &[p3_recursion::Target]| {
-            let l = left_apt.get(left_idx).expect("left seg present");
-            let r = right_apt.get(right_idx).expect("right seg present");
-            assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
-            for __k in 0..SEG_ANCHOR_WIDTH {
-                cb.connect(l[SEG_LAST_NEW + __k], r[SEG_FIRST_OLD + __k]);
-            }
-            let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
-            let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
-            acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
-            acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
-            let acc = seg_poseidon_commit(cb, &acc_inputs);
-            let mut parent = Vec::with_capacity(SEG_WIDTH);
-            parent.extend_from_slice(&l[SEG_FIRST_OLD..SEG_FIRST_OLD + SEG_ANCHOR_WIDTH]);
-            parent.extend_from_slice(&r[SEG_LAST_NEW..SEG_LAST_NEW + SEG_ANCHOR_WIDTH]);
-            parent.push(count);
-            parent.extend_from_slice(&acc);
-            cb.expose_as_public_output(&parent);
+                           left_vk_cap: &[p3_recursion::Target],
+                           right_vk_cap: &[p3_recursion::Target]| {
+            // ⚑ THE LIB'S OWN COMBINE, CALLED — not mirrored. `segment_combine_expose` became
+            // `pub` on 2026-08-11 for exactly this: the three hand-rolled copies that stood here
+            // all still built a `SEG_WIDTH`-lane parent after the VK spine widened the exposure to
+            // `SEG_SPINE_WIDTH`, so every root this file produced was a PRE-SPINE artifact and the
+            // verifier's shape guard, not its segment tooth, is what refused the forgery below.
+            dregg_circuit_prove::ivc_turn_chain::segment_combine_expose(
+                cb,
+                left_apt,
+                right_apt,
+                left_idx,
+                right_idx,
+                left_vk_cap,
+                right_vk_cap,
+            );
         };
         let left = leaves[0].into_recursion_input_pinned::<BatchOnly>(foreign_left);
         let right = leaves[1].into_recursion_input_pinned::<BatchOnly>(right_commit);

@@ -45,7 +45,26 @@
 //! clean `Err(OodEvaluationMismatch)` in release. Every refusal here goes through
 //! `dregg_circuit::refusal`, which catches both, but the RELEASE reading is the deployed one.
 //!
+//! ⚑⚑ **AND THAT SENTENCE WAS THE ALIBI FOR NINE TEETH THAT COULD NOT READ A REFUSAL AT ALL.**
+//! Measured 2026-08-11 under plain `cargo test`: **9 of the 14 tests here were RED**, every one of
+//! them with `expected a fail-closed Err refusal, but the call PANICKED: constraints not satisfied
+//! on row 0: failed constraints = [#N]`, and `#N` DIFFERENT for each — #0, #5, #29, #31, #39, #40,
+//! #50, #58, #635. So the forgeries were refused all along, by a violated constraint, and the teeth
+//! could not tell that from a crash. This descriptor carries LOOKUPS, which is `refusal`'s stated
+//! discriminator: p3 runs its `#[cfg(debug_assertions)]` `check_constraints` inside `prove_batch`
+//! and PANICS, so under `cargo test` an `Err` is structurally unreachable and bare `must_refuse` is
+//! red by construction. Every polarity tooth now goes through
+//! `must_be_refused_by_a_violated_constraint`, which reads BOTH mechanisms and then requires the
+//! verdict to be a **violated constraint and not a bus imbalance** — see that helper for why the
+//! second line is the repair and the first alone would not be.
+//!
+//! ⚑ **A TENTH, AND IT WAS GREEN.** `the_segment_sub_proof_proves_from_the_served_descriptor`
+//! asserted `assert_committed_shape` and returned — no prove, no verify — under a name and a
+//! comment that both promise the discharge. A shape assertion accepts an all-zeros trace. Repaired
+//! in the same pass; a loudly red tooth is a better neighbour than a quietly satisfied one.
+//!
 //! Run: `cargo test -p dregg-circuit --release --test mina_lightclient_carrier_proves -- --nocapture`
+//! (and plain `cargo test` too — the teeth now read the same in both profiles, which is the point).
 
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
@@ -136,6 +155,11 @@ const LINK_BODY_ACC_0: usize = 40;
 const LINK_CHAIN_VK_0: usize = 48;
 const LINK_BODY_ACC_LANES: usize = 8;
 const LINK_PI_COUNT: usize = 46;
+/// ⚑ PI slots 37..45 — the FIRST row's `OWNHASH` nonet, published by the 2026-08-10 `PI_HEAD_OWN`
+/// flag day (nine `pi_binding row=first col=9..17` legs). `LINK_PI_COUNT` here was carried to 46
+/// when that landed; the nine slots themselves were left at zero, and nothing caught it because the
+/// only test that reads this layout did not prove.
+const PI_HEAD_OWN: usize = 37;
 
 /// `dregg-pasta-fp-absorb::v1`'s nine fingerprint lanes — the state-hash seam's `vkPin`.
 /// ⚑ Recomputed 2026-08-08 (`conj_fingerprint`); the old `[446814635, …]` named a program no
@@ -285,6 +309,46 @@ fn prove_and_verify(
     verify_vm_descriptor2(d, &proof, pis).map_err(|e| format!("verifier refused: {e:?}"))
 }
 
+/// ⚑⚑ **THE TWO-PART REFUSAL READING EVERY POLARITY TOOTH IN THIS FILE TAKES.**
+///
+/// ⚠ **MEASURED 2026-08-11, and it is why this helper exists.** Every one of the nine polarity teeth
+/// below called bare `refusal::must_refuse`, and under `cargo test` all nine were RED with
+///
+/// ```text
+/// …: expected a fail-closed Err refusal, but the call PANICKED:
+///     constraints not satisfied on row 0: failed constraints = [#N]
+/// ```
+///
+/// The forgeries were being refused the whole time — by a violated CONSTRAINT, with a different `#N`
+/// per tooth. `must_refuse` simply could not observe it. This descriptor CARRIES LOOKUPS (its
+/// `constraints` list holds `lookup` legs at 5 and 29 among the 74), and `refusal`'s own module
+/// docs say that is the real discriminator: with lookups, p3 runs `check_constraints` inside
+/// `prove_batch` under `#[cfg(debug_assertions)]` and **panics** before any `Err` can be returned,
+/// so in a debug build `Err` is structurally unreachable here and `must_refuse` is red by
+/// construction. In `--release` the same forgery surfaces as the producer self-verify's
+/// `OodEvaluationMismatch`. The header's `--release` line is why this was not noticed sooner.
+///
+/// ⚑ **AND THE SWITCH TO [`refusal::must_refuse_or_unsat_panic`] IS NOT ON ITS OWN A REPAIR** — that
+/// helper accepts ANY non-shape `Err`, so a tooth that stopped there would have traded "cannot see a
+/// refusal" for "counts anything". The second line is the measurement:
+/// [`refusal::assert_violated_constraint_not_bus`] requires the verdict to name a **violated
+/// constraint** (`constraints not satisfied on row` in debug, `OodEvaluationMismatch` in release)
+/// and **not** a bus/lookup imbalance (`Lookup mismatch` / `LookupError`), in whichever profile the
+/// tooth ran.
+///
+/// That negative clause is the load-bearing half here, and it is exactly the claim these teeth's
+/// docblocks already make in words. Every forgery below moves ONE lane by ONE and each docblock says
+/// *"still a canonical `Faithful9` digit, so no range lookup can be what refuses it"*; a range
+/// lookup refusing it would surface as a BUS verdict, so this assertion is what discharges the
+/// sentence instead of asserting it. Same for the transcript tooth, whose docblock says the
+/// instruction ROM — a lookup TABLE — says nothing about the moved element and the boundary PIN is
+/// what refuses it.
+#[track_caller]
+fn must_be_refused_by_a_violated_constraint(what: &str, cells: &[i64], pis: &[BabyBear]) {
+    let r = refusal::must_refuse_or_unsat_panic(what, || prove_and_verify(&desc(), cells, pis));
+    refusal::assert_violated_constraint_not_bus(what, &r.reason());
+}
+
 // ═══ §1 — THE SHAPE THE LEAN EMITTED ════════════════════════════════════════════════════════════
 
 /// The served descriptor is the one Lean emitted, at the shape the rung declares.
@@ -418,11 +482,11 @@ fn a_row_naming_a_different_program_is_refused() {
     let mut cells = honest_cells();
     cells[SUB_VK_0] += 1;
     let pis = pis_of(&cells);
-    let e = refusal::must_refuse(
+    must_be_refused_by_a_violated_constraint(
         "a head row attesting a program that is not the chainlink AIR",
-        || prove_and_verify(&desc(), &cells, &pis),
+        &cells,
+        &pis,
     );
-    refusal::assert_violated_constraint_not_bus("forged program lane", &e);
 }
 
 /// ⚑ …and the LAST lane too, so the refusal is not an artifact of lane 0 being special.
@@ -431,9 +495,11 @@ fn a_forged_top_program_lane_is_refused() {
     let mut cells = honest_cells();
     cells[SUB_VK_0 + 8] += 1;
     let pis = pis_of(&cells);
-    refusal::must_refuse("a head row whose top program lane is forged", || {
-        prove_and_verify(&desc(), &cells, &pis)
-    });
+    must_be_refused_by_a_violated_constraint(
+        "a head row whose top program lane is forged",
+        &cells,
+        &pis,
+    );
 }
 
 /// ⚑⚑ **THE GUARD CANNOT BE SWITCHED OFF.** A prover who would rather not name a sub-proof at all
@@ -449,9 +515,11 @@ fn disarming_the_recursion_guard_is_refused() {
         cells[SUB_VK_0 + i] = 0;
     }
     let pis = pis_of(&cells);
-    refusal::must_refuse("a head row with the recursion guard disarmed", || {
-        prove_and_verify(&desc(), &cells, &pis)
-    });
+    must_be_refused_by_a_violated_constraint(
+        "a head row with the recursion guard disarmed",
+        &cells,
+        &pis,
+    );
 }
 
 /// ⚑ **THE PUBLISHED COMMITMENT IS PINNED TO THE ROW.** A prover that keeps the honest row but
@@ -462,9 +530,10 @@ fn publishing_a_commitment_the_row_does_not_hold_is_refused() {
     let cells = honest_cells();
     let mut pis = pis_of(&cells);
     pis[PI_SUB_COMMIT_BASE] = felt(i64::from(CHAINLINK_PI_LANES[0]) + 1);
-    refusal::must_refuse(
+    must_be_refused_by_a_violated_constraint(
         "a head proof publishing a commitment its row does not carry",
-        || prove_and_verify(&desc(), &cells, &pis),
+        &cells,
+        &pis,
     );
 }
 
@@ -492,11 +561,11 @@ fn a_row_naming_a_different_segment_program_is_refused() {
         "and it must move a NON-ZERO lane: bumping a zero into a one would test the filler, not the seam"
     );
     let pis = pis_of(&cells);
-    let e = refusal::must_refuse(
+    must_be_refused_by_a_violated_constraint(
         "a head row attesting a segment program that is not the link AIR",
-        || prove_and_verify(&desc(), &cells, &pis),
+        &cells,
+        &pis,
     );
-    refusal::assert_violated_constraint_not_bus("forged segment program lane", &e);
 }
 
 /// ⚑ …and the LAST lane too, so the refusal is not an artifact of lane 0 being special.
@@ -505,9 +574,10 @@ fn a_forged_top_segment_program_lane_is_refused() {
     let mut cells = honest_cells();
     cells[LINK_VK_0 + 8] += 1;
     let pis = pis_of(&cells);
-    refusal::must_refuse(
+    must_be_refused_by_a_violated_constraint(
         "a head row whose top segment-program lane is forged",
-        || prove_and_verify(&desc(), &cells, &pis),
+        &cells,
+        &pis,
     );
 }
 
@@ -525,9 +595,11 @@ fn disarming_the_segment_guard_is_refused() {
         cells[LINK_VK_0 + i] = 0;
     }
     let pis = pis_of(&cells);
-    refusal::must_refuse("a head row with the segment guard disarmed", || {
-        prove_and_verify(&desc(), &cells, &pis)
-    });
+    must_be_refused_by_a_violated_constraint(
+        "a head row with the segment guard disarmed",
+        &cells,
+        &pis,
+    );
 }
 
 /// ⚑⚑⚑ **THE SEGMENT SUB-PROOF PROVES FROM THE SERVED DESCRIPTOR** — so the program the seam pins
@@ -589,8 +661,28 @@ fn the_segment_sub_proof_proves_from_the_served_descriptor() {
     for i in 0..LINK_BODY_ACC_LANES {
         pis[29 + i] = r0[LINK_BODY_ACC_0 + i];
     }
+    // ⚑⚑ **PI SLOTS 37..45 — ROW 0's OWN HASH, PUBLISHED (`PI_HEAD_OWN`, the 2026-08-10 flag day).**
+    // Nine `pi_binding row=first col=9..17` legs, and this file left all nine at ZERO against a
+    // non-zero `OWNHASH` nonet. It went unnoticed for a reason worth naming: the test below did not
+    // exist, so nothing here ever asked the prover anything. `LINK_PI_COUNT` was carried to 46 and
+    // the *shape* assertion was satisfied by a PI vector of the right LENGTH full of zeros.
+    for i in 0..STATE_LANES {
+        pis[PI_HEAD_OWN + i] = r0[STATE_LANES + i];
+    }
     // A prove/verify pair is the claim; a shape fault would surface here as a panic, not a refusal.
     refusal::assert_committed_shape("mina segment sub-proof", &d, &trace, &pis);
+    // ⚑⚑ **MEASURED 2026-08-11: THE PROVE/VERIFY PAIR WAS MISSING.** The line above was the whole
+    // body — this test asserted the trace had the committed SHAPE and stopped, while its name and
+    // the comment above both promise a discharge. A shape assertion is satisfied by an all-zeros
+    // trace, so the claim "the program the seam pins is one a prover can actually discharge" was
+    // resting on nothing, GREEN, next to nine siblings that were at least loudly red. Restoring it
+    // turned the flag-day break above red on the first run — which is the whole argument for
+    // restoring it.
+    refusal::must_accept("the segment sub-proof the head's seam pins", || {
+        let proof = prove_vm_descriptor2(&d, &trace, &pis, &MemBoundaryWitness::default(), &[])
+            .map_err(|e| format!("prover refused: {e}"))?;
+        verify_vm_descriptor2(&d, &proof, &pis).map_err(|e| format!("verifier refused: {e:?}"))
+    });
 }
 
 /// The pre-existing teeth still bite with the widened row — a regression guard on the rung, since a
@@ -601,9 +693,7 @@ fn the_forged_blockchain_length_is_still_refused() {
     cells[SEG_LEN] = 5;
     cells[SEG_SLACK] = 4;
     let pis = pis_of(&cells);
-    refusal::must_refuse("the free-`blockchain_length` liar", || {
-        prove_and_verify(&desc(), &cells, &pis)
-    });
+    must_be_refused_by_a_violated_constraint("the free-`blockchain_length` liar", &cells, &pis);
 }
 
 // ═══ §4 — THE SUB-PROOF IS REAL, AND A TAMPERED TRANSCRIPT IS REFUSED ═══════════════════════════
@@ -671,14 +761,18 @@ fn a_tampered_transcript_element_is_refused_by_the_pin() {
     // SIX (limbs 192..223) — NOT block 3, which is the outgoing `v'` lane under this layout.
     let sk = 32usize;
     pis[ABSORBED_BLOCK * sk] = BabyBear::new((pis[ABSORBED_BLOCK * sk].as_u32() + 1) % 256);
-    refusal::must_refuse(
-        "a chainlink proof whose absorbed transcript element was moved",
-        || {
-            let proof = prove_vm_descriptor2(&d, &trace, &pis, &MemBoundaryWitness::default(), &[])
-                .map_err(|e| format!("prover refused: {e}"))?;
-            verify_vm_descriptor2(&d, &proof, &pis).map_err(|e| format!("verifier refused: {e:?}"))
-        },
-    );
+    let what = "a chainlink proof whose absorbed transcript element was moved";
+    refusal::assert_committed_shape("mina chainlink sub-proof", &d, &trace, &pis);
+    let r = refusal::must_refuse_or_unsat_panic(what, || {
+        let proof = prove_vm_descriptor2(&d, &trace, &pis, &MemBoundaryWitness::default(), &[])
+            .map_err(|e| format!("prover refused: {e}"))?;
+        verify_vm_descriptor2(&d, &proof, &pis).map_err(|e| format!("verifier refused: {e:?}"))
+    });
+    // ⚑ THE NEGATIVE CLAUSE IS THE POINT, and it is this tooth's own docblock as an assertion: the
+    // instruction ROM is a lookup TABLE, so "the ROM says nothing about this element" means a ROM
+    // refusal would read as a BUS verdict. Requiring a violated CONSTRAINT is what puts the refusal
+    // on the boundary PIN rather than on the ROM.
+    refusal::assert_violated_constraint_not_bus(what, &r.reason());
 }
 
 /// ⚑⚑ **AND A TAMPERED TRANSCRIPT CANNOT REUSE THE HEAD PROOF.** The head row publishes the digest
