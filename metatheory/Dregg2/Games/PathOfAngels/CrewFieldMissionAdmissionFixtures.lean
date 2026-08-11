@@ -160,6 +160,23 @@ theorem the_entry_point_refuses_the_empty_request : seatPreimageWire "" = "" := 
 
 /-! ## ⚑ 2026-08-09 — THE HANDOFF, PINNED
 
+✅ **EVALUATED 2026-08-09 20:14:57** — `lake build
+Dregg2.Games.PathOfAngels.CrewFieldMissionAdmissionFixtures`, 3130/3130, the module built in
+268s and its olean exists.  The commit that introduced these three pins (`950c0ef07`) is
+subject-lined `⚠ WRITTEN AND NOT YET EVALUATED` and that label is now RETIRED; it was true
+when written and is false now, so read it with this line.  ⚠ The label was not vanity: the
+run before this one printed `Build completed successfully (3123 jobs)` into a log carrying
+SEVEN different job totals, spliced mid-token by a second `lake build` on the identical
+target — and `CrewFieldMissionAdmissionFixtures.olean` did not exist.
+
+**Had I read the summary line instead of the artifact, I would have reported green.**  A
+build log that says `Build completed successfully` while the olean does not exist is a
+refusal rendering as the expected verdict, in the one place nobody thinks to distrust.
+⚑ **ASSERT ON THE PRODUCT, NEVER ON THE REPORT.**  Here the product is this module's olean,
+and it is load-bearing rather than incidental: these pins are `native_decide` +
+`#assert_compiled`, so a FALSE pin is a hard error that produces NO OLEAN.  The artifact's
+existence is the verdict; the summary line is a claim about it.
+
 Until this section the handoff was a GENERATOR RUN: `scripts/crew_playable_handoff.lean`
 drove the two exports over real `fips204` signatures and printed what came back.  That is
 real and reproducible and **invisible to every gate in this repo** — it cannot go red.
