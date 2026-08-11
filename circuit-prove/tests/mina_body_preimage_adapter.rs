@@ -51,6 +51,7 @@ use dregg_circuit_prove::fold_vk_pin::FoldVkPins;
 use dregg_circuit_prove::mina_body_preimage_adapter::{
     BODY_BITS_PI_COUNT, BODY_BITS_WIDTH, BODY_LINKS, NBITS, NLIMB, body_preimage_descriptor,
     body_preimage_seam, claim_from_row, prove_body_preimage_link_adapter,
+    prove_welded_body_hash_chain_fold,
 };
 use dregg_circuit_prove::mina_phase2_chain_leaf::{
     ABSORBED_PI_LO, CHAIN_PI_COUNT, chain_inner_config, chain_root_config, fold_chain_links,
@@ -220,7 +221,10 @@ fn the_emitted_preimage_claim_is_the_stream_the_chain_absorbs() {
 #[test]
 fn the_preimage_row_and_claim_agree() {
     let row = preimage_row();
-    assert_eq!(claim_from_row(&row).expect("row is the right width"), preimage_claim());
+    assert_eq!(
+        claim_from_row(&row).expect("row is the right width"),
+        preimage_claim()
+    );
     assert!(row[..NBITS].iter().all(|v| v.as_u32() <= 1));
     assert!(
         row[NBITS..NBITS + NLIMB].iter().all(|v| v.as_u32() < 256),
@@ -282,7 +286,10 @@ fn the_body_preimage_adapter_proves_and_publishes_the_chain_leafs_claim() {
     assert_eq!(a.transcript_acc, host_chain_transcript_acc(&pis[..1]));
 
     println!("\n═══ §1 ⚑⚑⚑ THE LEAF ADAPTER PROVES ═══");
-    println!("  adapter (2 STARKs + {} welds): {adapter_ms} ms", seam.connect_count());
+    println!(
+        "  adapter (2 STARKs + {} welds): {adapter_ms} ms",
+        seam.connect_count()
+    );
     println!("  plain chain leaf (1 STARK)   : {plain_ms} ms");
     println!("  claims IDENTICAL — the adapter is a drop-in for the chain leaf.");
 }
@@ -339,7 +346,11 @@ fn a_preimage_that_is_not_this_blocks_is_refused_by_the_seam() {
         "not one bit and not one packed limb moves"
     );
     let forged_claim = claim_from_row(&forged).expect("the forged row is the right width");
-    assert_ne!(forged_claim, preimage_claim(), "the CLAIM must move with it");
+    assert_ne!(
+        forged_claim,
+        preimage_claim(),
+        "the CLAIM must move with it"
+    );
     // ⚑ And the welded chain slot is unchanged, so the seam is what disagrees.
     assert_eq!(
         pis[0][ABSORBED_PI_LO].as_u32(),
@@ -567,11 +578,16 @@ fn limbs_to_decimal(limbs: &[BabyBear]) -> String {
 /// absorbed pair is welded, limb for limb, to a descriptor that gates those limbs as bytes and the
 /// 2 381 chunk bits as bits.
 ///
-/// ⚠ **THIS IS THE ROUTE, AND IT IS A TEST AND NOT A PRODUCTION PATH.** No node calls it: the
-/// deployed 25-link fold still proves plain chain leaves, and
-/// `turn::executor::mina_head_verifier`'s REFUSAL 16 is still what a node runs. What this test
-/// establishes is that the route EXISTS and terminates on the same root value — not that anything
-/// has been switched over.
+/// ⚑⚑⚑ **AND SINCE 2026-08-11 IT DRIVES THE PRODUCTION FUNCTION**, not a loop written here.
+/// `prove_welded_body_hash_chain_fold` is what the ceremony binary
+/// (`src/bin/mina_body_root_anchor.rs`) calls to mint the root a node anchors, so this test now
+/// exercises the routed path rather than a test-local reconstruction of it. The prior state — an
+/// `#[ignore]`d test that WAS the implementation — is the "route exists but nothing runs it" shape
+/// `MinaBodyPreimageSeams` §7.0 recorded.
+///
+/// ⚠ **WHAT IS STILL NOT ESTABLISHED HERE.** That an operator pinned the fingerprint this mints.
+/// The welded root and a plain one publish the identical 200-lane claim, so every check in
+/// `dregg-turn` passes on both, and the anchor is the only discriminator. See §5.
 ///
 /// `#[ignore]`d for wall clock only.
 #[test]
@@ -585,35 +601,32 @@ fn the_whole_body_hash_chain_folds_with_every_link_welded() {
     let row = preimage_row();
     let claim = preimage_claim();
 
-    let adapter = |j: usize| {
-        prove_body_preimage_link_adapter(
-            &pdesc,
-            &preimage_trace(row.clone()),
-            &claim,
-            &cdesc,
-            &link_trace(j),
-            &pis[j],
-            &body_preimage_seam(j).expect("seam"),
-            &inner,
-        )
-        .unwrap_or_else(|e| panic!("adapter at link {j}: {e}"))
-    };
+    let witnesses: Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>)> = (0..BODY_LINKS)
+        .map(|j| (link_trace(j), pis[j].clone()))
+        .collect();
+    let welds: usize = (0..BODY_LINKS)
+        .map(|j| body_preimage_seam(j).unwrap().connect_count())
+        .sum();
 
     let t0 = Instant::now();
-    let mut acc = adapter(0);
-    let mut welds = body_preimage_seam(0).unwrap().connect_count();
-    for j in 1..BODY_LINKS {
-        let leaf = adapter(j);
-        welds += body_preimage_seam(j).unwrap().connect_count();
-        acc = fold_chain_links(
-            &acc,
-            &leaf,
-            &FoldVkPins::tracked(&acc, &leaf).expect("both children carry a commitment"),
-            &fold_cfg,
-        )
-        .unwrap_or_else(|e| panic!("fold at link {j}: {e}"));
-        println!("  welded {}/{BODY_LINKS} ({} s)", j + 1, t0.elapsed().as_secs());
-    }
+    let acc = prove_welded_body_hash_chain_fold(
+        &pdesc,
+        &preimage_trace(row),
+        &claim,
+        &cdesc,
+        &witnesses,
+        &inner,
+        |j, phase| {
+            if phase == "fold" {
+                println!(
+                    "  welded {}/{BODY_LINKS} ({} s)",
+                    j + 1,
+                    t0.elapsed().as_secs()
+                );
+            }
+        },
+    )
+    .expect("the production welded whole-chain fold");
     let total_s = t0.elapsed().as_secs();
 
     verify_recursive_batch_proof_with_config(&acc.0, &fold_cfg).expect("the welded root verifies");
@@ -640,4 +653,253 @@ fn the_whole_body_hash_chain_folds_with_every_link_welded() {
     println!("  root out0: {REAL_BODY_HASH}");
     println!("  {welds} in-circuit merges across 25 adapters — the preimage can no longer");
     println!("  disagree with the stream. ⚠ What a prover still chooses is the CONTENT.");
+}
+
+// ============================================================================
+// §5 — BOTH POLARITIES AT THE PRODUCTION ENTRY POINT.
+// ============================================================================
+
+/// ⚑⚑⚑ **§5a — THE PRODUCTION WHOLE-CHAIN FOLD REFUSES A FORGED PREIMAGE.**
+///
+/// §2 drove `prove_body_preimage_link_adapter`. This drives
+/// `prove_welded_body_hash_chain_fold` — the function the ceremony binary calls and therefore the
+/// one that mints the root a node anchors. A polarity that only holds one layer down is a polarity
+/// about a function nothing runs.
+///
+/// The falsifier is §2's: one whole-field limb moves by one, in the ROW **and** the CLAIM, inside
+/// the eight-bit range, with every bit and every packed limb untouched — a body whose own AIR
+/// accepts it completely and which is not this block's.
+///
+/// ⚑ **AND IT IS ASSERTED ON THE CHECKED RAIL.** `prove_vm_descriptor2_unchecked` gates the
+/// pre-flight AND the `verify_batch` self-check on one flag and returns `Ok` for a witness that
+/// does not satisfy the AIR — so a falsifier that used it would be asserting nothing about the
+/// forged body's internal perfection, and the refusal below could be the preimage AIR rejecting
+/// its own row. This calls `verify_vm_descriptor2`.
+///
+/// `#[ignore]`d for wall clock: it refuses at link 0's adapter, during witness generation, so it
+/// costs a fraction of §4 — but it is still a real two-STARK prove.
+#[test]
+#[ignore = "the production welded fold on a forged preimage; wall-clock only"]
+fn the_production_welded_fold_refuses_a_preimage_that_is_not_this_blocks() {
+    let pis = all_link_pis();
+    let inner = chain_inner_config();
+    let pdesc = body_preimage_descriptor().expect("preimage descriptor");
+    let cdesc = fp_chain_link_descriptor().expect("chain-link descriptor");
+
+    // The first whole-field limb column, `FLIMB 0 0` — welded by seam 0 to chain slot 192.
+    let col = NBITS + NLIMB;
+    let honest = preimage_row();
+    let before = honest[col].as_u32();
+    assert_ne!(
+        before, 0,
+        "the falsifier must move a NON-ZERO limb, or it is a tautology about an unchanged body"
+    );
+    let mut forged = honest.clone();
+    forged[col] = BabyBear::new((before + 1) % 256);
+    assert_ne!(forged[col].as_u32(), before, "the falsifier must MOVE");
+    assert!(
+        forged[col].as_u32() < 256,
+        "the moved limb must stay INSIDE the eight-bit table, or the range gate refuses it"
+    );
+    assert_eq!(&forged[..col], &honest[..col], "not one bit moves");
+    let forged_claim = claim_from_row(&forged).expect("the forged row is the right width");
+    assert_ne!(
+        forged_claim,
+        preimage_claim(),
+        "the CLAIM must move with it"
+    );
+    assert_eq!(
+        pis[0][ABSORBED_PI_LO].as_u32(),
+        before,
+        "the chain absorbed the HONEST limb; the seam welds claim slot 0 to chain slot \
+         {ABSORBED_PI_LO}"
+    );
+
+    // ⚑⚑ INTERNALLY PERFECT, ON THE CHECKED RAIL — proved AND verified against its own descriptor.
+    {
+        use dregg_circuit::descriptor_ir2::{
+            MemBoundaryWitness, prove_vm_descriptor2, verify_vm_descriptor2,
+        };
+        let proof = prove_vm_descriptor2(
+            &pdesc,
+            &preimage_trace(forged.clone()),
+            &forged_claim,
+            &MemBoundaryWitness::default(),
+            &[],
+        )
+        .expect("the FORGED body must prove against its own AIR — that is the whole hazard");
+        verify_vm_descriptor2(&pdesc, &proof, &forged_claim)
+            .expect("…and VERIFY; this body is internally perfect and is not this block's");
+    }
+
+    let witnesses: Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>)> = (0..BODY_LINKS)
+        .map(|j| (link_trace(j), pis[j].clone()))
+        .collect();
+    let err = expect_refusal(
+        prove_welded_body_hash_chain_fold(
+            &pdesc,
+            &preimage_trace(forged),
+            &forged_claim,
+            &cdesc,
+            &witnesses,
+            &inner,
+            |_, _| {},
+        ),
+        "the PRODUCTION welded fold must refuse a body that is not this block's",
+    );
+    println!("\n§5a ⚑⚑⚑ PRODUCTION FOLD REFUSED A FOREIGN PREIMAGE: {err}");
+    assert!(
+        binding_connect_marker(&err).is_some(),
+        "the refusal must be the seam's own `cb.connect` — one of {BINDING_CONNECT_MARKERS:?}; \
+         got: {err}"
+    );
+    assert!(
+        !err.contains("is not the preimage descriptor") && !err.contains("takes exactly"),
+        "the production fold refused on SHAPE, before the seam existed; got: {err}"
+    );
+}
+
+/// ⚑⚑ **§5b — A SHORT WELDED CHAIN IS REFUSED, AND BEFORE ANYTHING IS PROVED.**
+///
+/// The twenty-five seams PARTITION the 1 518-slot preimage claim, so a `k < 25` welded fold welds
+/// `1 518·k/25` limbs and leaves the rest free — while publishing a well-formed 200-lane claim and
+/// minting a `recursion_vk_fingerprint` an operator could anchor. Nothing downstream can see the
+/// difference, so the refusal has to be here.
+///
+/// Not `#[ignore]`d and needs no witnesses: the length refusal fires before a cell is read, which
+/// is the property under test.
+#[test]
+fn a_short_welded_body_chain_is_refused_before_anything_is_proved() {
+    let pdesc = body_preimage_descriptor().expect("preimage descriptor");
+    let cdesc = fp_chain_link_descriptor().expect("chain-link descriptor");
+    let empty: Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>)> = vec![(Vec::new(), Vec::new()); 24];
+    let err = expect_refusal(
+        prove_welded_body_hash_chain_fold(
+            &pdesc,
+            &[],
+            &[],
+            &cdesc,
+            &empty,
+            &chain_inner_config(),
+            |_, _| panic!("nothing may be proved before the length is refused"),
+        ),
+        "a 24-link welded body-hash fold must be refused",
+    );
+    assert!(err.contains("exactly 25 links"), "{err}");
+    assert!(err.contains("PARTITION"), "the refusal must say WHY: {err}");
+}
+
+// ============================================================================
+// §6 — ⚑⚑⚑ THE FACT THE WHOLE ROUTING RESTS ON.
+// ============================================================================
+
+/// ⚑⚑⚑ **§6 — THE WELDED ROOT AND THE PLAIN ROOT: IDENTICAL CLAIM, DIFFERENT FINGERPRINT.**
+///
+/// This is the load-bearing measurement of the 2026-08-10 routing and it had never been taken.
+///
+/// * **Identical claim** is what makes the adapter a drop-in — and it is also why nothing
+///   downstream can tell the two towers apart. `read_chain_claim`, `fold_chain_links`, and every
+///   one of `dregg-turn`'s REFUSAL 16 sub-checks see the same 200 lanes from both.
+/// * **Different `recursion_vk_fingerprint`** is the ONLY thing that can. If these were equal the
+///   routing would be impossible: a node could not be pinned to the welded tower at all, because
+///   there would be no value that names it and not the other. `fold_vk_pin`'s "WHAT THE PIN BUYS
+///   (2)" is the mechanism — the tracked child commitments reach the parent's preprocessed
+///   commitment, and `recursion_vk_fingerprint` hashes it.
+///
+/// Both towers built in ONE process from ONE build, so the comparison is not across boxes, and
+/// both timed, so the cost of routing is measured on the same silicon at the same load.
+///
+/// `#[ignore]`d for wall clock: this is two whole 25-link folds.
+#[test]
+#[ignore = "both 25-link towers, welded and plain; wall-clock only"]
+fn the_welded_and_plain_body_roots_agree_on_the_claim_and_differ_on_the_fingerprint() {
+    use dregg_circuit_prove::mina_phase2_chain_leaf::prove_chain_fold_with;
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::recursion_vk_fingerprint;
+
+    let pis = all_link_pis();
+    let inner = chain_inner_config();
+    let fold_cfg = chain_root_config();
+    let pdesc = body_preimage_descriptor().expect("preimage descriptor");
+    let cdesc = fp_chain_link_descriptor().expect("chain-link descriptor");
+    let witnesses: Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>)> = (0..BODY_LINKS)
+        .map(|j| (link_trace(j), pis[j].clone()))
+        .collect();
+
+    let t_plain = Instant::now();
+    let plain = prove_chain_fold_with(&cdesc, &witnesses, &inner, |j, phase| {
+        if phase == "fold" {
+            println!(
+                "  plain  {}/{BODY_LINKS} ({} s)",
+                j + 1,
+                t_plain.elapsed().as_secs()
+            );
+        }
+    })
+    .expect("the plain 25-leaf body-hash fold");
+    let plain_ms = t_plain.elapsed().as_millis();
+    let plain_s = t_plain.elapsed().as_secs();
+    verify_recursive_batch_proof_with_config(&plain.0, &fold_cfg).expect("the plain root verifies");
+
+    let t_weld = Instant::now();
+    let welded = prove_welded_body_hash_chain_fold(
+        &pdesc,
+        &preimage_trace(preimage_row()),
+        &preimage_claim(),
+        &cdesc,
+        &witnesses,
+        &inner,
+        |j, phase| {
+            if phase == "fold" {
+                println!(
+                    "  welded {}/{BODY_LINKS} ({} s)",
+                    j + 1,
+                    t_weld.elapsed().as_secs()
+                );
+            }
+        },
+    )
+    .expect("the welded 25-adapter body-hash fold");
+    let weld_ms = t_weld.elapsed().as_millis();
+    let weld_s = t_weld.elapsed().as_secs();
+    verify_recursive_batch_proof_with_config(&welded.0, &fold_cfg)
+        .expect("the welded root verifies");
+
+    let cp = read_chain_claim(&plain).expect("plain claim");
+    let cw = read_chain_claim(&welded).expect("welded claim");
+    assert_eq!(
+        cp, cw,
+        "the two towers MUST publish the identical claim — that is the drop-in property, and \
+         without it `fold_chain_links` and REFUSAL 16 would need two shapes"
+    );
+    assert_eq!(limbs_to_decimal(&cw.out_state[..32]), REAL_BODY_HASH);
+
+    let fp_plain = recursion_vk_fingerprint(&plain.0);
+    let fp_weld = recursion_vk_fingerprint(&welded.0);
+    assert_ne!(
+        fp_plain, fp_weld,
+        "⚑⚑⚑ the welded and unwelded towers minted the SAME `recursion_vk_fingerprint`. Then NO \
+         anchor names the welded tower and the routing is not merely un-done but impossible: a \
+         node pinned to this value accepts an unwelded root, and every check in `dregg-turn` \
+         passes on it"
+    );
+
+    // ⚠ BOTH UNIT SYSTEMS, deliberately. The 2026-08-10 write-up quoted one leaf in ms
+    // (45 482 ms) beside a whole chain in s (695 s), and the two do not reconcile — 25 × 45.5 s is
+    // 1 137 s of leaves alone. Printing ms and s for the same interval makes a mixed-unit
+    // comparison impossible to make by accident.
+    println!("\n═══ §6 ⚑⚑⚑ TWO TOWERS, ONE BUILD, ONE BOX ═══");
+    println!("  plain  25 leaves   + 24 folds: {plain_ms} ms ({plain_s} s)");
+    println!("  welded 25 adapters + 24 folds: {weld_ms} ms ({weld_s} s)");
+    println!(
+        "  routing cost: +{} ms (+{} s), {:.2}×",
+        weld_ms.saturating_sub(plain_ms),
+        weld_s.saturating_sub(plain_s),
+        weld_ms as f64 / plain_ms.max(1) as f64
+    );
+    println!("  claim   : IDENTICAL — nothing downstream can tell the towers apart");
+    println!("  plain  vk: {}", fp_plain.to_hex());
+    println!(
+        "  welded vk: {}   ← DREGG_MINA_BODY_WELDED_ROOT_VK",
+        fp_weld.to_hex()
+    );
 }

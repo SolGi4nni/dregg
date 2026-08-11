@@ -546,10 +546,10 @@ pub const HEAD_CONJ_GUARD_COL: usize = 58;
 /// (`circuit/tests/fixtures/pasta-fp-bodyhash-pis.txt`, link 0's incoming block), which is itself
 /// pinned in Lean against `saltProtoStateBody`.
 pub const MINA_BODY_SALT_LIMBS: [u32; 96] = [
-    235, 58, 146, 154, 83, 140, 170, 44, 105, 31, 155, 21, 205, 93, 172, 162, 140, 46, 94, 196,
-    65, 8, 101, 162, 181, 165, 100, 86, 45, 104, 216, 7, //
-    135, 25, 160, 148, 17, 164, 216, 238, 43, 241, 99, 247, 210, 162, 126, 57, 93, 207, 94, 58,
-    77, 210, 218, 93, 23, 219, 29, 232, 210, 241, 75, 0, //
+    235, 58, 146, 154, 83, 140, 170, 44, 105, 31, 155, 21, 205, 93, 172, 162, 140, 46, 94, 196, 65,
+    8, 101, 162, 181, 165, 100, 86, 45, 104, 216, 7, //
+    135, 25, 160, 148, 17, 164, 216, 238, 43, 241, 99, 247, 210, 162, 126, 57, 93, 207, 94, 58, 77,
+    210, 218, 93, 23, 219, 29, 232, 210, 241, 75, 0, //
     111, 142, 253, 87, 153, 215, 147, 46, 16, 33, 203, 94, 36, 154, 252, 173, 54, 130, 132, 125,
     92, 23, 211, 77, 196, 12, 235, 92, 108, 239, 206, 41,
 ];
@@ -802,9 +802,14 @@ pub struct MinaHeadProofWire {
     /// REQUIRED, same codec reasoning as above.
     pub conjunction_proof: Ir2BatchProof<DreggStarkConfig>,
     /// ⚑⚑⚑ **THE RECURSION ROOT OF THE 25-LINK `state_body_hash` CHAIN**
-    /// (`MinaStateBodyHashChain` / `mina_body_hash_chain_fold`), postcard-serialised
-    /// `BatchStarkProof<DreggRecursionConfig>` bytes — same type discipline as
-    /// [`Self::chain_root_proof`] and for the same reason.
+    /// (`MinaStateBodyHashChain`), postcard-serialised `BatchStarkProof<DreggRecursionConfig>`
+    /// bytes — same type discipline as [`Self::chain_root_proof`] and for the same reason.
+    ///
+    /// ⚑ **SINCE 2026-08-11 THE ROOT A NODE ANCHORS IS THE WELDED ONE** —
+    /// `mina_body_preimage_adapter::prove_welded_body_hash_chain_fold`, twenty-five adapters each
+    /// welding that link's 64 absorbed limbs to the gated body-preimage descriptor. ⚠ The bytes
+    /// are byte-for-byte the same SHAPE as an unwelded root's and this field cannot tell them
+    /// apart; the operator's `DREGG_MINA_BODY_WELDED_ROOT_VK` is where that is decided.
     ///
     /// ⚑ **NEW 2026-08-08 — the field that gives the seventeen body slots a reader.** The link
     /// descriptor publishes `BODYHASH` (PI 20..28) and `BODY_ACC` (PI 29..36) and derives neither;
@@ -1081,12 +1086,19 @@ pub trait MinaChainRootBackend: Send + Sync + std::fmt::Debug {
     /// unset anchor.
     fn pinned_root_vk(&self) -> [u8; 32];
 
-    /// ⚑ The `recursion_vk_fingerprint` pinned for the **`state_body_hash` fold**
-    /// (`mina_body_hash_chain_fold`'s 25-leaf tower). **New 2026-08-08**, with REFUSAL 16: the
+    /// ⚑ The `recursion_vk_fingerprint` pinned for the **`state_body_hash` fold** — since
+    /// 2026-08-11 the 25-**adapter** WELDED tower
+    /// (`dregg_circuit_prove::mina_body_preimage_adapter::prove_welded_body_hash_chain_fold`),
+    /// where until then it was the 25-plain-leaf one. **New 2026-08-08**, with REFUSAL 16: the
     /// two towers publish the IDENTICAL `in(96) ‖ out(96) ‖ acc(8)` claim shape, so the
     /// fingerprint is the ONLY thing telling a phase-2 root from a body root — one pin cannot
     /// anchor both. Same discipline as [`Self::pinned_root_vk`]: all-zero is REFUSED as unset.
     /// Deliberately no default — a host that has not decided its body anchor must not compile.
+    ///
+    /// ⚠⚠ **AND IT IS ALSO THE ONLY THING TELLING A WELDED BODY ROOT FROM AN UNWELDED ONE** — the
+    /// adapter is a DROP-IN, so both towers' roots pass every check in this file. That is why
+    /// `dregg-node` renamed the env var on the flag day rather than reading the old one as a
+    /// fallback: nothing downstream of this value can recover the difference.
     fn pinned_body_root_vk(&self) -> [u8; 32];
 
     /// Verify the root and report `(measured recursion_vk_fingerprint, claim)`.
@@ -1418,9 +1430,59 @@ pub fn check_chain_root_binding(
 /// fold `cb.connect` — the turn dies, but a proof consumed by any other route would not make it.
 /// And the root grounds ONE body: the link's FIRST row's (`PI_BODYHASH` is pinned from
 /// `VmRow.first`). The remaining rows' `BODYHASH` columns stay per-row seam commitments whose
-/// stream this weld grounds only through `BODY_ACC`. What a prover chooses moved from "all
-/// seventeen slots" to "nothing below the chain's own 2 381-bit preimage residual"
-/// (`MinaBodyPreimageBitsAir`'s named residual), which is the next rung, not this one.
+/// stream this weld grounds only through `BODY_ACC`.
+///
+/// # ⚑⚑⚑ 2026-08-11 — THIS REFUSAL IS **KEPT**, AND IT IS NOT A SECOND CHECK OF THE SAME THING
+///
+/// The body-preimage weld was routed on 2026-08-11: the `state_body_hash` root a node anchors is
+/// now minted from twenty-five **adapters**
+/// (`dregg_circuit_prove::mina_body_preimage_adapter::prove_welded_body_hash_chain_fold`), each
+/// `cb.connect`ing its link's 64 absorbed limbs to a gated body-preimage descriptor. The obvious
+/// question — *is REFUSAL 16 now redundant, and should it be retired?* — has a measured answer:
+/// **no, because the two objects weld DIFFERENT PAIRS.**
+///
+/// * The adapter's seam welds *(body-preimage descriptor's 1 518 published limbs)* ↔ *(chain
+///   link's 64 absorbed limbs)*. It grounds **what the chain absorbed**.
+/// * This function welds *(chain root's `transcript_acc` and squeezed lane 0)* ↔ *(the segment
+///   link proof's `BODY_ACC` and `BODYHASH` slots)*. It grounds **what the segment proof
+///   published**.
+///
+/// Delete this and the seventeen link slots go back to having NO reader anywhere in the tree.
+/// `MinaSeams.the_link_body_ports_are_weld_covered = []` is the theorem that says they are
+/// covered, and it is discharged by naming **`bodyHashWeld`/`bodyAccWeld`** — this function —
+/// alongside the seam registry; the adapter's seam is not in that disjunct and could not be, since
+/// it never touches `minaLinkDesc` at all. (The historical count is
+/// `the_link_body_ports_have_no_registered_cover = 2`, retired 2026-08-08 — cited here in the past
+/// tense on purpose.) The two ties compose end to end — preimage ⟶ absorbed stream ⟶ root ⟶ the
+/// link's published body — and neither subsumes the other.
+///
+/// ⚠ **AND THE `BODYHASH` HALF CANNOT BECOME A SEAM, for an arithmetic reason and not a
+/// scheduling one.** The chain publishes thirty-two 8-bit limbs; the link publishes nine 29-bit
+/// `Faithful9` lanes; a 256-bit recomposition has coefficients running to `2^248` against a
+/// modulus below `2^31`, so the identity wraps and is **not expressible as a BabyBear linear
+/// gate**. `MinaBodyPreimageSeams` §7.2 names the transmutable fix (a bit-level re-limbing
+/// descriptor, 256 boolean columns + byte/lane composition gates whose coefficients top out at
+/// `2^7`/`2^28`) — **undone work, not a theorem of the model**. Until it lands, retiring this
+/// refusal would delete a check whose replacement does not exist.
+///
+/// ⚑ **WHAT DID CHANGE IS WHAT `claim` MEANS.** The `transcript_acc` this function compares
+/// against is now the ordered digest of a stream every element of which is welded, limb for limb,
+/// to a descriptor that gates 2 381 bits as bits and 302 limbs as bytes. So *"the link's per-row
+/// seam commits to a stream that is not the one the chain absorbed"* is refused here, and *"the
+/// chain absorbed a stream that is not this block's body"* is refused in the recursion circuit.
+///
+/// ⚠⚠ **AND IT IS THE ANCHOR THAT CARRIES THAT, NOT THIS CODE.** The welded root and an unwelded
+/// one publish the IDENTICAL 200-lane claim — every sub-check below passes on both. `pinned` is
+/// the only discriminator, and a node handed the unwelded tower's fingerprint (see
+/// `dregg-node`'s `DREGG_MINA_BODY_WELDED_ROOT_VK` and its flag-day rename) gets every green
+/// verdict this function can give while each link's absorbed pair is back to being whatever the
+/// prover said.
+///
+/// What a prover chooses moved from "all seventeen slots" to "nothing below the chain's own
+/// 2 381-bit preimage residual" (`MinaBodyPreimageBitsAir`'s named residual) — and since the
+/// routing, that residual is CONTENT, not shape or agreement: the 2 381 bits and 38 field
+/// elements are still whatever a prover says a `Protocol_state.Body` is. Those are Mina daemon
+/// consensus obligations, not this tree's.
 pub fn check_body_chain_binding(
     pinned: &[u8; 32],
     measured: &[u8; 32],
@@ -1738,7 +1800,10 @@ pub fn check_state_hash_program_pin(
     }
     for (i, want) in expected.iter().enumerate() {
         let got = u32::try_from(pin[i]).map_err(|_| {
-            format!("state-hash seam program pin lane {i} is {} — not a canonical BabyBear value", pin[i])
+            format!(
+                "state-hash seam program pin lane {i} is {} — not a canonical BabyBear value",
+                pin[i]
+            )
         })?;
         if got != *want {
             return Err(format!(
@@ -2350,7 +2415,11 @@ mod tests {
             &absorb[ABSORB_PI_OUT_LO..][..PASTA_LIMBS],
             "PARENT and OWNHASH must differ or the polarity below proves nothing"
         );
-        assert!(link[LINK_PI_HEAD_OWN_BASE..][..MINA_STATE_LANES].iter().any(|v| *v != 0));
+        assert!(
+            link[LINK_PI_HEAD_OWN_BASE..][..MINA_STATE_LANES]
+                .iter()
+                .any(|v| *v != 0)
+        );
         check_state_hash_preimage_binding(&link, &absorb)
             .expect("the honest state-hash preimage pair must be accepted");
     }
@@ -2372,8 +2441,15 @@ mod tests {
                 let (link, mut absorb) = honest_preimage_pair();
                 let before = absorb[absorb_lo + j];
                 absorb[absorb_lo + j] = before ^ 1;
-                assert_ne!(absorb[absorb_lo + j], before, "{name}: mutation moved nothing");
-                assert!(absorb[absorb_lo + j] <= 0xFF, "{name}: mutation left the declared width");
+                assert_ne!(
+                    absorb[absorb_lo + j],
+                    before,
+                    "{name}: mutation moved nothing"
+                );
+                assert!(
+                    absorb[absorb_lo + j] <= 0xFF,
+                    "{name}: mutation left the declared width"
+                );
                 let err = check_state_hash_preimage_binding(&link, &absorb)
                     .expect_err("a forged {name} limb must be refused");
                 assert!(err.contains(name), "{name} forgery refused as: {err}");
@@ -2383,10 +2459,16 @@ mod tests {
                 let before = link[link_lo + i];
                 link[link_lo + i] = before + 1;
                 assert_ne!(link[link_lo + i], before);
-                assert!(link[link_lo + i] < 1 << 29, "{name}: lane left the declared width");
+                assert!(
+                    link[link_lo + i] < 1 << 29,
+                    "{name}: lane left the declared width"
+                );
                 let err = check_state_hash_preimage_binding(&link, &absorb)
                     .expect_err("a forged link nonet lane must be refused");
-                assert!(err.contains(name), "{name} link-side forgery refused as: {err}");
+                assert!(
+                    err.contains(name),
+                    "{name} link-side forgery refused as: {err}"
+                );
             }
         }
     }
@@ -2771,26 +2853,25 @@ mod tests {
         use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
         let d = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
         let pin_row = |pi: usize| -> Option<VmRow> {
-            d.constraints.iter().find_map(|c| match c {
-                dregg_circuit::descriptor_ir2::VmConstraint2::Base(VmConstraint::PiBinding {
-                    row,
-                    col,
-                    pi_index,
-                }) if *pi_index == pi => Some((*row, *col)),
-                _ => None,
-            })
-            .map(|(r, _)| r)
+            d.constraints
+                .iter()
+                .find_map(|c| match c {
+                    dregg_circuit::descriptor_ir2::VmConstraint2::Base(
+                        VmConstraint::PiBinding { row, col, pi_index },
+                    ) if *pi_index == pi => Some((*row, *col)),
+                    _ => None,
+                })
+                .map(|(r, _)| r)
         };
-        let pin_col = |pi: usize| -> Option<usize> {
-            d.constraints.iter().find_map(|c| match c {
-                dregg_circuit::descriptor_ir2::VmConstraint2::Base(VmConstraint::PiBinding {
-                    col,
-                    pi_index,
-                    ..
-                }) if *pi_index == pi => Some(*col),
-                _ => None,
-            })
-        };
+        let pin_col =
+            |pi: usize| -> Option<usize> {
+                d.constraints.iter().find_map(|c| match c {
+                    dregg_circuit::descriptor_ir2::VmConstraint2::Base(
+                        VmConstraint::PiBinding { col, pi_index, .. },
+                    ) if *pi_index == pi => Some(*col),
+                    _ => None,
+                })
+            };
         for i in 0..MINA_STATE_LANES {
             assert_eq!(
                 pin_row(LINK_PI_HEAD_OWN_BASE + i),
@@ -3237,8 +3318,13 @@ mod tests {
         let conj =
             descriptor_by_name(MINA_CONJUNCTION_DESCRIPTOR).expect("conjunction descriptor served");
         assert_eq!(conj.public_input_count, MINA_CONJUNCTION_PI_COUNT);
-        check_subproof_program_pin(&head, &conj, HEAD_CONJ_GUARD_COL, MINA_CONJUNCTION_DESCRIPTOR)
-            .expect("the head's conjunction bind must name the sub-proof this node dispatches");
+        check_subproof_program_pin(
+            &head,
+            &conj,
+            HEAD_CONJ_GUARD_COL,
+            MINA_CONJUNCTION_DESCRIPTOR,
+        )
+        .expect("the head's conjunction bind must name the sub-proof this node dispatches");
     }
 
     /// ⚑⚑ **…AND THE CONJUNCTION GUARD DOES NOT ACCEPT A SIBLING PROGRAM.** The head carries
@@ -3248,9 +3334,13 @@ mod tests {
         let head = descriptor_by_name(MINA_LC_VERIFY_DESCRIPTOR).expect("head descriptor served");
         let chain = descriptor_by_name(MINA_CHAINLINK_DESCRIPTOR).expect("served");
         let link = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
-        let e =
-            check_subproof_program_pin(&head, &chain, HEAD_CONJ_GUARD_COL, MINA_CHAINLINK_DESCRIPTOR)
-                .expect_err("the conjunction guard must not accept the chainlink program");
+        let e = check_subproof_program_pin(
+            &head,
+            &chain,
+            HEAD_CONJ_GUARD_COL,
+            MINA_CHAINLINK_DESCRIPTOR,
+        )
+        .expect_err("the conjunction guard must not accept the chainlink program");
         assert!(e.contains("names a DIFFERENT program"), "got: {e}");
         let e = check_subproof_program_pin(&head, &link, HEAD_CONJ_GUARD_COL, MINA_LINK_DESCRIPTOR)
             .expect_err("the conjunction guard must not accept the segment program");
@@ -3292,7 +3382,10 @@ mod tests {
         other[5] += 1;
         assert_ne!(other[5], before, "the tamper must move a value");
         assert_ne!(before, 0, "and it must move a NON-ZERO limb");
-        assert!(other[5] < 256, "and stay inside the declared 8-bit limb width");
+        assert!(
+            other[5] < 256,
+            "and stay inside the declared 8-bit limb width"
+        );
         let err = check_conjunction_binding(&pis, &other).unwrap_err();
         assert!(
             err.contains("DIFFERENT"),
@@ -3317,7 +3410,10 @@ mod tests {
     #[test]
     fn the_conjunction_commitment_context_is_not_the_transcript_context() {
         let pis: Vec<u32> = (0..160).collect();
-        assert_ne!(chainlink_pi_commitment(&pis), conjunction_pi_commitment(&pis));
+        assert_ne!(
+            chainlink_pi_commitment(&pis),
+            conjunction_pi_commitment(&pis)
+        );
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════
@@ -3480,7 +3576,11 @@ mod tests {
             .take(96)
             .map(|v| v.parse().expect("fixture limbs parse"))
             .collect();
-        assert_eq!(first.len(), 96, "the fixture's first link carries a whole incoming state");
+        assert_eq!(
+            first.len(),
+            96,
+            "the fixture's first link carries a whole incoming state"
+        );
         assert_eq!(
             first,
             MINA_BODY_SALT_LIMBS.to_vec(),

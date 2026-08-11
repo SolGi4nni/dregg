@@ -666,6 +666,19 @@ fn the_body_hash_folds_recursion_vk_is_deterministic() {
 /// digest of the 49 absorbed packed elements — compared against the host mirror over the Lean
 /// emitted public inputs.
 ///
+/// ⚠⚠ **THIS IS THE UNWELDED TOWER, AND SINCE 2026-08-11 IT IS NOT THE ONE A NODE ANCHORS.** The
+/// `state_body_hash` root the wire carries is now minted by
+/// `mina_body_preimage_adapter::prove_welded_body_hash_chain_fold` — the same 25 links, each
+/// proved by an ADAPTER that also verifies the gated body-preimage STARK and `cb.connect`s that
+/// link's 64 absorbed limbs to it. The two towers publish the **identical** claim, so everything
+/// this section asserts holds of both; what separates them is the `recursion_vk_fingerprint`, and
+/// `circuit-prove/tests/mina_body_preimage_adapter.rs` §6 is where that inequality is measured.
+/// Mint the anchored root with
+/// `cargo run -p dregg-circuit-prove --release --bin mina_body_root_anchor`.
+///
+/// This section stays as the **baseline**: it is what the routing is priced against, and it is the
+/// object §6's `--plain` half builds.
+///
 /// `#[ignore]`d for wall clock only. Run:
 /// `cargo test -p dregg-circuit-prove --release --test mina_body_hash_chain_fold -- --ignored --nocapture`
 #[test]

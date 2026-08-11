@@ -274,6 +274,10 @@ armed-nightly dregg-circuit-prove real_apex_terminates_mina_native_and_verifies 
 unrouted dregg-circuit-prove the_fold_refuses_two_segments_that_do_not_chain   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
 unrouted dregg-circuit-prove the_split_chain_folds_and_the_root_carries_both_endpoints   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
 unrouted dregg-circuit-prove the_whole_body_hash_chain_folds   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
+unrouted dregg-circuit-prove two_adapters_fold_with_the_unmodified_chain_fold   # body-preimage adapter; needs the UNTRACKED ~80 MB pasta-fp-bodyhash witnesses, so no scheduled lane CAN run it
+unrouted dregg-circuit-prove the_whole_body_hash_chain_folds_with_every_link_welded   # ditto — 25 adapters + 24 folds over untracked witnesses
+unrouted dregg-circuit-prove the_production_welded_fold_refuses_a_preimage_that_is_not_this_blocks   # ⚑ an ADVERSARIAL tooth at the production entry point, and nothing runs it: untracked witnesses
+unrouted dregg-circuit-prove the_welded_and_plain_body_roots_agree_on_the_claim_and_differ_on_the_fingerprint   # ⚑ the fact the 08-11 routing rests on; two whole towers over untracked witnesses
 unrouted dregg-circuit-prove the_whole_kimchi_verifier_tower_proves_over_block_539508   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
 unrouted dregg-circuit-prove the_whole_phase2_transcript_folds_into_one_claim   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass
 unrouted dregg-circuit-prove the_wrap_cost_tracks_committed_width_not_declared_width   # Mina/Kimchi/Pickles surface — a separate lane owns it; deliberately NOT routed by this pass

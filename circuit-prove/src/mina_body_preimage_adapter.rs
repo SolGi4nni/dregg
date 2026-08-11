@@ -278,13 +278,9 @@ pub fn prove_body_preimage_link_adapter(
     )
     .map_err(|e| format!("chain-link inner IR-v2 prove failed: {e}"))?;
 
-    let (preimage_airs, preimage_tpi, preimage_common) = ir2_airs_and_common_for_config(
-        preimage_desc,
-        &preimage_inner,
-        preimage_pis,
-        inner_config,
-    )
-    .map_err(|e| format!("body-preimage verify-triple build failed: {e}"))?;
+    let (preimage_airs, preimage_tpi, preimage_common) =
+        ir2_airs_and_common_for_config(preimage_desc, &preimage_inner, preimage_pis, inner_config)
+            .map_err(|e| format!("body-preimage verify-triple build failed: {e}"))?;
     let (chain_airs, chain_tpi, chain_common) =
         ir2_airs_and_common_for_config(chain_desc, &chain_inner, chain_pis, inner_config)
             .map_err(|e| format!("chain-link verify-triple build failed: {e}"))?;
@@ -295,12 +291,13 @@ pub fn prove_body_preimage_link_adapter(
         common_data: &preimage_common,
         table_public_inputs: preimage_tpi,
     };
-    let right: RecursionInput<'_, DreggRecursionConfig, Ir2Air> = RecursionInput::NativeBatchStark {
-        airs: &chain_airs,
-        proof: &chain_inner,
-        common_data: &chain_common,
-        table_public_inputs: chain_tpi,
-    };
+    let right: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &chain_airs,
+            proof: &chain_inner,
+            common_data: &chain_common,
+            table_public_inputs: chain_tpi,
+        };
 
     let left_len = seam.left.claim_len;
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
@@ -367,6 +364,95 @@ pub fn prove_body_preimage_link_adapter(
     .map_err(|e| format!("body-preimage leaf adapter failed: {e:?}"))
 }
 
+/// ⚑⚑⚑ **THE WELDED BODY-HASH CHAIN FOLD — THE PRODUCTION ENTRY POINT.**
+///
+/// Twenty-five adapters, twenty-four `fold_chain_links` nodes, one root. This is the twin of
+/// [`crate::mina_phase2_chain_leaf::prove_chain_fold_with`] with the adapter where the plain leaf
+/// was, and it is the function a setup party runs to mint the `state_body_hash` root a node
+/// anchors — **not a test body**. Until 2026-08-11 the whole-chain welded fold existed only inside
+/// an `#[ignore]`d test, which is the "route exists but nothing runs it" state
+/// `MinaBodyPreimageSeams` §7.0 recorded and refused to round up.
+///
+/// * `link_witnesses` — `(trace, public_inputs)` per link, in CHAIN ORDER. **Exactly
+///   [`BODY_LINKS`]**: see the refusal below.
+/// * `config` — the INNER (IR-v2 descriptor) engine, [`crate::mina_phase2_chain_leaf::chain_inner_config`].
+///   The adapter's mint engine and the fold engine are both DERIVED from it here, by the same two
+///   applications of `recursion_layer_over` the plain fold uses, so a caller names neither and the
+///   welded root verifies under [`crate::mina_phase2_chain_leaf::chain_root_config`] exactly as a
+///   plain one does.
+/// * `progress` — `(index, phase)`, so a long fold can be reported without this module owning a
+///   logging policy. Same shape as the plain fold's.
+///
+/// ⚑ **WHY A SHORT CHAIN IS REFUSED RATHER THAN FOLDED.** The twenty-five seams PARTITION the
+/// preimage claim — `every_published_slot_is_welded_exactly_once`, and the Rust twin
+/// `the_twenty_five_seams_cover_the_whole_claim_exactly_once` — so folding `k < 25` links welds
+/// `1 518 · k/25` of the published limbs and leaves the rest free. That root would verify, publish
+/// a well-formed 200-lane claim, and be a strictly weaker sentence than the one this function's
+/// name claims. It is refused here because nothing downstream can see the difference: the claim
+/// shape is identical and the `recursion_vk_fingerprint` of a short welded tower is just another
+/// value an operator might anchor.
+///
+/// ⚠ **STANDING.** Everything [`prove_body_preimage_link_adapter`]'s standing note says holds
+/// here, once per link: this is recursion WIRING, it proves on a box, and it inherits the
+/// undischarged FRI/STARK floor. What routing it changes is WHICH root a node anchors, not what
+/// either descriptor says.
+pub fn prove_welded_body_hash_chain_fold(
+    preimage_desc: &EffectVmDescriptor2,
+    preimage_trace: &[Vec<BabyBear>],
+    preimage_pis: &[BabyBear],
+    chain_desc: &EffectVmDescriptor2,
+    link_witnesses: &[(Vec<Vec<BabyBear>>, Vec<BabyBear>)],
+    config: &DreggRecursionConfig,
+    mut progress: impl FnMut(usize, &str),
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    if link_witnesses.len() != BODY_LINKS {
+        return Err(format!(
+            "a welded body-hash fold takes exactly {BODY_LINKS} links, got {}: the {BODY_LINKS} \
+             seams PARTITION the {BODY_BITS_PI_COUNT}-slot preimage claim, so a shorter chain \
+             leaves the unwelded slots free and mints a root whose claim shape is indistinguishable \
+             from the whole one's",
+            link_witnesses.len()
+        ));
+    }
+    // ⚑ THE FOLD ENGINE, DERIVED — the same two applications of `recursion_layer_over` the plain
+    // whole-chain fold makes. An adapter mints where a leaf wrap mints, so every node above it
+    // verifies at the same place, and the welded root verifies under `chain_root_config()` with no
+    // second config for a caller to get wrong.
+    let fold_config = recursion_layer_over(&recursion_layer_over(config));
+
+    progress(0, "adapter");
+    let mut acc = prove_body_preimage_link_adapter(
+        preimage_desc,
+        preimage_trace,
+        preimage_pis,
+        chain_desc,
+        &link_witnesses[0].0,
+        &link_witnesses[0].1,
+        &body_preimage_seam(0)?,
+        config,
+    )?;
+    for (j, (trace, pis)) in link_witnesses.iter().enumerate().skip(1) {
+        progress(j, "adapter");
+        let leaf = prove_body_preimage_link_adapter(
+            preimage_desc,
+            preimage_trace,
+            preimage_pis,
+            chain_desc,
+            trace,
+            pis,
+            &body_preimage_seam(j)?,
+            config,
+        )?;
+        progress(j, "fold");
+        // ⚑ TRACKED pins, for the reason `fold_vk_pin` states: the running node's VK genuinely
+        // moves across the transient, so a frozen constant would falsely refuse honest depth, and
+        // what the tracked pin buys is that the pinned values reach the parent's `RecursionVk`.
+        let pins = crate::fold_vk_pin::FoldVkPins::tracked(&acc, &leaf)?;
+        acc = crate::mina_phase2_chain_leaf::fold_chain_links(&acc, &leaf, &pins, &fold_config)?;
+    }
+    Ok(acc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,7 +501,10 @@ mod tests {
             "the 1 518 pins' left endpoints must be a PERMUTATION of the claim — a duplicate is an \
              aliasing bug a count alone cannot see, and a gap is a limb the prover keeps"
         );
-        assert_eq!(zero_right, 82, "the `32 − ⌈W_e/8⌉` deficit plus the pad's 32");
+        assert_eq!(
+            zero_right, 82,
+            "the `32 − ⌈W_e/8⌉` deficit plus the pad's 32"
+        );
         assert_eq!(
             connects,
             BODY_LINKS * 2 * 32,
