@@ -945,6 +945,11 @@ reads as corroboration. **Two sources for one derived value are not two witnesse
 witness copied.** The literal below is that re-measurement, landed in the same flag day as
 `LightClientMinaLinkAir.ABSORB_VK_LANES` and independently resolved by the pure-Lean all-pin gate.
 
+⚑ **FINAL EMITTED BYTES, 2026-08-11.** The bridge value above authorized the materialisation of
+the descriptor's new round/state columns. The served artifact is now `w=532 pi=192 cons=953`,
+fingerprints to `0b55e61b97c113550b8a671a40ea22923dddd184cf22ae5cdfb036046a92b07a`, and yields the
+nine lanes below.
+
 ⚑ This is not a local defect. `circuit/tests/vk_pin_closure_over_the_served_tree.rs` resolves EVERY
 `vk_pin` the tree serves against the fingerprints of EVERY descriptor the tree serves — it needs no
 per-pin map, so it cannot go stale by omission — and at HEAD **7 of 7 dangle**: every recursion bind
@@ -956,7 +961,7 @@ construction.
 chain performed by this flag day; changing the literal without that derived-artifact step would
 leave the opposite half stale. -/
 def ABSORB_VK_LANES : List ℤ :=
-  [41093468, 279990907, 56337825, 304879677, 290952232, 13401509, 399993147, 204571843, 1637858]
+  [468079883, 144575672, 434275029, 97812532, 500422946, 292012648, 58553016, 222332630, 8040594]
 
 /-- The bind's guard column — one past the routing's row index. -/
 def DBIND : Nat := ROUTED_WIDTH

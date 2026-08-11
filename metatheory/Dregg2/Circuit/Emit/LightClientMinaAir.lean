@@ -940,9 +940,12 @@ not the current fingerprint after the canonical-record change.
 ⚑ **RE-MEASURED 2026-08-11 AFTER THE CANONICAL-RECORD CHANGE.** `2ad7e48c8` made `bound`
 non-nullable in the binary fingerprint record, so the unchanged served JSON now fingerprints to
 `33040b37662bc5c86ffa5b161d4fb057e6c5c56328e57b97671b2c43b53a4beb`, i.e. the nine lanes below.
-`scripts/check-vk-pin-literals.sh` independently recomputes this resolution in pure Lean. -/
+That value was the bridge into the authorized emit. The emit then materialised the descriptor's
+new round/state columns (`w=469→532`, `cons=922→1017`, `pi=256` unchanged), so the deployed bytes
+now fingerprint to `d53df3878fde7674aad302f33946c9fd740da34cb9eb47d646d13bf253eb1157`.
+`scripts/check-vk-pin-literals.sh` independently recomputes the final resolution in pure Lean. -/
 def CHAINLINK_VK_LANES : List ℤ :=
-  [386597939, 103373617, 385784818, 10369580, 475948411, 311701986, 228482543, 380134787, 15420218]
+  [133381589, 62321788, 11856541, 311194598, 282546140, 366782033, 85678367, 176047994, 5706219]
 
 /-- The `i`-th pinned program lane, as the `vkPin` literal the leg carries. -/
 def chainlinkVkLane (i : Nat) : ℤ := CHAINLINK_VK_LANES.getD i 0
@@ -1082,7 +1085,12 @@ def LINK_VK_LANES : List ℤ :=
   -- `state-hash-preimage` port an output to land on; see `PI_HEAD_OWN`. Recomputed from the NEW
   -- bytes, same command:
   --   fp=1e908aa558d53e755b1ab637b8b4bb9f506770eb6f84f6df8e3c37fbbb5da933  w=57 pi=46 cons=108
-  [92966942, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693]
+  --
+  -- ⚑ MOVED 2026-08-11 in the canonical-record leaf-pin flag day. Re-pinning this link AIR's
+  -- absorb and Fp-chainlink children changed the emitted link program without changing its
+  -- geometry (`w=57 pi=46 cons=108`). Measured from the authorized rung-one emitted bytes:
+  --   fp=bd9ec936199ec9f6696af47d6793bccedeaa2d7bd45f27c3c29081c99015b9d0
+  [382312125, 374141129, 488282749, 421973755, 447605995, 267009430, 51055773, 303640626, 13678869]
 
 /-- The `i`-th pinned segment-program lane, as the `vkPin` literal the leg carries. -/
 def linkVkLane (i : Nat) : ℤ := LINK_VK_LANES.getD i 0
@@ -2715,14 +2723,29 @@ lane 0 PLUS ONE. Every gate of the verify logic holds, every slack is in range, 
 canonical, and all five carriers read `1` — the row is honest in every column the descriptor carried
 before 2026-08-05. -/
 
-/-- The forged program lanes: the real fingerprint with lane 0 bumped by one. -/
+/-- The forged program lanes: the real fingerprint with lane 0 bumped by one.
+
+⚑ **RE-DERIVED 2026-08-11.** This vector had silently remained the `+1` of the 2026-08-08
+fingerprint while `CHAINLINK_VK_LANES` moved twice. The rejection theorem stayed green because a
+nine-lane mismatch is still rejected, but its claimed one-lane adversary had disappeared. The
+exact-one-lane theorem immediately below now makes that failure mode red. -/
 def FORGED_VK_LANES : List ℤ :=
-  [158847878, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666]
+  [133381590, 62321788, 11856541, 311194598, 282546140, 366782033, 85678367, 176047994, 5706219]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT PROGRAM.** -/
 def forgedProgramRow : Assignment :=
   rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES
           ++ ([1] ++ FORGED_VK_LANES ++ CHAINLINK_PI_LANES) ++ LINK_VK_LANES ++ conjBindCols)
+
+/-- ⚑ The chainlink falsifier really changes one non-zero lane, and no other lane. This is the
+tooth the older `forged_program_refused` theorem lacked: a stale adversary can no longer remain
+green merely because it still names *some* wrong program. -/
+theorem the_forged_program_lane_moves_exactly_one_real_value :
+    chainlinkVkLane 0 ≠ 0
+      ∧ FORGED_VK_LANES ≠ CHAINLINK_VK_LANES
+      ∧ FORGED_VK_LANES.getD 0 0 = CHAINLINK_VK_LANES.getD 0 0 + 1
+      ∧ FORGED_VK_LANES.tail = CHAINLINK_VK_LANES.tail := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **BEFORE: everything this descriptor checked before the bind ACCEPTS it.** The pre-bind
 predicate is `verifyAccepts ∧ canonAccepts` — literally `airAccepts` minus the seam — and it is
@@ -2794,7 +2817,8 @@ def FORGED_LINK_VK_LANES : List ℤ :=
   -- ⚑⚑ AND IT CAUGHT IT AGAIN on 2026-08-10, on the `PI_HEAD_OWN` flag day, with the same two
   -- conjuncts and no prompting. A falsifier that stops falsifying is this repo's own minted
   -- failure class; this one is built so that it CANNOT go quietly stale.
-  [92966943, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693]
+  -- ⚑ It caught the 2026-08-11 leaf-pin flag day too; lane zero follows the new link pin + 1.
+  [382312126, 374141129, 488282749, 421973755, 447605995, 267009430, 51055773, 303640626, 13678869]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT SEGMENT PROGRAM.** -/
 def forgedLinkProgramRow : Assignment :=
@@ -3002,6 +3026,7 @@ theorem mina_air_discriminates :
 #assert_axioms mina_bind_attests_the_pinned_program
 #assert_axioms mina_bind_guard_cannot_be_disarmed
 #assert_axioms mina_wrap_fs_row_is_fillable
+#assert_axioms the_forged_program_lane_moves_exactly_one_real_value
 #assert_axioms forged_program_was_admitted
 #assert_axioms forged_program_refused
 #assert_axioms forged_program_old_admits_new_rejects

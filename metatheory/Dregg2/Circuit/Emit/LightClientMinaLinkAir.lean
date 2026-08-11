@@ -653,10 +653,13 @@ recomputes them from the same bytes.
 record hashed for every descriptor even when its JSON did not move. The unchanged served
 `pasta-fp-absorb.json` now fingerprints to
 `5c0973624f0a1686966e8d1e0c16894279154bfb98c14edaf51d268c61e2fd18`, i.e. the nine lanes below.
-Both Lean consumers move in this flag day; the all-pin resolver and the two Rust gates recompute the
-value rather than accepting agreement between the copies. -/
+That value was the bridge into the authorized emit. The emitted descriptor then materialised the
+new round/state columns (`w=469→532`, `cons=858→953`, `pi=192` unchanged) and now fingerprints to
+`0b55e61b97c113550b8a671a40ea22923dddd184cf22ae5cdfb036046a92b07a`. Both Lean consumers move in
+this flag day; the all-pin resolver and the two Rust gates recompute the value rather than accepting
+agreement between the copies. -/
 def ABSORB_VK_LANES : List ℤ :=
-  [41093468, 279990907, 56337825, 304879677, 290952232, 13401509, 399993147, 204571843, 1637858]
+  [468079883, 144575672, 434275029, 97812532, 500422946, 292012648, 58553016, 222332630, 8040594]
 
 /-- The nine `Faithful9` lanes of a row's PARENT nonet, as commit expressions. -/
 def parentCommitLanes : List Expr :=
@@ -759,10 +762,13 @@ re-emits and re-VKs `dregg-mina-lightclient-link::v1`, which moves
 non-nullable in the binary fingerprint record, so every descriptor fingerprint moved even when its
 JSON bytes did not. The unchanged served `pasta-fp-chainlink.json` now fingerprints to
 `489dd5b7d14ba474912780b5c03af4f4d1076207fed8a46be8a4b4d5ebd10692`, i.e. the nine lanes below.
+That value was the bridge into the authorized emit. The emitted descriptor then materialised the
+new round/state columns (`w=469→532`, `cons=922→1017`, `pi=256` unchanged) and now fingerprints to
+`9d2e069018f1036867a534484802cb743ba172e157b80684e88529c68542163f`.
 `scripts/check-vk-pin-literals.sh` recomputes the whole term/bytes/BLAKE3/lane chain in pure Lean;
 the seam registry reads this same definition rather than carrying a second measured literal. -/
 def FP_CHAINLINK_VK_LANES : List ℤ :=
-  [399875400, 86138509, 648285, 141918571, 8200015, 209650609, 329363091, 494581396, 9570001]
+  [268840605, 2066628, 220813786, 369397904, 169064268, 472641721, 396496922, 280544560, 4134466]
 
 /-- The eight `BODY_ACC` columns, as commit expressions. -/
 def bodyAccCommitLanes : List Expr :=
