@@ -33,6 +33,11 @@ import Dregg2.Circuit.Emit.KimchiWrapHackDigest
 -- circuit defers and `wrap_main`'s `finalize_other_proof` checks. They are a VALUE, not a
 -- derivation: the derivation is two modules above and imports this one.
 import Dregg2.Circuit.Emit.MinaWrapProofDeferredWords
+-- ⚑ §24a's PADDING block's fifteen `bulletproof_challenges` — `Dummy.Ipa.Wrap.challenges` in
+-- prechallenge form. Reached transitively through `KimchiWrapHackDigest` already; named here
+-- because `stmtDummyVal` reads it DIRECTLY and a direct dependency that travels on someone else's
+-- import is the kind that disappears when that someone else is rewired.
+import Dregg2.Circuit.Emit.MinaWrapHackDummySg
 
 namespace Dregg2.Circuit.Emit.KimchiStepMain
 
@@ -5303,12 +5308,32 @@ inside `slotBits`' width: a parity bit and `should_finalize` are `0`/`1`, a chal
 `hi` half and a digest are `< p`. ⚠ This is a FILLER and the docblock at §1e says why that is
 faithful: upstream's padding block is `Unfinalized.Constant.dummy ()`, discharged by
 `wrap_main.ml:333`, and carries no obligation but its `should_finalize` bit — which is a `cConst`
-row here and therefore not filler at all. -/
+row here and therefore not filler at all.
+
+⚑⚑ **FIFTEEN OF THE THIRTY-TWO ARE NOT FILLER ANY MORE, AND THE REASON IS THAT SOMETHING READS
+THEM (2026-08-10).** The `bulletproof_challenges` slots are `Dummy.Ipa.Wrap.challenges` —
+`MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS`, `unfinalized.rs:286-290` — because the pad slot of the
+WRAP proof's kimchi `prev_challenges` is built out of them and Mina's own reader rebuilds that slot
+from a CONSTANT it already holds. `wrap.rs:729-737` (the prover) and `prover.rs:130-140` (the
+reader) both front-pad `challenge_polynomial_commitments` with `dummy_ipa_wrap_sg()`, which is
+`commit(b_poly(Dummy.Ipa.Wrap.challenges_computed))`; the endo expansion of these fifteen IS
+`challenges_computed` (asserted in the generator that emits both). So a ladder here does not make
+a free choice about an unread word — it makes the wrap proof's pad slot commit a challenge
+polynomial that is not the one Mina will pair with it, which is `gate_a2` slot 0 red and nothing
+else able to see it. The other seventeen are still filler and stay a ladder.
+
+⚠ **THE DISCRIMINATION IS ON `slotOf`, NOT ON `slotBits`.** `W_CHAL = 128` also covers the two
+`.challenge` and three `.scalarChallenge` slots of each block, and those are `beta`/`gamma` and
+`alpha`/`zeta`/`xi` — nothing pairs them with a commitment and Mina invents no constant for them.
+A width-keyed rule would have put `DUMMY_WRAP_PRECHALS` into five slots it does not describe. -/
 def stmtDummyVal (j : Nat) : Nat :=
-  let w := slotBits j
-  if w == 1 then (if j == PP_WORDS - 1 then 0 else (j % 2))
-  else if w == 128 then (7 + 1000003 * j) % 2 ^ 127
-  else (13 + 5000011 * j + 17 * j * j) % pN
+  match slotOf j with
+  | .bpChallenge _ k => MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.getD k 0
+  | _ =>
+    let w := slotBits j
+    if w == 1 then (if j == PP_WORDS - 1 then 0 else (j % 2))
+    else if w == 128 then (7 + 1000003 * j) % 2 ^ 127
+    else (13 + 5000011 * j + 17 * j * j) % pN
 
 /-- **§24's rows.** Empty on a shape that carries no statement, so a smoke emission is byte-identical
 to what it was. -/

@@ -310,4 +310,63 @@ theorem the_witnessed_slots_are_the_padding_block_and_the_live_blocks_deferred_v
 
 #assert_compiled the_witnessed_slots_are_the_padding_block_and_the_live_blocks_deferred_values
 
+/-- ⚑⚑⚑ **`the_padding_blocks_fifteen_are_minas_own_dummy_wrap_prechallenges`** — the pad slot of
+the WRAP proof's kimchi `prev_challenges` is a slot Mina's own reader REBUILDS FROM A CONSTANT, and
+these fifteen emitted words are that constant's preimage.
+
+`wrap.rs:729-737` (prover) and `prover.rs:130-140` (reader) both front-pad
+`challenge_polynomial_commitments` to `Max_proofs_verified.n` with `dummy_ipa_wrap_sg()` and zip the
+result, in order, against the wrap record's `old_bulletproof_challenges` — which `wrap_main.ml:421
+-431` builds out of THIS block's `deferred_values.bulletproof_challenges`. `dummy_ipa_wrap_sg()` is
+`commit(b_poly(Dummy.Ipa.Wrap.challenges_computed))`, and `MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS`
+is the prechallenge preimage of `challenges_computed` (asserted in the generator that exports both).
+So these fifteen words are the ONLY values for which the pad slot Mina reconstructs is the pad slot
+we committed. `gates::gate_a2` is that reconstruction run on the marshalled object; before
+2026-08-10 it reported slot 0 red and no other instrument in the tree could see it, because
+`accumulator_check` is a different pair entirely.
+
+The legs, in order, and each one is a way the repair could have been done wrongly:
+
+* the emitted vector's fifteen `.bpChallenge 0 _` words ARE `DUMMY_WRAP_PRECHALS`, in order — read
+  off `stepPublic tStep`, the vector a verifier is handed, not off `stmtDummyVal`;
+* `getD`'s fallback is UNREACHABLE — the list is exactly `PP_BP_LOG2` long, so no slot silently
+  publishes a `0`;
+* ⚑ the window the marshaller reads is these slots and not neighbours: `step_statement_pre
+  challenges` takes entry `32·p + 16 + j`, and slot `16 + j` of block 0 is `.bpChallenge 0 j`;
+* every one clears `marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS = 100` — a published slot's
+  prechallenges are `Ro.scalar_chal ()` draws and the floor refuses anything narrower;
+* ⚑⚑ **THE REFUSAL, and it is the reason the discrimination is on `slotOf`:** no OTHER 128-bit slot
+  of either block carries one of these fifteen. `W_CHAL` also covers `beta`/`gamma` and
+  `alpha`/`zeta`/`xi`, five slots per block that no commitment is paired with; a width-keyed rule
+  would have filled them with `DUMMY_WRAP_PRECHALS` too and this conjunct would be false. -/
+theorem the_padding_blocks_fifteen_are_minas_own_dummy_wrap_prechallenges :
+    -- the emitted words, in order, ARE Mina's own dummy prechallenges
+    (((List.range PP_BP_LOG2).all (fun k =>
+        (stepPublic tStep).getD (2 * PP_FIELDS + PP_DIGESTS + PP_CHALLENGES
+                                   + PP_SCALAR_CHALLENGES + k) 0
+          == (Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.getD k 0 : Int)))
+     -- …the `getD` fallback in `stmtDummyVal` is unreachable: the list is exactly as long as the
+     -- vector it fills, so no slot publishes a silent `0`
+     && Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.length == PP_BP_LOG2
+     && !Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.contains 0
+     -- ⚑ …and the window the MARSHALLER reads is exactly those slots: entry `32·p + 16 + j`
+     && ((List.range PP_BP_LOG2).all (fun j => slotOf (PP_WORDS * 0 + 16 + j) == .bpChallenge 0 j))
+     && ((List.range PP_BP_LOG2).all (fun j => slotOf (PP_WORDS * 1 + 16 + j) == .bpChallenge 1 j))
+     -- …every one clears the floor a PUBLISHED accumulator slot's prechallenges must clear
+     && ((List.range PP_BP_LOG2).all (fun k =>
+          decide (2 ^ 99 ≤ Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.getD k 0)
+            && decide (Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.getD k 0
+                         < 2 ^ W_CHAL)))
+     -- ⚑⚑ THE REFUSAL: no OTHER 128-bit slot of either block carries one of the fifteen. This is
+     -- the conjunct a `slotBits`-keyed repair makes false.
+     && ((List.range STMT_WORDS).all (fun i =>
+          match slotOf i with
+          | .challenge _ _ | .scalarChallenge _ _ =>
+              !Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.contains
+                ((stepPublic tStep).getD i 0).toNat
+          | _ => true))) = true := by
+  native_decide
+
+#assert_compiled the_padding_blocks_fifteen_are_minas_own_dummy_wrap_prechallenges
+
 end Dregg2.Circuit.Emit.KimchiStepMain

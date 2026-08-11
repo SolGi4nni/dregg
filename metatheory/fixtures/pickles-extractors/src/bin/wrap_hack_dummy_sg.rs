@@ -198,12 +198,18 @@ fn main() {
          statement word cannot carry it; these fifteen 128-bit draws are its preimage — asserted in\n\
          the generator, not assumed — and they are what the padding block's fifteen\n\
          `bpChallenge` words must be.\n\n\
-         ⚠ **THIS IS WHAT `KimchiStepMainCore.stmtDummyVal` DOES NOT YET EMIT.** It fills every\n\
-         128-bit padding slot with `(7 + 1000003·j) % 2^127` — 24-25 bits — so the wrap proof's\n\
-         PAD recursion slot commits a challenge polynomial that is not Mina's, while\n\
-         `prover.rs:130-140` front-pads the reader's list with `DUMMY_WRAP_SG`. `gate_a2` reports\n\
-         that slot RED, and `marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS` refuses the same shape\n\
-         wherever it reaches a slot the record PUBLISHES.\n\
+         ⚑ **AND `KimchiStepMainCore.stmtDummyVal` EMITS THEM SINCE 2026-08-10.** It fills a\n\
+         `PicklesStepStatement.slotOf` `.bpChallenge _ k` slot of the padding block with entry `k`\n\
+         of this list — keyed on `slotOf` and NOT on `slotBits`, because `W_CHAL` also covers the\n\
+         two `.challenge` and three `.scalarChallenge` slots per block, which no commitment is\n\
+         paired with. The tie is\n\
+         `KimchiStepStatementPins.the_padding_blocks_fifteen_are_minas_own_dummy_wrap_prechallenges`.\n\n\
+         ⚠ WHAT THAT REPLACED: every 128-bit padding slot carried `(7 + 1000003·j) % 2^127` —\n\
+         24-25 bits — so the wrap proof's PAD recursion slot committed a challenge polynomial that\n\
+         was not Mina's, while `prover.rs:130-140` front-pads the reader's list with\n\
+         `DUMMY_WRAP_SG`. `gate_a2` reported that slot RED and no other rung in the tree could see\n\
+         it; `marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS` refuses the same shape wherever it\n\
+         reaches a slot the record PUBLISHES.\n\
          -/\n\
          def DUMMY_WRAP_PRECHALS : List Nat :=\n{pre_list}\n\n\
          /-- ⚑⚑ **`messages_for_next_wrap_proof_padding()`** (`transaction.rs:3691-3700`) — the\n\

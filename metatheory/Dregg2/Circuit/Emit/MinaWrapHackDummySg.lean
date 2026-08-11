@@ -79,12 +79,19 @@ statement word cannot carry it; these fifteen 128-bit draws are its preimage —
 the generator, not assumed — and they are what the padding block's fifteen
 `bpChallenge` words must be.
 
-⚠ **THIS IS WHAT `KimchiStepMainCore.stmtDummyVal` DOES NOT YET EMIT.** It fills every
-128-bit padding slot with `(7 + 1000003·j) % 2^127` — 24-25 bits — so the wrap proof's
-PAD recursion slot commits a challenge polynomial that is not Mina's, while
-`prover.rs:130-140` front-pads the reader's list with `DUMMY_WRAP_SG`. `gate_a2` reports
-that slot RED, and `marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS` refuses the same shape
-wherever it reaches a slot the record PUBLISHES.
+⚑ **AND `KimchiStepMainCore.stmtDummyVal` EMITS THEM SINCE 2026-08-10.** It fills a
+`PicklesStepStatement.slotOf` `.bpChallenge _ k` slot of the padding block with entry `k`
+of this list — keyed on `slotOf` and NOT on `slotBits`, because `W_CHAL` also covers the
+two `.challenge` and three `.scalarChallenge` slots per block, which no commitment is
+paired with. The tie is
+`KimchiStepStatementPins.the_padding_blocks_fifteen_are_minas_own_dummy_wrap_prechallenges`.
+
+⚠ WHAT THAT REPLACED: every 128-bit padding slot carried `(7 + 1000003·j) % 2^127` —
+24-25 bits — so the wrap proof's PAD recursion slot committed a challenge polynomial that
+was not Mina's, while `prover.rs:130-140` front-pads the reader's list with
+`DUMMY_WRAP_SG`. `gate_a2` reported that slot RED and no other rung in the tree could see
+it; `marshal::ACCUMULATOR_PRECHALLENGE_MIN_BITS` refuses the same shape wherever it
+reaches a slot the record PUBLISHES.
 -/
 def DUMMY_WRAP_PRECHALS : List Nat :=
   [ 161621990286339861369413299182831583087

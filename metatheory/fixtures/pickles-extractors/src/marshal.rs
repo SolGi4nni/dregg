@@ -184,7 +184,9 @@ pub const WRAP_PAD_SLOTS: usize = PROOFS_VERIFIED - STEP_RECURSION_SLOTS;
 /// ⚑ **THE FLOOR A PUBLISHED SLOT'S PRECHALLENGES MUST CLEAR.** Measured on devnet block 539508
 /// (`bin/wire_recursion_pairing_probe.rs`): all 62 prechallenges in the object are **120–128 bits**
 /// — `wrap_record` slots at 124–128 and 125–128, `step_record` slots at 123–128 and 120–128,
-/// `deferred_values` at 127–128. `KimchiStepMainCore.stmtDummyVal`'s filler is 24–25.
+/// `deferred_values` at 127–128. `KimchiStepMainCore.stmtDummyVal`'s filler WAS 24–25; since
+/// 2026-08-10 its `.bpChallenge` slots are `MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS`, 123–128,
+/// so the emitted padding block clears this floor too.
 /// 100 sits under every real value with twenty bits of margin and over every ladder by seventy-five.
 pub const ACCUMULATOR_PRECHALLENGE_MIN_BITS: u32 = 100;
 
@@ -268,7 +270,10 @@ pub enum MarshalError {
     /// `Ro.scalar_chal ()` draw: **120–128 bits on that block, minimum 120 over all 62 values in
     /// it.** A structured filler is not one, and a filler is exactly what got published — the
     /// padding block's fifteen were `KimchiStepMainCore.stmtDummyVal`, `(7 + 1000003·j) % 2^127`,
-    /// **24–25 bits.**
+    /// **24–25 bits.** ⛑ REPAIRED 2026-08-10 at the source: those fifteen slots now carry
+    /// `MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS` — `Dummy.Ipa.Wrap.challenges`, 123–128 bits — so
+    /// no emission of this tree reaches this refusal. It stays because the refusal is about the
+    /// SHAPE and not about one emitter, and because the emitter it was aimed at can regress.
     ///
     /// [`ACCUMULATOR_PRECHALLENGE_MIN_BITS`] is the floor, set well under the 120 a real block
     /// shows and far over anything a ladder produces.

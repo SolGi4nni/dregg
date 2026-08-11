@@ -55,6 +55,9 @@ import Dregg2.Tactics
 import Dregg2.Circuit.Emit.PastaField
 -- ⚑ slot 11's preimage IS the step statement's own packed words since 2026-08-06 — see §1b.
 import Dregg2.Circuit.Emit.KimchiStepWrapChainFixture
+-- ⚑ …and its PADDING half is Mina's own `Dummy.Ipa.Wrap.challenges` since 2026-08-10, which §1b's
+-- pin states by identity rather than by the magnitude split that used to stand in for it.
+import Dregg2.Circuit.Emit.MinaWrapHackDummySg
 
 namespace Dregg2.Circuit.Emit.MinaWrapDeferredWords
 
@@ -86,38 +89,54 @@ survived a Mina reader.
 ⚠ **RE-BAKED FROM THE REPAIRED RUN, AND ONLY SLOT 12 MOVED** — the run's `wrap-public-input.json`
 was diffed against this list slot by slot and the other **thirty-nine are identical**. Any agreement
 count taken against the old slot 12 is void; `EmitWrapFortyAgreement` must be re-run rather than
-quoted forward. -/
+quoted forward.
+
+⚑⚑⚑ **AND RE-BAKED AGAIN ON 2026-08-10 FOR THE PAD-SLOT REPAIR — TWENTY-EIGHT SLOTS MOVED, AND
+SLOT 12 IS THE ONE THAT DID NOT.** `KimchiStepMainCore.stmtDummyVal` now emits
+`MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS` — `Dummy.Ipa.Wrap.challenges` — into the padding block's
+fifteen `.bpChallenge` slots, so the STEP proof's public vector moved at entries 16…30, and with it
+its public commitment, its whole Fq transcript and every scalar this list records. Slots 0–11 and
+13–28 moved; slot 12 did not, because `messages_for_next_step_proof` hashes the STEP record — the
+real accumulator and the step-side sixteen — and the padding block is nowhere in that preimage; and
+29–39 are the branch/flag constants.
+
+⚑ WHY THE PADDING BLOCK REACHES A PUBLIC WORD AT ALL: `wrap_main.ml:421-431` builds the wrap
+proof's `old_bulletproof_challenges` out of those fifteen, and both the wrap prover
+(`wrap.rs:729-737`) and Mina's reader (`prover.rs:130-140`) front-pad the accumulator list with
+`dummy_ipa_wrap_sg()` and zip it against them. `[gate A2 pad]` in `pickles_kimchi_marshal` is the
+resulting identity — our slot-0 commitment IS the constant Mina inserts — and gate A2 reports both
+slots green for the first time. -/
 def WRAP_PUBLIC_INPUT_MEASURED : List Nat :=
   [
-   26017410741744045290829070934559254703824283083743940023899019051732797073986, --  0  combined_inner_product
-   3751489255836096169246479393811668365158176711394967398418095762561239475153, --  1  b
-   8787231661934866357817006536158681587080686430379572926121118187714335877607, --  2  zeta_to_srs_length
-   23601739513555407704977078938638977000899449248425611416757992943366200442144, --  3  zeta_to_domain_size
-   14623260867347699292986089665747077846492192712063551941135720344300752036245, --  4  perm
-   190892650386308904967048834954838743422, --  5  beta
-   99823413157427069488856252948585823271, --  6  gamma
-   290765311199371283534474368710923202436, --  7  alpha
-   249947283924881829422420289271687923886, --  8  zeta
-   40819773011252951965786591925170351189, --  9  xi
-   24509190134669189350932271077153458845637581841237292827998761298607409051321, -- 10  sponge_digest_before_evaluations
-   16771708822857331661525096137736744731126618791327772885044186664956312760377, -- 11  messages_for_next_wrap_proof(hash)
+   13690855066494770350568499660080886558482130516525627030953644413516372345733, --  0  combined_inner_product
+   13906534661717462203424324489828698059187024823268989230213894942386354610409, --  1  b
+   26669091738225386051825669592718834328624790965645031816218813936873094353368, --  2  zeta_to_srs_length
+   26340250226351436402960157278773878902553322828505310633092256283817953625868, --  3  zeta_to_domain_size
+   25361633473668717511532952494629303390190460636521335015470947659081227785374, --  4  perm
+   111191117429463243753921715313559792289, --  5  beta
+   320825400927326903901194779335126432145, --  6  gamma
+   211487051526303636788670342083431862781, --  7  alpha
+   115578002033749641648447121945556527695, --  8  zeta
+   133754159910397760744118907990792941657, --  9  xi
+   11704453213318857910650988973050095910879674031431394572083448322882580006792, -- 10  sponge_digest_before_evaluations
+   16474167746541547591708869910932449957960182739825132561260403115718635096368, -- 11  messages_for_next_wrap_proof(hash)
    2685766687183477451051802608242803724569836825058666298408010832920491446954, -- 12  messages_for_next_step_proof(hash)
-   311233733838359755360644113088035028715, -- 13  bulletproof_challenges[0]
-   336132515510395718973214350458442654518, -- 14  bulletproof_challenges[1]
-   316566569917884704080835030316815679933, -- 15  bulletproof_challenges[2]
-   38125367280696517367550187338566038190, -- 16  bulletproof_challenges[3]
-   61516724540007409333035758814570216821, -- 17  bulletproof_challenges[4]
-   237000449428412595337314697716295979082, -- 18  bulletproof_challenges[5]
-   17234889212569029928633789613995350137, -- 19  bulletproof_challenges[6]
-   317915894054555721219296419702069457414, -- 20  bulletproof_challenges[7]
-   153733302622162185516531351292282576060, -- 21  bulletproof_challenges[8]
-   287415220589791846631505596727984056648, -- 22  bulletproof_challenges[9]
-   55040440071776430404765588208935209939, -- 23  bulletproof_challenges[10]
-   5897353789027618527316489390159303339, -- 24  bulletproof_challenges[11]
-   53554118112250697928031981118451909672, -- 25  bulletproof_challenges[12]
-   211413212166894169552167242985294023769, -- 26  bulletproof_challenges[13]
-   168610857935215084357451748694757664499, -- 27  bulletproof_challenges[14]
-   68730035702780708244672038887504269142, -- 28  bulletproof_challenges[15]
+   54864453522145489410086667584691614116, -- 13  bulletproof_challenges[0]
+   268166713601262402382392446937622781651, -- 14  bulletproof_challenges[1]
+   286818838905865025107338684918068269449, -- 15  bulletproof_challenges[2]
+   135880506660179608885410037430639245474, -- 16  bulletproof_challenges[3]
+   128846924387605006659953812323106566496, -- 17  bulletproof_challenges[4]
+   204593356895963330857088566631690562260, -- 18  bulletproof_challenges[5]
+   14064914908011148234697700046356864753, -- 19  bulletproof_challenges[6]
+   232681322098858975519786026162593865630, -- 20  bulletproof_challenges[7]
+   293681458053437709994422062662206687733, -- 21  bulletproof_challenges[8]
+   6386233358469198723594048967658020950, -- 22  bulletproof_challenges[9]
+   157283216405237169152658514396250644211, -- 23  bulletproof_challenges[10]
+   100997070817166461182224303362090877264, -- 24  bulletproof_challenges[11]
+   131762891670463260822230555430401581819, -- 25  bulletproof_challenges[12]
+   145370971578772252941251351965690225124, -- 26  bulletproof_challenges[13]
+   113315869807791774598996223024954509531, -- 27  bulletproof_challenges[14]
+   317666140629503170259500832571443849740, -- 28  bulletproof_challenges[15]
    58, -- 29  branch_data((domain_log2<<2)|proofs_verified)
    0, -- 30  feature_flags.range_check0
    0, -- 31  feature_flags.range_check1
@@ -178,33 +197,40 @@ nothing but the width sees it. `Nodup` is the anti-vacuity -- thirty aliases of 
 satisfy `KimchiWrapMain.wraphack_closing_sponge_reproduces_minas_slot_eleven` just as well and mean
 nothing.
 
-⚠ ⚑⚑ **AND THE OLD `2^125 < x` LEG IS GONE, BECAUSE HALF THE VECTOR IS THE PADDING BLOCK'S.**
-`Vector.extend_front` puts the dummy `per_proof` block at the FRONT, so the first fifteen are block
-0's -- `KimchiStepMainCore.vStmtDummy` filler, small structured numerals -- and only the last fifteen
-are `bullet_reduce` prechallenges. The old leg held because the marshaller's invented ladder made all
-thirty look alike; keeping it would have hidden exactly the fact that makes this vector honest. The
-split is stated instead, as the count, so a filler that leaked into block 1 (or a real challenge
-mis-indexed into block 0) reds here.
+⛑⛑ **THE FIDELITY GAP THIS PARAGRAPH USED TO NAME IS CLOSED (2026-08-10), AND CLOSING IT KILLED
+THE SEPARATION LEG THAT STOOD IN ITS PLACE.** The retired text read: *"the first fifteen are block
+0's -- `KimchiStepMainCore.vStmtDummy` filler, small structured numerals -- and only the last
+fifteen are `bullet_reduce` prechallenges … EVERY word of the real block exceeds EVERY word of the
+padding block … ⚠ THAT SPLIT IS A FIDELITY GAP AND IT IS NOT CLOSED. Upstream a padding block
+carries `Unfinalized.Constant.dummy ()`, whose challenges are `Ipa.Wrap.compute_challenge` of
+`Ro.scalar_chal ()` -- full-width 128-bit draws."*
 
-⚠ **THAT SPLIT IS A FIDELITY GAP AND IT IS NOT CLOSED.** Upstream a padding block carries
-`Unfinalized.Constant.dummy ()`, whose challenges are `Ipa.Wrap.compute_challenge` of
-`Ro.scalar_chal ()` -- full-width 128-bit draws, not `19 + 4000037·i`-shaped filler. What this pass
-fixed is that both sides now hash the SAME thirty, not that all thirty are upstream-shaped. -/
+That is now exactly what the first fifteen ARE. `stmtDummyVal` emits
+`MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS` into the padding block's `.bpChallenge` slots, so both
+halves are 123–128-bit draws and **no magnitude test can tell them apart any more** — the old leg
+would be simply FALSE, not weakened. It is replaced by a strictly stronger one that does not measure
+size at all: the first fifteen are `DUMMY_WRAP_PRECHALS` **by identity, in order**, and no word of
+the real block is one of them. A filler leaking into block 1 or a challenge mis-indexed into block 0
+still reds, and now so does a padding block that publishes any vector other than Mina's own.
+
+⚠ The width leg stays: a 255-bit lift where a 128-bit prechallenge belongs is the classic defect and
+nothing but the width sees it. `Nodup` stays as the anti-vacuity — thirty aliases of one number
+would satisfy `KimchiWrapMain.wraphack_closing_sponge_reproduces_minas_slot_eleven` just as well and
+mean nothing. -/
 theorem the_slot_eleven_preimage_is_thirty_distinct_prechallenges :
     WRAP_MSG_NEXT_WRAP_PRECHALS.length = 30
     ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.all (fun x => decide (x < 2 ^ 128)) = true
-    -- ⚑ …and the two halves are SEPARATED rather than each pinned to a threshold someone can
-    -- slide: EVERY word of the real block exceeds EVERY word of the padding block. That is the
-    -- shape claim -- filler at the front, `bullet_reduce` prechallenges at the back -- and it reds
-    -- if a filler leaks into block 1 or a challenge is mis-indexed into block 0, without naming a
-    -- bound that a re-bake can nudge. (The old leg was `2^125 < x` on all thirty; it held only
-    -- because the marshaller's invented ladder made both halves look alike.)
-    ∧ ((List.range 15).all (fun j =>
-        (List.range 15).all (fun i =>
-          decide (WRAP_MSG_NEXT_WRAP_PRECHALS.getD i 0
-                    < WRAP_MSG_NEXT_WRAP_PRECHALS.getD (15 + j) 0)))) = true
+    -- ⚑ …the PADDING block's fifteen are Mina's own `Dummy.Ipa.Wrap.challenges`, by identity and
+    -- in order. `Vector.extend_front` puts the dummy `per_proof` block at the FRONT, so this is
+    -- also the index claim: entries `32·0 + 16 + j`, not `32·1 + 16 + j`.
+    ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.take 15
+        = Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS
+    -- ⚑ …and the REAL block's fifteen are none of them, so a mis-index in either direction reds
+    -- without any threshold to slide.
+    ∧ ((WRAP_MSG_NEXT_WRAP_PRECHALS.drop 15).all (fun x =>
+        !Dregg2.Circuit.Emit.MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS.contains x)) = true
     ∧ WRAP_MSG_NEXT_WRAP_PRECHALS.Nodup := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ## §2 -- the six `wrap_main` READS and never DERIVES
 

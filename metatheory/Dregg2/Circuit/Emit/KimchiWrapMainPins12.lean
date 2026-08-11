@@ -729,6 +729,24 @@ referee left the memo naming a point the MSM no longer produces.
 HEAD** for exactly that reason, and `EmitWrapMainJson`'s `⚑ xhatXY IS NOT THE MSM'S OUTPUT` refusal
 — the fourth time it has caught this memo — is what surfaced it.
 
+⚑⚑ **RE-MEASURED 2026-08-10 ACROSS THE PAD-SLOT FLAG DAY — TWENTY-EIGHT REFEREE SLOTS MOVED AGAIN
+AND ALL FOUR NUMBERS ARE UNCHANGED.** `KimchiStepMainCore.stmtDummyVal` now emits
+`MinaWrapHackDummySg.DUMMY_WRAP_PRECHALS` into the padding block's fifteen `.bpChallenge` slots
+(`KimchiStepStatementPins.the_padding_blocks_fifteen_are_minas_own_dummy_wrap_prechallenges`), which
+closed `gates::gate_a2` slot 0 — the wrap proof's pad recursion slot now commits the challenge
+polynomial Mina's reader rebuilds from `dummy_ipa_wrap_sg()`, and `PROOF_MARSHAL_RESULT` is GREEN
+for the first time with that rung in it. The step statement's entries 16…30 moved, therefore the
+step proof, therefore `KimchiStepWrapChainFixture`, all thirty wrap fixtures, and this referee at
+slots 0–11 and 13–28.
+
+⚠ **AND SLOT 12 DID NOT MOVE ON EITHER SIDE — WHICH IS WHY 39 SURVIVING IS NOT PROGRESS.** Mina's
+stayed `2685766687…` and ours stayed `1053080512…`, because `messages_for_next_step_proof` hashes
+the STEP record — the real accumulator, the step-side sixteen, the app state — and the padding block
+is nowhere in that preimage. The pad slot and slot 12 were two wounds in one file, not one wound
+seen twice; closing the first moves twenty-eight numbers and leaves the twenty-ninth exactly where
+it was. Anyone reading "39 of 40" forward across three re-bakes should read that as the residue
+being STABLE under everything tried so far, not as it shrinking.
+
 ⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY**, and it is what makes this a fact about VALUES rather
 than about a list of zeros: ten of the forty are `Spec.T.Constant` padding and the lookup `Opt` and
 are zero on both sides, so an all-zero emission would satisfy the first conjunct at those ten.
