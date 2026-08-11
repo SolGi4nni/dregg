@@ -24,9 +24,24 @@ descriptor it names. A drifted artifact is a named red there; a drifted Lean obj
 `rfl`/`decide` in `MinaSeams`.
 -/
 import Dregg2.Circuit.Emit.MinaSeams
+import Dregg2.Circuit.Emit.MinaBodyPreimageSeams
 
 open Dregg2.Circuit.Emit.Seam
 open Dregg2.Circuit.Emit.MinaSeams
+
+/-- ⚑⚑ **THE BODY-PREIMAGE SEAM ROWS — EMITTED ONLY WHEN THE LEFT END'S FINGERPRINT IS MEASURED.**
+
+`MinaBodyPreimageSeams.BODY_BITS_VK_LANES` is a MEASUREMENT of the served
+`dregg-mina-body-preimage-bits-v1.json` (Lean cannot compute blake3). While it is the all-zero
+sentinel this list is EMPTY, so an unmeasured lane vector produces **no artifact at all** rather
+than a plausible one that `seam.rs::SeamEnd::require_matches` would reject at load. ⚠ This is the
+"a documented wound is not a detected one" discipline applied to an emitter: the refusal is
+structural, not a comment. -/
+def bodyPreimageRows : List (String × String) :=
+  if Dregg2.Circuit.Emit.MinaBodyPreimageSeams.leftLanesAreUnmeasured then []
+  else (List.range Dregg2.Circuit.Emit.MinaBodyPreimageSeams.BODY_LINKS).map
+    (fun j => ("seam-body-preimage-link-" ++ toString j ++ ".json",
+      (Dregg2.Circuit.Emit.MinaBodyPreimageSeams.bodyPreimageSeam j).toJson))
 
 def rows : List (String × String) :=
   [ ("seam-xi-endo-to-conjunction.json", xiSeam.toJson)
@@ -52,5 +67,5 @@ def rows : List (String × String) :=
   ]
 
 def main : IO Unit := do
-  for (f, j) in rows do
+  for (f, j) in rows ++ bodyPreimageRows do
     IO.println s!"{f}\t{j}"

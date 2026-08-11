@@ -1,5 +1,176 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 10 — TIE 1 IS A WELD: the leaf adapter exists, the twenty-five seams are APPLIED, and the two things the brief called "authored and proved" were neither
+
+**SUBSTRATE: Lean-authored AIR + recursion wiring, and the two are labelled separately.**
+`Dregg2/Circuit/Emit/MinaBodyPreimageSeams.lean` is the seam family (a `SeamSpec` family — recursion
+wiring with S1/S2 attached, NOT AIR, and it says so); `MinaBodyPreimageBitsAir` and
+`MinaPhase1Chain` are the two AIRs. `circuit-prove/src/mina_body_preimage_adapter.rs` verifies both
+STARKs and issues `cb.connect`s. **Rust authors no constraint.** House Law #1.
+
+### ⚑⚑ THE OWED OBJECT EXISTS AND IT RUNS
+
+`MinaBodyPreimageSeams` §7.0 refused to round the tie up: *"The owed object is a leaf adapter
+verifying the preimage STARK and a chain-link STARK in one circuit. ⚑ Until it exists the tie is
+**authored and proved but not applied** … the executor comparison is still what runs."*
+
+`prove_body_preimage_link_adapter` is it. Both children are `RecursionInput::NativeBatchStark`, so
+the aggregation hook receives **two raw descriptor PI vectors** — 1 518 preimage slots and 256 chain
+slots — and `apply_seam` welds them. That is the ONLY surface that carries the absorbed stream: the
+chain leaf's `expose_claim` is 200 lanes (`in ‖ out ‖ seg_poseidon_commit(absorbed)`) and the 64
+absorbed limbs are not among them.
+
+⚑ **AND IT ADDS NO CARRIED LANE.** The alternative — wrap the preimage as its own layer exposing
+1 518 lanes, then aggregate two `BatchOnly` children — was refused on the measurement the brief
+carried: a padded **3 048-lane** carried claim failed to fold with
+`WitnessConflict { witness_id: WitnessId(676) }`. Applying the seam where both PI vectors are
+already bound costs 64 merges per link and nothing else.
+
+⚑ **IT IS A DROP-IN.** The adapter publishes exactly the chain leaf's 200-lane claim, from the chain
+child's own bound targets, so `fold_chain_links` cannot tell the two apart.
+
+### ⚑ MEASURED, `--release`, laptop, `--test-threads=1`
+
+`circuit-prove/tests/mina_body_preimage_adapter.rs` — **5 passed, 0 failed** in 183 s, plus two
+`#[ignore]`d rungs:
+
+| | |
+|---|---|
+| adapter, 2 STARKs + 64 welds | **45 482 ms** |
+| plain chain leaf, 1 STARK | 12 028 ms |
+| claims | **IDENTICAL** (`read_chain_claim`) |
+| two adapters + one unmodified `fold_chain_links` | 61 970 ms + **8 897 ms**, node verifies |
+| ⚑ **all 25 links as adapters, 24 folds** | **695 s**, root verifies, **1 600 in-circuit merges** |
+
+⚑ **THE WELDED ROOT IS THE SAME ROOT.** `the_whole_body_hash_chain_folds_with_every_link_welded`
+lands on `in_state = salt("MinaProtoStateBody")`, `transcript_acc = host_chain_transcript_acc`, and
+`out_state` lane 0 =
+`5693930022757138716743408081919214747940268519364092084787368564557482288885` — block 540221's own
+`state_body_hash`, byte for byte what `mina_body_hash_chain_fold.rs` §4 derives from plain leaves.
+So the weld costs the root NOTHING and changes only what it says. **695 s against that file's 859 s
+baseline is not a speedup and must not be read as one** — different box load, different day; the
+number is there to say the tower COMPLETES at 25 adapters, not what it costs.
+
+**Both polarities, and the refusal is the SEAM's own `cb.connect`:**
+
+* **A body whose own AIR accepts it and which is not this block's.** One whole-field limb moves by
+  one, inside the eight-bit range, in the ROW *and* the CLAIM — so the range query passes, the pin
+  passes, and §2 asserts **the forged preimage proves and verifies against its own descriptor**
+  before asking the seam anything. The chain link is untouched and its leaf proves. Refusal:
+  `Circuit(WitnessConflict { witness_id: WitnessId(116), existing: 146, new: 145 })`, checked by
+  `binding_connect_marker` — so the tooth cannot stay green with `apply_seam` deleted.
+* **The right body at the wrong link.** Seam 0 against link 1: `WitnessConflict … 145 vs 252`. And
+  **seam 1 at link 1 proves**, so the refusal is the ORDER and not the link.
+
+`circuit/tests/mina_body_preimage_bits_proves.rs` — **7 passed, 0 failed**. ⚑ That file had
+**never run**; its own header said so and blamed a Path-of-Angels Lean red. The terminal cause was
+different and is recorded there: `dregg-lean-ffi`'s cached build script had stale
+`CARGO_MANIFEST_DIR`-derived paths, and both `metatheory_dir()` and `lean_sysroot()` are
+runtime-overridable — `DREGG_METATHEORY_DIR` + `DREGG_LEAN_SYSROOT` and the workspace builds.
+
+### ⚑⚑⚑ TWO THINGS THE BRIEF CALLED "AUTHORED AND PROVED" WERE NEITHER
+
+**1. The twenty-five seams did not elaborate.** `MinaBodyPreimageSeams.lean` is UNTRACKED and
+`lake build` on it produced **six real errors** plus eight `sorryAx` axiom-hygiene failures — so S1,
+S2 and the refuter were all `sorry` and every `#assert_axioms` on them was red. The record that says
+*"S2 kernel-clean with `body_preimage_seam_S2_needs_the_seam` proving the seam-dropped implication
+FALSE"* described a file that had never been built. Repaired here, and the six are worth naming
+because four are a class:
+
+* `MinaPhase1Chain.fpAbsorbProg` does not exist — it is `MinaWrapVerifierSpongeFp.fpAbsorbProg`,
+  merely `open`ed there. Two S1 memberships died on it.
+* S2 over-destructured `ChainLinkSays`: `⟨x0, x1, h0, h1, -⟩` on a TWO-conjunct existential bound
+  `h1` to `x1 < 2^(SB*SK)` instead of the second `Renders`.
+* **Three `decide`s over a FREE VARIABLE.** `by decide +kernel` cannot prove
+  `absorbedLimbCount (2*j) ≤ SK` at a symbolic `j`, and `∀ (n i : ℕ), …` has no `Decidable`
+  instance at all. Replaced by two named general theorems — `absorbedLimbCount_le_SK` (every `n`,
+  both branches terminal) and `pi_absorbed_lt_claim_len` (bounded, kernel-decided).
+
+**2. ⚑ The honest-pole control was FALSE, and `native_decide` said so.**
+`the_real_welds_carry_non_zero_values` asserted *"at least one welded left slot is non-zero at every
+link"*. It is false at **links 5 and 10**, and not because of any defect: `Body.to_input` puts the
+SOURCE and TARGET `Registers`' `Local_state` blocks at absorbed elements `9..12` and `19..22`, a
+link absorbs the pair `(2j, 2j+1)`, and those are exactly the two links that absorb two genuinely
+zero field elements. Restated as
+`the_real_welds_are_non_zero_except_at_the_two_local_state_links : … = [5, 10]` — a list a
+degenerate family would MOVE rather than satisfy — and cross-checked on the other side of the tree
+against `mina_body_hash_chain_fold.rs`'s independently measured zero slots
+`[9, 10, 11, 12, 19, 20, 21, 22, 49]`, whose adjacent pairs are exactly `[5, 10]`.
+
+⚠ The substantive pole, `the_preimage_seams_hold_on_the_real_block`, was TRUE all along — 1 518
+welds and 82 zero-pins on the block's own claims at all 25 links. The control was the broken part.
+
+### ⚑⚑ A TREE-WIDE FINGERPRINT STALENESS, FOUND WHILE MEASURING ONE LITERAL — NOT MINE, NOT FIXED
+
+`2ad7e48c8` (*"a bind that binds nothing is unrepresentable — `bound` stops being nullable"*) moved
+the CANONICAL ENCODING and therefore **every descriptor's `effect_vm_descriptor2_semantic_fingerprint`
+— including descriptors that carry no bind at all.** `pasta-fp-chainlink.json` has neither a
+`proof_bind` nor a `bound` field and its BYTES did not move; its fingerprint did. Measured with
+`conj_fingerprint`:
+
+| descriptor | tracked literal | recomputed 08-10 |
+|---|---|---|
+| `pasta-fp-chainlink` (`FP_CHAINLINK_VK_LANES`) | `331349446, …` | **`399875400, …`** |
+| `pasta-fq-chainlink` (`seam-chain-*.json`) | `158847877, …` | **`386597939, …`** |
+| `pasta-fp-absorb` (`ABSORB_VK_LANES`) | `484507606, …` | **`41093468, …`** |
+
+`circuit-prove/tests/seam_specs.rs::every_seam_end_matches_its_served_descriptor` is **RED at HEAD**
+because of it (7 passed / 1 failed before this pass). **A live VK-regen lane owns that**, and this
+lane did not reach into `LightClientMinaLinkAir.lean`, `MinaSeams.lean`, `VK-REGEN-LOG.md` or the
+link/verify descriptors to fix it. Instead:
+
+* the family's right end reads `MinaBodyPreimageSeams.FP_CHAINLINK_LANES_MEASURED`, measured on the
+  bytes `seam.rs` actually loads;
+* ⚑ the divergence is a REFUTABLE THEOREM, not prose:
+  `the_link_airs_chainlink_pin_is_stale_against_the_served_bytes` asserts the two disagree, and
+  **goes RED the day the regen lane re-measures** — at which point the two constants collapse to one
+  and the theorem is deleted with them. Two constants for one fact is the twin this repo forbids;
+  this is that divergence detected and time-bounded rather than tolerated.
+
+### ⚠ WHAT RE-EMITS, AND WHAT DELIBERATELY DID NOT
+
+* **NEW: 25 artifacts** `circuit/descriptors/seams/seam-body-preimage-link-{0..24}.json`, emitted by
+  `EmitSeamSpecs.lean`'s existing `bodyPreimageRows` once its unmeasured-sentinel gate went false.
+  **`BODY_BITS_VK_LANES` is now measured** (`fp=df0bcb84…`, `w=3899 pi=1518 cons=5417`).
+* **RE-EMITTED: the preimage witness.** `mina-body-preimage-bits-row.txt` **2 683 → 3 899** cells,
+  and a NEW `mina-body-preimage-bits-pis.txt` (1 518 slots). ⚑ **The claim is no longer a suffix of
+  the row** — the 08-09 flag day put the PI vector in ABSORB order while the ROW keeps the packed
+  limbs below the whole-field ones, so the claim is `row[2683..3899] ++ row[2381..2683]`, a
+  REORDERING. `MinaBodyBitsEmit.lean` now emits `realPub` directly so no consumer re-derives it, and
+  the two files are asserted to agree.
+* **NOT RE-EMITTED, deliberately:** the four older seam artifacts, `ports.json`, `PROVENANCE.json`,
+  and every descriptor. `EmitByName` imports both LightClient modules and a live lane is mid-regen
+  in them; only the 25 new filenames were written out of the emitter's output.
+* **No VK rotates and nothing re-genesises.** No descriptor moved; the adapter is a new recursion
+  circuit with its own fingerprint and no consumer.
+
+### ⚑ WHAT A PROVER STILL CHOOSES — the choice moved a third time and has not disappeared
+
+08-07: `BODYHASH`, one felt → its 49-element preimage. 08-08: → 49 elements whose last eleven are
+the packing of 819 width-declared chunks. 08-09: → published limbs that cannot disagree with the
+chain's absorbed stream **by an executor comparison**. **08-10: → that comparison is now a
+constraint of the recursion circuit**, and a preimage that is internally perfect but not this
+block's has no satisfying assignment.
+
+⚠ **SHAPE and AGREEMENT are constrained; CONTENT is not.** The whole `Protocol_state.Body` — 2 381
+bits and 38 felts — is still whatever a prover says it is. Nothing here says the epoch ledger hash
+is one, that the VRF output verifies, or that the global slot is consistent; those 857 pieces are
+Mina daemon consensus obligations. `PICKLES_OPENING_WITNESSED` is unchanged.
+
+⚠⚠ **AND THE WELD IS NOT ROUTED.** The 25-adapter root exists and verifies, but it lives in an
+`#[ignore]`d test. `mina_body_hash_chain_fold.rs` still folds plain chain leaves, and
+`turn/src/executor/mina_head_verifier.rs`'s REFUSAL 16 is still what a NODE runs — no node consumes
+an adapter root and no `DREGG_MINA_CHAIN_ROOT_VK` moved. **Tie 1 is a weld where the adapter runs;
+the deployed path has not been switched over.** The remaining gap is ROUTING — real prover/executor
+wiring to build, not a missing theorem — and calling it closed would be the
+proven-in-Lean-is-not-routable substitution.
+
+⚠ The **second tie** (the link rung's `BODYHASH`/`BODY_ACC` slots) is untouched and still covered by
+the executor's REFUSAL 16. It remains arithmetically inexpressible as a `SeamSpec` — the chain
+publishes thirty-two 8-bit limbs, the link publishes nine 29-bit `Faithful9` lanes, and a 256-bit
+recomposition has coefficients to `2^248` against a modulus below `2^31` — and still owes the
+bit-level re-limbing descriptor `MinaBodyPreimageSeams` §7.2 names.
+
 ## ⛑⛑⛑⛑ AUGUST 9 — THE CHEAP MULTIPLY IS ROUTED: the certified Schwartz–Zippel body lands in two deployed AIRs, and the win is stated in the currency that actually moved
 
 **SUBSTRATE: Lean.** Every constraint here is authored in

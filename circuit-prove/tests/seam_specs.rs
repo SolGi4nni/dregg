@@ -25,6 +25,10 @@ use dregg_circuit_prove::mina_wrap_finalize_fold::{
     CONJ_PI_COUNT, CONJ_PI_XI, ENDO_PI_COUNT, ENDO_PI_XI, SK, V_PRIME_LIMBS,
     conjunction_descriptor, endo_lift_descriptor,
 };
+use dregg_circuit_prove::mina_body_preimage_adapter::{
+    BODY_BITS_PI_COUNT, BODY_LINKS, body_preimage_descriptor, body_preimage_seam,
+};
+use dregg_circuit_prove::mina_phase2_chain_leaf::{ABSORBED_PI_LO, CHAIN_PI_COUNT};
 use dregg_circuit_prove::seam::{
     SeamSpec, fresh_sponge_seam, head_tip_seam, v_prime_seam, xi_seam,
 };
@@ -177,6 +181,85 @@ fn every_seam_end_matches_its_served_descriptor() {
     ht.right
         .require_matches(&link)
         .expect("head-tip seam right end is the served link segment");
+}
+
+/// ⚑⚑ Gate 1 for the BODY-PREIMAGE family: the twenty-five seams cover the preimage claim exactly
+/// once between them, and every weld lands in a chain link's ABSORBED window.
+///
+/// The Lean twins are `MinaBodyPreimageSeams.every_published_slot_is_welded_exactly_once` and
+/// `the_seams_cover_every_absorbed_limb`; this is the same three counts on the ARTIFACTS.
+///
+/// ⚠ The permutation clause is the one that matters. A count alone is satisfied by a family that
+/// welds one slot twice and another not at all — and an unwelded published limb is a limb the
+/// prover keeps choosing, which is the entire residual this family exists to remove.
+#[test]
+fn the_body_preimage_seams_cover_the_claim_exactly_once() {
+    let mut left_slots: Vec<usize> = Vec::new();
+    let mut zero_right = 0usize;
+    for j in 0..BODY_LINKS {
+        let s = body_preimage_seam(j).unwrap_or_else(|e| panic!("seam {j}: {e}"));
+        assert_eq!(s.name, format!("dregg-seam-body-preimage-link-{j}::v1"));
+        assert_eq!(s.left.claim_len, BODY_BITS_PI_COUNT);
+        assert_eq!(s.right.claim_len, CHAIN_PI_COUNT);
+        assert!(
+            s.zero_left.is_empty(),
+            "every zero-pin is on the CHAIN side: the preimage descriptor allocates ⌈W_e/8⌉ limbs \
+             so that no PUBLISHED limb is inert"
+        );
+        for &(_, r) in &s.pins {
+            assert!(
+                (ABSORBED_PI_LO..CHAIN_PI_COUNT).contains(&r),
+                "seam {j} welds chain slot {r} outside the absorbed window — a weld into the state \
+                 block would tie the preimage to the sponge instead of to the stream"
+            );
+        }
+        for &r in &s.zero_right {
+            assert!((ABSORBED_PI_LO..CHAIN_PI_COUNT).contains(&r));
+        }
+        left_slots.extend(s.pins.iter().map(|&(l, _)| l));
+        zero_right += s.zero_right.len();
+    }
+    left_slots.sort_unstable();
+    assert_eq!(
+        left_slots,
+        (0..BODY_BITS_PI_COUNT).collect::<Vec<_>>(),
+        "the 1 518 pins' left endpoints must be a PERMUTATION of the preimage claim"
+    );
+    assert_eq!(
+        zero_right, 82,
+        "the `32 − ⌈W_e/8⌉` deficit plus the odd tail's 32 — the only thing in the tree that \
+         forces `bodyPacked ++ [0]`"
+    );
+    assert_eq!(
+        left_slots.len() + zero_right,
+        BODY_LINKS * 2 * 32,
+        "every absorbed limb of every link is welded or pinned to zero, with nothing left free"
+    );
+}
+
+/// ⚑ Gate 2 for the BODY-PREIMAGE family: both ends of all twenty-five, against the served
+/// descriptors, by recomputed fingerprint.
+///
+/// ⚠ This is the gate `every_seam_end_matches_its_served_descriptor` is for the older four, and it
+/// is kept SEPARATE deliberately: on 2026-08-10 that one is RED for a reason that has nothing to do
+/// with any seam — `2ad7e48c8` moved the canonical encoding and therefore every descriptor's
+/// fingerprint, and the four older artifacts plus `LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES`
+/// were not re-measured. A live VK-regen lane owns that. Folding this family into the same test
+/// would hide a fresh red inside a stale one.
+#[test]
+fn every_body_preimage_seam_end_matches_its_served_descriptor() {
+    let preimage = body_preimage_descriptor().expect("the served preimage descriptor parses");
+    let chain = dregg_circuit_prove::mina_phase2_chain_leaf::fp_chain_link_descriptor()
+        .expect("the served Fp chain-link descriptor parses");
+    for j in 0..BODY_LINKS {
+        let s = body_preimage_seam(j).unwrap();
+        s.left
+            .require_matches(&preimage)
+            .unwrap_or_else(|e| panic!("seam {j} left end: {e}"));
+        s.right
+            .require_matches(&chain)
+            .unwrap_or_else(|e| panic!("seam {j} right end: {e}"));
+    }
 }
 
 /// Gate 3: the artifact-side port census. Every port `ports.json` declares is covered, slot for

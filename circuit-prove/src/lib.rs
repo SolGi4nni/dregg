@@ -86,6 +86,12 @@ pub mod merge_pool;
 /// `dregg-mina-accumulator-{seg,final}::v1` leaves, and the fold that carries the accumulator POINT
 /// from segment to segment INSIDE the recursion. The leg upstream's verifier does natively.
 pub mod mina_accumulator_fold;
+/// ⚑⚑⚑ **THE LEAF ADAPTER THAT MAKES TIE 1 A WELD.** One circuit verifying BOTH the gated
+/// body-preimage STARK and one `state_body_hash` chain-link STARK, so both raw descriptor PI
+/// vectors are in scope and `MinaBodyPreimageSeams`' twenty-five Lean-authored seams can be
+/// APPLIED. Exposes the chain leaf's own 200-lane claim, so it is a drop-in for
+/// `mina_phase2_chain_leaf::prove_chain_link_leaf_with` under the same fold.
+pub mod mina_body_preimage_adapter;
 /// ⚑⚑ **A KIMCHI VERIFIER GADGET, IN PLONKY3'S OWN RECURSION.** The top fold that welds the
 /// phase-2 transcript chain ROOT to the endo/conjunction finalize ROOT, so the ξ the finalize
 /// conjuncts check is the one the block's OWN sponge squeezed. ⚠ **An implementation, unverified,
