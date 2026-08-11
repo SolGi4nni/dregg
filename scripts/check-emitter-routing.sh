@@ -173,7 +173,14 @@ declare -A UNROUTED_OK=(
   # `c.public_input_size == 67`), added the same day after the generator was found unable to
   # re-emit its own generated file. Saying "nothing is checked in" is how a tracked artifact stops
   # being anybody's job.
-  [EmitStepMainJson.lean]="no-artifact|writes \$DREGG_SM_OUT (default /tmp/pickles-stepmain)/*.json for pickles-stepmain-harness; the tracked stepmain_step_r8_finalize.json is copied in BY HAND (no route to grade) and is guarded by pickles_kimchi_marshal's name/width refusal"
+  # ⚑ **AND THE HAND-COPY IS CLOSED (2026-08-10), THE SAME WAY THE WRAP SIDE'S WAS.** TEN artifacts
+  # are tracked, not one — the `step` shape's `r8_finalize` and the `smoke` shape's `r1_transcript`,
+  # `r6_ft_eval0`, `r7_absorption`, `r8_finalize`, each wired and `_unwired` — and the selection is
+  # now DECLARED in `EmitStepMainJson.TRACKED` rather than inferred from an `ls`. The refusal is
+  # `EmitStepMainJson.installedGate`, INSIDE the emitter, so a re-emit that does not install cannot
+  # slip past it; `DREGG_SM_INSTALL=1` installs and a `DREGG_SM_WIRED_ONLY=1` run may NOT, because
+  # it did not emit the controls. The row below stops describing a hole that is filled.
+  [EmitStepMainJson.lean]="regen:scripts/regen-stepmain-fixtures.sh|the ten tracked metatheory/fixtures/pickles-stepmain-harness/fixtures/stepmain_{step,smoke}_*.json; that script re-emits both shapes and EmitStepMainJson.installedGate REFUSES when a tracked file is not what the run emits (--check turns the drift into an exit code, DREGG_SM_INSTALL=1 installs). pickles_kimchi_marshal's name/width refusal still guards arity independently"
   [EmitStepWrapChainJson.lean]="no-artifact|writes /tmp/pickles-chain/chain{,bent,unread}_w*.json for pickles-chain-harness; nothing is checked in"
   # ⚑ **THIS ROW SAID `no-artifact` AND "no route to grade" UNTIL 2026-08-09, AND THE HOLE IT NAMED
   # WAS OPEN AT THAT MOMENT.** Thirty artifacts ARE tracked; the row's own grade — "the harness
