@@ -1,5 +1,145 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 11 — THE MINA VK CASCADE IS CLOSED, REPRODUCED AND CLEAN-STAMPED; THE EXPENSIVE LEAN BOUNDARY IS BUILD INVALIDATION, NOT THE SPEC
+
+**SUBSTRATE: Lean-authored AIR, generated descriptor bytes, Rust witnesses/consumers, and recursion
+wiring — each named separately below.** This is the completion of the Mina flag day begun in
+`1ce859c1a`, not a claim that a genuine Mina side-loaded proof has crossed the bridge.
+
+### ⚑ THE CASCADE REACHED ITS FIXED POINT
+
+The leaf emitters moved to the canonical-record 532-column programs; every semantic fingerprint
+consumer above them then moved in dependency order: leaf pins → multi-row link → light-client head
+→ accumulator head fixtures. Four deliberately small commits expose that sequence:
+
+* `1ce859c1a` — route the Mina seams and reconcile leaf VK pins;
+* `52c680235` — re-pin the emitted Mina leaf programs;
+* `5dbf419ec` — advance the Mina link VK pin;
+* `205cc0ca8` — close the Mina head VK cascade.
+
+`544068c30` installs the resulting descriptor/fixture flag day and repairs every consumer that
+still described or witnessed the old layouts. Exactly **44 descriptor JSONs moved**: 13 by-name
+programs and 31 seam records. The guarded emitter's final no-ACK pass reported **all 246 descriptor
+files and all 65 generated constants byte-identical** to the Lean emission, so there is no fifth
+rung hidden behind the installed bytes.
+
+The identities at the fixed point are:
+
+| program | semantic fingerprint | shape `(w, pi, constraints)` |
+|---|---|---|
+| `dregg-pasta-fq-chainlink::v1` | `d53df3878fde7674aad302f33946c9fd740da34cb9eb47d646d13bf253eb1157` | 532, 256, 1017 |
+| `dregg-pasta-fp-chainlink::v1` | `9d2e069018f1036867a534484802cb743ba172e157b80684e88529c68542163f` | 532, 256, 1017 |
+| `dregg-pasta-fp-absorb::v1` | `0b55e61b97c113550b8a671a40ea22923dddd184cf22ae5cdfb036046a92b07a` | 532, 192, 953 |
+| `dregg-mina-lightclient-link::v1` | `eb124bb648b6a18d8ede88c87991f6da5d3abe3a6ae45b05a45a0a50007826e2` | 57, 46, 108 |
+| `dregg-mina-wrap-conjunction::v1` | `3828888111e1d883293c5a4c30d252572797044e55e38aad92b520a35d2e0ff2` | pin unchanged at this rung |
+| `dregg-mina-lightclient-verify::v1` | `2a431795898a925498fff71d753050c3303f83a4ce5fd0f09ba5db35787c2d32` | 77, 39, 74 |
+
+The strict pure-Lean resolver walked 245 JSON files / 159 served IR-v2 programs and resolved **all
+14 live VK literals**, with **0 dangling literals and 0 forged literals colliding** with a served
+program. `vk_pin_closure_over_the_served_tree` is 3/3.
+
+### ⚑ TWO FQ PROGRAMS SHARE A TRACE, NOT A PUBLIC STATEMENT
+
+The strengthened phase-2 `pasta-fq-chainlink` is 532/256/1017 and publishes eight transcript
+blocks. The legacy `pasta-fq-wraplink` is 532/224/985 and publishes seven. Their link-45 traces are
+byte-identical (`735f99e7…9598`), but their PI claims and descriptor identities are not
+interchangeable. `MinaChainEmit.lean` now names the legacy
+`MinaBlockFqTranscript.linkPIs/linkTrace` explicitly for `wraplink`, while the aggregate chain uses
+`MinaPhase2Chain.chainPIs`. This repairs the tempting but false 256-PI wrap fixture.
+
+Fresh Pasta fixtures were generated on hbox under `/tank`, not inferred by editing old rows. All
+round traces are 32×532; all absorb/chain traces are 2048×532. The four wrap-closing artifacts were
+also re-derived after the Fp absorb pin moved; both closing traces are 8×3091 and contain no old
+absorb-lane literal.
+
+### ⚑ THE LAST RED WAS A STALE WITNESS CONTRACT, NOT A PROVER REGRESSION
+
+`mina_link_segment_multirow` still asserted the old 72-constraint / one-seam descriptor and left PI
+slots 37..45 at zero. The emitted descriptor has **108 constraints, two `proof_bind`s and 46 PIs**:
+the new nine slots publish first-row `OWNHASH` for the state-hash-preimage cover. The witness now
+fills those slots and the shape test asserts both seams (54-lane state-hash statement, 44-lane
+body-chain statement). Honest and forged polarities are green **10/10** on the deployed prover.
+
+Final measured Rust evidence, persvati, release, with the `pbuild: VERDICT` read rather than the
+pipeline status:
+
+* eight Mina circuit targets, including both Pasta programs and wrap closing: **76/76**;
+* the phase-1 tape-binding target: **8/8**;
+* the multi-row link descriptor: **10/10**;
+* `dregg-turn --test mina_anchored_head_lands`: **9/9**.
+
+The corresponding hbox Lean build completed **6157/6157 jobs** for
+`MinaWrapClosingAir`, `mina_chain_emit` and `mina_fp_chain_emit`. A fresh Pickles marshal referee in
+`/tank/dregg-build/codex-wrap-referee-20260811` generated and batch-verified the proofs, reproduced
+the Lean modules byte-for-byte, and refused both negative controls (`PROOF_MARSHAL_RESULT=GREEN`).
+The actual ladder measurement remains precise: `shapeWrap/w12_close` is **40/40**;
+`shapeSmoke` is **18/40** and is not the ladder.
+
+### ⚑ THE PROVENANCE CEREMONY IS CLEAN, AND ITS REMAINING RED IS NAMED
+
+The descriptor commit was re-emitted from an isolated clean clone of `544068c30` on hbox's `/tank`
+pool. The emitter rebuilt all 173 emitter modules, found every descriptor byte identical, then
+performed a stamp-only regen because 15 emitted by-name records were not attested. The new stamp is
+`mode=emit`, `source_dirty=false`, repo head `544068c3073d…`, Dregg2 tree
+`130748d09d4f…`; its audit row is appended at epoch 27.
+
+Afterward the provenance byte census is complete (**132 routed / 132 checked in / 132 stamped**).
+The gate still returns RED for one independent, accurately named reason: its workflow-reference
+walker does not inspect local composite action `.github/actions/lean-seed/action.yml`. That is a
+coverage gap in the checker, not a descriptor mismatch, and is not silenced here.
+
+### ⚑ A SECOND CHECKER HAD NOT LEARNED THE AUGUST 10 SUM TYPE
+
+`check-descriptor-anchor-inertness.py` treated `proof_bind.bound` as the retired bare expression
+array. The first tagged `{t:"port"}` therefore crashed it with `TypeError` before it could issue a
+verdict. It now handles the two real states emission-faithfully:
+
+* `{t:"bound", lanes:[…]}` joins each commit lane to its row-local expression;
+* `{t:"port", …}` adds no invented row-local edge, because its named executor seam is off-row.
+
+Its seven-case red-proof is green, including one bound and one port pole. The full ratchet now RUNS
+and reports its pre-existing ledger red: eight served descriptors have decorative anchors and no
+baseline row (including the 1216 published slots of `dregg-mina-body-preimage-bits::v1`). No
+baseline was raised to hide that finding.
+
+### ⚑ ANSWER TO “SHOULD THIS RIDICULOUSLY EXPENSIVE LEAN BE RUST OR `implemented_by`?”
+
+**First answer: mostly no. The measured waste is invalidation granularity, not kernel checking.**
+
+* A cold `KimchiWrapMainCore` import pulls roughly **3060 modules**.
+* Even a warm concrete driver costs about **45 seconds and ~3 GB RSS**.
+* More importantly, a pbuild sync containing an unchanged dirty Dregg2 surface repeatedly makes
+  `dregg-lean-ffi` resplice roughly **347 of 358 generated C facets** and rebuild the downstream
+  Rust graph. In this run, a five/eight-test follow-up with no semantic Lean change still paid
+  **77 seconds of release compilation** before 15 seconds of tests.
+* The descriptor provenance ceremony always builds **173 emitter modules and walks the entire 246
+  file corpus**, even for a small closed dependency cone.
+
+The first repair is therefore: content-address each generated facet and its dependency cone, stop
+the FFI build script from rewriting unchanged outputs, separate emitter/fixture drivers from the
+proof-theory umbrella imports, and make the ceremony able to prove a closed incremental cone while
+retaining a periodic whole-corpus check. That preserves Lean as the author of protocol semantics
+and removes the fixed rebuild tax.
+
+`implemented_by` is appropriate only for deterministic bulk evaluation where a kernel-level
+reference definition and theorem statement remain authoritative, the compiled result is checked
+against the reference on a bounded interface, and `#assert_compiled` makes the trust expansion
+visible. It is **not** appropriate for AIR constraints, canonical encoding, fork choice, verifier
+acceptance, seam identities, or anything whose Rust result would become an oracle for the theorem
+being claimed. Move/cache the evaluator; do not move the law.
+
+### ⚠ WHAT THIS STILL DOES NOT MEAN
+
+* Mina dregg→Mina remains **40/40 shape closure plus a real key on devnet**, not a genuine
+  side-loaded proof accepted by Mina.
+* Mina→dregg Tie 1 is welded and routed, but there is still no live proof producer and no deployment
+  setting the Mina anchors. No live node has exercised the path.
+* `PICKLES_OPENING_WITNESSED` and the named Mina consensus residuals remain residuals.
+* The faithful-commitment gate remains at its documented known red: two production 256→31-bit folds
+  require a Lean AIR/VK epoch and re-genesis. They were neither allowlisted nor attributed here.
+* The known-red ledger is therefore still a ledger. This entry closes the Mina cascade and its
+  witnesses; it does not pronounce the whole tree or a mainnet protocol shippable.
+
 ## ⛑⛑⛑⛑ AUGUST 11 — THE BODY-PREIMAGE WELD IS ROUTED: a production fold, a ceremony that did not exist, and an anchor rename that makes an unwelded root refuse
 
 **SUBSTRATE: recursion wiring, and it is labelled as such.** No AIR moved, no descriptor re-emits.
