@@ -264,10 +264,7 @@ impl StoredAttestedRoot {
     /// lower.
     pub fn verify_signatures(&self, committee: &[PublicKey]) -> bool {
         let required = self.required_quorum(committee);
-        if self.threshold == 0
-            || committee.is_empty()
-            || self.quorum_signatures.len() < required
-        {
+        if self.threshold == 0 || committee.is_empty() || self.quorum_signatures.len() < required {
             return false;
         }
         let message = self.signing_message();
@@ -805,7 +802,10 @@ mod quorum_floor_tests {
         }
     }
 
-    fn sign_with(root: &StoredAttestedRoot, sk: &ed25519_dalek::SigningKey) -> (PublicKey, Signature) {
+    fn sign_with(
+        root: &StoredAttestedRoot,
+        sk: &ed25519_dalek::SigningKey,
+    ) -> (PublicKey, Signature) {
         use ed25519_dalek::Signer;
         let msg = root.signing_message();
         (pubkey(sk), Signature(sk.sign(&msg).to_bytes()))
@@ -869,7 +869,10 @@ mod quorum_floor_tests {
         // verifies on its own — so a refusal below is about the QUORUM BAR and
         // not about a broken signature.
         assert_eq!(root.threshold, 1, "the tamper must be present");
-        assert!(committee.contains(&lone.0), "the signer is a committee member");
+        assert!(
+            committee.contains(&lone.0),
+            "the signer is a committee member"
+        );
         assert!(
             lone.0.verify(&root.signing_message(), &lone.1),
             "the lone signature must actually verify, or this test refuses for the wrong reason"
@@ -906,7 +909,10 @@ mod quorum_floor_tests {
         let mut root = bare_root();
         root.threshold = 1;
         root.quorum_signatures = vec![sign_with(&root, &sk)];
-        assert!(!root.verify_signatures(&[]), "an empty committee is not a quorum");
+        assert!(
+            !root.verify_signatures(&[]),
+            "an empty committee is not a quorum"
+        );
     }
 
     /// Solo (n=1) is unchanged: the floor is 1, so a single-member federation

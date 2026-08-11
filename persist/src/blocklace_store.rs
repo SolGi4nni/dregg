@@ -380,7 +380,9 @@ mod tests {
             forged.verify_signature().is_err(),
             "the falsifier must be live: the tampered block's signature must not verify"
         );
-        store.persist_block(&forged).expect("attacker writes the row");
+        store
+            .persist_block(&forged)
+            .expect("attacker writes the row");
 
         // `expect_err` is unavailable here: the Ok payload is `(Blocklace, usize)`
         // and `Blocklace` is not `Debug`. Match, so the refusal is read explicitly.
@@ -424,7 +426,9 @@ mod tests {
             "both halves of the pair are REAL signed blocks"
         );
         assert_eq!(a.creator, b.creator);
-        store.persist_blocks(&[a.clone(), b.clone()]).expect("persist the pair");
+        store
+            .persist_blocks(&[a.clone(), b.clone()])
+            .expect("persist the pair");
         // ASSERT THE MUTATION: the persisted meta names NO equivocators.
         let meta = store
             .load_blocklace_meta()
