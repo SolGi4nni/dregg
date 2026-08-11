@@ -950,12 +950,13 @@ the descriptor's new round/state columns. The served artifact is now `w=532 pi=1
 fingerprints to `0b55e61b97c113550b8a671a40ea22923dddd184cf22ae5cdfb036046a92b07a`, and yields the
 nine lanes below.
 
-⚑ This is not a local defect. `circuit/tests/vk_pin_closure_over_the_served_tree.rs` resolves EVERY
-`vk_pin` the tree serves against the fingerprints of EVERY descriptor the tree serves — it needs no
-per-pin map, so it cannot go stale by omission — and at HEAD **7 of 7 dangle**: every recursion bind
-in the Mina chain attests a program no descriptor here has. The per-pin gates named above are real
-but partial, each hand-written for one pin, so a pin added after its gate was written is ungated by
-construction.
+⚑ This was not a local defect. Before the 2026-08-11 flag day,
+`circuit/tests/vk_pin_closure_over_the_served_tree.rs` resolved EVERY `vk_pin` the tree served
+against the fingerprints of EVERY descriptor the tree served — it needs no per-pin map, so it
+cannot go stale by omission — and found **7 of 7 dangling**: every recursion bind in the Mina chain
+attested a program no descriptor there had. The final cascade re-emitted the served descriptors and
+that closure gate now reports no dangling pin. The per-pin gates named above remain useful but
+partial; the whole-tree resolver is what prevents a newly added pin from being ungated by omission.
 
 ⚠ Fixing the VALUE requires the re-emit + VK rotation of the link, the head and the conjunction
 chain performed by this flag day; changing the literal without that derived-artifact step would

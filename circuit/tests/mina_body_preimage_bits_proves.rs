@@ -69,7 +69,7 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::refusal::assert_violated_constraint_not_bus;
+use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
 
 /// Assert a refusal is the constraint system's own.
 ///
@@ -366,10 +366,13 @@ fn an_over_wide_chunk_bit_is_refused_by_the_air() {
         "the PUBLISHED limbs must be untouched — the forgery is the bit, not the claim"
     );
 
-    let err = prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
-        .expect_err("a one-bit chunk carrying 2 must be REFUSED");
-    println!("\n§2 ⚑⚑ OVER-WIDE CHUNK BIT REFUSED BY THE AIR: {err}");
-    assert_air_refusal(&err);
+    let what = "a one-bit chunk carrying 2";
+    let refusal = must_refuse_or_unsat_panic(what, || {
+        prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
+    });
+    let reason = refusal.reason();
+    println!("\n§2 ⚑⚑ OVER-WIDE CHUNK BIT REFUSED BY THE AIR: {reason}");
+    assert_air_refusal(&reason);
 
     // …and the CHECKED rail refuses it too.
     prove_vm_descriptor2(
@@ -382,17 +385,16 @@ fn an_over_wide_chunk_bit_is_refused_by_the_air() {
     .expect("the honest row still proves on the checked rail");
     let mut forged2 = honest_row();
     forged2[FALSIFIER_BIT] = BabyBear::new(2);
-    assert!(
+    let checked_refusal = must_refuse_or_unsat_panic("the checked over-wide chunk", || {
         prove_vm_descriptor2(
             &d,
             &trace_from(forged2, 2),
             &pis,
             &MemBoundaryWitness::default(),
-            &[]
+            &[],
         )
-        .is_err(),
-        "the checked rail must refuse it as well"
-    );
+    });
+    assert_air_refusal(&checked_refusal.reason());
 }
 
 /// ⚑ **AND A PUBLISHED LIMB THAT IS NOT WHAT ITS BITS COMPOSE IS REFUSED.** Move the first limb by
@@ -413,10 +415,13 @@ fn a_limb_that_is_not_its_bits_is_refused_by_the_air() {
     );
     let pis = claim_of(&forged);
 
-    let err = prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
-        .expect_err("a limb that is not the composition of its bits must be REFUSED");
-    println!("\n§2b ⚑ MIS-COMPOSED LIMB REFUSED BY THE AIR: {err}");
-    assert_air_refusal(&err);
+    let what = "a limb that is not the composition of its bits";
+    let refusal = must_refuse_or_unsat_panic(what, || {
+        prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
+    });
+    let reason = refusal.reason();
+    println!("\n§2b ⚑ MIS-COMPOSED LIMB REFUSED BY THE AIR: {reason}");
+    assert_air_refusal(&reason);
 }
 
 /// ⚑⚑ **§2c — AN OVER-WIDE *FIELD* LIMB IS REFUSED BY THE `range_w8` LOOKUP.** The tooth for the
@@ -523,8 +528,9 @@ fn body_preimage_bits_discriminates() {
     forged[FALSIFIER_BIT] = BabyBear::new(2);
     // ⚑ Not a bare `is_err()` — that is satisfied by the prover's shape pre-flight as readily as
     // by the circuit, which is not the sentence this pair is written to support.
-    let err = prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
-        .expect_err("the over-wide chunk is rejected");
-    assert_air_refusal(&err);
+    let refusal = must_refuse_or_unsat_panic("the over-wide chunk", || {
+        prove_and_verify_adversarial(&d, &trace_from(forged, 2), &pis)
+    });
+    assert_air_refusal(&refusal.reason());
     println!("\n§3 ⚑ old admits / new rejects — on the emitted object, at the deployed prover.");
 }

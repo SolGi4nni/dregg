@@ -94,7 +94,7 @@ const CONJ_PI_0: usize = 68;
 /// `dregg-mina-wrap-conjunction::v1`'s semantic fingerprint. NOT the prover's to choose: the emitted
 /// `proof_bind` forces the row's `CONJ_VK` block to these literals under the guard.
 const CONJ_VK_LANES: [u32; 9] = [
-    447620828, 118399956, 332150941, 529607877, 314255522, 98355104, 173079149, 176046258, 561245,
+    25700408, 516360332, 378473056, 94658712, 158496117, 296396546, 373995051, 196371478, 15863598,
 ];
 
 /// `LightClientMinaAir.CONJ_PI_LANES` — ⚠ **NINE ZEROS, and labelled so in Lean too.** Not forced by
@@ -116,14 +116,14 @@ const LINK_VK_0: usize = 49;
 /// descriptor's own bytes by `circuit/tests/mina_transcript_carrier_binding.rs` and by `dregg-turn`
 /// at verify time (`check_subproof_program_pin` at `HEAD_LINK_GUARD_COL`).
 const LINK_VK_LANES: [u32; 9] = [
-    92966942, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693,
+    374018795, 219001413, 37200803, 220394385, 61201839, 305470815, 177214831, 655691, 14820984,
 ];
 /// The nine `Faithful9` lanes of `dregg-pasta-fq-chainlink::v1`'s semantic fingerprint — the value
 /// the descriptor's `vk_pin` forces under `WRAP_FS_PROVED = 1`. Recomputed from that descriptor's
 /// own bytes by `circuit/tests/mina_transcript_carrier_binding.rs`, and by `dregg-turn` itself at
 /// verify time (`check_subproof_program_pin`); a literal here so a drift is a red, not a silence.
 const CHAINLINK_VK_LANES: [u32; 9] = [
-    158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666,
+    133381589, 62321788, 11856541, 311194598, 282546140, 366782033, 85678367, 176047994, 5706219,
 ];
 /// The nine lanes of the digest of that sub-proof's 256 public inputs on the block-539508 instance's
 /// 46th and last link — PI-bound at slots 20..28.

@@ -90,14 +90,15 @@ const LINK_WIDTH: usize = 57;
 /// ⚑ MOVED 2026-08-08: `067f63780` re-emitted `pasta-fp-absorb.json` and the pin did not follow, so
 /// the seam named a program no descriptor in this tree had. Recomputed, not copied.
 const ABSORB_VK_LANES: [u32; 9] = [
-    484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268,
+    468079883, 144575672, 434275029, 97812532, 500422946, 292012648, 58553016, 222332630, 8040594,
 ];
 
 /// ⚑ The nine lanes of `dregg-pasta-fp-chainlink::v1`'s fingerprint
 /// (`LightClientMinaLinkAir.FP_CHAINLINK_VK_LANES`) — the body-chain seam's `vkPin`. Recomputed
-/// from that descriptor's own bytes by `conj_fingerprint`; unchanged by this flag day.
+/// from the final 2026-08-11 descriptor bytes by `conj_fingerprint` after the canonical-record
+/// change and the 469→532-column emit.
 const FP_CHAINLINK_VK_LANES: [u32; 9] = [
-    331349446, 492579056, 87664392, 244507792, 473722701, 515537956, 384678982, 534069614, 6023200,
+    268840605, 2066628, 220813786, 369397904, 169064268, 472641721, 396496922, 280544560, 4134466,
 ];
 
 const PI_ANCHOR_BASE: usize = 0;
@@ -108,10 +109,14 @@ const PI_SEG_LEN: usize = 19;
 const PI_BODYHASH_BASE: usize = 20;
 /// ⚑ 2026-08-08: the FIRST row's eight `BODY_ACC` lanes, published at slots 29..36.
 const PI_BODY_ACC_BASE: usize = 29;
-/// ⚑ 20 → 37 on 2026-08-08. A `proofBind`'s `commit`/`vk` may name only PUBLISHED values, so an
-/// unpublished `BODYHASH` could not be `cb.connect`ed by a fold at all — publication is what makes
-/// the body-chain seam REACHABLE. The old 20-PI shape now REFUSES (`public input count … !=
-/// descriptor public_input_count`) rather than being reinterpreted at the wrong offsets.
+/// ⚑ 2026-08-10: the FIRST row's nine `OWNHASH` lanes, published at slots 37..45 so the
+/// state-hash-preimage cover can compare the absorb proof's output with this exact row.
+const PI_HEAD_OWN_BASE: usize = 37;
+/// ⚑ 20 → 37 on 2026-08-08 for the body-chain seam, then 37 → 46 on 2026-08-10 for the
+/// first-row state-hash-preimage cover. A `proofBind`'s `commit`/`vk` may name only PUBLISHED
+/// values, so publication is what makes both comparisons reachable by the consumer. Old PI shapes
+/// REFUSE (`public input count … != descriptor public_input_count`) rather than being reinterpreted
+/// at the wrong offsets.
 const LINK_PI_COUNT: usize = 46;
 
 /// A canonical stand-in for the chain's 8-lane transcript accumulator. ⚑ Like `BODY_LANES`, this is
@@ -191,7 +196,7 @@ fn row_of(b: Block, real_count: u32, anchor_h: u32) -> Vec<BabyBear> {
     r
 }
 
-/// Build the padded trace and the thirty-seven public inputs for an exhibited segment.
+/// Build the padded trace and the forty-six public inputs for an exhibited segment.
 ///
 /// ⚑ The padding rows repeat `(parent, own) = (tip, tip)` and CONTINUE the height and the counter,
 /// so the transition gates fire across the real→padding boundary and the last row's `REAL_COUNT` is
@@ -238,6 +243,7 @@ fn trace_and_pis(
     // every row repeats.
     for i in 0..9 {
         pis[PI_BODYHASH_BASE + i] = BabyBear::new(blocks[0].body[i]);
+        pis[PI_HEAD_OWN_BASE + i] = BabyBear::new(blocks[0].own[i]);
     }
     for i in 0..8 {
         pis[PI_BODY_ACC_BASE + i] = BabyBear::new(BODY_ACC_LANES[i]);
@@ -333,10 +339,11 @@ fn the_served_descriptor_matches_the_lean_shape() {
     assert_eq!(d.public_input_count, LINK_PI_COUNT, "PI count drifted");
     assert_eq!(
         d.constraints.len(),
-        72,
+        108,
         "constraint count drifted (minaLinkDesc_constraint_count)"
     );
-    // ⚑ 2026-08-06: exactly one recursion seam, and it is not the declarative shape.
+    // ⚑ Two recursion seams: state-hash absorb (2026-08-06) and body-hash chain (2026-08-08).
+    // Both pin a real program and name an executor weld; neither is declarative shape alone.
     let binds: Vec<_> = d
         .constraints
         .iter()
@@ -345,16 +352,18 @@ fn the_served_descriptor_matches_the_lean_shape() {
             _ => None,
         })
         .collect();
-    assert_eq!(binds.len(), 1, "one state-hash seam (minaLink_proofBinds)");
+    assert_eq!(binds.len(), 2, "two recursion seams (minaLink_proofBinds)");
     assert_eq!(
         binds[0].commit.len(),
         54,
         "six Fp elements, nine lanes each"
     );
     assert_eq!(binds[0].vk.len(), 9, "a nine-lane Faithful9 program pin");
+    assert_eq!(binds[1].commit.len(), 44, "salt + body hash + accumulator");
+    assert_eq!(binds[1].vk.len(), 9, "a nine-lane Faithful9 program pin");
     assert!(
-        !binds[0].is_declarative(),
-        "the seam must pin its program (ProofBind::is_declarative)"
+        binds.iter().all(|b| !b.is_declarative()),
+        "both seams must pin their programs (ProofBind::is_declarative)"
     );
     assert_eq!(
         d.tables.len(),

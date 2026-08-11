@@ -563,7 +563,7 @@ const ADD_Y: usize = 4 * SK; // 128
 
 /// `MinaWrapClosingAir.ABSORB_VK_LANES`, transcribed there and recomputed here.
 const LEAN_ABSORB_VK_LANES: [i64; 9] = [
-    484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268,
+    468079883, 144575672, 434275029, 97812532, 500422946, 292012648, 58553016, 222332630, 8040594,
 ];
 
 /// The library's [`key_limbs9`]; the hand-rolled base-`2^29` packing that stood here was a

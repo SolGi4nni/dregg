@@ -2,7 +2,8 @@
 # `mina_chain_emit` — the 46 witnesses of Mina devnet block 539508's phase-2 transcript.
 
 `EmitPastaAlu.lean` renders the same objects through `lake env lean --run`, i.e. Lean's
-INTERPRETER: one 2 048×469 trace costs **9 min 20 s** there (measured 2026-08-05), so the 46-link
+INTERPRETER: one 2 048×532 trace costs **9 min 20 s** there (measured 2026-08-05 at the former
+469-column shape), so the 46-link
 chain would be seven hours of rendering. That is a codegen fact, not a cost of the chain — this file
 is the same emit as a compiled `lean_exe`.
 
@@ -38,7 +39,10 @@ is **~4 minutes** and makes the two-link fold, the four-link fold, both tamper p
 `RecursionVk` determinism tooth live from a cold checkout. Only §5 (the whole chain) needs all 46.
 
 The 46 PUBLIC-INPUT vectors are always emitted in full — they cost seconds, they are tracked, and
-§0's continuity check is about them. -/
+§0's continuity check is about them. The three fixtures the `dregg-circuit` harness
+`include_str!`s — the round trace, the absorb trace, and link 45's trace — are likewise always
+written. Thus `mina_chain_emit <dir> 0` reproduces every tracked Fq fixture without rendering the
+other 45 chain traces. -/
 def main (args : List String) : IO UInt32 := do
   let dir := args.headD "chainlink-witness"
   let count := match args.drop 1 with
@@ -48,10 +52,35 @@ def main (args : List String) : IO UInt32 := do
   IO.FS.writeFile (dir ++ "/pasta-fq-chainlink.json") (emitVmJson2 chainDesc ++ "\n")
   IO.println s!"descriptor -> {dir}/pasta-fq-chainlink.json"
 
+  -- ── the round, absorption, and legacy seven-block wrap link: tracked harness fixtures ─────
+  IO.FS.writeFile (dir ++ "/pasta-fq-round-pis.txt")
+    (render Dregg2.Circuit.Emit.MinaWrapVerifierSponge.roundPIs ++ "\n")
+  IO.FS.writeFile (dir ++ "/pasta-fq-round-trace.txt")
+    (String.intercalate "\n"
+      (Dregg2.Circuit.Emit.MinaWrapVerifierSponge.roundTrace.map render) ++ "\n")
+  IO.println s!"round (32 rows) -> {dir}/pasta-fq-round-trace.txt + -pis.txt"
+
+  IO.FS.writeFile (dir ++ "/pasta-fq-absorb-pis.txt")
+    (render Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbPIs ++ "\n")
+  IO.FS.writeFile (dir ++ "/pasta-fq-absorb-trace.txt")
+    (String.intercalate "\n"
+      (Dregg2.Circuit.Emit.MinaWrapVerifierSponge.absorbTrace.map render) ++ "\n")
+  IO.println s!"absorption (2048 rows) -> {dir}/pasta-fq-absorb-trace.txt + -pis.txt"
+
+  IO.FS.writeFile (dir ++ "/pasta-fq-wraplink-pis.txt")
+    (render Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkPIs ++ "\n")
+  IO.FS.writeFile (dir ++ "/pasta-fq-wraplink-trace.txt")
+    (String.intercalate "\n"
+      (Dregg2.Circuit.Emit.MinaBlockFqTranscript.linkTrace.map render) ++ "\n")
+  IO.println s!"legacy wrap link (the seven-block link-45 view) \
+    -> {dir}/pasta-fq-wraplink-trace.txt + -pis.txt"
+
   -- The public inputs of ALL 46, always: seconds to render, and they are the objects the fold's
   -- continuity claim is about.
   let allPis := (List.range 46).map (fun j => render (chainPIs j))
   IO.FS.writeFile (dir ++ "/chainlink-pis.txt") (String.intercalate "\n" allPis ++ "\n")
+  IO.FS.writeFile (dir ++ "/pasta-fq-chainlink-pis.txt")
+    (String.intercalate "\n" allPis ++ "\n")
   IO.println s!"all 46 public-input vectors -> {dir}/chainlink-pis.txt"
 
   for j in [0:count] do

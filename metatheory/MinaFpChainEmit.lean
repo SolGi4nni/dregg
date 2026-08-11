@@ -21,7 +21,7 @@ Renders, from the Lean interpreters and nothing else:
     FRESH SPONGE** — link 0's incoming PI block is the SALT, which is what makes the chain a *Mina
     body* hash rather than a generic Poseidon run.
 
-⚠ **COMPILED FOR A MEASURED REASON**, the same one `MinaChainEmit` records: one 2 048×469 trace
+⚠ **COMPILED FOR A MEASURED REASON**, the same one `MinaChainEmit` records: one 2 048×532 trace
 costs **9 min 20 s** through `lake env lean --run` (Lean's INTERPRETER). That is a codegen cost, not
 a cost of the chain. Same objects, `leanc`.
 
@@ -53,7 +53,7 @@ def render (r : List Int) : String := String.intercalate " " (r.map toString)
 
 /-- `mina_fp_chain_emit <dir> [count] [bodyCount]` — `count` defaults to all 27 phase-1 chain
 traces, `bodyCount` to all 25 body-hash traces. ⚑ **THE TWO COUNTS ARE SEPARATE, AND MEASURED:**
-one 2 048×469 trace costs ~1–5 min of rendering depending on machine load, so a caller that wants
+one 2 048×532 trace costs ~1–5 min of rendering depending on machine load, so a caller that wants
 only the body-hash chain must not be made to pay for 25 phase-1 traces first. `… <dir> 0 25` is
 exactly the body-hash gate's prerequisite.
 

@@ -28,11 +28,12 @@
 //!
 //! ## PREREQUISITE — the witnesses
 //!
-//! `pasta-fp-bodyhash-pis.txt` is TRACKED, so §1 runs with no emit. The 2048x469 traces are not:
+//! `pasta-fp-bodyhash-pis.txt` is TRACKED, so §1 runs with no emit. The 2048x532 link-0 trace this
+//! test opens is not:
 //!
 //! ```text
 //! cd metatheory && lake build mina_fp_chain_emit
-//! ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 25
+//! ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 0 1
 //! ```
 //!
 //! Run: `cargo test -p dregg-circuit --release --test mina_body_hash_chain_proves -- --nocapture`
@@ -44,7 +45,7 @@ use dregg_circuit::descriptor_ir2::{
     prove_vm_descriptor2_unchecked, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::refusal::assert_violated_constraint_not_bus;
+use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
 
 const CHAIN_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fp-chainlink.json");
 const BODY_PIS_ALL: &str = include_str!("fixtures/pasta-fp-bodyhash-pis.txt");
@@ -120,7 +121,7 @@ fn link_trace(j: usize) -> Vec<Vec<BabyBear>> {
         panic!(
             "body-hash link witness {} missing ({e}).\n\
              Emit it first (COMPILED):\n  cd metatheory && lake build mina_fp_chain_emit \\\n    \
-             && ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 25",
+             && ./.lake/build/bin/mina_fp_chain_emit ../circuit/tests/fixtures 0 1",
             path.display()
         )
     });
@@ -134,7 +135,7 @@ fn link_trace(j: usize) -> Vec<Vec<BabyBear>> {
         })
         .collect();
     assert_eq!(t.len(), 2048);
-    assert!(t.iter().all(|r| r.len() == 469));
+    assert!(t.iter().all(|r| r.len() == 532));
     t
 }
 
@@ -260,8 +261,11 @@ fn the_body_hash_chain_emits_nothing() {
         })
         .expect("the machine declares an instruction ROM");
     assert_eq!(rom, 2048, "the same 2048-instruction ROM");
-    assert_eq!(d.trace_width, 469);
-    println!("\n§1b ⚑ `dregg-pasta-fp-chainlink::v1` UNCHANGED — 25 witnesses, no new descriptor.");
+    assert_eq!(d.trace_width, 532);
+    println!(
+        "\n§1b ⚑ `dregg-pasta-fp-chainlink::v1` REUSED at its canonical 532-column shape — \
+         25 witnesses, no body-hash-specific descriptor."
+    );
 }
 
 // ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -329,16 +333,19 @@ fn a_substituted_body_element_is_refused_by_the_air() {
         "the CLAIM must be untouched -- same salt in, same state out, same eventual body hash"
     );
 
-    let err = prove_and_verify_adversarial(&d, &t, &forged)
-        .expect_err("a body element that is not this block's must be REFUSED BY THE CIRCUIT");
-    println!("\n§3 ⚑⚑ SUBSTITUTED BODY ELEMENT REFUSED BY THE AIR: {err}");
-    assert_air_refusal(&err);
+    let what = "a body element that is not this block's";
+    let refusal =
+        must_refuse_or_unsat_panic(what, || prove_and_verify_adversarial(&d, &t, &forged));
+    let reason = refusal.reason();
+    println!("\n§3 ⚑⚑ SUBSTITUTED BODY ELEMENT REFUSED BY THE AIR: {reason}");
+    assert_air_refusal(&reason);
 
     // …and the CHECKED rail refuses it as well, which is the producer doing its job.
-    assert!(
-        prove_vm_descriptor2(&d, &t, &forged, &MemBoundaryWitness::default(), &[]).is_err(),
-        "the checked rail must refuse it too"
-    );
+    let checked_refusal =
+        must_refuse_or_unsat_panic("the checked substituted body element", || {
+            prove_vm_descriptor2(&d, &t, &forged, &MemBoundaryWitness::default(), &[])
+        });
+    assert_air_refusal(&checked_refusal.reason());
 }
 
 /// ⚑⚑ **A FORGED HEAD IS REFUSED BY THE CIRCUIT.** Claim link 0 started somewhere other than the
@@ -358,10 +365,12 @@ fn a_forged_head_state_is_refused_by_the_air() {
     let mut forged = pis[0].clone();
     forged[0] = BabyBear::new((before + 1) % 256);
 
-    let err = prove_and_verify_adversarial(&d, &t, &forged)
-        .expect_err("an incoming state that is not the pinned salt must be REFUSED BY THE CIRCUIT");
-    println!("\n§3b ⚑ FORGED HEAD REFUSED BY THE AIR: {err}");
-    assert_air_refusal(&err);
+    let what = "an incoming state that is not the pinned salt";
+    let refusal =
+        must_refuse_or_unsat_panic(what, || prove_and_verify_adversarial(&d, &t, &forged));
+    let reason = refusal.reason();
+    println!("\n§3b ⚑ FORGED HEAD REFUSED BY THE AIR: {reason}");
+    assert_air_refusal(&reason);
 }
 
 /// ⚑ **AND A FORGED OUTGOING LANE 2 IS REFUSED** — the lane the seven-block descriptor never
@@ -378,10 +387,12 @@ fn a_forged_third_outgoing_lane_is_refused_by_the_air() {
     let mut forged = pis[0].clone();
     forged[slot] = BabyBear::new((before + 1) % 256);
 
-    let err = prove_and_verify_adversarial(&d, &t, &forged)
-        .expect_err("a third outgoing lane the machine did not compute must be REFUSED");
-    println!("\n§3c ⚑ FORGED THIRD OUTGOING LANE REFUSED BY THE AIR: {err}");
+    let what = "a third outgoing lane the machine did not compute";
+    let refusal =
+        must_refuse_or_unsat_panic(what, || prove_and_verify_adversarial(&d, &t, &forged));
+    let reason = refusal.reason();
+    println!("\n§3c ⚑ FORGED THIRD OUTGOING LANE REFUSED BY THE AIR: {reason}");
     // ⚑ This tooth asserted NOTHING about the message until 2026-08-09 — a bare `expect_err`,
     // which is satisfied by the shape pre-flight, by `check_descriptor2`, by anything at all.
-    assert_air_refusal(&err);
+    assert_air_refusal(&reason);
 }

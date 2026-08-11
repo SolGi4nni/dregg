@@ -98,7 +98,7 @@ const CONJUNCTION_NAME: &str = "dregg-mina-wrap-conjunction::v1";
 /// Lean cannot compute blake3, so the literal there is a TRANSCRIPTION, and a transcription is only
 /// a gate if something recomputes it. This file is that something.
 const LEAN_CONJUNCTION_VK_LANES: [u64; 9] = [
-    447620828, 118399956, 332150941, 529607877, 314255522, 98355104, 173079149, 176046258, 561245,
+    25700408, 516360332, 378473056, 94658712, 158496117, 296396546, 373995051, 196371478, 15863598,
 ];
 
 /// ⚑ The FINALIZE carrier's guard column and its two nine-lane blocks
@@ -111,7 +111,7 @@ const CONJ_PI_BASE: usize = 68;
 /// `LEAN_CHAINLINK_PI_LANES`: Lean cannot compute blake3, so the literal there is a transcription,
 /// and a transcription is only a gate if something recomputes it.
 const LEAN_SEGMENT_VK_LANES: [u64; 9] = [
-    92966942, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693,
+    374018795, 219001413, 37200803, 220394385, 61201839, 305470815, 177214831, 655691, 14820984,
 ];
 
 /// ⚑ **AND IT MOVED ON 2026-08-06, WHICH IS WHY THIS FILE EXISTS.** A sibling lane re-emitted

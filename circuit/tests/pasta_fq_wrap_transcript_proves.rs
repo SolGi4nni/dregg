@@ -57,7 +57,7 @@ const ABSORB_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fq-abs
 /// types a challenge; every expected number is read out of here.
 const MINA_BLOCK_JSON: &str = include_str!("../../metatheory/mina_real_block_proof.json");
 
-const PROG_WIDTH: usize = 469;
+const PROG_WIDTH: usize = 532;
 const SK: usize = 32;
 const REG_BASE: usize = 226;
 const IMM_BASE: usize = 437;
@@ -68,8 +68,10 @@ const FULL_ROUNDS: usize = 55;
 /// The two high-entropy limbs `challenge()` keeps: `CHALLENGE_LENGTH_IN_LIMBS = 2` at 64 bits each,
 /// so a challenge is the low 128 bits of the raw squeeze — 16 of our 8-bit limbs.
 const CHALLENGE_LIMBS: usize = 16;
-/// 7 pin blocks: three incoming state lanes, the absorbed element, the zero second slot, and BOTH
-/// squeezed lanes.
+/// Seven pin blocks: three incoming state lanes, the absorbed element, the zero second slot, and
+/// both squeezed lanes. The strengthened `pasta-fq-chainlink` successor exposes the third outgoing
+/// state lane too; this legacy single-link artifact deliberately remains the independently served
+/// 224-PI object whose relation to that successor is checked elsewhere.
 const LINK_PI_COUNT: usize = 7 * SK;
 
 fn reg_col(r: usize) -> usize {
@@ -445,14 +447,14 @@ fn a_forged_challenge_is_refused_at_both_lanes() {
     let err = prove_and_verify(&d, &trace, &pis)
         .expect_err("a claimed v' that is not the link's squeeze must be REFUSED");
     println!("\n§4 forged v' (polyscale) REFUSED: {err}");
-    assert!(!err.is_empty());
+    assert_violated_constraint_not_bus("fq-wrap forged v'", &err);
 
     let mut pis = parse_pis(LINK_PIS);
     pis[6 * SK] = bump_limb8(pis[6 * SK]);
     let err = prove_and_verify(&d, &trace, &pis)
         .expect_err("a claimed u' that is not the link's squeeze must be REFUSED");
     println!("§4b forged u' (evalscale) REFUSED: {err}");
-    assert!(!err.is_empty());
+    assert_violated_constraint_not_bus("fq-wrap forged u'", &err);
 }
 
 /// ⚑ **§5 — THE `fq_kimchi` CONSTANTS ARE THE DESCRIPTOR'S, ON THIS INSTANCE TOO.** Give round 3 the

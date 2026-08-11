@@ -69,8 +69,8 @@
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, parse_vm_descriptor2,
-    prove_vm_descriptor2, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, prove_vm_descriptor2,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::key_limbs9;
 use dregg_circuit::heap_root::HeapLeaf;
@@ -162,14 +162,15 @@ const LINK_PI_COUNT: usize = 46;
 const PI_HEAD_OWN: usize = 37;
 
 /// `dregg-pasta-fp-absorb::v1`'s nine fingerprint lanes — the state-hash seam's `vkPin`.
-/// ⚑ Recomputed 2026-08-08 (`conj_fingerprint`); the old `[446814635, …]` named a program no
-/// descriptor in this tree had.
+/// ⚑ Recomputed from the final 2026-08-11 emitted bytes (`conj_fingerprint`) after the
+/// canonical-record change and the 469→532-column emit. The earlier pin named a prior descriptor
+/// epoch, not the served program below.
 const ABSORB_VK_LANES: [u32; 9] = [
-    484507606, 137849382, 203872743, 165431410, 35280581, 243997426, 419793387, 241629155, 7378268,
+    468079883, 144575672, 434275029, 97812532, 500422946, 292012648, 58553016, 222332630, 8040594,
 ];
 /// `dregg-pasta-fp-chainlink::v1`'s nine fingerprint lanes — the body-chain seam's `vkPin`.
 const FP_CHAINLINK_VK_LANES: [u32; 9] = [
-    331349446, 492579056, 87664392, 244507792, 473722701, 515537956, 384678982, 534069614, 6023200,
+    268840605, 2066628, 220813786, 369397904, 169064268, 472641721, 396496922, 280544560, 4134466,
 ];
 /// Canonical stand-ins. ⚑ SHAPE witnesses: this descriptor forces that the seams' program lanes are
 /// the pinned ones and that the chain is contiguous, not what the body hash or the accumulator ARE
@@ -200,7 +201,7 @@ const DEVNET_TIP_LANES: [u32; 9] = [
 /// semantic fingerprint. `mina_transcript_carrier_binding.rs` recomputes these from that
 /// descriptor's own bytes; here they are the row a prover must fill.
 const CHAINLINK_VK_LANES: [u32; 9] = [
-    158847877, 496723774, 21376199, 142114031, 147792743, 382053460, 529402576, 480024227, 2342666,
+    133381589, 62321788, 11856541, 311194598, 282546140, 366782033, 85678367, 176047994, 5706219,
 ];
 /// `LightClientMinaAir.CHAINLINK_PI_LANES` — the nine lanes of the digest of the chainlink
 /// sub-proof's 256 public inputs on the block-539508 instance's 46th and last link.
@@ -216,7 +217,7 @@ const CHAINLINK_PI_LANES: [u32; 9] = [
 /// `circuit/tests/mina_transcript_carrier_binding.rs`, which is what makes them a gate rather than
 /// a transcription.
 const LINK_VK_LANES: [u32; 9] = [
-    92966942, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693,
+    374018795, 219001413, 37200803, 220394385, 61201839, 305470815, 177214831, 655691, 14820984,
 ];
 
 /// `LightClientMinaAir.CONJ_VK_LANES` — the nine `Faithful9` lanes of the FINALIZE-CONJUNCTION
@@ -224,7 +225,7 @@ const LINK_VK_LANES: [u32; 9] = [
 /// 2536 / 160 PIs / 4317 constraints). `mina_transcript_carrier_binding.rs` recomputes these from
 /// that descriptor's own bytes; here they are the row a prover must fill.
 const CONJ_VK_LANES: [u32; 9] = [
-    447620828, 118399956, 332150941, 529607877, 314255522, 98355104, 173079149, 176046258, 561245,
+    25700408, 516360332, 378473056, 94658712, 158496117, 296396546, 373995051, 196371478, 15863598,
 ];
 
 /// `LightClientMinaAir.CONJ_PI_LANES` — ⚠ **NINE ZEROS, AND LABELLED SO IN LEAN TOO.** Unlike

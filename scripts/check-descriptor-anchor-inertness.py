@@ -91,14 +91,15 @@ SCOPE_DOES_NOT_ANSWER = (
     "registry TSVs, table-airs/, the top-level descriptors) is never opened."
 )
 SCOPE_ANSWERS_SELFTEST = (
-    "do five synthetic four-column descriptors get the decorative verdicts they were built to "
+    "do seven synthetic four-column descriptors get the decorative verdicts they were built to "
     "have (pinned-and-never-named, read-by-an-arity-1-range-lookup-only, joined-by-a-window-gate, "
-    "joined-by-a-chal_gate, and joined-by-nothing-but-a-shared-challenge), and does a count above "
-    "a baseline row get collected as red?"
+    "joined-by-a-chal_gate, joined-by-nothing-but-a-shared-challenge, joined by a tagged bound, "
+    "and deliberately not joined by a tagged port), and does a count above a baseline row get "
+    "collected as red?"
 )
 SCOPE_DOES_NOT_ANSWER_SELFTEST = (
     "anything about the descriptors on disk, and nothing about main()'s ratchet either: the "
-    "fourth case re-implements the baseline comparison in three lines rather than calling "
+    "eighth case re-implements the baseline comparison in three lines rather than calling "
     "main() or read_baseline(), so a broken comparison THERE stays invisible here."
 )
 
@@ -209,11 +210,13 @@ def analyze(d: dict) -> dict:
             #
             #     guard*(guard - 1)                     always     -- the guard's columns only
             #     guard*(vk_i - vk_pin_i)   per lane,   iff vk_pin -- guard  U  vk_i
-            #     guard*(commit_i - bound_i) per lane,  iff bound  -- guard  U  commit_i  U  bound_i
+            #     guard*(commit_i - bound_i) per lane,  iff `{t: "bound"}`
+            #                                                        -- guard U commit_i U bound_i
             #
-            # A `bound := none` seam emits NOTHING over its `commit` lanes, so a walker that
-            # related the whole declaration scored columns that appear in no emitted constraint as
-            # joined — and its 18 -> 9 was quoted as gate coverage. Measured the hour THIS fix
+            # A `{t: "port"}` seam emits NOTHING over its `commit` lanes, so a walker that related
+            # the whole declaration would score columns that appear in no emitted constraint as
+            # joined — the same misread the retired `bound := none` enabled. Measured when the
+            # original emission-faithful fix landed:
             # landed: `dregg-mina-lightclient-verify::v1` 9 -> 36 decorative anchors (the tip and
             # both sub-proof-commitment nonets return), `dregg-mina-lightclient-link::v1` 0 -> 17
             # (the body flag-day columns), no descriptor byte having moved. The Lean twin is
@@ -228,12 +231,31 @@ def analyze(d: dict) -> dict:
                     lane_cols = set(g)
                     expr_cols(lane, lane_cols)
                     relate(lane_cols, "proof_bind:vk_pin", i)
-            if c.get("bound") is not None:
-                for commit_lane, bound_lane in zip(c["commit"], c["bound"]):
+            binding = c.get("bound")
+            if not isinstance(binding, dict):
+                raise ValueError(
+                    "proof_bind bound is not the tagged object required by the 2026-08-10 IR"
+                )
+            binding_tag = binding.get("t")
+            if binding_tag == "bound":
+                bound_lanes = binding.get("lanes")
+                if not isinstance(bound_lanes, list) or len(bound_lanes) != len(c["commit"]):
+                    raise ValueError(
+                        "proof_bind `{t: 'bound'}` lanes do not match the commit width"
+                    )
+                for commit_lane, bound_lane in zip(c["commit"], bound_lanes):
                     lane_cols = set(g)
                     expr_cols(commit_lane, lane_cols)
                     expr_cols(bound_lane, lane_cols)
                     relate(lane_cols, "proof_bind:bound", i)
+            elif binding_tag == "port":
+                # A port is held by its named external seam. It deliberately emits no polynomial
+                # over `commit`, so those lanes gain no in-descriptor connectivity here.
+                pass
+            else:
+                raise ValueError(
+                    f"unknown proof_bind bound tag {binding_tag!r} — expected 'bound' or 'port'"
+                )
         elif t in ("mem_op", "map_op", "umem_op"):
             # ⚑ EXPRESSION SEQUENCES COUNT, NOT JUST SCALAR SLOTS (fixed 2026-08-05). These
             # tags carry their operands as bare `values()`, and until 2026-08-05 this walked only
@@ -411,6 +433,23 @@ def self_test() -> int:
         PIN(2, 0), PIN(3, 1),
     ]), [2, 3]))
 
+    # (6) THE TAGGED BOUND STATE — an in-descriptor bound emits `commit - bound`, so the two
+    #     published lanes are genuinely related.
+    cases.append(("a proof_bind bound joins commit to its row expression", _desc([
+        {"t": "proof_bind", "guard": K(1), "commit": [V(2)], "vk": [V(0)],
+         "vk_pin": None, "bound": {"t": "bound", "lanes": [V(3)]}},
+        PIN(2, 0), PIN(3, 1),
+    ]), []))
+
+    # (7) THE TAGGED PORT STATE — a port is checked by its named external seam and emits no
+    #     polynomial over `commit`; counting the declaration as an edge would launder the port.
+    cases.append(("a proof_bind port does not invent row-local connectivity", _desc([
+        {"t": "proof_bind", "guard": K(1), "commit": [V(2)], "vk": [V(0)],
+         "vk_pin": None,
+         "bound": {"t": "port", "port": "self-test", "seam": "self-test-seam"}},
+        PIN(2, 0), PIN(3, 1),
+    ]), [2, 3]))
+
     ok = True
     for label, d, expected in cases:
         got = analyze(d)["decorative"]
@@ -418,7 +457,7 @@ def self_test() -> int:
         ok &= got == expected
         print(f"  [{verdict}] {label}: decorative={got} expected={expected}")
 
-    # (4) THE RATCHET ARM — a count above its baseline row must be REFUSED, not merely reported.
+    # (8) THE RATCHET ARM — a count above its baseline row must be REFUSED, not merely reported.
     base = {"self-test": 1}
     entries = {"self-test": 2}
     red = [n for n, v in entries.items() if v > base.get(n, 0)]

@@ -67,7 +67,7 @@ const PHASE2_CHAIN_PIS: &str = include_str!("fixtures/pasta-fq-chainlink-pis.txt
 
 /// The Lean layout (`MinaWrapVerifierProgram` §1, unmoved), restated so a drift in either side reds
 /// here rather than silently addressing a different column.
-const PROG_WIDTH: usize = 469;
+const PROG_WIDTH: usize = 532;
 const SEL_MUL: usize = 222;
 const REG_BASE: usize = 226;
 const SK: usize = 32;
@@ -76,16 +76,19 @@ const YSEL_BASE: usize = 424;
 const WSEL_BASE: usize = 430;
 const PC_COL: usize = 436;
 const IMM_BASE: usize = 437;
+const ZCAN_BASE: usize = 469;
+const ZCCAR_BASE: usize = 501;
 
 /// ⚑ **THE COLUMN ORDER, PINNED AT BUILD TIME.** Every index above is a transcription of the
 /// emitted program layout; if two of them ever crossed, every witness builder in this file would
 /// be writing into the wrong column and the proofs would still be *about something*, just not
-/// about the sponge. The immediate block must also end flush at `PROG_WIDTH` — no slack, no
-/// overrun.
+/// about the sponge. The immediate block is followed by the canonical-result certificate's 32
+/// complement limbs and 31 carry columns; those blocks must end flush at `PROG_WIDTH`.
 const THE_COLUMN_ORDER_IS_THE_LAYOUTS: () = {
     assert!(SEL_MUL < REG_BASE && REG_BASE < XSEL_BASE);
     assert!(XSEL_BASE < YSEL_BASE && YSEL_BASE < WSEL_BASE && WSEL_BASE < PC_COL);
-    assert!(PC_COL < IMM_BASE && IMM_BASE + SK == PROG_WIDTH);
+    assert!(PC_COL < IMM_BASE && IMM_BASE + SK == ZCAN_BASE);
+    assert!(ZCAN_BASE + SK == ZCCAR_BASE && ZCCAR_BASE + SK - 1 == PROG_WIDTH);
 };
 const _: () = THE_COLUMN_ORDER_IS_THE_LAYOUTS;
 const NREG: usize = 6;
