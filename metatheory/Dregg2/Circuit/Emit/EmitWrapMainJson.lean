@@ -113,7 +113,7 @@ def installedGate (dir tag : String) (rungs : List Rung) : IO Nat := do
       so a stale fixture is a green run about a circuit the Lean no longer describes. Re-run with \
       DREGG_WM_INSTALL=1 to install them, and carry the consequence chain: every rung's witness \
       moves, the five-polarity sweep must be re-run, and any count graded against these fixtures \
-      (`the_forty_agree_but_for_slot_twelve`'s smoke conjunct among them) is about the old shape.")
+      (`the_forty_agree_at_every_slot`'s smoke conjunct among them) is about the old shape.")
   if doInstall then
     IO.println s!"[install] {names.length} tracked fixtures INSTALLED from this emission"
   else

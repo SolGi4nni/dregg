@@ -88,9 +88,19 @@ supplied advice pair), against the same block:
 So the diagnosis this module opened with — "what is missing is a transcript" — was half right and
 is now retired in BOTH directions: the transcript's half is CLOSED, and the remaining obstruction
 is an R4 rebuild (ξ-Horner + `endo_inv` + per-round prechallenge keying) plus an advice-cell
-split, not a value anyone can swap. `G` therefore STAYS `solveG`'s output in segment D's preimage —
+split, not a value anyone can swap. `G` therefore STAYS `solveG`'s output **in §19's ladder** —
 swapping it alone would leave `equal_g = 0` under the emitted rows, a stapled slot in place of a
 closed one — and `solveG`'s docblock carries the same flag.
+
+⚠⚑ **CORRECTED 2026-08-10: THAT SENTENCE SAID "IN SEGMENT D'S PREIMAGE", AND SEGMENT D IS NO LONGER
+WHERE IT IS TRUE.** The two were one cell when this was written, so naming either named both. They
+are now two (`vGx` for §19, `vGaX` for segment D), and segment D absorbs
+`MinaStepOwnAccumulator.ACC_XY` — the WRAP proof's published recursion-slot commitment, which kimchi
+forces to `commit(b_poly(chals))` and which `gates::gate_a2` re-derives (⚠ NOT `accumulator_check`:
+that reads the WRAP record's Vesta commitment and is blind to this family). **Nothing
+above is weakened by that**: this module's subject is `equal_g` and the refusal of `SG_XY`, both
+unchanged, and the accumulator is emphatically not `SG_XY` — see `KimchiStepMainCore.vGaX`. What
+changed is only which cell the sentence is about.
 -/
 import Dregg2.Circuit.Emit.KimchiStepMainFixture
 
@@ -201,7 +211,7 @@ it (`wrap.rs:610-625`). So "READABLE from the emitted artifact" was never the ri
 
 ⚑ **AND `uChal 0` IS PUBLISHED — AT SLOT 13 OF THE FORTY, AND IT AGREES WITH MINA.** The assembly's
 `uChal 0 … uChal 15` are family (1): `KimchiStepMainPins16` pins `stmtVar (13 + k)` to the RAW
-`vN (uChal k)`, and `KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve` proves the emitted
+`vN (uChal k)`, and `KimchiWrapMainPins12.the_forty_agree_at_every_slot` proves the emitted
 forty differs from `WRAP_PUBLIC_INPUT_MEASURED` at slot 12 **and nowhere else** — so all sixteen,
 `k = 0` included, are published AND correct against the referee. The absence measured below is an
 absence from the SIXTY-SEVEN, where family (1) does not belong.
@@ -237,7 +247,7 @@ theorem the_statement_window_is_the_wrap_sides_fifteen_not_segment_ds_sixteen :
      -- the emitted vector can BE `step_pre` with no extraction from either statement.
      && (List.range 16).all (fun k => raw k < 2 ^ 128 && raw k != 0)
      -- (3) ⚑ …and `uChal 0` is in no entry of the SIXTY-SEVEN — where family (1) does not belong.
-     -- It IS published, at slot 13 of the FORTY (`…WrapMainPins12.the_forty_agree_but_for_slot_twelve`).
+     -- It IS published, at slot 13 of the FORTY (`…WrapMainPins12.the_forty_agree_at_every_slot`).
      && (pub.contains (raw 0 : Int)) == false
      -- (4) …and NO lifted value is published, so the wire slot is a prechallenge slot.
      && (List.range 16).all (fun k => (pub.contains (lif k : Int)) == false)
@@ -343,10 +353,17 @@ reasons, both conjuncts here.
   * **THE FUSED ADVICE CELL.** R8's `Fp` fold (`bpBOf`, what the fused `vBShift` cell must carry)
     is neither the block's `b₀` nor its shifted form, at any transcript.
 
-⚠ What this theorem does NOT license, unchanged: swapping `G := SG_XY` in segment D while this
-refusal stands would publish the real accumulator over `equal_g = 0` — a stapled slot. `G` stays
-`solveG`'s output until ξ's instance and the advice-cell split land; `solveG`'s docblock carries
-the same flag, dated. -/
+⚠ What this theorem does NOT license, unchanged: swapping `G := SG_XY` **in §19's ladder** while
+this refusal stands would publish a foreign opening over `equal_g = 0` — a stapled slot. §19's `G`
+stays `solveG`'s output until ξ's instance and the advice-cell split land; `solveG`'s docblock
+carries the same flag, dated.
+
+⚠⚑ **AND `SG_XY` IS STILL NOT WHAT SEGMENT D TOOK IN 2026-08-10.** Segment D now absorbs
+`MinaStepOwnAccumulator.ACC_XY`, `⟨b_poly_coefficients(u⃗), get_srs::<Fp>().g⟩` at the assembly's own
+sixteen. That is a DERIVED object of this pipeline, not block 539508's opening: it is exactly what
+kimchi forces `prev_challenges[0].comm` to be and what Mina's `accumulator_check` recomputes, which
+is why publishing it is required rather than optional. The `SG_XY` refusal this theorem carries is
+untouched, and `KimchiStepMainCore.vGaX` states why the two roads are separate. -/
 theorem the_corrected_transcript_still_refuses_and_the_residue_is_xi_and_the_fused_advice_cell :
     (-- (d)'s premise, restated on this theorem's own subject…
      uSqueezeVal shapeStep tRealAdvice.sp == T_FQ

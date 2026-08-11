@@ -790,28 +790,65 @@ slot under investigation, and closing it leaves `G` and the sixteen exactly wher
 ⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY**, and it is what makes this a fact about VALUES rather
 than about a list of zeros: ten of the forty are `Spec.T.Constant` padding and the lookup `Opt` and
 are zero on both sides, so an all-zero emission would satisfy the first conjunct at those ten.
-Twenty-nine of the agreements are NONZERO. -/
-theorem the_forty_agree_but_for_slot_twelve :
+Twenty-nine of the agreements are NONZERO.
+
+⚑⚑⚑⚑ **2026-08-11 — SLOT 12 CLOSED AND THIS IS 40 OF 40.** The refusal above was shaped to shrink
+and it shrank. Both halves of the residue landed in one flag day, and they had to land TOGETHER
+because word 54 is ONE digest over all seventy-six cells:
+
+  * **Cells 58–59.** Segment D stopped absorbing `solveG`'s SOLVE and now absorbs
+    `MinaStepOwnAccumulator.ACC_XY` — the wrap proof's published recursion-slot commitment, which
+    kimchi forces to `commit(b_poly(chals))` and `gates::gate_a2` re-derives. `KimchiStepMainCore`
+    gives it its OWN witness cell (`vGaX`/`vGaY`, `assert_on_curve`d), because §19's `equal_g` keeps
+    the solve; that split, and what it leaves undischarged, is stated at `vGaX` and is item #11
+    exactly as before — **no new assumption was taken to reach this number.**
+  * **Cells 60–75.** `prove_step` stopped CHOOSING a `k·0x9E3779B97F4A7C15 | 1` ladder and now reads
+    the assembly's own sixteen (`stepmain_step_own_prechallenges.json`, `chalOf … (uChal k)`), with
+    `marshal::read_own_prechallenges` refusing unless this crate's `expand_step_prechallenge`
+    reproduces Lean's `liftOf` on every one.
+
+⚠ **THE COUNT BELOW IS RE-MEASURED, NOT CARRIED.** The referee moved at 29 of 40 slots on the first
+re-bake of this flag day and at 28 on the second; `EmitWrapFortyAgreement` over `mkWrap shapeWrap` at
+`.close` was re-run at HEAD after the last one. ⚠ And the residue's own instrument agrees: the
+marshaller's `[gate C] cell NN` lines print the wire record's cells 58–75 and they are segment D's,
+value for value.
+
+⚠ **WHAT THIS IS NOT.** It is not a proof that Mina accepts anything. It says the forty words this
+assembly derives ARE the forty openmina's own `PreparedStatement::to_public_input(40)` produced for
+this step proof — one statement, two implementations, and they agree. Every soundness caveat this
+cone carries is untouched: §19's opening leg is still a solve, the FRI/STARK floor is still
+undischarged, and `gate_b` still COMPARES NOTHING on the wire. -/
+theorem the_forty_agree_at_every_slot :
     (let em := (wrapPublicAt (mkWrap shapeWrap) .close).map (fun z => (z % (qN : Int)).toNat)
      let mn := Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED
-     -- ⚑ WHICH slot disagrees, over ALL forty — a count says a number, this says which.
-     ((List.range 40).filter (fun i => em.getD i 0 != mn.getD i 0)) = [12]
-     ∧ ((List.range 40).filter (fun i => em.getD i 0 == mn.getD i 0)).length = 39
-     -- ⚑ …and slot 12 still disagrees, so this is a refusal shaped to shrink and not a tautology.
-     ∧ em.getD 12 0 != mn.getD 12 0
-     -- ⚑ ANTI-VACUITY: the agreeing set is not the padding. Ten of the forty are `Spec.T.Constant`
-     -- padding and the lookup `Opt` and are zero on both sides; twenty-nine agreements are NONZERO.
+     -- ⚑ WHICH slots disagree, over ALL forty — a count says a number, this says which. NONE.
+     ((List.range 40).filter (fun i => em.getD i 0 != mn.getD i 0)) = []
+     ∧ ((List.range 40).filter (fun i => em.getD i 0 == mn.getD i 0)).length = 40
+     -- ⚑⚑ …and slot 12, the one that was the residue for the whole campaign, EXHIBITED as an
+     -- equality rather than left to be inferred from the count.
+     ∧ em.getD 12 0 == mn.getD 12 0
+     -- ⚑ ANTI-VACUITY (i): the agreeing set is not the padding. Ten of the forty are
+     -- `Spec.T.Constant` padding and the lookup `Opt` and are zero on both sides; THIRTY agreements
+     -- are NONZERO — up from twenty-nine, because slot 12 is one of them and it is not zero.
      ∧ ((List.range 40).filter (fun i =>
-          em.getD i 0 == mn.getD i 0 && em.getD i 0 != 0)).length = 29
-     -- ⚠ ⚑ …and the SMOKE shape grades 17, carried here so the two numbers cannot be confused by a
-     -- reader who finds only one of them. It is not a worse measurement of the same thing; it is a
-     -- measurement of a different, smaller circuit.
+          em.getD i 0 == mn.getD i 0 && em.getD i 0 != 0)).length = 30
+     ∧ em.getD 12 0 != 0
+     -- ⚑⚑ ANTI-VACUITY (ii): the referee is not a copy of the emission. A `WRAP_PUBLIC_INPUT_MEASURED`
+     -- that had been re-baked FROM `wrapPublicAt` would satisfy every conjunct above and mean
+     -- nothing. The SMOKE shape runs the same `wrapPublicAt` against the same referee and agrees at
+     -- FEWER than forty, so the referee is an object this derivation can still miss.
      ∧ ((List.range 40).filter (fun i =>
           ((wrapPublicAt tW .close).map (fun z => (z % (qN : Int)).toNat)).getD i 0
-            == mn.getD i 0)).length = 17) := by
+            == mn.getD i 0)).length < 40
+     -- ⚠ ⚑ …and the SMOKE shape's own number, carried here so the two cannot be confused by a
+     -- reader who finds only one of them. It is not a worse measurement of the same thing; it is a
+     -- measurement of a different, smaller circuit, whose `xhatXY` this flag day did not re-derive.
+     ∧ ((List.range 40).filter (fun i =>
+          ((wrapPublicAt tW .close).map (fun z => (z % (qN : Int)).toNat)).getD i 0
+            == mn.getD i 0)).length = 18) := by
   native_decide
 
-#assert_compiled the_forty_agree_but_for_slot_twelve
+#assert_compiled the_forty_agree_at_every_slot
 
 #assert_compiled fin_deferred_words_are_the_derivation
 #assert_compiled the_live_block_declares_itself_minas_own_wrap_proof

@@ -540,6 +540,194 @@ pub fn expand_step_prechallenge(c: &PreChallenge) -> Fp {
     ScalarChallenge(raw).to_field(endo_r)
 }
 
+/// ⚑⚑ **THE STEP ASSEMBLY'S OWN SIXTEEN — cells 60–75 of slot 12, read rather than chosen.**
+///
+/// `EmitStepMainJson.ownPrechallengesJson` writes
+/// `pickles-stepmain-harness/fixtures/stepmain_step_own_prechallenges.json` out of `mkStep
+/// shapeStep`: `raw` is `chalOf s d (uChal k)`, the 128-bit transcript prechallenge, and `lift` is
+/// `liftOf s d (uChal k)`, its `to_field_checked` image — which IS what segment D absorbs.
+///
+/// ⚠ **UNTIL 2026-08-10 `prove_step` CHOSE this vector** — `k·0x9E3779B97F4A7C15 | 1` — so the wire
+/// record's `old_bulletproof_challenges` and segment D's preimage were two different vectors where
+/// `step_verifier.ml:1114-1147` has one. Every per-slot instrument agreed with itself and slot 12
+/// missed.
+pub struct OwnPrechallenges {
+    /// The sixteen as the wire carries them: `[u64; 2]`, low limb first.
+    pub raw: [PreChallenge; STEP_ROUNDS],
+    /// …and their `to_field_checked` images, as Lean emitted them.
+    pub lift: [Fp; STEP_ROUNDS],
+}
+
+/// Read [`OwnPrechallenges`], **checking every property that makes the read meaningful** rather
+/// than trusting the file.
+///
+/// ⚑ **THE LOAD-BEARING ONE IS THE LAST: `expand_step_prechallenge(raw[k]) == lift[k]`.** Lean's
+/// `liftVal` is the `EndomulScalar` crumb accumulator `a₈·endo_r + b₈` (`to_field_checked`); this
+/// crate's is `ScalarChallenge::to_field` with Vesta's `endo_r`. They are two implementations of
+/// one lift, and this is where they are COMPARED instead of assumed equal — on every run, over the
+/// real vector. A disagreement here means the wire would carry a prechallenge whose expansion is
+/// not the field element the circuit absorbed, which is exactly the class of defect that made slot
+/// 12 a value gap in the first place.
+pub fn read_own_prechallenges(path: &std::path::Path) -> Result<OwnPrechallenges, String> {
+    use std::str::FromStr;
+    let src = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read the step assembly's own sixteen at {path:?}: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&src).map_err(|e| format!("bad JSON in {path:?}: {e}"))?;
+    let n = v["b_rounds"].as_u64().ok_or("no `b_rounds`")? as usize;
+    if n != STEP_ROUNDS {
+        return Err(format!(
+            "{path:?} declares b_rounds = {n}, but a step proof's recursion slot carries \
+             {STEP_ROUNDS} challenges"
+        ));
+    }
+    let bits = v["chal_bits"].as_u64().ok_or("no `chal_bits`")?;
+    if bits != 128 {
+        return Err(format!(
+            "{path:?} declares chal_bits = {bits}; a `PicklesBulletproofChallengeStableV1` is two \
+             u64 limbs and holds 128"
+        ));
+    }
+    let arr = |k: &str| -> Result<Vec<String>, String> {
+        v[k].as_array()
+            .ok_or_else(|| format!("{path:?} has no `{k}` array"))?
+            .iter()
+            .map(|e| {
+                e.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("{path:?}: `{k}` holds a non-string"))
+            })
+            .collect()
+    };
+    let raws = arr("raw")?;
+    let lifts = arr("lift")?;
+    if raws.len() != STEP_ROUNDS || lifts.len() != STEP_ROUNDS {
+        return Err(format!(
+            "{path:?} carries {} raw and {} lifted challenges; both must be {STEP_ROUNDS}",
+            raws.len(),
+            lifts.len()
+        ));
+    }
+    let mut raw = [[0u64; 2]; STEP_ROUNDS];
+    let mut lift = [Fp::from(0u64); STEP_ROUNDS];
+    for k in 0..STEP_ROUNDS {
+        // ⚑ A `u128` parse IS the width refusal: a prechallenge that does not fit two limbs is not
+        // a prechallenge, and truncating it here would publish a vector the circuit never squeezed.
+        let r: u128 = raws[k].parse().map_err(|e| {
+            format!(
+                "{path:?}: raw[{k}] = {} does not fit 128 bits ({e}) — `chalOf` is supposed to be \
+                 the low `chalBits` of a squeeze",
+                raws[k]
+            )
+        })?;
+        raw[k] = [r as u64, (r >> 64) as u64];
+        lift[k] = Fp::from_str(&lifts[k])
+            .map_err(|_| format!("{path:?}: lift[{k}] is not an Fp decimal"))?;
+        let ours = expand_step_prechallenge(&raw[k]);
+        if ours != lift[k] {
+            return Err(format!(
+                "⚑ THE TWO LIFTS DISAGREE at k={k}. Lean's `liftOf` emitted {}, and this crate's \
+                 `expand_step_prechallenge` (ScalarChallenge::to_field, Vesta endo_r) makes {ours} \
+                 of the same 128-bit prechallenge {}. One of the two is not `to_field_checked`.",
+                lifts[k], raws[k]
+            ));
+        }
+    }
+    Ok(OwnPrechallenges { raw, lift })
+}
+
+/// ⚑ **The step statement's own packed prechallenges — the WRAP proof's two recursion slots.**
+///
+/// `entry = 32·p + 16 + j` is the `Unfinalized`'s fifteen for previous proof `p`
+/// (`unfinalized.rs:103-108`, `wrap.rs:688-696`). Moved out of `pickles_kimchi_marshal` so the
+/// binary that PROVES the wrap proof and the binary that installs the commitment over these same
+/// challenges read one function; two readers of one packing is how the two sides of a slot come
+/// apart.
+///
+/// ⚠ Entries 16…30 and 48…62 — **NOT 64**, which is word 54 and is segment D's own squeeze. That is
+/// what makes the accumulator install a one-pass stratification: re-emitting the step circuit with a
+/// different `[Gx; Gy]` moves entry 64 alone (measured), so these thirty are invariant under it.
+pub fn step_statement_prechallenges(
+    public_input: &[String],
+) -> [[PreChallenge; WRAP_ROUNDS]; PROOFS_VERIFIED] {
+    assert_eq!(
+        public_input.len(),
+        67,
+        "a Types.Step.Statement is 67 entries"
+    );
+    std::array::from_fn(|p| {
+        std::array::from_fn(|j| {
+            let entry = 32 * p + 16 + j;
+            let v = num_bigint::BigUint::parse_bytes(public_input[entry].as_bytes(), 10)
+                .expect("packed statement word is a decimal numeral");
+            assert!(
+                v.bits() <= 128,
+                "packed word 27*{p} + {} is {} bits; `spec.ml:374-392` packs a \
+                 Bulletproof_challenge at Challenge.length = 128 and a wider value would not \
+                 round-trip through the two limbs the wire carries",
+                11 + j,
+                v.bits()
+            );
+            let lo = &v & num_bigint::BigUint::from(u64::MAX);
+            let hi = &v >> 64u32;
+            [
+                lo.try_into().expect("low limb"),
+                hi.try_into().expect("high limb"),
+            ]
+        })
+    })
+}
+
+/// ⚑⚑⚑ **ONE WRAP RECURSION SLOT'S COMMITMENT — and cells 58–59 of slot 12 are the published one.**
+///
+/// `commit(b_poly(chals))` over the Tock SRS. kimchi FORCES it: the IPA folds `b_poly(chals)` into
+/// the batch and the verifier combines using this very point, so an unrelated one makes
+/// `batch_verify` return `OpenProof` (measured, first run). It is therefore not a choice on either
+/// side of slot 12 — it is a function of the fifteen prechallenges alone.
+///
+/// ⚑ **WHAT BINDS IT ON MINA'S SIDE IS GATE A2, NOT `accumulator_check`.** `accumulator_check`
+/// (`accumulator_check.rs:10-64`) reads `messages_for_next_WRAP_proof
+/// .challenge_polynomial_commitment` — a **Vesta** point, slot 11's family — and is structurally
+/// blind to this one. What re-derives THIS point is `gates::gate_a2`: it takes the step record's
+/// `challenge_polynomial_commitments` (Pallas, front-padded with `dummy_ipa_wrap_sg()`), zips them
+/// against `messages_for_next_wrap_proof.old_bulletproof_challenges`, and checks
+/// `comm == ⟨b_poly_coefficients(chals), pallas_srs.g⟩` per slot.
+///
+/// ⚠ **AND THE CURVE IS THE WHOLE REASON THIS FUNCTION EXISTS RATHER THAN A ONE-LINER AT THE CALL
+/// SITE.** `messages_for_next_step_proof.challenge_polynomial_commitments` is
+/// `Vec<InnerCurve<Fp>>` — **Pallas** points, coordinates in Fp, which is the STEP circuit's own
+/// native field and therefore the only kind of point segment D can absorb. The step proof's own
+/// `prev_challenges[_].comm` is a **Vesta** point in Fq and does NOT go here; wiring it in emits a
+/// witness whose `assert_on_curve` cannot hold and the step prover refuses with
+/// `"rest of division by vanishing polynomial"` (measured, 2026-08-10).
+pub fn wrap_slot_commitment(
+    srs: &poly_commitment::ipa::SRS<Pallas>,
+    pre: &[PreChallenge],
+) -> Result<Pallas, String> {
+    use poly_commitment::SRS as _;
+    let chals: Vec<Fq> = pre.iter().map(expand_prechallenge).collect();
+    let coeffs = poly_commitment::commitment::b_poly_coefficients(&chals);
+    if coeffs.len() != srs.g.len() {
+        return Err(format!(
+            "b_poly_coefficients of {} challenges is {} coefficients and the Tock SRS has {} \
+             generators — the challenge polynomial does not tile this SRS",
+            pre.len(),
+            coeffs.len(),
+            srs.g.len()
+        ));
+    }
+    use ark_poly::DenseUVPolynomial as _;
+    let poly = ark_poly::univariate::DensePolynomial::from_coefficients_vec(coeffs);
+    let comm = srs.commit_non_hiding(&poly, 1);
+    if comm.chunks.len() != 1 {
+        return Err(format!(
+            "the challenge-polynomial commitment came back in {} chunks; the wire carries one",
+            comm.chunks.len()
+        ));
+    }
+    Ok(comm.chunks[0])
+}
+
 /// `ScalarChallenge::to_field` — the endo expansion the PROVER applied
 /// (`poseidon/src/sponge.rs:95`), with kimchi's own Pallas scalar endo coefficient.
 pub fn expand_prechallenge(c: &PreChallenge) -> Fq {

@@ -6291,8 +6291,12 @@ def shapeSmoke : WrapShape :=
   -- is a kernel `rfl` between THIS literal and `xhatOutOf (xhatSel 5)`, and defining the field as
   -- that computation would make the theorem `rfl` on itself and the emitter's refusal vacuous. The
   -- refusal is the route to grade; the numeral is what gives it something to grade.
+  -- ⚠ **SIXTH HAND-EDIT, 2026-08-11.** Segment D's `[Gx; Gy]` became the record's own accumulator
+  -- (`KimchiStepMainCore.vGaX`), so the step statement's word 54 moved, so the step proof and its
+  -- tape moved, so every MSM scalar under `xhatSel 5` moved with them. `xhat_smoke_shape_absorbs_the_msm_output`
+  -- (`…Pins05`, a kernel `rfl`) is what went red and is what makes this a route rather than a guess.
   , xhatXY :=
-      (28254262488532232353957562227619483435654182216853164959495920661858969543627,
-       25343470852128235139217801532973525398889300456461152556172484536691679416684) }
+      (28838907831641694120154489076046198697490805010897717563996646089451402213534,
+       7142378238084345995505990911399663788737758352618294125082770717331477433812) }
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

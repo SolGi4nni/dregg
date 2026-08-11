@@ -1558,9 +1558,11 @@ theorem the_published_statement_carries_every_derived_word_but_the_arity_mismatc
   -- is the equality; this is its complement said at the word map.
   ∧ prevWordVal (PREV_MSG_NEXT_STEP + 1) = whPrevDigest 0
   ∧ prevWordVal (PREV_MSG_NEXT_STEP + 2) = whPrevDigest 1
-  -- ⚑ …and word 54 is the ONE that does not, stated as the refusal it is rather than omitted.
+  -- ⚑⚑⚑ …and word 54 CLOSED on 2026-08-11. This conjunct was `≠` — a refusal shaped to shrink —
+  -- from the day the file was written; segment D absorbing the record's own accumulator and the
+  -- wire carrying the assembly's own sixteen made it an equality, and it is written as one.
   ∧ prevWordVal PREV_MSG_NEXT_STEP
-      ≠ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
+      = Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
   ∧ PREV_WORDS - 1 = 56
   -- ⚑ …and the ONE, exhibited: a 255-bit Fq digest, so the gap's shape is visible and a reader
   -- cannot mistake it for the `Challenge`-width kind the deferred words are.

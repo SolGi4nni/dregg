@@ -159,20 +159,20 @@ The substituted witness is accepted at every one of those rungs. -/
           (fun k => prevChalVal (shapeSmoke.bRounds + k))
         == (tS.segC.states.getLastD []).getD 0 0
 
-#guard wordSeven tS tS.gXY == (stepPublic tS).getD 7 0
+#guard wordSeven tS tS.gAccXY == (stepPublic tS).getD 7 0
 
 -- ⚑⚑ **(a) THE HONEST CHAIN CLOSES.** Step `N+1`'s segment C, fed step `N`'s app state, `G` and
 -- returned bulletproof challenges, reconstructs step `N`'s public word 7 EXACTLY. This is the
 -- reconstruction-and-comparison, and it is the first time the two hashes are shown to be the two
 -- ends of one chain rather than two sponges that happen to share a copy point.
 #guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tS.ipa).1
-          (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
-        == wordSeven tS tS.gXY
+          (chainSlot0 shapeSmoke tS.ipa).2 tS.gAccXY (chainChals shapeSmoke tS.sp)
+        == wordSeven tS tS.gAccXY
 -- …and it is not trivially true: segment C's own app-state fixture gives a DIFFERENT digest, so the
 -- identity is carrying the chained app state and not ignoring it.
 #guard hmChainDigest shapeSmoke idxOVal hmVal (chainSlot0 shapeSmoke tS.ipa).1
-          (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
-        != wordSeven tS tS.gXY
+          (chainSlot0 shapeSmoke tS.ipa).2 tS.gAccXY (chainChals shapeSmoke tS.sp)
+        != wordSeven tS tS.gAccXY
 
 /-- ⚑⚑ **(a′) THE TIE BINDS THE KEY — AND THIS IS THE LEG THAT DID NOT EXIST BEFORE 2026-08-07.**
 
@@ -191,11 +191,11 @@ tie whose premise cannot be falsified is not a tie; it is a definition wearing o
 `MessagesForNextStepProof::hash()`. -/
 theorem the_inter_step_tie_binds_the_absorbed_wrap_key :
     (hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tS.ipa).1
-        (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
-       == wordSeven tS tS.gXY)
+        (chainSlot0 shapeSmoke tS.ipa).2 tS.gAccXY (chainChals shapeSmoke tS.sp)
+       == wordSeven tS tS.gAccXY)
     ∧ (hmChainDigest shapeSmoke idxVal hmOVal (chainSlot0 shapeSmoke tS.ipa).1
-        (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
-       != wordSeven tS tS.gXY) := by
+        (chainSlot0 shapeSmoke tS.ipa).2 tS.gAccXY (chainChals shapeSmoke tS.sp)
+       != wordSeven tS tS.gAccXY) := by
   native_decide
 
 #assert_compiled the_inter_step_tie_binds_the_absorbed_wrap_key
@@ -209,7 +209,7 @@ theorem the_inter_step_tie_binds_the_absorbed_wrap_key :
         == wordSeven tSwapAbs bpGResolvedA
 -- …and this really is the §17(e) witness and not a re-run of the honest one: the two chains'
 -- digests differ, and `equal_g` still closes on the substituted one.
-#guard wordSeven tSwapAbs bpGResolvedA != wordSeven tS tS.gXY
+#guard wordSeven tSwapAbs bpGResolvedA != wordSeven tS tS.gAccXY
 #guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) bpGResolved
                 (bpBOf tSwapAbs) BP_Z1 BP_Z2
 
@@ -223,15 +223,20 @@ theorem the_inter_step_tie_binds_the_absorbed_wrap_key :
 -- …and the reason is structural: `G` is a word of segment D and of NEITHER other place, while `z₁`
 -- and `z₂` are not variables of this assembly at all. So the chain can move with `G` and cannot move
 -- with the response scalars.
-#guard (tS.specD.ws.map (·.1)).countP (fun v => v == vGx shapeSmoke) == 1
-#guard (tS.specC.ws.map (·.1)).countP (fun v => v == vGx shapeSmoke) == 0
+-- ⚑ SINCE 2026-08-11 the cell is `vGaX`, not `vGx`: segment D absorbs the record's own accumulator
+-- and §19's ladder keeps `solveG`'s solve, so the two `G`s are two cells (`KimchiStepMainCore.vGaX`).
+-- The structural fact this states is unchanged — segment D has it and segment C does not — and it is
+-- stated about the cell segment D actually carries. `vGx` is now in NEITHER segment.
+#guard (tS.specD.ws.map (·.1)).countP (fun v => v == vGaX shapeSmoke) == 1
+#guard (tS.specC.ws.map (·.1)).countP (fun v => v == vGaX shapeSmoke) == 0
+#guard (tS.specD.ws.map (·.1)).countP (fun v => v == vGx shapeSmoke) == 0
 
 -- ⚑⚑ **(d) THE DIRECTION THE TIE DOES REFUSE — and it is the reason the tie is not nothing.**
 -- A prover who moves step `N`'s word 7 and then carries the HONEST `G` forward at step `N+1` is
 -- REFUSED: the reconstruction no longer equals the word the wrap proof was made for. So the fake
 -- commitment cannot be laundered away between steps; it must be carried.
 #guard hmChainDigest shapeSmoke idxOVal hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
-          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 tS.gXY (chainChals shapeSmoke tSwapAbs.sp)
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 tS.gAccXY (chainChals shapeSmoke tSwapAbs.sp)
         != wordSeven tSwapAbs bpGResolvedA
 -- …and each of the other three chained quantities is covered in the same direction:
 --   the carried challenges,
@@ -439,7 +444,7 @@ what it does not:
 
 Word 54 is `messages_for_next_step_proof`, and it is Mina's wrap public-input **slot 12** — the one
 slot of the forty the emitted wrap vector does not agree with
-(`KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve`, 39 of 40). Three
+(`KimchiWrapMainPins12.the_forty_agree_at_every_slot`, 39 of 40). Three
 structural explanations for that miss have been written into `KimchiWrapMainPins10` and refuted at
 source: the outer hash (refuted by the index repair), an arity gap (refuted 2026-08-07 —
 `marshal::STEP_RECURSION_SLOTS = gates::STEP_RULE_N_PREVIOUS = 1`), and a **fixpoint**:
@@ -491,7 +496,7 @@ families, and the two have different prices:
     (`transaction.rs:3770-3805`) lays it in a POSEIDON PREIMAGE and publishes only the digest
     (`prepared_statement.rs:123`, slot 12; entry 64 of the sixty-seven). And `uChal 0` **is**
     published — at **slot 13 of the FORTY**, agreeing with the referee
-    (`KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve`). What the sixty-seven's entries
+    (`KimchiWrapMainPins12.the_forty_agree_at_every_slot`). What the sixty-seven's entries
     48…62 hold upstream is a DIFFERENT family: the previous wrap proof's fifteen Tock challenges
     (`unfinalized.rs:103-108`, `BACKEND_TOCK_ROUNDS_N = 15`), which this assembly fills with
     `uChal 1 … uChal 15` — sixteen laid into a fifteen-wide window, which is what manufactured the
@@ -526,16 +531,16 @@ theorem the_cone_of_word_fifty_four_holds_no_published_statement_entry :
      cone.length == N_IDX_WORDS + N_HM_APP + 2 + shapeStep.bRounds
      && cone.length == 76
      -- (2) …whose squeeze IS word 54, and word 54 IS published entry 64.
-     && hmOutDigestOf shapeStep tStep.sp tStep.gXY
+     && hmOutDigestOf shapeStep tStep.sp tStep.gAccXY
           == (tStep.segD.states.getLastD []).getD 0 0
      && Dregg2.Circuit.Emit.KimchiStepWrapChainFixture.STEP_PUBLIC_IN.getD 64 0
-          == hmOutDigestOf shapeStep tStep.sp tStep.gXY
+          == hmOutDigestOf shapeStep tStep.sp tStep.gAccXY
      -- (3) the four families, each against its OWN source rather than against a copy.
      && (List.range N_IDX_WORDS).all (fun i =>
           cone.getD i 0 == Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey.INDEX_WORDS.getD i 0)
      && (List.range N_HM_APP).all (fun i => cone.getD (N_IDX_WORDS + i) 0 == hmOVal i)
-     && cone.getD (N_IDX_WORDS + N_HM_APP) 0 == tStep.gXY.1
-     && cone.getD (N_IDX_WORDS + N_HM_APP + 1) 0 == tStep.gXY.2
+     && cone.getD (N_IDX_WORDS + N_HM_APP) 0 == tStep.gAccXY.1
+     && cone.getD (N_IDX_WORDS + N_HM_APP + 1) 0 == tStep.gAccXY.2
      && (List.range shapeStep.bRounds).all (fun k =>
           cone.getD (N_IDX_WORDS + N_HM_APP + 2 + k) 0
             == liftOf shapeStep tStep.sp (shapeStep.uChal k))
@@ -553,12 +558,76 @@ theorem the_cone_of_word_fifty_four_holds_no_published_statement_entry :
      -- nothing: every one of the seventy-six is nonzero, and bending EITHER coordinate of the one
      -- family that disagrees with Mina moves word 54.
      && (cone.filter (fun v => v != 0)).length == 76
-     && (hmOutDigestOf shapeStep tStep.sp (fAdd tStep.gXY.1 1, tStep.gXY.2)
-          != hmOutDigestOf shapeStep tStep.sp tStep.gXY)
-     && (hmOutDigestOf shapeStep tStep.sp (tStep.gXY.1, fAdd tStep.gXY.2 1)
-          != hmOutDigestOf shapeStep tStep.sp tStep.gXY)) = true := by
+     && (hmOutDigestOf shapeStep tStep.sp (fAdd tStep.gAccXY.1 1, tStep.gAccXY.2)
+          != hmOutDigestOf shapeStep tStep.sp tStep.gAccXY)
+     && (hmOutDigestOf shapeStep tStep.sp (tStep.gAccXY.1, fAdd tStep.gAccXY.2 1)
+          != hmOutDigestOf shapeStep tStep.sp tStep.gAccXY)) = true := by
   native_decide
 
 #assert_compiled the_cone_of_word_fifty_four_holds_no_published_statement_entry
+
+/-- ⚑⚑⚑ **CELLS 58–75 ARE THE WIRE RECORD'S OWN TWO FAMILIES — the residue of slot 12, stated as
+the fact that closes it rather than as the count that reported it.**
+
+Slot 12's seventy-six cells split 58 / 18. The first fifty-eight — 56 index coordinates and 2
+app-state words — agreed from 2026-08-08. The remaining eighteen were the whole residue, and they
+were the two families where THIS assembly and the marshalled wire record filled one preimage with
+two different vectors:
+
+  * **58–59, `G`.** Segment D absorbed `solveG`'s SOLVE while the record carried
+    `proof.prev_challenges[0].comm`, which kimchi forces to `commit(b_poly(chals))`.
+  * **60–75, the sixteen.** Segment D absorbed `liftOf … (uChal k)` while `prove_step` CHOSE a
+    `k·0x9E3779B97F4A7C15 | 1` ladder.
+
+Both are closed by this theorem's subject, and **they had to close together**: word 54 is ONE digest
+over all seventy-six, so either family alone moves the number without landing it.
+
+⚑ **WHAT EACH CONJUNCT IS FOR.**
+
+  1. Cells 58–59 are `MinaStepOwnAccumulator.ACC_XY` — the point `step_accumulator_install`
+     computes as `commit(b_poly(chals))` over the Tock SRS at the WRAP proof's published recursion
+     slot, and which `pickles_kimchi_marshal` compares against that proof's own
+     `prev_challenges[WRAP_PAD_SLOTS].comm`. So the circuit and the wire carry one point.
+     ⚠ It is a **Pallas** point over `pN`; the first install put the STEP proof's Vesta commitment
+     here and the step prover refused, which is why `onCurveA` is a conjunct below and not a
+     comment.
+  2. Cells 60–75 are the lifts of the SIXTEEN RAW prechallenges this assembly squeezes, i.e. of
+     `chalOf … (uChal k)` — which is exactly the vector `stepmain_step_own_prechallenges.json`
+     hands the marshaller and `marshal::read_own_prechallenges` refuses to expand differently.
+  3. ⚠ **ANTI-VACUITY, and it is the conjunct that makes this a fact rather than a rename.** The two
+     `G`s are DIFFERENT points: `gAccXY ≠ gXY`. Had the split been cosmetic — one cell read under
+     two names — this would be false and the theorem would say nothing about which point segment D
+     took. Both are on the curve, so neither is a degenerate fill.
+  4. …and every one of the sixteen raw prechallenges is under `2 ^ 128`, which is what lets the wire
+     carry them as `[u64; 2]` unchanged rather than as a truncation of something wider.
+
+⚠ **WHAT IT DOES NOT SAY.** It does not say `equal_g` holds at `gAccXY` — it does not, and §19 keeps
+`gXY` for exactly that reason (`KimchiStepMainCore.vGaX`, item #11). It does not say any row of this
+assembly relates `gAccXY` to its fifteen: none does, and upstream none does either — that binding is
+**gate A2** (`gates::gate_a2`), a native check one rung out, green at both slots. ⚠ NOT
+`accumulator_check`, which reads the WRAP record's Vesta commitment and is blind to this family. -/
+theorem cells_fifty_eight_to_seventy_five_are_the_records_own_accumulator_and_the_assemblys_own_sixteen :
+    (let cone := tStep.specD.ws.map (·.2)
+     -- (1) 58–59: the record's accumulator, from the module the marshaller pins to the proof.
+     cone.getD (N_IDX_WORDS + N_HM_APP) 0
+       == Dregg2.Circuit.Emit.MinaStepOwnAccumulator.ACC_X
+     && cone.getD (N_IDX_WORDS + N_HM_APP + 1) 0
+          == Dregg2.Circuit.Emit.MinaStepOwnAccumulator.ACC_Y
+     && tStep.gAccXY == Dregg2.Circuit.Emit.MinaStepOwnAccumulator.ACC_XY
+     -- (2) 60–75: the lifts OF THE RAW SIXTEEN this assembly squeezes — the vector the wire carries.
+     && (List.range shapeStep.bRounds).all (fun k =>
+          cone.getD (N_IDX_WORDS + N_HM_APP + 2 + k) 0
+            == liftVal shapeStep (chalOf shapeStep tStep.sp (shapeStep.uChal k)))
+     && shapeStep.bRounds == 16
+     -- (3) ⚑ ANTI-VACUITY: the two `G`s are two POINTS, not one cell under two names — and both are
+     -- on the curve, so the split did not fill segment D with a degenerate pair.
+     && tStep.gAccXY != tStep.gXY
+     && onCurveA tStep.gAccXY && onCurveA tStep.gXY
+     -- (4) …and the sixteen raw prechallenges fit the two u64 limbs the wire spells them in.
+     && (List.range shapeStep.bRounds).all (fun k =>
+          chalOf shapeStep tStep.sp (shapeStep.uChal k) < 2 ^ 128)) = true := by
+  native_decide
+
+#assert_compiled cells_fifty_eight_to_seventy_five_are_the_records_own_accumulator_and_the_assemblys_own_sixteen
 
 end Dregg2.Circuit.Emit.KimchiStepMain

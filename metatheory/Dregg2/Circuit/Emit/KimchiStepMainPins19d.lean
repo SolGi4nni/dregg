@@ -51,9 +51,11 @@ any ξ.
 **ξ is the BLOCK's, supplied — not the assembly's own `defc.pre 0`.** §8g chain 0 lifts the
 STATEMENT word `vXiStmt`, and R8's `xi_correct` ties that word to the assembly's fr-sponge, which
 runs over FIXTURE evaluations. So the assembly's OWN run (`tRealAdvice`) still does not close
-`equal_g`, and **`G` STAYS `solveG`'s output**: publishing `SG_XY` over an `equal_g` the emitted
-rows refuse would be a stapled slot, which is the shortcut §19b already declined and which the row
-rewiring does NOT license. The residue is the **fr-sponge's instance** (segment B over the block's
+`equal_g`, and **§19's `G` STAYS `solveG`'s output**: publishing `SG_XY` over an `equal_g` the
+emitted rows refuse would be a stapled slot, which is the shortcut §19b already declined and which
+the row rewiring does NOT license. ⚠ Read this as the sentence about `vGx` that it is — since
+2026-08-10 segment D absorbs a DIFFERENT cell (`vGaX`, `MinaStepOwnAccumulator.ACC_XY`), and that is
+neither `SG_XY` nor a swap of this one. The residue is the **fr-sponge's instance** (segment B over the block's
 own evaluations) plus the advice-cell split §19c(f) named. Both are smaller than the fold was and
 neither is this one.
 -/
@@ -283,8 +285,9 @@ The wiring conjuncts are what make that a statement about the ROWS rather than a
 
 ⚠ **AND IT DOES NOT LICENSE PUBLISHING `SG_XY`.** The last two conjuncts are the assembly's own
 run: its ξ is not the block's, its `ft_comm` is not the block's, and its `lhs` is therefore not
-`lhsRealOpening`. `G` stays `solveG`'s output; `equal_g` on the emitted rows still refuses the real
-accumulator, and stapling `SG_XY` over that refusal is the shortcut §19b declined. -/
+`lhsRealOpening`. §19's `G` stays `solveG`'s output; `equal_g` on the emitted rows still refuses the
+real opening, and stapling `SG_XY` over that refusal is the shortcut §19b declined. ⚠ Segment D's
+`[Gx; Gy]` is a different cell since 2026-08-10 (`vGaX`) and is not covered by this sentence. -/
 theorem the_emitted_rows_are_the_rebuilt_fold :
     (-- the EMITTED fold's own combine accumulator IS o1-labs' aggregate…
      emittedAtBlockData.sums.getD 45 (0, 0) == COMBINED_GOLD_A

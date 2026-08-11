@@ -793,7 +793,11 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          -- at source on 2026-08-07 and the name outlived it by a day. What blocks slot 12 is one
          -- VALUE — `G` — and `KimchiStepMainPins13
          -- .the_cone_of_word_fifty_four_holds_no_published_statement_entry` is the cone that says so.
-         slot_eleven_agrees_and_slot_twelve_still_disagrees
+         -- ⚑⚑⚑ RENAMED A THIRD TIME 2026-08-11 (`slot_eleven_and_slot_twelve_both_agree`): slot 12
+         -- CLOSED, the refusal shrank as it was shaped to, and the theorem MOVED OUT of this list —
+         -- as an equality it is kernel-clean and carries the stronger `#assert_axioms`. Listing it
+         -- here would have labelled a kernel fact 'compiled' and thrown its real pin away, which
+         -- `#assert_compiled` itself refuses to do.
          -- ⚑ Joined 2026-08-06 with slot 11's derivation. The first hands this file's own
          -- `hash_messages_for_next_wrap_proof` Mina's thirty prechallenges and lands on the
          -- marshaller's slot 11 — sixteen Poseidon permutations against a numeral, which is the
@@ -821,10 +825,10 @@ measurement that sizes it. None of them is a value this file fakes and calls der
          the_finalize_evaluations_are_minas_own_wrap_proof
          the_finalize_evaluations_need_no_encoding
          finalize_reproduces_minas_own_ft_eval0
-         -- ⚑ …and `the_forty_agree_but_for_slot_twelve`, the agreement grade
+         -- ⚑ …and `the_forty_agree_at_every_slot`, the agreement grade
          -- itself: `wrapPublicAt (mkWrap shapeWrap) .close` against openmina's forty, forty
          -- comparisons over a vector whose closing rung runs `bullData`'s 67 endo ladders.
-         the_forty_agree_but_for_slot_twelve
+         the_forty_agree_at_every_slot
          -- ⚠ ⚑⚑ **AND THE SAME CLASS AGAIN, ONE COMMIT LATER — `95ab41aef` LANDED THIS THEOREM IN
          -- `KimchiWrapHackDigest` WITH ITS OWN `#assert_compiled` AND THIS LIST DID NOT FOLLOW.**
          -- It went unseen for a different reason from the last one, and the reason is worth

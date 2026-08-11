@@ -454,13 +454,15 @@ fn prove_wrap(
     // verifier combines using this commitment; an unrelated point makes `batch_verify` return
     // `OpenProof` (measured, first run). So `challenge_polynomial_commitments` on the wire is a
     // real accumulator here.
+    // ⚑ ONE function for the commitment, shared with `step_accumulator_install` — see
+    // `marshal::wrap_slot_commitment`. Slot `WRAP_PAD_SLOTS` of these is what the step record
+    // publishes, i.e. cells 58–59 of slot 12.
     let prev: Vec<RecursionChallenge<Pallas>> = (0..PROOFS_VERIFIED)
         .map(|i| {
             let chals: Vec<Fq> = pre[i].iter().map(expand_prechallenge).collect();
-            let coeffs = poly_commitment::commitment::b_poly_coefficients(&chals);
-            let poly = ark_poly::univariate::DensePolynomial::from_coefficients_vec(coeffs);
-            let comm = index.srs.commit_non_hiding(&poly, 1);
-            RecursionChallenge::new(chals, comm)
+            let comm = marshal::wrap_slot_commitment(&index.srs, &pre[i])
+                .expect("the wrap slot's challenge-polynomial commitment");
+            RecursionChallenge::new(chals, poly_commitment::PolyComm { chunks: vec![comm] })
         })
         .collect();
 
@@ -661,22 +663,35 @@ fn prove_step(
     // the sixteenth a ladder digit: the record would then be true about the circuit in fifteen slots
     // and false in one, which is the shape that reads as agreement in every per-slot instrument.
     //
-    // ⚠ And it would not close slot 12 on its own. `messages_for_next_step_proof
-    // .challenge_polynomial_commitments[0]` is `proof.prev_challenges[_].comm` — forced by kimchi to
-    // `commit(b_poly(chals))` — while segment D absorbs `solveG`'s output; block 539508's real
-    // `opening.sg` closes neither side, because this assembly's `check_bulletproof` runs over its own
-    // `t`/`u`/`b` and not the block's (§19b(a),(b)).
-    let step_pre: Vec<[PreChallenge; STEP_ROUNDS]> = (0..STEP_RECURSION_SLOTS)
-        .map(|j| {
-            std::array::from_fn(|i| {
-                let k = (j * STEP_ROUNDS + i) as u64;
-                [
-                    k.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
-                    (k + 11).wrapping_mul(0xD1B5_4A32_D192_ED03) | 1,
-                ]
-            })
-        })
-        .collect();
+    // ⚑⚑⚑ **DONE, 2026-08-10 — THE LADDER IS GONE AND THIS IS A READ.**
+    // `EmitStepMainJson.ownPrechallengesJson` writes the sixteen out of `mkStep shapeStep`, and
+    // `marshal::read_own_prechallenges` refuses unless every one fits 128 bits AND this crate's
+    // `expand_step_prechallenge` reproduces Lean's own `liftOf` on it. So cells 60–75 of slot 12
+    // stop being two vectors, and the two lift implementations are compared rather than assumed.
+    //
+    // ⚠ And this alone does not close slot 12 — `messages_for_next_step_proof
+    // .challenge_polynomial_commitments[0]` is `proof.prev_challenges[_].comm`, forced by kimchi to
+    // `commit(b_poly(chals))`. It closes with the OTHER half: the accumulator over exactly these
+    // sixteen is what segment D now absorbs (`gates::step_own_accumulator_lean` →
+    // `MinaStepOwnAccumulator`), so cells 58–59 and 60–75 land TOGETHER or not at all.
+    let own = marshal::read_own_prechallenges(&sibling(
+        "pickles-stepmain-harness",
+        "stepmain_step_own_prechallenges.json",
+    ))
+    .expect("the step assembly's own sixteen bulletproof prechallenges");
+    println!(
+        "[step] the sixteen recursion prechallenges are the ASSEMBLY'S OWN (chalOf ∘ uChal), and \
+         `expand_step_prechallenge` reproduces Lean's `liftOf` on all {} of them",
+        STEP_ROUNDS
+    );
+    // ⚑ ONE slot, and it carries the assembly's vector. `STEP_RECURSION_SLOTS` is 1 by measurement
+    // (`gate_c` prints `MATCH=true`); a second slot would need a second `verify_one` to have
+    // squeezed its own sixteen, and this rule has one.
+    assert_eq!(
+        STEP_RECURSION_SLOTS, 1,
+        "the emitted vector is `mkStep`'s single `verify_one`; more slots need more assemblies"
+    );
+    let step_pre: Vec<[PreChallenge; STEP_ROUNDS]> = vec![own.raw];
     let prev_slots: Vec<kimchi::proof::RecursionChallenge<Vesta>> = step_pre
         .iter()
         .map(|pre| {
@@ -975,6 +990,28 @@ fn main() {
         serde_json::to_string_pretty(&tape_out.json).expect("tape json"),
     )
     .expect("write tape json");
+
+    // ⚑⚑⚑ **CELLS 58–59 — THE STEP RECORD'S `challenge_polynomial_commitment`, GATED.**
+    // The WRAP proof's published recursion slot (`WRAP_PAD_SLOTS`, the trailing one — the reader
+    // front-pads with `dummy_ipa_wrap_sg()`), which is the point the wire carries and the point
+    // segment D absorbs. `step_accumulator_install` WRITES this module from the same
+    // `marshal::wrap_slot_commitment`; here it is only compared, and the comparison is against the
+    // PROOF OBJECT rather than against a recomputation, so a module that agrees with a formula but
+    // not with the proof still goes red.
+    println!("\n== CELLS 58–59 — the step record's challenge_polynomial_commitment ==");
+    let published = &proof.prev_challenges[marshal::WRAP_PAD_SLOTS];
+    let acc_pt = published.comm.chunks[0];
+    println!(
+        "[accum] wrap slot {} comm = ({}, {})",
+        marshal::WRAP_PAD_SLOTS,
+        gates::dec(&acc_pt.x),
+        gates::dec(&acc_pt.y)
+    );
+    let acc_lean = gates::step_own_accumulator_lean(&acc_pt, &pre[marshal::WRAP_PAD_SLOTS]);
+    std::fs::write(format!("{out_dir}/MinaStepOwnAccumulator.lean"), &acc_lean)
+        .expect("write the step accumulator module");
+    println!("[accum] wrote {out_dir}/MinaStepOwnAccumulator.lean — segment D's `[Gx; Gy]`");
+    failed += installed_gate("MinaStepOwnAccumulator.lean", &acc_lean);
 
     // ── the accumulator, computed rather than asserted ──
     println!("\n== GATE A INPUT — the IPA accumulator, computed ==");

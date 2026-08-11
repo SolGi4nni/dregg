@@ -136,7 +136,7 @@ the other.
   * **AGREED: 29 of 30, and 39 of 40 counting the padding.** Measured slot by slot over
     `wrapPublicAt tChain .close` — `tChain = mkWrap shapeWrap`, the shape this ladder is about —
     against `WRAP_PUBLIC_INPUT_MEASURED`. It was 28 of 30 before slot 11 closed.
-    `KimchiWrapMainPins12.the_forty_agree_but_for_slot_twelve` is the count as a theorem, with the
+    `KimchiWrapMainPins12.the_forty_agree_at_every_slot` is the count as a theorem, with the
     disagreeing slot EXHIBITED rather than subtracted. ⚠ The citation here named
     `KimchiStepWrapChain.the_emitted_forty_agree_with_minas_at_every_slot_but_twelve` until
     2026-08-09; that theorem was DELETED as a duplicate the hour it was written
@@ -250,14 +250,34 @@ the object it is about.
     call it item #11. So the last of the forty is an ASSUMPTION this assembly has never discharged,
     not an iteration and not a marshaller edit.
 
-⚠ **AND THIS THEOREM IS A REFUSAL SHAPED TO SHRINK, like `STATEMENT_BLOCKED`.** Its second conjunct
-asserts a DISAGREEMENT. Close it and it goes red at the place the claim is made, and the counts above
-have to be rewritten — which is the only direction this file should ever move. -/
-theorem slot_eleven_agrees_and_slot_twelve_still_disagrees :
+⚠ **AND THIS THEOREM WAS A REFUSAL SHAPED TO SHRINK, like `STATEMENT_BLOCKED`. IT SHRANK, 2026-08-11.**
+Its second conjunct asserted a DISAGREEMENT so that closing slot 12 would go red at the place the
+claim is made rather than leave a stale count standing. That is what happened: the conjunct is now an
+EQUALITY and the counts above are rewritten.
+
+⚑⚑⚑ **AND THE PARAGRAPH ABOVE IS RETIRED IN ITS OWN TERMS — WITHOUT `equal_g` MOVING.** It said the
+last of the forty was "an ASSUMPTION this assembly has never discharged", because pinning `G` to the
+real accumulator turns `equal_g` into the 2-D discrete log. **The assumption was not discharged and
+`equal_g` was not touched.** What was wrong was the premise that ONE cell must serve both: upstream
+`check_bulletproof`'s `sg` and the record's `challenge_polynomial_commitment` are one point because
+the previous proof's IPA was honestly run, and this assembly has no such opening — so it now carries
+TWO cells. §19's ladder keeps `solveG`'s solve (`vGx`); segment D absorbs the record's own
+commitment (`vGaX`, `MinaStepOwnAccumulator.ACC_XY`), which kimchi forces and `gate_a2` re-derives.
+Item #11 is exactly where it was; what closed is a VALUE disagreement between the statement this
+assembly published and the record the prover marshalled — the published statement had been internally
+false, which is a worse thing to have been carrying than an undischarged opening leg.
+
+⚠ And the other half landed in the same flag day: `prove_step`'s `k·0x9E3779B97F4A7C15 | 1` ladder is
+gone and the wire carries the assembly's own sixteen. Word 54 is ONE digest over all seventy-six
+cells, so neither half could have landed alone. -/
+theorem slot_eleven_and_slot_twelve_both_agree :
     Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 11 0
       = whCloseDigest shapeWrap
   ∧ Dregg2.Circuit.Emit.MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED.getD 12 0
-      ≠ prevWordVal PREV_MSG_NEXT_STEP
+      = prevWordVal PREV_MSG_NEXT_STEP
+  -- ⚑ ANTI-VACUITY on the new conjunct: slot 12 is a 255-bit Fq digest, not a zero both sides
+  -- happen to carry.
+  ∧ 2 ^ 250 < prevWordVal PREV_MSG_NEXT_STEP
   -- ⚑⚑ …and slot 11's agreement is not a digest coincidence: the thirty packed words the closing
   -- sponge reads ARE the thirty the marshaller hashes, all thirty of them. This conjunct read
   -- `= WH_MLMB * WH_ROUNDS` until 2026-08-06 — every one disagreed — and it is the same expression
@@ -269,8 +289,11 @@ theorem slot_eleven_agrees_and_slot_twelve_still_disagrees :
   -- ⚑ …and the denominator, so "29 of 30" is not a number in a dump: forty words, ten of which
   -- upstream neither reads nor checks.
   ∧ 40 - 10 = 30 := by
-  refine ⟨?_, ?_, ?_, ?_⟩ <;> native_decide
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> first | decide | native_decide
 
-#assert_compiled slot_eleven_agrees_and_slot_twelve_still_disagrees
+-- ⚑ **KERNEL-CLEAN, AND THAT IS A STRENGTHENING THE CLOSURE BOUGHT.** This was `#assert_compiled`
+-- while its slot-12 conjunct was a `≠` over `prevWordVal`; as an EQUALITY the whole conjunction
+-- closes by `decide`, so the compiled evaluator is out of the trusted path entirely.
+#assert_axioms slot_eleven_and_slot_twelve_both_agree
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

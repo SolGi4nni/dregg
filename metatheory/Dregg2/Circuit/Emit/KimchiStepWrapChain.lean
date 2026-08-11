@@ -1318,7 +1318,7 @@ theorem the_chain_stops_at_the_statements_derived_words :
 DELETION RATHER THAN A SECOND COPY.** A `the_emitted_forty_agree_with_minas_at_every_slot_but_twelve`
 stood here for about an hour on 2026-08-06 — same subject, same `wrapPublicAt (mkWrap shapeWrap)
 .close`, same `WRAP_PUBLIC_INPUT_MEASURED` — written by this lane while a sibling was writing
-`the_forty_agree_but_for_slot_twelve` in §20b⁵. Two lanes measuring one thing in two
+`the_forty_agree_at_every_slot` in §20b⁵. Two lanes measuring one thing in two
 modules is the defect this whole campaign has been deleting, and the sibling's is the better
 statement: it grades the set `{0..39} \ {11, 12}` rather than a total (so a lane CLOSING a slot does
 not red the pin that tracks the closing), it normalises `Int → Fq` before comparing, and its

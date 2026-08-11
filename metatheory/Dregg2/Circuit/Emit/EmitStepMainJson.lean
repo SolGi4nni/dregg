@@ -158,12 +158,81 @@ fixture is a green run about a circuit the Lean no longer describes. Re-run with
 DREGG_SM_INSTALL=1 to install, and carry the consequence chain: the step proof re-proves, \
 `KimchiStepWrapChainFixture` and `KimchiStepWrapChainKey` re-install, \
 `MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED` re-bakes, and every count graded against it \
-(`the_forty_agree_but_for_slot_twelve` among them) is about the old shape until re-measured.")
+(`the_forty_agree_at_every_slot` among them) is about the old shape until re-measured.")
   if doInstall then
     IO.println s!"[install] {names.length} tracked fixtures INSTALLED from this emission"
   else
     IO.println s!"[install] {names.length} tracked fixtures are byte-identical to this emission"
   pure drift
+
+/-- The tracked name of the step assembly's OWN sixteen bulletproof prechallenges. -/
+def OWN_PRECHAL_NAME : String := "stepmain_step_own_prechallenges.json"
+
+/-- ⚑⚑ **THE ASSEMBLY'S OWN SIXTEEN, EMITTED SO THE WIRE CAN CARRY THEM — cells 60–75 of slot 12.**
+
+`messages_for_next_step_proof.old_bulletproof_challenges` is `Vec<[Fp; 16]>` and is **never a
+published statement word**: `MessagesForNextStepProof::to_fields` puts it in a Poseidon PREIMAGE and
+only the digest reaches the forty (`prepared_statement.rs:123`). So there is nothing for the
+marshaller to read out of the sixty-seven, and until now `prove_step` CHOSE the vector — a
+`k·0x9E3779B97F4A7C15 | 1` ladder — while segment D absorbed `liftOf … (uChal k)`. Two vectors where
+`step_verifier.ml:1114-1147` has one, and every per-slot instrument agreed with itself.
+
+This file is the extraction. `raw` is `chalOf s d (uChal k)`, the 128-bit prechallenge the transcript
+squeezes; `lift` is `liftOf s d (uChal k)`, its `to_field_checked` image, which IS segment D's
+preimage cells 60–75. The marshaller reads `raw` into `step_pre`, endo-expands it with **Vesta's**
+`endo_r` (`marshal::expand_step_prechallenge`) and REFUSES unless the result is `lift` — so the two
+implementations of one lift are compared on every run instead of assumed equal.
+
+⚠ **`raw` is emitted as well as `lift` because the wire carries the PRECHALLENGE, not its image.**
+A `[u64; 2]` is what `PicklesBulletproofChallengeStableV1` holds; publishing the lift would hand Mina
+a vector whose endo-expansion is a second lift of an already-lifted value.
+
+⚑ **THIS DOES NOT DEPEND ON `G`, WHICH IS WHY THE FLAG DAY TERMINATES IN ONE PASS.** `chalOf` reads
+the pass-2 transcript, whose only free input is `mkStepWith`'s `cipV` — computed in PASS 1 from
+`sp0`/`ft0`/`defc0` and from nothing in `runBp`. So the sixteen are settled before `gXY` exists, the
+accumulator over them is a constant, and segment D absorbing that constant cannot move them back. -/
+def ownPrechallengesJson (t : StepData) : String :=
+  let s := t.sh
+  let d := t.sp
+  let raw := (List.range s.bRounds).map (fun k => chalOf s d (s.uChal k))
+  let lift := (List.range s.bRounds).map (fun k => liftOf s d (s.uChal k))
+  let arr (xs : List Nat) : String :=
+    "[" ++ String.intercalate ", " (xs.map (fun v => s!"\"{v}\"")) ++ "]"
+  "{\n" ++
+  s!"  \"shape\": \"step\",\n" ++
+  s!"  \"b_rounds\": {s.bRounds},\n" ++
+  s!"  \"chal_bits\": {s.chalBits},\n" ++
+  s!"  \"raw\": {arr raw},\n" ++
+  s!"  \"lift\": {arr lift}\n" ++
+  "}\n"
+
+/-- The install gate for [`ownPrechallengesJson`], the same shape as `installedGate`: emit into
+`$DREGG_SM_OUT`, compare against the tracked copy, and REFUSE rather than let the marshaller prove a
+step proof whose recursion challenges are not this assembly's. Returns 1 on drift. -/
+def ownPrechallengesGate (dir : String) (t : StepData) : IO Nat := do
+  let tracked := (← IO.getEnv "DREGG_SM_TRACKED").getD TRACKED_STEP_DIR
+  let doInstall := ((← IO.getEnv "DREGG_SM_INSTALL").getD "") == "1"
+  let emitted := ownPrechallengesJson t
+  writeAtomic s!"{dir}/{OWN_PRECHAL_NAME}" emitted
+  let path := s!"{tracked}/{OWN_PRECHAL_NAME}"
+  if ← System.FilePath.pathExists path then
+    let s ← IO.FS.readFile path
+    if s == emitted then
+      IO.println s!"[install] {OWN_PRECHAL_NAME}: byte-identical to the tracked vector"
+      return 0
+    if doInstall then
+      writeAtomic path emitted
+      IO.println s!"[install] * {OWN_PRECHAL_NAME}: INSTALLED — the sixteen MOVED, so \
+`pickles_kimchi_marshal` must re-prove and the accumulator over them re-install"
+      return 0
+    IO.println s!"[install] ⚑ {OWN_PRECHAL_NAME}: THE TRACKED SIXTEEN ARE NOT THIS ASSEMBLY'S"
+    return 1
+  if doInstall then
+    writeAtomic path emitted
+    IO.println s!"[install] * {OWN_PRECHAL_NAME}: INSTALLED (was absent)"
+    return 0
+  IO.println s!"[install] ⚑ {OWN_PRECHAL_NAME}: MISSING at {path}"
+  return 1
 
 /-- The nine rungs in schedule order. ⚑ This is the FULL-SET path and it stays the DEFAULT: §15's
 row-length pins and the shape-diff sweeps legitimately want every rung. -/
@@ -324,4 +393,16 @@ b={sh.bRounds} pub={sh.pubWords} =="
     pure ()
   -- ⚑ THE ROUTE, GRADED IN THE PROCESS THAT PRODUCED THE BYTES. See `installedGate`.
   let _ ← installedGate dir tag rungs wiredOnly
+  -- ⚑⚑ …and the assembly's OWN sixteen beside them, for the `step` shape only — the smoke shape is
+  -- a different, smaller circuit and its transcript is not what the marshaller proves over.
+  -- ⚠ This rides EVERY `step` emission regardless of which rungs ran: the sixteen are a fact about
+  -- `mkStep`, not about a rung, and a run that emitted only `r1_transcript` has still settled them.
+  if tag == "step" then
+    let d ← ownPrechallengesGate dir t
+    if d != 0 then
+      throw (IO.userError s!"⚑ THE TRACKED {OWN_PRECHAL_NAME} IS STALE. \
+`pickles_kimchi_marshal` reads it into `prove_step`'s `step_pre`, so a stale vector makes the wire \
+record's `old_bulletproof_challenges` a vector this assembly never squeezed — cells 60–75 of slot \
+12. Re-run with DREGG_SM_INSTALL=1, then re-install the accumulator over them \
+(`MinaStepOwnAccumulator`) and re-prove.")
   pure ()

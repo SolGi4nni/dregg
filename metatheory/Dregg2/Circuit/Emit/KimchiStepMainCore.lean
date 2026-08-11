@@ -23,6 +23,7 @@ import Dregg2.Bridge.MinaWrapFtEval0
 import Dregg2.Bridge.TickShifts
 import Dregg2.Bridge.MinaStepPrevCommitments
 import Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey
+import Dregg2.Circuit.Emit.MinaStepOwnAccumulator
 import Dregg2.Circuit.Emit.KimchiStepMainField
 import Dregg2.Circuit.Emit.PicklesStepStatement
 -- ⚑ `whPrevDigest` — packed statement words 55/56. `wrap_main.ml:340-348` COMPUTES them and
@@ -956,7 +957,10 @@ runs `assert_on_curve` on each one exactly as it does on an absorbed commitment.
 would be the §7b hole re-opened at the one point in the fold a PROVER supplies: the ladder that
 checks `res` constrains the addition arithmetic only, and an off-curve `res` satisfies every
 `EndoMul` polynomial. -/
-def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s + 3 + nBulletPairs s
+-- ⚑ **FOUR, not three, since 2026-08-10**: `sg_old[0]`, `delta`, §19's `G` (`vGx`) and — new —
+-- segment D's own `G` (`vGaX`), the accumulator the wire record publishes. It arrives through
+-- `Inner_curve.typ` exactly as the other three do, so it is `assert_on_curve`'d exactly as they are.
+def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s + 4 + nBulletPairs s
 def baseOnC (s : StepShape) : Nat :=
   baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks + 1
 def vOcX2At (b : Nat) (k : Nat) : PVar := xv (b + 2 * k)
@@ -1172,7 +1176,43 @@ the wrap circuit `pickles-wrapmain-harness` compiles and `pickles_kimchi_marshal
 def idxOVal (k j : Nat) : Nat :=
   Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey.INDEX_WORDS.getD (2 * k + j) 0
 
-def N_OUT_VARS : Nat := N_HM_APP + 2 + N_IDX_WORDS
+/-- ⚑⚑⚑ **`G` AS THE RECORD PUBLISHES IT — the pair SEGMENT D absorbs, and a DIFFERENT CELL from
+[`vGx`]/[`vGy`] since 2026-08-10.**
+
+`messages_for_next_step_proof.challenge_polynomial_commitments[0]` is `proof.prev_challenges[0].comm`
+and kimchi forces it to `commit(b_poly(chals))`; Pickles recomputes that MSM before it consults any
+key (`accumulator_check.rs:10-64`). So this cell's value is not free in the pipeline even though it
+is free in this circuit: `MinaStepOwnAccumulator.ACC_XY`, over the sixteen prechallenges this
+assembly squeezes.
+
+⚠ **WHY IT IS NOT `vGx`.** Upstream those are one cell — `check_bulletproof`'s `sg` IS the record's
+commitment — and `equal_g` holds because the previous proof's IPA was honestly run. This assembly
+has no such opening (§19b), so `vGx` is `solveG`'s SOLVE. Absorbing the solve made the published
+statement a hash of a point the wire record does not carry, which is cells 58–59 of slot 12; pinning
+`vGx` to the accumulator instead turns `equal_g` into the two-dimensional discrete log in
+`⟨G + b·u, H⟩` (item #11). The two roads are therefore separated: §19 keeps the solve, the record
+gets the accumulator, and `StepData.gAccXY` is where that is priced.
+
+⚑ **A `w.exists` WITNESS WITH NO PIN, AND THAT IS UPSTREAM'S SHAPE RATHER THAN A SHORTFALL.** No row
+of `step_main` relates `challenge_polynomial_commitment` to the challenges either — the binding is
+one rung out, in **gate A2** (`gates::gate_a2`: `comm == ⟨b_poly_coefficients(chals), pallas_srs.g⟩`
+per slot, over the record's own front-padded commitments), which is native and green at both slots.
+⚠ NOT `accumulator_check` — that reads the WRAP record's Vesta commitment and is blind to this
+family; the two were confused for one draft of this docblock and the correction is kept because the
+mistake is the easy one to make. This is the same "binding one rung out" `idxOVar` carries for the 56
+index words. What IS emitted here is `assert_on_curve` (`Inner_curve.typ`, §7b), so the cell is a
+curve point over `pN` rather than two free field elements.
+
+⚠ **ONE CONSTANT FOR BOTH SHAPES, and it is the STEP shape's.** `MinaStepOwnAccumulator` is taken
+over `mkStep shapeStep`'s sixteen, and `shapeSmoke` — a smaller control circuit that nothing proves a
+statement about — absorbs the same pair as an opaque supplied point. That is exactly what
+`idxOVal`'s 56 words already are on both shapes, so this adds no new kind of fiction; it does mean
+the smoke shape's segment D is not self-consistent with the smoke shape's own transcript, which was
+true of its `idxOVal` prefix before and is stated here rather than discovered. -/
+def vGaX (s : StepShape) : PVar := xv (baseOut s + N_HM_APP + 2 + N_IDX_WORDS)
+def vGaY (s : StepShape) : PVar := xv (baseOut s + N_HM_APP + 2 + N_IDX_WORDS + 1)
+
+def N_OUT_VARS : Nat := N_HM_APP + 2 + N_IDX_WORDS + 2
 
 -- ⚠ ⚑ **`G_XY` was DELETED 2026-08-03 (§19).** `G` was a fixture point (`GAMMA_XY[27]`) because
 -- nothing in the assembly related it to anything. §19's `rhs`/`equal_g` do relate it: `G` is now
@@ -3061,7 +3101,9 @@ def onCVarAt (s : StepShape) (bi : Nat) (k : Nat) : PVar × PVar :=
   else if k == t then (ipxAt bi (qInit s), ipyAt bi (qInit s))
   else if k == t + 1 then (ipxAt bi (qDel s), ipyAt bi (qDel s))
   else if k == t + 2 then (vGx s, vGy s)
-  else let j := k - t - 3; (ipxAt bi (qEndoInv s j), ipyAt bi (qEndoInv s j))
+  -- ⚑ segment D's own `[Gx; Gy]` — the record's accumulator, a supplied point like every other.
+  else if k == t + 3 then (vGaX s, vGaY s)
+  else let j := k - t - 4; (ipxAt bi (qEndoInv s j), ipyAt bi (qEndoInv s j))
 def onCVar (s : StepShape) (k : Nat) : PVar × PVar := onCVarAt s (baseIpa s) k
 
 /-- **R4's on-curve rows** — one `assert_on_curve` per ABSORBED commitment, over the very coordinate
@@ -4938,7 +4980,8 @@ def hmOutSpec (s : StepShape) (d : SpongeData) (G : Nat × Nat) : SegSpec :=
   { ws := (List.range N_IDX_WORDS).map (fun i =>
             (idxOVar s (i / 2) (i % 2), idxOVal (i / 2) (i % 2)))
       ++ (List.range N_HM_APP).map (fun i => (vHmO s i, hmOVal i))
-      ++ [ (vGx s, G.1), (vGy s, G.2) ]
+      -- ⚑⚑ `vGaX`/`vGaY`, NOT `vGx`/`vGy`: the record's accumulator, not §19's solve. See `vGaX`.
+      ++ [ (vGaX s, G.1), (vGaY s, G.2) ]
       ++ (List.range s.bRounds).map (fun k =>
           (vLift s (s.uChal k), liftOf s d (s.uChal k)))
   , squeezes := 1, masked := false }
@@ -5994,9 +6037,62 @@ structure StepData where
   segD : SegData
   /-- ⚑ §19 — `group_map`, the four `scale_fast2`s, `rhs` and `equal_g`. -/
   bp : BpData
-  /-- ⚑ `challenge_polynomial_commitment`, SOLVED off `lhs` (`solveG`). Segment D absorbs it and
-  §19's ladder 2 consumes it, so it is data and not a constant. -/
+  /-- ⚑ `challenge_polynomial_commitment` AS §19'S LADDER 2 CONSUMES IT — SOLVED off `lhs`
+  (`solveG`), so it is data and not a constant.
+
+  ⚠ **SEGMENT D NO LONGER ABSORBS THIS.** It absorbs [`gAccXY`]. See that field for the split and
+  what it costs. -/
   gXY : Nat × Nat
+  /-- ⚑⚑⚑ **`challenge_polynomial_commitment` AS THE WIRE RECORD PUBLISHES IT — cells 58–59 of the
+  step statement's word 54, and the half of slot 12 that `solveG` could never reach.**
+
+  `MinaStepOwnAccumulator.ACC_XY`: `commit(b_poly(chals))` over the **Tock** SRS
+  (`SRS::<Pallas>::create(2 ^ 15)`) at the fifteen prechallenges of the WRAP proof's PUBLISHED
+  recursion slot — the step statement's own packed words, entries `32·p + 16 + j`. It is not a
+  choice. `messages_for_next_step_proof.challenge_polynomial_commitments[i]` is **the WRAP proof's**
+  `prev_challenges[i].comm` (`marshal::marshal` takes a `&WrapKimchiProof`), and kimchi forces that
+  to `commit(b_poly(chals))` — an unrelated point makes `batch_verify` return `OpenProof`.
+
+  ⚠⚑ **AND WHAT RE-DERIVES IT ON MINA'S SIDE IS GATE A2, NOT `accumulator_check`.** This docblock
+  said `accumulator_check` for one draft and that was **measured false**: `accumulator_check.rs:10-64`
+  reads `messages_for_next_WRAP_proof.challenge_polynomial_commitment` — a **Vesta** point, slot 11's
+  family — and is structurally blind to this one. `gates::gate_a2` is the check that front-pads the
+  step record's commitments with `dummy_ipa_wrap_sg()`, zips them against
+  `messages_for_next_wrap_proof.old_bulletproof_challenges`, and tests
+  `comm == ⟨b_poly_coefficients(chals), pallas_srs.g⟩` per slot. It is green at both slots.
+
+  ⚠⚠ **IT IS A PALLAS POINT AND THE FIRST INSTALL PUT A VESTA ONE HERE.** These coordinates are
+  absorbed by a circuit whose native field is `pN`, so they must satisfy `y² = x³ + 5` over `pN`.
+  The STEP proof's own `prev_challenges[0].comm` is a Vesta point over `qN`; installing it emitted a
+  witness whose `assert_on_curve` could not hold and the step prover refused outright with
+  `"rest of division by vanishing polynomial"`. `step_accumulator_install` now refuses on
+  `is_on_curve` at the source rather than letting an emission discover it.
+
+  ⚠⚠ **UPSTREAM THESE ARE ONE POINT AND HERE THEY ARE TWO. SAY IT PLAINLY.** In
+  `step_verifier.ml`, `check_bulletproof`'s `sg` and the record's `challenge_polynomial_commitment`
+  are the same value — the previous proof's IPA opening — and `equal_g` holds because that IPA was
+  honestly run. This assembly has no such opening: §19b measured that its `check_bulletproof` folds
+  over its OWN `t`/`u`/`b` rather than the block's, so `equal_g` is satisfied by SOLVING for `G`
+  (`solveG`) instead of by taking one. Fusing the solved point into segment D made the wire record
+  and the circuit disagree at cells 58–59 for as long as slot 12 has been open; pinning segment D to
+  the accumulator INSTEAD would turn `equal_g` into the two-dimensional discrete log in
+  `⟨G + b·u, H⟩` — item #11, priced at `KimchiStepMainPins12` §17(g) and `…Pins13` §18(g).
+
+  So the two roads are separated rather than collapsed: **§19 is the BLOCK-VERIFICATION road** and
+  keeps its solve; **segment D is the WIRE-RECORD road** and takes the accumulator it is required to
+  publish. ⚑ **What that leaves undischarged is exactly item #11 and nothing new** — the §19 leg was
+  already a solve and is unchanged by this field. What it REMOVES is a value disagreement between
+  the statement this assembly publishes and the record the prover marshals, which is a different and
+  worse thing to have been carrying: the published statement was internally false.
+
+  ⚑ **AND IT IS WHY THE FLAG DAY TERMINATES IN ONE PASS.** This field is consumed by `specD` and by
+  nothing else — not by `runBp`, hence not by `ver`, hence not by `fin`/`segC`/`msm`. The fifteen it
+  is taken over live at published statement entries 16…30 and 48…62, while segment D's own squeeze is
+  entry **64**. So installing it moves word 54, therefore the step proof — and moves the fifteen, and
+  therefore itself, not at all. ⚠ "It is a fixpoint" has been wrong three times in this cone, so this
+  is not asserted: it is MEASURED. Re-emitting the step circuit across this very install moved
+  **published entry 64 and no other**, diffed entry by entry against the previous artifact. -/
+  gAccXY : Nat × Nat
   specA : SegSpec
   specB : SegSpec
   specC : SegSpec
@@ -6167,7 +6263,11 @@ def mkStepAtAdvice (s : StepShape) (bs : List (Nat × Nat)) (cipAbs : Nat × Nat
   -- ⚠ This comment said "copies `sponge_after_index` … SIBLINGS off one copy" until 2026-08-07.
   -- The independence it claimed is real; the reason it gave for it was the wrong one, and that
   -- reason is what made segment D's block-0 state lanes segment C's variables.
-  let specD := hmOutSpec s sp gA
+  -- ⚑⚑⚑ **CELLS 58–59 — THE ACCUMULATOR, NOT THE SOLVE.** `hmOutSpec`'s `[Gx; Gy]` is what the
+  -- wire record publishes, and Mina recomputes it from the sixteen before it consults a key. §19's
+  -- ladder below keeps `gA`. `StepData.gAccXY` is where the split is stated and priced.
+  let gAcc : Nat × Nat := Dregg2.Circuit.Emit.MinaStepOwnAccumulator.ACC_XY
+  let specD := hmOutSpec s sp gAcc
   let fin := runFin s sp ft df segB specB (defc.lift s 1) ver
   let segC := runSeg specC
   -- ⚑⚑ **R3 IS LAST IN THE CHAIN SINCE §21**, because its scalars ARE the Wrap statement's words and
@@ -6177,7 +6277,7 @@ def mkStepAtAdvice (s : StepShape) (bs : List (Nat × Nat)) (cipAbs : Nat × Nat
   -- `sponge → ft → fold → fr-sponge → finalize → segment C → x_hat`, still no cycle.
   let msm := runMsm s bs (msmScalars s (chalOf s sp) (digestBeforeEvalsVal s sp) ft fin segC)
   { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, ftw := ftw, ftc := ftc
-  , defc := defc, df := df, bp := bp, gXY := gA
+  , defc := defc, df := df, bp := bp, gXY := gA, gAccXY := gAcc
   , fin := fin
   , segA := segA, segB := segB, segC := segC, segD := runSeg specD
   , specA := specA, specB := specB, specC := specC, specD := specD }
@@ -6383,8 +6483,9 @@ def circuitEnv (t : StepData) : VarEnv :=
                else if k == l + tCommN s then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY.1
                else if k == l + tCommN s + 1 then Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY.1
                else if k == l + tCommN s + 2 then t.gXY.1
+               else if k == l + tCommN s + 3 then t.gAccXY.1
                -- ⚑ §19d's `endo_inv` witnesses — checked exactly like an absorbed commitment.
-               else (t.ipa.invs.getD (k - l - tCommN s - 3) (0, 0)).1
+               else (t.ipa.invs.getD (k - l - tCommN s - 4) (0, 0)).1
       [ (vOcX2At bo k, (fMul x x : Int)), (vOcX3At bo k, (fMul (fMul x x) x : Int)) ])
   -- ⚑ §6b: `Common.ft_comm`'s MSM — the eight `scale_fast2` ladders, `t_comm`'s absorbed
   -- coordinates, the `Ops.add_fast` chain and `Shifted_value.Type2`'s two split pairs.
@@ -6450,6 +6551,8 @@ def circuitEnv (t : StepData) : VarEnv :=
        (idxOVar s (i / 2) (i % 2), (idxOVal (i / 2) (i % 2) : Int)))
   ++ (List.range N_HM_APP).map (fun i => (vHmO s i, (hmOVal i : Int)))
   ++ [ (vGx s, (t.gXY.1 : Int)), (vGy s, (t.gXY.2 : Int)) ]
+  -- ⚑⚑ …and segment D's OWN `[Gx; Gy]`, the accumulator the wire record publishes (`vGaX`).
+  ++ [ (vGaX s, (t.gAccXY.1 : Int)), (vGaY s, (t.gAccXY.2 : Int)) ]
   -- ⚑ §19: `group_map`'s cells, the four `scale_fast2` ladders, `H`, `G + b_u`, `rhs`, the two free
   -- response scalars and `equal_g`'s gadget.
   ++ bpEnv s t.bp
