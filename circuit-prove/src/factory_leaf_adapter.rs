@@ -412,7 +412,7 @@ pub fn prove_factory_binding_node_segmented(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
         reason: format!("{FACTORY_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })

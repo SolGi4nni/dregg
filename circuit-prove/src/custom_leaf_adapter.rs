@@ -1479,6 +1479,7 @@ pub fn read_exposed_pi_commitment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::report_refusal;
     use crate::custom_proof_bind::custom_proof_pi_commitment;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
     use dregg_circuit::descriptor_ir2::{CHIP_OUT_LANES, TID_P2, VmConstraint2};
@@ -1487,7 +1488,10 @@ mod tests {
         PolyTerm,
     };
     use dregg_circuit::lean_descriptor_air::VmConstraint;
-    use dregg_circuit::refusal::{must_refuse_or_unsat_panic, must_refuse_shape_fault};
+    use dregg_circuit::refusal::{
+        assert_bus_imbalance_not_constraint, assert_violated_constraint_not_bus,
+        must_refuse_or_unsat_panic, must_refuse_shape_fault,
+    };
 
     /// The same minimal-but-REAL custom program the off-AIR engine's tests use: one
     /// boolean column (`dir`) + one conservation polynomial
@@ -1618,9 +1622,17 @@ mod tests {
         let pis: Vec<BabyBear> = vec![BabyBear::new(10), BabyBear::new(16)];
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a FORGED custom witness", || {
+        let refusal = must_refuse_or_unsat_panic("a FORGED custom witness", || {
             prove_custom_leaf(&program, &w, rows, &pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): the conservation polynomial is an emitted gate, so broken conservation is a violated CONSTRAINT.
+        report_refusal("a FORGED custom witness", &refusal.reason());
+        assert_violated_constraint_not_bus("a FORGED custom witness", &refusal.reason());
     }
 
     /// An honest witness for an arbitrary credit (dir=0): new = old + amt, constant across rows.
@@ -1855,9 +1867,19 @@ mod tests {
         sib0[1] = sib0[1] + BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a FORGED Merkle path", || {
+        let refusal = must_refuse_or_unsat_panic("a FORGED Merkle path", || {
             prove_custom_leaf(&program, &w, 4, &pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   LookupError("GlobalCumulativeMismatch(None): ir2_p2")
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a BUS/LOOKUP imbalance (`LookupError` deployed / `Lookup mismatch` in
+        // debug): MEASURED, not assumed: a corrupted sibling leaves every emitted gate holding and breaks the
+        // Poseidon2 CHIP LOOKUP (`ir2_p2`) - the docblock above says exactly that in words. Asserting
+        // the constraint verdict here would have been RED-by-construction.
+        report_refusal("a FORGED Merkle path", &refusal.reason());
+        assert_bus_imbalance_not_constraint("a FORGED Merkle path", &refusal.reason());
     }
 
     /// A forged path that DOES recompute the chain (so every per-level `MerkleHash`
@@ -1881,10 +1903,19 @@ mod tests {
         );
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a root-pin mismatch", || {
+        let refusal = must_refuse_or_unsat_panic("a root-pin mismatch", || {
             // honest_pis claims the honest root; `w` climbs to other root ⇒ pin fails.
             prove_custom_leaf(&program, &w, 4, &honest_pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): the last-row `parent == root_pi` BOUNDARY is an emitted gate, so unlike its sibling above this
+        // tooth is a violated CONSTRAINT - the two bite through DIFFERENT mechanisms.
+        report_refusal("a root-pin mismatch", &refusal.reason());
+        assert_violated_constraint_not_bus("a root-pin mismatch", &refusal.reason());
     }
 
     // ========================================================================
@@ -1981,9 +2012,18 @@ mod tests {
         w.get_mut("running_hash").unwrap()[1] += BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a forged running-hash chain", || {
+        let refusal = must_refuse_or_unsat_panic("a forged running-hash chain", || {
             prove_custom_leaf(&program, &w, rows, &pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   LookupError("GlobalCumulativeMismatch(None): ir2_p2")
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a BUS/LOOKUP imbalance (`LookupError` deployed / `Lookup mismatch` in
+        // debug): MEASURED: the chained-hash accumulator is carried by the Poseidon2 chip lookup, so a forged
+        // chain is a BUS imbalance (`ir2_p2`), not a gate.
+        report_refusal("a forged running-hash chain", &refusal.reason());
+        assert_bus_imbalance_not_constraint("a forged running-hash chain", &refusal.reason());
     }
 
     /// THE NEGATIVE POLE (wrong table entry): tampering a `next_state` to an edge the
@@ -2004,9 +2044,17 @@ mod tests {
         w.get_mut("next_state").unwrap()[1] = BabyBear::new(1);
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a forbidden table edge", || {
+        let refusal = must_refuse_or_unsat_panic("a forbidden table edge", || {
             prove_custom_leaf(&program, &w, rows, &pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): `TableFunction` lowers to a bivariate-Lagrange GATE, so a forbidden edge violates a constraint.
+        report_refusal("a forbidden table edge", &refusal.reason());
+        assert_violated_constraint_not_bus("a forbidden table edge", &refusal.reason());
     }
 
     // ========================================================================
@@ -2219,9 +2267,24 @@ mod tests {
         pis[31] += BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a mutated PI with a stale witness minted a leaf", || {
-            prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
-        });
+        let refusal =
+            must_refuse_or_unsat_panic("a mutated PI with a stale witness minted a leaf", || {
+                prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
+            });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): `PiBinding{First}` is an emitted first-row gate.
+        report_refusal(
+            "a mutated PI with a stale witness minted a leaf",
+            &refusal.reason(),
+        );
+        assert_violated_constraint_not_bus(
+            "a mutated PI with a stale witness minted a leaf",
+            &refusal.reason(),
+        );
     }
 
     /// THE NEGATIVE POLE (declared length): passing 31 PIs against a 32-PI

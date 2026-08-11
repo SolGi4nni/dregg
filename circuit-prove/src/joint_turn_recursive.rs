@@ -216,7 +216,7 @@ pub fn prove_custom_binding_node(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
         reason: format!("{CUSTOM_BINDING_NODE_ARM}: {e:?}"),
     })
@@ -418,7 +418,7 @@ pub fn prove_custom_binding_node_state_segmented(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
         reason: format!("{CUSTOM_STATE_BINDING_NODE_ARM}: {e:?}"),
     })
@@ -570,7 +570,7 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
         reason: format!("{CUSTOM_BOARD_WINDOW_NODE_ARM}: {e:?}"),
     })
@@ -862,7 +862,7 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
         reason: format!("{CUSTOM_APP_ROOT_NODE_ARM}: {e:?}"),
     })
@@ -949,7 +949,7 @@ pub fn prove_claim_binding_node_segmented(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
         reason: format!("{CUSTOM_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
@@ -1077,7 +1077,7 @@ pub fn prove_sovereign_binding_node_segmented(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
         reason: format!("{SOVEREIGN_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })

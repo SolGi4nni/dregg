@@ -269,6 +269,17 @@ pub fn read_exposed_blinded_membership(
 // THE BLINDED-MEMBERSHIP-BINDING FOLD NODES.
 // ============================================================================
 
+/// [`prove_blinded_membership_binding_node`]'s failure prefix, SINGLE-SOURCED so the production `format!` and a tooth's
+/// `binding_tooth::assert_node_refused_by_binding_connect` expectation cannot drift apart.
+/// A renamed arm that only lived as two duplicated string literals is exactly how a tooth
+/// quietly degrades to "any refusal at all".
+pub const BLINDED_MEMBERSHIP_BINDING_NODE_ARM: &str =
+    "blinded-membership-binding aggregation node failed";
+/// [`prove_blinded_membership_binding_node_segmented`]'s failure prefix. ⚠ [`BLINDED_MEMBERSHIP_BINDING_NODE_ARM`] is a SUBSTRING of it, so a `contains` on the shorter
+/// one does not discriminate the two nodes.
+pub const BLINDED_MEMBERSHIP_BINDING_NODE_SEGMENTED_ARM: &str =
+    "segmented blinded-membership-binding aggregation node failed";
+
 /// **THE BLINDED-MEMBERSHIP-BINDING MECHANISM NODE (the minimal fold tooth — no segment).**
 /// Aggregate a blinded-membership leg leaf (which must RE-EXPOSE its CLAIMED 2-felt
 /// `(blinded_leaf, root)` as an `expose_claim`) WITH the re-proved blinded-membership leaf
@@ -346,9 +357,9 @@ pub fn prove_blinded_membership_binding_node(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("blinded-membership-binding aggregation node failed: {e:?}"),
+        reason: format!("{BLINDED_MEMBERSHIP_BINDING_NODE_ARM}: {e:?}"),
     })
 }
 
@@ -444,17 +455,20 @@ pub fn prove_blinded_membership_binding_node_segmented(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("segmented blinded-membership-binding aggregation node failed: {e:?}"),
+        reason: format!("{BLINDED_MEMBERSHIP_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::{assert_node_refused_by_binding_connect, report_refusal};
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
-    use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+    use dregg_circuit::refusal::{
+        assert_violated_constraint_not_bus, must_refuse, must_refuse_or_unsat_panic,
+    };
 
     /// A distinct-felt honest blinded membership (leftmost-child path, depth 2).
     fn make_input() -> BlindedMembershipInput {
@@ -568,9 +582,18 @@ mod tests {
         assert_ne!(forged_pis, inp.public_inputs().unwrap());
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a FORGED blinded-membership PI", || {
+        let refusal = must_refuse_or_unsat_panic("a FORGED blinded-membership PI", || {
             prove_blinded_membership_leaf(&inp, &forged_pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): the root pin `row0[PARENT1] == pi[ROOT_PI]` is an AIR constraint, so the deployed verifier's
+        // verdict is `OodEvaluationMismatch` - not a lookup imbalance.
+        report_refusal("a FORGED blinded-membership PI", &refusal.reason());
+        assert_violated_constraint_not_bus("a FORGED blinded-membership PI", &refusal.reason());
     }
 
     /// THE FOLD, HONEST: the binding MECHANISM node folds a leg leaf (re-exposing the claim) WITH
@@ -622,17 +645,23 @@ mod tests {
         let leaf = prove_blinded_membership_leaf_with_claim(&honest, &honest_pis, &config)
             .expect("the honest blinded-membership leaf");
 
-        must_refuse_or_unsat_panic(
-            "a leg claiming a show the leaf does not bind produced a root",
-            || {
-                prove_blinded_membership_binding_node(
-                    &leg,
-                    &leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what = "a leg claiming a show the leaf does not bind produced a root";
+        let err = must_refuse(what, || {
+            prove_blinded_membership_binding_node(
+                &leg,
+                &leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   Circuit(WitnessConflict { .. }) under `BLINDED_MEMBERSHIP_BINDING_NODE_ARM`
+        // This tooth's subject IS the per-lane `cb.connect` between the leg's CLAIMED lanes and the
+        // leaf's BOUND ones, so `binding_tooth` is the right assertion and it is exactly what the
+        // discarded result used to hide: the node has PRE-CONNECT guards ("carries no expose_claim",
+        // the lane-count widths) that return before a single connect exists, and until 2026-08-10 an
+        // `InvalidProofShape` from a mis-derived fold engine satisfied this site identically.
+        assert_node_refused_by_binding_connect(what, &err, BLINDED_MEMBERSHIP_BINDING_NODE_ARM);
     }
 }

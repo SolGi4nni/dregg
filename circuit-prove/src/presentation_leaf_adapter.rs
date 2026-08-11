@@ -305,6 +305,16 @@ pub fn read_exposed_presentation(
 // THE PRESENTATION-BINDING FOLD NODES.
 // ============================================================================
 
+/// [`prove_presentation_binding_node`]'s failure prefix, SINGLE-SOURCED so the production `format!` and a tooth's
+/// `binding_tooth::assert_node_refused_by_binding_connect` expectation cannot drift apart.
+/// A renamed arm that only lived as two duplicated string literals is exactly how a tooth
+/// quietly degrades to "any refusal at all".
+pub const PRESENTATION_BINDING_NODE_ARM: &str = "presentation-binding aggregation node failed";
+/// [`prove_presentation_binding_node_segmented`]'s failure prefix. ⚠ [`PRESENTATION_BINDING_NODE_ARM`] is a SUBSTRING of it, so a `contains` on the shorter
+/// one does not discriminate the two nodes.
+pub const PRESENTATION_BINDING_NODE_SEGMENTED_ARM: &str =
+    "segmented presentation-binding aggregation node failed";
+
 /// **THE PRESENTATION-BINDING MECHANISM NODE (the minimal fold tooth — no segment).**
 /// Aggregate a presentation leg leaf (which must RE-EXPOSE its CLAIMED 17-felt
 /// `(action_binding, revealed_facts, tag)` as an `expose_claim`) WITH the re-proved
@@ -379,9 +389,9 @@ pub fn prove_presentation_binding_node(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("presentation-binding aggregation node failed: {e:?}"),
+        reason: format!("{PRESENTATION_BINDING_NODE_ARM}: {e:?}"),
     })
 }
 
@@ -478,17 +488,20 @@ pub fn prove_presentation_binding_node_segmented(
         BatchOnly,
         _,
         D,
-    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    >(&left, &right, &crate::ivc_turn_chain::fold_layer_over_leaves(config), &backend, &params, None, Some(&expose))
     .map_err(|e| JointAggError::AggregationProofInvalid {
-        reason: format!("segmented presentation-binding aggregation node failed: {e:?}"),
+        reason: format!("{PRESENTATION_BINDING_NODE_SEGMENTED_ARM}: {e:?}"),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::{assert_node_refused_by_binding_connect, report_refusal};
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
-    use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+    use dregg_circuit::refusal::{
+        assert_violated_constraint_not_bus, must_refuse, must_refuse_or_unsat_panic,
+    };
 
     /// A distinct-felt honest bound presentation at the minimal power-of-two height.
     fn make_input() -> BoundPresentationInput {
@@ -568,9 +581,17 @@ mod tests {
         assert_ne!(forged_pis, inp.public_inputs().unwrap());
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a FORGED presentation PI", || {
+        let refusal = must_refuse_or_unsat_panic("a FORGED presentation PI", || {
             prove_presentation_leaf(&inp, &forged_pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): the descriptor's `PiBinding` requires `row0[col] == pi[col]`, an emitted gate.
+        report_refusal("a FORGED presentation PI", &refusal.reason());
+        assert_violated_constraint_not_bus("a FORGED presentation PI", &refusal.reason());
     }
 
     /// THE FOLD, HONEST: the presentation-binding MECHANISM node folds a leg leaf (re-exposing
@@ -625,17 +646,23 @@ mod tests {
         let leaf = prove_presentation_leaf_with_claim(&honest, &honest_pis, &config)
             .expect("the honest presentation leaf");
 
-        must_refuse_or_unsat_panic(
-            "a leg claiming a presentation the leaf does not bind produced a root",
-            || {
-                prove_presentation_binding_node(
-                    &leg,
-                    &leaf,
-                    &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &leaf)
-                        .expect("both fold children carry a preprocessed commitment"),
-                    &config,
-                )
-            },
-        );
+        let what = "a leg claiming a presentation the leaf does not bind produced a root";
+        let err = must_refuse(what, || {
+            prove_presentation_binding_node(
+                &leg,
+                &leaf,
+                &crate::fold_vk_pin::FoldVkPins::tracked(&leg, &leaf)
+                    .expect("both fold children carry a preprocessed commitment"),
+                &config,
+            )
+        });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   Circuit(WitnessConflict { .. }) under `PRESENTATION_BINDING_NODE_ARM`
+        // This tooth's subject IS the per-lane `cb.connect` between the leg's CLAIMED lanes and the
+        // leaf's BOUND ones, so `binding_tooth` is the right assertion and it is exactly what the
+        // discarded result used to hide: the node has PRE-CONNECT guards ("carries no expose_claim",
+        // the lane-count widths) that return before a single connect exists, and until 2026-08-10 an
+        // `InvalidProofShape` from a mis-derived fold engine satisfied this site identically.
+        assert_node_refused_by_binding_connect(what, &err, PRESENTATION_BINDING_NODE_ARM);
     }
 }

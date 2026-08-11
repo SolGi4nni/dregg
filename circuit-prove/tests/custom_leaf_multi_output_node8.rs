@@ -48,7 +48,8 @@ use dregg_circuit::dsl::cap_membership::{
 use dregg_circuit::dsl::circuit::{CellProgram, CircuitDescriptor, ConstraintExpr};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
-use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
+use dregg_circuit_prove::binding_tooth::report_refusal;
 use dregg_circuit_prove::custom_leaf_adapter::{
     prove_custom_leaf, prove_custom_leaf_with_commitment, read_exposed_pi_commitment,
 };
@@ -515,9 +516,23 @@ fn forged_sibling_into_the_node8_site_is_refused() {
     let v = w.get_mut("left0").expect("left0 column");
     v[1] = v[1] + BabyBear::new(1);
     let config = ir2_leaf_wrap_config();
-    must_refuse_or_unsat_panic("a FORGED 8-felt sibling into the node8 site", || {
+    let refusal = must_refuse_or_unsat_panic("a FORGED 8-felt sibling into the node8 site", || {
         prove_custom_leaf(&program, &w, CAP_TREE_DEPTH, &pis, &config)
     });
+    // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+    //   OodEvaluationMismatch { index: Some(0) }
+    // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+    // or a trace-shape error read identically to the forgery being caught. The subject is
+    // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+    // satisfied on row` in debug): the node8 site's lane pins are emitted gates.
+    report_refusal(
+        "a FORGED 8-felt sibling into the node8 site",
+        &refusal.reason(),
+    );
+    assert_violated_constraint_not_bus(
+        "a FORGED 8-felt sibling into the node8 site",
+        &refusal.reason(),
+    );
 }
 
 /// **THE CANARY — the multi-output site is what refuses the forgery.** Neuter it (drop the

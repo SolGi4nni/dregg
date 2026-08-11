@@ -538,7 +538,7 @@ pub fn prove_claim_union_fold(
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
         &left,
         &right,
-        config,
+        &crate::ivc_turn_chain::fold_layer_over_leaves(config),
         &backend,
         &params,
         None,
@@ -573,11 +573,12 @@ pub fn read_structured_product_claim(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::report_refusal;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
     use dregg_circuit::descriptor_ir2::chip_absorb_all_lanes;
     use dregg_circuit::note_spending_witness::{NoteSpendingWitness, test_spending_key};
     use dregg_circuit::poseidon2::hash_many;
-    use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
 
     /// THE FEASIBILITY KAT: the unconditional fact site's arity-7 absorb reproduces
     /// `hash_fact(R, [salt,0,0,0])` — the seeding equivalence the commitment openings
@@ -716,9 +717,17 @@ mod tests {
         let pis = solvency_leaf_public_inputs(&w);
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("an INSOLVENT reserve", || {
+        let refusal = must_refuse_or_unsat_panic("an INSOLVENT reserve", || {
             prove_solvency_leaf(&w, &pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): the 30-bit range reconstruction of `diff = R - L` is an emitted gate.
+        report_refusal("an INSOLVENT reserve", &refusal.reason());
+        assert_violated_constraint_not_bus("an INSOLVENT reserve", &refusal.reason());
     }
 
     /// THE NEGATIVE POLE (leaf, forged commitment): a forged `reserve_commit` PI
@@ -731,9 +740,17 @@ mod tests {
         pis[RESERVE_COMMIT_PI] += BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a FORGED reserve commitment", || {
+        let refusal = must_refuse_or_unsat_panic("a FORGED reserve commitment", || {
             prove_solvency_leaf(&w, &pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): the PI-0 pin over the in-AIR opening is an emitted gate.
+        report_refusal("a FORGED reserve commitment", &refusal.reason());
+        assert_violated_constraint_not_bus("a FORGED reserve commitment", &refusal.reason());
     }
 
     /// THE STRUCTURED PRODUCT (the moat's first real financial fold): fold a REAL

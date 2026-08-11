@@ -1703,6 +1703,37 @@ pub fn turn_chain_root_config() -> DreggRecursionConfig {
     dregg_recursion_verify::config::recursion_tower_root_config()
 }
 
+/// ⚑⚑ **THE ENGINE A BINDING / FOLD NODE RUNS AT, DERIVED — never handed in.**
+///
+/// [`recursion_layer_over`] is the one tower rule: a layer VERIFIES its child at the child's own
+/// MINT engine and MINTS at the recursion engine. A LEAF applies it once, over the IR-v2 descriptor
+/// batch (`ir2_leaf_wrap_config()`), and every leaf minter in this crate already does that
+/// internally. A NODE that folds two leaves sits one layer higher again, so it applies the rule
+/// TWICE — which is exactly `recursion_tower_root_config`'s own derivation, and therefore the
+/// rule's fixed point ([`turn_chain_root_config`]).
+///
+/// ⚠ **THE DRIFT THIS EXISTS TO KILL** (opened by `c88e52cbd`, "the leaf wrap mints at its OWN
+/// blowup"). Before that split a leaf VERIFIED and MINTED at one engine, so a node folding leaves
+/// could be handed the same `ir2_leaf_wrap_config()` its children were built from and it worked by
+/// coincidence. A leaf now EMITS at `recursion_layer_over`'s mint knobs (log_blowup 3, 38 queries),
+/// so a node built at `ir2_leaf_wrap_config()` (log_blowup 6) builds a verification circuit
+/// expecting FRI Merkle paths three levels longer than its children carry, and
+/// `build_and_prove_aggregation_layer_with_expose` returns
+/// `InvalidProofShape("Fewer siblings in proof than op_ids provided")`.
+///
+/// That is an OPERATIONAL fault, and it is the worst possible one to leave on this rail: on a
+/// forgery tooth a bare `must_refuse` reads it as "the forgery was rejected", so an honest pole
+/// goes RED while every negative pole beside it stays GREEN measuring nothing. The deployed chain
+/// prover was updated at the split (it derives `fold_config` at each `prove_chain_core_*`); the
+/// twenty-two standalone binding nodes and every test that calls one were not.
+///
+/// So the nodes DERIVE. `config` means, for a binding node exactly as for a leaf minter, *the
+/// engine my children's inner IR-v2 batch was minted at* — no call site names an engine, and none
+/// can be one layer off again.
+pub fn fold_layer_over_leaves(ir2_batch_config: &DreggRecursionConfig) -> DreggRecursionConfig {
+    recursion_layer_over(&recursion_layer_over(ir2_batch_config))
+}
+
 /// [`prove_descriptor_leaf_rotated`] under an explicit recursion config (the inner proof must
 /// have been minted under the SAME config — same FRI engine). Exposed so the smoke test +
 /// future chain wiring share one config object for mint + wrap + output-verify.

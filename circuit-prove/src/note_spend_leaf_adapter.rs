@@ -723,7 +723,7 @@ pub fn prove_note_spend_binding_node(
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
         &left,
         &right,
-        config,
+        &crate::ivc_turn_chain::fold_layer_over_leaves(config),
         &backend,
         &params,
         None,
@@ -807,7 +807,7 @@ pub fn prove_note_spend_binding_node_segmented(
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
         &left,
         &right,
-        config,
+        &crate::ivc_turn_chain::fold_layer_over_leaves(config),
         &backend,
         &params,
         None,
@@ -899,7 +899,7 @@ pub fn prove_note_spend_mint_binding_node_segmented(
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
         &left,
         &right,
-        config,
+        &crate::ivc_turn_chain::fold_layer_over_leaves(config),
         &backend,
         &params,
         None,
@@ -934,11 +934,12 @@ pub fn read_exposed_note_spend_claim(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding_tooth::report_refusal;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
     use dregg_circuit::descriptor_ir2::chip_absorb_all_lanes;
     use dregg_circuit::note_spending_witness::test_spending_key;
     use dregg_circuit::poseidon2::hash_many;
-    use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+    use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
 
     /// THE FEASIBILITY KAT: the chip's arity-7 absorb with inputs
     /// `[pred, t0..t3, 0xFACF, 1]` is BYTE-IDENTICAL to `poseidon2::hash_fact` —
@@ -1099,9 +1100,17 @@ mod tests {
         pis[pi::NULLIFIER] += BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a FORGED nullifier", || {
+        let refusal = must_refuse_or_unsat_panic("a FORGED nullifier", || {
             prove_note_spend_leaf(&w, &pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): the nullifier's `PiBinding{First}` pin is an emitted gate.
+        report_refusal("a FORGED nullifier", &refusal.reason());
+        assert_violated_constraint_not_bus("a FORGED nullifier", &refusal.reason());
     }
 
     /// THE MINT-BINDING TOOTH: a forged mint_hash lane (every other PI honest) is
@@ -1115,8 +1124,16 @@ mod tests {
         pis[NOTE_SPEND_MINT_HASH_PI] += BabyBear::ONE;
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic("a FORGED mint_hash", || {
+        let refusal = must_refuse_or_unsat_panic("a FORGED mint_hash", || {
             prove_note_spend_leaf(&w, &pis, &config)
         });
+        // NAME THE REFUSAL, MEASURED FIRST (2026-08-10, --release, this exact fixture):
+        //   OodEvaluationMismatch { index: Some(0) }
+        // The bare `must_refuse_or_unsat_panic` here DISCARDED its result, so an FRI fault, an OOM
+        // or a trace-shape error read identically to the forgery being caught. The subject is
+        // a violated CONSTRAINT (`OodEvaluationMismatch` deployed / `constraints not
+        // satisfied on row` in debug): the PI-6 pin over the in-AIR-recomputed mint identity is an emitted gate.
+        report_refusal("a FORGED mint_hash", &refusal.reason());
+        assert_violated_constraint_not_bus("a FORGED mint_hash", &refusal.reason());
     }
 }

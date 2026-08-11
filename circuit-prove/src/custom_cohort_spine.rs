@@ -188,7 +188,7 @@ pub fn prove_segment_merge_preserving_claims(
     >(
         &left_input,
         &right_input,
-        config,
+        &crate::ivc_turn_chain::fold_layer_over_leaves(config),
         &backend,
         &params,
         None,
@@ -323,7 +323,7 @@ pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
     >(
         &carrier_input,
         &direct_input,
-        config,
+        &crate::ivc_turn_chain::fold_layer_over_leaves(config),
         &backend,
         &params,
         None,

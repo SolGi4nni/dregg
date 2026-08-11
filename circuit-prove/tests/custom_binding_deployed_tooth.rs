@@ -3,7 +3,7 @@
 //! This is the integration tooth for the deployed custom-effect fold-wire (the close of the one
 //! REAL deployed light-client vacuity). It builds a REAL 2-turn chain whose FIRST turn is an
 //! `Effect::Custom` turn carrying a `customVmDescriptor2R24` wide leg (publishing its claimed
-//! 8-felt `custom_proof_commitment` at IR2 PI 46..53 — the proof-bind flag-day rotation) PLUS the prover-side `CustomWitnessBundle` (the
+//! 8-felt `custom_proof_commitment` at IR2 PI `CUSTOM_COMMIT_PI_LO`..+8 — the proof-bind flag-day rotation) PLUS the prover-side `CustomWitnessBundle` (the
 //! re-provable `CellProgram` + trace witness + PIs), folds it through the DEPLOYED chain prover
 //! (`prove_turn_chain_recursive` → `prove_chain_core_rotated`), and verifies the whole-chain
 //! artifact through the light-client verifier (`verify_turn_chain_recursive`).
@@ -41,7 +41,9 @@
 use dregg_circuit_prove::binding_tooth::{
     assert_node_refused_by_binding_connect, assert_refused_by_binding_node,
 };
-use dregg_circuit_prove::joint_turn_recursive::CUSTOM_STATE_BINDING_NODE_ARM;
+use dregg_circuit_prove::joint_turn_recursive::{
+    CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO, CUSTOM_STATE_BINDING_NODE_ARM,
+};
 
 use std::collections::HashMap;
 
@@ -235,7 +237,8 @@ fn state_pis(old8: &[BabyBear; 8], new8: &[BabyBear; 8]) -> Vec<BabyBear> {
 }
 
 /// Mint a REAL `customVmDescriptor2R24` wide leg whose claimed 8-felt `custom_proof_commitment`
-/// (IR2 PI 46..53 — limbs 0..4 from the param cols, limbs 4..8 from the commit teeth) is `commit`. Custom bumps nonce by 1, balance unchanged: `before=(b,nonce)`,
+/// (IR2 PI `CUSTOM_COMMIT_PI_LO`..+`CUSTOM_COMMIT_LEN` — limbs 0..4 from the param cols, limbs 4..8
+/// from the commit teeth) is `commit`. Custom bumps nonce by 1, balance unchanged: `before=(b,nonce)`,
 /// `after=(b,nonce+1)`. Optionally attach the prover-side `bundle` (the deployed custom-binding
 /// thread the chain prover reads).
 fn mint_custom_leg(
@@ -288,17 +291,27 @@ fn mint_custom_leg(
         None,
     )
     .expect("custom wide dispatch");
+    // ⚑ DERIVED, NEVER WRITTEN. These were the literals `54` / `dpis[46..54]` / "at 46..53" until
+    // the 2026-08-07 seven-slot PI compaction (`9bdab9b5b`) took `V1_PI_COUNT` 42 → 35 and
+    // `CUSTOM_COMMIT_PI_LO` (= `ROT_PI_COUNT`) 46 → 39 with it. The literal outlived the layout: the
+    // assertion then compared `dpis[46..54]` — the rotated tail, which for this leg is
+    // `[0, 9, 9, …]` (the program-VK block) — against the effect's commitment, and every honest
+    // custom leg failed it before a single proof was minted. Reading the offset off
+    // `CUSTOM_COMMIT_PI_LO` is what makes the next compaction move this tooth with it.
+    let commit_hi = CUSTOM_COMMIT_PI_LO + CUSTOM_COMMIT_LEN;
     assert!(
-        dpis.len() >= 54,
-        "custom leg PI vector must carry the 8-felt commitment slice at 46..53 (got {})",
+        dpis.len() >= commit_hi,
+        "custom leg PI vector must carry the 8-felt commitment slice at \
+         {CUSTOM_COMMIT_PI_LO}..{commit_hi} (got {})",
         dpis.len()
     );
-    // The leg PUBLISHES the claimed 8-felt commitment at PI 46..53 (== the effect's
+    // The leg PUBLISHES the claimed 8-felt commitment at `CUSTOM_COMMIT_PI_LO` (== the effect's
     // proof_commitment — both squeeze blocks, the flag-day rotation).
     assert_eq!(
-        &dpis[46..54],
+        &dpis[CUSTOM_COMMIT_PI_LO..commit_hi],
         &commit[..],
-        "custom leg must publish the claimed 8-felt commitment at PI 46..53"
+        "custom leg must publish the claimed 8-felt commitment at PI \
+         {CUSTOM_COMMIT_PI_LO}..{commit_hi}"
     );
 
     let config = ir2_leaf_wrap_config();
@@ -332,7 +345,7 @@ fn mint_custom_leg(
 /// ⚠ **THIS TURN USED TO BE UNBOUND, AND THAT WAS THE HOLE, NOT A HARMLESS FILLER.** It was
 /// `mint_custom_leg(.., None)` claiming a fabricated `[1..8]` commitment: a custom-member leg
 /// riding the fold's NO-CARRIER arm, publishing a prover-chosen `custom_proof_commitment` at PI
-/// 46..53 that neither the deployed AIR (`Ir2Air::Main` has no `ProofBind` arm) nor any connect
+/// `CUSTOM_COMMIT_PI_LO`..+8 that neither the deployed AIR (`Ir2Air::Main` has no `ProofBind` arm) nor any connect
 /// constrained. The honest pole below therefore used to fold and light-client-VERIFY a chain that
 /// contained exactly the forgery its sibling tooth forges — the difference being only which turn
 /// carried it. The deployed prover now refuses that arm outright

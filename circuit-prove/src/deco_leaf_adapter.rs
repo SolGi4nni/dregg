@@ -466,7 +466,7 @@ pub fn prove_deco_payment_binding_node_segmented(
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
         &left,
         &right,
-        config,
+        &crate::ivc_turn_chain::fold_layer_over_leaves(config),
         &backend,
         &params,
         None,
@@ -540,7 +540,7 @@ pub fn prove_deco_binding_node(
     build_and_prove_aggregation_layer_with_expose::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
         &left,
         &right,
-        config,
+        &crate::ivc_turn_chain::fold_layer_over_leaves(config),
         &backend,
         &params,
         None,

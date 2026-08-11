@@ -29,7 +29,8 @@ use dregg_circuit_prove::custom_leaf_adapter::prove_direct_ir2_leaf_with_app_and
 use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
 use dregg_circuit_prove::descent_census;
 use dregg_circuit_prove::ivc_turn_chain::{
-    CUSTOM_PROGRAM_VK_PI_LO, SEG_ANCHOR_WIDTH, SEG_WIDTH, ir2_leaf_wrap_config,
+    CUSTOM_APP_FIELD_OCTET_LEN, CUSTOM_POST_FIELDS_ROOT_LEN, CUSTOM_PROGRAM_VK_PI_LO,
+    DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN, SEG_ANCHOR_WIDTH, SEG_WIDTH, ir2_leaf_wrap_config,
     prove_descriptor_leaf_expose_segment_and_claims, prove_descriptor_leaf_rotated_with_segment,
 };
 use dregg_circuit_prove::joint_turn_recursive::{CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO};
@@ -53,13 +54,41 @@ fn pins(
 }
 
 const APP_LEN: usize = 6;
-// Current Custom-wide geometry:
-// 46 rotated + commitment/VK exposure 16 + dsl-rc 4 + field octet 8 +
-// fields_root8 + old/new anchors 16 = 98.
-const ORDINARY_WIDE_PI_COUNT: usize = 66;
-const CUSTOM_WIDE_PI_COUNT: usize = 98;
-const FIELD_OCTET_PI_LO: usize = 66;
-const FIELDS_ROOT_PI_LO: usize = 74;
+
+// ⚑ THE CUSTOM-WIDE GEOMETRY, DERIVED — never written down. These were the literals
+// `66 / 98 / 66 / 74`, correct only while `ROT_PI_COUNT` was 46. The 2026-08-07 seven-slot PI
+// compaction (`9bdab9b5b`) took it to 39 and moved the whole wide tail seven slots down with it
+// (`ORDINARY_WIDE_PI_COUNT` 66 → 59, the custom member 98 → 91, the octet 66 → 59, the fields root
+// 74 → 67), and four hand-written numbers stayed where they were — the same class that left
+// `custom_binding_deployed_tooth` comparing `dpis[46..54]` against a commitment that had moved.
+//
+//   rotated (`ROT_PI_COUNT`) ‖ commitment(8) ‖ program VK(8) ‖ dsl-rc(4)
+//     ‖ fields[0..8] octet(8) ‖ post-state fields root(8) ‖ old8 ‖ new8
+const ORDINARY_WIDE_PI_COUNT: usize = dregg_circuit::effect_vm::trace_rotated::WIDE_PI_COUNT;
+const CUSTOM_WIDE_PI_COUNT: usize = CUSTOM_PROGRAM_VK_PI_LO
+    + DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN
+    + dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN
+    + CUSTOM_APP_FIELD_OCTET_LEN
+    + CUSTOM_POST_FIELDS_ROOT_LEN
+    + 2 * SEG_ANCHOR_WIDTH;
+/// Read through the ONE derivation every octet consumer goes through
+/// ([`dregg_circuit_prove::ivc_turn_chain::custom_leg_field_octet_lo`]), so a stand-in leg and the
+/// deployed reader can never disagree about where the octet is.
+const FIELD_OCTET_PI_LO: usize = CUSTOM_WIDE_PI_COUNT
+    - (2 * SEG_ANCHOR_WIDTH + CUSTOM_POST_FIELDS_ROOT_LEN + CUSTOM_APP_FIELD_OCTET_LEN);
+const FIELDS_ROOT_PI_LO: usize = FIELD_OCTET_PI_LO + CUSTOM_APP_FIELD_OCTET_LEN;
+
+/// The derived octet offset MUST equal what the deployed reader computes for this PI count — the
+/// two were open-coded and drifted once already (a stale `n - 24` read the fields ROOT as the
+/// fields). Stated as a `const` assertion so it cannot be skipped by a filtered test run.
+const _: () = assert!(
+    FIELD_OCTET_PI_LO
+        + CUSTOM_APP_FIELD_OCTET_LEN
+        + CUSTOM_POST_FIELDS_ROOT_LEN
+        + 2 * SEG_ANCHOR_WIDTH
+        == CUSTOM_WIDE_PI_COUNT,
+    "the custom-wide tail must be exactly [octet(8) ‖ fields_root(8) ‖ old8 ‖ new8]"
+);
 
 fn root8(base: u32) -> [BabyBear; 8] {
     core::array::from_fn(|lane| BabyBear::new(base + lane as u32))
