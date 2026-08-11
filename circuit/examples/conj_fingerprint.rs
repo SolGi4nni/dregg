@@ -20,27 +20,12 @@
 
 use dregg_circuit::descriptor_ir2::parse_vm_descriptor2;
 use dregg_circuit::descriptor_ir2_canonical::effect_vm_descriptor2_semantic_fingerprint;
+use dregg_circuit::effect_vm::key_limbs9;
 
-/// `Faithful9::from_key_lanes9` — the 32 bytes as one little-endian 256-bit number in its NINE
-/// base-`2^29` digits. Lanes 0..=7 below `2^29`, lane 8 below `2^24`; `8·29 + 24 = 256` exactly, so
-/// the encoding loses nothing (`fieldToLanes9_injective`).
+/// The library's [`key_limbs9`]; the hand-rolled base-`2^29` packing that stood here was a
+/// transcription of it.
 fn key_lanes9(bytes: &[u8; 32]) -> [u64; 9] {
-    let mut acc = [0u64; 9];
-    let mut cur: u128 = 0;
-    let mut bits = 0u32;
-    let mut out = 0usize;
-    for b in bytes.iter() {
-        cur |= (*b as u128) << bits;
-        bits += 8;
-        while bits >= 29 && out < 8 {
-            acc[out] = (cur & ((1u128 << 29) - 1)) as u64;
-            cur >>= 29;
-            bits -= 29;
-            out += 1;
-        }
-    }
-    acc[8] = cur as u64;
-    acc
+    key_limbs9(bytes).map(|l| u64::from(l.as_u32()))
 }
 
 fn main() {

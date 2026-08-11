@@ -42,6 +42,7 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, ProofBindSpec, VmConstraint2, parse_vm_descriptor2,
 };
 use dregg_circuit::descriptor_ir2_canonical::effect_vm_descriptor2_semantic_fingerprint;
+use dregg_circuit::effect_vm::key_limbs9;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
 const LINK_JSON: &str = include_str!("../descriptors/by-name/dregg-mina-lightclient-link-v1.json");
@@ -108,25 +109,10 @@ fn absorb_desc() -> EffectVmDescriptor2 {
     parse_vm_descriptor2(ABSORB_JSON).expect("the absorb descriptor parses")
 }
 
-/// Nine base-`2^29` lanes of a 32-byte value, least-significant first (Lean `keyToLanes9`,
-/// `Faithful9::from_key_lanes9`): `8·29 + 24 = 256` exactly, machine-checked injective.
+/// The library's [`key_limbs9`]; the hand-rolled base-`2^29` packing that stood here was a
+/// transcription of it.
 fn key_lanes9(bytes: &[u8; 32]) -> [i64; 9] {
-    let mut v = [0i64; 9];
-    let mut acc: u128 = 0;
-    let mut bits = 0usize;
-    let mut out = 0usize;
-    for b in bytes.iter() {
-        acc |= u128::from(*b) << bits;
-        bits += 8;
-        while bits >= 29 && out < 8 {
-            v[out] = (acc & ((1u128 << 29) - 1)) as i64;
-            acc >>= 29;
-            bits -= 29;
-            out += 1;
-        }
-    }
-    v[8] = acc as i64;
-    v
+    key_limbs9(bytes).map(|l| i64::from(l.as_u32()))
 }
 
 /// Recompose nine base-`2^29` lanes into a DECIMAL string, by repeated multiply-add on the decimal
