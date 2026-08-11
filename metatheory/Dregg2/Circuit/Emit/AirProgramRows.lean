@@ -1249,9 +1249,15 @@ theorem absorb_rows_force_the_permutation {Pm : Params} {pl : Nat → ℤ} {tr :
    (`MinaWrapVerifierProgram.padInstr`), so the instruction whose result is read is never the last
    row — but a caller who forgets that is reading an unforced write.
 
-4. **`Tracks` at row 0 is a premise.** `programAir` pins no register column on the first row; a
-   boundary does (`sboxPins` and its siblings), and `programAir_boundary_pinsTied` is what makes
-   adding one cost a single structural lemma.
+4. **`Tracks` at row 0 is a premise, and it is now a STRICTLY STRONGER one.** `programAir` pins no
+   register column on the first row; a boundary does (`sboxPins` and its siblings), and
+   `programAir_boundary_pinsTied` is what makes adding one cost a single structural lemma.
+   ⚠ Since `Tracks` became an ℤ equality the boundary owes an ℤ-exact row-0 register file — the
+   limbs must be BYTES that recompose to `st0 r`, not merely a residue class. That is what the
+   honest generator writes (`rowAsg` fills `regCol r + i` with `limbAt (st r) i`, each in
+   `[0, 2^8) ⊆ [0, P)`, and `st0 r < N < 2^256`), so the premise is satisfiable and this rung is not
+   vacuous — but a boundary that pinned residues would no longer discharge it, and that is a real
+   cost of the strengthening rather than a free upgrade.
 
 5. ✅ **CLOSED 2026-08-10 — THE MOD-`N` CEILING IS GONE, AND WHAT REPLACED IT COST 63 COLUMNS.**
    This entry read *"the mod-`N` resolution is a CEILING, not a choice — UNDONE WORK, not a theorem
