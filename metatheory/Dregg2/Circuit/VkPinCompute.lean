@@ -27,13 +27,24 @@ goes through the compiled evaluator. A pin it produces is an IDENTITY claim — 
 the deployed hash gives* — never a soundness one. The uninterpreted `PortalFloor.Blake3Kernel` is
 what proofs use and is untouched.
 
-⚠ **WHAT IS STILL MISSING, AND IT IS THE REASON THE THIRTEEN CONSTANTS ARE STILL THERE.** The input
-here is *canonical bytes*, and the canonical ENCODER —
-`circuit/src/descriptor_ir2_canonical.rs::canonical_effect_vm_descriptor2_bytes`, 534 lines and 13
-mutually recursive writers over the IR-v2 AST — exists **only in Rust**. So `vkPinLanes` cannot yet
-be handed a Lean `EffectVmDescriptor2` term; something must produce its bytes first. Authoring that
-encoder in Lean (and deleting the Rust one, per House Law #1) is the next hop, and it is a lane of
-its own. Do not read this module as though the collapse had already happened.
+⚑ **THE MISSING HOP LANDED 2026-08-11.** The input here is *canonical bytes*, and the canonical
+ENCODER — `circuit/src/descriptor_ir2_canonical.rs::canonical_effect_vm_descriptor2_bytes`, 13
+mutually recursive writers over the IR-v2 AST — used to exist **only in Rust**, so `vkPinLanes` could
+not be handed a Lean `EffectVmDescriptor2` term at all. `Dregg2.Circuit.DescriptorCanonical
+.canonicalBytes` is that encoder in Lean, byte-exact against the deployed one on all 159 served
+descriptors (18 010 889 canonical bytes,
+`scripts/check-descriptor-canonical-differential.sh`), and `DescriptorCanonical.vkPinLanesOf` is this
+function taking a TERM instead of bytes. **Prefer it**: this entry point survives for callers that
+genuinely start from bytes.
+
+⚠ **AND THE ENCODER IS NOT `emitVmJson2`.** That renders the JSON build artifact; the fingerprint is
+taken over the fixed BINARY record (magic `DREGGIR2`, LE fixed widths, `u64` length prefixes) — 10 229
+JSON bytes against 2 646 canonical bytes for `by-name/accumulator-nonrev.json`. The SHA-256 in
+`Argus/EmitRoundtrip.lean` is over the JSON and is a different digest for a different purpose. Three
+separate write-ups conflated them; the header bytes are the arbiter.
+
+⚠ **THE CONSTANTS ARE STILL CONSTANTS, AND THE REASON IS NO LONGER THIS ONE.** See
+`scripts/check-vk-pin-literals.sh`, which resolves all fourteen against the served tree in pure Lean.
 -/
 import Dregg2.Crypto.Blake3Compute
 import Dregg2.Circuit.KeyLanes9

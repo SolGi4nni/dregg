@@ -1039,6 +1039,22 @@ GATES=(
   # tree an uncommitted sibling re-emit otherwise flatters the verdict, and this tree has a recorded
   # case of exactly that reading outliving the tree it was measured on.
   "vk-pin-closure|300|cargo test -p dregg-circuit --test vk_pin_closure_over_the_served_tree"
+  # ⚑⚑ THE OTHER HALF OF THE ROW ABOVE — the LITERAL side, which until 2026-08-11 was gated by
+  # NOTHING while reading as gated. `vk_pin_closure_over_the_served_tree`'s header cited
+  # `descriptor_pin_literals_are_not_transcriptions.rs` as covering the Lean literals, and that
+  # citation was the file's ONLY occurrence in the tree. The two ask genuinely different questions
+  # and this one is GREEN while that one is red, which is the argument for both existing:
+  #   this row : the Lean `vkPin`/`descLanes` literal EQUALS some emitted pin (+ a seam end's
+  #              literal is served under the descriptor name Lean pairs it with — INTENT, which the
+  #              closure gate says outright it cannot see), and the three `FORGED_*` falsifier
+  #              literals match NOTHING served (the red arm; a forged constant that drifts onto a
+  #              real pin has stopped falsifying).
+  #   above    : that emitted pin is the FINGERPRINT of a descriptor this tree serves.
+  # A stale Lean literal is invisible above unless the descriptor was ALSO re-emitted — that proviso
+  # is in the closure gate's own header and is the hole this closes.
+  # ~3s, no Lean toolchain, no circuit compiled: it reads `metatheory/**.lean` as text and
+  # `circuit/descriptors/`. `DREGG_METATHEORY_DIR` / `DREGG_DESCRIPTOR_ROOT` retarget either side.
+  "vk-pin-literals|300|cargo test -p dregg-circuit --test descriptor_pin_literals_are_not_transcriptions"
   # ⚑⚑ THE TRANSCRIPTION ARMS OF THE BLAKE3 DIFFERENTIAL — the answer to the row above.
   # `vk-pin-closure` is red because a `vk_pin` is a derived value a human TYPES IN: nine `Faithful9`
   # lanes of `blake3::derive_key` over a descriptor's canonical encoding, obtained from a Rust tool
@@ -1057,6 +1073,20 @@ GATES=(
   # 3-mode theorems (`native_decide` + `#assert_compiled`) and its falsifiers run in every
   # `lake build`. ARM 4 — 158 served descriptors, both sides recomputed — is under --all below.
   "blake3-transcription|120|bash scripts/check-blake3-differential.sh --fast"
+  # ⚑⚑ THE CHEAP ARM OF THE CANONICAL-ENCODER DIFFERENTIAL — the hop the row above could not reach.
+  # `blake3-differential` gates `canonical bytes -> fingerprint -> lanes`; it is HANDED the canonical
+  # bytes, because `canonical_effect_vm_descriptor2_bytes` was Rust-only, so a Lean
+  # `EffectVmDescriptor2` term could not be fingerprinted at all and fourteen `*_VK_LANES` literals
+  # stayed transcribed digits. `Dregg2.Circuit.DescriptorCanonical.canonicalBytes` is that encoder in
+  # Lean. ⚠ IT IS NOT `emitVmJson2`: that renders the JSON build artifact (10 229 bytes for
+  # `accumulator-nonrev`), this renders the fixed binary record the fingerprint is taken over (2 646
+  # bytes, opening "DREGGIR2"). This row is the constants a human typed and that therefore rot — the
+  # magic, the SCHEMA VERSION, the allocation bound, the BabyBear prime and the vacuous-range width,
+  # each read out of the Rust source and compared with the Lean. A version bump on one side alone
+  # rotates EVERY fingerprint and refuses every old record, and nothing else would notice. ~0.2s, no
+  # Lean, no cargo. The named theorems ride `lake build` (both modules are rooted in `Dregg2.lean`);
+  # the 159-descriptor arm is under --all below.
+  "canonical-encoder-constants|120|bash scripts/check-descriptor-canonical-differential.sh --fast"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
@@ -1085,6 +1115,40 @@ GATES_ALL=(
   # red that only reported hop 1 would leave the lane encoder unfalsified, and a refusal rendering
   # as the expected verdict is its own defect class. The tree is never mutated.
   "blake3-differential-red|1500|bash scripts/check-blake3-differential.sh --self-test"
+  # ⚑⚑ THE DEPLOYED-INPUT ARM OF THE CANONICAL-ENCODER DIFFERENTIAL, over EVERY DescriptorIR-v2
+  # record this tree serves: 159 at landing, 18,010,889 canonical bytes, byte for byte. ⚑ BOTH SIDES
+  # COMPUTE FROM THE SAME INPUT — the descriptor JSON on disk. Rust parses and encodes it; Lean
+  # parses it (`DescriptorCanonicalJson.parseDescriptor`) and encodes it
+  # (`DescriptorCanonical.canonicalBytes`). Nothing is stored, so a sibling lane's uncommitted
+  # re-emit moves both sides identically and cannot flatter the result. The fingerprint and the nine
+  # lanes are then recomputed FROM THE LEAN BYTES, so the composite claim — a Lean descriptor TERM
+  # produces the nine `vk_pin` digits the deployed tool prints — is checked end to end rather than
+  # inferred from two half-results. A fourth arm censuses two deliberately WRONG encoders
+  # (`EncoderVariant`): each must AGREE with the truth on most of the corpus and DIVERGE on at least
+  # one descriptor, because a falsifier that diverges nowhere has become a no-op and one that agrees
+  # nowhere is a different encoder rather than a probe. Measured at landing: 155/4 and 156/3.
+  # ⚠ WHY NOT THE CHEAP SET — ~2.5 min of interpreted Lean over 57.8 MB of JSON, plus a cargo
+  # example build and a `lake build`.
+  "canonical-encoder-differential|1800|bash scripts/check-descriptor-canonical-differential.sh"
+  # The -red row, THREE mutations because the gate has three ways to be hollow: a corrupted
+  # canonical record must turn the ENCODER comparison red, a corrupted fingerprint must turn the
+  # HASH comparison red, and a corpus with the chal_gate / ported-proof_bind carriers REMOVED must
+  # turn the FALSIFIER CENSUS red. Each is built constructively and asserted to have landed before
+  # any verdict is read, and each required failure must be NAMED in the log. The tree is never
+  # mutated.
+  "canonical-encoder-differential-red|1800|bash scripts/check-descriptor-canonical-differential.sh --self-test"
+  # ⚑ THE PAYOFF ROW, and it is the row `vk-pin-closure` could not be: every `*_VK_LANES` literal in
+  # the tree, resolved against the served corpus with the WHOLE chain recomputed IN LEAN
+  # (`descriptor JSON -> canonical bytes -> derive-key -> nine lanes`), no Rust in the path. It
+  # resolves BY VALUE — there is no literal-to-file map anywhere, because a stale map is invisible in
+  # exactly the way the literals are. HARD failures: a literal that is not nine non-negative lanes,
+  # and a deliberate FORGED_* falsifier that MATCHES a served descriptor (a forged pin naming a real
+  # program is a falsifier that stopped falsifying). Measured at landing: 14 literals, 3 forged and
+  # all three correctly matching nothing, 8 live literals naming no served program.
+  # ⚠ It does NOT adjudicate those 8: which literal is wrong versus which descriptor moved is a
+  # question about THIS tree and not a fact, and `vk_pin_closure_over_the_served_tree` already
+  # carries that verdict — a second copy would be a twin, not a second witness. `--strict` exits 1.
+  "vk-pin-literal-resolution|1800|bash scripts/check-vk-pin-literals.sh"
   # ⚑ THE ONLY GO MODULE IN THE REPOSITORY, AND UNTIL 2026-08-08 IT WAS IN NO WORKFLOW AND NO
   # RUNNER. `chain/gnark` holds the BN254 settlement wrap: the Lean-emitted R1CS templates under
   # `chain/gnark/emitted/`, the apex-VK governance pin the `SettlementCircuit` bakes, and the
