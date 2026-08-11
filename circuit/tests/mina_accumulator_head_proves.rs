@@ -62,6 +62,7 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::descriptor_ir2_canonical::effect_vm_descriptor2_semantic_fingerprint;
+use dregg_circuit::effect_vm::key_limbs9;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
 
@@ -198,26 +199,10 @@ fn public_inputs(t: &[Vec<BabyBear>], with_head: bool) -> Vec<BabyBear> {
     pis
 }
 
-/// `Faithful9::from_key_lanes9` — 32 bytes as one little-endian 256-bit number in NINE base-`2^29`
-/// digits. Same decomposition `circuit/examples/conj_fingerprint.rs` prints and
-/// `mina_head_verifier::check_subproof_program_pin` recomputes at verify time.
+/// The library's [`key_limbs9`]; the hand-rolled base-`2^29` packing that stood here was a
+/// transcription of it.
 fn key_lanes9(bytes: &[u8; 32]) -> [i64; HEAD_LANES] {
-    let mut acc = [0i64; HEAD_LANES];
-    let mut cur: u128 = 0;
-    let mut bits = 0u32;
-    let mut out = 0usize;
-    for b in bytes.iter() {
-        cur |= u128::from(*b) << bits;
-        bits += 8;
-        while bits >= 29 && out < 8 {
-            acc[out] = i64::try_from(cur & ((1u128 << 29) - 1)).unwrap();
-            cur >>= 29;
-            bits -= 29;
-            out += 1;
-        }
-    }
-    acc[8] = i64::try_from(cur).unwrap();
-    acc
+    key_limbs9(bytes).map(|l| i64::from(l.as_u32()))
 }
 
 /// The descriptor's one `proof_bind`, resolved by SHAPE and refused if there is more than one —
@@ -274,7 +259,7 @@ fn the_head_artifact_declares_what_this_file_reads() {
     assert_eq!(seam.commit.len(), HEAD_LANES + 3 * SK, "105 commit lanes");
     assert_eq!(seam.vk.len(), HEAD_LANES);
     assert!(!seam.is_declarative(), "the seam pins BOTH halves");
-    assert!(seam.vk_pin.is_some() && seam.bound.is_some());
+    assert!(seam.vk_pin.is_some() && seam.bound.lanes().is_some());
     seam.width_ok().expect("the seam clears both lane floors");
     println!(
         "-head: {HEADED_WIDTH} cols, {HEAD_CONSTRAINTS} constraints, {} commit lanes, {} vk lanes",
@@ -356,7 +341,7 @@ fn the_declared_head_is_the_light_clients_devnet_tip() {
     let d = descriptor(HEAD_JSON);
     let bound = the_seam(&d)
         .bound
-        .as_ref()
+        .lanes()
         .expect("the seam bounds its commitment");
     assert_eq!(bound.len(), HEAD_LANES + 3 * SK);
 
@@ -379,7 +364,7 @@ fn the_declared_head_is_the_light_clients_devnet_tip() {
 #[test]
 fn the_declared_claim_is_the_honest_chains_entry_accumulator() {
     let d = descriptor(HEAD_JSON);
-    let bound = the_seam(&d).bound.as_ref().expect("bound");
+    let bound = the_seam(&d).bound.lanes().expect("bound");
     let t = trace(HEAD_TRACE, HEADED_WIDTH);
 
     let mut nonzero = 0usize;
@@ -694,8 +679,8 @@ fn the_control_differs_from_the_artifact_in_nine_lanes() {
     assert_eq!(a.vk, b.vk);
     assert_eq!(a.vk_pin, b.vk_pin, "both name the SAME head program");
 
-    let ab = a.bound.as_ref().expect("bound");
-    let bb = b.bound.as_ref().expect("bound");
+    let ab = a.bound.lanes().expect("bound");
+    let bb = b.bound.lanes().expect("bound");
     assert_eq!(ab.len(), bb.len());
     let lanes: Vec<usize> = (0..ab.len()).filter(|&i| ab[i] != bb[i]).collect();
     assert_eq!(

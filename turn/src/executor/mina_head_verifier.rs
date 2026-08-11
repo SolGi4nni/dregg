@@ -445,6 +445,12 @@ pub const MINA_LINK_DESCRIPTOR: &str = "dregg-mina-lightclient-link::v1";
 /// nine anchor lanes, nine tip lanes, the anchor height, the segment length, the nine PUBLISHED
 /// `state_body_hash` lanes, and the body-hash chain's eight-lane ordered transcript accumulator.
 ///
+/// ⚑⚑ **37 → 46 on 2026-08-10** — the `PI_HEAD_OWN` publication (see [`LINK_PI_HEAD_OWN_BASE`]),
+/// which is what gave the `state-hash-preimage` port an output to land on. `trace_width` did NOT
+/// move (57): the nine new slots publish columns 9..17, which `PI_TIP` already read on the last
+/// row. So a stale segment proof is caught by ARITY alone here, and the link's VK rotates with the
+/// descriptor.
+///
 /// ⚑ **20 → 37 on 2026-08-08** — the publication flag day. `BODYHASH` and the chain accumulator
 /// were columns nothing published, and a `proofBind`'s `commit`/`vk` may only name PUBLISHED
 /// values, so the body-chain seam could not be `cb.connect`ed by a fold at all. Publishing them
@@ -459,7 +465,7 @@ pub const MINA_LINK_DESCRIPTOR: &str = "dregg-mina-lightclient-link::v1";
 ///
 /// The four slot constants below are UNMOVED: the new blocks are APPENDED at 20..36, so every
 /// offset this module reads is exactly where it was.
-pub const MINA_LINK_PI_COUNT: usize = 3 * MINA_STATE_LANES + 10;
+pub const MINA_LINK_PI_COUNT: usize = 3 * MINA_STATE_LANES + 19;
 
 /// PI slot of the segment proof's PUBLISHED `state_body_hash` lane `i`
 /// (`LightClientMinaLinkAir.PI_BODYHASH`), slots 20..28.
@@ -481,6 +487,25 @@ pub const LINK_PI_BODYHASH_BASE: usize = 2 * MINA_STATE_LANES + 2;
 pub const LINK_PI_BODY_ACC_BASE: usize = 3 * MINA_STATE_LANES + 2;
 /// Lane count of the body-hash chain's transcript accumulator (a BabyBear Poseidon2 digest).
 pub const LINK_BODY_ACC_LANES: usize = 8;
+
+/// ⚑⚑⚑ PI slot of the segment proof's FIRST-ROW `OWNHASH` lane `i`
+/// (`LightClientMinaLinkAir.PI_HEAD_OWN`), slots 37..45. **New 2026-08-10.**
+///
+/// ⚑ **THE PUBLICATION THAT MADE THE `state-hash-preimage` COVER POSSIBLE AT ALL.** The link's
+/// per-row state-hash seam commits `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` — 54 lanes — and on ROW 0
+/// three of those four blocks were already outside the prover's choice: the salt is 27 descriptor
+/// constants, `PARENT` is PI-pinned to `PI_ANCHOR` and refused against the cell-program-pinned
+/// anchor by [`check_segment_binding`], `BODYHASH` is PI-pinned and welded to the body-chain root
+/// by [`check_body_chain_binding`]. **`OWNHASH` was the one unpublished block**, so no object in
+/// the tree — AIR, seam or host — could relate it to anything, and the port's cover did not exist
+/// rather than merely being unwritten.
+///
+/// ⚠ **`.first`, not `.last`, and the difference is the whole content.** [`LINK_PI_TIP_BASE`] is
+/// the LAST row's `OWNHASH`. A cover written against it would be ∃-image vacuity: at the last row
+/// both absorbed elements are unpublished, so a prover picks any pair, computes its image, and
+/// publishes THAT as the tip. At the first row both are grounded, so `OWNHASH₀` is determined and
+/// the comparison has no freedom left to satisfy.
+pub const LINK_PI_HEAD_OWN_BASE: usize = 3 * MINA_STATE_LANES + 10;
 
 /// PI slot of the segment proof's anchor lane `i` (`LightClientMinaLinkAir.PI_ANCHOR`), slots 0..8 —
 /// pinned from the FIRST row's `PARENT` columns.
@@ -536,6 +561,74 @@ pub const MINA_BODY_SALT_LIMBS: [u32; 96] = [
 pub const BODY_OUT_LANE0_LO: usize = 0;
 /// Limb width of one sponge lane in a chain claim.
 pub const BODY_OUT_LANE0_WIDTH: usize = PASTA_LIMBS;
+
+/// ⚑⚑⚑ **THE STATE-HASH PREIMAGE SUB-PROGRAM** — `dregg-pasta-fp-absorb::v1`, the program
+/// `LightClientMinaLinkAir.stateHashBindLeg` pins by fingerprint and whose public-input vector IS
+/// that seam's 54-lane commitment, re-encoded.
+///
+/// It computes `perm(state + [x₀, x₁, 0])` with the incoming state a PUBLIC INPUT — which is
+/// exactly Mina's own `state_hash = Poseidon_Fp(salt "MinaProtoState")[previous_state_hash ;
+/// state_body_hash]` (the daemon's `protocol_state.ml:45-55`,
+/// `Bridge/MinaStateHashDerive.lean:31`): two field elements at rate 2, one permutation.
+pub const MINA_ABSORB_DESCRIPTOR: &str = "dregg-pasta-fp-absorb::v1";
+
+/// Public-input arity of [`MINA_ABSORB_DESCRIPTOR`] (`MinaWrapVerifierSpongeFp.SPONGE_PI_COUNT`):
+/// `in_state(3·32) ‖ absorbed(2·32) ‖ squeeze(32)`, all in the sound base-`2^8` limb encoding.
+pub const MINA_ABSORB_PI_COUNT: usize = 6 * PASTA_LIMBS;
+/// PI offset of the absorb program's INCOMING sponge state.
+pub const ABSORB_PI_IN_LO: usize = 0;
+/// Width of that block — a whole three-lane Poseidon state.
+pub const ABSORB_PI_IN_WIDTH: usize = 3 * PASTA_LIMBS;
+/// PI offset of the FIRST absorbed element — for this seam, `PARENT`.
+pub const ABSORB_PI_PARENT_LO: usize = ABSORB_PI_IN_WIDTH;
+/// PI offset of the SECOND absorbed element — for this seam, `BODYHASH`.
+pub const ABSORB_PI_BODY_LO: usize = ABSORB_PI_PARENT_LO + PASTA_LIMBS;
+/// PI offset of the SQUEEZED lane — for this seam, `OWNHASH`.
+pub const ABSORB_PI_OUT_LO: usize = ABSORB_PI_BODY_LO + PASTA_LIMBS;
+
+/// ⚑ **THE FOUR BLOCKS TILE THE VECTOR EXACTLY, ASSERTED AT COMPILE TIME.** The bind's commitment
+/// IS the absorb program's public-input vector; a future re-block that leaves limbs uncovered fails
+/// to COMPILE rather than quietly comparing three quarters of the claim — the shape of refusal 10's
+/// wraplink mistake, made unrepresentable.
+const _: () = assert!(ABSORB_PI_OUT_LO + PASTA_LIMBS == MINA_ABSORB_PI_COUNT);
+
+/// ⚑⚑ **THE `MinaProtoState` SALT, AS THE 96 EIGHT-BIT LIMBS THE ABSORB PROGRAM PINS** — three
+/// Pasta `Fp` sponge lanes, 32 base-`2^8` limbs each, low limb first.
+///
+/// ⚑ **THIS IS THE LOAD-BEARING HALF OF THE STATE-HASH WELD**, for the identical reason
+/// [`MINA_BODY_SALT_LIMBS`] is: `perm` is a permutation, so against a FREE incoming state a prover
+/// picks `state := perm⁻¹(T) − [x₀,x₁,0]` and the sub-proof is honest at EVERY target. With the
+/// salt pinned, the bound sub-proof is a *Mina state hash* rather than a generic two-input
+/// Poseidon.
+///
+/// ⚠ **AND IT IS THE OTHER SALT.** [`MINA_BODY_SALT_LIMBS`] is `"MinaProtoStateBody"`; this is
+/// `"MinaProtoState"`. Mina's whole domain separation between a state hash and a body hash rests on
+/// the two being different, and a copy-paste here would name a different hash function with every
+/// gate green — `the_two_mina_salts_are_different` is that as a test.
+///
+/// A LITERAL and not a computed value because `dregg-turn` has no Pasta arithmetic. The unit test
+/// `the_state_salt_limbs_are_the_served_descriptors_own_constants` re-lanes these 96 bytes and
+/// compares them against the 27 `Faithful9` constants the SERVED link descriptor's own seam
+/// carries — a second source that is neither this file nor the Lean file that emitted it.
+pub const MINA_STATE_SALT_LIMBS: [u32; 96] = [
+    54, 182, 245, 134, 254, 222, 28, 49, 127, 218, 197, 90, 109, 80, 140, 240, 43, 11, 21, 130,
+    220, 90, 11, 49, 75, 193, 110, 27, 55, 213, 137, 11, //
+    108, 67, 222, 92, 77, 62, 234, 96, 123, 138, 178, 68, 206, 254, 81, 7, 212, 184, 213, 94, 65,
+    205, 6, 245, 252, 32, 158, 226, 55, 57, 241, 16, //
+    233, 154, 82, 244, 139, 36, 12, 58, 47, 44, 27, 38, 111, 126, 54, 232, 195, 2, 62, 89, 57, 91,
+    200, 32, 242, 162, 11, 129, 249, 230, 231, 43,
+];
+
+/// The commitment width by which the link descriptor's TWO unconditional seams are told apart: the
+/// state-hash seam commits `salt(27) ‖ PARENT(9) ‖ BODYHASH(9) ‖ OWNHASH(9)`, the body-chain seam
+/// 44.
+///
+/// ⚠ Both link seams carry the guard `.const 1`, so [`head_bind_by_guard`]'s structural key does
+/// not apply here and resolving by LIST POSITION is the mis-resolution
+/// `reference-a-display-name-is-not-a-key` records. The sentence width is the key, and a tie is
+/// REFUSED rather than resolved arbitrarily — the same rule
+/// `circuit/tests/mina_statehash_seam_proves.rs::the_seam` follows.
+pub const LINK_STATE_HASH_COMMIT_LANES: usize = 6 * MINA_STATE_LANES;
 
 /// Domain separation for the WEAK-SUBJECTIVITY ANCHOR commitment — see [`mina_anchor_commitment`].
 pub const MINA_ANCHOR_COMMITMENT_CONTEXT: &str = "dregg.mina-lightclient.anchor-commitment.v1";
@@ -719,6 +812,20 @@ pub struct MinaHeadProofWire {
     /// prover chose all seventeen (`MinaSeams.the_link_body_ports_have_no_registered_cover = 2`).
     /// [`check_body_chain_binding`] is the weld; this is the proof it welds against.
     pub body_chain_root_proof: Vec<u8>,
+    /// ⚑⚑⚑ **THE STATE-HASH PREIMAGE SUB-PROOF'S 192 PUBLIC INPUTS**, in
+    /// [`MINA_ABSORB_DESCRIPTOR`] order: `in_state(96) ‖ PARENT(32) ‖ BODYHASH(32) ‖ OWNHASH(32)`.
+    /// REQUIRED, so a pre-2026-08-10 blob fails to DECODE rather than being reinterpreted as "no
+    /// preimage proof supplied" — the refusal is at the codec, the one place it cannot be
+    /// forgotten.
+    ///
+    /// ⚑ **NEW 2026-08-10 — the flag day that makes REFUSAL 17 live, and it is deliberately
+    /// landed in the SAME change as the refusal.** REFUSAL 15 was defined on 2026-08-06 and called
+    /// by nothing for two days for exactly the want of a field like this one; REFUSAL 16 was wired
+    /// the same week. There is no third.
+    pub absorb_public_inputs: Vec<u32>,
+    /// ⚑⚑ **THE IR-v2 BATCH PROOF OVER [`MINA_ABSORB_DESCRIPTOR`]. This node verifies it.**
+    /// REQUIRED, same codec reasoning as above.
+    pub absorb_proof: Ir2BatchProof<DreggStarkConfig>,
 }
 
 /// ⚑⚑ **THE CLAIM A MINA PHASE-2 CHAIN-FOLD ROOT PUBLISHES**, as canonical `u32` lanes.
@@ -1416,6 +1523,234 @@ pub fn check_body_chain_binding(
     Ok(())
 }
 
+/// ⚑⚑⚑ **REFUSAL 17 — THE `state-hash-preimage` PORT'S COVER. `OWNHASH` STOPS BEING A FREE
+/// WITNESS AT THE HEAD OF THE SEGMENT.**
+///
+/// # ⚠ SAY THE KIND OUT LOUD: THIS IS A **HOST** COMPARISON, NOT A CONSTRAINT
+///
+/// `LightClientMinaLinkAir.stateHashBindLeg` is a `CommitBinding::Port`. A port emits **no
+/// polynomial** over its commit lanes, and no `cb.connect` runs here either. What follows is an
+/// EXECUTOR refusal: the turn dies, and a proof consumed by any other route would not meet it. Do
+/// not read "the port is covered" as "the descriptor forces it".
+///
+/// # What was wrong, measured
+///
+/// The seam commits `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` — 54 lanes, every row — against
+/// [`MINA_ABSORB_DESCRIPTOR`]'s fingerprint, and **nothing anywhere compared its public inputs to
+/// those lanes.** `MINA_LINK_DESCRIPTOR`'s own docblock said so in prose for weeks (*"its `OWNHASH`
+/// is a free witness"*). Under the retired `bound: null` that was a paragraph; the 2026-08-10 sum
+/// type made it a name that failed to resolve, counted by `circuit/tests/proof_bind_port_covers.rs`.
+///
+/// # The four refusals, and why each is load-bearing rather than decorative
+///
+/// * **17a — the arities.** All three vectors, by name, before any offset is read.
+/// * **17b ⚑ — the chain's head IS the `MinaProtoState` salt.** [`MINA_STATE_SALT_LIMBS`], limb for
+///   limb. The refusal-16c analogue and load-bearing for the identical reason: `perm` is a
+///   permutation, so from a free incoming state a prover picks the state whose image is whatever it
+///   already published, and every comparison below would refuse nothing.
+/// * **17c ⚑⚑ — the absorbed pair IS the link's published `(PARENT₀, BODYHASH₀)`.** Both operands
+///   are grounded OUTSIDE this function, which is what makes 17d bite:
+///   * `PARENT₀` is `PI_ANCHOR`, refused against the cell-program-pinned weak-subjectivity anchor
+///     by [`check_segment_binding`] (refusal 14) — the executor resolves it from authoritative
+///     state, so it is not the prover's to choose;
+///   * `BODYHASH₀` is `PI_BODYHASH`, welded to the 25-leaf body-hash chain root by
+///     [`check_body_chain_binding`] (refusal 16d), whose own head is the pinned body salt.
+/// * **17d ⚑⚑⚑ — THE SQUEEZE IS THE LINK'S PUBLISHED `OWNHASH₀`** ([`LINK_PI_HEAD_OWN_BASE`]).
+///   With 17b and 17c fixed, `Poseidon_{MinaProtoState}(PARENT₀, BODYHASH₀)` is a DETERMINED value
+///   and this comparison has no freedom left to satisfy. And `laneContinuity` forces
+///   `OWNHASH₀ = PARENT₁` in the AIR, so **the chain's second element is derived from the pinned
+///   anchor** instead of witnessed.
+///
+/// Each 32-limb block is re-limbed to bytes and compared against the CANONICAL `Faithful9` image,
+/// so a non-canonical nonet cannot alias in; each limb is refused above 255.
+///
+/// # ⚠ WHAT THIS DOES NOT BUY — named, not softened
+///
+/// **One link, not the segment.** Rows `1 …` keep `LinkHashResidual`: their `OWNHASH` is still a
+/// free witness and a prover choosing them can still fabricate the rest of the chain. What moved is
+/// the head of it. Closing the rest needs one absorb instance per row and a per-row accumulator the
+/// link AIR does not compute — UNDONE WORK, not a theorem of the model, and it is the next rung.
+///
+/// And a verifying absorb proof is a proof of a CONSISTENT quadruple, not of this block: the
+/// rebuilt-claim gap this module's header names applies here unchanged. What ties the quadruple to
+/// this segment is 17b–17d, which is exactly why all four blocks are compared and not three.
+pub fn check_state_hash_preimage_binding(
+    link_pis: &[u32],
+    absorb_pis: &[u32],
+) -> Result<(), String> {
+    // ── REFUSAL 17a: the arities, before any offset is read.
+    if link_pis.len() != MINA_LINK_PI_COUNT {
+        return Err(format!(
+            "the segment sub-proof publishes {} inputs; {MINA_LINK_DESCRIPTOR} declares \
+             {MINA_LINK_PI_COUNT}. Refusing rather than reading the state-hash blocks off the \
+             wrong offsets",
+            link_pis.len()
+        ));
+    }
+    if absorb_pis.len() != MINA_ABSORB_PI_COUNT {
+        return Err(format!(
+            "the state-hash preimage sub-proof publishes {} inputs; {MINA_ABSORB_DESCRIPTOR} \
+             declares {MINA_ABSORB_PI_COUNT}",
+            absorb_pis.len()
+        ));
+    }
+
+    // ── ⚑ REFUSAL 17b: the sponge started at Mina's OWN state-hash domain separator.
+    for (i, want) in MINA_STATE_SALT_LIMBS.iter().enumerate() {
+        let got = absorb_pis[ABSORB_PI_IN_LO + i];
+        if got != *want {
+            return Err(format!(
+                "state-hash preimage incoming limb {i} is {got}, not the `MinaProtoState` salt's \
+                 {want}: the sub-proof absorbed into some other sponge state, so it derives some \
+                 other hash function's image and this seam would refuse nothing"
+            ));
+        }
+    }
+
+    // ── ⚑⚑ REFUSAL 17c: the absorbed pair IS the link's published `(PARENT₀, BODYHASH₀)`.
+    absorb_block_is_link_nonet(
+        absorb_pis,
+        ABSORB_PI_PARENT_LO,
+        link_pis,
+        LINK_PI_ANCHOR_BASE,
+        "PARENT",
+        "the segment's published anchor",
+    )?;
+    absorb_block_is_link_nonet(
+        absorb_pis,
+        ABSORB_PI_BODY_LO,
+        link_pis,
+        LINK_PI_BODYHASH_BASE,
+        "BODYHASH",
+        "the segment's published first-row body hash",
+    )?;
+
+    // ── ⚑⚑⚑ REFUSAL 17d: the squeeze IS the link's published FIRST-ROW `OWNHASH`.
+    absorb_block_is_link_nonet(
+        absorb_pis,
+        ABSORB_PI_OUT_LO,
+        link_pis,
+        LINK_PI_HEAD_OWN_BASE,
+        "OWNHASH",
+        "the segment's published first-row own hash",
+    )?;
+
+    Ok(())
+}
+
+/// One 32-limb Pasta block of the absorb proof against one nine-lane `Faithful9` nonet of the link
+/// proof. Re-limbs to bytes (each limb refused above 255) and compares against the CANONICAL image,
+/// so a non-canonical nonet cannot alias in.
+fn absorb_block_is_link_nonet(
+    absorb_pis: &[u32],
+    absorb_lo: usize,
+    link_pis: &[u32],
+    link_lo: usize,
+    block: &str,
+    role: &str,
+) -> Result<(), String> {
+    let mut bytes = [0u8; 32];
+    for (i, limb) in absorb_pis[absorb_lo..][..PASTA_LIMBS].iter().enumerate() {
+        if *limb > 0xFF {
+            return Err(format!(
+                "state-hash preimage {block} limb {i} is {limb}, above the eight-bit limb range \
+                 {MINA_ABSORB_DESCRIPTOR} declares: refusing to re-limb a non-canonical element"
+            ));
+        }
+        bytes[i] = *limb as u8;
+    }
+    let expected = key_lanes_u32(&bytes);
+    for (i, want) in expected.iter().enumerate() {
+        let got = link_pis[link_lo + i];
+        if got != *want {
+            return Err(format!(
+                "state-hash {block} lane {i} is {got} in {role}, but the preimage sub-proof's own \
+                 {block} block re-limbs to {want}: the absorb proof presented is not about this \
+                 segment's state-hash step"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// ⚑ The link descriptor's state-hash seam, resolved by the WIDTH of the sentence it commits to.
+///
+/// ⚠ Both of the link's seams are guarded by the unconditional `.const 1`, so the guard-column key
+/// [`head_bind_by_guard`] uses does not separate them, and resolving by LIST POSITION is exactly
+/// the mis-resolution `reference-a-display-name-is-not-a-key` records. A tie is REFUSED rather than
+/// resolved arbitrarily.
+fn link_state_hash_bind(
+    link_desc: &EffectVmDescriptor2,
+) -> Result<&dregg_circuit::descriptor_ir2::ProofBindSpec, String> {
+    let matching: Vec<&dregg_circuit::descriptor_ir2::ProofBindSpec> = link_desc
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            dregg_circuit::descriptor_ir2::VmConstraint2::ProofBind(p) => Some(p),
+            _ => None,
+        })
+        .filter(|p| p.commit.len() == LINK_STATE_HASH_COMMIT_LANES)
+        .collect();
+    if matching.len() != 1 {
+        return Err(format!(
+            "{MINA_LINK_DESCRIPTOR} declares {} proof_bind(s) committing \
+             {LINK_STATE_HASH_COMMIT_LANES} lanes; this consumer requires exactly one. A segment \
+             descriptor whose seam shape moved is refused rather than partially checked",
+            matching.len()
+        ));
+    }
+    Ok(matching[0])
+}
+
+/// ⚑⚑ **REFUSAL 17's PROGRAM PIN — the link's state-hash seam names the absorb program THIS node
+/// verifies.** The `check_subproof_program_pin` shape, aimed at the LINK descriptor's own seam
+/// rather than the head's, because that is where `ABSORB_VK_LANES` lives.
+///
+/// The measured reason this exists rather than being asserted by a test: `067f63780` re-emitted
+/// `pasta-fp-absorb.json` and the Lean literal did not follow, so the state-hash seam named a
+/// program **no descriptor in this tree had** — and only a test noticed, and only later. A drift is
+/// now a refused head.
+pub fn check_state_hash_program_pin(
+    link_desc: &EffectVmDescriptor2,
+    absorb_desc: &EffectVmDescriptor2,
+) -> Result<(), String> {
+    let fp = effect_vm_descriptor2_semantic_fingerprint(absorb_desc).map_err(|e| {
+        format!(
+            "the {MINA_ABSORB_DESCRIPTOR} descriptor has no representable semantic fingerprint \
+             ({e}): this node cannot tell which program the state-hash seam names"
+        )
+    })?;
+    let expected = key_lanes_u32(&fp);
+    let bind = link_state_hash_bind(link_desc)?;
+    let pin = bind.vk_pin.as_deref().ok_or_else(|| {
+        format!(
+            "{MINA_LINK_DESCRIPTOR}'s state-hash seam declares NO program pin (`vk_pin: None`): \
+             the row's attested program would be the prover's to choose, so this node refuses the \
+             head rather than verifying a sub-proof of an unnamed program"
+        )
+    })?;
+    if pin.len() != MINA_STATE_LANES {
+        return Err(format!(
+            "{MINA_LINK_DESCRIPTOR}'s state-hash seam pins {} program lanes; a `Faithful9` \
+             fingerprint is {MINA_STATE_LANES}",
+            pin.len()
+        ));
+    }
+    for (i, want) in expected.iter().enumerate() {
+        let got = u32::try_from(pin[i]).map_err(|_| {
+            format!("state-hash seam program pin lane {i} is {} — not a canonical BabyBear value", pin[i])
+        })?;
+        if got != *want {
+            return Err(format!(
+                "{MINA_LINK_DESCRIPTOR}'s state-hash seam pins program lane {i} = {got}, but the \
+                 served {MINA_ABSORB_DESCRIPTOR} fingerprints to {want}: the seam names a program \
+                 no descriptor in this tree has"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// ⚑ The Mina anchored-head verifier: a dregg turn's acceptance made to DEPEND on a verified Mina
 /// head. See the module docs for the refusals and the named residuals.
 ///
@@ -1730,6 +2065,59 @@ impl WitnessedPredicateVerifier for MinaAnchoredHeadStarkVerifier {
         // ── ⚑⚑⚑ REFUSALS 13-14: the nine-lane seam and the eleven public inputs it does not cover.
         check_segment_binding(&wire.public_inputs, &wire.link_public_inputs).map_err(reject)?;
 
+        // ── ⚑⚑⚑ REFUSAL 17: **THE STATE-HASH PREIMAGE SUB-PROOF** — the `state-hash-preimage`
+        // port's cover. Same order discipline as 11-14 and 15: the program pin BEFORE the STARK (a
+        // seam naming a program this node does not dispatch is refused without spending a
+        // verification), the comparison AFTER it (comparing public inputs of an unverified proof
+        // is comparing numbers to numbers).
+        let absorb_pis: Vec<BabyBear> = wire
+            .absorb_public_inputs
+            .iter()
+            .map(|v| BabyBear::new(*v))
+            .collect();
+        let absorb_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let desc = descriptor_by_name(MINA_ABSORB_DESCRIPTOR).ok_or_else(|| {
+                format!(
+                    "no descriptor dispatches for {MINA_ABSORB_DESCRIPTOR:?} (fail-closed): this \
+                     node cannot check the segment's state-hash step and therefore refuses the head"
+                )
+            })?;
+            if desc.public_input_count != MINA_ABSORB_PI_COUNT {
+                return Err(format!(
+                    "the descriptor served for {MINA_ABSORB_DESCRIPTOR:?} declares {} public \
+                     inputs; this consumer's layout is {MINA_ABSORB_PI_COUNT}. Refusing an \
+                     ambiguous layout rather than reading the four blocks off the wrong offsets",
+                    desc.public_input_count
+                ));
+            }
+            let link = descriptor_by_name(MINA_LINK_DESCRIPTOR).ok_or_else(|| {
+                format!(
+                    "no descriptor dispatches for {MINA_LINK_DESCRIPTOR:?} (fail-closed): this \
+                     node cannot resolve the state-hash seam and therefore refuses the head"
+                )
+            })?;
+            check_state_hash_program_pin(&link, &desc)?;
+            verify_vm_descriptor2(&desc, &wire.absorb_proof, &absorb_pis)
+        }));
+        match absorb_result {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => {
+                return Err(reject(format!(
+                    "the Mina state-hash preimage sub-proof rejected: {reason}"
+                )));
+            }
+            Err(_) => {
+                return Err(reject(
+                    "Mina state-hash preimage sub-proof decode/verify panicked (treated as \
+                     rejection)"
+                        .into(),
+                ));
+            }
+        }
+        // …and the comparison the port owes: all four blocks of the seam's commit vector.
+        check_state_hash_preimage_binding(&wire.link_public_inputs, &wire.absorb_public_inputs)
+            .map_err(reject)?;
+
         // ── ⚑⚑ REFUSAL 15: **THE FINALIZE-CONJUNCTION SUB-PROOF.** Defined 2026-08-06, called by
         // NOTHING until 2026-08-08 — the `EffectsHashMismatch` class this repo's doctrine opens
         // with: a refusal that is formatted, documented and constructed zero times. Same order
@@ -1874,6 +2262,247 @@ pub fn register_mina_head_verifier_with_chain_root(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // ⚑⚑⚑ REFUSAL 17 — BOTH POLARITIES ON THE `state-hash-preimage` COVER.
+    //
+    // ⚠ These grade the COMPARISON, which is what the port owed. That the compared triple stands
+    // in the Poseidon relation is what the VERIFIED `dregg-pasta-fp-absorb::v1` sub-proof supplies
+    // (refusal 17's `verify_vm_descriptor2` call), and that the executor RUNS all of it is
+    // `every_refusal_is_reached_from_the_production_verify_body`. Three separate objects; none of
+    // them is claimed to be the others.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+
+    /// Nine base-`2^29` lanes back to a 32-byte value — the left inverse `Faithful9` is
+    /// machine-checked to have, spelled here so a test can build an honest pole from either side.
+    fn lanes_to_key(lanes: &[u32; MINA_STATE_LANES]) -> [u8; 32] {
+        let mut acc: u128 = 0;
+        let mut bits = 0usize;
+        let mut out = [0u8; 32];
+        let mut o = 0usize;
+        for l in lanes.iter() {
+            acc |= u128::from(*l) << bits;
+            bits += 29;
+            while bits >= 8 && o < 32 {
+                out[o] = (acc & 0xFF) as u8;
+                acc >>= 8;
+                bits -= 8;
+                o += 1;
+            }
+        }
+        while o < 32 {
+            out[o] = (acc & 0xFF) as u8;
+            acc >>= 8;
+            o += 1;
+        }
+        out
+    }
+
+    /// An honest `(link_pis, absorb_pis)` pair for refusal 17: three distinct 32-byte elements, the
+    /// link publishing their canonical `Faithful9` nonets and the absorb proof publishing the same
+    /// three as eight-bit limb blocks under the pinned `MinaProtoState` salt.
+    fn honest_preimage_pair() -> (Vec<u32>, Vec<u32>) {
+        let parent: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(7).wrapping_add(3));
+        let body: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(11).wrapping_add(29));
+        let own: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(5).wrapping_add(101));
+        // ⚠ the top byte must leave the value canonical for `Faithful9`'s ninth lane; masking the
+        // high bits keeps every element a legal 254-bit Pasta element rather than a wrap.
+        let clamp = |mut b: [u8; 32]| {
+            b[31] &= 0x3F;
+            b
+        };
+        let (parent, body, own) = (clamp(parent), clamp(body), clamp(own));
+
+        let mut link = vec![0u32; MINA_LINK_PI_COUNT];
+        for (i, v) in key_lanes_u32(&parent).iter().enumerate() {
+            link[LINK_PI_ANCHOR_BASE + i] = *v;
+        }
+        for (i, v) in key_lanes_u32(&body).iter().enumerate() {
+            link[LINK_PI_BODYHASH_BASE + i] = *v;
+        }
+        for (i, v) in key_lanes_u32(&own).iter().enumerate() {
+            link[LINK_PI_HEAD_OWN_BASE + i] = *v;
+        }
+
+        let mut absorb = vec![0u32; MINA_ABSORB_PI_COUNT];
+        absorb[ABSORB_PI_IN_LO..][..ABSORB_PI_IN_WIDTH].copy_from_slice(&MINA_STATE_SALT_LIMBS);
+        for (i, b) in parent.iter().enumerate() {
+            absorb[ABSORB_PI_PARENT_LO + i] = u32::from(*b);
+        }
+        for (i, b) in body.iter().enumerate() {
+            absorb[ABSORB_PI_BODY_LO + i] = u32::from(*b);
+        }
+        for (i, b) in own.iter().enumerate() {
+            absorb[ABSORB_PI_OUT_LO + i] = u32::from(*b);
+        }
+        (link, absorb)
+    }
+
+    /// ⚑ **POLARITY ONE — the honest pair is ACCEPTED.** The control that stops every refusal below
+    /// from being satisfied by a check that refuses everything. Non-vacuous: all three elements are
+    /// distinct and every nonet is non-zero, so an implementation comparing zeros to zeros could
+    /// not pass this.
+    #[test]
+    fn an_honest_state_hash_preimage_pair_is_accepted() {
+        let (link, absorb) = honest_preimage_pair();
+        assert_ne!(
+            &absorb[ABSORB_PI_PARENT_LO..][..PASTA_LIMBS],
+            &absorb[ABSORB_PI_OUT_LO..][..PASTA_LIMBS],
+            "PARENT and OWNHASH must differ or the polarity below proves nothing"
+        );
+        assert!(link[LINK_PI_HEAD_OWN_BASE..][..MINA_STATE_LANES].iter().any(|v| *v != 0));
+        check_state_hash_preimage_binding(&link, &absorb)
+            .expect("the honest state-hash preimage pair must be accepted");
+    }
+
+    /// ⚑⚑⚑ **THE FORGERY THE PORT NAMES — a commit vector satisfying every other constraint whose
+    /// `PARENT` / `OWNHASH` is not the chain's.** Each of the three element blocks is forged in
+    /// turn, on the LINK side and on the ABSORB side independently, by a move that is non-zero and
+    /// stays inside the block's declared width (a limb `^ 1` is still `≤ 255`; a lane `+ 1` is
+    /// still under `2^29`) — so nothing is refused for being out of range instead of for
+    /// disagreeing.
+    #[test]
+    fn a_forged_state_hash_block_is_refused_on_either_side() {
+        for (name, absorb_lo, link_lo) in [
+            ("PARENT", ABSORB_PI_PARENT_LO, LINK_PI_ANCHOR_BASE),
+            ("BODYHASH", ABSORB_PI_BODY_LO, LINK_PI_BODYHASH_BASE),
+            ("OWNHASH", ABSORB_PI_OUT_LO, LINK_PI_HEAD_OWN_BASE),
+        ] {
+            for j in [0usize, 1, 17, 30] {
+                let (link, mut absorb) = honest_preimage_pair();
+                let before = absorb[absorb_lo + j];
+                absorb[absorb_lo + j] = before ^ 1;
+                assert_ne!(absorb[absorb_lo + j], before, "{name}: mutation moved nothing");
+                assert!(absorb[absorb_lo + j] <= 0xFF, "{name}: mutation left the declared width");
+                let err = check_state_hash_preimage_binding(&link, &absorb)
+                    .expect_err("a forged {name} limb must be refused");
+                assert!(err.contains(name), "{name} forgery refused as: {err}");
+            }
+            for i in [0usize, 4, 8] {
+                let (mut link, absorb) = honest_preimage_pair();
+                let before = link[link_lo + i];
+                link[link_lo + i] = before + 1;
+                assert_ne!(link[link_lo + i], before);
+                assert!(link[link_lo + i] < 1 << 29, "{name}: lane left the declared width");
+                let err = check_state_hash_preimage_binding(&link, &absorb)
+                    .expect_err("a forged link nonet lane must be refused");
+                assert!(err.contains(name), "{name} link-side forgery refused as: {err}");
+            }
+        }
+    }
+
+    /// ⚑⚑ **REFUSAL 17b IS LOAD-BEARING, AND THIS IS THE MEASUREMENT.** `perm` is a permutation:
+    /// with a free incoming state a prover picks `state := perm⁻¹(T) − [x₀,x₁,0]` and the sub-proof
+    /// is honest at EVERY target, so without the salt pin the three comparisons above would refuse
+    /// nothing. One limb of the salt, moved by one, is refused.
+    #[test]
+    fn a_sponge_state_that_is_not_the_mina_proto_state_salt_is_refused() {
+        for j in [0usize, 31, 32, 95] {
+            let (link, mut absorb) = honest_preimage_pair();
+            let before = absorb[ABSORB_PI_IN_LO + j];
+            absorb[ABSORB_PI_IN_LO + j] = before ^ 1;
+            assert_ne!(absorb[ABSORB_PI_IN_LO + j], before);
+            let err = check_state_hash_preimage_binding(&link, &absorb)
+                .expect_err("a chain head that is not the salt must be refused");
+            assert!(err.contains("MinaProtoState"), "refused as: {err}");
+        }
+    }
+
+    /// ⚑⚑ **THE SALT LITERAL HAS A SECOND SOURCE, AND IT IS NOT THE LEAN FILE THAT EMITTED IT.**
+    /// The 96 byte limbs are re-laned and compared against the 27 `Faithful9` CONSTANTS the SERVED
+    /// link descriptor's own state-hash seam carries. A transcription error here would name a
+    /// different hash function with every other gate green.
+    #[test]
+    fn the_state_salt_limbs_are_the_served_descriptors_own_constants() {
+        use dregg_circuit::lean_descriptor_air::LeanExpr;
+        let d = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
+        let bind = link_state_hash_bind(&d).expect("the 54-lane state-hash seam resolves");
+        let declared: Vec<i64> = bind.commit[..3 * MINA_STATE_LANES]
+            .iter()
+            .map(|e| match e {
+                LeanExpr::Const(v) => *v,
+                other => panic!("salt lane is {other:?}, not a constant — the seam would be free"),
+            })
+            .collect();
+        let mut recomputed = Vec::with_capacity(3 * MINA_STATE_LANES);
+        for e in 0..3 {
+            let mut bytes = [0u8; 32];
+            for i in 0..PASTA_LIMBS {
+                bytes[i] = MINA_STATE_SALT_LIMBS[e * PASTA_LIMBS + i] as u8;
+            }
+            recomputed.extend(key_lanes_u32(&bytes).iter().map(|v| i64::from(*v)));
+        }
+        assert_eq!(
+            declared, recomputed,
+            "MINA_STATE_SALT_LIMBS is not the salt the served link seam commits to"
+        );
+    }
+
+    /// ⚑ **AND IT IS THE OTHER SALT.** Mina's domain separation between `state_hash` and
+    /// `state_body_hash` is exactly that these two differ; a copy-paste would name a different hash
+    /// function with every gate green.
+    #[test]
+    fn the_two_mina_salts_are_different() {
+        assert_ne!(
+            MINA_STATE_SALT_LIMBS, MINA_BODY_SALT_LIMBS,
+            "`MinaProtoState` and `MinaProtoStateBody` must not be the same 96 limbs"
+        );
+    }
+
+    /// The `lanes_to_key` helper really is `key_lanes_u32`'s inverse, so the honest pole above is
+    /// built from a real round trip and not from a coincidence.
+    #[test]
+    fn the_lane_round_trip_is_the_identity() {
+        let b: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(13).wrapping_add(2));
+        let mut b = b;
+        b[31] &= 0x3F;
+        assert_eq!(lanes_to_key(&key_lanes_u32(&b)), b);
+    }
+
+    /// ⚑⚑⚑ **NO DEAD REFUSALS — THE GATE THAT WOULD HAVE CAUGHT REFUSAL 15's TWO DAYS.**
+    ///
+    /// REFUSAL 15 was defined, documented, formatted and **constructed zero times** from
+    /// 2026-08-06 to 2026-08-08; REFUSAL 16 was wired the same week only because someone looked.
+    /// This reads this module's OWN SOURCE and requires every refusal entry point to be invoked
+    /// from the production body — outside `#[cfg(test)] mod tests`, which is where
+    /// `MINA_LINK_DESCRIPTOR` was already resolved twice as a decoy while no node asked for it.
+    ///
+    /// ⚠ A source-text gate is a coarse instrument and is named as one: it proves the CALL EXISTS
+    /// in the production body, not that it is reached on every path. What it makes impossible is
+    /// the exact shape this repository has now shipped twice — a refusal whose only callers are
+    /// tests.
+    #[test]
+    fn every_refusal_is_reached_from_the_production_verify_body() {
+        let src = include_str!("mina_head_verifier.rs");
+        let prod = src
+            .split("\nmod tests {")
+            .next()
+            .expect("this module has a production half above its test module");
+        assert!(
+            prod.len() < src.len(),
+            "the split found no test module — the gate would then read the whole file and pass \
+             on a call that only a test makes"
+        );
+        for f in [
+            "check_anchor_binding",
+            "check_transcript_binding",
+            "check_conjunction_binding",
+            "check_segment_binding",
+            "check_chain_root_binding",
+            "check_body_chain_binding",
+            "check_state_hash_preimage_binding",
+            "check_state_hash_program_pin",
+            "check_subproof_program_pin",
+        ] {
+            let calls = prod.matches(&format!("{f}(")).count();
+            assert!(
+                calls >= 2,
+                "`{f}` appears {calls}× as a call in the production half: a refusal that is \
+                 defined and never invoked is the `EffectsHashMismatch` class this module's own \
+                 doctrine opens with"
+            );
+        }
+    }
 
     /// ⚑⚑ **REFUSAL 5b, POLARITY ONE — the served head descriptor's program pin IS the served
     /// sub-proof descriptor's fingerprint.** Both objects come from `descriptor_by_name`, so this is
@@ -2105,7 +2734,7 @@ mod tests {
         let short = &link[..link.len() - 1];
         let e = check_segment_binding(&head, short).expect_err("must be REFUSED");
         assert!(
-            e.contains("the segment sub-proof publishes 36 inputs"),
+            e.contains("the segment sub-proof publishes 45 inputs"),
             "got: {e}"
         );
     }
@@ -2114,8 +2743,9 @@ mod tests {
     /// `LightClientMinaLinkAir` cannot silently move what this consumer compares.
     ///
     /// ⚑ 37, not 20, since the 2026-08-08 publication flag day (`BODYHASH` PI 20..28, `BODY_ACC`
-    /// PI 29..36). The literals are deliberately literals — the SECOND source, checked against
-    /// Lean `LightClientMinaLinkAir.MINA_LINK_PI_COUNT` and the served descriptor's own count.
+    /// PI 29..36); ⚑⚑ **46, not 37, since 2026-08-10** (`PI_HEAD_OWN` 37..45). The literals are
+    /// deliberately literals — the SECOND source, checked against Lean
+    /// `LightClientMinaLinkAir.MINA_LINK_PI_COUNT` and the served descriptor's own count.
     #[test]
     fn segment_pi_layout_matches_the_lean_descriptor() {
         assert_eq!(LINK_PI_ANCHOR_BASE, 0);
@@ -2125,9 +2755,59 @@ mod tests {
         assert_eq!(LINK_PI_BODYHASH_BASE, 20);
         assert_eq!(LINK_PI_BODY_ACC_BASE, 29);
         assert_eq!(LINK_BODY_ACC_LANES, 8);
-        assert_eq!(MINA_LINK_PI_COUNT, 37);
+        assert_eq!(LINK_PI_HEAD_OWN_BASE, 37);
+        assert_eq!(MINA_LINK_PI_COUNT, 46);
         let d = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
         assert_eq!(d.public_input_count, MINA_LINK_PI_COUNT);
+    }
+
+    /// ⚑⚑ **THE SERVED DESCRIPTOR PUBLISHES ROW 0's `OWNHASH` ON `.first`, AND THE TIP ON
+    /// `.last`.** The nine new slots read the SAME nine columns the tip block reads; what
+    /// separates them is the row selector, and that separation is the entire reason REFUSAL 17 is
+    /// not ∃-image vacuous. Read off the emitted bytes, so a Lean re-index that collapsed the two
+    /// blocks onto one row would red here rather than quietly making the cover decorative.
+    #[test]
+    fn the_head_own_block_is_the_first_row_and_the_tip_block_the_last() {
+        use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
+        let d = descriptor_by_name(MINA_LINK_DESCRIPTOR).expect("served");
+        let pin_row = |pi: usize| -> Option<VmRow> {
+            d.constraints.iter().find_map(|c| match c {
+                dregg_circuit::descriptor_ir2::VmConstraint2::Base(VmConstraint::PiBinding {
+                    row,
+                    col,
+                    pi_index,
+                }) if *pi_index == pi => Some((*row, *col)),
+                _ => None,
+            })
+            .map(|(r, _)| r)
+        };
+        let pin_col = |pi: usize| -> Option<usize> {
+            d.constraints.iter().find_map(|c| match c {
+                dregg_circuit::descriptor_ir2::VmConstraint2::Base(VmConstraint::PiBinding {
+                    col,
+                    pi_index,
+                    ..
+                }) if *pi_index == pi => Some(*col),
+                _ => None,
+            })
+        };
+        for i in 0..MINA_STATE_LANES {
+            assert_eq!(
+                pin_row(LINK_PI_HEAD_OWN_BASE + i),
+                Some(VmRow::First),
+                "PI_HEAD_OWN lane {i} must read the FIRST row"
+            );
+            assert_eq!(
+                pin_row(LINK_PI_TIP_BASE + i),
+                Some(VmRow::Last),
+                "PI_TIP lane {i} must read the LAST row"
+            );
+            assert_eq!(
+                pin_col(LINK_PI_HEAD_OWN_BASE + i),
+                pin_col(LINK_PI_TIP_BASE + i),
+                "both blocks must name the SAME `OWNHASH` column {i}"
+            );
+        }
     }
 
     /// The vk is a function of the DESCRIPTOR NAME, so a VK-epoch flip that renames the descriptor

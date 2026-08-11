@@ -53,6 +53,7 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, parse_vm_descriptor2,
     prove_vm_descriptor2, verify_vm_descriptor2,
 };
+use dregg_circuit::effect_vm::key_limbs9;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal;
@@ -134,7 +135,7 @@ const LINK_HASH_VK_0: usize = 31;
 const LINK_BODY_ACC_0: usize = 40;
 const LINK_CHAIN_VK_0: usize = 48;
 const LINK_BODY_ACC_LANES: usize = 8;
-const LINK_PI_COUNT: usize = 37;
+const LINK_PI_COUNT: usize = 46;
 
 /// `dregg-pasta-fp-absorb::v1`'s nine fingerprint lanes — the state-hash seam's `vkPin`.
 /// ⚑ Recomputed 2026-08-08 (`conj_fingerprint`); the old `[446814635, …]` named a program no
@@ -191,7 +192,7 @@ const CHAINLINK_PI_LANES: [u32; 9] = [
 /// `circuit/tests/mina_transcript_carrier_binding.rs`, which is what makes them a gate rather than
 /// a transcription.
 const LINK_VK_LANES: [u32; 9] = [
-    521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626,
+    92966942, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693,
 ];
 
 /// `LightClientMinaAir.CONJ_VK_LANES` — the nine `Faithful9` lanes of the FINALIZE-CONJUNCTION
@@ -367,7 +368,7 @@ fn the_served_descriptor_has_the_recursion_shape() {
     // chain's 8-lane ordered transcript accumulator (PI 29..36) are PUBLISHED, because a
     // `proofBind`'s `commit`/`vk` may only name published values.
     assert_eq!(
-        seg_desc.public_input_count, 37,
+        seg_desc.public_input_count, 46,
         "nine anchor lanes, nine tip lanes, the anchor height, the counted segment length, the \
          nine published body-hash lanes and the eight transcript-accumulator lanes"
     );
@@ -715,23 +716,10 @@ fn chainlink_pi_commitment(pis: &[u32]) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
+/// The library's [`key_limbs9`]; the hand-rolled base-`2^29` packing that stood here was a
+/// transcription of it.
 fn key_lanes9(bytes: &[u8; 32]) -> [u64; 9] {
-    let mut v = [0u64; 9];
-    let mut acc: u128 = 0;
-    let mut bits = 0usize;
-    let mut out = 0usize;
-    for b in bytes.iter() {
-        acc |= (*b as u128) << bits;
-        bits += 8;
-        while bits >= 29 && out < 8 {
-            v[out] = (acc & ((1u128 << 29) - 1)) as u64;
-            acc >>= 29;
-            bits -= 29;
-            out += 1;
-        }
-    }
-    v[8] = acc as u64;
-    v
+    key_limbs9(bytes).map(|l| u64::from(l.as_u32()))
 }
 
 /// Silence the unused-import lint when `HeapLeaf` is only needed by the shape helper above.

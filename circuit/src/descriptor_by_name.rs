@@ -370,6 +370,13 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-pasta-fp-chainlink::v1",
         MINA_FP_CHAINLINK_TRANSCRIPT_JSON,
     ),
+    // ⚑⚑⚑ 2026-08-10 — THE STATE-HASH PREIMAGE PROGRAM, served so REFUSAL 17 can dispatch it.
+    // `dregg-mina-lightclient-link::v1`'s state-hash seam has pinned this descriptor's fingerprint
+    // since it was written, and NOTHING resolved the name: the seam declared a sub-program no
+    // consumer could obtain, which is why its `state-hash-preimage` port had no cover. Emitted and
+    // pinned but served by nothing is the same shape the conjunction descriptor sat in for two
+    // days — see that row's note.
+    ("dregg-pasta-fp-absorb::v1", MINA_FP_ABSORB_JSON),
     // ⚑ The Solana STAKE-TABLE FOLD: one row per stake-table entry. The eight-lane Poseidon2
     // commitment to the table and the u64 active-stake DENOMINATOR both come out of the SAME rows,
     // so a swapped validator set with an identical tally moves the root.
@@ -774,6 +781,31 @@ const MINA_WRAP_CONJUNCTION_JSON: &str =
 /// element 0) is the VK's. Deriving `fq_digest` removes a CARRIER; it does not verify Mina.
 const MINA_FP_CHAINLINK_TRANSCRIPT_JSON: &str =
     include_str!("../descriptors/by-name/pasta-fp-chainlink.json");
+
+/// ⚑⚑⚑ `dregg-pasta-fp-absorb::v1` — **THE MINA STATE-HASH STEP**, served from 2026-08-10.
+///
+/// Lean-authored. One `fp_kimchi` permutation over a PUBLIC incoming sponge state:
+/// `perm(state + [x₀, x₁, 0])`, which is Mina's own
+/// `state_hash = Poseidon_Fp(salt "MinaProtoState")[previous_state_hash ; state_body_hash]` — two
+/// field elements at rate 2, one permutation (`Bridge/MinaStateHashDerive.lean:31`, the daemon's
+/// `protocol_state.ml:45-55`). 192 public inputs: `in_state(96) ‖ absorbed(64) ‖ squeeze(32)`, in
+/// the sound base-`2^8` limb encoding.
+///
+/// ⚑ **WHY IT IS SERVED, and it is the same defect the conjunction row records.**
+/// `LightClientMinaLinkAir.stateHashBindLeg` has pinned this descriptor's semantic fingerprint
+/// (`ABSORB_VK_LANES`) since it was written, and its 54-lane commitment IS this descriptor's
+/// public-input vector re-encoded — but `descriptor_by_name` did not resolve the name, so **no
+/// consumer could obtain the sub-program the seam names**, and the seam's `state-hash-preimage`
+/// port therefore had no cover of any kind. `mina_head_verifier::check_state_hash_preimage_binding`
+/// (REFUSAL 17) is the cover; this row is what lets it dispatch.
+///
+/// ⚠ **WHAT A VERIFYING PROOF OF IT ESTABLISHES, precisely.** That a CONSISTENT quadruple
+/// `(state, x₀, x₁, out)` was exhibited — the genuine permutation of the first three lands on the
+/// fourth. It does NOT say whose block: what ties the quadruple to a segment is the consumer
+/// pinning the incoming state to the `MinaProtoState` salt and the other three blocks to the
+/// link proof's own published lanes, which is exactly refusals 17b–17d and not an assumption
+/// hidden here.
+const MINA_FP_ABSORB_JSON: &str = include_str!("../descriptors/by-name/pasta-fp-absorb.json");
 
 /// ⚑ `dregg-solana-stake-table-fold::v1` — the Solana stake table, FOLDED, one row per entry.
 ///

@@ -823,14 +823,21 @@ theorem minaLink_body_hash_is_named_by_the_body_chain_seam :
         declaredCols) := by
   decide
 
-/-- …and the count is exactly the thirty-seven the descriptor declares, so the `[]` above is a
-statement about thirty-seven joined columns and not about an empty PI set. ⚑ **20 → 37 on the
+/-- …and the count is exactly the forty-six the descriptor declares, so the `[]` above is a
+statement about forty-six joined columns and not about an empty PI set. ⚑ **20 → 37 on the
 2026-08-08 publication flag day**, and the seventeen that arrived are the nine `BODYHASH` lanes and
-the eight body-chain accumulator lanes. -/
-theorem minaLink_has_thirty_seven_pi_bound_columns :
+the eight body-chain accumulator lanes.
+
+⚑⚑ **37 → 46 on the 2026-08-10 `PI_HEAD_OWN` flag day, and the COLUMN count did NOT move with
+it.** The nine new slots publish the FIRST row's `OWNHASH` — columns 9..17, which `PI_TIP` already
+PI-bound on the LAST row. So this is the one case in the census where a publication adds PI SLOTS
+and no new bound COLUMNS: the two blocks are the same nine columns read at two different rows, and
+`isPiBound` is a fact about a column. The two conjuncts below therefore no longer agree, and that
+disagreement is the measurement. -/
+theorem minaLink_pi_bound_columns_and_slots :
     ((List.range LightClientMinaLinkAir.minaLinkDesc.traceWidth).filter
       fun col => isPiBound LightClientMinaLinkAir.minaLinkDesc col).length = 37 ∧
-    LightClientMinaLinkAir.minaLinkDesc.piCount = 37 := by
+    LightClientMinaLinkAir.minaLinkDesc.piCount = 46 := by
   decide
 
 /-- ⚑⚑⚑ **THE SOLANA STAKE-TABLE FOLD: NO DECORATIVE ANCHORS — AND, FOR THE FIRST TIME IN THIS
@@ -955,7 +962,7 @@ theorem the_five_verify_descriptors_carry_eighty_decorative_anchors :
 #assert_axioms the_unpublished_body_hash_claim_is_now_refuted
 #assert_axioms minaLink_body_chain_accumulator_is_published_and_declared
 #assert_axioms minaLink_body_hash_is_named_by_the_body_chain_seam
-#assert_axioms minaLink_has_thirty_seven_pi_bound_columns
+#assert_axioms minaLink_pi_bound_columns_and_slots
 #assert_axioms solStakeFold_decorative_anchors
 #assert_axioms solStakeFold_has_twelve_pi_bound_columns
 #assert_axioms solStakeFold_root_shares_a_constraint_with_the_stake_rows

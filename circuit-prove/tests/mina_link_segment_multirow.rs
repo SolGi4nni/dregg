@@ -112,7 +112,7 @@ const PI_BODY_ACC_BASE: usize = 29;
 /// unpublished `BODYHASH` could not be `cb.connect`ed by a fold at all — publication is what makes
 /// the body-chain seam REACHABLE. The old 20-PI shape now REFUSES (`public input count … !=
 /// descriptor public_input_count`) rather than being reinterpreted at the wrong offsets.
-const LINK_PI_COUNT: usize = 37;
+const LINK_PI_COUNT: usize = 46;
 
 /// A canonical stand-in for the chain's 8-lane transcript accumulator. ⚑ Like `BODY_LANES`, this is
 /// a SHAPE witness: the AIR forces the seam's `vk` lanes and publishes these eight, and relates them

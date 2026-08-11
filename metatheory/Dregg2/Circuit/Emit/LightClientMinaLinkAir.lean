@@ -392,8 +392,43 @@ def PI_SEG_LEN : Nat := 2 * STATE_LIMBS + 1
 def PI_BODYHASH (j : Nat) : Nat := 2 * STATE_LIMBS + 2 + j
 /-- ⚑ PI slots 29..36: the body-hash chain's ordered transcript accumulator, PUBLISHED. -/
 def PI_BODY_ACC (i : Nat) : Nat := 3 * STATE_LIMBS + 2 + i
-/-- Number of public inputs. ⚑ **20 → 37 on 2026-08-08**, the flag day §"WHAT THIS BREAKS" costed. -/
-def MINA_LINK_PI_COUNT : Nat := 3 * STATE_LIMBS + 10
+/-- ⚑⚑⚑ PI slots 37..45: the FIRST row's OWN state hash, PUBLISHED — **2026-08-10**.
+
+**WHY THIS BLOCK EXISTS, and it is the whole content of the `state-hash-preimage` port's cover.**
+
+`stateHashBindLeg` commits `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` on EVERY row against
+`dregg-pasta-fp-absorb::v1`. On ROW 0 three of those four blocks were already grounded outside the
+prover's choice:
+
+* `salt` — 27 descriptor CONSTANTS;
+* `PARENT` — `firstOldRootBind` pins those columns to `PI_ANCHOR`, and the consumer refuses
+  `PI_ANCHOR` against the cell-program-pinned weak-subjectivity anchor
+  (`mina_head_verifier::check_segment_binding`, refusal 14);
+* `BODYHASH` — pinned to `PI_BODYHASH` and welded to the 25-leaf body-hash chain root
+  (`check_body_chain_binding`, refusal 16d).
+
+**`OWNHASH` was the ONE unpublished block of the row-0 commit vector — 9 lanes of 54.** A
+`proofBind`'s commitment may only name PUBLISHED values for a fold to reach, and a consumer can
+only compare what a proof publishes, so with row 0's `OWNHASH` unpublished there was NO object
+anywhere — AIR, seam or host — that could relate it to anything. That is why the port's cover did
+not exist rather than merely being unwritten.
+
+⚑ And publishing the FIRST row's is what makes the comparison bite. `PI_TIP` is the LAST row's
+`OWNHASH`, and a cover against it would be ∃-image vacuity: the absorbed pair at that row is
+unpublished, so a prover picks any pair, computes its image, and publishes THAT as the tip. At row
+0 both absorbed elements are grounded, so `OWNHASH₀` is a DETERMINED value and the comparison has
+no freedom left to satisfy.
+
+⚠ **WHAT IT DOES NOT BUY.** Rows `1 …` keep `LinkHashResidual`: their `OWNHASH` is still a free
+witness. What this closes is the FIRST link — and by `laneContinuity`, `OWNHASH₀ = PARENT₁`, so the
+chain's second element is derived from the pinned anchor. Closing the rest needs one absorb
+instance per row and a per-row accumulator this AIR does not compute; that is the next rung and it
+is UNDONE WORK, not a theorem of the model. -/
+def PI_HEAD_OWN (j : Nat) : Nat := 3 * STATE_LIMBS + 10 + j
+/-- Number of public inputs. ⚑ **20 → 37 on 2026-08-08**, the flag day §"WHAT THIS BREAKS" costed;
+⚑⚑ **37 → 46 on 2026-08-10**, the `state-hash-preimage` cover's publication (see
+[`PI_HEAD_OWN`]). -/
+def MINA_LINK_PI_COUNT : Nat := 3 * STATE_LIMBS + 19
 
 /-- The eight LOW lane columns of the block's parent hash. -/
 def parentLowLanes : List Nat :=
@@ -753,6 +788,15 @@ def bodyHashPins : List AirLeg :=
 def bodyAccPins : List AirLeg :=
   (List.range 8).map fun i => .pin ⟨VmRow.first, BODY_ACC i, PI_BODY_ACC i⟩
 
+/-- ⚑⚑⚑ The nine FIRST-ROW `OWNHASH` PI pins (cols 9..17 → PI 37..45) — the 2026-08-10 publication
+that gives the `state-hash-preimage` port an output to land on. See [`PI_HEAD_OWN`].
+
+⚠ `.first`, and the row selector is the whole point: `tipPins` pins the SAME columns on `.last`.
+The two coincide only on a one-row segment, and a cover written against the `.last` block would be
+∃-image vacuous — the reason is spelled out at [`PI_HEAD_OWN`]. -/
+def headOwnPins : List AirLeg :=
+  (List.range STATE_LIMBS).map fun j => .pin ⟨VmRow.first, OWNHASH j, PI_HEAD_OWN j⟩
+
 /-! ## §3 — ⚑ THE SOURCE AIR, and the descriptor as the COMPILER'S OUTPUT. -/
 
 /-- ⚑ **THE SOURCE.** Forty-three legs: fifteen windows (nine lane-continuity + six
@@ -784,7 +828,7 @@ def minaLinkAir : EffectAir :=
       ++ anchorPins ++ tipPins
       ++ [ .pin ⟨VmRow.first, ANCHOR_H, PI_ANCHOR_H⟩
          , .pin ⟨VmRow.last, REAL_COUNT, PI_SEG_LEN⟩ ]
-      ++ bodyHashPins ++ bodyAccPins }
+      ++ bodyHashPins ++ bodyAccPins ++ headOwnPins }
 
 /-- ⚑ **THE VOCABULARY WAS ADEQUATE, AND THE MULTI-ROW HALF IS WHERE IT MATTERED.** Every leg is
 main-rail expressible — decided on the emitted predicate, not by eye — so no leg lowered to
@@ -796,9 +840,10 @@ theorem minaLinkAir_mainRailOk : minaLinkAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaLinkAir_pinsFit : minaLinkAir.pinsFit MINA_LINK_PI_COUNT = true := by rfl
 
-/-- Sixty-two legs: 9 lane windows + 6 counting/height windows + 5 `.limbs` + 3 top lookups +
-2 `.bind` + 37 pins. ⚑ 43 → 62 on the 2026-08-08 publication flag day. -/
-theorem minaLinkAir_leg_count : minaLinkAir.legs.length = 62 := by rfl
+/-- Seventy-one legs: 9 lane windows + 6 counting/height windows + 5 `.limbs` + 3 top lookups +
+2 `.bind` + 46 pins. ⚑ 43 → 62 on the 2026-08-08 publication flag day; ⚑⚑ 62 → 71 on the
+2026-08-10 `PI_HEAD_OWN` publication. -/
+theorem minaLinkAir_leg_count : minaLinkAir.legs.length = 71 := by rfl
 
 /-- ⚑ **THE SEAM IS NOT THE DECLARATIVE SHAPE, AND IT IS NOT NARROW.** `BindLeg.mainRailOk` refuses
 a bind that pins neither its program nor its commitment, and refuses either vector below
@@ -902,10 +947,11 @@ theorem minaLinkDesc_tables : minaLinkDesc.tables = [minaLaneTable, minaTopLaneT
 theorem minaLinkDesc_hashSites : minaLinkDesc.hashSites = [] := rfl
 theorem minaLinkDesc_ranges : minaLinkDesc.ranges = [] := rfl
 
-/-- Ninety-nine constraints from sixty-two legs: one per leg except the five `.limbs` legs, which
-lower to EIGHT (parent, own, body) and NINE (each attested program) lookups. A dropped lane moves
-this and nothing else does. ⚑ 72 → 99 on the 2026-08-08 publication flag day. -/
-theorem minaLinkDesc_constraint_count : minaLinkDesc.constraints.length = 99 := rfl
+/-- One hundred and eight constraints from seventy-one legs: one per leg except the five `.limbs`
+legs, which lower to EIGHT (parent, own, body) and NINE (each attested program) lookups. A dropped
+lane moves this and nothing else does. ⚑ 72 → 99 on the 2026-08-08 publication flag day; ⚑⚑
+99 → 108 on the 2026-08-10 `PI_HEAD_OWN` publication. -/
+theorem minaLinkDesc_constraint_count : minaLinkDesc.constraints.length = 108 := rfl
 
 /-- ⚑⚑ **THE SEAM, AT ITS EMITTED POSITION, ON THE COMPILER'S OUTPUT.** Constraint 51 is the
 `proofBind`: an unconditional guard, a commitment whose first 27 lanes are the pinned salt
@@ -1015,7 +1061,39 @@ theorem minaLinkDesc_pins :
       , .base (.piBinding VmRow.first (BODY_ACC 4) (PI_BODY_ACC 4))
       , .base (.piBinding VmRow.first (BODY_ACC 5) (PI_BODY_ACC 5))
       , .base (.piBinding VmRow.first (BODY_ACC 6) (PI_BODY_ACC 6))
-      , .base (.piBinding VmRow.first (BODY_ACC 7) (PI_BODY_ACC 7)) ] := rfl
+      , .base (.piBinding VmRow.first (BODY_ACC 7) (PI_BODY_ACC 7))
+      -- ⚑⚑⚑ 2026-08-10 — the nine that give the `state-hash-preimage` port an output to land on.
+      -- ⚠ `.first`, against `tipPins`' `.last` on the SAME columns: see `PI_HEAD_OWN`.
+      , .base (.piBinding VmRow.first (OWNHASH 0) (PI_HEAD_OWN 0))
+      , .base (.piBinding VmRow.first (OWNHASH 1) (PI_HEAD_OWN 1))
+      , .base (.piBinding VmRow.first (OWNHASH 2) (PI_HEAD_OWN 2))
+      , .base (.piBinding VmRow.first (OWNHASH 3) (PI_HEAD_OWN 3))
+      , .base (.piBinding VmRow.first (OWNHASH 4) (PI_HEAD_OWN 4))
+      , .base (.piBinding VmRow.first (OWNHASH 5) (PI_HEAD_OWN 5))
+      , .base (.piBinding VmRow.first (OWNHASH 6) (PI_HEAD_OWN 6))
+      , .base (.piBinding VmRow.first (OWNHASH 7) (PI_HEAD_OWN 7))
+      , .base (.piBinding VmRow.first (OWNHASH 8) (PI_HEAD_OWN 8)) ] := rfl
+
+/-- ⚑⚑⚑ **THE TWO `OWNHASH` PUBLICATIONS ARE DIFFERENT ROWS, AND THAT IS THE COVER'S WHOLE
+CONTENT.** `PI_TIP` reads the LAST row's own hash; `PI_HEAD_OWN` reads the FIRST row's. They name
+the same nine COLUMNS and different `VmRow` selectors, so on any segment longer than one row they
+are different values.
+
+Stated as a theorem rather than a comment because the cheap mistake — covering the port against
+`PI_TIP` — is exactly the ∃-image vacuity `PI_HEAD_OWN`'s docblock names: at the last row both
+absorbed elements are unpublished, so a prover picks a pair, computes its image and publishes THAT
+as the tip. At the first row both are grounded. A future edit that "simplifies" these to one block
+reds here. -/
+theorem the_head_own_pins_are_a_different_row_than_the_tip_pins :
+    headOwnPins.filterMap (fun l => match l with | .pin p => some (p.row, p.col) | _ => none)
+        = (List.range STATE_LIMBS).map (fun j => (VmRow.first, OWNHASH j))
+      ∧ tipPins.filterMap (fun l => match l with | .pin p => some (p.row, p.col) | _ => none)
+        = (List.range STATE_LIMBS).map (fun j => (VmRow.last, OWNHASH j))
+      ∧ headOwnPins.length = STATE_LIMBS
+      ∧ (∀ j, (PI_HEAD_OWN j) ≠ (PI_TIP j)) := by
+  refine ⟨by decide, by decide, by decide, fun j => ?_⟩
+  simp only [PI_HEAD_OWN, PI_TIP, STATE_LIMBS]
+  omega
 
 /-- ⚑⚑⚑ **THE BODY-CHAIN SEAM, AT ITS EMITTED POSITION.** Constraint 61 is the second `proofBind`:
 an unconditional guard, a commitment whose first 27 lanes are the pinned `MinaProtoStateBody` salt
@@ -1072,10 +1150,11 @@ theorem minaLink_layout_wellformed :
       ∧ BODY_ACC 0 = 40 ∧ BODY_ACC 7 = 47 ∧ CHAIN_VK 0 = 48 ∧ CHAIN_VK 8 = 56
       ∧ MINA_LINK_WIDTH = 57
       ∧ PI_BODYHASH 0 = 20 ∧ PI_BODYHASH 8 = 28 ∧ PI_BODY_ACC 0 = 29 ∧ PI_BODY_ACC 7 = 36
-      ∧ MINA_LINK_PI_COUNT = 37
-      ∧ CHAIN_VK 8 < MINA_LINK_WIDTH ∧ PI_BODY_ACC 7 < MINA_LINK_PI_COUNT := by
+      ∧ PI_HEAD_OWN 0 = 37 ∧ PI_HEAD_OWN 8 = 45
+      ∧ MINA_LINK_PI_COUNT = 46
+      ∧ CHAIN_VK 8 < MINA_LINK_WIDTH ∧ PI_HEAD_OWN 8 < MINA_LINK_PI_COUNT := by
   refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-    rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩ <;> decide
+    rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, ?_⟩ <;> decide
 
 /-- ⚑ **THE SALT LANES ARE THE SALT.** The 27 `.const` lanes of the seam's commitment head
 recompose, nine at a time base `2^29`, to the three elements of

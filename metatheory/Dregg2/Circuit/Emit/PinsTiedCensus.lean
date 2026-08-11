@@ -223,7 +223,7 @@ pins** — the two rows below are the delta, each with its classification:
     REFUSAL 4 (`check_transcript_binding`) and REFUSAL 15 (`check_conjunction_binding` — wired
     2026-08-08, dead code the two days before), censused as `MinaSeams.subPiWeld`/`conjPiWeld`,
     both-polarity tested in `mina_head_verifier.rs`.
-16. **`dregg-mina-lightclient-link::v1`** — 8/37 untied (cols 40..47 `BODY_ACC`). Same class:
+16. **`dregg-mina-lightclient-link::v1`** — 8/46 untied (cols 40..47 `BODY_ACC`). Same class:
     the forcing is REFUSAL 16 (`check_body_chain_binding`, landed 2026-08-08 — these eight lanes
     had NO reader of any kind before it), censused as `MinaSeams.bodyAccWeld`. ⚠ No in-AIR width
     lookup exists or is owed: a BabyBear digest lane fills its column, and a 29-bit table would
@@ -298,7 +298,7 @@ theorem minaVerify_untied_pins :
     untiedPins LightClientMinaAir.minaLcVerifyDesc
       = [40, 41, 42, 43, 44, 45, 46, 47, 48, 68, 69, 70, 71, 72, 73, 74, 75, 76] := by decide
 
-/-- **Mina link: eight of thirty-seven** — the `BODY_ACC` island (cols 40..47), row 16 of the
+/-- **Mina link: eight of forty-six** — the `BODY_ACC` island (cols 40..47), row 16 of the
 dated confession. The eight lanes NO constraint of any kind reads; forced by REFUSAL 16's
 executor weld since 2026-08-08 and by nothing before it. -/
 theorem minaLink_untied_pins :

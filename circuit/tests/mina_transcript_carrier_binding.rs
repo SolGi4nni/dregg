@@ -41,6 +41,7 @@
 
 use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, parse_vm_descriptor2};
 use dregg_circuit::descriptor_ir2_canonical::effect_vm_descriptor2_semantic_fingerprint;
+use dregg_circuit::effect_vm::key_limbs9;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint};
 
 const LINK_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-fq-chainlink.json");
@@ -110,7 +111,7 @@ const CONJ_PI_BASE: usize = 68;
 /// `LEAN_CHAINLINK_PI_LANES`: Lean cannot compute blake3, so the literal there is a transcription,
 /// and a transcription is only a gate if something recomputes it.
 const LEAN_SEGMENT_VK_LANES: [u64; 9] = [
-    521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626,
+    92966942, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693,
 ];
 
 /// ⚑ **AND IT MOVED ON 2026-08-06, WHICH IS WHY THIS FILE EXISTS.** A sibling lane re-emitted
@@ -123,25 +124,10 @@ const LEAN_SEGMENT_VK_LANES: [u64; 9] = [
 /// re-emit that leaves a forgery behind goes red), and the recompute below is what makes THESE nine
 /// a gate.
 
-/// Nine base-`2^29` lanes of a 32-byte value, least-significant first (Lean `keyToLanes9`,
-/// `Faithful9::from_key_lanes9`): `8·29 + 24 = 256` exactly, machine-checked injective.
+/// The library's [`key_limbs9`]; the hand-rolled base-`2^29` packing that stood here was a
+/// transcription of it.
 pub fn key_lanes9(bytes: &[u8; 32]) -> [u64; 9] {
-    let mut v = [0u64; 9];
-    let mut acc: u128 = 0;
-    let mut bits = 0usize;
-    let mut out = 0usize;
-    for b in bytes.iter() {
-        acc |= (*b as u128) << bits;
-        bits += 8;
-        while bits >= 29 && out < 8 {
-            v[out] = (acc & ((1u128 << 29) - 1)) as u64;
-            acc >>= 29;
-            bits -= 29;
-            out += 1;
-        }
-    }
-    v[8] = acc as u64;
-    v
+    key_limbs9(bytes).map(|l| u64::from(l.as_u32()))
 }
 
 /// ⚑ **THE SUB-PROOF PUBLIC-INPUT COMMITMENT.** blake3 derive-key over the context above, absorbing
@@ -426,7 +412,7 @@ fn the_segment_seam_pins_the_real_link_program() {
     // because a `proofBind`'s `commit`/`vk` can only name published values and an unpublished
     // `BODYHASH` cannot be `cb.connect`ed by a fold at all.
     assert_eq!(
-        seg.public_input_count, 37,
+        seg.public_input_count, 46,
         "nine anchor lanes, nine tip lanes, the anchor height, the counted segment length, the \
          nine published body-hash lanes and the eight transcript-accumulator lanes"
     );

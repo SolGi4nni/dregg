@@ -324,7 +324,7 @@ fn the_seam_is_pinned_and_eight_lanes_wide() {
     assert_eq!(binds[0].commit.len(), 8);
     assert_eq!(binds[0].vk.len(), 8);
     assert!(
-        binds[0].bound.is_some(),
+        binds[0].bound.lanes().is_some(),
         "the commitment half is pinned to row expressions"
     );
 }

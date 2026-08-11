@@ -76,7 +76,7 @@ fn the_four_seams_parse_and_validate() {
 fn the_head_tip_seam_is_the_executors_nineteen_refusals() {
     let s = head_tip_seam().unwrap();
     assert_eq!(s.left.claim_len, 39);
-    assert_eq!(s.right.claim_len, 37);
+    assert_eq!(s.right.claim_len, 46);
     let mut expected: Vec<(usize, usize)> = (0..9).map(|i| (i, i)).collect();
     expected.extend((0..9).map(|i| (9 + i, 9 + i)));
     expected.push((29, 18));

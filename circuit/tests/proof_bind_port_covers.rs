@@ -29,30 +29,55 @@
 //! (`mina_head_verifier.rs`'s REFUSAL suites), named at each `WeldCover` declaration in
 //! `MinaSeams.lean`. What this gate refuses is the cheaper lie: a port that points at nothing.
 //!
-//! # The counted wound, said out loud
+//! # The counted wound — CLOSED 2026-08-10, and the scan root moved to make the count honest
 //!
-//! [`OWED_COVERS`] is not zero, and the number is the point. Two ported commit surfaces name a
-//! welder that has not been written:
+//! [`OWED_COVERS`] is **0**. It was pinned at 2 and the gate MEASURED 1, and the gap was not a
+//! miscount: the second owed row — `dregg-mina-wrap-closing-fs::v1`'s **`delta-absorb-pis`** —
+//! lives in `circuit/tests/fixtures/`, and this file only walked `circuit/descriptors/`. **A port
+//! outside the scan root is not an owed cover, it is an invisible one**, which is worse than the
+//! `null` the type retired. The walk now covers both roots, so writing a welder is the only thing
+//! that moves the literal.
+//!
+//! ⚑ And those two fixtures still carried `"bound":null` — the RETIRED shape, which
+//! `parse_vm_descriptor2` refuses by name. They were re-emitted from Lean (`EmitMinaWrapClosing`,
+//! `desc fs` / `desc fs-shifted-manifest`), byte-identical modulo the `bound` field.
+//!
+//! What closed the two:
 //!
 //! * `dregg-mina-lightclient-link::v1`'s **`state-hash-preimage`** — the 54-lane
-//!   `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` commit vector of `stateHashBindLeg`. `bodyHashWeld`
-//!   covers the `BODYHASH` nonet (REFUSAL 16d); **nothing anywhere compares `PARENT` or
-//!   `OWNHASH`**, and `mina_head_verifier.rs` says so itself — *"its `OWNHASH` is a free witness"*.
-//!   Under `bound := none` that fact lived in a paragraph. It is now a name that fails to resolve.
-//! * `dregg-mina-wrap-closing::v1`'s **`delta-absorb-pis`** — the closing fold's `connect`s over
-//!   the delta-absorb commit vector, which `mina_wrap_closing_fold.rs` does not expose as a named
-//!   function.
+//!   `salt ‖ PARENT ‖ BODYHASH ‖ OWNHASH` commit vector of `stateHashBindLeg`. Covered by
+//!   `mina_head_verifier::check_state_hash_preimage_binding` (REFUSAL 17), a **HOST** comparison
+//!   of all four blocks against a VERIFIED `dregg-pasta-fp-absorb::v1` sub-proof. It needed a
+//!   descriptor flag day first: row 0's `OWNHASH` was published by nothing, so no object anywhere
+//!   could reach it — `piCount` 37 → 46 (`LightClientMinaLinkAir.PI_HEAD_OWN`), and the link's VK
+//!   and the head's rotate with it.
+//! * `dregg-mina-wrap-closing-fs::v1`'s **`delta-absorb-pis`** — covered by
+//!   `mina_wrap_closing_fold::connect_delta_absorb_pis`, a **SEAM**: 192 in-circuit `cb.connect`s
+//!   in a recursion aggregation node. Not an AIR constraint of the `-fs` descriptor, and the
+//!   docblock says so.
 //!
-//! The literal may only shrink. Writing either welder is what shrinks it; renaming a port to dodge
-//! the gate moves the literal the other way and reds this file.
+//! ⚠ **AND ZERO IS NOT "COVERED EVERYWHERE".** This gate resolves NAMES. That
+//! `check_state_hash_preimage_binding` exists does not make it compare the right lanes; that is
+//! the welder's own both-polarity release tests. Read [`OWED_COVERS`] as *"no port points at
+//! nothing"*, never as *"every commit lane is forced"*.
 
 use dregg_circuit::descriptor_ir2::{CommitBinding, VmConstraint2, parse_vm_descriptor2};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// ⚑ The number of declared port covers that DO NOT resolve. May only shrink. See the module
-/// docblock for what each one is and what closes it.
-const OWED_COVERS: usize = 2;
+/// ⚑ The number of declared port covers that DO NOT resolve. **May only shrink**, and it is at the
+/// floor: 2 → 0 on 2026-08-10. See the module docblock for what closed each one, and for the
+/// scan-root correction that made the count honest before it could be closed.
+const OWED_COVERS: usize = 0;
+
+/// Every root a served or fixture descriptor can live under.
+///
+/// ⚑ **`circuit/tests/fixtures/` IS IN THE WALK, and the reason is a measurement.** With only
+/// `circuit/descriptors/`, `dregg-mina-wrap-closing-fs::v1`'s `delta-absorb-pis` port was outside
+/// the gate entirely — declared in Lean, emitted into a fixture, resolved by nothing and COUNTED
+/// by nothing. The pinned literal said 2 while the walk found 1, and the discrepancy was the only
+/// trace of it. A port the ratchet cannot see is strictly worse than one it counts.
+const SCAN_ROOTS: [&str; 2] = ["circuit/descriptors", "circuit/tests/fixtures"];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -120,11 +145,10 @@ fn resolves(cover: &str, seams: &BTreeSet<String>) -> bool {
     text.contains(&format!("fn {func}("))
 }
 
-/// Every served descriptor's ported commit halves, as `(descriptor, port, cover)`.
+/// Every served OR fixture descriptor's ported commit halves, as `(descriptor, port, cover)`.
 fn declared_ports() -> Vec<(String, String, String)> {
-    let dir = repo_root().join("circuit/descriptors");
     let mut out = Vec::new();
-    let mut stack = vec![dir];
+    let mut stack: Vec<PathBuf> = SCAN_ROOTS.iter().map(|r| repo_root().join(r)).collect();
     while let Some(d) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&d) else {
             continue;

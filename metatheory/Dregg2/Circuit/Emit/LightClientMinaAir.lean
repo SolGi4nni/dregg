@@ -1067,7 +1067,15 @@ def LINK_VK_LANES : List ℤ :=
   -- one `vk_pin` moved — and the link's fingerprint moves with it. Recomputed from the NEW bytes,
   -- same command:
   --   fp=9b5310dfefcd5ec053dd842c62adba89a6d50623f21fe2348b971efb85fa3125
-  [521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626]
+  --
+  -- ⚑⚑ MOVED 2026-08-10 with the link's `PI_HEAD_OWN` publication flag day: `piCount` 37 → 46,
+  -- constraints 99 → 108, `trace_width` UNCHANGED at 57 (the nine new slots publish the FIRST
+  -- row's `OWNHASH`, which is columns 9..17 — already-existing columns read at a second row).
+  -- That publication is what gives `LightClientMinaLinkAir.stateHashBindLeg`'s
+  -- `state-hash-preimage` port an output to land on; see `PI_HEAD_OWN`. Recomputed from the NEW
+  -- bytes, same command:
+  --   fp=1e908aa558d53e755b1ab637b8b4bb9f506770eb6f84f6df8e3c37fbbb5da933  w=57 pi=46 cons=108
+  [92966942, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693]
 
 /-- The `i`-th pinned segment-program lane, as the `vkPin` literal the leg carries. -/
 def linkVkLane (i : Nat) : ℤ := LINK_VK_LANES.getD i 0
@@ -2772,7 +2780,10 @@ def FORGED_LINK_VK_LANES : List ℤ :=
   -- ⚑ FOLLOWS `LINK_VK_LANES`, 2026-08-08: lane 0 + 1, tail identical. The 08-06 note above is
   -- exactly this maintenance, and `the_forged_link_lane_moves_a_real_value` went RED when the
   -- literal moved and this one did not — the falsifier caught its own staleness.
-  [521163676, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626]
+  -- ⚑⚑ AND IT CAUGHT IT AGAIN on 2026-08-10, on the `PI_HEAD_OWN` flag day, with the same two
+  -- conjuncts and no prompting. A falsifier that stops falsifying is this repo's own minted
+  -- failure class; this one is built so that it CANNOT go quietly stale.
+  [92966943, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693]
 
 /-- ⚑ **THE ROW THAT NAMES A DIFFERENT SEGMENT PROGRAM.** -/
 def forgedLinkProgramRow : Assignment :=

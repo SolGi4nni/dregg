@@ -116,7 +116,7 @@ const LINK_VK_0: usize = 49;
 /// descriptor's own bytes by `circuit/tests/mina_transcript_carrier_binding.rs` and by `dregg-turn`
 /// at verify time (`check_subproof_program_pin` at `HEAD_LINK_GUARD_COL`).
 const LINK_VK_LANES: [u32; 9] = [
-    521163675, 49704830, 20403440, 358270041, 224028827, 267981187, 506254216, 280978386, 2437626,
+    92966942, 167160517, 226924253, 392786031, 108333563, 37221816, 305889242, 394225383, 3385693,
 ];
 /// The nine `Faithful9` lanes of `dregg-pasta-fq-chainlink::v1`'s semantic fingerprint — the value
 /// the descriptor's `vk_pin` forces under `WRAP_FS_PROVED = 1`. Recomputed from that descriptor's

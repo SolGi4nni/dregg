@@ -981,8 +981,10 @@ fold's lane-by-lane `connect`, `prove_custom_binding_node`, counted by `proofBin
 
 /-- The head verify leaf claim: its whole 39-slot PI vector. -/
 def HEAD_CLAIM_LEN : Nat := 39
-/-- The link segment leaf claim: its whole 37-slot PI vector. -/
-def LINK_CLAIM_LEN : Nat := 37
+/-- The link segment leaf claim: its whole 46-slot PI vector. ⚑ **37 → 46 on 2026-08-10** — the
+`PI_HEAD_OWN` publication that gives `LightClientMinaLinkAir.stateHashBindLeg`'s
+`state-hash-preimage` port an output to land on. -/
+def LINK_CLAIM_LEN : Nat := 46
 
 /-- `effect_vm_descriptor2_semantic_fingerprint(dregg-mina-lightclient-verify::v1)`, as
 `Faithful9` key lanes. Measured 2026-08-08 (`conj_fingerprint` over the served artifact,
@@ -1101,7 +1103,11 @@ private theorem link_bodyhash_slot_published (j : Nat) (hj : j < 9) :
   have hmem : AirLeg.pin ⟨VmRow.first, LightClientMinaLinkAir.BODYHASH j,
       LightClientMinaLinkAir.PI_BODYHASH j⟩ ∈ LightClientMinaLinkAir.bodyHashPins :=
     List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
-  exact List.mem_append_left _ (List.mem_append_right _ hmem)
+  -- ⚠ NOT a hand-counted `mem_append_left/right` chain: that spelling encodes the leg list's
+  -- APPEND NESTING, so appending a pin block anywhere reds it with a type mismatch rather than a
+  -- statement change. It did, on the 2026-08-10 `headOwnPins` flag day.
+  simp only [LightClientMinaLinkAir.minaLinkAir, List.mem_append]
+  tauto
 
 private theorem link_bodyacc_slot_published (j : Nat) (hj : j < 8) :
     AirLeg.pin ⟨VmRow.first, LightClientMinaLinkAir.BODY_ACC j,
@@ -1110,7 +1116,8 @@ private theorem link_bodyacc_slot_published (j : Nat) (hj : j < 8) :
   have hmem : AirLeg.pin ⟨VmRow.first, LightClientMinaLinkAir.BODY_ACC j,
       LightClientMinaLinkAir.PI_BODY_ACC j⟩ ∈ LightClientMinaLinkAir.bodyAccPins :=
     List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
-  exact List.mem_append_right _ hmem
+  simp only [LightClientMinaLinkAir.minaLinkAir, List.mem_append]
+  tauto
 
 /-- ⚑ **S1 FOR THE HEAD↔LINK SEAM.** Every left endpoint is a slot the head AIR publishes with a
 real pin leg, every right endpoint one the link AIR publishes — the tip's right end deliberately
