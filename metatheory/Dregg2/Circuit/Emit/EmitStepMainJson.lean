@@ -74,6 +74,97 @@ def writeAtomic (path contents : String) : IO Unit := do
   IO.FS.writeFile staged contents
   IO.FS.rename staged path
 
+/-- The tracked step fixtures' directory, relative to `metatheory/` — the cwd every documented
+invocation of this driver uses. -/
+def TRACKED_STEP_DIR : String := "fixtures/pickles-stepmain-harness/fixtures"
+
+/-- ⚑ **THE TRACKED `(tag, rung)` PAIRS, DECLARED RATHER THAN DISCOVERED.** Five, each with its
+`_unwired` twin — ten files. Unlike the wrap side (where all fifteen rungs are tracked), the step
+harness carries a SELECTION, so the gate cannot infer "tracked" from "emitted": a rung this run
+emitted that is absent here is not drift, and a rung that IS here and was emitted must match. Listing
+them makes "which artifacts does this repo actually consume" answerable without a `ls`, and makes a
+tracked file that has quietly disappeared a RED instead of a silently smaller grade. -/
+def TRACKED : List (String × String) :=
+  [ ("smoke", "r1_transcript"), ("smoke", "r6_ft_eval0"), ("smoke", "r7_absorption")
+  , ("smoke", "r8_finalize"),   ("step",  "r8_finalize") ]
+
+/-- ⚑⚑ **"INSTALL WHAT YOU EMIT", AS A RED INSTEAD OF AS A COMMENT** — the STEP side's twin of
+`EmitWrapMainJson.installedGate` and of `pickles_kimchi_marshal::installed_gate`, and it exists
+because this route had **no refusal at all**.
+
+`scripts/check-emitter-routing.sh:176` said so in as many words: the tracked
+`stepmain_step_r8_finalize.json` is *"copied in BY HAND (no route to grade)"*, guarded only by
+`pickles_kimchi_marshal`'s name/width refusal — which checks that the file is A step circuit of the
+right arity, never that it is THIS assembly's. A stale step fixture is a perfectly provable circuit;
+it is just not the one the Lean says, and every downstream number (the step proof,
+`KimchiStepWrapChainFixture`, `WRAP_PUBLIC_INPUT_MEASURED`, slot 12 of the forty) is then about a
+circuit that no longer exists in the tree.
+
+**The gate is here rather than in a script for the reason the other two are inside their emitters:
+it fires in the same process that produced the bytes, so re-emitting and not installing is the one
+thing it cannot miss.**
+
+`DREGG_SM_INSTALL=1` performs the copy instead of refusing. There is deliberately no switch that
+disables the comparison, and a tracked file that is missing or unreadable counts as drift.
+
+⚠ **A `DREGG_SM_WIRED_ONLY=1` RUN MAY NOT INSTALL.** It did not emit the `_unwired` twins, so
+installing would leave a fresh wired artifact beside a stale control — the mixed-run directory
+`emitRung` already refuses to create in `$DREGG_SM_OUT`, recreated in the tracked tree where it
+would be worse. The tamper control is what makes "the tamper is REJECTED here and ACCEPTED on the
+unwired twin" a real claim.
+
+Returns the number of tracked files that differ. -/
+def installedGate (dir tag : String) (rungs : List Rung) (wiredOnly : Bool) : IO Nat := do
+  let tracked := (← IO.getEnv "DREGG_SM_TRACKED").getD TRACKED_STEP_DIR
+  let doInstall := ((← IO.getEnv "DREGG_SM_INSTALL").getD "") == "1"
+  if doInstall && wiredOnly then
+    throw (IO.userError "⚑ DREGG_SM_INSTALL=1 with DREGG_SM_WIRED_ONLY=1: this run did not emit \
+the `_unwired` controls, so installing would leave fresh wired artifacts beside stale ones. \
+Re-run without DREGG_SM_WIRED_ONLY.")
+  let names := (rungs.filter (fun k => TRACKED.contains (tag, k.tag))).flatMap (fun k =>
+    if wiredOnly then [s!"stepmain_{tag}_{k.tag}.json"]
+    else [s!"stepmain_{tag}_{k.tag}.json", s!"stepmain_{tag}_{k.tag}_unwired.json"])
+  if names.isEmpty then
+    IO.println s!"[install] tag={tag}: this run emitted no TRACKED (tag, rung) pair — \
+nothing to grade. Tracked: {TRACKED.map (fun p => s!"{p.1}/{p.2}")}"
+    return 0
+  let mut drift := 0
+  for n in names do
+    let emitted ← IO.FS.readFile s!"{dir}/{n}"
+    let path := s!"{tracked}/{n}"
+    if ← System.FilePath.pathExists path then
+      let s ← IO.FS.readFile path
+      if s == emitted then
+        IO.println s!"[install] {n}: byte-identical to the tracked fixture ({s.length} bytes)"
+      else if doInstall then
+        writeAtomic path emitted
+        IO.println s!"[install] * {n}: INSTALLED — {s.length} tracked bytes replaced by \
+{emitted.length} emitted ones"
+      else
+        drift := drift + 1
+        IO.println s!"[install] ⚑ {n}: THE TRACKED FIXTURE IS NOT WHAT THIS RUN EMITS \
+(tracked {s.length} bytes, emitted {emitted.length})"
+    else if doInstall then
+      writeAtomic path emitted
+      IO.println s!"[install] * {n}: INSTALLED (was absent) — {emitted.length} bytes"
+    else
+      drift := drift + 1
+      IO.println s!"[install] ⚑ {n}: MISSING at {path} — nothing consumes what was emitted"
+  if drift != 0 && !doInstall then
+    throw (IO.userError s!"⚑ THE TRACKED STEP FIXTURES ARE STALE: {drift} of {names.length} \
+differ from what this run emits. `pickles-stepmain-harness` and the three conformance gates prove \
+whatever JSON is on disk, and `pickles_kimchi_marshal` proves the STEP PROOF over it, so a stale \
+fixture is a green run about a circuit the Lean no longer describes. Re-run with \
+DREGG_SM_INSTALL=1 to install, and carry the consequence chain: the step proof re-proves, \
+`KimchiStepWrapChainFixture` and `KimchiStepWrapChainKey` re-install, \
+`MinaWrapDeferredWords.WRAP_PUBLIC_INPUT_MEASURED` re-bakes, and every count graded against it \
+(`the_forty_agree_but_for_slot_twelve` among them) is about the old shape until re-measured.")
+  if doInstall then
+    IO.println s!"[install] {names.length} tracked fixtures INSTALLED from this emission"
+  else
+    IO.println s!"[install] {names.length} tracked fixtures are byte-identical to this emission"
+  pure drift
+
 /-- The nine rungs in schedule order. ⚑ This is the FULL-SET path and it stays the DEFAULT: §15's
 row-length pins and the shape-diff sweeps legitimately want every rung. -/
 def allRungs : List Rung :=
@@ -231,3 +322,6 @@ b={sh.bRounds} pub={sh.pubWords} =="
   for k in rungs do
     let _ ← emitRung dir tag t k wiredOnly
     pure ()
+  -- ⚑ THE ROUTE, GRADED IN THE PROCESS THAT PRODUCED THE BYTES. See `installedGate`.
+  let _ ← installedGate dir tag rungs wiredOnly
+  pure ()

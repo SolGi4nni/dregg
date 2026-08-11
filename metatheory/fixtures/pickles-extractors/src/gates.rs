@@ -411,10 +411,17 @@ pub fn vk_evals_flat(vk: &PlonkVerificationKeyEvals<Fp>) -> Vec<Fp> {
 /// wrap VK back, the two key equations would close on each other and neither VK would be
 /// computable. `KimchiStepWrapChain.the_wrap_gates_carry_the_step_key_and_none_of_the_step_proofs_values`
 /// is the measurement.
-pub fn wrap_own_vk_lean(vk: &PlonkVerificationKeyEvals<Fp>) -> String {
+///
+/// ⚠ `rung` is the emitting binary's `WRAP_RUNG` and is INTERPOLATED into the generated docblock
+/// rather than spelled there. It was spelled, and it went stale the day `WRAP_RUNG` moved from
+/// `wrapmain_smoke_w1_transcript.json` to `wrapmain_smoke_w4_bind.json` (2026-08-10): the module
+/// then named a 0-arity circuit as the one whose key it carried, while carrying the 40-arity one's.
+/// A generated file that describes its own provenance must derive that description from the same
+/// constant the value came from, or it is a second copy that can disagree.
+pub fn wrap_own_vk_lean(vk: &PlonkVerificationKeyEvals<Fp>, rung: &str) -> String {
     let flat = vk_evals_flat(vk);
     let mut s = String::new();
-    s.push_str(
+    s.push_str(&format!(
         "/-\n\
          # MinaWrapOwnVerifierKey — dregg's OWN wrap circuit's verification key, 56 coordinates.\n\
          \n\
@@ -423,7 +430,7 @@ pub fn wrap_own_vk_lean(vk: &PlonkVerificationKeyEvals<Fp>) -> String {
          \n\
          These are `vk_evals_of_wrap_index(wrap_index.verifier_index)` — the kimchi verifier index\n\
          of the wrap circuit this pipeline COMPILES AND PROVES (`pickles-wrapmain-harness`'s\n\
-         `wrapmain_smoke_w1_transcript.json`), re-typed as Pickles' `PlonkVerificationKeyEvals` and\n\
+         `{rung}`), re-typed as Pickles' `PlonkVerificationKeyEvals` and\n\
          flattened `sigma[0..7] · coefficients[0..15] · generic · psm · complete_add · mul · emul ·\n\
          endomul_scalar`, each point as `(x, y)`. They are **Pallas** points, so their coordinates\n\
          live in Fp — the STEP circuit's own field, which is why segment D can absorb them.\n\
@@ -431,11 +438,19 @@ pub fn wrap_own_vk_lean(vk: &PlonkVerificationKeyEvals<Fp>) -> String {
          ⚑ WHAT CONSUMES THIS: the OUTER `hash_messages_for_next_step_proof`'s `sponge_after_index`\n\
          (`step_main.ml:525-566`, `step.rs:2718`). The INNER `_opt` hash keeps\n\
          `MinaStepPrevCommitments.INDEX_XY` — the PREVIOUS branch's key (`step.rs:2725,2734`).\n\
+         \n\
+         ⚠ **A WITNESS, NOT A PIN, AND THAT IS WHAT TERMINATES THE RECURSION.** `KimchiStepMainCore`\n\
+         takes these 56 words as `w.exists` (`idxOVar`, no `idxConstRows`), so they reach the step\n\
+         circuit's WITNESS and never its gates. The step VK is therefore invariant under this module,\n\
+         the wrap gates that pin the step VK as `Inner_curve.constant` are invariant under it, and so\n\
+         is the wrap VK this module IS. Re-installing it converges in ONE pass\n\
+         (`KimchiStepWrapChain.the_wrap_gates_carry_the_step_key_and_none_of_the_step_proofs_values`,\n\
+         `KimchiStepMainPins13.the_cone_of_word_fifty_four_holds_no_published_statement_entry`).\n\
          -/\n\
          namespace Dregg2.Circuit.Emit.MinaWrapOwnVerifierKey\n\n\
          /-- The 28 points as 56 coordinates, `to_field_elements` order. -/\n\
-         def INDEX_WORDS : List Nat :=\n[\n",
-    );
+         def INDEX_WORDS : List Nat :=\n[\n"
+    ));
     for (i, v) in flat.iter().enumerate() {
         s.push_str("  ");
         s.push_str(&dec(v));

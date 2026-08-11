@@ -1547,16 +1547,18 @@ fn main() {
     // ⚑ THE OUTER `dlog_plonk_index`, AS A LEAN MODULE. `step.rs:2718` makes it the INSTANCE'S OWN
     // wrap key, and this is that key — the verifier index of the wrap circuit compiled twenty lines
     // into this binary. Segment D absorbed block 539508's key instead, which is segment C's.
+    // ⚑ ONE rendering, written and graded. It was rendered TWICE — once for the file, once for the
+    // gate — so the gate compared the tracked module against a SECOND evaluation rather than
+    // against the bytes just written. Identical today by determinism; a difference between them
+    // would have been invisible in exactly the direction that matters.
+    let own_vk_lean = gates::wrap_own_vk_lean(&vk_evals, WRAP_RUNG);
     std::fs::write(
         format!("{out_dir}/MinaWrapOwnVerifierKey.lean"),
-        gates::wrap_own_vk_lean(&vk_evals),
+        &own_vk_lean,
     )
     .expect("write the wrap-own-vk lean module");
     println!("[gate C] wrote {out_dir}/MinaWrapOwnVerifierKey.lean — the OUTER dlog_plonk_index");
-    failed += installed_gate(
-        "MinaWrapOwnVerifierKey.lean",
-        &gates::wrap_own_vk_lean(&vk_evals),
-    );
+    failed += installed_gate("MinaWrapOwnVerifierKey.lean", &own_vk_lean);
 
     // ⚠ ⚑ THE RECORD'S ARITY, CHECKED RATHER THAN ACCEPTED. `step.rs:2848-2857` leaves
     // `messages_for_next_step_proof` UNPADDED at `N_PREVIOUS` while the same function pads

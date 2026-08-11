@@ -6279,8 +6279,20 @@ def shapeSmoke : WrapShape :=
   -- and it said so ("the 30 wrap fixtures are not re-emitted"). ⚑ **So the thirty fixtures were not
   -- merely stale — they were UNEMITTABLE**, and every attempt would have hit this refusal. It fired
   -- for the fourth time and is still the only thing that would have.
+  -- ⚑⚑ **AND A FIFTH TIME ON 2026-08-10, FOR THE `w4_bind` VK RE-INSTALL.** `pickles_kimchi_marshal`
+  -- began proving `wrapmain_smoke_w4_bind` instead of the 0-arity `w1_transcript` (`131dd5878`), so
+  -- `MinaWrapOwnVerifierKey` became the verifier index of a DIFFERENT circuit — 48 of its 56
+  -- coordinates moved. Segment D absorbs those as witnesses, so the step circuit re-emitted with
+  -- **0 of 10 753 gate rows moved in `typ`, `wires` or `coeffs`** and exactly one published entry
+  -- moved: **64**, again one of this selection's five. The step proof then re-proved over that
+  -- witness and every MSM scalar moved with it.
+  -- ⚠ **THIS IS THE FIFTH HAND-EDIT AND THE COMMENT ABOVE ALREADY NAMED WHY**: *"a memo written as a
+  -- numeral is a memo that can rot"*. It stays a numeral on purpose — `xhat_smoke_shape_absorbs_the_msm_output`
+  -- is a kernel `rfl` between THIS literal and `xhatOutOf (xhatSel 5)`, and defining the field as
+  -- that computation would make the theorem `rfl` on itself and the emitter's refusal vacuous. The
+  -- refusal is the route to grade; the numeral is what gives it something to grade.
   , xhatXY :=
-      (3089256916528585213403184970640774851200302182250348632858195762843838864972,
-       26320744053102272168591889516004757536017016268432223208932774444918340889148) }
+      (28254262488532232353957562227619483435654182216853164959495920661858969543627,
+       25343470852128235139217801532973525398889300456461152556172484536691679416684) }
 
 end Dregg2.Circuit.Emit.KimchiWrapMain

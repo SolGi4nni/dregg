@@ -747,6 +747,46 @@ seen twice; closing the first moves twenty-eight numbers and leaves the twenty-n
 it was. Anyone reading "39 of 40" forward across three re-bakes should read that as the residue
 being STABLE under everything tried so far, not as it shrinking.
 
+⚑⚑⚑ **RE-MEASURED 2026-08-10 ACROSS THE `w4_bind` VK FLAG DAY — AND THE "GENUINE FIXPOINT" IT WAS
+FILED UNDER IS A STRATIFICATION THAT TERMINATES IN ONE PASS.** `131dd5878` pointed
+`pickles_kimchi_marshal`'s `WRAP_RUNG` at `wrapmain_smoke_w4_bind.json` (519 rows,
+`public_input_size = 40`) instead of the 0-arity `w1_transcript`, so `MinaWrapOwnVerifierKey` became
+the verifier index of a DIFFERENT circuit — **48 of its 56 coordinates moved, 24 of 28 points**.
+
+The install was written up as a cycle: *"`MinaWrapOwnVerifierKey` feeds `KimchiWrapMainCore`, which
+emits `w4_bind`, which is the circuit whose key it is."* ⚠ **The first clause is false.**
+`KimchiWrapMainCore` does not import that module and never has; the only consumer is
+`KimchiStepMainCore`, whose segment D takes the 56 words as `w.exists` witnesses (`idxOVar`, and
+`idxConstRows` pins segment C's index only). That is the asymmetry
+`the_wrap_gates_carry_the_step_key_and_none_of_the_step_proofs_values` states, and it was measured
+on the emitted objects rather than read off the definition graph:
+
+  * `stepmain_step_r8_finalize.json` re-emitted at **10 753 rows with 0 rows differing in `typ`,
+    `wires` or `coeffs`** — 6 586 of 161 295 witness cells moved and **exactly one** published entry,
+    **64**, which is word 54.
+  * `wrapmain_smoke_w4_bind.json` re-emitted at **519 rows with 0 rows differing in `typ`, `wires`
+    or `coeffs`** — 4 468 of 7 785 witness cells moved and the public vector at the six slots the
+    rung derives.
+  * A verification key commits to gates, wiring and domain and to nothing else, so neither VK could
+    move — and the oracle agrees: the next `pickles_kimchi_marshal` run reported
+    `MinaWrapOwnVerifierKey.lean` **and** `KimchiStepWrapChainKey.lean` byte-identical with
+    `PROOF_MARSHAL_RESULT=GREEN`. **One pass, no iteration.** The pass order is
+    `KimchiStepMainCore`'s: step gates → step VK → wrap gates → wrap VK → segment D's witnesses →
+    step proof → step statement → wrap witness/public input → wrap proof.
+
+**The whole chain was carried and installed**: VK → step circuit (both shapes, ten tracked fixtures)
+→ step proof → `KimchiStepWrapChainFixture` → this referee, re-baked from that run's own
+`wrap-public-input.json` and moving at **29 of 40 slots (0–28)** → `shapeSmoke.xhatXY`, a FIFTH
+hand-edit under the emitter's refusal → all thirty wrap fixtures.
+
+**And all five numbers below are unchanged.** Mina's slot 12 moved `2685766687… → 1838000011…` and
+ours moved `1053080512… → 6630120479…`; the residue is the same slot, the same two families and the
+same size. `segd_slot12_probe`, re-snapshotted, reproduces segment D's squeeze **to the digit** with
+openmina's own `MessagesForNextStepProof::hash()` and both controls firing, so there is still no
+sponge gap and the disagreement is still confined to **cells 58–75** — `[Gx; Gy]` and the sixteen
+lifts. ⚠ **So the fixpoint was never the road to 40/40.** It was a real referee defect at exactly the
+slot under investigation, and closing it leaves `G` and the sixteen exactly where §19b left them.
+
 ⚑ **THE LAST CONJUNCT IS THE ANTI-VACUITY**, and it is what makes this a fact about VALUES rather
 than about a list of zeros: ten of the forty are `Spec.T.Constant` padding and the lookup `Opt` and
 are zero on both sides, so an all-zero emission would satisfy the first conjunct at those ten.
