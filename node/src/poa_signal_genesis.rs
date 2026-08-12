@@ -205,10 +205,18 @@ fn initialize_poa_signal_genesis_with(
     let head = output.into_head()?;
 
     // Opening occurs only after every immutable byte and the Lean export have
-    // been accepted. `initialize_*` itself performs the final compare+insert in
-    // one redb transaction.
+    // been accepted. The Signal slot ceremony verifies its envelope against the
+    // store's independently persisted curator pin; installing only the head
+    // leaves an apparently initialized authority that can never open a slot.
+    // Pin first: if the subsequent singular-head check refuses a nonempty store,
+    // the only retained mutation is this already signature-authenticated,
+    // immutable trust root. No Signal state becomes playable. Both operations
+    // are exact-retry safe.
     let store = PersistentStore::open(&args.data_dir.join("dregg.redb"))
         .map_err(|error| format!("failed to open PoA store: {error}"))?;
+    store
+        .install_poa_world_curator_pin_v1(verified.public_key().0)
+        .map_err(|error| format!("PoA curator pin installation refused: {error}"))?;
     let outcome = store
         .initialize_poa_signal_head_if_empty_or_identical(&head)
         .map_err(|error| format!("PoA Signal store initialization refused: {error}"))?;
@@ -973,6 +981,17 @@ mod tests {
         assert_eq!(
             config["mission"]["federation_id"],
             dregg_types::hex_encode(&report.authority_id)
+        );
+        assert_eq!(
+            reopened.load_poa_world_curator_pin_v1().unwrap(),
+            Some(
+                CuratorKeyPin::load(repo().join("poa/config/curator-key.json"))
+                    .unwrap()
+                    .public_key()
+                    .unwrap()
+                    .0
+            ),
+            "Signal genesis must persist the independently authenticated curator pin needed by the slot ceremony"
         );
 
         let canon: Value = serde_json::from_slice(head.canon()).unwrap();
