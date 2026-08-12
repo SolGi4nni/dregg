@@ -890,6 +890,21 @@ pub enum Command {
         #[arg(long, default_value = "./devnet-config")]
         output: PathBuf,
 
+        /// Reuse the exact validator seeds from an earlier devnet bundle.
+        ///
+        /// This is an explicit SUCCESSOR-CEREMONY operation: `node-N.key` is
+        /// read from this directory for every validator, preserving the hybrid
+        /// committee and therefore the federation id while a distinct genesis /
+        /// deployment descriptor and fresh player-grant identity are minted.
+        /// Deterministic issuer/fee wells remain functions of the same public
+        /// federation/domain coordinates. The directory's named validator-key
+        /// set must equal the requested committee exactly, and every file must
+        /// be a raw 32-byte, owner-only regular file; missing, extra, linked, or
+        /// permissive seeds refuse the whole ceremony. Omit to draw a fresh
+        /// committee. Never use this to clone two simultaneously-live chains.
+        #[arg(long)]
+        reuse_validator_keys_from: Option<PathBuf>,
+
         /// Optional deployment domain used to derive deployment-local issuer /
         /// fee-well identities.  This does not replace the committee-derived
         /// federation_id; it prevents auxiliary genesis identities from being
@@ -914,9 +929,10 @@ pub enum Command {
         /// and `--no-demo-economy`, and is refused below the cost of a single
         /// Signal claim.
         ///
-        /// ⚑ The grant seed derives from PUBLIC material (the deployment domain
-        /// and the federation id), so it is bearer value for anyone who can read
-        /// the descriptor. Fund it for the turns you intend.
+        /// ⚑ The grant seed is newly DRAWN and written only to
+        /// `player-grant.key`; it is not derivable from the descriptor. Fund it
+        /// for the turns you intend, and preserve that sole copy like a
+        /// validator seed.
         #[arg(long)]
         player_grant: Option<u64>,
     },
@@ -1727,6 +1743,7 @@ pub async fn run(cli: Cli) {
             epoch_length,
             checkpoint_interval,
             output,
+            reuse_validator_keys_from,
             deployment_domain,
             no_demo_economy,
             player_grant,
@@ -1739,6 +1756,7 @@ pub async fn run(cli: Cli) {
                 deployment_domain,
                 seed_demo_economy: !no_demo_economy,
                 player_grant,
+                validator_key_source: reuse_validator_keys_from,
             },
         ),
         Command::RegisterFederation {
@@ -4438,6 +4456,7 @@ mod boot_recovery_baseline_tests {
                 deployment_domain: Some(domain.to_owned()),
                 seed_demo_economy: false,
                 player_grant: Some(100_000),
+                validator_key_source: None,
             },
         );
         let descriptor_path = tmp.path().join("genesis.json");

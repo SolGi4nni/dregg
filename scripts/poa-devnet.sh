@@ -38,6 +38,9 @@ POA_NODE_HOSTS="${POA_NODE_HOSTS:-}"
 # author a turn, and reproducing its cell id from the descriptor is
 # load-bearing); the grant, which holds spendable value, does not.
 POA_PLAYER_GRANT="${POA_PLAYER_GRANT:-1000000}"
+# Optional immutable predecessor bundle whose `node-N.key` files define the
+# committee for an explicit successor ceremony. Omit for a new federation.
+POA_VALIDATOR_KEY_DIR="${POA_VALIDATOR_KEY_DIR:-}"
 # The one secret this ceremony produces that is NOT a validator seed.
 POA_PLAYER_GRANT_KEY_FILE="player-grant.key"
 
@@ -78,6 +81,10 @@ Environment:
                         genesis and written 0600 to bundle/player-grant.key; nothing
                         published determines it, so that file is the sole copy of the
                         key that spends the grant. Back it up, never distribute it.
+  POA_VALIDATOR_KEY_DIR predecessor bundle containing owner-only node-N.key files.
+                        When set, genesis reuses the entire validator committee,
+                        preserving federation_id while minting a distinct successor
+                        genesis/deployment. There is no missing-key fallback.
   POA_HTTP_BASE         first HTTP port (default: 8421)
   POA_GOSSIP_BASE       first gossip port (default: 9421)
   POA_NODE_HOSTS        comma-separated advertised hosts, one per validator
@@ -277,18 +284,24 @@ assertDisjointRoots(process.argv[2], process.argv[3]);
   [[ "$POA_PLAYER_GRANT" =~ ^[0-9]+$ ]] || die "POA_PLAYER_GRANT must be a non-negative integer"
 
   mkdir -p "$POA_ROOT/bundle" "$POA_ROOT/nodes" "$POA_ROOT/followers"
-  local grant_args=()
+  local grant_args=() validator_key_args=()
   if [ "$POA_PLAYER_GRANT" -gt 0 ]; then
     grant_args=(--player-grant "$POA_PLAYER_GRANT")
   else
     printf 'warning: POA_PLAYER_GRANT=0 — this federation issues NO value, so no cell can\n' >&2
     printf '         pay a turn fee and latest_height can never leave 0. Deliberate?\n' >&2
   fi
+  if [ -n "$POA_VALIDATOR_KEY_DIR" ]; then
+    [ -d "$POA_VALIDATOR_KEY_DIR" ] || die \
+      "POA_VALIDATOR_KEY_DIR is not a directory: $POA_VALIDATOR_KEY_DIR"
+    validator_key_args=(--reuse-validator-keys-from "$POA_VALIDATOR_KEY_DIR")
+  fi
   "$BIN" genesis \
     --validators "$POA_VALIDATORS" \
     --output "$POA_ROOT/bundle" \
     --deployment-domain pathofangels.network/federation/v1 \
     --no-demo-economy \
+    "${validator_key_args[@]}" \
     "${grant_args[@]}"
 
   local index data_dir

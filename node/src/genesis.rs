@@ -6,7 +6,7 @@
 //! - `node-N.env` — per-node environment variable files
 //! - `.devnet` — marker file indicating devnet data directory
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dregg_storage_templates::cap_inbox::CAP_INBOX_FACTORY_VK;
@@ -190,6 +190,11 @@ pub struct GenesisOptions {
     /// deployment-scoped and the generic devnet economy already funds its own
     /// agents.
     pub player_grant: Option<u64>,
+    /// Existing `node-N.key` directory for an explicit successor ceremony.
+    /// Every seed is reused or the ceremony refuses; there is no per-validator
+    /// fallback to randomness, because that would silently mint a different
+    /// federation identity.
+    pub validator_key_source: Option<PathBuf>,
 }
 
 impl Default for GenesisOptions {
@@ -198,6 +203,7 @@ impl Default for GenesisOptions {
             deployment_domain: None,
             seed_demo_economy: true,
             player_grant: None,
+            validator_key_source: None,
         }
     }
 }
@@ -405,6 +411,35 @@ pub fn run_genesis_with_options(
         std::process::exit(1);
     });
 
+    let validator_key_source = options.validator_key_source.as_deref().map(|source| {
+        let source = std::fs::canonicalize(source).unwrap_or_else(|e| {
+            eprintln!(
+                "error: cannot open --reuse-validator-keys-from {}: {e}",
+                source.display()
+            );
+            std::process::exit(1);
+        });
+        let output = std::fs::canonicalize(output).unwrap_or_else(|e| {
+            eprintln!(
+                "error: cannot resolve output directory {}: {e}",
+                output.display()
+            );
+            std::process::exit(1);
+        });
+        if source == output {
+            eprintln!(
+                "error: --reuse-validator-keys-from must not be the output directory; a successor \
+                 ceremony reads an immutable predecessor bundle and writes a distinct new bundle"
+            );
+            std::process::exit(1);
+        }
+        if let Err(error) = validate_validator_seed_set(&source, validators) {
+            eprintln!("error: {error}");
+            std::process::exit(1);
+        }
+        source
+    });
+
     // Generate keypairs for each validator. Federation_id is derived from
     // the committee pubkeys AFTER this loop — see below.
     let mut genesis_validators = Vec::with_capacity(validators);
@@ -416,9 +451,22 @@ pub fn run_genesis_with_options(
         Vec::with_capacity(validators);
 
     for i in 0..validators {
-        // Generate a 32-byte signing key.
-        let mut key_bytes = [0u8; 32];
-        getrandom::fill(&mut key_bytes).expect("getrandom failed");
+        // Draw a new signing key by default. A successor ceremony instead
+        // reuses EVERY enrolled validator seed from one explicit predecessor
+        // directory. `read_validator_seed` is deliberately fail-closed: one
+        // missing or malformed seed must not turn a preserved committee into a
+        // partly-random new one while the operator believes identity survived.
+        let key_bytes = match validator_key_source.as_deref() {
+            Some(source) => read_validator_seed(source, i).unwrap_or_else(|e| {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }),
+            None => {
+                let mut drawn = [0u8; 32];
+                getrandom::fill(&mut drawn).expect("getrandom failed");
+                drawn
+            }
+        };
 
         // Derive the Ed25519 public key.
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
@@ -774,6 +822,14 @@ pub fn run_genesis_with_options(
         println!("  Deployment domain: {domain}");
     }
     println!("  Demo economy: {}", options.seed_demo_economy);
+    if let Some(source) = validator_key_source {
+        println!(
+            "  Committee: REUSED from {} (explicit successor ceremony)",
+            source.display()
+        );
+    } else {
+        println!("  Committee: newly drawn");
+    }
     match (&genesis.player_grant, options.player_grant) {
         (Some(id), Some(amount)) => {
             println!("  Player grant: {amount} into cell {id}");
@@ -1004,6 +1060,90 @@ fn write_key_file(output: &Path, name: &str, key_bytes: &[u8; 32]) {
     }
 }
 
+/// Read one predecessor validator seed for an explicit successor ceremony.
+///
+/// This is kept as a Result boundary so the dangerous inputs are unit-testable
+/// without spawning a process merely to observe its exit code. The ceremony
+/// converts any error into a whole-command refusal; it never falls back to a
+/// fresh key after the operator asked to preserve committee identity.
+fn read_validator_seed(source: &Path, index: usize) -> Result<[u8; 32], String> {
+    let path = source.join(format!("node-{index}.key"));
+    let metadata = std::fs::symlink_metadata(&path).map_err(|e| {
+        format!(
+            "successor ceremony cannot read required predecessor seed {}: {e}; refusing instead \
+             of silently drawing a different validator",
+            path.display()
+        )
+    })?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "successor ceremony requires {} to be a regular file, not a link or special file",
+            path.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "successor ceremony requires {} to be owner-only (0600 or stricter), found {:03o}",
+                path.display(),
+                mode
+            ));
+        }
+    }
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("cannot read predecessor seed {}: {e}", path.display()))?;
+    bytes.try_into().map_err(|bytes: Vec<u8>| {
+        format!(
+            "successor ceremony requires {} to contain exactly 32 raw bytes, found {}",
+            path.display(),
+            bytes.len()
+        )
+    })
+}
+
+/// Refuse a subset/superset ceremony. Reusing one key from a larger predecessor
+/// committee does not preserve its federation identity, even though every key
+/// this invocation asks for exists; the named `node-N.key` set must therefore
+/// equal the requested committee exactly.
+fn validate_validator_seed_set(source: &Path, validators: usize) -> Result<(), String> {
+    let expected: std::collections::BTreeSet<String> = (0..validators)
+        .map(|index| format!("node-{index}.key"))
+        .collect();
+    let mut found = std::collections::BTreeSet::new();
+    let entries = std::fs::read_dir(source).map_err(|e| {
+        format!(
+            "cannot enumerate predecessor validator directory {}: {e}",
+            source.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            format!(
+                "cannot enumerate predecessor validator directory {}: {e}",
+                source.display()
+            )
+        })?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if name.starts_with("node-") && name.ends_with(".key") {
+            found.insert(name);
+        }
+    }
+    if found != expected {
+        return Err(format!(
+            "successor ceremony requires the predecessor validator seed set to equal the requested \
+             committee exactly; expected {:?}, found {:?}. Refusing a subset/superset ceremony that \
+             would silently change federation identity",
+            expected, found
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod custody {
     //! ⚑ THE PLAYER-GRANT CUSTODY FALSIFIER.
@@ -1048,6 +1188,7 @@ mod custody {
                 deployment_domain: Some(DOMAIN.to_owned()),
                 seed_demo_economy: false,
                 player_grant: Some(GRANT),
+                validator_key_source: None,
             },
         );
     }
@@ -1134,24 +1275,50 @@ mod custody {
         refuse_derivable_player_grant(&genesis)
     }
 
-    /// THE PROPERTY: two ceremonies over the SAME deployment domain reproduce the
-    /// wells from public data and never reproduce the grant.
+    /// THE PROPERTY: a successor ceremony can preserve the exact committee while
+    /// still drawing a fresh, non-derivable player grant. This is the live PoA
+    /// re-genesis case: federation identity remains pinned, while the deployment
+    /// descriptor and custody-bearing player identity are honestly new.
     #[test]
-    fn two_ceremonies_reproduce_the_wells_and_never_the_player_grant() {
+    fn successor_reuses_the_committee_and_never_the_player_grant() {
         let first = tempfile::tempdir().expect("tempdir");
         let second = tempfile::tempdir().expect("tempdir");
         ceremony(first.path());
-        ceremony(second.path());
+        run_genesis_with_options(
+            1,
+            1000,
+            100,
+            second.path(),
+            GenesisOptions {
+                deployment_domain: Some(DOMAIN.to_owned()),
+                seed_demo_economy: false,
+                player_grant: Some(GRANT),
+                validator_key_source: Some(first.path().to_owned()),
+            },
+        );
 
         grade_grant_custody(first.path()).expect("ceremony 1 custody");
         grade_grant_custody(second.path()).expect("ceremony 2 custody");
 
-        // Same domain, same generator, same amount — and two different secrets.
-        // (The wells differ too, but only because each ceremony mints a fresh
-        // committee and therefore a fresh federation id; that is why the grading
-        // above re-derives from EACH descriptor's OWN coordinates rather than
-        // comparing the two bundles to each other. This assertion is the weaker,
-        // more obvious half: the grant is not a constant either.)
+        assert_eq!(
+            seed(first.path(), "node-0.key"),
+            seed(second.path(), "node-0.key"),
+            "the explicit successor operation must preserve the validator seed"
+        );
+        assert_eq!(
+            descriptor(first.path())["federation_id"],
+            descriptor(second.path())["federation_id"],
+            "the same hybrid committee and epoch must preserve federation identity"
+        );
+        assert_eq!(
+            descriptor(first.path())["validators"],
+            descriptor(second.path())["validators"],
+            "the whole enrolled hybrid roster must be byte-identical"
+        );
+
+        // Same domain, committee, generator, and amount — and two different
+        // grant secrets/cells. The successor flag preserves ONLY validator
+        // custody; it must never duplicate the spendable player identity.
         assert_ne!(
             seed(first.path(), PLAYER_GRANT_KEY_FILE),
             seed(second.path(), PLAYER_GRANT_KEY_FILE),
@@ -1161,6 +1328,11 @@ mod custody {
             descriptor(first.path())["player_grant"],
             descriptor(second.path())["player_grant"],
             "two ceremonies must not share a grant cell"
+        );
+        assert_ne!(
+            std::fs::read(first.path().join("genesis.json")).expect("first genesis"),
+            std::fs::read(second.path().join("genesis.json")).expect("second genesis"),
+            "a successor descriptor must remain distinct even when the committee is preserved"
         );
 
         // The grant amount, the fee well and the conservation column are NOT what
@@ -1178,6 +1350,64 @@ mod custody {
             Some(1),
             "still exactly one issuer-move"
         );
+    }
+
+    #[test]
+    fn successor_seed_reader_refuses_missing_malformed_linked_and_loose_keys() {
+        use std::fs;
+
+        let source = tempfile::tempdir().expect("tempdir");
+        let key = source.path().join("node-0.key");
+
+        assert!(
+            read_validator_seed(source.path(), 0)
+                .expect_err("missing key must refuse")
+                .contains("silently drawing")
+        );
+
+        fs::write(&key, [0x31; 31]).expect("short key");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).expect("owner mode");
+        }
+        assert!(
+            read_validator_seed(source.path(), 0)
+                .expect_err("short key must refuse")
+                .contains("exactly 32")
+        );
+
+        fs::write(&key, [0x32; 32]).expect("valid key");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{PermissionsExt, symlink};
+
+            fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).expect("loose mode");
+            assert!(
+                read_validator_seed(source.path(), 0)
+                    .expect_err("loose key must refuse")
+                    .contains("owner-only")
+            );
+            fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).expect("owner mode");
+            assert_eq!(read_validator_seed(source.path(), 0), Ok([0x32; 32]));
+
+            fs::write(source.path().join("node-1.key"), [0x33; 32]).expect("extra key");
+            assert!(
+                validate_validator_seed_set(source.path(), 1)
+                    .expect_err("a committee subset must refuse")
+                    .contains("subset/superset")
+            );
+            fs::remove_file(source.path().join("node-1.key")).expect("remove extra key");
+            assert_eq!(validate_validator_seed_set(source.path(), 1), Ok(()));
+
+            let linked_source = tempfile::tempdir().expect("linked tempdir");
+            symlink(&key, linked_source.path().join("node-0.key")).expect("symlink");
+            assert!(
+                read_validator_seed(linked_source.path(), 0)
+                    .expect_err("linked key must refuse")
+                    .contains("regular file")
+            );
+        }
     }
 
     /// THE FALSIFIER, RUN. Rebuild the pre-2026-08-07 bundle — grant seed and
