@@ -18,14 +18,97 @@ const root = fileURLToPath(new URL("./", import.meta.url));
 const overlays = [root, fileURLToPath(new URL("./public/", import.meta.url))];
 const port = Number.parseInt(process.env.POA_WEB_PORT ?? "4173", 10);
 const host = process.env.POA_WEB_HOST ?? "127.0.0.1";
+const nodeUpstream = process.env.POA_NODE_UPSTREAM
+  ? new URL(process.env.POA_NODE_UPSTREAM)
+  : null;
+if (nodeUpstream && !["http:", "https:"].includes(nodeUpstream.protocol)) {
+  throw new Error("POA_NODE_UPSTREAM must be an http(s) origin");
+}
 const mimes = new Map([
   [".html", "text/html; charset=utf-8"], [".css", "text/css; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"], [".json", "application/json; charset=utf-8"],
   [".svg", "image/svg+xml"], [".png", "image/png"], [".ico", "image/x-icon"],
 ]);
 
-createServer((request, response) => {
+function readBody(request, limit = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let bytes = 0;
+    let refused = false;
+    request.on("data", (chunk) => {
+      if (refused) return;
+      bytes += chunk.byteLength;
+      if (bytes > limit) {
+        refused = true;
+        reject(Object.assign(new Error("request body exceeds development proxy limit"), { code: "body-too-large" }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      if (!refused) resolve(chunks.length === 0 ? undefined : Buffer.concat(chunks));
+    });
+    request.on("error", reject);
+  });
+}
+
+/**
+ * Development-only same-origin carrier for the exact `/node/*` paths the
+ * terminal uses in production.
+ *
+ * This is deliberately opt-in: setting `POA_NODE_UPSTREAM` is an operator act,
+ * and the destination is fixed at process start rather than accepted from a
+ * request. It exists for a browser integration check against a real node when a
+ * browser or privacy extension blocks that node's public hostname. It does not
+ * add a proxy route to deployed static releases.
+ */
+async function proxyNode(request, response, requestUrl) {
+  const path = requestUrl.pathname.slice("/node".length) || "/";
+  // Assign path/query onto the fixed origin. `new URL(path, origin)` would
+  // interpret `/node//attacker.example` as a scheme-relative URL after slicing
+  // the prefix, turning an operator-fixed proxy into an SSRF primitive.
+  const target = new URL(nodeUpstream);
+  target.pathname = path;
+  target.search = requestUrl.search;
+  try {
+    const body = request.method === "GET" || request.method === "HEAD"
+      ? undefined
+      : await readBody(request);
+    const upstream = await fetch(target, {
+      method: request.method,
+      headers: {
+        accept: request.headers.accept ?? "application/json",
+        ...(request.headers["content-type"] ? { "content-type": request.headers["content-type"] } : {}),
+      },
+      body,
+      redirect: "manual",
+    });
+    response.writeHead(upstream.status, {
+      "Content-Type": upstream.headers.get("content-type") ?? "application/octet-stream",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    if (request.method === "HEAD" || upstream.body === null) {
+      response.end();
+      return;
+    }
+    for await (const chunk of upstream.body) response.write(chunk);
+    response.end();
+  } catch (error) {
+    const tooLarge = error?.code === "body-too-large";
+    if (!response.headersSent) {
+      response.writeHead(tooLarge ? 413 : 502, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    }
+    response.end(JSON.stringify({ reason: tooLarge ? "proxy-body-too-large" : "proxy-upstream-unanswered" }));
+  }
+}
+
+createServer(async (request, response) => {
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
+  if (nodeUpstream && (requestUrl.pathname === "/node" || requestUrl.pathname.startsWith("/node/"))) {
+    await proxyNode(request, response, requestUrl);
+    return;
+  }
   let pathname;
   try { pathname = decodeURIComponent(requestUrl.pathname); } catch { pathname = "/__invalid__"; }
   const local = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");

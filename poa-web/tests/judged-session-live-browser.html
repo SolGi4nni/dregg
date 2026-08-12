@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PoA judged-session live browser integration</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-status="loading">
+    <main class="platform-shell">
+      <section class="platform-heading">
+        <div>
+          <p class="panel-label">LIVE INTEGRATION // EPHEMERAL UNFUNDED PLAYER</p>
+          <h1>Judged Signal browser route</h1>
+        </div>
+        <p class="platform-heading__copy">
+          This test page uses the production trust loader, slot verifier, session statement encodings,
+          parser and panel controls. Its in-memory key can open and guess, but owns no cell and cannot settle.
+        </p>
+      </section>
+      <div id="judged-panel" aria-live="polite"></div>
+      <pre id="integration-status" role="status" aria-live="polite">Loading the signed counter-12 bundle…</pre>
+    </main>
+    <script type="module" src="./judged-session-live-browser.js"></script>
+  </body>
+</html>

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import { test } from "node:test";
 
 /**
@@ -34,11 +35,11 @@ async function syncArtifacts() {
   assert.equal(code, 0, `sync-artifacts refused: ${Buffer.concat(stderr).toString()}`);
 }
 
-async function withServer(callback) {
+async function withServer(callback, extraEnv = {}) {
   await syncArtifacts();
   const port = 40000 + Math.floor(Math.random() * 20000);
   const child = spawn(process.execPath, [server.pathname], {
-    env: { ...process.env, POA_WEB_PORT: String(port), POA_WEB_HOST: "127.0.0.1" },
+    env: { ...process.env, ...extraEnv, POA_WEB_PORT: String(port), POA_WEB_HOST: "127.0.0.1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   try {
@@ -46,6 +47,32 @@ async function withServer(callback) {
     return await callback(`http://127.0.0.1:${port}`);
   } finally {
     child.kill("SIGKILL");
+  }
+}
+
+async function withUpstream(callback) {
+  const requests = [];
+  const upstream = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const record = {
+      method: request.method,
+      url: request.url,
+      contentType: request.headers["content-type"] ?? null,
+      body: Buffer.concat(chunks).toString(),
+    };
+    requests.push(record);
+    response.writeHead(request.method === "POST" ? 201 : 200, { "content-type": "application/json" });
+    response.end(JSON.stringify(record));
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  try {
+    return await callback(`http://127.0.0.1:${address.port}`, requests);
+  } finally {
+    upstream.close();
+    await once(upstream, "close");
   }
 }
 
@@ -105,5 +132,40 @@ test("the served headers keep the page self-contained", async () => {
     assert.ok(!csp.includes("unsafe-inline"), "the terminal must not permit inline script or style");
     assert.equal(headers.get("x-content-type-options"), "nosniff");
     assert.equal(headers.get("referrer-policy"), "no-referrer");
+  });
+});
+
+test("the opt-in development proxy carries exact node paths and session bodies", async () => {
+  await withUpstream(async (upstream, requests) => {
+    await withServer(async (origin) => {
+      const read = await fetch(`${origin}/node/api/poa/signal/abcd/slot?at=1`);
+      assert.equal(read.status, 200);
+      assert.equal(read.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await read.json(), {
+        method: "GET", url: "/api/poa/signal/abcd/slot?at=1", contentType: null, body: "",
+      });
+
+      const write = await fetch(`${origin}/node/api/poa/signal/abcd/session/open`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ player_key: "11" }),
+      });
+      assert.equal(write.status, 201);
+      assert.deepEqual(await write.json(), {
+        method: "POST", url: "/api/poa/signal/abcd/session/open",
+        contentType: "application/json", body: '{"player_key":"11"}',
+      });
+
+      const doubleSlash = await fetch(`${origin}/node//attacker.invalid/status`);
+      assert.equal(doubleSlash.status, 200);
+      assert.equal((await doubleSlash.json()).url, "//attacker.invalid/status");
+      assert.equal(requests.length, 3, "a scheme-relative path must still reach the fixed upstream");
+    }, { POA_NODE_UPSTREAM: upstream });
+  });
+});
+
+test("the node-shaped path remains absent unless the development proxy is explicitly enabled", async () => {
+  await withServer(async (origin) => {
+    assert.equal((await fetch(`${origin}/node/status`)).status, 404);
   });
 });
