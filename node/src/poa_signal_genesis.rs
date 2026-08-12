@@ -33,6 +33,18 @@ const ZERO_HEX: &str = "00000000000000000000000000000000000000000000000000000000
 /// different things, and a reader who sees `ZERO_HEX` here would reasonably think
 /// the field was merely unset.
 const UNBOUND_RUN_SEED: &str = ZERO_HEX;
+/// `Emit.UNBOUND_TARGET` — the non-playable target paired with
+/// [`UNBOUND_RUN_SEED`] in `Emit.signalTemplateConfig`.
+///
+/// This is not content and is deliberately not read from the public Signal
+/// descriptor: publishing a live target publishes the answer. Lean independently
+/// rebuilds the template config and requires this exact value, while judged play
+/// replaces both target and run seed from the committed slot secret and player key.
+const UNBOUND_TARGET: SignalCode = SignalCode {
+    low: 0,
+    mid: 0,
+    high: 0,
+};
 
 #[derive(Clone, Debug)]
 pub struct PoaSignalGenesisArgs {
@@ -256,7 +268,7 @@ struct SignalConfig {
     reward: Contribution,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 struct SignalCode {
     low: u64,
     mid: u64,
@@ -353,22 +365,7 @@ fn build_network_genesis_input(
         .signal_triangulation()
         .as_object()
         .ok_or_else(|| "authenticated Signal descriptor is not an object".to_owned())?;
-    let target = descriptor
-        .get("target")
-        .and_then(Value::as_array)
-        .filter(|values| values.len() == 3)
-        .ok_or_else(|| "authenticated Signal target is not three bands".to_owned())?;
-    let target = SignalCode {
-        low: target[0]
-            .as_u64()
-            .ok_or_else(|| "Signal target low band is not a u64".to_owned())?,
-        mid: target[1]
-            .as_u64()
-            .ok_or_else(|| "Signal target mid band is not a u64".to_owned())?,
-        high: target[2]
-            .as_u64()
-            .ok_or_else(|| "Signal target high band is not a u64".to_owned())?,
-    };
+    let target = template_target_for_authenticated_descriptor(descriptor)?;
     let discoveries = mission
         .get("allowed_beta_discoveries")
         .and_then(Value::as_array)
@@ -443,6 +440,11 @@ fn build_network_genesis_input(
         },
         config: SignalConfig {
             game: crate::poa_signal_adapter::POA_GAME_TAG_SIGNAL,
+            // Genesis authenticates a mission TEMPLATE, not a live instance.
+            // Lean's `expectedConfig` independently emits the same sentinel and
+            // compares the complete config byte-for-byte. The slot ceremony
+            // installs the commitment/secret separately; judged play then derives
+            // and substitutes this player's live target and run seed through Lean.
             target,
             mission: SignalMission {
                 mission_id: required_u64(mission, "mission_id")?,
@@ -498,6 +500,18 @@ fn build_network_genesis_input(
     };
     serde_json::to_string(&input)
         .map_err(|error| format!("cannot encode Lean genesis wire: {error}"))
+}
+
+fn template_target_for_authenticated_descriptor(
+    descriptor: &serde_json::Map<String, Value>,
+) -> Result<SignalCode, String> {
+    if descriptor.contains_key("target") {
+        return Err(
+            "authenticated Signal descriptor publishes a target; a public target is the answer"
+                .to_owned(),
+        );
+    }
+    Ok(UNBOUND_TARGET)
 }
 
 fn required_u64(object: &serde_json::Map<String, Value>, field: &str) -> Result<u64, String> {
@@ -660,7 +674,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     output
 }
 
-/// ⚑⚑ THE ONE RED THIS MODULE STILL CARRIES — OWNED, NAMED, AND NOT A TEST DEFECT.
+/// ⚑⚑ THE STALE CALLER/CALLEE SPLIT THIS MODULE CLOSED.
 ///
 /// Six tests here were red on 2026-08-07 for THREE stacked causes. Two are fixed in the commit
 /// that wrote this note; the third is a live design change and is the poa-signal lane's.
@@ -674,28 +688,24 @@ fn sha256_hex(bytes: &[u8]) -> String {
 ///  2. FIXED — `expected_activation_counter` was hardcoded `2` beside an artifact that carries
 ///     8 (`4002060a2`, Black Box enrolled and the curator re-signed). Read from the envelope now,
 ///     with `a_wrong_activation_counter_is_refused` keeping the leg able to go red.
-///  3. ⚑ OPEN, AND IT IS THE REAL ONE. `build_network_genesis_input` reads
-///     `descriptor["target"]` — three bands — and refuses with "authenticated Signal target is
-///     not three bands". The shipped descriptor has no `target`, and that is DELIBERATE:
+///  3. CLOSED HERE. `build_network_genesis_input` read `descriptor["target"]` — three bands —
+///     and refused because the shipped descriptor has no `target`. That absence is DELIBERATE:
 ///     `4db8ec12e` ("the games stop publishing their own answers") deleted it when Signal moved
 ///     `signal-v1 → signal-v2`, because a published target IS the published answer. The run seed
 ///     is now per-run and unpredictable, derived through `dregg_poa_signal_slot_derive` from a
 ///     curator-held per-slot secret whose commitment is published before the slot opens.
 ///
-///     SO THERE IS NOTHING TO REPOINT THIS READ AT. Closing it means deciding what the Signal
-///     genesis head commits to when there is no published target — a commitment to the per-slot
-///     secret rather than a code — which is game semantics, and this module owns ceremony
-///     plumbing, not game semantics (see the module doc). Guessing it here would install a head
-///     binding the wrong thing.
-///
-///     OWNER: the live poa-signal lane — `4db8ec12e` (the descriptor cutover), `47cf23360`
-///     ("judged play gets a feedback oracle in Lean") and `e1410b0f8` ("a judged SESSION"), with
-///     `sdk/src/poa_signal.rs`, `node/src/poa_signal_session.rs` and
-///     `node/src/poa_signal_adapter.rs` uncommitted in the tree as this was written.
+///     The semantic answer was already named in Lean: `Emit.signalTemplateConfig` pairs
+///     `UNBOUND_RUN_SEED` with `UNBOUND_TARGET = [0,0,0]`, and `NetworkGenesis.expectedConfig`
+///     requires that exact complete config. `Judged.admissionChecks` refuses the unbound seed, so
+///     this value can never be played. A live slot is stored separately; the judge derives and
+///     substitutes the player-specific seed and target from its committed secret. Rust now sends
+///     that named template sentinel, and refuses a descriptor that regresses by publishing a
+///     target. Lean still owns the byte-exact acceptance decision.
 ///
 ///     ⚠ It is a CALLER/CALLEE SPLIT, and it was invisible for two days because causes 1 and 2
 ///     refused first. That is the whole reason those two were worth fixing: the red now names
-///     the thing that is actually broken.
+///     the thing that was actually broken.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -850,13 +860,11 @@ mod tests {
         // ...and the SHIPPED counter gets past this leg, so the assertions above are a
         // discrimination and not a gate that refuses everything.
         //
-        // ⚠ Deliberately "does not fail ON THE COUNTER" rather than "installs". The ceremony does
-        // not currently reach installation at all — `build_network_genesis_input` still reads a
-        // `target` the descriptor no longer publishes (see THE ONE RED THIS MODULE STILL CARRIES,
-        // at the top of this module). Asserting `Installed` here would couple this counter tooth
-        // to an unrelated open wound and take it red with it, which is how a tooth stops being
-        // read. It strengthens on its own the day that wound closes: the shipped counter must
-        // then carry all the way through.
+        // ⚠ Deliberately "does not fail ON THE COUNTER" rather than "installs". The fixture
+        // evaluator below is byte-pinned to one historical deployment/content tuple, while this
+        // leg deliberately reads the currently shipped signed envelope. Coupling the anti-rollback
+        // tooth to a fixture regeneration would take it red for an unrelated reason and make the
+        // discrimination above harder to read.
         let shipped_run = initialize_poa_signal_genesis_with(&args(&deployment), fixture_evaluator);
         if let Err(error) = &shipped_run {
             assert!(
@@ -883,6 +891,26 @@ mod tests {
             counter >= 1,
             "a zero activation counter would make the anti-rollback claim vacuous"
         );
+    }
+
+    #[test]
+    fn template_target_shipped_descriptor_is_target_free_and_a_published_answer_refuses() {
+        let descriptor: Value = serde_json::from_slice(
+            &fs::read(repo().join("poa/artifacts/poag1/games/signal-triangulation.json")).unwrap(),
+        )
+        .unwrap();
+        let descriptor = descriptor.as_object().unwrap();
+        assert_eq!(
+            template_target_for_authenticated_descriptor(descriptor).unwrap(),
+            UNBOUND_TARGET,
+            "a target-free public descriptor must receive only Lean's non-playable template sentinel"
+        );
+
+        let mut published_answer = descriptor.clone();
+        published_answer.insert("target".to_owned(), serde_json::json!([1, 2, 3]));
+        let error = template_target_for_authenticated_descriptor(&published_answer)
+            .expect_err("publishing the answer must refuse genesis");
+        assert!(error.contains("public target is the answer"), "{error}");
     }
 
     fn fixture_evaluator(wire: &str) -> Result<String, String> {
@@ -922,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn linked_lean_export_drives_the_real_store_ceremony() {
+    fn template_target_linked_lean_export_drives_the_real_store_ceremony() {
         let deployment = prepare_deployment();
         let report = initialize_poa_signal_genesis(&args(&deployment)).unwrap();
         assert_eq!(report.outcome, PoaSignalGenesisInitOutcome::Installed);
@@ -932,19 +960,29 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(head.digest(), report.head_digest);
-        let config_fixture = include_bytes!(
-            "../../dregg-lean-ffi/tests/fixtures/poa-network-genesis-config-v1.json"
-        );
-        let canon_fixture =
-            include_bytes!("../../dregg-lean-ffi/tests/fixtures/poa-network-genesis-canon-v1.json");
+        let config: Value = serde_json::from_slice(head.config()).unwrap();
         assert_eq!(
-            head.config(),
-            config_fixture.strip_suffix(b"\n").unwrap_or(config_fixture)
+            config["game"],
+            crate::poa_signal_adapter::POA_GAME_TAG_SIGNAL
         );
         assert_eq!(
-            head.canon(),
-            canon_fixture.strip_suffix(b"\n").unwrap_or(canon_fixture)
+            config["target"],
+            serde_json::json!({"low": 0, "mid": 0, "high": 0})
         );
+        assert_eq!(config["mission"]["run_seed"], UNBOUND_RUN_SEED);
+        assert_eq!(
+            config["mission"]["federation_id"],
+            dregg_types::hex_encode(&report.authority_id)
+        );
+
+        let canon: Value = serde_json::from_slice(head.canon()).unwrap();
+        assert_eq!(
+            canon["federation_id"],
+            dregg_types::hex_encode(&report.authority_id)
+        );
+        assert_eq!(canon["content_epoch"], 1);
+        assert_eq!(canon["world"]["sequence"], 0);
+        assert_eq!(canon["revision"], 0);
     }
 
     #[test]
