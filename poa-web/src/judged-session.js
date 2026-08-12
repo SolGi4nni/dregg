@@ -45,19 +45,13 @@ import { ArtifactRefusal } from "./poag1.js";
  * FALLEN_WALLS not because the path runs but because it named the WRONG
  * obstacle — the page was never supposed to build a carrier.
  *
- * ⚠ THE PATH STILL DOES NOT RUN, BUT NOT HERE ANY MORE. This paragraph used to
- * say `claim-cell-underivable` stands and that `wasm.cell_id_for_pubkey` "has
- * never existed in any build of the wasm". BOTH HALVES ARE NOW FALSE: that wall
- * fell on 2026-08-09 (`FALLEN_WALLS`, and the shipped `extension/dregg_wasm.js`
- * exports the function), and `CUSTODY_BLOCKERS` — which this paragraph pointed
- * readers at — no longer contains it. A docblock asserting a wall the same file
- * records as fallen is exactly the rot the `judgedCustody` comment below warns
- * about: a wall a player meets is a wall someone fixes; a wall a docblock
- * asserts is one that rots.
- *
- * What stands now is ONE wall further on and is the first that is not about a
- * local artifact at all: `settle-node-curtained`, the private-beta 401. See
- * `CUSTODY_BLOCKERS`, which holds it and the measurement behind it.
+ * ⚑ THE LAST STATIC WALL FELL TOO. `claim-cell-underivable` fell when the shipped
+ * WASM grew the canonical cell binding. The wall behind it,
+ * `settle-node-curtained`, fell later on 2026-08-09 when the direct node host
+ * lost its redundant Basic-Auth curtain; the node's own public/protected router
+ * now answers. Both remain in `FALLEN_WALLS` with the source change and live
+ * probes that licensed moving them. `CUSTODY_BLOCKERS` is therefore empty: an
+ * installed provider can ask to settle, and its returned result is the evidence.
  *
  * So `canPlay` is routinely `true`, `canSettle` follows the provider rather than
  * this file's beliefs, and the refusal a player actually meets is rendered BY
@@ -437,76 +431,40 @@ export const FALLEN_WALLS = Object.freeze([
       "and the shipped glue exports it now. The blocked-rebuild note this entry used to carry — that the " +
       "wasm32 workspace would not compile for want of an `Effect::Deshield` match arm — is DEAD: the " +
       "workspace compiled in 4m21s.\n\n" +
-      "⚠ IT DID NOT FALL BECAUSE SETTLING WORKS. Driving the seam now refuses one wall further on, at the " +
-      "node hop, and that wall is `settle-node-curtained` below. A wall that fell is not a leg that runs.\n\n" +
+      "⚠ IT DID NOT FALL BECAUSE SETTLING WORKED THAT DAY. Driving the seam then refused one wall further " +
+      "on, at the node hop: `settle-node-curtained`. The later entry below records when that wall fell too. " +
+      "A wall that fell is not by itself a leg that ran.\n\n" +
       "⚑ AND THE PROBE IS STILL SILENT. The binding closes this instance; `clientCellIdHex` still returns " +
       "`null` rather than throwing when a lookup fails, so the NEXT absent export will hide exactly as " +
       "well. What catches that class now is a test rather than the code: the e2e artifact pole sweeps " +
       "every `typeof w.…` probe in `background.ts` and requires the shipped glue to carry each name.",
   }),
+  Object.freeze({
+    code: "settle-node-curtained",
+    fell: "2026-08-09",
+    was:
+      "The extension talked directly to node.pathofangels.network, whose site-wide Basic-Auth curtain " +
+      "answered 401 before the node could receive a Signal claim.",
+    landed:
+      "dregg-infra `7fe98bd` removed Basic Auth from ONLY the direct node host; the private beta surface " +
+      "kept it. The cutover was licensed by credential-free live probes: `/status` answered 200 while " +
+      "protected node routes (`/cipherclerk/tokens`, `/intents`, and " +
+      "`/api/receipts/finalized-core`) answered the node's own 403. That proves the trusted-proxy pin and " +
+      "the node's public/protected router—not a drifting Caddy path list—remain the authorization boundary. " +
+      "A provider carrying `submitPoaSignalClaim` can now reach the claim route directly; its response, not " +
+      "this file's optimism, decides whether an individual settlement succeeds.",
+  }),
 ]);
 
 /**
- * ⚑ WHY THIS BROWSER STILL CANNOT SETTLE A JUDGED RUN. Each entry is a fact
- * about the node, NOT a policy choice made here — and each names the thing that
- * would have to land for the surface below to light up unchanged.
+ * Static facts that make this browser unable to settle a judged run.
  *
- * ⚑ FIVE WALLS HAVE FALLEN AND ONE REMAINS, and on 2026-08-09 the remaining one
- * CHANGED KIND. Every wall this list has ever held was a fact about an artifact
- * on this side of the wire — a missing signer, a missing carrier, a missing
- * export. All five are in [`FALLEN_WALLS`] above, by name, with what landed.
- *
- * What is left is the first one that is NOT: the node the extension is pinned to
- * is behind the private-beta invitation curtain and answers 401 to everything.
- * That is a deployment posture, not a defect, and no change to this page or the
- * extension's logic reaches it.
- *
- * So the honest summary a player is owed: a browser can open a judged run, spend
- * all five bursts and read its own transcript back — that works, through the
- * same-origin `/node/*` tunnel the curtain already covers. It cannot SETTLE,
- * because settling goes through the extension to the direct node host, where the
- * curtain refuses it.
- *
- * The one below is not worked around. Generating a keypair in page memory would
- * be a player key with no cell, no funds and no ML-DSA half, i.e. inventing
- * custody to make a button clickable — and putting the invitation password on a
- * request from here would be the same sin wearing a credential.
+ * Empty since 2026-08-09. History is not erased: every former entry is retained
+ * by code in [`FALLEN_WALLS`]. Runtime absence (no extension/provider, no active
+ * identity, unanswered route) is reported separately from measured state and
+ * never smuggled into this source-fact ledger.
  */
-export const CUSTODY_BLOCKERS = Object.freeze([
-  Object.freeze({
-    code: "settle-node-curtained",
-    what:
-      "The node your extension talks to turns every request away with HTTP 401. It is behind the " +
-      "private-beta door, and the extension carries no key to that door — deliberately.",
-    detail:
-      "⚑ THIS IS THE FIRST WALL IN THIS LIST THAT IS NOT ABOUT A LOCAL ARTIFACT. Everything on the browser " +
-      "side of the wire now works: the page derives and checks the statement, the extension signs it with " +
-      "the player key, builds the carrier, derives the cell, and reaches the network. It stops at the hop.\n\n" +
-      "MEASURED 2026-08-09, not read: every path on `https://node.pathofangels.network` answers `HTTP 401` " +
-      "with `www-authenticate: Basic realm=\"restricted\"` and `server: Caddy` — `/`, `/status`, `/health`, " +
-      "and `/api/poa/signal/<authority>/status` alike. So the node's own `public_routes` never get to " +
-      "answer, and `session-routes-authenticated` (in FALLEN_WALLS above) really did fall: this 401 is the " +
-      "reverse proxy, NOT the node's bearer layer, and reading it as a stale deployment is a misdiagnosis.\n\n" +
-      "The curtain lives in `dregg-infra`'s `edge/anchor/Caddyfile`, where `basic_auth` sits at site-block " +
-      "top level with NO path matcher, so it covers the host entirely; the same curtain covers " +
-      "`beta.pathofangels.network`. It has been there since 2026-08-02, predates the re-genesis by six days, " +
-      "and is the standing private-beta posture rather than an accident — that repo asserts it deliberately " +
-      "in three places and pins it with a test.\n\n" +
-      "⚑ THE PAGE IS NOT BLOCKED BY IT AND THE EXTENSION IS, WHICH IS THE WHOLE ASYMMETRY. This module " +
-      "fetches `\"/node\" + path` with `credentials: \"same-origin\"`, through Caddy's `handle_path /node/*` " +
-      "tunnel on the beta origin — so a player already past the curtain carries it for free, and OPENING " +
-      "and PLAYING a judged run is reachable for an invited player. `POA_SIGNAL_NODE_URL` in " +
-      "`extension/src/poa-signal.ts` is the DIRECT host: a different origin, with no credential, because " +
-      "`background.ts` says in as many words that there is intentionally no Basic-Auth credential or shared " +
-      "beta password in the extension. SETTLING is what that costs.\n\n" +
-      "⚠ NOTHING HERE IS WORKED AROUND. This page does not hold the invitation password, must not carry " +
-      "one, and will not put a credential on a request to make a button light up.",
-    needs:
-      "a change to how the beta is deployed: the extension's claim routed through the same-origin " +
-      "`/node/*` tunnel it already reaches the session routes by, or a carve-out in the beta Caddyfile " +
-      "for the public signal routes, or the curtain lifted. None of the three is a change to this page.",
-  }),
-]);
+export const CUSTODY_BLOCKERS = Object.freeze([]);
 
 /**
  * Did the session routes ANSWER this origin? A measured tri-state, never a
@@ -540,8 +498,8 @@ export function routesReachableFrom(session) {
  * ⚑ `canPlay` NOW MEANS PLAY, not settle. The bearer wall it used to be gated on
  * fell on 2026-08-07 (`FALLEN_WALLS`), so on a current deployment with the signer
  * installed and an identity bound, this returns `true` and the button is live.
- * The remaining `CUSTODY_BLOCKERS` entry is about SETTLING, which is a separate
- * act and stays disabled regardless.
+ * Static `CUSTODY_BLOCKERS` is empty. Settling is a separate act and becomes
+ * available only when the detected provider exposes the scoped claim submitter.
  */
 export function judgedCustody(provider = globalThis.window?.dregg ?? null, session = null) {
   const identityAvailable = Boolean(provider && typeof provider.getActiveIdentity === "function");
@@ -575,10 +533,8 @@ export function judgedCustody(provider = globalThis.window?.dregg ?? null, sessi
     signerAvailable,
     settlerAvailable,
     routesReachable,
-    // A settled deployment with everything present still names the SETTLING wall,
-    // because that is the next thing this page cannot do.
-    blocker: blocker ?? CUSTODY_BLOCKERS[0],
-    settleBlocker: settlerAvailable ? CUSTODY_BLOCKERS[0] : SETTLER_ABSENT,
+    blocker,
+    settleBlocker: settlerAvailable ? null : SETTLER_ABSENT,
     blockers: CUSTODY_BLOCKERS,
     fellAlready: FALLEN_WALLS,
   });

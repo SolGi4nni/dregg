@@ -184,7 +184,7 @@ export function mountBlackBox(root, descriptor, options = {}) {
       // probe" is a fact about THIS CLIENT'S OWN TRANSCRIPT, which `answered()` above
       // already reads. Measured before this line existed: an already-`excluded` cell
       // stayed live, and re-pressing it spent a probe and changed nothing, so a
-      // rehearsal could burn 12 of its 15 probes re-asking one dead question with no
+      // rehearsal could burn most of its 11 probes re-asking one dead question with no
       // refusal, no message, and no visible difference from an unasked cell.
       // `repeated-probe` is declared in the emitted refusal vocabulary: the real rules
       // reject this, and only the rehearsal was charging for it.

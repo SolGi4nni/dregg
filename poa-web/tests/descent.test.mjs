@@ -24,7 +24,7 @@ import { canonicalAuthority, canonicalDescriptors, canonicalPayload } from "./ca
  * on either side of the loader any more.
  *
  * A hand-written fixture is deliberately NOT used: the loader pins the emitted
- * 1924-state closure and 17316 rows, and a fixture that could satisfy that pin
+ * 1692-state closure and 15228 rows, and a fixture that could satisfy that pin
  * would be a second copy of the table maintained by hand.
  */
 const AUTHORITY = await canonicalAuthority("deck-descent");
@@ -40,9 +40,9 @@ test("the emitted descent descriptor loads through the shared finite-table engin
   assert.equal(descriptor.actionLimit, 9);
   assert.equal(descriptor.disclosure, "oracle-only");
   assert.equal(descriptor.members.length, 1);
-  assert.equal(descriptor.members[0].states.length, 1924);
-  assert.equal(descriptor.members[0].transitions.length, 1924 * 9);
-  assert.equal(descriptor.oracleRows, 316);
+  assert.equal(descriptor.members[0].states.length, 1692);
+  assert.equal(descriptor.members[0].transitions.length, 1692 * 9);
+  assert.equal(descriptor.oracleRows, 298);
 });
 
 test("the shaft carries PER-CHAMBER relic counts, and the spurs are not a mirror", async () => {
@@ -53,7 +53,7 @@ test("the shaft carries PER-CHAMBER relic counts, and the spurs are not a mirror
   // holds two, which is the asymmetry that makes the T-junction a decision.
   assert.deepEqual({ ...shaft.relicCount }, { mouth: 1, west: 1, east: 2 });
   assert.equal(shaft.air, 9);
-  assert.equal(shaft.shoring, 2);
+  assert.equal(shaft.shoring, 1);
   assert.equal(shaft.bankTarget, 2);
   assert.deepEqual([...shaft.chambers], ["mouth", "west", "east"]);
   assert.equal(shaft.surface, "hatch");
@@ -70,19 +70,18 @@ test("a `relics_per_chamber` scalar is refused rather than reinterpreted", async
   );
 });
 
-test("the practice family is the whole eight, distinct, and names no run", async () => {
+test("the practice family is the whole six, distinct, and names no run", async () => {
   const { json, descriptor } = await descent();
   const practice = descriptor.instance.practice;
   assert.equal(practice.scored, false);
-  assert.equal(practice.instanceSpace, 8);
-  assert.equal(practice.boards.length, 8);
-  assert.equal(new Set(practice.boards.map((board) => JSON.stringify(board))).size, 8);
-  // ⚑ THE FAMILY, NOT THE INSTANCE. Every one of the 2^3 assignments is present,
-  // so the block distinguishes no run from any other: knowing all eight is knowing
-  // what the `shaft` block already said. A block that named the drawn board would
-  // be a block with fewer than eight rows, or one row.
+  assert.equal(practice.instanceSpace, 6);
+  assert.equal(practice.boards.length, 6);
+  assert.equal(new Set(practice.boards.map((board) => JSON.stringify(board))).size, 6);
+  // ⚑ THE FAMILY, NOT THE INSTANCE. Every assignment permitted by the public
+  // shared-bulkhead law is present. A block that named the drawn board would be
+  // a block with fewer than six rows, or one row.
   const shapes = practice.boards.map((board) => `${board.mouth}${board.west}${board.east}`.replace(/sound/g, "s").replace(/flooded/g, "f"));
-  assert.deepEqual([...shapes].sort(), ["fff", "ffs", "fsf", "fss", "sff", "sfs", "ssf", "sss"]);
+  assert.deepEqual([...shapes].sort(), ["ffs", "fsf", "fss", "sfs", "ssf", "sss"]);
   // …and nothing anywhere in the bytes names a selection.
   const bytes = JSON.stringify(json);
   for (const leak of ["selected", "seed_byte", "run_seed", "drawn_board"]) {
@@ -92,12 +91,12 @@ test("the practice family is the whole eight, distinct, and names no run", async
 
 test("a practice family short one board is refused — a missing member IS a leak", async () => {
   const { json } = await descent();
-  const short = { ...json, practice: { ...json.practice, boards: json.practice.boards.slice(0, 7) } };
-  assert.throws(() => loadDeckDescentDescriptor(short, AUTHORITY), /emits 7 boards for a declared space of 8/);
+  const short = { ...json, practice: { ...json.practice, boards: json.practice.boards.slice(0, 5) } };
+  assert.throws(() => loadDeckDescentDescriptor(short, AUTHORITY), /emits 5 boards for a declared space of 6/);
 
   const duplicated = {
     ...json,
-    practice: { ...json.practice, boards: [...json.practice.boards.slice(0, 7), json.practice.boards[0]] },
+    practice: { ...json.practice, boards: [...json.practice.boards.slice(0, 5), json.practice.boards[0]] },
   };
   assert.throws(() => loadDeckDescentDescriptor(duplicated, AUTHORITY), /repeats a board/);
 });
@@ -105,7 +104,7 @@ test("a practice family short one board is refused — a missing member IS a lea
 test("every oracle row's question is derived twice and the two agree", async () => {
   const { descriptor } = await descent();
   const shaft = descriptor.instance.shaft;
-  // `loadDeckDescentDescriptor` has already checked this over all 316 rows — a
+  // `loadDeckDescentDescriptor` has already checked this over all 298 rows — a
   // disagreement would have thrown. What is asserted here is that the check saw
   // something: the map is non-empty and says what the shaft's topology says.
   assert.equal(descriptor.questions.size, 6);
@@ -166,14 +165,15 @@ test("a practice run answers its own oracle rows and banks, and is not a judged 
 
 test("a flooded shaft is answered differently by the same rows, and can strand a run", async () => {
   const { descriptor } = await descent();
-  // Board 7 floods every passage. The same opening move is answered the other way.
+  // Board 4 floods the mouth and west passage (the shared bulkhead guarantees
+  // east stays sound). The same opening move is answered the other way.
   const kind = descentPracticeOracle(descriptor, 0);
-  const cruel = descentPracticeOracle(descriptor, 7);
+  const cruel = descentPracticeOracle(descriptor, 4);
   const opening = tableRunView(descriptor, createFiniteTableRun(descriptor, { mode: "practice", member: 0 }));
   assert.equal(kind(opening, "survey"), "match");
   assert.equal(cruel(opening, "survey"), "mismatch");
 
-  const run = replayFiniteTable(descriptor, { mode: "practice", member: 7 }, [
+  const run = replayFiniteTable(descriptor, { mode: "practice", member: 4 }, [
     { action: "survey", resolution: cruel(opening, "survey") },
   ]);
   const view = tableRunView(descriptor, run);
@@ -185,11 +185,11 @@ test("a flooded shaft is answered differently by the same rows, and can strand a
 test("the emitted `doomed` states are rendered, never recomputed", async () => {
   const { descriptor } = await descent();
   const doomed = descriptor.members[0].states.filter((state) => state.view.doomed);
-  // ⚑ 1030 of 1924. A client that did not surface this would show a player a live
+  // ⚑ 889 of 1692. A client that did not surface this would show a player a live
   // board with nine dead buttons and no reason given — the exact "doomed-but-open"
   // complaint the design gate raises. It is a published field precisely so the
   // browser can say so without holding the rules.
-  assert.equal(doomed.length, 1030);
+  assert.equal(doomed.length, 889);
   assert.ok(doomed.every((state) => !state.terminal), "a doomed state is not a finished one");
   for (const state of doomed.slice(0, 40)) {
     const rows = descriptor.members[0].transitions.filter((row) => row.state === state.id);
@@ -336,10 +336,10 @@ test("a doomed run says so, on the map and in words, before a player presses any
   const { descriptor } = await descent();
   withFakeDocument(() => {
     const root = new FakeElement("div");
-    // Board 7 floods every passage. Walk into the mouth blind and take the damage,
-    // then spend the rest of the air on looks: the emitted table calls it doomed.
-    const oracle = descentPracticeOracle(descriptor, 7);
-    mountDeckDescent(root, descriptor, { session: { mode: "practice", member: 7, oracle } });
+    // Board 4 floods the mouth and west passage. Walk into both blind and take
+    // the damage: the emitted table calls it doomed even though east stays dry.
+    const oracle = descentPracticeOracle(descriptor, 4);
+    mountDeckDescent(root, descriptor, { session: { mode: "practice", member: 4, oracle } });
     const press = (actionId) => {
       const button = all(root).find((node) => node.dataset.action === actionId);
       assert.ok(button && !button.disabled, `${actionId} is unavailable`);

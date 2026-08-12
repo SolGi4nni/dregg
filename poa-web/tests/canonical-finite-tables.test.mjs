@@ -123,7 +123,7 @@ test("canonical Lean-emitted Relay and Salvage bytes match the strict web consum
   assert.equal(salvage.initialState, "salvage:0:none:0");
   assert.equal(salvage.instance.practice.boards.length, 90);
   const verdicts = machine.transitions.reduce((tally, row) => ({ ...tally, [row.verdict]: (tally[row.verdict] ?? 0) + 1 }), {});
-  assert.deepEqual(verdicts, { accept: 456, resolve: 1200, refuse: 2136 });
+  assert.deepEqual(verdicts, { accept: 744, resolve: 1920, refuse: 3432 });
 });
 
 test("no emitted descriptor or catalog byte names its own instance", async () => {
@@ -232,6 +232,6 @@ test("the real descriptors refuse a widened disclosure and a relabelled security
     row.on_mismatch = null;
     collapsed += 1;
   }
-  assert.equal(collapsed, 1200, "the mutation must actually remove every oracle row");
+  assert.equal(collapsed, 1920, "the mutation must actually remove every oracle row");
   assert.throws(() => loadSalvageLockDescriptor(settled, finiteTableAuthority(salvageMission)), { code: "table-state-closure" });
 });

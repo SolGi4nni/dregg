@@ -33,7 +33,7 @@ export function blackBoxMission() {
     missionId: 4,
     gameId: "black-box-reconstruction",
     title: "Black Box Reconstruction",
-    actionLimit: 15,
+    actionLimit: 11,
     instanceDisclosure: "oracle-only",
     federationId: "7".repeat(64),
     contentSession: "8".repeat(64),

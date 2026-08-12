@@ -60,7 +60,7 @@ test("the oracle decodes as a complete instances-by-probes matrix", () => {
   assert.equal(descriptor.oracle.slotCount, 5);
   assert.equal(descriptor.oracle.fragmentCount, 5);
   assert.equal(descriptor.oracle.requiredPerInstance, 5);
-  assert.equal(descriptor.actionLimit, 15);
+  assert.equal(descriptor.actionLimit, 11);
   assert.equal(descriptor.oracle.table.length, 120);
   assert.ok(descriptor.oracle.table.every((row) => row.length === 25));
   // Every row settles exactly five probes, one per slot, and no two rows agree —
@@ -140,12 +140,13 @@ test("a practice run reads its own row; a judged run learns nothing", () => {
 
 test("the probe budget is the emitted action_limit, not a number this client chose", () => {
   const descriptor = load();
-  // Fifteen probes that never settle: instance 0 places fragment n at slot n, so
+  // A pool of probes that never settle: instance 0 places fragment n at slot n, so
   // asking for the wrong fragment is always a mismatch.
-  const wrong = [];
+  const candidates = [];
   for (let slot = 0; slot < 5; slot += 1) {
-    for (const fragment of [(slot + 1) % 5, (slot + 2) % 5, (slot + 3) % 5]) wrong.push(`probe-${slot}-${fragment}`);
+    for (const fragment of [(slot + 1) % 5, (slot + 2) % 5, (slot + 3) % 5]) candidates.push(`probe-${slot}-${fragment}`);
   }
+  const wrong = candidates.slice(0, descriptor.actionLimit);
   assert.equal(wrong.length, descriptor.actionLimit);
   const spent = replayPractice(descriptor, 0, wrong);
   assert.equal(spent.exhausted, true);

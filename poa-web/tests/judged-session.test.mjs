@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
+  CLAIM_SUBMIT_METHOD,
   CUSTODY_BLOCKERS,
   FALLEN_WALLS,
   MAX_ROUNDS,
@@ -417,16 +418,24 @@ test("custody detects the scoped signer, and says what still bites", () => {
   assert.equal(judgedCustody(provider, { state: "unauthenticated" }).canPlay, false);
   assert.equal(judgedCustody(provider, { state: "none" }).canPlay, true);
   assert.equal(judgedCustody(null, { state: "none" }).canPlay, false, "no signer is still no play");
+
+  const completeProvider = {
+    ...provider,
+    [CLAIM_SUBMIT_METHOD]: async () => ({}),
+  };
+  const complete = judgedCustody(completeProvider, { state: "none" });
+  assert.equal(complete.canPlay, true);
+  assert.equal(complete.canSettle, true);
+  assert.equal(complete.blocker, null);
+  assert.equal(complete.settleBlocker, null);
 });
 
-test("each custody blocker is a checkable fact about the node", async () => {
-  // ⚑ ONE WALL LEFT, AND IT MOVED ONE STEP FURTHER IN. `claim-carrier-unbuildable`
-  // led this list this morning; it is now in FALLEN_WALLS — not because settling
-  // works, but because it named the WRONG obstacle. What stands is the wall that
-  // was hiding behind the wasm one, and it was found by DRIVING, not by reading.
+test("each custody blocker is a checkable fact and fallen walls stay recorded", async () => {
+  // ⚑ NO STATIC WALL LEFT. Runtime absence is still measured separately, and
+  // every former source/deployment wall remains named below with what landed.
   assert.deepEqual(
     CUSTODY_BLOCKERS.map((blocker) => blocker.code),
-    ["settle-node-curtained"],
+    [],
   );
   assert.deepEqual(
     FALLEN_WALLS.map((wall) => wall.code),
@@ -436,6 +445,7 @@ test("each custody blocker is a checkable fact about the node", async () => {
       "wasm-carrier-absent",
       "session-routes-authenticated",
       "claim-cell-underivable",
+      "settle-node-curtained",
     ],
   );
   for (const wall of FALLEN_WALLS) {
@@ -490,9 +500,10 @@ test("each custody blocker is a checkable fact about the node", async () => {
   // The abuse budget that replaced the bearer is not optional: a public write
   // surface with no explicit budget is the thing the move must never become.
   const sessionRs = await readFile(new URL("../../node/src/poa_signal_session.rs", import.meta.url), "utf8");
-  assert.match(sessionRs, /struct SessionAdmission/, "the abuse budget left the session module");
-  assert.match(sessionRs, /session-player-rate-limit/, "the per-player-key budget is gone");
-  assert.match(sessionRs, /session-busy/, "the in-flight ceiling is gone");
+  const judgedRs = await readFile(new URL("../../node/src/poa_judged_session.rs", import.meta.url), "utf8");
+  assert.match(judgedRs, /pub struct SessionAdmission/, "the abuse budget left the judged-session authority");
+  assert.match(judgedRs, /session-player-rate-limit/, "the per-player-key budget is gone");
+  assert.match(judgedRs, /session-busy/, "the in-flight ceiling is gone");
   // And the ORDER: the per-key budget is charged only after verification. The
   // opposite order is a way to lock a player out of their own run with a public key.
   const verifyAt = sessionRs.indexOf("verify_player_signature(");
@@ -537,23 +548,19 @@ test("each custody blocker is a checkable fact about the node", async () => {
   assert.match(wasmSource, /pub fn build_poa_signal_claim_turn/,
     "wasm/src/lib.rs did not load — the assertions above are vacuous");
 
-  // ⚑ AND THE WALL THAT ACTUALLY BITES IS NOW A NODE FACT, not an artifact one.
-  // It must say it was MEASURED and name the proxy rather than the node's bearer
-  // layer — reading a curtain 401 as a stale deployment is the misdiagnosis this
-  // entry exists to prevent.
-  assert.match(CUSTODY_BLOCKERS[0].detail, /MEASURED 2026-08-09/);
-  assert.match(CUSTODY_BLOCKERS[0].detail, /www-authenticate/);
-  assert.match(CUSTODY_BLOCKERS[0].detail, /NOT the node's bearer layer/);
-  // It must keep the asymmetry that makes the copy actionable: playing works,
-  // settling does not, and the reason is which origin each one talks to.
-  assert.match(CUSTODY_BLOCKERS[0].detail, /THE PAGE IS NOT BLOCKED BY IT AND THE EXTENSION IS/);
-  // And it must not offer a workaround this page would be wrong to take.
-  assert.match(CUSTODY_BLOCKERS[0].detail, /NOTHING HERE IS WORKED AROUND/);
+  // ⚑ THE DEPLOYMENT WALL IS ASSERTED FALLEN, not silently deleted. The entry
+  // names the exact infra commit and both sides of the live authorization probe:
+  // public status answered while protected node routes still refused.
+  const curtain = FALLEN_WALLS.find((wall) => wall.code === "settle-node-curtained");
+  assert.match(curtain.landed, /7fe98bd/);
+  assert.match(curtain.landed, /`\/status` answered 200/);
+  assert.match(curtain.landed, /answered the node's own 403/);
+  assert.match(curtain.landed, /private beta surface kept it/);
 
   // The fallen cell wall must say what landed, and must NOT claim settling works.
   const cell = FALLEN_WALLS.find((wall) => wall.code === "claim-cell-underivable");
-  assert.match(cell.landed, /IT DID NOT FALL BECAUSE SETTLING WORKS/);
-  assert.match(cell.landed, /A wall that fell is not a leg that runs/);
+  assert.match(cell.landed, /IT DID NOT FALL BECAUSE SETTLING WORKED THAT DAY/);
+  assert.match(cell.landed, /A wall that fell is not by itself a leg that ran/);
   // ⚠ The probe that hid it is still silent, and the entry has to say so — the
   // instance is closed, the CLASS is not.
   assert.match(cell.landed, /THE PROBE IS STILL SILENT/);

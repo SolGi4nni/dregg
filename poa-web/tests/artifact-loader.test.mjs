@@ -39,7 +39,7 @@ test("loads the actual curator-authenticated Lean-emitted POAG1 bundle", async (
   ]);
 });
 
-test("the client accepts the curator-signed counter-11 seven-game bundle end to end", async () => {
+test("the client accepts the curator-signed counter-12 seven-game bundle end to end", async () => {
   const bundle = await loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",

@@ -172,6 +172,14 @@ test("the judged run keeps a register row of its own, and every branch of it is 
   // Reachable to PLAY is never reachable to SETTLE, and the row says which.
   assert.match(reachable.grade.detail, /Settling is a separate act and is refused: settle-node-curtained/);
 
+  const settlementReady = row({
+    custody: { canPlay: true, canSettle: true, blocker: null, settleBlocker: null },
+    session: { state: "none" },
+  });
+  assert.equal(settlementReady.grade.label, "JUDGED RUN REACHABLE");
+  assert.match(settlementReady.grade.detail, /provider also exposes the scoped settlement action/);
+  assert.doesNotMatch(settlementReady.grade.detail, /refused|settle-blocked/);
+
   const scored = row({
     custody: { canPlay: true, blocker: null, settleBlocker: { code: "settle-node-curtained" } },
     session: { state: "ready" },

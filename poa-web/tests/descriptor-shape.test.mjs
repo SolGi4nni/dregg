@@ -36,7 +36,7 @@ test("a descriptor with no hidden information is refused, not defaulted", async 
     row.next = row.on_match;
     collapsed += 1;
   }
-  assert.equal(collapsed, 1200, "the mutation must actually remove every oracle row");
+  assert.equal(collapsed, 1920, "the mutation must actually remove every oracle row");
   assert.throws(() => descriptorShape(flattened), { code: "shape-no-hidden-information" });
 
   assert.throws(() => descriptorShape({ format: "POAG1-GAME", game_id: "x" }), { code: "shape-unknown" });

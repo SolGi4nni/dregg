@@ -2,12 +2,12 @@
  * Deck Descent — decode the authenticated Lean-emitted descent table.
  *
  * ⚑ THE SAME ENGINE AS SALVAGE AND ARTIFICER, NOT A THIRD ONE. Descent is a
- * `parametric` descriptor: one machine, 1924 states, and 316 rows that do not
+ * `parametric` descriptor: one machine, 1692 states, and 298 rows that do not
  * have one successor because the answer depends on a board nobody in this
  * browser holds. That is precisely the shape `finite-table-runtime.js` exists
  * for, so every verdict, successor, refusal and view below comes through it and
  * nothing in this file walks a transition. What is HERE is the part the shared
- * engine cannot know: the `shaft` — the public rules of the mine — and the eight
+ * engine cannot know: the `shaft` — the public rules of the mine — and the six
  * practice boards.
  *
  * ## What this file derives, and why each derivation is a LOOKUP
@@ -26,7 +26,7 @@
  *      chamber's `lore`, and that chamber is the question — and once off the
  *      action's emitted `line` and the shaft's child maps, which is the reading
  *      `DeckDescentEmit.line_determines_target` PROVES is the kernel's
- *      `Action.target`. Two sources, checked against each other on all 316 rows
+ *      `Action.target`. Two sources, checked against each other on all 298 rows
  *      at load. Neither is a rule this file invented.
  *
  *   3. That `on_match` IS the sound branch. The emitter says so in a docblock,
@@ -56,7 +56,7 @@ const RULESET = "descent-v1";
 const ENGINE = "Dregg2.Games.PathOfAngels.DeckDescent";
 /** `DeckDescent.AIR`: nine actions, and the design gate measures slack 0. */
 const ACTION_LIMIT = 9;
-const STATE_COUNT = 1924;
+const STATE_COUNT = 1692;
 const ACTION_COUNT = 9;
 const KINDS = Object.freeze(["survey", "shore", "descend", "lift", "ascend", "extract"]);
 const LINES = Object.freeze(["main", "spur", "here"]);
@@ -104,7 +104,7 @@ function countMap(value, chambers, at, max) {
 }
 
 /**
- * The shaft: the public rules, true on all eight boards.
+ * The shaft: the public rules, true on all six boards.
  *
  * ⚑ This block is checked as hard as the table is, because it is what the whole
  * board is DRAWN from — the map a player navigates, how far from the hatch they
@@ -241,12 +241,13 @@ function descentShaft(value, at) {
 }
 
 /**
- * The practice family: ALL EIGHT boards, and no answer.
+ * The practice family: ALL SIX boards, and no answer.
  *
  * ⚑ Publishing the family is not publishing the instance, and here the family
  * was public before this block existed. `shaft` names three chambers and two
- * readings that a passage can have; every `resolve` row carries both successors;
- * `scripts/poa-design-gate.py` rebuilds all eight boards from exactly that and
+ * readings that a passage can have; the public bulkhead law says at most one
+ * spur floods; every `resolve` row carries both successors;
+ * `scripts/poa-design-gate.py` rebuilds all six boards from exactly that and
  * walks them, reading nothing from this block. So the block adds no bits — it
  * replaces a RULE a client would otherwise carry ("each chamber is independently
  * sound or flooded, so there are two-to-the-chambers of them") with a lookup.
@@ -277,7 +278,7 @@ function descentPractice(value, shaft, at) {
       row[chamber] = board[chamber];
     }
     const shape = shaft.chambers.map((chamber) => row[chamber]).join("|");
-    // ⚠ A duplicate is a LEAK dressed as a count: eight rows naming seven boards
+    // ⚠ A duplicate is a LEAK dressed as a count: six rows naming five boards
     // tells a reader one board is twice as likely as the others.
     refuse(!seen.has(shape), "descent-practice", `${at}.boards[${index}] repeats a board the family already names`);
     seen.add(shape);
@@ -532,7 +533,7 @@ export function rowFor(descriptor, run, actionId) {
  * consulted; `on_match`/`on_mismatch` stay in the table, so a rehearsal walks
  * exactly the rows a judged run walks.
  *
- * ⚠ `boardIndex` is a LOCAL, UNSCORED choice out of the published eight. It is
+ * ⚠ `boardIndex` is a LOCAL, UNSCORED choice out of the published six. It is
  * not `HiddenInstance.boardFromRunSeed` and must never become it: reproducing the
  * Lean draw here would put a second copy of it in a browser that has no secret to
  * feed it, and would make a rehearsal look like a judged run.

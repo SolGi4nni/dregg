@@ -261,12 +261,15 @@ function judgedGrade(judged) {
       "dim",
     );
   }
-  const settleCode = custody.settleBlocker?.code ?? "settle-blocked";
+  const canSettle = custody.canSettle === true;
+  const settleCode = custody.settleBlocker?.code ?? "settle-not-requested";
   if (judged?.session?.state === "ready") {
     return grade(
       "judged-unsettled",
       "NODE-JUDGED, UNSETTLED",
-      `The node scored this run against a slot the curator committed to before it opened — this browser classified nothing. It still has not settled, and the reason has a name: ${settleCode}.`,
+      canSettle
+        ? "The node scored this run against a slot the curator committed to before it opened — this browser classified nothing. Settlement is available but no finalized settlement has been observed yet."
+        : `The node scored this run against a slot the curator committed to before it opened — this browser classified nothing. It still has not settled, and the reason has a name: ${settleCode}.`,
       "amber",
     );
   }
@@ -274,7 +277,9 @@ function judgedGrade(judged) {
     return grade(
       "judged-playable",
       "JUDGED RUN REACHABLE",
-      `The session route answered this origin and your signer is installed, so a judged run can be opened here and the node will score it. Settling is a separate act and is refused: ${settleCode}.`,
+      canSettle
+        ? "The session route answered this origin and your signer is installed, so a judged run can be opened here and the node will score it. The provider also exposes the scoped settlement action."
+        : `The session route answered this origin and your signer is installed, so a judged run can be opened here and the node will score it. Settling is a separate act and is refused: ${settleCode}.`,
       "amber",
     );
   }

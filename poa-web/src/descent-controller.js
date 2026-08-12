@@ -9,11 +9,11 @@
  *
  * ⚑ THE SHAFT IS DRAWN BECAUSE THE SHAFT IS PUBLIC. Everything on the map — the
  * topology, how many relics each chamber holds, how many crossings from the
- * hatch, which reading damages — is in the `shaft` block, true on all eight
+ * hatch, which reading damages — is in the `shaft` block, true on all six
  * boards, and a player is entitled to all of it. What is withheld is the three
  * bits, and the map shows those as `unread` until the table resolves them.
  *
- * ⚑ `doomed` IS ON SCREEN, LOUDLY. 1030 of the 1924 emitted states are ones no
+ * ⚑ `doomed` IS ON SCREEN, LOUDLY. 889 of the 1692 emitted states are ones no
  * board still rescues, and the emitter publishes the flag precisely so a client
  * can say so. A descent whose air has already run out in every future, rendered
  * as a live board with nine dead buttons, is the exact "doomed-but-open" failure
@@ -41,7 +41,7 @@ const REFUSAL_COPY = Object.freeze({
   "no-air": "The air is gone.",
   "no-passage": "No passage runs that way from where you are standing.",
   "already-read": "You have already read that passage — a second look buys nothing.",
-  "no-shoring": "No shoring left. The supply was two and it is spent.",
+  "no-shoring": "No shoring left. The single timber is spent.",
   "already-safe": "That passage is already safe.",
   "not-in-a-chamber": "There is nothing to lift at the hatch.",
   "chamber-emptied": "This chamber has given up everything it holds.",
@@ -145,7 +145,7 @@ export function mountDeckDescent(root, descriptor, callbacks = {}) {
           ariaLabel: `${action.label}. Refused: ${REFUSAL_COPY[row?.reason] ?? "closed here"}`,
           state: "spent",
           // ⚑ DISABLED, not merely greyed — and this game is the one where it
-          // matters. 1030 of the 1924 emitted states are doomed, and in every one
+          // matters. 889 of the 1692 emitted states are doomed, and in every one
           // of them all nine rows refuse. Nine live-looking buttons over a run
           // that is already lost is the "doomed-but-open" board the design gate
           // raises against other games; the reason is on the button face and the
