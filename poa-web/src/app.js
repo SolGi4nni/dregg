@@ -23,7 +23,9 @@ import {
   judgedCustody,
   loadJudgedSession,
   mountJudgedPanel,
+  openJudgedSession,
   settleJudgedRun,
+  spendJudgedBurst,
 } from "./judged-session.js";
 import {
   buildCrateOpenAction,
@@ -418,15 +420,68 @@ function renderJudged() {
     session: state.judgedSession,
     settle: state.judgedSettle,
   });
-  mountJudgedPanel(root, panel);
-  if (panel.action.code === "settle-claim" && panel.action.enabled) {
-    root.querySelector(".judged-panel__action")?.addEventListener("click", settleJudgedClaim, { once: true });
-  }
+  const signal = state.games.find((game) => game.gameId === "signal-triangulation") ?? null;
+  mountJudgedPanel(root, panel, {
+    guessSymbols: signal?.symbols ?? null,
+    // One dispatch point holds the product-level reachability statement: every
+    // action the panel can render live has an operation behind it. The mount
+    // disables an otherwise-live button when this callback is absent, so a
+    // future unwiring fails closed instead of recreating the inert-button bug.
+    onAction: performJudgedAction,
+  });
   // The evidence register grades the judged run off the same measured state this
   // panel renders, so it is refreshed HERE rather than at each call site — a
   // second place that has to remember would eventually be the stale one.
   // `renderPlatform` mounts only; it cannot re-enter this function.
   renderPlatform();
+}
+
+/**
+ * Route the panel's named action into the operation with the same name.
+ *
+ * The panel authors only player intent. Opening and guessing are signed by the
+ * extension; LOCKED/DRIFT still come exclusively from the served session; and
+ * settlement still hands the served transcript back to the extension without
+ * constructing a carrier here.
+ */
+function performJudgedAction(code, guess = null) {
+  if (code === "session-open") return openJudgedRun();
+  if (code === "session-guess") return spendJudgedGuess(guess);
+  if (code === "settle-claim") return settleJudgedClaim();
+  return undefined;
+}
+
+async function openJudgedRun() {
+  const [mission] = state.missions;
+  if (!mission || state.slot?.state !== "open" || state.judgedCustody?.canPlay !== true) return;
+  state.judgedSession = await openJudgedSession({
+    provider: window.dregg ?? null,
+    authorityId: mission.federationId,
+    commitment: state.slot.commitment,
+    slot: state.slot.slot,
+    baseUrl: location.href,
+  });
+  // Re-grade custody from what the write route actually answered, by the same
+  // measured rule initialization uses for the read route.
+  state.judgedCustody = judgedCustody(window.dregg ?? null, state.judgedSession);
+  renderJudged();
+}
+
+async function spendJudgedGuess(guess) {
+  const [mission] = state.missions;
+  const session = state.judgedSession?.state === "ready" ? state.judgedSession.session : null;
+  if (!mission || !session?.open || state.judgedCustody?.canPlay !== true || !guess) return;
+  state.judgedSession = await spendJudgedBurst({
+    provider: window.dregg ?? null,
+    authorityId: mission.federationId,
+    commitment: state.slot.commitment,
+    slot: state.slot.slot,
+    round: session.roundsUsed,
+    guess,
+    baseUrl: location.href,
+  });
+  state.judgedCustody = judgedCustody(window.dregg ?? null, state.judgedSession);
+  renderJudged();
 }
 
 /**

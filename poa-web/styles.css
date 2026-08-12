@@ -454,6 +454,14 @@ footer { grid-column: 1 / -1; z-index: 3; display: flex; align-items: center; ju
 .judged-round__code { color: var(--text); font-size: 11px; letter-spacing: .12em; }
 .judged-round__locked { color: var(--acid); font-size: 9px; letter-spacing: .1em; }
 .judged-round__drift { color: var(--dim); font-size: 9px; letter-spacing: .1em; }
+.judged-composer { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+  margin: 2px 0 0; padding: 0; border: 0; }
+.judged-composer__legend { grid-column: 1 / -1; padding: 0; color: var(--dim); font-size: 8px;
+  letter-spacing: .12em; text-transform: uppercase; }
+.judged-composer__field { display: grid; gap: 3px; }
+.judged-composer__label { color: var(--dim); font-size: 7px; letter-spacing: .14em; }
+.judged-composer__select { min-width: 0; padding: 6px 7px; border: 1px solid var(--line-bright);
+  border-radius: 0; background: var(--ink); color: var(--text); font: 9px var(--mono); }
 .judged-panel__action { justify-self: start; padding: 6px 13px; border: 1px solid var(--line-bright);
   background: transparent; color: var(--text); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; }
 .judged-panel__action[disabled] { border-color: var(--line); color: var(--dim); cursor: not-allowed; }

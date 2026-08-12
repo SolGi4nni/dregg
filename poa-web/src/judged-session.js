@@ -1221,7 +1221,7 @@ function element(documentRef, tag, className, textContent) {
   return node;
 }
 
-export function mountJudgedPanel(root, panel) {
+export function mountJudgedPanel(root, panel, { guessSymbols = null, onAction = null } = {}) {
   if (!root || typeof root.replaceChildren !== "function") throw new TypeError("a judged-panel root is required");
   const documentRef = root.ownerDocument ?? globalThis.document;
   if (!documentRef?.createElement) throw new TypeError("DOM document is required");
@@ -1249,15 +1249,78 @@ export function mountJudgedPanel(root, panel) {
     card.append(list);
   }
 
+  // A judged guess is the one thing this browser is allowed to author besides
+  // identity: three band choices. The options come from the descriptor whose
+  // signed bundle the page already accepted. No target, seed, table row or
+  // classifier enters this form; the node remains the only source of readings.
+  const needsGuess = panel.action.code === "session-guess" && panel.action.enabled;
+  const symbols = Array.isArray(guessSymbols) ? guessSymbols : [];
+  const descriptorMatchesWire = symbols.length === MAX_BAND + 1
+    && symbols.every((symbol, id) => symbol?.id === id);
+  const selects = [];
+  if (needsGuess && descriptorMatchesWire) {
+    const composer = element(documentRef, "fieldset", "judged-composer");
+    composer.append(element(documentRef, "legend", "judged-composer__legend", "Choose three carrier bands"));
+    for (const [index, position] of ["LOW", "MID", "HIGH"].entries()) {
+      const label = element(documentRef, "label", "judged-composer__field");
+      label.append(element(documentRef, "span", "judged-composer__label", position));
+      const select = element(documentRef, "select", "judged-composer__select");
+      select.dataset.position = position.toLowerCase();
+      select.setAttribute("aria-label", `${position} carrier band`);
+      const placeholder = element(documentRef, "option", "", "choose");
+      placeholder.value = "";
+      placeholder.selected = true;
+      select.append(placeholder);
+      for (const symbol of symbols) {
+        const option = element(documentRef, "option", "", `${symbol.glyph} ${symbol.label}`);
+        option.value = String(symbol.id);
+        select.append(option);
+      }
+      select.value = "";
+      selects.push(select);
+      label.append(select);
+      composer.append(label);
+    }
+    card.append(composer);
+  }
+
   const button = element(documentRef, "button", "judged-panel__action", panel.action.label);
   button.type = "button";
-  button.disabled = !panel.action.enabled;
+  const actionReachable = typeof onAction === "function";
+  button.disabled = !panel.action.enabled || !actionReachable || needsGuess;
   button.dataset.code = panel.action.code;
   // The reason is TEXT, not only a tooltip: a disabled control whose reason lives
   // in a `title` is a control that reads as broken to anyone who cannot hover it.
-  const reason = element(documentRef, "p", "judged-panel__reason", panel.action.reason);
+  const missingComposer = needsGuess && !descriptorMatchesWire;
+  const reason = element(
+    documentRef,
+    "p",
+    "judged-panel__reason",
+    missingComposer
+      ? "The signed Signal descriptor does not provide exactly band ids 0 through 5, so this terminal refuses to compose a wire guess."
+      : needsGuess
+        ? `Choose all three bands. ${panel.action.reason}`
+        : panel.action.reason,
+  );
   reason.id = `judged-reason-${panel.action.code}`;
   button.setAttribute("aria-describedby", reason.id);
+
+  if (needsGuess && descriptorMatchesWire) {
+    const refresh = () => {
+      button.disabled = selects.some((select) => select.value === "") || !actionReachable;
+    };
+    for (const select of selects) select.addEventListener("change", refresh);
+  }
+  if (panel.action.enabled && actionReachable) {
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      const guess = needsGuess
+        ? Object.freeze({ low: Number(selects[0].value), mid: Number(selects[1].value), high: Number(selects[2].value) })
+        : null;
+      onAction(panel.action.code, guess);
+    }, { once: true });
+  }
   card.append(button, reason);
 
   root.replaceChildren(card);

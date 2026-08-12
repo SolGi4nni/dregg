@@ -34,10 +34,14 @@ class FakeElement {
     this.className = "";
     this.textContent = "";
     this.attributes = {};
+    this.listeners = {};
+    this.value = "";
   }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = [...nodes]; }
   setAttribute(name, value) { this.attributes[name] = value; }
+  addEventListener(name, listener) { (this.listeners[name] ??= []).push(listener); }
+  dispatch(name) { for (const listener of this.listeners[name] ?? []) listener({ currentTarget: this }); }
 }
 
 function withFakeDocument(callback) {
@@ -1195,6 +1199,69 @@ test("the panel renders one round element per played round", () => {
     const list = root.children[0].children.find((node) => node.tagName === "OL");
     assert.equal(list.children.length, 1);
     assert.deepEqual(list.children[0].children.map((node) => node.textContent), ["0-1-2", "1 LOCKED", "1 DRIFT"]);
+  });
+});
+
+test("the mounted live actions reach open and a complete three-band guess", () => {
+  withFakeDocument(() => {
+    const symbols = Array.from({ length: 6 }, (_, id) => ({ id, glyph: String(id), label: `BAND ${id}` }));
+    const calls = [];
+
+    const openRoot = new FakeElement("div");
+    mountJudgedPanel(openRoot, buildJudgedPanel({
+      slot: openSlot, custody: judgedCustody(fakeSigner(), { state: "none" }),
+    }), { guessSymbols: symbols, onAction: (...args) => calls.push(args) });
+    const openButton = openRoot.children[0].children.find((node) => node.tagName === "BUTTON");
+    assert.equal(openButton.disabled, false);
+    openButton.dispatch("click");
+    assert.deepEqual(calls.shift(), ["session-open", null]);
+
+    const session = {
+      state: "ready",
+      session: parseSessionDocument(sessionDocument({
+        rounds: [{ guess: code(0, 1, 2), exact: 1, present: 1 }],
+      }), EXPECTED),
+    };
+    const guessRoot = new FakeElement("div");
+    mountJudgedPanel(guessRoot, buildJudgedPanel({
+      slot: openSlot, custody: judgedCustody(fakeSigner(), session), session,
+    }), { guessSymbols: symbols, onAction: (...args) => calls.push(args) });
+    const card = guessRoot.children[0];
+    const composer = card.children.find((node) => node.tagName === "FIELDSET");
+    const selects = composer.children
+      .filter((node) => node.tagName === "LABEL")
+      .map((label) => label.children.find((node) => node.tagName === "SELECT"));
+    const guessButton = card.children.find((node) => node.tagName === "BUTTON");
+    assert.equal(selects.length, 3);
+    assert.equal(guessButton.disabled, true, "an incomplete guess must not spend a burst");
+    for (const [select, value] of selects.map((select, index) => [select, [5, 0, 3][index]])) {
+      select.value = String(value);
+      select.dispatch("change");
+    }
+    assert.equal(guessButton.disabled, false);
+    guessButton.dispatch("click");
+    assert.deepEqual(calls.shift(), ["session-guess", { low: 5, mid: 0, high: 3 }]);
+  });
+});
+
+test("the application reaches every live judged action through one dispatcher", async () => {
+  const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  assert.match(app, /openJudgedSession,/u);
+  assert.match(app, /spendJudgedBurst,/u);
+  assert.match(app, /onAction: performJudgedAction/u);
+  assert.match(app, /code === "session-open"\) return openJudgedRun\(\)/u);
+  assert.match(app, /code === "session-guess"\) return spendJudgedGuess\(guess\)/u);
+  assert.match(app, /code === "settle-claim"\) return settleJudgedClaim\(\)/u);
+});
+
+test("an enabled panel action without a mounted handler fails closed", () => {
+  withFakeDocument(() => {
+    const root = new FakeElement("div");
+    mountJudgedPanel(root, buildJudgedPanel({
+      slot: openSlot, custody: judgedCustody(fakeSigner(), { state: "none" }),
+    }));
+    const button = root.children[0].children.find((node) => node.tagName === "BUTTON");
+    assert.equal(button.disabled, true, "an enabled-looking inert action is forbidden");
   });
 });
 
