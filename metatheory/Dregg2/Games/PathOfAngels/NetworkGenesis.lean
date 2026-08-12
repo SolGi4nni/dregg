@@ -28,9 +28,40 @@ private def zeroDigest : Digest32 where
   bytes := List.replicate 32 0
   length_eq := by simp
 
+private def digestOrZero (hex : String) : Digest32 :=
+  (Emit.parseBytes32Hex? hex).getD zeroDigest
+
 abbrev DEPLOYMENT_IDENTITY_DOMAIN : String := "POA-SIGNAL-DEPLOYMENT-IDENTITY-V2"
-abbrev PRODUCTION_POLICY_SHA256 : String :=
+abbrev PRODUCTION_POLICY_ZERO_ISSUANCE_SHA256 : String :=
   "8346263cf2fd50210353dca763dfb8f1271e1154e766ca93553ef3abc12a65ca"
+abbrev PRODUCTION_POLICY_PLAYER_GRANT_SHA256 : String :=
+  "8d477a883e96bde09d6fe01b407a6dca7c7c7633f4dd7488d311eb6782e988b8"
+
+/-- The two exact production-policy images the external deployment verifier
+accepts. The first is the historical zero-issuance deployment, which cannot pay
+for a turn. The second differs in exactly one authenticated claim:
+`generic_genesis_value_issued = true`, paired by `poa-curator` with one exact
+issuer move into a freshly drawn player-grant cell. This is a closed set, not a
+policy prefix or a caller-chosen digest. -/
+def productionPolicyDigestAccepted (digest : Digest32) : Bool :=
+  decide (Emit.bytes32Hex digest = PRODUCTION_POLICY_ZERO_ISSUANCE_SHA256 ∨
+    Emit.bytes32Hex digest = PRODUCTION_POLICY_PLAYER_GRANT_SHA256)
+
+theorem productionPolicyDigestAccepted_of_zero_issuance {digest : Digest32}
+    (h : Emit.bytes32Hex digest = PRODUCTION_POLICY_ZERO_ISSUANCE_SHA256) :
+    productionPolicyDigestAccepted digest = true := by
+  simp [productionPolicyDigestAccepted, h]
+
+theorem productionPolicyDigestAccepted_of_player_grant {digest : Digest32}
+    (h : Emit.bytes32Hex digest = PRODUCTION_POLICY_PLAYER_GRANT_SHA256) :
+    productionPolicyDigestAccepted digest = true := by
+  simp [productionPolicyDigestAccepted, h]
+
+theorem productionPolicyDigestAccepted_refuses_other {digest : Digest32}
+    (hz : Emit.bytes32Hex digest ≠ PRODUCTION_POLICY_ZERO_ISSUANCE_SHA256)
+    (hg : Emit.bytes32Hex digest ≠ PRODUCTION_POLICY_PLAYER_GRANT_SHA256) :
+    productionPolicyDigestAccepted digest = false := by
+  simp [productionPolicyDigestAccepted, hz, hg]
 
 private def expectedConfig (input : GenesisInputWire) : SignalTriangulation.Config :=
   -- ⚠ `UNBOUND_RUN_SEED`: genesis describes the mission TEMPLATE, and a template
@@ -89,7 +120,7 @@ def deploymentDigestPreimage (input : GenesisInputWire) : String :=
 must still hash and validate the actual genesis bytes named by `genesisSha256`. -/
 def deploymentBindingChecks (input : GenesisInputWire) : Bool :=
   decide (sha256Wire? (deploymentIdPreimage input) = some input.deployment.deploymentId) &&
-  decide (Emit.bytes32Hex input.deployment.policySha256 = PRODUCTION_POLICY_SHA256) &&
+  productionPolicyDigestAccepted input.deployment.policySha256 &&
   decide (sha256Wire? (deploymentDigestPreimage input) =
     some input.deployment.deploymentDigest)
 
@@ -382,9 +413,6 @@ fixture reds the guard library instead of the archive.
 
 Named residue: NONE — no construction here demands a proof as data. -/
 
-private def digestOrZero (hex : String) : Digest32 :=
-  (Emit.parseBytes32Hex? hex).getD zeroDigest
-
 abbrev FIXTURE_DEPLOYMENT_ID : String :=
   "4db835cc36cd0d3b722e742334dc1dde9557601fe1334c7499ab023de4d6d45d"
 abbrev FIXTURE_DEPLOYMENT_DIGEST : String :=
@@ -395,7 +423,7 @@ abbrev FIXTURE_GENESIS_SHA256 : String :=
   "f7010ca2acf705a9d941cc27ae500b4274e958ec9529b364b8b678c3ce3ccdea"
 abbrev FIXTURE_DEPLOYMENT_MANIFEST_SHA256 : String :=
   "85c5f58a8237333c6935374b5c8f40f479cb4e50bcbd91a4c4e8eb7a534dc7bb"
-abbrev FIXTURE_DEPLOYMENT_POLICY_SHA256 : String := PRODUCTION_POLICY_SHA256
+abbrev FIXTURE_DEPLOYMENT_POLICY_SHA256 : String := PRODUCTION_POLICY_ZERO_ISSUANCE_SHA256
 abbrev FIXTURE_MANIFEST_SHA256 : String :=
   "c4f34a6ef639c532965ee5c05ec9bbbd7ac722ad7350f1825915bf67f0b69d2b"
 abbrev FIXTURE_CONTENT_ROOT : String :=
@@ -758,6 +786,9 @@ def check_unknown_top_level_field_refused : Bool :=
 #assert_axioms genesisChecks_requires_exact_config
 #assert_axioms genesisChecks_requires_empty_state
 #assert_axioms genesisChecks_requires_positive_activation_counter
+#assert_axioms productionPolicyDigestAccepted_of_zero_issuance
+#assert_axioms productionPolicyDigestAccepted_of_player_grant
+#assert_axioms productionPolicyDigestAccepted_refuses_other
 #assert_axioms AuthorizedGenesis.config_is_exact_emission
 #assert_axioms AuthorizedGenesis.canon_is_empty
 #assert_axioms AuthorizedGenesis.persisted_coordinates_are_lean_bytes
