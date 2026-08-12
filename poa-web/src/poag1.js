@@ -12,7 +12,7 @@ export const POAG1_AUTHORITY = "Dregg2.Games.PathOfAngels";
  * sorts before `relay-repair`.
  *
  * ⚠ NINE — two envelope files and all SEVEN games — and the count is REFUSED, not
- * warned about. Every game is enrolled in the curator-signed epoch-1 counter-10
+ * warned about. Every game is enrolled in the curator-signed epoch-1 counter-12
  * bundle, so this list is pinned against the bytes that actually shipped. Widening
  * it beyond what the manifest carries would mean this client accepting a shape
  * nothing has produced.
@@ -62,7 +62,7 @@ export const POAG1_EXPECTED_ARTIFACTS = Object.freeze([
  * or media type other than the pinned list; a pending path buys a game nothing at
  * load time. It is a statement about what the emitter will produce next.
  */
-// Empty at epoch 1 counter 10: all seven games are in the signed bundle. A path lands
+// Empty at epoch 1 counter 12: all seven games are in the signed bundle. A path lands
 // here only while its descriptor is emitted and NOT yet signed into the manifest.
 //
 // ⚠ While this is empty, `poa/artifacts/poag1-pending/` on disk is DEAD WEIGHT — its

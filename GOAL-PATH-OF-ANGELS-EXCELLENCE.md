@@ -117,11 +117,16 @@ tree left red). The welds below are still the right *technical* decomposition, b
 rather than player-shaped, and organising cycles around them produced width without depth. Ambitions
 are restated as **player-visible milestones**; a cycle is judged by whether a milestone moved.
 
-**M1 — THE FIRST SETTLED TURN.** `latest_height` 0 → 1. Every piece — judge, carrier, weld, receipt,
-the whole ~9,880-line runtime tower — has **never once executed end to end**. Worth more than M2–M5
-combined: it is the difference between a beautiful local toy and a system.
-**M2 — the answer is hidden.** (W1.) Until then no score means anything.
-**M3 — a run persists.** Records, rebuilt without publishing the target.
+**M1 — COMPLETE 2026-08-12: THE FIRST SETTLED TURN.** `latest_height` moved 0 → 1. A funded player
+opened the curator-committed slot, solved Signal, submitted the canonical carrier, and received turn
+`22583a8c…b2923` / receipt `a2df84ea…29013`. Admission alone was not called settlement: the gate
+waited for height 1 and read the signed receipt-index head.
+**M2 — COMPLETE 2026-08-12: the answer is hidden.** Slot 1 publishes commitment `4cba654a…95c9`;
+the browser never receives the target or grant instance, and renders only node-authored
+LOCKED/DRIFT. The operator still knows the instance: this is committed hidden play, not MPC secrecy.
+**M3 — COMPLETE 2026-08-12: a run persists.** After a deliberate service restart the node replayed
+one transition from genesis head `2a4782f2…1d5b` to `847f299e…1b8e`; Records rebuilt the finalized
+run, world sequence 1 and Canon revision 1 without publishing the target.
 **M4 — the Descent.** 1,171 lines of officers, hazards and custody, still unreachable.
 **M5 — crown → custody → Bazaar.** One object with a life.
 

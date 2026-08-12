@@ -9,18 +9,18 @@ Field Drills, Expedition, Archive, Flight Recorder, Crew, Bazaar, and Choir, wit
 Expedition, Archive and Flight Recorder are labs under Records rather than top-level organs. **Seven**
 short games are playable now (Signal Triangulation, Relay Repair, Salvage Lock, Black Box
 Reconstruction, Deck Descent, Artificer Logic, Vent Crawl), all seven enrolled by the curator at epoch
-1 counter 10, and the Expedition and Archive contain larger demonstrators. The visual treatment is
+1 counter 12, and the Expedition and Archive contain larger demonstrators. The visual treatment is
 still a functional field terminal, not a final art direction, but the deployed bytes are signed and
-tested, and served by a **single-validator** PoA federation — `poa/deployments/epoch-1/poa-devnet.json`
-carries one node at threshold 1. This brief said "three-validator" until 2026-08-09; the fleet was
-collapsed to one on 08-05 and nothing here followed.
+tested, and served by a **single-validator** PoA development chain at threshold 1. The live epoch-3
+manifest—not the older checked operator package—names deployment `de8a785f…95866`; the active release
+receipt binds its exact genesis, binary, config, counter-12 web tree and first finalized Signal turn.
 
-⚠ Playable is not the same as finished, and this brief should not be read as saying it is. Three of
-the seven ship a descriptor their own Lean kernel has since moved away from — Salvage Lock is signed at
-a 12-action budget where `SalvageLock.MAX_TURNS` is 18, Black Box at 15 actions and two answer classes
-where the kernel is 11 and three, and Deck Descent at `shoring: 2` where `DeckDescent.SHORING` is 1. The
-re-emit and re-sign that closes that gap has not been run. Until it is, those three are playing an older
-game than the one the kernels prove.
+⚠ Playable is not the same as finished, and this brief should not be read as saying it is. Counter 12
+does close the three game-descriptor drifts counter 10 carried: Salvage Lock now has its proved
+18-action budget, Black Box its 11-action / three-class rules, and Deck Descent one shoring timber.
+The larger incompletenesses are product-shaped: only Signal has crossed judged play and settlement;
+the browser proof used an unfunded ephemeral signer for open/guess while the funded settlement was an
+operator-driven claim; Descent, custody, holder admission and private Bazaar settlement remain ahead.
 
 The engine's useful trick is that a game result is an exact object rather than a number the page
 claims happened. We are making activities as Lean state machines wherever practical; the browser

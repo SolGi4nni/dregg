@@ -1,5 +1,167 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⛑⛑⛑⛑ AUGUST 12 — PATH OF ANGELS CROSSED THE WHOLE SIGNAL JOURNEY: browser play, height-1 settlement, restart replay, and an honest counter-12 solo release
+
+**SUBSTRATE: product controls, Lean-authored game policy, Rust/node persistence, one-validator
+operations, and static-release provenance — each named separately below.** This is the first time a
+Path of Angels activity has crossed the system as a player-visible judged run and a finalized Dregg
+turn. It is not a claim that the development chain is federated, that an ordinary installed
+Cipherclerk completed the browser settlement, or that every game is judged.
+
+### ⚑ THE PLAYER JOURNEY RAN, AND “ADMITTED” WAS NOT CALLED “SETTLED”
+
+The epoch-3 successor is a one-validator `solo` chain on workhorse. It preserves federation id
+`70b7fa4cfbc3921bef2e1ddb1a42869c8dcef27539179c9cbdf6a6e6b1d07c1b` and validator
+`8f3f051b523d1392547493756e47ac0f4a7b6e12cb0cb2026f276fc906111eab`, but has fresh deployment
+`de8a785f457e350c3a077a38f6c3b3d7cd856bbc8eb69768e5b9d61bcd295866` and genesis
+`c6d148538a90481744a833cc16b0ebad018d7487c27558f8b2910f406180be59`. Its exact deployed binary is
+`9be785e1cc12113e6be903dcb57069165c5298079d5f4f2e99be1d22dbeb3b64`, built on hbox under `/tank`
+with eight Lean/Cargo jobs and a 64 GB memory cap. No heavy local build ran.
+
+Genesis issues exactly 1,000,000 development DREGG to player cell
+`4eb21b5aa0ecf0283e1766002c783e8a98e6c0edde696e32aba7ee5cfd57d970`; the grant key and hidden
+instance stayed mode 0600 on hbox and neither answer nor seed entered a log, receipt, browser or web
+root. Counter-12 curator `3c757baf…7b34` signed slot 1 / mission 1 commitment
+`4cba654a4c260957a6af4b4564ac01de45910af613bcd570a1788f15c2ca95c9`; the opening envelope is
+`b8f357c0…c231`.
+
+The funded player opened a judged session, solved the node-served hidden instance, and submitted the
+canonical claim. The claim route answered HTTP 200, then the gate waited for `latest_height` to move
+to 1 before calling it finalized:
+
+| object | exact identity |
+|---|---|
+| signed turn | `22583a8c44e4e08a06196cbd5a4d39c10989d876b5698bf376b4cc2cbb4b2923` |
+| finalized receipt | `a2df84ea0432a02a223cf5e17f3ff2ddc6cde154640c0556e40ef05ddbb29013` |
+| receipt-index root / length | `2717602fc8dfeb737bdb3c9448619474a9416f9591fa987c8bfa99600e2a6b75` / 1 |
+| signed receipt-index block | `c975606bb64c324f46170445992bbd24acc4bab87c341337ddcd55005f42a3e9`, height 1 |
+| Signal genesis head | `2a4782f271de41a08f97d89cd59fda2d08bd03f0afe1545c4c9d6a672b741d5b` |
+| Signal current head | `847f299e44b72f665713e38949b59034d8cf8f250410ff502aa475523fa16b8e` |
+| last Signal transition | `e53cb416ba3093e4fdfcffb2803fea200555edc1a6a037e9d2e919737ae48126` |
+
+The public Records view now carries one finalized run, world sequence 1, Canon revision 1, the exact
+turn/receipt pair and the beta artifact. Its finality sentence remains narrow: records reflect this
+node's finalized commit history; **no quorum-finality claim is made**.
+
+### ⚑ THE RESTART TEST REBUILT HISTORY; IT DID NOT MERELY REOPEN A DATABASE
+
+The first live claim attempt correctly refused 403 because the cipherclerk was still locked. There
+were no promised sidecars on the workhorse; the actual secret source is root-only
+`/opt/pathofangels/.env`. `dregg-infra 40e2061` installs `poa/unlock-node.sh` as a systemd
+`ExecStartPost`: passphrase travels through stdin to container loopback, and the returned bearer is
+checked but never printed or persisted.
+
+A deliberate service restart then took the full cold path. The journal reported one native-Lean
+transition replayed from retained genesis `2a4782f2…1d5b` to rebuilt head `847f299e…1b8e`, followed
+by a successful cipherclerk unlock with the token withheld. Post-restart `/status` remained healthy,
+`solo`, Lean-produced, full-turn-proving, height 1, under the same validator key. This is the M3
+property: the record is a fold of durable history, not a response cached from the claim.
+
+The operational changes that made this safe are `dregg-infra 53e3837`, `5e941f7`, `ded75f4` and
+`40e2061`: configurable container-visible versus host storage roots, full initialized-state seeding,
+bounded startup, atomic binary replacement, and a transaction that cuts binary + unit + env + data
+root together. The old schema-23 node was first restored after the schema-27 binary honestly refused
+it; content-addressed predecessor binary/config files and the predecessor data root remain intact.
+
+### ⚑ THE BROWSER NOW HAS OPERATIONS BEHIND ITS LIVE BUTTONS
+
+`poa-web` used to render session-open and session-guess as named actions without dispatching them.
+`4b5b4d0c8` wires both through one product dispatcher; `27319f148` reconciles the signed counter-12
+surface; `be3f4f0fd` preserves a repeatable live browser integration check. The page still does no
+classification: it authors identity and a three-band guess, checks the provider's statement against
+its own exact encoding, and renders the node's LOCKED/DRIFT fields.
+
+The Codex in-app browser blocks both public PoA hostnames before navigation with
+`net::ERR_BLOCKED_BY_CLIENT`. That is a client/browser boundary, not a node verdict. An opt-in,
+development-only same-origin proxy was therefore added to `serve.mjs`; its destination is fixed at
+process start, it carries only `/node/*`, is absent unless explicitly enabled, limits request bodies,
+and has a regression pole against scheme-relative SSRF. A test-only page uses the production POAG1
+trust loader, curator slot verifier, statement encodings, parser and panel renderer with an ephemeral,
+unfunded in-memory Ed25519 key. No page-generated key was added to the product.
+
+Driven through the actual browser controls against the live node:
+
+1. signed counter 12 and the slot-1 curator opening verified;
+2. **Play a judged run** opened a live session;
+3. choosing `0-1-2` enabled **Spend a burst**;
+4. the node returned `0 LOCKED / 1 DRIFT`, and the panel rendered four bursts remaining.
+
+That proves browser open/guess, not browser settlement: the integration key owns no cell and cannot
+settle. The funded claim above proves the settlement carrier and node path separately. The next
+product pole is one ordinary installed Cipherclerk completing both halves in one browser journey.
+
+Focused browser/session/server evidence is **54/54**. The three new solo receipt/cutover tests are
+**3/3**. The linked-export genesis ceremony test was run directly and is **1/1**; its body took
+0.14 s after native runtime startup. The earlier whole web suite was 382/384, with both reds caused
+by local Lake symlink/environment setup rather than web assertions; no broad rerun was charged merely
+to turn those into green prose.
+
+### ⚑ ACTIVE RELEASE METADATA NOW DESCRIBES WHAT THE ANCHOR ACTUALLY SERVES
+
+Before this cutover the anchor served the counter-12 artifact bundle from web identity `83e3e4b9…e5`
+while `/var/lib/pathofangels/active-release.json` was still the counter-4, obsolete-node v3 receipt
+`bcc19348…27a`. The page bytes and the authority metadata disagreed.
+
+The replacement is deliberately a solo schema rather than a counterfeit projection through the
+retired 3-of-3 ceremony. `dregg-infra 4a8fae7` derives and verifies
+`pathofangels-solo-release-receipt-v1`; `5c3754d`, `bce0fed`, `8adc3dd` and `78385f4` make its Caddy
+cutover fail-closed and rollbackable on the anchor's actual minimal runtime. The receipt binds:
+
+* committed breadstuffs `be3f4f0fd` and infra `78385f427` object identities;
+* the exact counter-12 POAG1 manifest/signature and curator key;
+* epoch-3 manifest/genesis, binary, runtime image, unit, env and container-visible data root;
+* the funded cell and amount, but **not** its player key;
+* live solo/Lean/full-turn status, slot opening, Signal replay head, finalized turn/receipt and signed
+  receipt-index head;
+* the exact previous receipt, previous served web manifest, previous pointer and current Caddy policy.
+
+Active identities after cutover:
+
+| anchor object | SHA-256 |
+|---|---|
+| immutable web manifest (84 files) | `35511fe54735ed97e10ec49c382ac2d8129e1c14a0b635d6150b4e5d885b857e` |
+| active solo release receipt | `13a8e49802fbeeacd02ea9ca8247ae42d192c30dc3015b5df8461df07e136b75` |
+| active Caddy release pointer | `985108663eeb1200b76ba894f50f0c04b834f96a4be29bb6fa682f637eecf068` |
+| served `src/app.js` | `d6a6bccc3a184dbd8e19de5736933ee79a63e4741d08323539a7f72c7344e90b` |
+| served epoch-3 manifest | `fb64633191ec0d6b3271ef30e6811a9205aa77bb8cc44ca3f901eabc44868d95` |
+
+Caddy validated before and after the swap, reloaded successfully, the credential-free beta probe
+still returned its intended 401 curtain, and the public node remained healthy at height 1. The old
+pointer `097d8a3c…887`, web manifest `83e3e4b9…e5` and receipt `bcc19348…27a` are preserved as exact
+rollback files. One macOS archive carried `._` AppleDouble entries; the gate caught its file-count
+drift before activation. The unpublished invalid root was checked to be absent from the active
+pointer and deleted, then the clean 84-file tree was installed. This is why the count is a gate.
+
+### ⚑ ANSWER TO THE EXPENSIVE-LEAN QUESTION, ONE LAYER DEEPER
+
+The August 11 entry below remains right about invalidation granularity, and this run exposed a second
+concrete tax: **eager native Lean runtime initialization in binaries that are not doing proof work**.
+The `dregg-node` test executable takes roughly 3m20s at one fully occupied core merely to start and
+enumerate; nextest enumerates it twice (`--list`, then `--list --ignored`). The linked-export test body
+then finishes in 0.14 s. The network client subcommand `poa-signal-submit-claim` pays the same ~3m20s
+before its HTTP request.
+
+That work should not become an unverified Rust copy of the judge. The high-value repair is to lazy-load
+the native Lean archive only in proof/ceremony paths, or split non-proof client commands into a small
+binary. `implemented_by` remains suitable only for deterministic bulk evaluation behind a retained
+reference and visible `#assert_compiled`; it is not a licence to move AIR, canonical encoding or
+verifier acceptance out of Lean.
+
+### ⚠ RESIDUALS KEPT NAMED
+
+* The frozen `exact_tuple_installs_and_crash_reopens_the_same_head` fixture is stale: it reaches the
+  real test and refuses because generated ceremony wire differs from the frozen Lean input. It was
+  put under an explicit time budget after measurement, not made green or rewritten during a live
+  release.
+* Federation is **not re-enabled**. The preserved federation id does not turn `solo` mode into quorum
+  evidence; hbox and persvati are build capacity, not validators.
+* The browser integration did not settle with a real extension install. It proves the exact web
+  actions and player-signature routes; the funded operator claim proves settlement.
+* The faithful-commitment gate's two known production folds remain red and unallowlisted. This
+  epoch-3 devnet does not license mainnet.
+* The old full runtime/content successor scripts still describe the retired three-host topology.
+  Their history is retained; `dev-deploy.sh` plus the solo receipt/cutover are the active lane.
+
 ## ⛑⛑⛑⛑ AUGUST 11 — THE MINA VK CASCADE IS CLOSED, REPRODUCED AND CLEAN-STAMPED; THE EXPENSIVE LEAN BOUNDARY IS BUILD INVALIDATION, NOT THE SPEC
 
 **SUBSTRATE: Lean-authored AIR, generated descriptor bytes, Rust witnesses/consumers, and recursion

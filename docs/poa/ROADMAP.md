@@ -1,10 +1,10 @@
 # Path of Angels: development map
 
-Status: live epoch 1, curator **counter 10**, plus working design, header refreshed 2026-08-09. This is a
+Status: live epoch 1, curator **counter 12**, plus working design, header refreshed 2026-08-12. This is a
 menu and dependency map for co-creation with Sentyr, not a promise that every row becomes canon or ships
 in order. The counter is read from `poa/artifacts/poag1/manifest.sig.json` and pinned by
-`POA_EXPECTED_CURATOR_COUNTER` in `poa-web/src/trust-config.js`; this line said 4 until 2026-08-09, which
-is six ceremonies of drift in the first sentence everybody reads.
+`POA_EXPECTED_CURATOR_COUNTER` in `poa-web/src/trust-config.js`; this line said 4 until 2026-08-09 and
+10 until 2026-08-12, which is why the envelope—not this sentence—remains the authority.
 
 ## What epoch 1 actually establishes
 
@@ -15,16 +15,18 @@ distinguish implemented substrate from the option space below:
   organs: Field Drills, Expedition, Archive, Recorder, Crew, and Bazaar. **Seven** games are playable
   finite games — Signal Triangulation, Relay Repair, Salvage Lock, Black Box Reconstruction, Deck
   Descent, Artificer Logic and Vent Crawl; each consumes an exact Lean-emitted
-  table and the browser does not score it. ⚠ Three of the seven are signed at descriptors their kernels
-  have since moved away from (Salvage 12 vs `MAX_TURNS` 18, Black Box 15/2-class vs 11/3-class, Descent
-  `shoring: 2` vs `SHORING` 1); the re-emit has not been run, so those three ship an older game than the
-  one that is proved. The Expedition and Archive demonstrators also regenerate
-  their complete Lean artifacts during the release gate. Curator counter 10 is live behind Basic
+  table and the browser does not score it. Counter 12 closes the three descriptor/kernel drifts that
+  counter 10 still carried: Salvage now emits 18 actions, Black Box 11 actions with three answer
+  classes, and Descent one shoring timber. The Expedition and Archive demonstrators also regenerate
+  their complete Lean artifacts during the release gate. Curator counter 12 is live behind Basic
   Auth, with separate evidence grades so a healthy local instrument cannot launder an unavailable
   network authority path.
-- The PoA federation is distinct from public Dregg: three validators, threshold three, separate
-  keys/storage/ports/deployment domain, no demo economy, required Lean authority and full-turn
-  proving. Its finalized history converges across workhorse, hbox and persvati.
+- The PoA chain is distinct from public Dregg: one workhorse validator in explicit `solo` mode,
+  threshold one, separate keys/storage/ports/deployment domain, no demo economy, required Lean
+  authority and full-turn proving. Federation id remains
+  `70b7fa4c…d07c1b`; the epoch-3 successor deployment is `de8a785f…95866`.
+  This is a twice-monthly development chain, not a fault-tolerant federation: hbox is build capacity
+  and persvati is not a validator.
 - Lean owns the emitted game state machines and their judged/canon boundaries. It also owns Black
   Box Reconstruction, Containment Inspection, deck validation, daily mission selection,
   accessibility commitments, the Field Archive, owner-wide Attendant continuity, authenticated
@@ -33,11 +35,11 @@ distinguish implemented substrate from the option space below:
   not activated browser content merely because their semantics exist. Galley still needs concrete
   host codecs and atomic stores; Bazaar still needs its seven fixed native verifier/effect adapters
   and durable restart decoder.
-- The curator, content-epoch rollback ratchet, extension route authentication, exact release gate,
-  content-addressed web staging, and atomic content-only cutover are exercised rather than
-  diagrammed. Counter 4 was reproduced from a sealed source snapshot, passed 136 web/runtime tests
-  including both large Lean regenerations, and was promoted without changing the running validator
-  binary or federation.
+- The curator, content-epoch rollback ratchet, extension route authentication, content-addressed web
+  staging, and atomic content-only cutover are exercised rather than diagrammed. The active solo
+  release receipt binds counter 12, committed browser source, epoch-3 genesis/runtime/config bytes,
+  the height-1 Signal head and finalized receipt, while preserving the prior pointer and metadata as
+  content-addressed rollback copies.
 - DrEX ingress signs distinct exact Lean-judge input and output digests and still refuses to crown a
   claim because the finalized-state adapter is not wired. The curator likewise exports only a
   semantic Signal review. A bearer-only node-envelope diagnostic now reconstructs exact canonical
@@ -48,17 +50,18 @@ distinguish implemented substrate from the option space below:
   real, but its production portal and private/proved outer statement are not.
 - The browser now supports Wallet Standard and an explicit classic-provider seam for Solana
   proof-of-holding admission against the exact `$DREGG` mint. Challenges and capabilities are
-  wallet-bound, short-lived, and fail closed. The current live validator predates those holder RPCs,
-  so the deployed panel is an honest preview rather than game authority; the next node ceremony
-  must ship and exercise that exact admission path before holder mechanics are called live.
+  wallet-bound, short-lived, and fail closed. Holder mechanics remain a separate, unexercised path;
+  the fact that the current validator serves judged Signal does not turn that preview into live
+  holder admission.
 - Rooted transitive N=2 admission is proved and differentially tested, but the live node remains the
   fixed genesis committee until authenticated vouch rows are persisted and consumed.
 
-Epoch 1 is therefore a trustworthy field terminal and federation, not yet the whole “sealed beta
-station” constellation. The immediate expansion is one finalized node-derived judged receipt
-reaching durable world/archive state, activation of holder admission on a newly gated validator,
-and that same receipt reaching an actually private Bazaar clearing path without weakening the
-existing refusal.
+Epoch 1 is therefore a trustworthy field terminal and solo development chain, not yet the whole
+“sealed beta station” constellation. One judged Signal claim now reaches a finalized receipt,
+durable world/archive state and byte-identical restart replay. The immediate expansion is to put the
+real Cipherclerk provider—not an integration-only ephemeral signer—through that whole browser path,
+then carry the same discipline into Descent, holder admission and an actually private Bazaar
+clearing path without weakening the existing refusals.
 
 ## The opportunity
 
