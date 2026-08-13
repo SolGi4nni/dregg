@@ -460,3 +460,54 @@ fn limbs_are_the_layout_the_statement_names() {
     assert_eq!(flat[1], F::from_u64(5), "limb 1 is the high part");
     assert_eq!(flat.len(), shape.limbs());
 }
+
+#[test]
+fn the_challenge_point_lives_in_the_EXTENSION_field() {
+    // ⚑ REGRESSION GUARD for the one place this construction can silently fall below the
+    // repo's ~124-bit bar. Soundness is mu/|challenge field|. At mu=16 that is 2^-120
+    // over EF = F^4 and 2^-27 over F. A "simplification" to base-field challenges would
+    // still typecheck, still pass every other test here, and cost 93 bits.
+    use p3_field::BasedVectorSpace;
+
+    let shape = Shape::deployed();
+    let cts = batch(shape, DEPLOYED_BATCH);
+    let acc = lazy_fold(&cts, &[1, 1, 1, 1]).unwrap();
+    let proof = prove(&cts, &[1, 1, 1, 1], &acc).unwrap();
+    let point = verify(&proof).unwrap().point;
+
+    assert_eq!(<EF as BasedVectorSpace<F>>::DIMENSION, 4, "EF must be F^4");
+    let nonbase = point
+        .as_slice()
+        .iter()
+        .filter(|c| {
+            <EF as BasedVectorSpace<F>>::as_basis_coefficients_slice(c)[1..]
+                .iter()
+                .any(|&x| x != F::ZERO)
+        })
+        .count();
+    assert!(
+        nonbase >= point.num_variables() - 1,
+        "essentially every challenge coordinate must have nonzero non-constant basis \
+         components; {nonbase}/{} did — a base-field challenge would give 0 and cost 93 \
+         bits of soundness",
+        point.num_variables()
+    );
+
+    // A gate that cannot go red is not a gate: build the base-field point this guard
+    // exists to reject and confirm the same predicate scores it 0.
+    let base_point: Vec<EF> = (0..point.num_variables())
+        .map(|i| EF::from(F::from_u64(1 + i as u64)))
+        .collect();
+    let base_nonbase = base_point
+        .iter()
+        .filter(|c| {
+            <EF as BasedVectorSpace<F>>::as_basis_coefficients_slice(c)[1..]
+                .iter()
+                .any(|&x| x != F::ZERO)
+        })
+        .count();
+    assert_eq!(
+        base_nonbase, 0,
+        "the guard must score a base-field point 0, or it is not measuring what it claims"
+    );
+}
