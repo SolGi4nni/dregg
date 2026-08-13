@@ -1,0 +1,37 @@
+[package]
+name = "fold-opening"
+version.workspace = true
+edition.workspace = true
+
+# M1 of the vFHE vector-relation ladder (`sumcheck-toy` is M0). It demonstrates
+# the `notes/fold-as-opening.md` result on REAL deployed-shape BFV ciphertexts:
+# `fold_add` is linear, the multilinear extension is linear, so
+# `c_out = sum_k a_k c_k` implies `chat_out(r) = sum_k a_k chat_k(r)` at every r,
+# and ONE common-point evaluation certifies the whole fold with ZERO sumcheck
+# rounds.
+#
+# WHAT THIS CRATE IS NOT. It authors NO constraint system, no AIR, no gadget,
+# no `air_accepts`. The relation it demonstrates is specified in
+# `notes/fold-as-opening.md` §2 in the shape a Lean theorem takes; authoring it
+# is Lean work (house law). What lives here is the MLE construction, the
+# transcript binding, the range leg, and a measurement harness — plus adversaries
+# that make each binding condition FAIL when it is removed.
+#
+# It also has NO polynomial commitment: `Opened::value` is an unbacked claim, the
+# same caveat `sumcheck-toy` carries. See `STUB` in the docblock.
+#
+# Member but NOT a default-member: nothing ships it and nothing depends on it.
+
+[dependencies]
+fhegg-core = { path = "../fhegg-core" }
+p3-baby-bear.workspace = true
+p3-challenger.workspace = true
+p3-field.workspace = true
+p3-multilinear-util.workspace = true
+
+[dev-dependencies]
+p3-field.workspace = true
+p3-multilinear-util.workspace = true
+
+[lints]
+workspace = true
