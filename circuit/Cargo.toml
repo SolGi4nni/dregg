@@ -91,6 +91,13 @@ getrandom = { workspace = true }
 # tooth bites in the deployed `verify_batch`. Needs the extension-field element type.
 p3-field = { workspace = true }
 p3-baby-bear = { workspace = true }
+# MEASUREMENT ONLY (tests/poseidon2_virtualization_measure.rs). Upstream Plonky3's own
+# Poseidon2 AIR at the workspace-pinned rev, used as the NARROW arithmetization arm of the
+# committed-vs-virtualized measurement: it commits one column per partial round where the
+# deployed chip commits sixteen. It is a MEASUREMENT BASELINE and is never on any shipped
+# path — the narrow layout, if adopted, is authored in
+# `metatheory/Dregg2/Circuit/Emit/Poseidon2RoundGates.lean` like the deployed one.
+p3-poseidon2-air = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 blake3 = "1"
 rmp-serde = { workspace = true }
 # proof-economics measurements (tests/proof_economics.rs): structural walk of
@@ -101,6 +108,11 @@ serde_json = { workspace = true }
 # a silent re-emit cannot slide under a green test. Deliberately a dev-dep: `dregg-circuit` is the
 # verify-level floor and takes no hash dependency it does not need.
 sha2 = { workspace = true }
+# TEST-LAYER ONLY. `tests/ir2_phase_profile.rs` installs a `Layer` that accumulates plonky3's OWN
+# `#[instrument]` spans into a per-phase wall-clock table (LDE / Merkle / quotient / FRI fold /
+# query). Every span it reads already exists upstream; this is the collector, not new
+# instrumentation. Already in the lock at 0.3 via `dregg-circuit-prove`'s dev-deps.
+tracing-subscriber = "0.3"
 
 [lints]
 workspace = true
