@@ -63,6 +63,14 @@ pub mod bfv_gpu;
 /// MOVED to the wasm-clean `fhegg-core` crate (streamed-cooking-shannon Track B); re-exported here at its
 /// original path so every `crate::bfv_lean::…` / `fhegg_fhe::bfv_lean::…` consumer is unchanged.
 pub use fhegg_core::bfv_lean;
+/// The ROTATION-FREE LINEAR-LAYER stone: Cheetah-style (eprint 2022/207 §3.1)
+/// coefficient-encoded public-matrix × encrypted-vector product. ZERO
+/// rotations, ZERO key switches, ZERO new key material — the only packed
+/// matmul that closes under the deployed parameters' PROVABLE (worst-case)
+/// noise bound, per `notes/fhe-core-theory.md` "THE INVERSION". The first user
+/// of `Encoding::poly()` in the tree. Oracle-anchored in
+/// `tests/bfv_coeff_matmul_oracle.rs`.
+pub mod bfv_coeff_matmul;
 /// The MULTIPLICATIVE stone: wrap-guarded BFV ct×ct multiply + relinearization
 /// over fhe.rs's `Multiplicator`, oracle-anchored in `tests/bfv_mul_oracle.rs`.
 pub mod bfv_mul;
