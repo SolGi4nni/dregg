@@ -1,0 +1,30 @@
+[package]
+name = "sumcheck-toy"
+version.workspace = true
+edition.workspace = true
+
+# M0 of the vFHE vector-relation ladder: the smallest honest thing that proves
+# `p3-sumcheck` is wired into this workspace at the pinned Plonky3 revision
+# (82cfad73) and runs prover -> verifier over BabyBear with Ext4 challenges.
+#
+# ⚑ WHAT THIS CRATE IS NOT. It authors NO constraint system. `p3-sumcheck` ships
+# its own `Constraint` type for STIR/WHIR-style constraint absorption; this crate
+# passes `None` and never constructs one. The vector-relation descriptor that M1
+# needs is a Lean object (house law: AIR / circuits / constraints are authored in
+# Lean, never hand-written in Rust). What lives here is a CALL into an existing
+# prover, so that the Lean-side descriptor design can be written against the
+# measured API surface rather than against a reading of the docs.
+#
+# It is a member but NOT a default-member: nothing ships it and nothing depends
+# on it, so it stays out of the default build.
+
+[dependencies]
+p3-baby-bear.workspace = true
+p3-challenger.workspace = true
+p3-field.workspace = true
+p3-multilinear-util.workspace = true
+p3-sumcheck.workspace = true
+p3-util.workspace = true
+
+[lints]
+workspace = true
