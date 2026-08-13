@@ -6227,6 +6227,7 @@ dependencies = [
  "p3-merkle-tree",
  "p3-monty-31",
  "p3-poseidon2",
+ "p3-poseidon2-air",
  "p3-poseidon2-circuit-air",
  "p3-symmetric",
  "p3-uni-stark",
@@ -6238,6 +6239,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tracing",
+ "tracing-subscriber 0.3.23",
 ]
 
 [[package]]
@@ -9238,6 +9240,9 @@ dependencies = [
  "hkdf",
  "hmac 0.12.1",
  "merlin",
+ "p3-baby-bear",
+ "p3-field",
+ "p3-multilinear-util",
  "pollster 0.4.0",
  "rand 0.8.6",
  "rand 0.9.4",

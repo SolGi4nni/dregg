@@ -111,6 +111,9 @@ pub mod fhir;
 pub mod fhir_paired_root_zero;
 pub mod gpu_arena;
 pub mod gpu_qualification;
+/// The sumcheck prover's multilinear fold, on the arena's device — the fusion seam between an FHE
+/// evaluation's resident intermediates and a prover's evaluation tables.
+pub mod mle_gpu;
 /// Canonical public coefficients for the exact deployed BFV relation, shared
 /// by monolithic and distributed proof backends without accepting prover rows.
 #[cfg(feature = "amm-input-binding")]

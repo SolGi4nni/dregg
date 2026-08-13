@@ -101,14 +101,31 @@ struct PoolEntry {
 }
 
 /// A wgpu device + a resident ciphertext buffer pool.
+///
+/// ⚑ MULTI-PIPELINE. One device, one queue, one buffer pool, SEVERAL compute pipelines. The arena
+/// used to hold exactly one (`bfv_fold.wgsl`), which meant any other kernel in this crate had to
+/// stand up its own `Device`/`Queue` — and two wgpu devices cannot share a buffer, so a
+/// "GPU-resident" hand-off between the BFV fold and anything else was structurally impossible, not
+/// merely unimplemented. The pipelines here all bind the SAME pool, so a `ResidentHandle` produced
+/// by one kernel is consumable by the next with no host round trip. See `mle_gpu` for the sumcheck
+/// fold that consumes BFV fold output directly.
 pub struct Arena {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pipeline: wgpu::ComputePipeline,
-    bgl: wgpu::BindGroupLayout,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+    /// `bfv_fold.wgsl` — RNS fold-add over the deployed three-prime set.
+    fold_pipeline: wgpu::ComputePipeline,
+    fold_bgl: wgpu::BindGroupLayout,
+    /// `bfv_to_babybear.wgsl` — resident RNS lanes -> a padded BabyBear MLE evaluation table.
+    pub(crate) bridge_pipeline: wgpu::ComputePipeline,
+    pub(crate) bridge_bgl: wgpu::BindGroupLayout,
+    /// `mle_fold.wgsl` — one in-place sumcheck fold round over BabyBear.
+    pub(crate) mle_pipeline: wgpu::ComputePipeline,
+    pub(crate) mle_bgl: wgpu::BindGroupLayout,
     /// min(max_buffer_size, max_storage_buffer_binding_size), the actual input-binding ceiling.
-    max_storage_bytes: u64,
+    pub(crate) max_storage_bytes: u64,
     pool: Mutex<Vec<PoolEntry>>,
+    /// BabyBear evaluation tables, resident alongside the ciphertexts in the same device.
+    pub(crate) tables: Mutex<Vec<wgpu::Buffer>>,
     /// MAP_READ buffers are reusable after `unmap`. Retaining a small exact-size cache removes one device
     /// allocation from every steady-state FoldEngine call without changing synchronization or bytes.
     readback_cache: Mutex<Vec<wgpu::Buffer>>,
@@ -128,6 +145,22 @@ pub struct ResidentHandle {
     variable_times: Vec<bool>,
     /// Per-resident-ciphertext plaintext bound, tracked in u128 so a fold's sum can never wrap silently.
     bounds: Vec<u128>,
+}
+
+impl ResidentHandle {
+    /// Coefficient lanes across the whole resident set (`n_cts * polys * rns-rows * degree`). One
+    /// lane is one u64 = two u32 words on the device.
+    #[must_use]
+    pub fn total_lanes(&self) -> usize {
+        self.n_cts
+            .checked_mul(self.shape.n_lanes())
+            .expect("gpu_arena: resident lane-count overflow")
+    }
+
+    #[must_use]
+    pub fn n_ciphertexts(&self) -> usize {
+        self.n_cts
+    }
 }
 
 /// Adapter-derived capacity for this exact ciphertext shape.
@@ -389,7 +422,7 @@ pub fn arena() -> Option<Arena> {
         label: Some("bfv_fold.wgsl (arena)"),
         source: wgpu::ShaderSource::Wgsl(include_str!("shaders/bfv_fold.wgsl").into()),
     });
-    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    let fold_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("arena-fold"),
         entries: &[
             buffer_entry(0, wgpu::BufferBindingType::Uniform),
@@ -397,27 +430,73 @@ pub fn arena() -> Option<Arena> {
             buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: false }),
         ],
     });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: None,
-        bind_group_layouts: &[&bgl],
-        push_constant_ranges: &[],
+    let fold_pipeline = build_pipeline(&device, "arena-fold", &shader, "main", &fold_bgl);
+
+    // The fusion seam: resident RNS lanes reinterpreted as a BabyBear evaluation table, same device.
+    let bridge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("bfv_to_babybear.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/bfv_to_babybear.wgsl").into()),
     });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("arena-fold"),
-        layout: Some(&layout),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
+    let bridge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("arena-bridge"),
+        entries: &[
+            buffer_entry(0, wgpu::BufferBindingType::Uniform),
+            buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
+            buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: false }),
+        ],
     });
+    let bridge_pipeline =
+        build_pipeline(&device, "arena-bridge", &bridge_shader, "main", &bridge_bgl);
+
+    // The sumcheck fold round. Two bindings only — the table is folded IN PLACE.
+    let mle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("mle_fold.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mle_fold.wgsl").into()),
+    });
+    let mle_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("arena-mle"),
+        entries: &[
+            buffer_entry(0, wgpu::BufferBindingType::Uniform),
+            buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
+        ],
+    });
+    let mle_pipeline = build_pipeline(&device, "arena-mle", &mle_shader, "fold_round", &mle_bgl);
+
     Some(Arena {
         device,
         queue,
-        pipeline,
-        bgl,
+        fold_pipeline,
+        fold_bgl,
+        bridge_pipeline,
+        bridge_bgl,
+        mle_pipeline,
+        mle_bgl,
         max_storage_bytes,
         pool: Mutex::new(Vec::new()),
+        tables: Mutex::new(Vec::new()),
         readback_cache: Mutex::new(Vec::new()),
+    })
+}
+
+fn build_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    entry_point: &str,
+    bgl: &wgpu::BindGroupLayout,
+) -> wgpu::ComputePipeline {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: &[bgl],
+        push_constant_ranges: &[],
+    });
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some(label),
+        layout: Some(&layout),
+        module,
+        entry_point: Some(entry_point),
+        compilation_options: Default::default(),
+        cache: None,
     })
 }
 
@@ -526,8 +605,27 @@ fn preflight_fold(cts: &[LeanCiphertext], plaintext_modulus: u64) -> Result<Shap
 }
 
 impl Arena {
-    fn clear_pool(&self) {
+    /// Drop every resident ciphertext buffer AND every resident BabyBear table.
+    ///
+    /// ⚠ Every outstanding `ResidentHandle` / `ResidentTable` is invalidated: their ids index into
+    /// the pools this empties. `FoldEngine` owns its arena privately and calls this per call; a
+    /// direct `Arena` user (a benchmark loop, say) must not hold handles across it.
+    pub fn clear_pool(&self) {
         self.pool.lock().unwrap().clear();
+        self.tables.lock().unwrap().clear();
+    }
+
+    /// The device buffer backing a resident ciphertext set. Handed out (as a cheap Arc-backed clone)
+    /// so a kernel in another module can bind the SAME allocation the BFV fold wrote — the whole
+    /// point of the arena being multi-pipeline rather than one-device-per-module.
+    pub(crate) fn resident_buffer(&self, h: &ResidentHandle) -> wgpu::Buffer {
+        let pool = self.pool.lock().unwrap();
+        let entry = &pool[h.id];
+        assert_eq!(
+            entry.n_cts, h.n_cts,
+            "gpu_arena: handle/pool n_cts mismatch"
+        );
+        entry.buf.clone()
     }
 
     fn acquire_readback(&self, size: u64) -> wgpu::Buffer {
@@ -884,7 +982,7 @@ impl Arena {
                     );
                     self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
-                        layout: &self.bgl,
+                        layout: &self.fold_bgl,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
@@ -905,7 +1003,7 @@ impl Arena {
             let mut enc = self.device.create_command_encoder(&Default::default());
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&self.pipeline);
+                pass.set_pipeline(&self.fold_pipeline);
                 for (bind, &lanes) in bind_groups.iter().zip(&n_lanes) {
                     pass.set_bind_group(0, bind, &[]);
                     pass.dispatch_workgroups((lanes as u32).div_ceil(256), 1, 1);

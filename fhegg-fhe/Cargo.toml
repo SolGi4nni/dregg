@@ -130,6 +130,14 @@ getrandom_v3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # The integration test drives a real PDHG solve to produce a genuine Cert-F
 # certificate; it needs the solver's pdhg/cert API directly.
 fhegg-solver = { path = "../fhegg-solver" }
+# INDEPENDENT ORACLE for the WGSL MLE fold (`mle_gpu`, `tests/wgpu_mle_fold.rs`). Checking the GPU
+# kernel against this crate's own CPU reference only catches GPU bugs; it cannot catch both sides
+# sharing a wrong idea of what "the fold" is. `Poly::fix_prefix_var` at the workspace's pinned
+# Plonky3 rev is literally `r * (a1 - a0) + a0` over the split-at-half table — the same object the
+# deployed prover folds — so it settles the semantics, not just the arithmetic.
+p3-baby-bear = { workspace = true }
+p3-field = { workspace = true }
+p3-multilinear-util = { workspace = true }
 # TEST-ONLY: installs the Lean-verified ML-DSA / ML-KEM cores. `dregg-lean-ffi` above is
 # OPTIONAL (behind `verified-pq-runtime-tests`), so in the DEFAULT graph the two native-PQ
 # transport tests — `mpc_pq_transport`, `mpc_pq_crossing_sealed`, which do NOT declare
