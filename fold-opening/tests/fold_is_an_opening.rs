@@ -14,8 +14,8 @@ use fold_opening::{
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField32};
 
 /// The batch the node actually folds: `ORDER_COUNT = 4`, fixed in
-/// `metatheory/Market/DarkBazaarPrivateDescriptor.lean:44` and structurally enforced at
-/// `node/src/dark_clearing_service.rs:383`.
+/// `metatheory/Market/DarkBazaarPrivateDescriptor.lean:44` and pinned by the session roster and the fixed-arity
+/// proving family (`node/src/dark_clearing_service.rs`).
 const DEPLOYED_BATCH: usize = 4;
 
 fn batch(shape: Shape, b: usize) -> Vec<fhegg_core::bfv_lean::LeanCiphertext> {
