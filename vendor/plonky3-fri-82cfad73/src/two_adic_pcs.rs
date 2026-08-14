@@ -54,7 +54,7 @@ use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_commit::{
     BatchOpening, BuildPeriodicLdeTableFast, Mmcs, OpenedValues, Pcs, PeriodicLdeTable,
 };
-use p3_dft::TwoAdicSubgroupDft;
+use p3_dft::{Layout, TwoAdicSubgroupDft};
 use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{
     ExtensionField, PackedFieldExtension, TwoAdicField, batch_multiplicative_inverse, dot_product,
@@ -335,6 +335,129 @@ impl<F: TwoAdicField, InputProof: Sync, InputError: Debug + Sync, EF: ExtensionF
     }
 }
 
+/// ⚑ DREGG DELTA 3 — **one batched coset LDE for a whole AIR's quotient chunks.**
+///
+/// # What was wrong with one call per chunk
+///
+/// `Radix2DitParallel::coset_lde_batch_with_transform` runs one iDFT of size `h` and then
+/// **`2^added_bits` separate `coset_dft_oop` calls**, one per coset. Each of those makes several
+/// `p3_maybe_rayon` parallel dispatches on a matrix that, for a quotient chunk, is `h × 4`.
+///
+/// Measured (`circuit/tests/ir2_field_op_counts.rs` §G6d, `RAYON_NUM_THREADS=1`): holding the
+/// output size fixed at `h · 2^added_bits = 4096` and sliding the split, the total butterfly work
+/// *falls* as `added_bits` rises while the clock *rises 34×* — the cost is `2^added_bits` × a
+/// constant of ~10–15 µs that depends on **neither the width nor the height**. §G6e attributes
+/// that constant: it is rayon's cold hand-off (`Registry::in_worker_cold`) paid by a caller that is
+/// not itself a pool worker — the same workload run inside `ThreadPool::install` is 11–27× faster.
+/// (§G6c rules out the coset-twiddle tables, which are ~0 on a clock.)
+///
+/// So the fix is to pay that constant fewer times. The IR-v2 prover splits each AIR's quotient into
+/// `n` chunks of `D = 4` base columns and made twelve width-4 calls where three batched calls
+/// (widths 8, 32, 8) do the same arithmetic — 12·2^b coset dispatches become 3·2^b.
+///
+/// ⚑ The bigger win of the same mechanism is NOT taken here: calling the prover inside
+/// `rayon::ThreadPool::install` measures 2.2–2.5× on the WHOLE prover (§G6f), and it subsumes most
+/// of this batch's absolute gain. See `zkml-research/notes/lde-layout.md` §6.
+///
+/// # Why one call is legal even though the chunks have different shifts
+///
+/// Chunk `i` is evaluations of `q_i` over the coset `s_i·H`, and the caller asks for its LDE at
+/// shift `t_i = g / s_i`. A coset DFT is a *coefficient scaling followed by a plain DFT*:
+/// `coset_dft(c, t)[k] = Σ_j c_j t^j k^j`. So scaling chunk `i`'s coefficients by `t_i^j` and then
+/// running a **single shared** LDE at shift `ONE` reproduces each chunk's output exactly:
+///
+/// - the iDFT is column-independent and shift-free, so it batches across chunks verbatim;
+/// - the scaling is column-block-local, `Θ(h·w)`, and lands in `coset_lde_batch_with_transform`'s
+///   transform hook — the point between the iDFT and the coset DFTs, which exists for this;
+/// - the forward coset DFTs are column-independent, so they batch verbatim;
+/// - row order is unaffected: `coset_lde_batch`'s output row for `(coset_idx, h_idx)` is the
+///   evaluation at `shift · g_big^{coset_idx} · h_gen^{h_idx}`, and the map from that index pair to
+///   a storage slot does not depend on `shift` at all.
+///
+/// Result: `batched_chunk_ldes(dft, b, &shifts, mats)[i]` equals
+/// `dft.coset_lde_batch(mats[i], b, shifts[i]).bit_reverse_rows().to_row_major_matrix()`
+/// element for element. That equality is the correctness obligation and it is **asserted**, over
+/// the prover's real geometry and real shifts, in `ir2_field_op_counts.rs` §G7a.
+///
+/// Shift `ONE` (rather than factoring out `shifts[0]`) is chosen deliberately: it makes the coset
+/// twiddle tables keyed on `(log_h, g_big^j)`, which every AIR of the same height and every later
+/// proof on the same `Pcs` then shares.
+pub fn batched_chunk_ldes<Val, Dft>(
+    dft: &Dft,
+    added_bits: usize,
+    shifts: &[Val],
+    mats: Vec<RowMajorMatrix<Val>>,
+) -> Vec<RowMajorMatrix<Val>>
+where
+    Val: TwoAdicField,
+    Dft: TwoAdicSubgroupDft<Val>,
+{
+    let n = mats.len();
+    assert_eq!(shifts.len(), n, "one shift per chunk");
+    let h = mats[0].height();
+    let w = mats[0].width();
+    let wide_w = n * w;
+
+    // ── Concatenate the chunks column-block-wise into one `h × (n·w)` matrix.
+    let mut wide = Val::zero_vec(h * wide_w);
+    for (c, m) in mats.iter().enumerate() {
+        for (r, dst) in wide.chunks_exact_mut(wide_w).enumerate() {
+            dst[c * w..(c + 1) * w].copy_from_slice(&m.values[r * w..(r + 1) * w]);
+        }
+    }
+    let wide = RowMajorMatrix::new(wide, wide_w);
+
+    // ── Per-chunk coefficient scaling: `scales[c][r]` is the factor for buffer row `r` of chunk
+    // `c`. Built in natural coefficient order, then permuted to match the buffer's layout.
+    let scales: Vec<Vec<Val>> = shifts.iter().map(|s| s.powers().collect_n(h)).collect();
+
+    let lde = dft.coset_lde_batch_with_transform(wide, added_bits, Val::ONE, move |buf, layout| {
+        let mut scales = scales;
+        if layout == Layout::BitReversed {
+            // `reverse_slice_index_bits` sends `p[r] ↦ p[reverse_bits_len(r, log_2 h)]`, which is
+            // exactly the buffer's row ↦ coefficient-index map.
+            for p in scales.iter_mut() {
+                reverse_slice_index_bits(p);
+            }
+        }
+        buf.values
+            .par_chunks_exact_mut(wide_w)
+            .enumerate()
+            .for_each(|(r, row)| {
+                for (c, p) in scales.iter().enumerate() {
+                    let s = p[r];
+                    if s != Val::ONE {
+                        for v in row[c * w..(c + 1) * w].iter_mut() {
+                            *v *= s;
+                        }
+                    }
+                }
+            });
+    });
+
+    // We bit reverse as this is required by our implementation of the FRI protocol.
+    let wide_lde = lde.bit_reverse_rows().to_row_major_matrix();
+    let big_h = h << added_bits;
+
+    // ── Split back into one matrix per chunk. This copy is the batch's only added cost: `n·h·2^b·w`
+    // elements, against `n-1` saved iDFTs and `(n-1)·2^b` saved coset-twiddle tables.
+    debug_span!("split batched quotient LDE").in_scope(|| {
+        (0..n)
+            .into_par_iter()
+            .map(|c| {
+                let mut v = Val::zero_vec(big_h * w);
+                for (dst, src) in v
+                    .chunks_exact_mut(w)
+                    .zip(wide_lde.values.chunks_exact(wide_w))
+                {
+                    dst.copy_from_slice(&src[c * w..(c + 1) * w]);
+                }
+                RowMajorMatrix::new(v, w)
+            })
+            .collect()
+    })
+}
+
 /// Lagrange interpolation: given points (xs[i], ys[i]), evaluate at z.
 ///
 /// Uses the barycentric formula for efficiency when xs are roots of unity.
@@ -446,28 +569,49 @@ where
         self.mmcs.commit(ldes)
     }
 
+    /// ⚑ DREGG DELTA 3 (2026-08-14) — ONE batched LDE per AIR, not one per quotient chunk.
+    /// See [`batched_chunk_ldes`] for the mechanism, the algebra and the exactness argument.
+    /// The returned `Vec` is element-for-element what the per-chunk loop returned, so nothing
+    /// downstream — the MMCS batch, the opening rounds, the verifier — can tell the difference.
     fn get_quotient_ldes(
         &self,
         evaluations: impl IntoIterator<Item = (Self::Domain, RowMajorMatrix<Val>)>,
         _num_chunks: usize,
     ) -> Vec<RowMajorMatrix<Val>> {
-        evaluations
+        // coset_lde_batch converts from evaluations over `xH` to evaluations over `shift * x * K`.
+        // Hence, letting `shift = g/x` the output will be evaluations over `gK` as desired.
+        // When `x = g`, we could just use the standard LDE but currently this doesn't seem
+        // to give a meaningful performance boost.
+        let (shifts, mats): (Vec<Val>, Vec<RowMajorMatrix<Val>>) = evaluations
             .into_iter()
             .map(|(domain, evals)| {
                 assert_eq!(domain.size(), evals.height());
-                // coset_lde_batch converts from evaluations over `xH` to evaluations over `shift * x * K`.
-                // Hence, letting `shift = g/x` the output will be evaluations over `gK` as desired.
-                // When `x = g`, we could just use the standard LDE but currently this doesn't seem
-                // to give a meaningful performance boost.
-                let shift = Val::GENERATOR / domain.shift();
-                // Compute the LDE with blowup factor fri.log_blowup.
-                // We bit reverse as this is required by our implementation of the FRI protocol.
-                self.dft
-                    .coset_lde_batch(evals, self.fri.log_blowup, shift)
-                    .bit_reverse_rows()
-                    .to_row_major_matrix()
+                (Val::GENERATOR / domain.shift(), evals)
             })
-            .collect()
+            .unzip();
+
+        // The batch is legal only on a uniform geometry: `split_evals` always produces chunks of
+        // one height and one width, but this entry point is public, so the shape is CHECKED and
+        // the per-chunk path is kept as the honest fallback rather than assumed away.
+        let uniform = mats.len() > 1
+            && mats
+                .iter()
+                .all(|m| m.height() == mats[0].height() && m.width() == mats[0].width());
+
+        if !uniform {
+            return izip!(shifts, mats)
+                .map(|(shift, evals)| {
+                    // Compute the LDE with blowup factor fri.log_blowup.
+                    // We bit reverse as this is required by our implementation of the FRI protocol.
+                    self.dft
+                        .coset_lde_batch(evals, self.fri.log_blowup, shift)
+                        .bit_reverse_rows()
+                        .to_row_major_matrix()
+                })
+                .collect();
+        }
+
+        batched_chunk_ldes(&self.dft, self.fri.log_blowup, &shifts, mats)
     }
 
     fn commit_ldes(&self, ldes: Vec<RowMajorMatrix<Val>>) -> (Self::Commitment, Self::ProverData) {

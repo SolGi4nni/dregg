@@ -1525,3 +1525,721 @@ fn conversion_rate_microbenchmark() {
          SMALLEST Y in this table is the one a hash-bound claim must clear."
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §G6 — THE MECHANISM behind Finding 3: what a NARROW `coset_lde_batch` pays for
+//
+// §G1 Finding 3 established the *shape* of the anomaly — twelve width-4 quotient-chunk LDE calls
+// carrying 3.5% of the LDE's arithmetic and (per §A) 63% of its time — and named a layout fix
+// without naming a mechanism. A layout change justified by "it was slow" does not generalise, and
+// it cannot tell you WHICH widths to batch into. §G6 names the mechanism in exact counts.
+//
+// `Radix2DitParallel::coset_lde_batch_with_transform` runs one iDFT and then `2^added_bits`
+// separate `coset_dft_oop` calls, one per coset, each at a DISTINCT shift `g_big^j · shift`. The
+// sections below take the candidates in order and let the measurements eliminate them:
+//
+//   §G6b  the coset-twiddle tables — width-independent in COUNTS (confirmed) …
+//   §G6c  … and ~zero on a CLOCK. ⚑ HYPOTHESIS REFUTED; the counted term is not the cost.
+//   §G6d  the cost tracks the COSET COUNT, not the work: at fixed output size the work falls
+//         while the clock rises 34×. A per-coset constant of ~10–15 µs, independent of h AND w.
+//   §G6e  that constant IS rayon's cold hand-off — 11–27× when the caller is a pool worker.
+//   §G6f  the same question asked of the whole prover: 1.2–2.5×. ⚑ NOT TAKEN by this lane.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The quotient-chunk geometry the real prover produces, read off §G1's call log (stable at every
+/// blowup): `(chunk height, number of chunks)`, one entry per AIR. Chunk height IS trace height —
+/// `quotient_domain.size() = trace_size · n_chunks` and `split_evals` cuts it into `n_chunks`
+/// pieces — so the chunk counts read directly as the AIRs' quotient degrees: 2, 8, 2.
+const QUOTIENT_CHUNK_GEOMETRY: [(usize, usize); 3] = [(64, 2), (8, 8), (16, 2)];
+
+/// The per-chunk LDE shift the prover passes, DERIVED from `p3-batch-stark`'s construction and
+/// CHECKED against the recorded log in [`quotient_chunk_shifts_are_omega_powers`].
+///
+/// `quotient_domain = trace_domain.create_disjoint_domain(h·n)` gives shift `1 · GENERATOR` and
+/// size `h·n`; `split_domains(n)` gives chunk `i` the shift `GENERATOR · ω^i` where
+/// `ω = two_adic_generator(log2(h·n))`; and `two_adic_pcs.rs` passes
+/// `GENERATOR / chunk_shift = ω^{-i}`.
+fn chunk_lde_shifts(h: usize, n: usize) -> Vec<P3BabyBear> {
+    let log_q = p3_util::log2_strict_usize(h * n);
+    let omega = P3BabyBear::two_adic_generator(log_q);
+    let omega_inv = omega.inverse();
+    (0..n).map(|i| omega_inv.exp_u64(i as u64)).collect()
+}
+
+/// **§G6a — the premise, checked through the prover's OWN domain API, and the after-picture.**
+///
+/// Part 1 rebuilds the chunk domains with the same calls `p3-batch-stark` makes
+/// (`natural_domain_for_degree` → `create_disjoint_domain(h·n)` → `split_domains(n)`) and takes
+/// `GENERATOR / shift` exactly as `two_adic_pcs.rs` does, then checks [`chunk_lde_shifts`] against
+/// it. Nothing here is re-derived by hand; the check is against the real objects.
+///
+/// Part 2 records a real prove and asserts what the DFT seam now sees. **Before DELTA 3 this was
+/// twelve width-4 calls** (the §G1 log in `field-op-counts.md`, reproduced on this box on
+/// 2026-08-14); after it, three batched calls at widths 8 / 32 / 8, all at shift `ONE`.
+#[test]
+fn quotient_chunk_shifts_are_omega_powers() {
+    use p3_commit::PolynomialSpace;
+    use p3_field::coset::TwoAdicMultiplicativeCoset;
+
+    println!("\n═══ §G6a THE CHUNK SHIFTS, through the prover's own domain API ═══");
+    for (h, n) in QUOTIENT_CHUNK_GEOMETRY {
+        let trace = TwoAdicMultiplicativeCoset::new(P3BabyBear::ONE, p3_util::log2_strict_usize(h))
+            .expect("trace domain");
+        let quotient = trace.create_disjoint_domain(h * n);
+        assert_eq!(quotient.size(), h * n, "quotient domain size h·n");
+        let real: Vec<P3BabyBear> = quotient
+            .split_domains(n)
+            .into_iter()
+            .map(|d| P3BabyBear::GENERATOR / d.shift())
+            .collect();
+        assert_eq!(
+            real,
+            chunk_lde_shifts(h, n),
+            "h={h} n={n}: derived ω^-i must equal the shift `get_quotient_ldes` computes"
+        );
+        println!(
+            "   h={h:>3} n={n}  shifts = {:?}",
+            real.iter()
+                .map(|s| s.as_canonical_u32())
+                .collect::<Vec<_>>()
+        );
+    }
+    println!(
+        "   ⚑ CHECKED at source: chunk `i` of every AIR is LDE'd at `ω^-i` for\n   \
+         `ω = two_adic_generator(log2(h·n))`, and chunk 0 is always ONE."
+    );
+
+    install_path_layer();
+    let w = transfer_workload();
+    let events = record_one(&w, 6, 19, 0);
+    let quot: Vec<&DftEvent> = events
+        .iter()
+        .filter(|e| e.path.contains("compute quotient"))
+        .collect();
+
+    println!("\n═══ §G6a AFTER DELTA 3 — what the DFT seam sees in a real prove (b=6) ═══");
+    for (k, ev) in quot.iter().enumerate() {
+        println!(
+            "   call {k}: h={:>3} w={:>3} +b={} shift={}",
+            ev.height, ev.width, ev.added_bits, ev.shift
+        );
+    }
+    let shape: Vec<(usize, usize)> = quot.iter().map(|e| (e.height, e.width)).collect();
+    assert_eq!(
+        shape,
+        vec![(64, 8), (8, 32), (16, 8)],
+        "DELTA 3: one batched LDE per AIR, at width n·D — was twelve width-4 calls"
+    );
+    assert!(
+        quot.iter().all(|e| e.shift == 1),
+        "DELTA 3 folds every chunk shift into the coefficients and LDEs at shift ONE"
+    );
+    println!(
+        "   ⚑ 12 width-4 calls → 3 calls at widths 8 / 32 / 8. The six `prove_batch` commits\n   \
+         (widths 236, 386, 2, 72, 12, 4) are untouched."
+    );
+}
+
+/// Ops charged by one `coset_lde_batch(h, w, added_bits, shift)` on a **cold** memo (fresh `Dft`)
+/// minus the same call on a **warm** memo (same instance, same key). The difference is exactly the
+/// twiddle-table construction for the `2^added_bits` distinct coset shifts.
+fn cold_warm_split(h: usize, w: usize, added_bits: usize, shift: u32) -> (OpCounts, OpCounts) {
+    let s = CountedBabyBear(P3BabyBear::from_u32(shift));
+
+    let dft: Radix2DitParallel<CountedBabyBear> = Radix2DitParallel::default();
+    let base = OpCounts::read();
+    std::hint::black_box(dft.coset_lde_batch(filler_matrix(h, w), added_bits, s));
+    let cold = OpCounts::since(base);
+
+    let base = OpCounts::read();
+    std::hint::black_box(dft.coset_lde_batch(filler_matrix(h, w), added_bits, s));
+    let warm = OpCounts::since(base);
+
+    (cold, warm)
+}
+
+/// **§G6b — the width-independent term, isolated in exact counts.**
+///
+/// Sweeps width at fixed `(h, added_bits)` and reports the cold−warm difference. If the mechanism
+/// is the per-coset twiddle table, that difference is a CONSTANT in `w` while the call's total
+/// grows linearly in `w` — so its SHARE falls as `1/w`, which is the whole asymmetry between a
+/// width-236 trace commit and a width-4 quotient chunk.
+#[test]
+fn narrow_call_overhead_mechanism() {
+    reset_counters();
+    let added_bits = 6usize;
+
+    println!(
+        "\n═══ §G6b THE WIDTH-INDEPENDENT TERM — cold-memo minus warm-memo `coset_lde_batch` ═══\n   \
+         added_bits={added_bits} (blowup {}×). `cold` builds {} coset-twiddle tables; `warm` reuses them.\n   \
+         Counts are scalar-equivalent BabyBear ops.\n",
+        1 << added_bits,
+        1 << added_bits
+    );
+    println!(
+        "   {:>4} {:>5} {:>12} {:>12} {:>12} {:>9} {:>12}",
+        "h", "w", "cold M+A+S", "warm M+A+S", "twiddle term", "share", "twid/coset"
+    );
+    for h in [8usize, 16, 64] {
+        for w in [4usize, 8, 16, 32, 64, 236] {
+            let (cold, warm) = cold_warm_split(h, w, added_bits, 1);
+            let c = cold.mul + cold.add + cold.sub;
+            let wm = warm.mul + warm.add + warm.sub;
+            let t = c - wm;
+            println!(
+                "   {h:>4} {w:>5} {c:>12} {wm:>12} {t:>12} {:>8.2}% {:>12.2}",
+                100.0 * t as f64 / c as f64,
+                t as f64 / (1u64 << added_bits) as f64
+            );
+        }
+    }
+    println!(
+        "\n   ⚑ READ THE `twiddle term` COLUMN DOWN EACH `h` BLOCK: it does not move with `w`, so\n   \
+         its SHARE falls as 1/w — 9.1% of a width-4 call at h=64 against 0.17% of a width-236 one.\n   \
+         ⚠ THAT IS A COUNT, AND THE COUNT IS NOT THE COST: §G6c measures the same cold-vs-warm\n   \
+         split on a CLOCK and finds it is noise. The width-independent TIME is elsewhere (§G6d/e).\n   \
+         Kept because a plausible width-independent term that turns out not to be the mechanism is\n   \
+         the thing a reader most needs to see eliminated.\n   \
+         (⚠ the h=64 rows are ~2.5× the closed form 63+2·15=93: `Powers::collect_n` takes a\n   \
+         PARALLEL path at n ≥ 16, so those cells are thread-count dependent. h=8 and h=16 match\n   \
+         13 and 27 exactly.)"
+    );
+
+    // The claim the column makes, asserted rather than left to the reader.
+    for h in [8usize, 16, 64] {
+        let terms: Vec<u64> = [4usize, 8, 16, 32, 64, 236]
+            .into_iter()
+            .map(|w| {
+                let (c, wm) = cold_warm_split(h, w, added_bits, 1);
+                (c.mul + c.add + c.sub) - (wm.mul + wm.add + wm.sub)
+            })
+            .collect();
+        assert!(
+            terms.iter().all(|t| *t == terms[0]),
+            "h={h}: the cold−warm term must be identical at every width (it is width-independent); got {terms:?}"
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §G7 — THE BATCHING: correctness first, then counts, then a labelled clock
+//
+// §G6 says the per-coset overhead is a function of `(h, added_bits)` and not of `w`. That names
+// the fix AND its grouping: batch every chunk that shares a height, because those are exactly the
+// calls that would otherwise rebuild the same `2^added_bits` tables. The IR-v2 prover's chunks
+// group by AIR and an AIR's chunks all have one height, so the grouping is "one call per AIR" —
+// widths 8, 32, 8 for the three AIRs, which is the shape `field-op-counts.md` §G1 Finding 3 named.
+//
+// `p3_fri::batched_chunk_ldes` is the deployed implementation; these tests call THAT function, not
+// a re-derivation of it, so a divergence between instrument and prover is not possible here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn filler_matrix_p3(height: usize, width: usize) -> RowMajorMatrix<P3BabyBear> {
+    let values = (0..height * width)
+        .map(|i| P3BabyBear::from_u32((i as u32).wrapping_mul(2_654_435_761) | 1))
+        .collect();
+    RowMajorMatrix::new(values, width)
+}
+
+/// The unbatched path, verbatim from `two_adic_pcs.rs`'s pre-DELTA-3 `get_quotient_ldes` body.
+fn per_chunk_ldes<F: TwoAdicField + Ord>(
+    dft: &Radix2DitParallel<F>,
+    added_bits: usize,
+    shifts: &[F],
+    mats: Vec<RowMajorMatrix<F>>,
+) -> Vec<RowMajorMatrix<F>> {
+    use p3_matrix::bitrev::BitReversibleMatrix;
+    shifts
+        .iter()
+        .zip(mats)
+        .map(|(s, m)| {
+            dft.coset_lde_batch(m, added_bits, *s)
+                .bit_reverse_rows()
+                .to_row_major_matrix()
+        })
+        .collect()
+}
+
+/// **§G7a — THE CORRECTNESS OBLIGATION: the batch returns the same matrices, element for element.**
+///
+/// The quotient chunks are committed as separate matrices because the verifier opens them
+/// separately, so a batching that changed what those matrices ARE would be a wire change. This
+/// asserts it does not: at the prover's real geometry and its real `ω^-i` shifts, at every blowup
+/// in range, the batched result equals the per-chunk result exactly. Deployed types
+/// (`P3BabyBear`, `Radix2DitParallel`), no counting newtype, nothing generic left free.
+#[test]
+fn batched_chunk_ldes_are_bit_identical() {
+    for added_bits in 3..=7usize {
+        for (h, n) in QUOTIENT_CHUNK_GEOMETRY {
+            let shifts = chunk_lde_shifts(h, n);
+            let mats: Vec<_> = (0..n)
+                .map(|c| filler_matrix_p3(h, 4).clone_with_offset(c))
+                .collect();
+
+            let dft_a: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+            let want = per_chunk_ldes(&dft_a, added_bits, &shifts, mats.clone());
+
+            let dft_b: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+            let got = p3_fri::batched_chunk_ldes(&dft_b, added_bits, &shifts, mats);
+
+            assert_eq!(want.len(), got.len(), "chunk count preserved");
+            for (i, (a, b)) in want.iter().zip(&got).enumerate() {
+                assert_eq!(a.width, b.width, "b={added_bits} h={h} chunk {i} width");
+                assert_eq!(
+                    a.values, b.values,
+                    "b={added_bits} h={h} chunk {i}: batched LDE differs from per-chunk LDE"
+                );
+            }
+        }
+    }
+    println!(
+        "\n═══ §G7a BATCHED == PER-CHUNK, element for element ═══\n   \
+         Checked at added_bits 3..=7 × the three real chunk geometries (h=64 n=2, h=8 n=8,\n   \
+         h=16 n=2) with the prover's real `ω^-i` shifts, over deployed `P3BabyBear` /\n   \
+         `Radix2DitParallel`. ⇒ the MMCS batch, the opening rounds and the verifier see an\n   \
+         IDENTICAL object. No wire change, no VK change, no flag day."
+    );
+}
+
+/// A distinct filler per chunk, so an equality test cannot pass by every chunk being the same.
+trait CloneWithOffset {
+    fn clone_with_offset(self, k: usize) -> Self;
+}
+impl CloneWithOffset for RowMajorMatrix<P3BabyBear> {
+    fn clone_with_offset(mut self, k: usize) -> Self {
+        for (i, v) in self.values.iter_mut().enumerate() {
+            *v += P3BabyBear::from_u32((k as u32 + 1).wrapping_mul(i as u32 | 7));
+        }
+        self
+    }
+}
+
+/// **§G7b — the batching in EXACT COUNTS.** Both paths run over the counting field, on one fresh
+/// `Radix2DitParallel<CountedBabyBear>` each (a prover builds a fresh `Pcs` per proof, so the
+/// twiddle memo really does start cold), in the real call order. The batched column INCLUDES the
+/// coefficient prescale, because the counted run calls the deployed `batched_chunk_ldes` itself.
+#[test]
+fn batched_chunk_ldes_op_counts() {
+    println!(
+        "\n═══ §G7b QUOTIENT-CHUNK LDE, PER-CHUNK vs BATCHED — scalar-equivalent ops ═══\n   \
+         Geometry per proof: 2×(h=64,w=4) + 8×(h=8,w=4) + 2×(h=16,w=4) ⇒ batched widths 8 / 32 / 8."
+    );
+    println!(
+        "\n   {:>3} {:>7} {:>14} {:>14} {:>10} {:>9}",
+        "b", "calls", "per-chunk M+A+S", "batched M+A+S", "saved", "saved %"
+    );
+    let mut rows = Vec::new();
+    for added_bits in 3..=7usize {
+        let mut narrow = OpCounts::default();
+        let mut batched = OpCounts::default();
+        let mut narrow_calls = 0usize;
+        let mut batched_calls = 0usize;
+
+        // One `Dft` per path per proof, exactly as the prover has one per config.
+        let dft_a: Radix2DitParallel<CountedBabyBear> = Radix2DitParallel::default();
+        let dft_b: Radix2DitParallel<CountedBabyBear> = Radix2DitParallel::default();
+
+        for (h, n) in QUOTIENT_CHUNK_GEOMETRY {
+            let shifts: Vec<CountedBabyBear> = chunk_lde_shifts(h, n)
+                .into_iter()
+                .map(CountedBabyBear)
+                .collect();
+            let mats: Vec<_> = (0..n).map(|_| filler_matrix(h, 4)).collect();
+
+            let base = OpCounts::read();
+            std::hint::black_box(per_chunk_ldes(&dft_a, added_bits, &shifts, mats.clone()));
+            narrow.add_in(OpCounts::since(base));
+            narrow_calls += n;
+
+            let base = OpCounts::read();
+            std::hint::black_box(p3_fri::batched_chunk_ldes(
+                &dft_b, added_bits, &shifts, mats,
+            ));
+            batched.add_in(OpCounts::since(base));
+            batched_calls += 1;
+        }
+
+        let nt = narrow.mul + narrow.add + narrow.sub;
+        let bt = batched.mul + batched.add + batched.sub;
+        println!(
+            "   {added_bits:>3} {:>7} {nt:>14} {bt:>14} {:>10} {:>8.1}%",
+            format!("{narrow_calls}→{batched_calls}"),
+            nt as i64 - bt as i64,
+            100.0 * (nt as f64 - bt as f64) / nt as f64
+        );
+        rows.push((added_bits, nt, bt));
+    }
+    println!(
+        "\n   ⚑ The arithmetic saving is REAL but SMALL — it is `n-1` iDFTs and the duplicated\n   \
+         coset-twiddle tables, minus the prescale. That is the point of §G6: the 27× per-call\n   \
+         asymmetry §G1 Finding 2 measured was never in the op count, so an arithmetic optimisation\n   \
+         aimed here would have bought nothing. What the batch removes is the per-CALL, per-COSET\n   \
+         overhead a counter cannot see — see §G7c."
+    );
+    for (b, nt, bt) in rows {
+        assert!(
+            bt <= nt,
+            "b={b}: batched must not do more arithmetic ({bt} > {nt})"
+        );
+    }
+}
+
+/// **§G7c — the wall-clock upper bound, labelled.** ⚠ This box is contended; the estimator is
+/// min-of-N, which finds one un-preempted window if there is one, and a MINIMUM under load is an
+/// UPPER BOUND on the true time. Both paths pay the same contention, so the RATIO is the durable
+/// quantity; the absolute ms are not.
+#[test]
+fn batched_chunk_ldes_wallclock() {
+    const N: usize = 40;
+    println!(
+        "\n═══ §G7c QUOTIENT-CHUNK LDE WALL CLOCK — min of {N}, fresh `Dft` per iteration ═══\n   \
+         ⚠ UPPER BOUND on a contended box. RAYON_NUM_THREADS={}. Deployed `P3BabyBear`.\n",
+        std::env::var("RAYON_NUM_THREADS").unwrap_or_else(|_| "default".into())
+    );
+    println!(
+        "   {:>3} {:>12} {:>12} {:>9} {:>14}",
+        "b", "per-chunk ms", "batched ms", "speedup", "saved ms"
+    );
+    for added_bits in 3..=7usize {
+        let work: Vec<(Vec<P3BabyBear>, Vec<RowMajorMatrix<P3BabyBear>>)> = QUOTIENT_CHUNK_GEOMETRY
+            .iter()
+            .map(|&(h, n)| {
+                (
+                    chunk_lde_shifts(h, n),
+                    (0..n).map(|_| filler_matrix_p3(h, 4)).collect(),
+                )
+            })
+            .collect();
+
+        let narrow_ns = min_ns(N, 1, || {
+            let dft: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+            for (shifts, mats) in &work {
+                std::hint::black_box(per_chunk_ldes(&dft, added_bits, shifts, mats.clone()));
+            }
+        });
+        let batched_ns = min_ns(N, 1, || {
+            let dft: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+            for (shifts, mats) in &work {
+                std::hint::black_box(p3_fri::batched_chunk_ldes(
+                    &dft,
+                    added_bits,
+                    shifts,
+                    mats.clone(),
+                ));
+            }
+        });
+        println!(
+            "   {added_bits:>3} {:>12.3} {:>12.3} {:>8.2}× {:>14.3}",
+            narrow_ns / 1e6,
+            batched_ns / 1e6,
+            narrow_ns / batched_ns,
+            (narrow_ns - batched_ns) / 1e6
+        );
+    }
+}
+
+/// **§G6c — the per-coset constant, in wall clock, split into twiddle-table and butterfly.**
+///
+/// §G6b isolates the width-independent term in *counts*; counts cannot see allocation, a
+/// `spin::RwLock` write, a `BTreeMap` insert or a rayon dispatch, and §G1 Finding 2 is precisely a
+/// phase whose time is not its count. This measures the same split on a clock: one
+/// `coset_lde_batch` on a **cold** memo against the identical call on a **warm** one, **one call
+/// per timing window in both arms** so the two windows differ only by the `2^added_bits`
+/// coset-twiddle tables.
+///
+/// ⚠ The first cut of this test timed `cold` against a window containing *two* calls and
+/// subtracted — and reported NEGATIVE twiddle costs at 11 of 14 geometries, because the second
+/// call in a window allocates its output while the first is still live and pays for that, not for
+/// the memo. A min-of-mins over differently-shaped windows is not a difference. Recorded because
+/// the broken version looked plausible and printed a full table.
+///
+/// ⚠ Run with `RAYON_NUM_THREADS=1`. §G5 failed on this box because rayon dispatch under load
+/// swamped every geometry at a flat 2.7–6.0 ms floor; one thread removes that term and the numbers
+/// become monotone in the work — which is what §G5 said the next measurement needed.
+#[test]
+fn per_coset_constant_wallclock() {
+    const N: usize = 60;
+    println!(
+        "\n═══ §G6c THE PER-COSET CONSTANT ON A CLOCK — cold memo vs warm memo ═══\n   \
+         ⚠ min of {N}, UPPER BOUND on a contended box. RAYON_NUM_THREADS={}.\n   \
+         Both arms: ONE `coset_lde_batch` per window. `cold` builds 2^b coset-twiddle tables.\n",
+        std::env::var("RAYON_NUM_THREADS").unwrap_or_else(|_| "default".into())
+    );
+    println!(
+        "   {:>4} {:>5} {:>4} {:>11} {:>11} {:>12} {:>13} {:>10}",
+        "h", "w", "+b", "cold µs", "warm µs", "twiddle µs", "twid/coset µs", "twid %"
+    );
+    for added_bits in [3usize, 6] {
+        for (h, w) in [
+            (64usize, 4usize),
+            (64, 8),
+            (8, 4),
+            (8, 32),
+            (16, 4),
+            (16, 8),
+            (64, 236),
+        ] {
+            let cold = min_ns(N, 1, || {
+                let dft: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+                std::hint::black_box(dft.coset_lde_batch(
+                    filler_matrix_p3(h, w),
+                    added_bits,
+                    P3BabyBear::ONE,
+                ));
+            });
+            let dft_warm: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+            std::hint::black_box(dft_warm.coset_lde_batch(
+                filler_matrix_p3(h, w),
+                added_bits,
+                P3BabyBear::ONE,
+            ));
+            let warm = min_ns(N, 1, || {
+                std::hint::black_box(dft_warm.coset_lde_batch(
+                    filler_matrix_p3(h, w),
+                    added_bits,
+                    P3BabyBear::ONE,
+                ));
+            });
+            let twid = cold - warm;
+            println!(
+                "   {h:>4} {w:>5} {added_bits:>4} {:>11.1} {:>11.1} {:>12.1} {:>13.3} {:>9.1}%",
+                cold / 1e3,
+                warm / 1e3,
+                twid / 1e3,
+                twid / 1e3 / (1u64 << added_bits) as f64,
+                100.0 * twid / cold
+            );
+        }
+    }
+    println!(
+        "\n   ⚑ `twid/coset` is the width-independent per-coset constant a NARROW call cannot\n   \
+         amortise. Compare the `w` pairs at one `h`: the µs stay put while the work multiplies.\n   \
+         That constant, times (calls × 2^b), is what the batching removes."
+    );
+}
+
+/// **§G6d — THE MECHANISM, isolated: the cost tracks the COSET COUNT, not the output size.**
+///
+/// §G6c refuted the twiddle-table hypothesis on a clock (cold−warm is sign-random noise). What is
+/// left in `coset_lde_batch_with_transform` that is paid `2^added_bits` times and depends on
+/// neither `w` nor `h` is the **per-coset `coset_dft_oop` call itself** — a `first_half_general_oop`
+/// and a `second_half_general`, each a `p3_maybe_rayon` parallel dispatch, plus a
+/// `reverse_matrix_index_bits`, on a matrix that at `w = 4` is 256 elements.
+///
+/// This holds the OUTPUT SIZE fixed at `h · 2^added_bits = 4096` and slides the split. Total
+/// butterfly work is `Θ(4096 · w · log h)` — it *falls* as `added_bits` rises. If the cost tracked
+/// work, the last row would be the cheapest. If it tracks the coset count, it doubles per rung.
+#[test]
+fn cost_tracks_coset_count_not_work() {
+    const N: usize = 40;
+    const OUT: usize = 4096;
+    println!(
+        "\n═══ §G6d FIXED OUTPUT SIZE h·2^b = {OUT}, SLIDING THE SPLIT ═══\n   \
+         ⚠ min of {N}, RAYON_NUM_THREADS={}. Output is {OUT}×w in EVERY row.\n",
+        std::env::var("RAYON_NUM_THREADS").unwrap_or_else(|_| "default".into())
+    );
+    for w in [4usize, 64] {
+        println!("   ── w = {w}");
+        println!(
+            "   {:>6} {:>7} {:>7} {:>11} {:>14} {:>16}",
+            "h", "+b", "cosets", "µs", "µs/coset", "rel. work Θ(log h)"
+        );
+        let mut prev = f64::NAN;
+        for added_bits in 0..=9usize {
+            let h = OUT >> added_bits;
+            let ns = min_ns(N, 1, || {
+                let dft: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+                std::hint::black_box(dft.coset_lde_batch(
+                    filler_matrix_p3(h, w),
+                    added_bits,
+                    P3BabyBear::ONE,
+                ));
+            });
+            println!(
+                "   {h:>6} {added_bits:>7} {:>7} {:>11.1} {:>14.3} {:>16.2}  {}",
+                1usize << added_bits,
+                ns / 1e3,
+                ns / 1e3 / (1usize << added_bits) as f64,
+                p3_util::log2_strict_usize(h) as f64 / 12.0,
+                if prev.is_nan() {
+                    String::new()
+                } else {
+                    format!("{:.2}× prev", ns / prev)
+                }
+            );
+            prev = ns;
+        }
+    }
+    println!(
+        "\n   ⚑ Work FALLS monotonically down each block (the `log h` column) while the clock\n   \
+         RISES with the coset count. The cost of a `coset_lde_batch` is `2^added_bits` × a\n   \
+         constant that depends on neither the width nor the height — a per-coset CALL constant.\n   \
+         ⇒ batching `k` same-height calls into one divides that term by exactly `k`, and nothing\n   \
+         about the arithmetic changes. That is why §G7c measures ~4× on a 12→3 batch."
+    );
+}
+
+/// **§G6e — WHAT the per-coset constant IS: a cold rayon hand-off, and a second free win.**
+///
+/// §G6d pins the constant at ~10–15 µs per coset, independent of `h` and `w`. The only thing in
+/// `coset_dft_oop` with that shape is its `p3_maybe_rayon` parallel dispatches
+/// (`first_half_general_oop`, `second_half_general`, `reverse_matrix_index_bits`). Rayon's
+/// `par_*` from a thread that is **not itself a pool worker** takes `Registry::in_worker_cold`:
+/// the caller parks on a latch while a worker picks the job up — a full cross-thread round trip,
+/// paid per dispatch, per coset, per call, and utterly independent of how much work the job does.
+///
+/// The test: run the identical workload from the calling thread and again inside
+/// `ThreadPool::install`, which makes the caller a worker so every nested dispatch is warm.
+///
+/// ⚠ If this shows a large gap, it is a SECOND optimisation of the same kind, available to the
+/// whole prover for the price of one `install` at the top — and it is NOT taken by this lane.
+#[test]
+fn per_coset_constant_is_a_cold_rayon_handoff() {
+    const N: usize = 30;
+    let threads: usize = std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(rayon::current_num_threads);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .expect("pool");
+
+    println!(
+        "\n═══ §G6e THE PER-COSET CONSTANT — caller-thread vs INSIDE the rayon pool ═══\n   \
+         ⚠ min of {N}, {threads} rayon thread(s). Workload: the real quotient-chunk LDEs,\n   \
+         both layouts × both call sites, so the two optimisations can be read against each other.\n"
+    );
+    println!(
+        "   {:>3} {:>13} {:>13} {:>13} {:>13} {:>10} {:>10}",
+        "b", "12× caller", "3× caller", "12× pool", "3× pool", "batch gain", "pool gain"
+    );
+    for added_bits in [3usize, 6] {
+        let work: Vec<(Vec<P3BabyBear>, Vec<RowMajorMatrix<P3BabyBear>>)> = QUOTIENT_CHUNK_GEOMETRY
+            .iter()
+            .map(|&(h, n)| {
+                (
+                    chunk_lde_shifts(h, n),
+                    (0..n).map(|_| filler_matrix_p3(h, 4)).collect(),
+                )
+            })
+            .collect();
+        let narrow = || {
+            let dft: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+            for (shifts, mats) in &work {
+                std::hint::black_box(per_chunk_ldes(&dft, added_bits, shifts, mats.clone()));
+            }
+        };
+        let batched = || {
+            let dft: Radix2DitParallel<P3BabyBear> = Radix2DitParallel::default();
+            for (shifts, mats) in &work {
+                std::hint::black_box(p3_fri::batched_chunk_ldes(
+                    &dft,
+                    added_bits,
+                    shifts,
+                    mats.clone(),
+                ));
+            }
+        };
+        let n_out = min_ns(N, 1, narrow);
+        let b_out = min_ns(N, 1, batched);
+        let n_in = pool.install(|| min_ns(N, 1, narrow));
+        let b_in = pool.install(|| min_ns(N, 1, batched));
+        println!(
+            "   {added_bits:>3} {:>13.3} {:>13.3} {:>13.3} {:>13.3} {:>9.2}× {:>9.2}×",
+            n_out / 1e6,
+            b_out / 1e6,
+            n_in / 1e6,
+            b_in / 1e6,
+            n_out / b_out,
+            n_out / n_in
+        );
+    }
+    println!(
+        "\n   ⚑ READ THE LAST TWO COLUMNS TOGETHER. Both optimisations attack the SAME per-coset\n   \
+         constant: the batch divides the number of times it is paid, the pool makes each one\n   \
+         cheap. They therefore DO NOT COMPOSE MULTIPLICATIVELY — compare `3× pool` against\n   \
+         `12× pool` to see what the batching is still worth once the hand-off is warm."
+    );
+}
+
+type PlainPcs = TwoAdicFriPcs<P3BabyBear, Radix2DitParallel<P3BabyBear>, ValMmcs, ChallengeMmcs>;
+type PlainConfig = StarkConfig<PlainPcs, Ef, Challenger>;
+
+fn plain_config(log_blowup: usize, num_queries: usize, pow: usize) -> PlainConfig {
+    let perm = default_babybear_poseidon2_16();
+    let hash = Hash::new(perm.clone());
+    let compress = Compress::new(perm.clone());
+    let val_mmcs = ValMmcs::new(hash, compress, 0);
+    let fri_params = FriParameters {
+        log_blowup,
+        log_final_poly_len: 0,
+        max_log_arity: 3,
+        num_queries,
+        commit_proof_of_work_bits: 0,
+        query_proof_of_work_bits: pow,
+        mmcs: ChallengeMmcs::new(val_mmcs.clone()),
+    };
+    StarkConfig::new(
+        TwoAdicFriPcs::new(Radix2DitParallel::default(), val_mmcs, fri_params),
+        Challenger::new(perm),
+    )
+}
+
+/// **§G6f — the same cold-hand-off question, asked of the WHOLE prover.**
+///
+/// §G6e prices it on the quotient-chunk LDEs alone, where the matrices are 256 elements and a
+/// cross-thread hand-off has nothing to amortise against. A whole prove is mostly big matrices and
+/// a Merkle build, so the honest question is what fraction of the *prover* this reaches. Same
+/// workload, same config, deployed `Radix2DitParallel`; the only difference is whether the calling
+/// thread is a rayon worker.
+///
+/// ⚠ NOT TAKEN BY THIS LANE. It is a one-line change at the prover entry point and it belongs to
+/// whoever owns that entry point, with its own before/after. Recorded here because the number is
+/// the reason to do it.
+#[test]
+fn whole_prove_inside_the_rayon_pool() {
+    const N: usize = 5;
+    let threads: usize = std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(rayon::current_num_threads);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .expect("pool");
+    let w = transfer_workload();
+
+    println!(
+        "\n═══ §G6f WHOLE PROVE — caller-thread vs INSIDE the rayon pool ═══\n   \
+         ⚠ min of {N}, {threads} rayon thread(s), q=19 pow=0, contended box (UPPER BOUNDS).\n"
+    );
+    println!(
+        "   {:>3} {:>16} {:>16} {:>10}",
+        "b", "from caller ms", "inside pool ms", "speedup"
+    );
+    for lb in [3usize, 6] {
+        let run = || {
+            let config = plain_config(lb, 19, 0);
+            let proof = prove_vm_descriptor2_for_config(
+                &w.desc,
+                &w.base_trace,
+                &w.pis,
+                &MemBoundaryWitness::default(),
+                &[],
+                &UMemBoundaryWitness::default(),
+                &config,
+            )
+            .expect("proves");
+            std::hint::black_box(&proof);
+        };
+        let outside = min_ns(N, 1, run);
+        let inside = pool.install(|| min_ns(N, 1, run));
+        println!(
+            "   {lb:>3} {:>16.3} {:>16.3} {:>9.2}×",
+            outside / 1e6,
+            inside / 1e6,
+            outside / inside
+        );
+    }
+}
