@@ -118,6 +118,11 @@ tracing-subscriber = "0.3"
 # is the same rayon the vendored `p3-challenger` grinds on — already in the lock at 1.12 via
 # `p3-maybe-rayon` with `features = ["parallel"]`; no new resolution.
 rayon = "1"
+# TEST-LAYER ONLY. `tests/ir2_field_op_counts.rs` instantiates plonky3's `Field` over a counting
+# newtype to get exact scalar-equivalent field-op counts; `Field::order()` returns a
+# `num_bigint::BigUint` and the trait's required signature has to name that type. Already in the
+# lock at 0.4.6 via `p3-field` itself; this adds an edge, not a resolution.
+num-bigint = "0.4"
 
 [lints]
 workspace = true
