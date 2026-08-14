@@ -213,6 +213,25 @@ fn install_layer() {
     });
 }
 
+/// ⚑ **THE MEASUREMENT IS PROCESS-GLOBAL, AND THIS FILE ONLY *DOCUMENTED* THAT.**
+///
+/// [`TOTALS`], [`PERMS`] and [`PERMS_PACKED`] are one per process, and five tests in this file
+/// bracket a `prove` with [`reset_totals`] … [`snapshot`]. Under the harness's DEFAULT
+/// parallelism any two of them run at once, each zeroing the other's counters mid-flight and
+/// attributing the other's Poseidon2 permutations to its own phases. The header has prescribed
+/// `--test-threads=1` since the file was written; **nothing enforced it**, so the corruption
+/// arrived as a plausible number rather than as a failure — until §D2's assertions turned it into
+/// a red (found 2026-08-14: `q 19 → 57` read `+5` permutations run alone and thousands run with
+/// the file, and the delta was another test's prove).
+///
+/// This lock makes the measurement correct regardless of how the harness is invoked. Poisoning is
+/// deliberately absorbed: a panic in one measuring test must red THAT test, not turn every sibling
+/// into a confusing `PoisonError` about a lock they never contended.
+fn serialize_measurement() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn reset_totals() {
     totals().lock().unwrap().clear();
     PERMS.store(0, Ordering::Relaxed);
@@ -573,6 +592,8 @@ fn phase_ms_bestrun(p: &Point, ph: &str) -> f64 {
 /// because at parity (§B) the query count moves too and the two effects are confounded.
 #[test]
 fn phase_profile_blowup_sweep_fixed_queries() {
+    // The phase totals and permutation counters are PROCESS-GLOBAL; see `serialize_measurement`.
+    let _serial = serialize_measurement();
     install_layer();
     let w = transfer_workload();
     let reps: usize = std::env::var("DREGG_PROFILE_REPS")
@@ -697,6 +718,8 @@ fn crossover_table(tag: &str, pts: &[Point]) {
 /// this one separates them.
 #[test]
 fn phase_profile_parity_ladder() {
+    // The phase totals and permutation counters are PROCESS-GLOBAL; see `serialize_measurement`.
+    let _serial = serialize_measurement();
     install_layer();
     let w = transfer_workload();
     let reps: usize = std::env::var("DREGG_PROFILE_REPS")
@@ -785,6 +808,8 @@ fn phase_profile_parity_ladder() {
 /// the classifier in this file can be audited against what plonky3 actually reports.
 #[test]
 fn phase_profile_raw_spans_at_deployed_point() {
+    // The phase totals and permutation counters are PROCESS-GLOBAL; see `serialize_measurement`.
+    let _serial = serialize_measurement();
     install_layer();
     let w = transfer_workload();
     let config = create_config_with_fri(6, 0, 3, 19, 16);
@@ -917,6 +942,8 @@ fn counting_config(log_blowup: usize, num_queries: usize, pow: usize) -> Countin
 #[test]
 fn poseidon2_permutation_counts_per_phase() {
     use dregg_circuit::descriptor_ir2::{UMemBoundaryWitness, prove_vm_descriptor2_for_config};
+    // The phase totals and permutation counters are PROCESS-GLOBAL; see `serialize_measurement`.
+    let _serial = serialize_measurement();
     install_layer();
     let w = transfer_workload();
     let mem_boundary = MemBoundaryWitness::default();
@@ -1323,6 +1350,8 @@ fn parse_rows(text: &str, width: usize) -> Vec<Vec<BabyBear>> {
 /// **§F — hash/arith as a function of TRACE HEIGHT at fixed blowup.**
 #[test]
 fn phase_profile_trace_height_sweep() {
+    // The phase totals and permutation counters are PROCESS-GLOBAL; see `serialize_measurement`.
+    let _serial = serialize_measurement();
     install_layer();
     let reps: usize = std::env::var("DREGG_PROFILE_REPS")
         .ok()
