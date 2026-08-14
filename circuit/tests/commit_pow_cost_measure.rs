@@ -72,18 +72,40 @@ fn commit_pow_price_per_bit() {
     // knob we are about to recommend turning on. (A single `grind` has a geometric trial count, so
     // the spread across these samples is the distribution, not measurement error.)
     let rate = rates.iter().cloned().fold(f64::INFINITY, f64::min);
-    println!(
-        "\n  conservative WHOLE-MACHINE rate: {rate:.0} Poseidon2-BabyBear witness trials/s\n"
-    );
+    println!("\n  conservative ACHIEVED rate: {rate:.0} Poseidon2-BabyBear witness trials/s\n");
 
-    // ⚑ `grind` is ALREADY both SIMD-packed (`F::Packing::WIDTH` candidates per permutation) and
-    // rayon-parallel (`(0..num_batches).into_par_iter().find_map_any`,
-    // `challenger/src/grinding_challenger.rs:166`). The rate above is therefore a WHOLE-MACHINE
-    // rate, not a per-core one: there is no further thread multiplier to apply, and a column that
-    // applied one would be counting the same parallelism twice.
+    // ⚑ CORRECTED 2026-08-14 — THE PREMISE OF THIS PARAGRAPH LEFT THE TREE FIVE DAYS AFTER IT WAS
+    // WRITTEN, AND THE PARAGRAPH DID NOT.
+    //
+    // It used to read: "`grind` is ALREADY both SIMD-packed and rayon-parallel
+    // (`into_par_iter().find_map_any`) … the rate above is therefore a WHOLE-MACHINE rate, not a
+    // per-core one: there is no further thread multiplier to apply, and a column that applied one
+    // would be counting the same parallelism twice."
+    //
+    // `90680ee7d` (2026-08-02) replaced `find_map_any` with **`find_map_first`** so the PoW witness
+    // would stop depending on thread scheduling — correct, and every byte-parity gate needs it. But
+    // `find_first` must prove no LOWER candidate exists, and the witness sits in the first ~0.003%
+    // of the range, so rayon's thief-driven splitter leaves the worker that owns index 0 walking to
+    // the answer alone.
+    //
+    // MEASURED (`tests/grind_phase_measure.rs` §G3, contention-free instrument = max batches
+    // scanned by any ONE worker): the critical path is **20,766 batches at 1 thread and 20,766 at
+    // 12 — scale 1.00, flat** — while TOTAL work rises from 20,766 to 123,517 and wall clock gets
+    // WORSE (24.4 ms → 28.9 ms). So:
+    //
+    //   * The rate above is the ACHIEVED rate, and it is a SINGLE-CORE rate wearing a whole-machine
+    //     name. The seconds column below is therefore still CORRECT AS MEASURED — do not multiply
+    //     it by anything — but it is not a hardware floor.
+    //   * A windowed parallel-`min` grind (§G3 strategy C) returns BYTE-FOR-BYTE the same witness
+    //     and measures **7.49× on the critical path at 12 threads**. If that lands, every seconds
+    //     figure below divides by ~T, and `commit_proof_of_work_bits` gets ~3.6 bits cheaper.
+    //
+    // The old sentence was written to stop a reader double-counting parallelism; today it makes one
+    // count parallelism that is gone. Leaving it would be keeping a cost verdict whose premise is
+    // refuted, which is worse than having no comment at all.
     println!(
         "  {:<10}{:>16}{:>20}{:>14}",
-        "cpow bits", "perms total", "whole machine (s)", "runnable?"
+        "cpow bits", "perms total", "achieved (s)", "runnable?"
     );
     println!("  {}", "-".repeat(62));
     for cpow in [0usize, 8, 12, 16, 20, 24, 26, 28, 30, 31, 32] {
@@ -104,9 +126,11 @@ fn commit_pow_price_per_bit() {
         );
     }
     println!(
-        "\n  (grinding is embarrassingly parallel and VERIFIER-FREE: the verifier does one\n   \
-         `check_witness` per fold round — {DEPLOYED_FOLD_ROUNDS} extra permutations total — and the\n   \
-         proof grows by one BabyBear field element per fold round, i.e. {} bytes.)",
+        "\n  (grinding is VERIFIER-FREE: the verifier does one `check_witness` per fold round —\n   \
+         {DEPLOYED_FOLD_ROUNDS} extra permutations total — and the proof grows by one BabyBear field\n   \
+         element per fold round, i.e. {} bytes. It is also EMBARRASSINGLY PARALLELISABLE, which is\n   \
+         not the same as parallel: measured, the deployed `find_map_first` search scales 1.00× from\n   \
+         1 to 12 threads — see `grind_phase_measure.rs` §G3 and the corrected note above.)",
         DEPLOYED_FOLD_ROUNDS * 4
     );
 }
