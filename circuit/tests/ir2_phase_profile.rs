@@ -84,6 +84,8 @@ struct Frame {
     child: Duration,
     perms_at_enter: u64,
     child_perms: u64,
+    packed_at_enter: u64,
+    child_packed: u64,
 }
 
 thread_local! {
@@ -104,6 +106,10 @@ struct Bucket {
     self_time: Duration,
     total_time: Duration,
     self_perms: u64,
+    /// Of `self_perms`, how many `permute_mut` calls took the PACKED path. `self_perms -
+    /// WIDTH * self_packed_calls` is the SCALAR permutation count, and the two run at rates that
+    /// differ by ~5x — so a phase's cost is not readable from `self_perms` alone.
+    self_packed_calls: u64,
     calls: u64,
 }
 
@@ -170,6 +176,8 @@ where
                 child: Duration::ZERO,
                 perms_at_enter: PERMS.load(Ordering::Relaxed),
                 child_perms: 0,
+                packed_at_enter: PERMS_PACKED.load(Ordering::Relaxed),
+                child_packed: 0,
             });
         });
     }
@@ -180,15 +188,18 @@ where
             let Some(f) = st.pop() else { return };
             let total = f.start.elapsed();
             let perms = PERMS.load(Ordering::Relaxed) - f.perms_at_enter;
+            let packed = PERMS_PACKED.load(Ordering::Relaxed) - f.packed_at_enter;
             if let Some(p) = st.last_mut() {
                 p.child += total;
                 p.child_perms += perms;
+                p.child_packed += packed;
             }
             let mut map = totals().lock().unwrap();
             let b = map.entry(f.path).or_default();
             b.self_time += total.saturating_sub(f.child);
             b.total_time += total;
             b.self_perms += perms.saturating_sub(f.child_perms);
+            b.self_packed_calls += packed.saturating_sub(f.child_packed);
             b.calls += 1;
         });
     }
@@ -916,7 +927,15 @@ fn poseidon2_permutation_counts_per_phase() {
         "\n═══ §D EXACT POSEIDON2 PERMUTATION COUNTS (scalar-equivalent; SIMD lane width = {}) ═══",
         Pack::WIDTH
     );
-    let mut rows: Vec<(usize, usize, HashMap<&'static str, u64>, u64, u64)> = Vec::new();
+    type PermRow = (
+        usize,
+        usize,
+        HashMap<&'static str, u64>,
+        u64,
+        u64,
+        HashMap<&'static str, u64>,
+    );
+    let mut rows: Vec<PermRow> = Vec::new();
     for (lb, q, pow) in [
         (3usize, 19usize, 0usize),
         (4, 19, 0),
@@ -942,24 +961,29 @@ fn poseidon2_permutation_counts_per_phase() {
         let packed_calls = PERMS_PACKED.load(Ordering::Relaxed);
         let total = PERMS.load(Ordering::Relaxed);
         let mut per: HashMap<&'static str, u64> = HashMap::new();
+        let mut per_packed: HashMap<&'static str, u64> = HashMap::new();
         let mut verifier = 0u64;
+        let mut verifier_packed = 0u64;
         for (path, b) in &snap {
             if path.contains("verify_batch") {
                 verifier += b.self_perms;
+                verifier_packed += b.self_packed_calls;
                 continue;
             }
             if let Some(ph) = classify(path) {
                 *per.entry(ph).or_default() += b.self_perms;
+                *per_packed.entry(ph).or_default() += b.self_packed_calls;
             }
         }
         per.insert("VERIFIER (self-verify)", verifier);
-        rows.push((lb, pow, per, total, packed_calls));
+        per_packed.insert("VERIFIER (self-verify)", verifier_packed);
+        rows.push((lb, pow, per, total, packed_calls, per_packed));
     }
 
     let mut phases: Vec<&'static str> = PHASES.to_vec();
     phases.push("VERIFIER (self-verify)");
     print!("   {:<32}", "phase");
-    for (lb, pow, _, _, _) in &rows {
+    for (lb, pow, _, _, _, _) in &rows {
         print!(" {:>13}", format!("lb{lb} pow{pow}"));
     }
     println!();
@@ -983,6 +1007,30 @@ fn poseidon2_permutation_counts_per_phase() {
         print!(" {:>13}", r.4);
     }
     println!();
+    // ⚑ THE SPLIT THAT DECIDES WHAT A COUNT COSTS. A packed call does `WIDTH` permutations for
+    // roughly the price of one scalar permutation (measured 4.95x in §E), so a phase's ms is not
+    // readable from its scalar-equivalent count without knowing which path it took. The Merkle
+    // build and the PoW grind are packed; the VERIFIER is entirely SCALAR.
+    println!(
+        "\n   SCALAR permutations only (self_perms - {} x packed calls):",
+        Pack::WIDTH
+    );
+    for ph in &phases {
+        let any = rows.iter().any(|r| {
+            r.2.get(ph).copied().unwrap_or(0)
+                > Pack::WIDTH as u64 * r.5.get(ph).copied().unwrap_or(0)
+        });
+        if !any {
+            continue;
+        }
+        print!("   {ph:<32}");
+        for r in &rows {
+            let se = r.2.get(ph).copied().unwrap_or(0);
+            let pk = r.5.get(ph).copied().unwrap_or(0);
+            print!(" {:>13}", se.saturating_sub(Pack::WIDTH as u64 * pk));
+        }
+        println!();
+    }
     println!(
         "\n   ⚑ The grind column is the pow=16 run minus the pow=0 run at the same (lb, q): a pure\n   \
          function of the PoW bits and the Fiat–Shamir witness index, not of the trace or blowup."
