@@ -930,12 +930,29 @@ fn poseidon2_permutation_counts_per_phase() {
     type PermRow = (
         usize,
         usize,
+        usize,
         HashMap<&'static str, u64>,
         u64,
         u64,
         HashMap<&'static str, u64>,
     );
     let mut rows: Vec<PermRow> = Vec::new();
+    // ⚑ 2026-08-14 — THE QUERY AXIS, WHICH THIS SWEEP COULD NOT SEE. Every row used to hold
+    // `q = 19`, so the table priced the blowup and was silent about the thing a blowup DROP has to
+    // buy back: queries. The four appended points factor the deployed → candidate move into its
+    // two independent halves and then measure the move itself:
+    //
+    //   (6,19,0) vs (2,19,0)   — BLOWUP alone, queries held
+    //   (2,19,0) vs (2,57,0)   — QUERIES alone, blowup held
+    //   (6,19,16) vs (2,57,16) — the actual deployed vs candidate, grind included
+    //
+    // `lb = 2` is in this list at all only because the `p3-fri` row-order fix landed
+    // (`circuit/tests/fri_extrapolation_row_order.rs`); before it, a chip-bearing descriptor at
+    // `lb = 2` produced an unverifiable proof and this harness would have counted the
+    // permutations of a broken prove.
+    //
+    // Counts, not milliseconds: a permutation count is deterministic, contention-immune and
+    // reproducible on any box. This file's §A/§B wall clocks are not — read them as upper bounds.
     for (lb, q, pow) in [
         (3usize, 19usize, 0usize),
         (4, 19, 0),
@@ -943,6 +960,10 @@ fn poseidon2_permutation_counts_per_phase() {
         (6, 19, 0),
         (7, 19, 0),
         (6, 19, 16),
+        (2, 19, 0),
+        (2, 57, 0),
+        (6, 57, 0),
+        (2, 57, 16),
     ] {
         let config = counting_config(lb, q, pow);
         reset_totals();
@@ -977,34 +998,34 @@ fn poseidon2_permutation_counts_per_phase() {
         }
         per.insert("VERIFIER (self-verify)", verifier);
         per_packed.insert("VERIFIER (self-verify)", verifier_packed);
-        rows.push((lb, pow, per, total, packed_calls, per_packed));
+        rows.push((lb, q, pow, per, total, packed_calls, per_packed));
     }
 
     let mut phases: Vec<&'static str> = PHASES.to_vec();
     phases.push("VERIFIER (self-verify)");
     print!("   {:<32}", "phase");
-    for (lb, pow, _, _, _, _) in &rows {
-        print!(" {:>13}", format!("lb{lb} pow{pow}"));
+    for (lb, q, pow, _, _, _, _) in &rows {
+        print!(" {:>14}", format!("lb{lb} q{q} p{pow}"));
     }
     println!();
     for ph in &phases {
-        if rows.iter().all(|r| r.2.get(ph).copied().unwrap_or(0) == 0) {
+        if rows.iter().all(|r| r.3.get(ph).copied().unwrap_or(0) == 0) {
             continue;
         }
         print!("   {ph:<32}");
         for r in &rows {
-            print!(" {:>13}", r.2.get(ph).copied().unwrap_or(0));
+            print!(" {:>14}", r.3.get(ph).copied().unwrap_or(0));
         }
         println!();
     }
     print!("   {:<32}", "TOTAL perms (scalar-equiv)");
     for r in &rows {
-        print!(" {:>13}", r.3);
+        print!(" {:>14}", r.4);
     }
     println!();
     print!("   {:<32}", "  of which SIMD calls issued");
     for r in &rows {
-        print!(" {:>13}", r.4);
+        print!(" {:>14}", r.5);
     }
     println!();
     // ⚑ THE SPLIT THAT DECIDES WHAT A COUNT COSTS. A packed call does `WIDTH` permutations for
@@ -1017,23 +1038,142 @@ fn poseidon2_permutation_counts_per_phase() {
     );
     for ph in &phases {
         let any = rows.iter().any(|r| {
-            r.2.get(ph).copied().unwrap_or(0)
-                > Pack::WIDTH as u64 * r.5.get(ph).copied().unwrap_or(0)
+            r.3.get(ph).copied().unwrap_or(0)
+                > Pack::WIDTH as u64 * r.6.get(ph).copied().unwrap_or(0)
         });
         if !any {
             continue;
         }
         print!("   {ph:<32}");
         for r in &rows {
-            let se = r.2.get(ph).copied().unwrap_or(0);
-            let pk = r.5.get(ph).copied().unwrap_or(0);
-            print!(" {:>13}", se.saturating_sub(Pack::WIDTH as u64 * pk));
+            let se = r.3.get(ph).copied().unwrap_or(0);
+            let pk = r.6.get(ph).copied().unwrap_or(0);
+            print!(" {:>14}", se.saturating_sub(Pack::WIDTH as u64 * pk));
         }
         println!();
     }
     println!(
         "\n   ⚑ The grind column is the pow=16 run minus the pow=0 run at the same (lb, q): a pure\n   \
          function of the PoW bits and the Fiat–Shamir witness index, not of the trace or blowup."
+    );
+
+    // ── ⚑ THE BLOWUP DROP, FACTORED. Counts only — no wall clock enters this block.
+    //
+    // ⚑ `TOTAL perms` above is prove + SELF-VERIFY: `prove_vm_descriptor2_for_config` verifies
+    // its own proof, and that verify is counted by the same global. Reading TOTAL as "prover
+    // work" attributes the verifier's per-query Merkle paths to the prover and makes the query
+    // count look expensive on the wrong side of the wire. Everything below splits them.
+    let row = |lb: usize, q: usize, pow: usize| -> &PermRow {
+        rows.iter()
+            .find(|r| r.0 == lb && r.1 == q && r.2 == pow)
+            .unwrap_or_else(|| panic!("({lb},{q},pow{pow}) is a row of this sweep"))
+    };
+    let vat = |lb: usize, q: usize, pow: usize| -> u64 {
+        row(lb, q, pow)
+            .3
+            .get("VERIFIER (self-verify)")
+            .copied()
+            .unwrap_or(0)
+    };
+    // PROVER-ONLY permutations.
+    let pat = |lb: usize, q: usize, pow: usize| -> u64 { row(lb, q, pow).4 - vat(lb, q, pow) };
+    // The grind, isolated: it is the ONE phase whose count is a sample, not a constant (the
+    // Fiat–Shamir witness index is where a `pow`-bit witness happened to be found), so it is
+    // reported and then removed from every ratio.
+    let gat = |lb: usize, q: usize, pow: usize| -> u64 {
+        row(lb, q, pow)
+            .3
+            .get("PoW grind (hash)")
+            .copied()
+            .unwrap_or(0)
+    };
+    println!(
+        "\n═══ §D2  THE BLOWUP DROP (6,19) → (2,57), FACTORED — PERMUTATION COUNTS ONLY ═══\n\
+         \x20  A count is deterministic and contention-immune. Nothing below is a millisecond.\n\
+         \x20  PROVER = total minus the self-verify; the grind is reported separately because its\n\
+         \x20  count is a geometric SAMPLE (~2^pow expected), not a property of the config.\n"
+    );
+    let show = |tag: &str, a: (usize, usize, usize), b: (usize, usize, usize)| {
+        let (pa, pb) = (pat(a.0, a.1, a.2), pat(b.0, b.1, b.2));
+        println!(
+            "   {tag:<26} ({},{},p{}) → ({},{},p{}):  {pa:>8} → {pb:>8} prover perms  = {:.4}x",
+            a.0,
+            a.1,
+            a.2,
+            b.0,
+            b.1,
+            b.2,
+            pa as f64 / pb as f64
+        );
+    };
+    show("BLOWUP alone", (6, 19, 0), (2, 19, 0));
+    show("QUERIES alone @ lb2", (2, 19, 0), (2, 57, 0));
+    show("QUERIES alone @ lb6", (6, 19, 0), (6, 57, 0));
+    show("⚑ NET, grind-free", (6, 19, 0), (2, 57, 0));
+    println!(
+        "\n   The query axis in ABSOLUTE terms: {:+} prover permutations at lb2 and {:+} at lb6 for \
+         38 extra\n   queries. The prover only READS Merkle siblings when opening — it does not \
+         re-hash them.",
+        pat(2, 57, 0) as i64 - pat(2, 19, 0) as i64,
+        pat(6, 57, 0) as i64 - pat(6, 19, 0) as i64
+    );
+    println!(
+        "\n   The grind, which is blowup- and query-INDEPENDENT work with a sampled count:\n   \
+         (6,19,p16) ground {} perms, (2,57,p16) ground {} — both samples of a ~2^16 = 65536 mean.\n   \
+         ⚑ Do NOT read a ratio off those two numbers; they differ by where the witness happened to \
+         be.\n   At the MEAN, prove+grind is {} → {} = {:.2}x, and grind's share of the prover goes \
+         {:.0}% → {:.0}%.",
+        gat(6, 19, 16),
+        gat(2, 57, 16),
+        pat(6, 19, 0) + 65536,
+        pat(2, 57, 0) + 65536,
+        (pat(6, 19, 0) + 65536) as f64 / (pat(2, 57, 0) + 65536) as f64,
+        65536.0 / (pat(6, 19, 0) + 65536) as f64 * 100.0,
+        65536.0 / (pat(2, 57, 0) + 65536) as f64 * 100.0,
+    );
+    println!(
+        "\n   ⚑ AND THE PRICE, ON THE OTHER SIDE OF THE WIRE. VERIFIER (6,19) → (2,57): {} → {} \
+         perms = {:.2}x MORE.\n   That — plus proof bytes — is what the drop pays for its queries. \
+         It pays nothing on the prover.",
+        vat(6, 19, 16),
+        vat(2, 57, 16),
+        vat(2, 57, 16) as f64 / vat(6, 19, 16) as f64
+    );
+
+    // ── THE ASSERTIONS. Four facts the table is claimed to show, stated so a silent inversion
+    // reds instead of printing a plausible number.
+    assert!(
+        pat(2, 19, 0) < pat(6, 19, 0),
+        "dropping the blowup at fixed queries must cut prover hashing: the Merkle tree is built \
+         over an LDE of n·2^lb rows. {} at lb=2 vs {} at lb=6 says otherwise.",
+        pat(2, 19, 0),
+        pat(6, 19, 0)
+    );
+    for lb in [2usize, 6] {
+        let delta = pat(lb, 57, 0) as i64 - pat(lb, 19, 0) as i64;
+        assert!(
+            (0..64).contains(&delta),
+            "⚑ tripling the query count (19 → 57) moved PROVER hashing by {delta} permutations at \
+             lb={lb}. The whole case for the blowup drop is that the queries it must buy back are \
+             free on the PROVER — the prover reads Merkle siblings when opening, it does not \
+             re-hash them, so the delta should be a handful of transcript permutations and \
+             nothing else. A delta in the thousands means the count is picking up the SELF-VERIFY \
+             (see the note above) or the opening path started hashing."
+        );
+    }
+    assert!(
+        pat(2, 57, 0) < pat(6, 19, 0),
+        "⚑ the blowup drop must be a NET reduction in prover hashing even after paying for its \
+         queries: {} perms at (2,57,pow0) against {} at (6,19,pow0). If this inverts, the config \
+         change in `descriptor_ir2.rs` is not justified by this measurement.",
+        pat(2, 57, 0),
+        pat(6, 19, 0)
+    );
+    assert!(
+        vat(2, 57, 16) > vat(6, 19, 16),
+        "the verifier hashes one Merkle path per query, so tripling the queries must cost the \
+         VERIFIER more. A drop that were free on BOTH sides would mean this harness is not \
+         measuring the query count at all, and the trade being described has no cost column."
     );
 }
 
