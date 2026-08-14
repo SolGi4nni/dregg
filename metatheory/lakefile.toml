@@ -1,5 +1,5 @@
 name = "Dregg2"
-defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards", "TurnAuthGuards", "PicklesEmitDrivers", "DivergenceToothGuards", "PathOfAngelsGuards", "GameFixtureGuards"]
+defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards", "TurnAuthGuards", "PicklesEmitDrivers", "DivergenceToothGuards", "PathOfAngelsGuards", "GameFixtureGuards", "ZkmlSuiteGuards"]
 
 # Pin mathlib to the exact revision matching v4.30.0
 # (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). This is a PORTABLE `git`+`rev`
@@ -626,6 +626,14 @@ globs = [
   "Dregg2.Games.MultiwayTugFixtures",
   "Dregg2.Games.MultiwayTugFFIFixtures",
 ]
+
+# ZkmlSuiteGuards — the checked, deterministic producer boundary consumed by
+# Selvage/minidregg.  Direct-globbed because the module also carries the emit
+# `main`; compiling this target runs its named meaning/KAT checks without pulling
+# the emitter into the broad Dregg2 aggregate or leaving it as an orphan.
+[[lean_lib]]
+name = "ZkmlSuiteGuards"
+globs = ["Dregg2.Circuit.ZkmlSuiteArtifact"]
 
 # mina_wrap_opening_sched_emit — `dregg-mina-wrap-opening-sched::v1`: the IPA opening relation
 # (B) of Mina devnet block 539508 as a 35-addend scheduled chain with the `sg` slot PINNED —
