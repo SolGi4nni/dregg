@@ -607,10 +607,17 @@ impl Workload {
     /// trace-height axis; it is **recorded** in [`Workload::heights`] so that a sweep which
     /// silently fails to change the trace shape is visible rather than reported as a flat curve.
     pub fn build(effects: usize) -> Result<Self, String> {
+        Self::build_with(effects, 50)
+    }
+
+    /// Same workload with a different transfer `amount`. Changing the amount changes the trace,
+    /// hence the commitment, hence the Fiat-Shamir challenge, hence the **grind transcript** —
+    /// which is the only way to draw more than once from the PoW distribution. See §E3.
+    pub fn build_with(effects: usize, amount: u64) -> Result<Self, String> {
         let state = CellState::new(100_000, 0);
         let effs: Vec<Effect> = (0..effects.max(1))
             .map(|_| Effect::Transfer {
-                amount: 50,
+                amount,
                 direction: 1,
             })
             .collect();
@@ -1139,6 +1146,7 @@ fn e1_count_sweep_and_self_check() {
     };
     let mut rungs = Vec::new();
     let mut census = None;
+    let mut census_w = 1.0f64;
     for b in 3..=7usize {
         let c = count_arm(&w, base.at_blowup(b)).expect("count arm proves");
         println!(
@@ -1153,9 +1161,25 @@ fn e1_count_sweep_and_self_check() {
         rungs.push((b, c.prover_only()));
         if b == 6 {
             census = Some(c.dft.clone());
+            census_w = c.effective_packing_width();
         }
     }
     cond.close();
+
+    // ⚑ The SIMD condition. `<BabyBear as Field>::Packing` is chosen by target features, not by
+    // the CPU that exists. On a box with AVX2 and no `-C target-cpu=native`, the prover runs the
+    // SCALAR Poseidon2 and every hash millisecond is several times the deployed one — while the
+    // COUNTS are unchanged, because they are scalar-equivalent by construction. That is the
+    // nastiest possible shape for a defect: the primary instrument stays correct and the
+    // secondary one silently measures a different prover.
+    let packed_w = census_w;
+    if packed_w <= 1.0 {
+        println!(
+            "\n  ⛔ PACKING WIDTH IS 1 — this build ran the SCALAR Poseidon2 path.\n                  The counts above are UNAFFECTED (they are scalar-equivalent by construction), but\n                  ANY WALL CLOCK FROM THIS BUILD MEASURES THE WRONG PROVER. On x86-64 the packed\n                  path needs the target feature: rebuild with RUSTFLAGS='-C target-cpu=native'.\n                  (Recorded rather than fatal: the count arm is still a valid result.)"
+        );
+    } else {
+        println!("\n  ⓘ packing width {packed_w:.2} — the packed Poseidon2 path is live.");
+    }
 
     banner("§D — SELF-CHECK");
     let sc = self_check(&rungs, PINNED_LAW);
@@ -1250,27 +1274,38 @@ fn e3_grind_is_a_sample_not_a_measurement() {
     };
     let grindless = count_arm(&w, p0).expect("pow=0 proves").prover_only();
     println!("  grind-free prover perms at {}: {grindless}", p0.label());
-
-    let mut draws = Vec::new();
-    for i in 0..3 {
-        let p = Point {
-            pow_bits: 16,
-            ..Point::deployed()
-        };
-        let c = count_arm(&w, p).expect("pow=16 proves");
-        let g = c.prover_only().saturating_sub(grindless);
-        draws.push(g);
-        println!("  draw {i}: grind = {g:>9} perms  (expectation 2^16 = 65,536)");
-    }
-    let lo = *draws.iter().min().unwrap() as f64;
-    let hi = *draws.iter().max().unwrap() as f64;
-    cond.close();
     println!(
-        "\n  ⚠ spread across {} draws: {:.2}× — any 'speedup' smaller than this, computed by\n     \
-         differencing two grind runs, is NOISE. Grind must be composed at its MEAN (2^pow) or\n     \
-         excluded and named as excluded.",
-        draws.len(),
-        hi / lo.max(1.0)
+        "\n  ⚑ Each draw uses a DIFFERENT transfer amount. That is not cosmetic: the grind\n              searches a witness for ONE transcript, so re-proving the SAME workload returns the\n              SAME witness and would report a spread of 1.00× — which reads as 'grind is stable',\n              the exact opposite of the truth. Varying the amount varies the trace, the commitment,\n              the challenge, and therefore the draw.\n"
+    );
+
+    let p16 = Point {
+        pow_bits: 16,
+        ..Point::deployed()
+    };
+    let mut draws = Vec::new();
+    for (i, amount) in [50u64, 51, 52, 53, 54, 55].into_iter().enumerate() {
+        let wi = Workload::build_with(1, amount).expect("workload builds");
+        // The grind-free baseline is amount-independent (same shape), but recompute it per
+        // workload rather than assume — assuming is how a censored sample gets fitted.
+        let base_i = count_arm(&wi, p0).expect("pow=0 proves").prover_only();
+        let c = count_arm(&wi, p16).expect("pow=16 proves");
+        let g = c.prover_only().saturating_sub(base_i);
+        draws.push(g);
+        println!(
+            "  draw {i} (amount {amount}): grind = {g:>9} perms   (expectation 2^16 = 65,536)"
+        );
+    }
+    cond.close();
+
+    let lo = *draws.iter().min().unwrap();
+    let hi = *draws.iter().max().unwrap();
+    let mean = draws.iter().sum::<u64>() as f64 / draws.len() as f64;
+    println!(
+        "\n  min {lo}  ·  max {hi}  ·  mean {mean:.0}  ·  spread {:.2}×  (theory: geometric, \n             mean 2^16 = 65,536; 256 recorded draws gave p50 53,173 / p99 277,677 / max 398,257)",
+        hi as f64 / lo.max(1) as f64
+    );
+    println!(
+        "\n  ⚠ A 'speedup' obtained by differencing two grind runs is NOISE unless it exceeds\n              this spread. Grind must be composed at its MEAN (2^pow), or excluded and NAMED as\n              excluded — a one-sample grind column must never be differenced."
     );
     println!("\n{cond}");
 }
