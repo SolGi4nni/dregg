@@ -9,7 +9,10 @@ use crate::{
 };
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
-// ⚑ DREGG DELTA vs Plonky3 82cfad73 — the ONLY edit in this vendored crate.
+// ⚑ DREGG DELTA vs Plonky3 82cfad73 — the only edits in this vendored crate, both in the PoW
+// grind and neither of them touching what the verifier checks. DELTA 1 (2026-08-02) fixed WHICH
+// valid witness is returned; DELTA 2 (2026-08-14) fixed the SCHEDULE that finds it, and returns
+// DELTA 1's witness exactly.
 //
 // Upstream grinds with rayon's UNORDERED finders: `find_map_any` (`DuplexChallenger::grind`) and
 // `find_any` (`grind_generic`, `MultiField32Challenger::grind`, and both
@@ -42,7 +45,141 @@ use crate::{
 // `commit_proof_of_work_bits` are untouched; the work an honest prover performs and the
 // predicate the verifier checks are identical. Only WHICH of the many valid witnesses is
 // returned changes. A "determinism fix" that lowered a PoW knob would be the opposite of this.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// ⚑ DELTA 2 (2026-08-14) — THE SCHEDULE. `find_first` KEPT ITS ANSWER AND LOST ITS PARALLELISM.
+//
+// `find_first` must prove NO LOWER candidate exists, so rayon's `full()` fires only for a worker
+// whose lower bound already exceeds the best index found. The answer lives at candidate
+// `w ≈ 2^bits`, i.e. in the first ~0.003% of a `2^31`-wide range, and rayon's splitter is
+// thief-driven: the other workers are never idle (each is grinding its own multi-million-batch
+// subrange and will not abort until a LOWER match is published), so nobody steals into the low
+// chunk. The worker that owns index 0 walks `0 -> w` essentially alone.
+//
+// MEASURED (`breadstuffs/circuit/tests/grind_phase_measure.rs` §G3, 2026-08-13, one fixed
+// transcript, `crit` = max batches scanned by any ONE worker = the permutations on the critical
+// path, a contention-free instrument): **20,766 batches at 1 thread and 20,766 at 12 threads.
+// Scale 1.00.** Wall clock got WORSE (24.4 -> 28.9 ms) while total work rose 5.9x, because the
+// eleven other workers contend for memory bandwidth and every match they publish loses the `min`.
+//
+// The fix is a WINDOWED PARALLEL MIN, and it is a pure scheduling change:
+//
+//     scan `0..span` in contiguous ascending windows; inside a window take the match with the
+//     LOWEST unit index (a complete scan, no early exit, so it splits perfectly across T
+//     threads); return on the first non-empty window.
+//
+// ⚑ WHY THE WITNESS IS BYTE-FOR-BYTE THE SAME, and it is an equality, not an approximation.
+// Windows are contiguous and ascending, so every unit before the first non-empty window produced
+// `None`. `find_map_first` returns the value of the lowest unit producing `Some`; that unit lies
+// in the first non-empty window; and `min_by_key(unit)` over that window returns exactly that
+// unit's value. So `windowed(span, w) == find_map_first(0..span)` FOR EVERY WINDOW SIZE `w >= 1`
+// — the window is a schedule parameter that cannot reach the answer. Same predicate, same
+// witness, same Fiat-Shamir transcript, same query indices, same proof bytes, same VK.
+// `dregg-circuit`'s `grind_windowed_min_is_byte_identical` sweeps eleven window sizes against the
+// deployed `grind` and `grind_proof_bytes_are_identical_under_the_windowed_schedule` asserts the
+// SERIALIZED PROOFS are equal, rather than arguing it.
+//
+// The price is the tunable part: a window covering `c * 2^bits` candidates is empty with
+// probability `e^(-c)`, so expected total work is `c / (1 - e^(-c))` times the mean draw
+// (`c = 1/4` => 1.13x) while the critical path falls by ~T. See `GRIND_WINDOW_C_NUM/DEN`.
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Window size as a fraction of the expected draw `2^bits`: `c = NUM / DEN`.
+///
+/// A window covers `c * 2^bits` candidates, so it is empty with probability `e^(-c)` and the
+/// expected number of windows is `1 / (1 - e^(-c))`. The two effects pull opposite ways:
+///
+/// * **small `c`** — less wasted work (`c / (1 - e^(-c))` -> 1 as `c -> 0`) and a shorter critical
+///   path, but more rayon joins (`~1/c` of them), so the per-window barrier eventually dominates;
+/// * **large `c`** — fewer joins and, at `c = 8`, literally fixed work (one window over 64 draws,
+///   measured), but a proportionally larger constant cost.
+///
+/// `c = 1/4` is picked from the measured sweep in `grind_phase_measure.rs` §G3/§G6, not from
+/// roundness: it is inside the flat basin of the measured `E[latency]` curve, costs **1.13x** the
+/// expected total work (so the serial/1-thread path regresses by 13%, not by `c`), and keeps the
+/// window at `2^bits / 4` candidates = 4,096 batches at the deployed `bits = 16`, which is ~340
+/// batches per worker on a 12-core box — large enough that the join is a few percent.
+const GRIND_WINDOW_C_NUM: u64 = 1;
+const GRIND_WINDOW_C_DEN: u64 = 4;
+
+/// Never window below this many units. Only binds for tiny `bits` (where the whole grind is
+/// microseconds anyway) and keeps a window from degenerating into a barrier per handful of work.
+const GRIND_WINDOW_MIN_UNITS: u64 = 64;
+
+/// How many rayon tasks each worker should have available per window. Splitting a window into
+/// `threads * this` chunks up front is what turns "a complete parallel scan" from an aspiration
+/// into a division of labour — see `windowed_find_map_first`.
+const GRIND_TASKS_PER_WORKER: u64 = 8;
+
+/// The default window, in *units* (a unit is one SIMD batch for `DuplexChallenger`, one candidate
+/// for every other grinder), for a grind of `bits` bits at `candidates_per_unit` candidates a unit.
+#[inline]
+pub const fn default_grind_window(bits: usize, candidates_per_unit: u64) -> u64 {
+    // `bits < 64` is asserted by every caller before this point.
+    let expected = 1u64 << bits;
+    let per_unit = if candidates_per_unit == 0 {
+        1
+    } else {
+        candidates_per_unit
+    };
+    let units = expected.saturating_mul(GRIND_WINDOW_C_NUM) / (GRIND_WINDOW_C_DEN * per_unit);
+    if units < GRIND_WINDOW_MIN_UNITS {
+        GRIND_WINDOW_MIN_UNITS
+    } else {
+        units
+    }
+}
+
+/// Scan `0..span` in contiguous ascending windows of `window` units and return the value produced
+/// by the **lowest** unit that produces one — i.e. exactly `find_map_first(0..span)`, on a
+/// schedule that parallelises.
+///
+/// Each window is a COMPLETE parallel scan with no early exit, reduced by minimum unit index, so
+/// it saturates the pool; the search stops at the first non-empty window. See this module's
+/// `DELTA 2` block for why the result is independent of `window`.
+///
+/// ⚑ **The window is split EAGERLY, and it has to be.** `rayon::range` gives `Range<u64>` an
+/// **unindexed** producer (`u64`/`i64`/`u128`/`i128` all are), which halves only when a worker goes
+/// idle and steals. On a loaded box the steal does not arrive, one worker walks a long contiguous
+/// run of the window, and the critical path stops falling with `T` — MEASURED here at **9,942 of
+/// 24,576 batches on a single worker at `T = 12`**, against 2,048 for an even division. Iterating
+/// the window as a `usize` range makes it **indexed**, which is what `with_max_len` needs in order
+/// to force the split up front instead of hoping for it. That is a schedule detail and, like the
+/// window itself, cannot reach the answer.
+#[inline]
+pub fn windowed_find_map_first<T, S>(span: u64, window: u64, scan: S) -> Option<T>
+where
+    T: Send,
+    S: Fn(u64) -> Option<T> + Sync + Send,
+{
+    // A zero window would not advance; a window wider than the span is just one window.
+    let window = window.max(1).min(span.max(1));
+    let threads = current_num_threads().max(1) as u64;
+    let mut lo = 0u64;
+    while lo < span {
+        let hi = (lo + window).min(span);
+        let len = hi - lo;
+        // Enough tasks that every worker has slack to steal from, without the per-task overhead
+        // mattering: a chunk here is thousands of permutations even at the deployed window.
+        let chunk = len
+            .div_ceil(threads.saturating_mul(GRIND_TASKS_PER_WORKER).max(1))
+            .max(1)
+            .min(usize::MAX as u64) as usize;
+        let hit = (0..len as usize)
+            .into_par_iter()
+            .with_max_len(chunk)
+            .filter_map(|k| {
+                let unit = lo + k as u64;
+                scan(unit).map(|found| (unit, found))
+            })
+            .min_by_key(|&(unit, _)| unit);
+        if let Some((_, found)) = hit {
+            return Some(found);
+        }
+        lo = hi;
+    }
+    None
+}
 
 /// Trait for challengers that support proof-of-work (PoW) grinding.
 ///
@@ -141,6 +278,27 @@ where
 
     #[instrument(name = "grind for proof-of-work witness", skip_all)]
     fn grind(&mut self, bits: usize) -> Self::Witness {
+        self.grind_with_window(
+            bits,
+            default_grind_window(bits.min(63), F::Packing::WIDTH as u64),
+        )
+    }
+}
+
+impl<F, P, const WIDTH: usize, const RATE: usize> DuplexChallenger<F, P, WIDTH, RATE>
+where
+    F: PrimeField64,
+    P: CryptographicPermutation<[F; WIDTH]>
+        + CryptographicPermutation<[<F as Field>::Packing; WIDTH]>,
+{
+    /// [`GrindingChallenger::grind`] with the search window stated explicitly, in SIMD batches.
+    ///
+    /// ⚑ **The window is a SCHEDULE parameter and cannot reach the answer**: this returns the
+    /// globally minimal valid witness for every `window >= 1`, identically to upstream's
+    /// `find_map_first`. It is public so that a test can sweep windows against the deployed
+    /// `grind` and assert the equality on real proof bytes, rather than a paraphrase of this
+    /// function doing so beside it.
+    pub fn grind_with_window(&mut self, bits: usize, window: u64) -> F {
         // Ensure `bits` is small enough to be used in a shift.
         assert!(bits < 64, "bit count must be valid");
 
@@ -200,65 +358,67 @@ where
         // - Each SIMD lane corresponds to a distinct candidate witness
         // - All lanes share the same transcript prefix
         // - A single permutation evaluates multiple candidates in parallel
-        // DREGG DELTA: `find_map_first`, not upstream's `find_map_any` — the lowest matching
-        // batch, whose inner `Iterator::find` already takes the lowest matching lane, so the
-        // witness is the global minimum candidate and does not depend on thread scheduling or on
-        // `F::Packing::WIDTH`.
-        let witness = (0..num_batches)
-            .into_par_iter()
-            .find_map_first(|batch| {
-                // Compute the starting candidate for this batch.
-                //
-                // Each batch processes `F::Packing::WIDTH` candidates:
-                //   - Batch 0 -> candidates [0, 1, ..., F::Packing::WIDTH - 1]
-                //   - Batch 1 -> candidates [F::Packing::WIDTH, ..., 2 * F::Packing::WIDTH - 1]
-                //   - Batch k -> candidates [k * F::Packing::WIDTH, ..., (k+1) * F::Packing::WIDTH - 1]
-                let base = batch * lanes as u64;
+        //
+        // DREGG DELTA 1: the LOWEST matching batch wins, whose inner `Iterator::find` already
+        // takes the lowest matching lane, so the witness is the global minimum candidate and does
+        // not depend on thread scheduling or on `F::Packing::WIDTH`.
+        //
+        // DREGG DELTA 2: that minimum is computed by a WINDOWED PARALLEL MIN rather than by
+        // rayon's `find_map_first`, which was measured at scale 1.00 across 12 threads. Same
+        // witness, same bytes; see the module's `DELTA 2` block.
+        let witness = windowed_find_map_first(num_batches, window, |batch| {
+            // Compute the starting candidate for this batch.
+            //
+            // Each batch processes `F::Packing::WIDTH` candidates:
+            //   - Batch 0 -> candidates [0, 1, ..., F::Packing::WIDTH - 1]
+            //   - Batch 1 -> candidates [F::Packing::WIDTH, ..., 2 * F::Packing::WIDTH - 1]
+            //   - Batch k -> candidates [k * F::Packing::WIDTH, ..., (k+1) * F::Packing::WIDTH - 1]
+            let base = batch * lanes as u64;
 
-                // Start with a copy of the precomputed base state.
-                let mut packed_state = base_packed_state;
+            // Start with a copy of the precomputed base state.
+            let mut packed_state = base_packed_state;
 
-                // Generate SIMD-packed candidate witnesses.
-                // Each lane receives a distinct field element.
-                //   [base + 0, base + 1, ..., base + F::Packing::WIDTH - 1]
-                let packed_witnesses = F::Packing::from_fn(|lane| {
-                    let candidate = base + lane as u64;
-                    if candidate < order {
-                        // SAFETY: candidate < field order, so this is a valid canonical field element.
-                        unsafe { F::from_canonical_unchecked(candidate) }
-                    } else {
-                        // Values outside the field order can never satisfy PoW, so we repeat the last potential witness
-                        F::NEG_ONE
-                    }
-                });
+            // Generate SIMD-packed candidate witnesses.
+            // Each lane receives a distinct field element.
+            //   [base + 0, base + 1, ..., base + F::Packing::WIDTH - 1]
+            let packed_witnesses = F::Packing::from_fn(|lane| {
+                let candidate = base + lane as u64;
+                if candidate < order {
+                    // SAFETY: candidate < field order, so this is a valid canonical field element.
+                    unsafe { F::from_canonical_unchecked(candidate) }
+                } else {
+                    // Values outside the field order can never satisfy PoW, so we repeat the last potential witness
+                    F::NEG_ONE
+                }
+            });
 
-                // Insert the candidate witnesses at the next absorption position.
-                //
-                // This simulates absorbing `transcript || witness` before the Fiat–Shamir challenge is derived.
-                packed_state[witness_idx] = packed_witnesses;
+            // Insert the candidate witnesses at the next absorption position.
+            //
+            // This simulates absorbing `transcript || witness` before the Fiat–Shamir challenge is derived.
+            packed_state[witness_idx] = packed_witnesses;
 
-                // Apply the cryptographic permutation (SIMD version)
-                //
-                // This permutes all `lanes` candidates simultaneously.
-                self.permutation.permute_mut(&mut packed_state);
+            // Apply the cryptographic permutation (SIMD version)
+            //
+            // This permutes all `lanes` candidates simultaneously.
+            self.permutation.permute_mut(&mut packed_state);
 
-                // Check each lane for the PoW condition
-                //
-                // - In a duplex sponge, output is read from position [RATE-1] (last rate element).
-                // - We check if the low `bits` of each sample are all zeros.
-                //
-                // We scan SIMD lanes to find the first candidate whose output satisfies the PoW condition.
-                packed_state[RATE - 1]
-                    .as_slice()
-                    .iter()
-                    .zip(packed_witnesses.as_slice())
-                    .find(|(sample, _)| {
-                        // Accept if the low `bits` bits are all zero.
-                        (sample.as_canonical_u64() & mask) == 0
-                    })
-                    .map(|(_, &witness)| witness)
-            })
-            .expect("failed to find proof-of-work witness");
+            // Check each lane for the PoW condition
+            //
+            // - In a duplex sponge, output is read from position [RATE-1] (last rate element).
+            // - We check if the low `bits` of each sample are all zeros.
+            //
+            // We scan SIMD lanes to find the first candidate whose output satisfies the PoW condition.
+            packed_state[RATE - 1]
+                .as_slice()
+                .iter()
+                .zip(packed_witnesses.as_slice())
+                .find(|(sample, _)| {
+                    // Accept if the low `bits` bits are all zero.
+                    (sample.as_canonical_u64() & mask) == 0
+                })
+                .map(|(_, &witness)| witness)
+        })
+        .expect("failed to find proof-of-work witness");
 
         // Double-check the witness using the standard verifier logic and update the challenger state.
         assert!(self.check_witness(bits, witness));
@@ -306,15 +466,16 @@ where
             "bit count exceeds field order"
         );
         // The core parallel brute-force search logic.
-        let witness = (0..F::ORDER_U64)
-            .into_par_iter()
-            .map(|i| unsafe {
-                // This is safe as i is always in range.
-                F::from_canonical_unchecked(i)
-            })
-            // DREGG DELTA: `find_first`, not upstream's `find_any`.
-            .find_first(|&witness| check_fn(&mut self.clone(), witness))
-            .expect("failed to find proof-of-work witness");
+        //
+        // DREGG DELTA 1: the LOWEST valid candidate, not upstream's `find_any`.
+        // DREGG DELTA 2: computed by a windowed parallel min, so the search actually divides
+        // across the pool. Identical answer for every window; see the module's `DELTA 2` block.
+        let witness = windowed_find_map_first(F::ORDER_U64, default_grind_window(bits, 1), |i| {
+            // SAFETY: `i < F::ORDER_U64` by construction.
+            let witness = unsafe { F::from_canonical_unchecked(i) };
+            check_fn(&mut self.clone(), witness).then_some(witness)
+        })
+        .expect("failed to find proof-of-work witness");
         // Run the check one last time on the *original* challenger to update its state
         // and confirm the witness is valid.
         assert!(check_fn(self, witness));
@@ -333,6 +494,26 @@ where
 
     #[instrument(name = "grind for proof-of-work witness", skip_all)]
     fn grind(&mut self, bits: usize) -> Self::Witness {
+        self.grind_with_window(bits, default_grind_window(bits.min(63), 1))
+    }
+}
+
+impl<F, PF, P, const WIDTH: usize, const RATE: usize> MultiField32Challenger<F, PF, P, WIDTH, RATE>
+where
+    F: PrimeField32,
+    PF: PrimeField,
+    P: CryptographicPermutation<[PF; WIDTH]>,
+{
+    /// [`GrindingChallenger::grind`] with the search window stated explicitly, in candidates.
+    ///
+    /// ⚑ This is the OUTER (BN254) path, and it is where the absolute milliseconds are largest:
+    /// it is neither SIMD-packed nor batched, so **one candidate costs one whole BN254 Poseidon2
+    /// duplex** — roughly two orders of magnitude more than a BabyBear packed permutation ÷ 4
+    /// lanes. It carried exactly the same `find_first` pathology as the inner grind.
+    ///
+    /// The window is a schedule parameter and cannot reach the answer: the returned witness is the
+    /// globally minimal valid one for every `window >= 1`.
+    pub fn grind_with_window(&mut self, bits: usize, window: u64) -> F {
         assert!(bits < (usize::BITS as usize), "bit count must be valid");
         assert!((1 << bits) < F::ORDER_U32);
 
@@ -341,16 +522,15 @@ where
             return F::ZERO;
         }
 
-        let witness = (0..F::ORDER_U32)
-            .into_par_iter()
-            .map(|i| unsafe {
-                // i < F::ORDER_U32 by construction so this is safe.
-                F::from_canonical_unchecked(i)
-            })
-            // DREGG DELTA: `find_first`, not upstream's `find_any`. This is the OUTER (BN254)
-            // config's challenger, so it is the one the apex/shrink byte-parity gates ride on.
-            .find_first(|witness| self.clone().check_witness(bits, *witness))
-            .expect("failed to find witness");
+        // DREGG DELTA 1: the LOWEST valid candidate, not upstream's `find_any` — this is the
+        // challenger the apex/shrink byte-parity gates ride on.
+        // DREGG DELTA 2: found by a windowed parallel min, so the search divides across the pool.
+        let witness = windowed_find_map_first(u64::from(F::ORDER_U32), window, |i| {
+            // SAFETY: `i < F::ORDER_U32` by construction.
+            let witness = unsafe { F::from_canonical_unchecked(i as u32) };
+            self.clone().check_witness(bits, witness).then_some(witness)
+        })
+        .expect("failed to find witness");
         assert!(self.check_witness(bits, witness));
         witness
     }

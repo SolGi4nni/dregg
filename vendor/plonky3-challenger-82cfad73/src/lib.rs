@@ -3,9 +3,17 @@
 //! ⚑ **DREGG VENDOR of Plonky3 `82cfad73cd734d37a0d51953094f970c531817ec`.** Byte-identical to
 //! upstream except for the FIVE `grind` sites listed in
 //! [`grinding_challenger`]'s `DREGG DELTA` block (and its twin in `serializing_challenger`):
-//! the parallel PoW search returns the **lowest-index** valid witness rather than whichever
-//! thread's chunk happened to win. Nothing else — not a constant, not a transcript rule, not the
-//! verifier-side `check_witness` — differs. Rebase the delta, do not re-vendor from memory.
+//!
+//! 1. **the ANSWER** — the parallel PoW search returns the **lowest-index** valid witness rather
+//!    than whichever thread's chunk happened to win, so the emitted proof bytes are reproducible;
+//! 2. **the SCHEDULE** — that lowest-index witness is found by a **windowed parallel min**
+//!    (`windowed_find_map_first`) rather than by rayon's `find_first`, which was *measured* at
+//!    speedup 1.00 across 12 threads because proving no lower candidate exists never divides.
+//!    The window cannot reach the answer: the witness is the same for every window size, so (2)
+//!    changes no proof byte and no VK.
+//!
+//! Nothing else — not a constant, not a transcript rule, not the verifier-side `check_witness` —
+//! differs. Rebase the delta, do not re-vendor from memory.
 
 #![no_std]
 

@@ -2,14 +2,14 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use p3_field::{BasedVectorSpace, PrimeField32, PrimeField64};
-use p3_maybe_rayon::prelude::*;
 use p3_symmetric::{CryptographicHasher, Hash, MerkleCap};
 use p3_util::log2_ceil_u64;
 use tracing::instrument;
 
 use crate::{
     CanFinalizeDigest, CanObserve, CanSample, CanSampleBits, CanSampleUniformBits, FieldChallenger,
-    GrindingChallenger, HashChallenger, ResamplingError,
+    GrindingChallenger, HashChallenger, ResamplingError, default_grind_window,
+    windowed_find_map_first,
 };
 
 /// Given a challenger that can observe and sample bytes, produces a challenger that is able to
@@ -212,15 +212,19 @@ where
             return F::ZERO;
         }
 
-        let witness = (0..F::ORDER_U32)
-            .into_par_iter()
-            .map(|i| unsafe {
-                // i < F::ORDER_U32 by construction so this is safe.
-                F::from_canonical_unchecked(i)
-            })
-            // DREGG DELTA: `find_first`, not upstream's `find_any` (see grinding_challenger.rs).
-            .find_first(|witness| self.clone().check_witness(bits, *witness))
-            .expect("failed to find witness");
+        // DREGG DELTA 1: the LOWEST valid candidate, not upstream's `find_any`.
+        // DREGG DELTA 2: found by a windowed parallel min, so the search divides across the pool.
+        // Same answer for every window (see grinding_challenger.rs).
+        let witness = windowed_find_map_first(
+            u64::from(F::ORDER_U32),
+            default_grind_window(bits.min(63), 1),
+            |i| {
+                // SAFETY: `i < F::ORDER_U32` by construction.
+                let witness = unsafe { F::from_canonical_unchecked(i as u32) };
+                self.clone().check_witness(bits, witness).then_some(witness)
+            },
+        )
+        .expect("failed to find witness");
         assert!(self.check_witness(bits, witness));
         witness
     }
@@ -403,14 +407,15 @@ where
             return F::ZERO;
         }
 
-        let witness = (0..F::ORDER_U64)
-            .into_par_iter()
-            .map(|i| unsafe {
-                // i < F::ORDER_U64 by construction so this is safe.
-                F::from_canonical_unchecked(i)
+        // DREGG DELTA 1: the LOWEST valid candidate, not upstream's `find_any`.
+        // DREGG DELTA 2: found by a windowed parallel min, so the search divides across the pool.
+        // Same answer for every window (see grinding_challenger.rs).
+        let witness =
+            windowed_find_map_first(F::ORDER_U64, default_grind_window(bits.min(63), 1), |i| {
+                // SAFETY: `i < F::ORDER_U64` by construction.
+                let witness = unsafe { F::from_canonical_unchecked(i) };
+                self.clone().check_witness(bits, witness).then_some(witness)
             })
-            // DREGG DELTA: `find_first`, not upstream's `find_any` (see grinding_challenger.rs).
-            .find_first(|witness| self.clone().check_witness(bits, *witness))
             .expect("failed to find witness");
         assert!(self.check_witness(bits, witness));
         witness

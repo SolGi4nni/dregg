@@ -9,7 +9,7 @@ homepage = "https://github.com/Plonky3/Plonky3"
 
 [package.metadata.dregg]
 upstream-revision = "82cfad73cd734d37a0d51953094f970c531817ec"
-local-delta = "PoW grinding picks the LOWEST-index witness (find_first / find_map_first) instead of whichever thread wins the race (find_any / find_map_any) — the prover's only source of run-to-run non-determinism. See src/grinding_challenger.rs's DREGG DELTA block."
+local-delta = "PoW grinding (1) picks the LOWEST-index witness instead of whichever thread wins the race (find_any / find_map_any) — the prover's only source of run-to-run non-determinism — and (2) finds that witness with a WINDOWED PARALLEL MIN instead of rayon's find_first, which measured speedup 1.00 at 12 threads because proving no-lower-candidate-exists never divides. (2) returns (1)'s witness for every window size, so it changes no proof byte. See src/grinding_challenger.rs's DREGG DELTA block."
 
 [dependencies]
 p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
