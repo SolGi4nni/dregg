@@ -404,14 +404,17 @@ type EfC = BinomialExtensionField<CountedBabyBear, 4>;
 // THE RECORDING DFT — the substitutable seam
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Which `TwoAdicSubgroupDft` entry point the prover called. **This is also the phase
-/// classifier**, and it is exact rather than heuristic, because each phase reaches the DFT through
-/// a different entry point in `two_adic_pcs.rs`:
+/// Which `TwoAdicSubgroupDft` entry point the prover called. Recorded for the record, **not** used
+/// as the phase classifier — [`phase_of`] does that from the span path, because the entry point
+/// turned out not to distinguish the phases at all:
 ///
-/// - `Pcs::commit` and `Pcs::get_quotient_ldes` call `coset_lde_batch` → **LDE commit**.
-/// - `Pcs::get_evaluations_on_domain`'s slow path calls `coset_idft_batch` then `coset_dft_batch`
-///   → **LDE quotient-eval** (`ir2_phase_profile.rs`'s classifier reaches the same split via the
-///   `compute quotient` span prefix; the two agree, and the agreement is asserted below).
+/// - `Pcs::commit` AND `Pcs::get_quotient_ldes` both call `coset_lde_batch`, so the entry point
+///   cannot tell a trace commit from a quotient-chunk commit; only the enclosing span can.
+/// - `Pcs::get_evaluations_on_domain`'s slow path would call `coset_idft_batch` then
+///   `coset_dft_batch` — and **§G1 measures ZERO of both at every blowup.** The fast truncation
+///   branch fires every time, so these two variants are never constructed in this workload. They
+///   are kept because their absence is the evidence for §G1's finding 1, and a variant that stops
+///   being unreachable is something a reader should be able to see.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DftCall {
     DftBatch,
