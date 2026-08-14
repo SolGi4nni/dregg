@@ -6234,6 +6234,7 @@ dependencies = [
  "p3-util",
  "postcard",
  "rand 0.10.1",
+ "rayon",
  "rmp-serde",
  "serde",
  "serde_json",

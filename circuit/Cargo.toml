@@ -113,6 +113,11 @@ sha2 = { workspace = true }
 # query). Every span it reads already exists upstream; this is the collector, not new
 # instrumentation. Already in the lock at 0.3 via `dregg-circuit-prove`'s dev-deps.
 tracing-subscriber = "0.3"
+# TEST-LAYER ONLY. `tests/grind_phase_measure.rs` needs an EXPLICIT `ThreadPool` to measure the PoW
+# grind's thread scaling (`RAYON_NUM_THREADS` is read once per process, so it cannot sweep). This
+# is the same rayon the vendored `p3-challenger` grinds on — already in the lock at 1.12 via
+# `p3-maybe-rayon` with `features = ["parallel"]`; no new resolution.
+rayon = "1"
 
 [lints]
 workspace = true
