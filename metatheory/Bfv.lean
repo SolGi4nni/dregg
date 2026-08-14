@@ -30,6 +30,17 @@ This namespace is those two theorems and their composition:
     carrier with the SAME `RowBound` definition and the SAME `G^T` conclusion — **no ring
     expansion factor**, because a public INTEGER-scalar matrix acts coefficientwise. The
     heuristic average-case factor `δ_R ≈ 2√N` is deliberately NOT formalized.
+  * **`Bfv.CrossLimb`** — the vFHE #1 named soundness hole (`VERDICTS.md` §7.5, `SELVAGE.md` §7)
+    STATED and EXHIBITED, on a carrier where the forgery is representable (`RnsCt` = `L`
+    INDEPENDENT residue vectors; every other Lean BFV carrier in the tree binds the limbs in the
+    TYPE of its witness and therefore cannot express the attack). The one name was carrying two
+    holes: **PROVENANCE** (`perLimb_not_imp_bound` — limbs from different ciphertexts satisfying
+    every per-limb equation, with `exhibit_accepted_value_is_dishonest` showing the accepted value
+    is one no honest pair produces) and **EXPRESSIBILITY** (`rescale_not_limb_local` — `⌊t·x/Q⌉`
+    is not a function of any single limb's residue). ⚑ The first-named candidate fix is a
+    TAUTOLOGY (`crt_consistency_vacuous`: the CRT map is a bijection, so the check can never
+    refuse). ct×pt narrows it — Hole B absent (`scalarStep_limb_local`), Hole A alive at `K^L`
+    rather than `(K²)^L` — and a singleton pool closes it outright.
 
 ## NOT proved here, named plainly (the honesty ledger)
 
@@ -59,6 +70,7 @@ import Bfv.NoWrap
 import Bfv.Noise
 import Bfv.Fold
 import Bfv.Ring
+import Bfv.CrossLimb
 
 /-! Namespace-wide axiom hygiene: every theorem under `Bfv` pinned to the kernel triple. -/
 #assert_namespace_axioms Bfv
