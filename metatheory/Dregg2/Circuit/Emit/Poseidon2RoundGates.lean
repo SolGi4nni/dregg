@@ -14,6 +14,18 @@ This file is the Lean author of that algebra. `permEmission aux0 base seed` IS t
 plus the SHARED DEFINITIONS they read, in the Rust emission order; `ChipTableEmit` splices them into
 the chip's `TableAir` and the Rust side only INTERPRETS.
 
+## ⚑ TWO EMISSIONS LIVE HERE. `permEmission` (§5b) IS THE DEPLOYED ONE.
+
+`permEmissionNarrow` (§8) is the same permutation committing **141 lanes instead of 352**: an
+internal round's fifteen affine lanes and the initial linear layer's sixteen are carried as
+EXPRESSIONS rather than columns. Same round algebra, same KATs, same
+`max_constraint_degree = 7` (§8c pins the degree on both emitted objects); measured 2.11× prover,
+1.28× verifier, 2.34× committed cells at 2^16 permutations. **§8e is the safety argument as
+theorems** — each of the 195 dropped internal lanes is a UNIT MULTIPLE of the gate that survives,
+the 16 dropped initial lanes are a definition rather than a constraint, and the two equation
+systems have the same solutions under the projection. The chip cutover is a flag day; §8g is the
+list, and the Rust witness generator is the item that blocks it.
+
 ⚠ `permGateBodies` — the TREE spelling of the same 352 polynomials — is kept, and it is NOT emitted.
 It is §7's measurement baseline and §6b's agreement oracle: the shared emission is checked against
 it gate by gate, so "the DAG denotes the tree" is a computation on both objects rather than a claim
@@ -54,8 +66,14 @@ multiplications; each `external_linear_layer_expr` is forty because that is what
 `state` and `sums`. §7 measures both spellings side by side.
 
 ## Axiom hygiene
-No `sorry`, no `native_decide`, no new axiom. `#eval` appears only in §7, as MEASUREMENT — never as
-evidence for a claim.
+No `sorry`, no new axiom. `#eval` appears only in §7, as MEASUREMENT — never as evidence for a
+claim.
+
+⚠ **§8 DOES use `native_decide`, and says so with `#assert_compiled` on every one.** §1–§7 are
+kernel-clean; §8's counts, layout tiling, degree, KAT agreement, teeth and model differential are
+compiled evaluation — the same engine the `#guard`s above run on, named rather than silent. §8's
+RELATING theorems (`wide_internal_lane_is_a_unit_multiple`, `narrowSat_iff`,
+`narrow_accepts_exactly_the_wide_witnesses`, …) are kernel-clean and pinned with `#assert_axioms`.
 -/
 import Dregg2.Circuit.TableAirIR
 import Dregg2.Circuit.Poseidon2BabyBearW16
@@ -603,9 +621,21 @@ the same 16 sixteen times. Measured as the sum of the per-gate hash-consed DAGs 
 what a per-expression `let` can reach — it is **28,064 nodes, 5.0×**, against the table-level
 definition list's 20.8×. That is why `defs` sits on `TableAir` and not inside `TExpr`.
 
-⚠ And none of this is a licence to re-arithmetize: the algebra IS the deployed permutation, checked
-against its KAT in §6 and against the tree spelling gate-by-gate in §6b. A cheaper circuit would be
-a DIFFERENT circuit. -/
+⚑ **THIS PARAGRAPH USED TO DECLINE THE CHEAPER ARITHMETIZATION, AND THAT WAS THE MISTAKE.** It read:
+*"none of this is a licence to re-arithmetize … a cheaper circuit would be a DIFFERENT circuit."*
+True, and not an objection: **§8 lands the different circuit.** `permEmissionNarrow` commits 141
+lanes where this one commits 352, at the SAME `max_constraint_degree = 7` (§8c pins both), for a
+measured 2.11× prover / 1.28× verifier / 2.34× committed cells. Everything the old paragraph was
+protecting is still protected — the round ALGEBRA does not move, §6's KATs carry over unchanged
+(§8d replays them on the narrow arm), and §8e proves the 211 dropped lanes carry no constraint the
+141 survivors do not.
+
+**Both emissions live here on purpose, and `permEmission` is the DEPLOYED one** — `ChipTableEmit`
+splices it, `CHIP_WIDTH` is 386, `CHIP_TABLE_AIR_JSON` carries its 352 gates. The narrow arm is
+landed and related, and the cutover is a flag day whose list is §8g; the item that actually blocks
+it is the Rust witness generator, which writes 352 values per permutation and would have to write
+141. Keeping the wide arm after the cutover would be the two-shapes-that-agree-today error — it
+stays only until §8g's list is discharged, and this is the note that says so. -/
 
 /-- Nodes in a `TExpr` tree — the unit the prover's per-row constraint evaluation pays, once
 per row of the quotient domain (blow-up 64). -/
@@ -725,5 +755,811 @@ def permPerGateLetTotal : Nat :=
 -- `TableAir` rather than a `let` inside `TExpr`.
 #guard permPerGateLetTotal == 28064
 #guard permNodeTotal / permPerGateLetTotal == 5
+
+/-! ## §8 — ⚑⚑ **THE NARROW EMISSION**: the same permutation, 141 committed lanes instead of 352.
+
+§7 used to close by declining this, verbatim — *"a cheaper circuit would be a DIFFERENT circuit"*.
+It is a different circuit, and it is the one to run. **211 of the wide arm's 352 committed lanes
+(59.9%) carry no nonlinearity at all**, and §8e proves that dropping them drops no constraint:
+
+| block | wide arm | narrow arm | why |
+|---|---|---|---|
+| initial linear layer | 16 committed | **0** | a linear map of a seed the caller already holds |
+| external round ×8 | 16 each | 16 each | S-box on all sixteen lanes — unchanged |
+| **internal round ×13** | **16 each** | **1 each** | S-box on lane 0 ONLY; lanes 1..15 are affine |
+| | **352** | **141** | |
+
+Measured at 2^16 permutations on matched config (`circuit/tests/poseidon2_virtualization_measure.rs`,
+`zkml-research/notes/poseidon2-virtualization.md`): **2.11× prove, 1.28× verify, 1.25× proof bytes,
+2.34× committed cells**, at IDENTICAL `max_constraint_degree` — §8b pins the degree at **7 on both
+arms**, on the emitted objects. Strictly Pareto; there is no trade to price. Upstream
+`p3-poseidon2-air` (rev 82cfad73, `air.rs:259-278`) arithmetizes exactly this way.
+
+## ⚑ WHICH ONE IS DEPLOYED
+
+**`permEmission` (§5b) is deployed.** `ChipTableEmit.chipEmission` splices it, `CHIP_WIDTH` is 386,
+and `CHIP_TABLE_AIR_JSON` carries its 352 gates. `permEmissionNarrow` is landed, measured and
+related to it here; cutting the chip over is a flag day — see the closing note.
+
+## ⚠ THE SHARING NODE IS A PRECONDITION HERE, NOT AN OPTIMISATION
+
+The wide arm has a TREE spelling (`permGateBodies`) because every round's input is a bare column
+read, so the tree is 140,850 nodes and §6b can use it as an agreement oracle. **The narrow arm has
+no such spelling.** Its internal-round state is carried as expressions, and one internal round
+multiplies a tree state by **16×** (`intLayer` reads all sixteen lanes into `sum` and once more into
+lane `i`): measured on the emitted objects, `[1104, 17900, 286670, …]` for zero, one and two
+internal rounds (§8b). Thirteen of them is ~5·10^18 nodes. So there is no tree twin to check the
+DAG against, and the narrow arm's instruments are §8d's KAT, §8e's theorems and §8f's differential
+against the value model instead.
+
+## What is PROVED here, and what is CHECKED
+
+* **§8e is proof, general in the state, the environment and the committed value.** The 195 dropped
+  internal lanes are each a UNIT MULTIPLE of the one gate that survives, and the 16 dropped initial
+  lanes are a DEFINITION rather than a constraint. Then `narrowSat_iff` /
+  `narrow_accepts_exactly_the_wide_witnesses`: the narrow equation system accepts exactly the
+  projections of the wide system's accepting assignments.
+* **§8b/§8c/§8d/§8f are COMPILED EVALUATION** — `native_decide` + `#assert_compiled`, the same
+  engine a `#guard` runs on, said out loud. Counts, layout tiling, degree, KAT agreement, teeth.
+* ⚠ **One bridge is NOT closed**: that `permEmissionNarrow`'s literal gate list, resolved through
+  `shareVals`, IS the equation system §8e reasons about. The gate bodies read `shr` leaves, and
+  tying `shareVals`'s resolution of those indices to `nStateVal` needs a `shareVals` prefix lemma
+  plus a fold invariant over the emitter's 21 steps. **That is undone work, not a boundary** — it
+  is the next thing to do here. §8f case-checks it on six row windows in the meantime, which is a
+  falsifier for an offset or def-index slip and is NOT a proof. -/
+
+/-! ### §8a — the geometry, and the layout that TILES. -/
+
+/-- `NARROW_AUX_COLS` — the aux block the NARROW arm commits: one 16-lane block per EXTERNAL round,
+ONE lane per INTERNAL round, and NOTHING for the initial linear layer. -/
+def NARROW_AUX_COLS : Nat := EXTERNAL_ROUNDS * WIDTH + INTERNAL_ROUNDS
+
+/-- Committed lanes round `r` costs the narrow arm. -/
+def narrowBlockWidth (r : Nat) : Nat := if isExternalRound r then WIDTH else 1
+
+/-- The first aux column of round `r`'s narrow block: the four opening external blocks, then the
+thirteen single internal lanes, then the four closing external blocks. -/
+def narrowBase (r : Nat) : Nat :=
+  if r < HALF_EXTERNAL then WIDTH * r
+  else if r < HALF_EXTERNAL + INTERNAL_ROUNDS then WIDTH * HALF_EXTERNAL + (r - HALF_EXTERNAL)
+  else WIDTH * HALF_EXTERNAL + INTERNAL_ROUNDS + WIDTH * (r - HALF_EXTERNAL - INTERNAL_ROUNDS)
+
+/-- Aux column of round `r`'s narrow block, lane `j`. -/
+def narrowLane (aux0 r j : Nat) : TExpr := v (aux0 + narrowBase r + j)
+
+/-- Round `r`'s narrow block as the sixteen columns the rebinding leaves it at (external rounds). -/
+def narrowState (aux0 r : Nat) : List TExpr := (List.range WIDTH).map (narrowLane aux0 r)
+
+theorem narrow_aux_cols_is_141 : NARROW_AUX_COLS = 141 := by rfl
+#assert_axioms narrow_aux_cols_is_141
+
+/-- ⚑ **THE LAYOUT TILES `[0, 141)` EXACTLY** — every committed lane of every round lands on its own
+column, with no overlap and no gap. A mis-derived `narrowBase` would either alias two rounds onto
+one column (a soundness hole invisible to a count) or leave a hole (a wasted column); this is the
+pin that sees both, and it is a `decide` in the kernel rather than a compiled evaluation. -/
+theorem narrow_blocks_tile :
+    ((List.range TOTAL_ROUNDS).flatMap (fun r =>
+        (List.range (narrowBlockWidth r)).map (fun j => narrowBase r + j)))
+      = List.range NARROW_AUX_COLS := by decide
+#assert_axioms narrow_blocks_tile
+
+/-! ### §8b — the emission.
+
+An EXTERNAL round is **`roundDefs` unchanged** — the narrow arm re-uses §5b's emitter verbatim, so
+nothing about the full rounds is re-authored. An INTERNAL round is the one that changes: it binds
+ONE column (the post-S-box lane 0) and carries the diagonal layer's sixteen outputs as
+DEFINITIONS. That is the 16:1, and it is also why the narrow arm has MORE definitions than the wide
+one (1,286 against 1,078) while committing 2.5× fewer columns: a definition is a per-row field
+operation, a column is a commitment.
+
+⚠ **Lane 0 of the post-layer state is the COMMITTED column, not the S-box expression.** Feeding the
+expression forward instead would be the same polynomial and would push the state to degree 7, then
+49 at the next round; reading the column keeps every round's input at degree 1 and the whole arm at
+degree 7. This is `p3-poseidon2-air`'s `state[0] = partial_round.post_sbox.into()`, and it is what
+§8c's degree pin measures. -/
+
+/-- Definitions one INTERNAL round costs the narrow arm: the lane-0 constant add, its four S-box
+multiplications, the column sum, and the SIXTEEN diagonal-layer outputs — definitions here because
+no column holds them. -/
+def INT_ROUND_DEFS_NARROW : Nat := 1 + 4 + 1 + WIDTH
+
+/-- ⚑ One INTERNAL round of the narrow arm, as `(definitions, the ONE gate body, the sixteen output
+expressions)`. Layout from `base`: `+0` the constant add, `+1…+4` the S-box, `+5` the column sum,
+`+6…+21` the diagonal layer's outputs. `y` is the committed post-S-box lane. -/
+def intRoundDefsNarrow (r base : Nat) (s : List TExpr) (y : TExpr) :
+    List TExpr × TExpr × List TExpr :=
+  let a0 : TExpr := .add (gx s 0) (k (rcAt r 0))
+  let sb : List TExpr := (sboxDefs (base + 1) (.shr base)).1
+  let st : List TExpr := (List.range WIDTH).map (fun i => if i = 0 then y else gx s i)
+  let sumDef : TExpr :=
+    (List.range (WIDTH - 1)).foldl (fun acc i => .add acc (gx st (i + 1))) (gx st 0)
+  let outs : List TExpr := (List.range WIDTH).map (fun i =>
+    .add (.shr (base + 5)) (.mul (gx st i) (k (vCoef i))))
+  ( a0 :: (sb ++ (sumDef :: outs))
+  , eSub (.shr (base + 4)) y
+  , (List.range WIDTH).map (fun i => .shr (base + 6 + i)) )
+
+/-- ⚑ **THE NARROW EMISSION**: `(definitions, the 141 gate bodies)`, in the same round order
+`permEmission` uses. The initial linear layer emits NO gate and NO column — its sixteen outputs are
+carried into round 0 as expressions. -/
+def permEmissionNarrow (aux0 base : Nat) (seed : List TExpr) : List TExpr × List TExpr :=
+  let (initDefs, initOut) := extLayerDefs base seed
+  let step : (Nat × List TExpr × List TExpr × List TExpr) → Nat →
+      (Nat × List TExpr × List TExpr × List TExpr) :=
+    fun st r =>
+      let (b, ds, gs, s) := st
+      if isExternalRound r then
+        let (rd, ro) := roundDefs r b s
+        ( b + rd.length
+        , ds ++ rd
+        , gs ++ (List.range WIDTH).map (fun j => eSub (gx ro j) (narrowLane aux0 r j))
+        , narrowState aux0 r )
+      else
+        let (rd, g, ro) := intRoundDefsNarrow r b s (narrowLane aux0 r 0)
+        (b + rd.length, ds ++ rd, gs ++ [g], ro)
+  let (_, ds, gs, _) :=
+    (List.range TOTAL_ROUNDS).foldl step (base + initDefs.length, initDefs, [], initOut)
+  (ds, gs)
+
+/-- The narrow emission's definition count, derived: the initial layer, eight external rounds at
+`roundDefs`' own cost, thirteen internal rounds at `INT_ROUND_DEFS_NARROW`. -/
+def NARROW_PERM_DEFS : Nat :=
+  EXT_LAYER_DEFS + EXTERNAL_ROUNDS * EXT_ROUND_DEFS + INTERNAL_ROUNDS * INT_ROUND_DEFS_NARROW
+
+/-- The narrow arm's exposed output lanes — the LAST external block, which is a committed block in
+both arms, so `permOutLane`'s meaning is unchanged and only its column index moves. -/
+def permOutLaneNarrow (aux0 i : Nat) : TExpr := narrowLane aux0 (TOTAL_ROUNDS - 1) i
+
+/-- The narrow arm's FINAL permutation state, all sixteen lanes. -/
+def permFinalStateNarrow (aux0 : Nat) : List TExpr := narrowState aux0 (TOTAL_ROUNDS - 1)
+
+theorem narrow_perm_defs_is_1286 : NARROW_PERM_DEFS = 1286 := by rfl
+#assert_axioms narrow_perm_defs_is_1286
+
+/-- ⚑ The emitted shape: 1,286 definitions, **141 gate bodies — one per committed column** — the
+definition list in topological order at base 0 and at a nonzero splice base, and the output block
+sitting at the last sixteen aux columns. -/
+theorem narrow_emission_shape :
+    ((permEmissionNarrow 33 0 measSeed).1.length == NARROW_PERM_DEFS) &&
+    ((permEmissionNarrow 33 0 measSeed).2.length == NARROW_AUX_COLS) &&
+    ((permEmissionNarrow 33 0 measSeed).1.zipIdx.all (fun p => p.1.sharesBelow p.2)) &&
+    ((permEmissionNarrow 33 17 measSeed).1.zipIdx.all (fun p => p.1.sharesBelow (17 + p.2))) &&
+    ((permOutLaneNarrow 33 0).toJson == (v (33 + NARROW_AUX_COLS - WIDTH)).toJson) &&
+    ((permFinalStateNarrow 33).map TExpr.toJson
+       == ((List.range WIDTH).map (fun i => v (33 + NARROW_AUX_COLS - WIDTH + i))).map
+            TExpr.toJson) = true := by
+  native_decide
+#assert_compiled narrow_emission_shape
+
+/-! ### §8c — ⚑ MEASURED ON THE EMITTED OBJECTS: the ops, the nodes, and the DEGREE. -/
+
+/-- The DEGREE of an emitted expression in the committed columns, resolving `shr` through a vector
+of already-computed definition degrees — the same one-pass resolution `shareVals` uses, and the
+Lean twin of the Rust `def_degrees`. -/
+def degWith (dv : Array Nat) : TExpr → Nat
+  | .loc _ | .nxt _ => 1
+  | .const _ | .prep _ => 0
+  | .shr i => dv.getD i 0
+  | .add a b => max (degWith dv a) (degWith dv b)
+  | .mul a b => degWith dv a + degWith dv b
+
+/-- Per-definition degrees, one left-to-right pass. -/
+def defDegs (ds : List TExpr) : Array Nat :=
+  ds.foldl (fun acc d => acc.push (degWith acc d)) (Array.emptyWithCapacity ds.length)
+
+/-- The maximum degree over an emission's gate bodies — what `max_constraint_degree` reads, and
+what fixes the `log_blowup` floor. -/
+def maxGateDeg (ds gs : List TExpr) : Nat :=
+  let dv := defDegs ds
+  gs.foldl (fun acc g => max acc (degWith dv g)) 0
+
+/-- Field operations an emission performs per row: every definition ONCE, plus the gate bodies. -/
+def emissionOps (p : List TExpr × List TExpr) : Nat :=
+  (p.1.foldl (fun acc b => acc + opCount b) 0) + (p.2.foldl (fun acc b => acc + opCount b) 0)
+
+/-- Nodes an emission holds. -/
+def emissionNodes (p : List TExpr × List TExpr) : Nat := totalNodes p.1 + totalNodes p.2
+
+/-- ⚑ **THE DEGREE IS UNCHANGED — 7 ON BOTH ARMS.** This is the whole "strictly Pareto" claim's
+load-bearing half: the narrow arm buys 2.5× fewer committed columns at the SAME
+`max_constraint_degree`, hence the same `log_blowup ≥ 3` floor and the same FRI ledger. Measured on
+the emitted objects rather than argued, because "no degree accumulation" is exactly the property a
+virtualization gets wrong. -/
+theorem the_degree_is_seven_on_both_arms :
+    (maxGateDeg (permEmissionNarrow 33 0 measSeed).1 (permEmissionNarrow 33 0 measSeed).2 == 7) &&
+    (maxGateDeg (permEmission 33 0 measSeed).1 (permEmission 33 0 measSeed).2 == 7) = true := by
+  native_decide
+#assert_compiled the_degree_is_seven_on_both_arms
+
+/-- ⚑ **THE COST, BOTH ARMS, ON THE EMITTED OBJECTS.** 2,246 field operations per row against
+2,668 — and the residual law is the wide arm's own: the deployed Rust gadget's counted 2,105
+operations for this arithmetization plus **exactly one multiplication per gate** (`TExpr` encodes
+`a − b` as `a + (−1)·b`), `141 = NARROW_AUX_COLS`. Stated as an equation so a drift in either term
+is visible. -/
+theorem narrow_cost_measured :
+    (emissionOps (permEmissionNarrow 33 0 measSeed) == 2246) &&
+    (emissionOps (permEmissionNarrow 33 0 measSeed) == 2105 + NARROW_AUX_COLS) &&
+    (emissionNodes (permEmissionNarrow 33 0 measSeed) == 5919) &&
+    (totalNodes (permEmissionNarrow 33 0 measSeed).1 == 4958) &&
+    (totalNodes (permEmissionNarrow 33 0 measSeed).2 == 961) &&
+    (emissionOps (permEmission 33 0 measSeed) == 2668) = true := by
+  native_decide
+#assert_compiled narrow_cost_measured
+
+/-- ⚠ **WHY THERE IS NO TREE SPELLING OF THE NARROW ARM.** One internal round applied to a TREE
+state multiplies it by ~16 — `intLayer` reads all sixteen lanes into `sum` and each lane once more.
+Pinned at zero, one and two internal rounds; thirteen of them is ~5·10^18 nodes, which is why §6b's
+tree-vs-DAG oracle has no narrow counterpart and §8f's differential stands in for it. -/
+def narrowTreeState : Nat → List TExpr
+  | 0 => extLayer measSeed
+  | n + 1 => intLayer ((List.range WIDTH).map
+      (fun i => if i = 0 then v (900 + n) else gx (narrowTreeState n) i))
+
+theorem the_narrow_tree_spelling_explodes :
+    ((List.range 3).map (fun n => totalNodes (narrowTreeState n)) == [1104, 17900, 286670]) = true := by
+  native_decide
+#assert_compiled the_narrow_tree_spelling_explodes
+
+/-! ### §8d — ⚑ AGREEMENT WITH THE KAT-PINNED PERMUTATION, AND BOTH POLES.
+
+Same instrument §6 uses on the wide arm, on the same `Poseidon2BabyBearW16` KAT: the narrow witness
+is the SAME `permBlocks` trace, projected — the eight external blocks whole, and for each internal
+round the single post-S-box lane-0 value. -/
+
+/-- The 141 committed values of the narrow arm, projected from the SAME `permBlocks` trace §6 uses.
+`P2.sbox (P2.fadd state[0] rc)` is `internalRound`'s own first line, so this is a projection of the
+KAT'd permutation and not a second computation of it. -/
+def narrowAuxWitness (input : List Nat) : List ℤ :=
+  let blks := permBlocks input
+  (List.range TOTAL_ROUNDS).flatMap (fun r =>
+    if isExternalRound r then (blks.getD (r + 1) []).map (fun x => (x : ℤ))
+    else [((P2.sbox (P2.fadd (P2.g (blks.getD r []) 0)
+             (P2.rcInternal.getD (r - HALF_EXTERNAL) 0))) : ℤ)])
+
+/-- The row window a narrow permutation witness induces. -/
+def narrowEnv (in0 aux0 : Nat) (input : List Nat) : TRowEnv :=
+  let inv : List ℤ := input.map (fun x => (x : ℤ))
+  let aux : List ℤ := narrowAuxWitness input
+  ⟨fun c =>
+      if c < in0 then 0
+      else if c < in0 + WIDTH then inv.getD (c - in0) 0
+      else if c < aux0 then 0
+      else aux.getD (c - aux0) 0
+  , fun _ => 0, fun _ => 0⟩
+
+/-- The seed a caller at `in0` supplies. -/
+def narrowSeed (in0 : Nat) : List TExpr := (List.range WIDTH).map (fun i => v (in0 + i))
+
+/-- The EMITTED narrow arm's verdict on a row window, definitions resolved once. -/
+def narrowAcceptsAt (in0 aux0 : Nat) (env : TRowEnv) : Bool :=
+  let (ds, gs) := permEmissionNarrow aux0 0 (narrowSeed in0)
+  let sv := shareVals ds env
+  gs.all (fun b => b.evalWith sv env % 2013265921 == 0)
+
+/-- The honest witness, perturbed at one column. -/
+def narrowBumpEnv (in0 aux0 col : Nat) (d : ℤ) (input : List Nat) : TRowEnv :=
+  let base := narrowEnv in0 aux0 input
+  ⟨fun c => if c == col then base.loc c + d else base.loc c, base.nxt, base.prep⟩
+
+/-- ⚑ **THE WHOLE 141-GATE ARITHMETIZATION ACCEPTS THE KAT-PINNED WITNESS**, on three inputs — and
+the witness's last block IS the deployed permutation's output. -/
+theorem narrow_gates_accept_the_kat :
+    ((narrowAuxWitness (List.range 16)).length == NARROW_AUX_COLS) &&
+    narrowAcceptsAt 1 33 (narrowEnv 1 33 (List.range 16)) &&
+    narrowAcceptsAt 1 33 (narrowEnv 1 33 (List.replicate 16 0)) &&
+    narrowAcceptsAt 1 33 (narrowEnv 1 33 katState) &&
+    (((narrowAuxWitness katState).drop (NARROW_AUX_COLS - WIDTH))
+       == (P2.perm katState).map (fun x => (x : ℤ))) = true := by
+  native_decide
+#assert_compiled narrow_gates_accept_the_kat
+
+/-- ⚠ **THE FALSE POLE.** One bumped limb in each region the narrow arm commits — the opening
+external block, the first and last of the thirteen single internal lanes, the OUTPUT block, and an
+input lane — every one refused. And the instrument is not always-false: a column outside the gadget
+changes nothing. ⚑ The internal-lane teeth are the ones that matter: those are the columns whose
+fifteen wide siblings no longer exist, and a witness is still pinned there. -/
+theorem narrow_gates_refuse_a_forgery :
+    (!narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 33 1 katState)) &&
+    (!narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 (33 + 64) 1 katState)) &&
+    (!narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 (33 + 76) 1 katState)) &&
+    (!narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 (33 + 140) 1 katState)) &&
+    (!narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 1 1 katState)) &&
+    narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 400 1 katState) = true := by
+  native_decide
+#assert_compiled narrow_gates_refuse_a_forgery
+
+/-! ### §8e — ⚑⚑ **THE RELATING THEOREM.** This is the safety argument, and it is not a comment.
+
+Two halves, both general in the state, the row window and the committed value:
+
+1. **The sixteen wide gates of an internal round are ONE gate, up to units.** Instantiate the wide
+   arm's sixteen free columns at what the narrow arm computes for them — `intLayer` of the state
+   with lane 0 set to the committed post-S-box value — and the `j`-th wide gate body becomes
+   `c_j · δ` where `δ` is the narrow arm's single gate body and `c_j = 1` for `j ≠ 0`, `p − 1` for
+   `j = 0`. Both are units mod `p`, so no single wide gate is stronger than the narrow one and all
+   sixteen together are not either. **That is 13 × 15 = 195 of the 211.**
+2. **The sixteen initial-block gates are a DEFINITION.** They say exactly "these sixteen columns
+   equal this linear function of the seed", and nothing else. **That is the remaining 16.**
+
+Then the equation systems: `narrowSat_iff` shows the narrow system's solutions are exactly the
+projections of the unique round chain, and `narrow_accepts_exactly_the_wide_witnesses` states it
+against an ARBITRARY wide-accepting assignment rather than against the canonical one — so it is not
+an ∃-over-a-witness in disguise.
+
+⚠ The value-level round functions here are DEFINED BY EVALUATING §4's emitters on a state of
+sixteen numbers (`roundOutVal r xs = evalSt (valEnv xs) (roundOut r varState)`). They are the
+emitted algebra's own denotation, not a second transcription of the round. -/
+
+/-- BabyBear is prime, discharged by `norm_num`. -/
+theorem P_prime : Nat.Prime 2013265921 := by norm_num
+/-- …and prime over ℤ, the form `Prime.dvd_mul` needs. -/
+theorem P_prime_int : Prime (2013265921 : ℤ) := by
+  exact_mod_cast Nat.prime_iff_prime_int.mp P_prime
+
+theorem range_WIDTH : List.range WIDTH = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15] := by rfl
+theorem range_WIDTH_pred : List.range (WIDTH - 1)
+    = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14] := by rfl
+
+/-- A state with lane 0 replaced — the shape both arms feed the diagonal layer. -/
+def setL0 (s : List TExpr) (y : TExpr) : List TExpr :=
+  (List.range WIDTH).map (fun i => if i = 0 then y else gx s i)
+
+/-- The value an internal round S-boxes: `(state[0] + rc)^7`. The narrow arm commits it; the wide
+arm commits the sixteen lanes downstream of it. -/
+def intSboxIn (r : Nat) (s : List TExpr) : TExpr := eSbox (.add (gx s 0) (k (rcAt r 0)))
+
+/-- §4's `roundOut`, on an internal round, IS the diagonal layer of the lane-0-substituted state. -/
+theorem roundOut_internal (r : Nat) (s : List TExpr) (hr : isExternalRound r = false) :
+    roundOut r s = intLayer (setL0 s (intSboxIn r s)) := by
+  simp [roundOut, hr, setL0, intSboxIn]
+
+/-- ⚑ `p − 1` is a UNIT: the lane-0 multiplier cancels. Without this the lane-0 wide gate could in
+principle be strictly stronger than the narrow one, and the 16:1 would lose information. -/
+theorem lane_zero_multiplier_is_a_unit (x : ℤ) :
+    (2013265920 : ℤ) * x ≡ 0 [ZMOD 2013265921] ↔ x ≡ 0 [ZMOD 2013265921] := by
+  simp only [Int.modEq_zero_iff_dvd]
+  constructor
+  · intro hd
+    rcases (P_prime_int.dvd_mul).mp hd with h1 | h2
+    · exact absurd h1 (by decide)
+    · exact h2
+  · intro hd; exact Dvd.dvd.mul_left hd _
+#assert_axioms lane_zero_multiplier_is_a_unit
+
+set_option linter.unnecessarySeqFocus false in
+/-- ⚑⚑ **EACH OF THE SIXTEEN WIDE INTERNAL-ROUND GATES IS A SCALAR MULTIPLE OF THE ONE NARROW
+GATE**, with the scalar `1` on fifteen lanes and `p − 1` on lane 0. General in `r`, the state `s`,
+the committed value `y`, the definition vector and the row window — an identity over ℤ, not a
+congruence, so nothing is hidden in a modulus. -/
+theorem wide_internal_lane_is_a_unit_multiple
+    (r : Nat) (s : List TExpr) (y : TExpr) (sv : Array ℤ) (env : TRowEnv)
+    (hr : isExternalRound r = false) (j : Nat) (hj : j < WIDTH) :
+    (eSub (gx (roundOut r s) j) (gx (intLayer (setL0 s y)) j)).evalWith sv env
+      = (if j = 0 then (2013265920 : ℤ) else 1)
+        * (eSub (intSboxIn r s) y).evalWith sv env := by
+  rw [roundOut_internal r s hr]
+  have hj' : j < 16 := hj
+  clear hj
+  interval_cases j <;>
+    simp [intLayer, setL0, gx, eSub, TExpr.evalWith, vCoef, V, internalDiag,
+      range_WIDTH, range_WIDTH_pred, Dregg2.Circuit.TableAirIR.k] <;> ring
+#assert_axioms wide_internal_lane_is_a_unit_multiple
+
+/-- ⚑ …hence the narrow arm's ONE internal gate holds exactly when all sixteen of the wide arm's
+do. **The 195 dropped lanes carry no constraint the surviving one does not.** -/
+theorem narrow_internal_gate_is_the_whole_wide_round
+    (r : Nat) (s : List TExpr) (y : TExpr) (sv : Array ℤ) (env : TRowEnv)
+    (hr : isExternalRound r = false) :
+    (∀ j, j < WIDTH →
+        (eSub (gx (roundOut r s) j) (gx (intLayer (setL0 s y)) j)).evalWith sv env
+          ≡ 0 [ZMOD 2013265921])
+      ↔ (eSub (intSboxIn r s) y).evalWith sv env ≡ 0 [ZMOD 2013265921] := by
+  constructor
+  · intro h
+    have h1 := h 1 (by decide)
+    rw [wide_internal_lane_is_a_unit_multiple r s y sv env hr 1 (by decide)] at h1
+    simpa using h1
+  · intro h j hj
+    rw [wide_internal_lane_is_a_unit_multiple r s y sv env hr j hj]
+    by_cases hj0 : j = 0
+    · subst hj0
+      simpa only [if_pos rfl] using (lane_zero_multiplier_is_a_unit _).mpr h
+    · simpa only [if_neg hj0, one_mul] using h
+#assert_axioms narrow_internal_gate_is_the_whole_wide_round
+
+/-- ⚑ **THE INITIAL BLOCK IS A DEFINITION, NOT A CONSTRAINT.** Each of the wide arm's sixteen
+block-0 gates says exactly "this column equals this linear function of the seed" — so deleting the
+columns and the gates together deletes a definition, and the remaining 16 of the 211 are accounted
+for. -/
+theorem wide_initial_block_is_a_definition
+    (seed : List TExpr) (aux0 : Nat) (sv : Array ℤ) (env : TRowEnv) (j : Nat) :
+    (eSub (gx (extLayer seed) j) (auxLane aux0 0 j)).evalWith sv env ≡ 0 [ZMOD 2013265921]
+      ↔ (gx (extLayer seed) j).evalWith sv env ≡ env.loc (aux0 + j) [ZMOD 2013265921] := by
+  simp only [eSub, auxLane, ROUND_COLS, Nat.mul_zero, Nat.add_zero,
+    Dregg2.Circuit.TableAirIR.v, TExpr.evalWith, Int.modEq_iff_dvd]
+  ring_nf
+#assert_axioms wide_initial_block_is_a_definition
+
+/-! #### §8e′ — the two equation systems, and the theorem that they have the same solutions. -/
+
+/-- Columns `0 … WIDTH−1` as a state — what the value-level round functions read. -/
+def varState : List TExpr := (List.range WIDTH).map v
+
+/-- The row window assigning `xs` to columns `0 … WIDTH−1` and zero elsewhere. -/
+def valEnv (xs : List ℤ) : TRowEnv :=
+  ⟨fun c => if c < WIDTH then xs.getD c 0 else 0, fun _ => 0, fun _ => 0⟩
+
+/-- The values a state of expressions takes on a window. -/
+def evalSt (env : TRowEnv) (s : List TExpr) : List ℤ := s.map (fun e => e.evalWith #[] env)
+
+/-- The initial linear layer, as a function of sixteen numbers — §4's emitter, evaluated. -/
+def extLayerVal (xs : List ℤ) : List ℤ := evalSt (valEnv xs) (extLayer varState)
+/-- The diagonal layer, as a function of sixteen numbers. -/
+def intLayerVal (xs : List ℤ) : List ℤ := evalSt (valEnv xs) (intLayer varState)
+/-- One round, as a function of sixteen numbers. -/
+def roundOutVal (r : Nat) (xs : List ℤ) : List ℤ := evalSt (valEnv xs) (roundOut r varState)
+/-- The value an internal round commits. -/
+def sboxValAt (r : Nat) (xs : List ℤ) : ℤ := (intSboxIn r varState).evalWith #[] (valEnv xs)
+/-- Lane-0 substitution, on values. -/
+def setL0Val (xs : List ℤ) (z : ℤ) : List ℤ :=
+  (List.range WIDTH).map (fun i => if i = 0 then z else xs.getD i 0)
+
+theorem evalSt_getD (env : TRowEnv) (s : List TExpr) (j : Nat) :
+    (evalSt env s).getD j 0 = (gx s j).evalWith #[] env := by
+  simp only [evalSt, gx, List.getD_eq_getElem?_getD, List.getElem?_map]
+  cases h : s[j]? <;> simp [TExpr.evalWith, Dregg2.Circuit.TableAirIR.k]
+
+theorem gx_rangeW_map (f : Nat → TExpr) (j : Nat) (hj : j < WIDTH) :
+    gx ((List.range WIDTH).map f) j = f j := by
+  have hj' : j < 16 := hj
+  clear hj
+  interval_cases j <;> simp [gx, range_WIDTH]
+
+theorem gx_varState (xs : List ℤ) (j : Nat) (hj : j < WIDTH) :
+    (gx varState j).evalWith #[] (valEnv xs) = xs.getD j 0 := by
+  rw [varState, gx_rangeW_map _ j hj]
+  simp [Dregg2.Circuit.TableAirIR.v, TExpr.evalWith, valEnv, hj]
+
+/-- ⚑ Evaluation respects a row window that agrees only MOD `p` — the structural induction that
+makes every value-level congruence below a one-liner instead of sixteen `ring`s. -/
+theorem evalWith_modEq (sv : Array ℤ) {env env' : TRowEnv}
+    (hl : ∀ c, env.loc c ≡ env'.loc c [ZMOD 2013265921])
+    (hn : ∀ c, env.nxt c ≡ env'.nxt c [ZMOD 2013265921])
+    (hp : ∀ c, env.prep c ≡ env'.prep c [ZMOD 2013265921]) :
+    ∀ e : TExpr, e.evalWith sv env ≡ e.evalWith sv env' [ZMOD 2013265921]
+  | .loc c => hl c
+  | .nxt c => hn c
+  | .const z => Int.ModEq.refl z
+  | .shr _ => Int.ModEq.refl _
+  | .prep c => hp c
+  | .add a b => Int.ModEq.add (evalWith_modEq sv hl hn hp a) (evalWith_modEq sv hl hn hp b)
+  | .mul a b => Int.ModEq.mul (evalWith_modEq sv hl hn hp a) (evalWith_modEq sv hl hn hp b)
+
+/-- Two states agree in the field the gates are asserted over. -/
+def ValEq (a b : List ℤ) : Prop :=
+  ∀ j, j < WIDTH → a.getD j 0 ≡ b.getD j 0 [ZMOD 2013265921]
+
+theorem ValEq.refl (a : List ℤ) : ValEq a a := fun _ _ => Int.ModEq.refl _
+theorem ValEq.symm {a b : List ℤ} (h : ValEq a b) : ValEq b a := fun j hj => (h j hj).symm
+theorem ValEq.trans {a b c : List ℤ} (h : ValEq a b) (h' : ValEq b c) : ValEq a c :=
+  fun j hj => (h j hj).trans (h' j hj)
+
+theorem valEnv_modEq {a b : List ℤ} (h : ValEq a b) (c : Nat) :
+    (valEnv a).loc c ≡ (valEnv b).loc c [ZMOD 2013265921] := by
+  by_cases hc : c < WIDTH
+  · simpa [valEnv, hc] using h c hc
+  · simp [valEnv, hc]
+
+theorem roundOutVal_congr (r : Nat) {a b : List ℤ} (h : ValEq a b) :
+    ValEq (roundOutVal r a) (roundOutVal r b) := by
+  intro j _
+  rw [roundOutVal, roundOutVal, evalSt_getD, evalSt_getD]
+  exact evalWith_modEq #[] (valEnv_modEq h) (fun _ => Int.ModEq.refl _)
+    (fun _ => Int.ModEq.refl _) _
+
+theorem intLayerVal_congr {a b : List ℤ} (h : ValEq a b) :
+    ValEq (intLayerVal a) (intLayerVal b) := by
+  intro j _
+  rw [intLayerVal, intLayerVal, evalSt_getD, evalSt_getD]
+  exact evalWith_modEq #[] (valEnv_modEq h) (fun _ => Int.ModEq.refl _)
+    (fun _ => Int.ModEq.refl _) _
+
+theorem sboxValAt_congr (r : Nat) {a b : List ℤ} (h : ValEq a b) :
+    sboxValAt r a ≡ sboxValAt r b [ZMOD 2013265921] :=
+  evalWith_modEq #[] (valEnv_modEq h) (fun _ => Int.ModEq.refl _) (fun _ => Int.ModEq.refl _) _
+
+theorem setL0Val_getD (xs : List ℤ) (z : ℤ) (j : Nat) (hj : j < WIDTH) :
+    (setL0Val xs z).getD j 0 = if j = 0 then z else xs.getD j 0 := by
+  rw [setL0Val]
+  have hj' : j < 16 := hj
+  clear hj
+  interval_cases j <;> simp [range_WIDTH]
+
+theorem setL0Val_congr {a b : List ℤ} {z z' : ℤ} (h : ValEq a b)
+    (hz : z ≡ z' [ZMOD 2013265921]) : ValEq (setL0Val a z) (setL0Val b z') := by
+  intro j hj
+  rw [setL0Val_getD _ _ j hj, setL0Val_getD _ _ j hj]
+  by_cases hj0 : j = 0
+  · simpa [hj0] using hz
+  · simpa [hj0] using h j hj
+
+theorem intLayer_eval_congr {s t : List TExpr} {sv sv' : Array ℤ} {env env' : TRowEnv}
+    (h : ∀ i, i < WIDTH → (gx s i).evalWith sv env = (gx t i).evalWith sv' env')
+    (j : Nat) (hj : j < WIDTH) :
+    (gx (intLayer s) j).evalWith sv env = (gx (intLayer t) j).evalWith sv' env' := by
+  simp only [intLayer]
+  rw [gx_rangeW_map _ j hj, gx_rangeW_map _ j hj]
+  simp only [range_WIDTH_pred, List.foldl_cons, List.foldl_nil, TExpr.evalWith,
+    Dregg2.Circuit.TableAirIR.k, h 0 (by decide), h 1 (by decide), h 2 (by decide),
+    h 3 (by decide), h 4 (by decide), h 5 (by decide), h 6 (by decide), h 7 (by decide),
+    h 8 (by decide), h 9 (by decide), h 10 (by decide), h 11 (by decide), h 12 (by decide),
+    h 13 (by decide), h 14 (by decide), h 15 (by decide), h j hj]
+
+/-- ⚑ An internal round, at the value level, IS the diagonal layer of the lane-0-substituted
+state — the fact that lets the narrow arm commit one number where the wide arm commits sixteen. -/
+theorem roundOutVal_internal (r : Nat) (xs : List ℤ) (hr : isExternalRound r = false)
+    (j : Nat) (hj : j < WIDTH) :
+    (roundOutVal r xs).getD j 0 = (intLayerVal (setL0Val xs (sboxValAt r xs))).getD j 0 := by
+  rw [roundOutVal, evalSt_getD, roundOut_internal r varState hr, intLayerVal, evalSt_getD]
+  refine intLayer_eval_congr ?_ j hj
+  intro i hi
+  rw [setL0, gx_rangeW_map _ i hi, gx_varState _ i hi, setL0Val_getD _ _ i hi]
+  by_cases hi0 : i = 0
+  · subst hi0; rfl
+  · simp only [if_neg hi0]; exact gx_varState xs i hi
+
+/-- The round chain a seed determines — the WIDE arm's 22 blocks, as values. ⚠ Never evaluate this
+at a large `r`: the round function is degree 7 over ℤ with no reduction, so `blocksVal seedv 21`
+is an integer with ~10^11 bits. It is a statement-level object. -/
+def blocksVal (seedv : List ℤ) : Nat → List ℤ
+  | 0 => extLayerVal seedv
+  | r + 1 => roundOutVal r (blocksVal seedv r)
+
+/-- The NARROW arm's state entering round `r`, driven by what it actually commits: `ext r` for an
+external round's sixteen lanes, `yv r` for an internal round's one. -/
+def nStateVal (seedv : List ℤ) (ext : Nat → List ℤ) (yv : Nat → ℤ) : Nat → List ℤ
+  | 0 => extLayerVal seedv
+  | r + 1 =>
+      if isExternalRound r then ext r
+      else intLayerVal (setL0Val (nStateVal seedv ext yv r) (yv r))
+
+/-- **The WIDE arm's 352 equations**, as conditions on the 22 committed blocks. -/
+def WideSat (seedv : List ℤ) (blk : Nat → List ℤ) : Prop :=
+  ValEq (blk 0) (extLayerVal seedv) ∧
+  ∀ r, r < TOTAL_ROUNDS → ValEq (blk (r + 1)) (roundOutVal r (blk r))
+
+/-- **The NARROW arm's 141 equations**, as conditions on the eight committed blocks and the
+thirteen committed lanes. -/
+def NarrowSat (seedv : List ℤ) (ext : Nat → List ℤ) (yv : Nat → ℤ) : Prop :=
+  ∀ r, r < TOTAL_ROUNDS →
+    (isExternalRound r = true → ValEq (ext r) (roundOutVal r (nStateVal seedv ext yv r))) ∧
+    (isExternalRound r = false →
+      yv r ≡ sboxValAt r (nStateVal seedv ext yv r) [ZMOD 2013265921])
+
+theorem wideSat_blocksVal (seedv : List ℤ) : WideSat seedv (blocksVal seedv) :=
+  ⟨ValEq.refl _, fun _ _ => ValEq.refl _⟩
+#assert_axioms wideSat_blocksVal
+
+/-- The wide system has exactly one solution per seed: the round chain. -/
+theorem wideSat_iff (seedv : List ℤ) (blk : Nat → List ℤ) :
+    WideSat seedv blk ↔ ∀ r, r ≤ TOTAL_ROUNDS → ValEq (blk r) (blocksVal seedv r) := by
+  constructor
+  · rintro ⟨h0, hs⟩ r
+    induction r with
+    | zero => intro _; exact h0
+    | succ r ih =>
+        intro _
+        have hr : r < TOTAL_ROUNDS := by omega
+        exact (hs r hr).trans (roundOutVal_congr r (ih (by omega)))
+  · intro h
+    refine ⟨h 0 (by omega), fun r hr => ?_⟩
+    exact (h (r + 1) (by omega)).trans (roundOutVal_congr r (h r (by omega)).symm)
+#assert_axioms wideSat_iff
+
+private theorem nState_step_internal {seedv : List ℤ} {ext : Nat → List ℤ} {yv : Nat → ℤ}
+    {r : Nat} (hf : isExternalRound r = false)
+    (ihr : ValEq (nStateVal seedv ext yv r) (blocksVal seedv r))
+    (hyv : yv r ≡ sboxValAt r (blocksVal seedv r) [ZMOD 2013265921]) :
+    ValEq (intLayerVal (setL0Val (nStateVal seedv ext yv r) (yv r))) (blocksVal seedv (r + 1)) := by
+  refine (intLayerVal_congr (setL0Val_congr ihr hyv)).trans ?_
+  intro j hj
+  simp only [blocksVal]
+  rw [roundOutVal_internal r (blocksVal seedv r) hf j hj]
+
+/-- ⚑ **THE 141 EQUATIONS FORCE THE WHOLE 352-VALUE CHAIN.** Nothing is left free by the lanes the
+narrow arm stopped committing. -/
+theorem narrowSat_forces_the_trace {seedv : List ℤ} {ext : Nat → List ℤ} {yv : Nat → ℤ}
+    (h : NarrowSat seedv ext yv) :
+    ∀ r, r ≤ TOTAL_ROUNDS → ValEq (nStateVal seedv ext yv r) (blocksVal seedv r) := by
+  intro r
+  induction r with
+  | zero => intro _; exact ValEq.refl _
+  | succ r ih =>
+      intro _
+      have hr : r < TOTAL_ROUNDS := by omega
+      have ihr := ih (by omega)
+      rw [nStateVal]
+      by_cases hx : isExternalRound r = true
+      · rw [if_pos hx]; exact ((h r hr).1 hx).trans (roundOutVal_congr r ihr)
+      · have hf : isExternalRound r = false := by simpa using hx
+        rw [if_neg (by simp [hf])]
+        exact nState_step_internal hf ihr (((h r hr).2 hf).trans (sboxValAt_congr r ihr))
+#assert_axioms narrowSat_forces_the_trace
+
+theorem nStateVal_of_projection {seedv : List ℤ} {ext : Nat → List ℤ} {yv : Nat → ℤ}
+    (hx : ∀ r, r < TOTAL_ROUNDS → isExternalRound r = true →
+      ValEq (ext r) (blocksVal seedv (r + 1)))
+    (hy : ∀ r, r < TOTAL_ROUNDS → isExternalRound r = false →
+      yv r ≡ sboxValAt r (blocksVal seedv r) [ZMOD 2013265921]) :
+    ∀ r, r ≤ TOTAL_ROUNDS → ValEq (nStateVal seedv ext yv r) (blocksVal seedv r) := by
+  intro r
+  induction r with
+  | zero => intro _; exact ValEq.refl _
+  | succ r ih =>
+      intro _
+      have hr : r < TOTAL_ROUNDS := by omega
+      have ihr := ih (by omega)
+      rw [nStateVal]
+      by_cases hxb : isExternalRound r = true
+      · rw [if_pos hxb]; exact hx r hr hxb
+      · have hf : isExternalRound r = false := by simpa using hxb
+        rw [if_neg (by simp [hf])]
+        exact nState_step_internal hf ihr (hy r hr hf)
+
+/-- ⚑ The narrow system's solutions are EXACTLY the projections of the round chain: the eight
+external blocks whole, and one post-S-box value per internal round. -/
+theorem narrowSat_iff (seedv : List ℤ) (ext : Nat → List ℤ) (yv : Nat → ℤ) :
+    NarrowSat seedv ext yv ↔
+      ((∀ r, r < TOTAL_ROUNDS → isExternalRound r = true →
+          ValEq (ext r) (blocksVal seedv (r + 1))) ∧
+       (∀ r, r < TOTAL_ROUNDS → isExternalRound r = false →
+          yv r ≡ sboxValAt r (blocksVal seedv r) [ZMOD 2013265921])) := by
+  constructor
+  · intro h
+    have hstate := narrowSat_forces_the_trace h
+    refine ⟨fun r hr hxb => ?_, fun r hr hf => ?_⟩
+    · exact ((h r hr).1 hxb).trans (roundOutVal_congr r (hstate r (by omega)))
+    · exact ((h r hr).2 hf).trans (sboxValAt_congr r (hstate r (by omega)))
+  · rintro ⟨hx, hy⟩
+    have hstate := nStateVal_of_projection hx hy
+    intro r hr
+    refine ⟨fun hxb => ?_, fun hf => ?_⟩
+    · exact (hx r hr hxb).trans (roundOutVal_congr r (hstate r (by omega)).symm)
+    · exact (hy r hr hf).trans (sboxValAt_congr r (hstate r (by omega)).symm)
+#assert_axioms narrowSat_iff
+
+/-- ⚑⚑ **THE RELATING THEOREM.** For ANY assignment the WIDE arm accepts, the NARROW arm accepts a
+committed vector exactly when that vector is the wide one's projection — the eight external blocks
+kept whole, one post-S-box lane kept per internal round, the initial block and the 195 affine lanes
+dropped. Stated against an arbitrary `blk` rather than against the canonical chain, so it is not an
+existential over a witness wearing a theorem's clothes. -/
+theorem narrow_accepts_exactly_the_wide_witnesses
+    (seedv : List ℤ) (blk : Nat → List ℤ) (ext : Nat → List ℤ) (yv : Nat → ℤ)
+    (hw : WideSat seedv blk) :
+    NarrowSat seedv ext yv ↔
+      ((∀ r, r < TOTAL_ROUNDS → isExternalRound r = true → ValEq (ext r) (blk (r + 1))) ∧
+       (∀ r, r < TOTAL_ROUNDS → isExternalRound r = false →
+          yv r ≡ sboxValAt r (blk r) [ZMOD 2013265921])) := by
+  have hb := (wideSat_iff seedv blk).mp hw
+  rw [narrowSat_iff]
+  constructor
+  · rintro ⟨hx, hy⟩
+    exact ⟨fun r hr hxb => (hx r hr hxb).trans (hb (r + 1) (by omega)).symm,
+           fun r hr hf => (hy r hr hf).trans (sboxValAt_congr r (hb r (by omega)).symm)⟩
+  · rintro ⟨hx, hy⟩
+    exact ⟨fun r hr hxb => (hx r hr hxb).trans (hb (r + 1) (by omega)),
+           fun r hr hf => (hy r hr hf).trans (sboxValAt_congr r (hb r (by omega)))⟩
+#assert_axioms narrow_accepts_exactly_the_wide_witnesses
+
+/-! #### §8e″ — ⚠ BOTH POLES OF THE EQUATION SYSTEMS.
+
+`narrowSat_iff` would read the same if `NarrowSat` were unsatisfiable or trivially true, so both
+are exhibited. The refutations probe at round 0 deliberately: `blocksVal` past a few rounds is an
+integer with astronomically many bits, so a refutation deeper in the chain is not computable and a
+`native_decide` that appeared to do it would be measuring something else. -/
+
+theorem extLayerVal_probe :
+    (extLayerVal (1 :: List.replicate 15 (0:ℤ))).getD 0 0 = 4 := by native_decide
+#assert_compiled extLayerVal_probe
+
+theorem wideSat_is_refutable :
+    ¬ WideSat (1 :: List.replicate 15 (0:ℤ)) (fun _ => []) := by
+  intro h
+  have h0 := h.1 0 (by decide)
+  rw [extLayerVal_probe] at h0
+  simp only [List.getD_nil] at h0
+  exact absurd h0 (by decide)
+#assert_compiled wideSat_is_refutable
+
+theorem roundOutVal_probe :
+    (roundOutVal 0 (extLayerVal (1 :: List.replicate 15 (0:ℤ)))).getD 0 0 % 2013265921 ≠ 0 := by
+  native_decide
+#assert_compiled roundOutVal_probe
+
+theorem narrowSat_is_refutable :
+    ¬ NarrowSat (1 :: List.replicate 15 (0:ℤ)) (fun _ => []) (fun _ => 0) := by
+  intro h
+  have h0 := (h 0 (by decide)).1 (by decide) 0 (by decide)
+  simp only [List.getD_nil, nStateVal] at h0
+  exact roundOutVal_probe (by simpa [Int.ModEq, Int.zero_emod] using h0.symm)
+#assert_compiled narrowSat_is_refutable
+
+theorem narrowSat_is_satisfiable (seedv : List ℤ) :
+    NarrowSat seedv (fun r => blocksVal seedv (r + 1)) (fun r => sboxValAt r (blocksVal seedv r)) :=
+  (narrowSat_iff seedv _ _).mpr ⟨fun _ _ _ => ValEq.refl _, fun _ _ _ => Int.ModEq.refl _⟩
+#assert_axioms narrowSat_is_satisfiable
+
+/-! ### §8f — ⚠ THE UNPROVED BRIDGE, CASE-CHECKED.
+
+§8e reasons about `NarrowSat` — the 141 equations. `permEmissionNarrow` emits 141 gate BODIES whose
+content sits in a 1,286-entry definition list that `shareVals` resolves. **That the two are the same
+system is not proved here.** It needs a `shareVals` prefix lemma (`foldl` over an append) plus a
+fold invariant carrying "round `r`'s definitions start at index `base + Σ earlier`" through the
+emitter's 21 steps — real work, not a boundary, and the next thing to do in this file.
+
+Below is the falsifier that stands in for it: the EMITTED arm's verdict and the value model's
+verdict, on the honest window and on five perturbed ones. An aux-offset slip, a `narrowBase` error
+or a wrong `shr` index moves one and not the other. It is case-testing and it is labelled as such;
+it proves nothing about all windows. -/
+
+/-- The value model's verdict on a concrete row window — the same 141 equations, read off the
+committed COLUMN VALUES rather than off the emitted gate list. -/
+def narrowModelAccepts (in0 aux0 : Nat) (env : TRowEnv) : Bool :=
+  let seedv : List ℤ := (List.range WIDTH).map (fun i => env.loc (in0 + i))
+  let ext : Nat → List ℤ := fun r =>
+    (List.range WIDTH).map (fun j => env.loc (aux0 + narrowBase r + j))
+  let yv : Nat → ℤ := fun r => env.loc (aux0 + narrowBase r)
+  (List.range TOTAL_ROUNDS).all (fun r =>
+    if isExternalRound r then
+      (List.range WIDTH).all (fun j =>
+        ((ext r).getD j 0 - (roundOutVal r (nStateVal seedv ext yv r)).getD j 0)
+          % 2013265921 == 0)
+    else
+      ((yv r - sboxValAt r (nStateVal seedv ext yv r)) % 2013265921 == 0))
+
+theorem narrow_model_accepts_the_kat :
+    narrowModelAccepts 1 33 (narrowEnv 1 33 katState) = true := by native_decide
+#assert_compiled narrow_model_accepts_the_kat
+
+/-- The emitted DAG and the value model return the SAME verdict on six row windows — the honest one
+and five perturbations, one in each region the narrow arm commits. -/
+theorem narrow_emission_agrees_with_the_model :
+    (narrowAcceptsAt 1 33 (narrowEnv 1 33 katState)
+       == narrowModelAccepts 1 33 (narrowEnv 1 33 katState)) &&
+    (narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 33 1 katState)
+       == narrowModelAccepts 1 33 (narrowBumpEnv 1 33 33 1 katState)) &&
+    (narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 (33 + 64) 3 katState)
+       == narrowModelAccepts 1 33 (narrowBumpEnv 1 33 (33 + 64) 3 katState)) &&
+    (narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 (33 + 76) 5 katState)
+       == narrowModelAccepts 1 33 (narrowBumpEnv 1 33 (33 + 76) 5 katState)) &&
+    (narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 (33 + 140) 7 katState)
+       == narrowModelAccepts 1 33 (narrowBumpEnv 1 33 (33 + 140) 7 katState)) &&
+    (narrowAcceptsAt 1 33 (narrowBumpEnv 1 33 1 1 katState)
+       == narrowModelAccepts 1 33 (narrowBumpEnv 1 33 1 1 katState)) = true := by
+  native_decide
+#assert_compiled narrow_emission_agrees_with_the_model
+
+/-! ### §8g — ⚑ THE FLAG DAY, NAMED.
+
+Cutting the chip over to `permEmissionNarrow` breaks these, on purpose, and each must be re-emitted
+rather than reinterpreted:
+
+* **`CHIP_WIDTH` 386 → 175** (`CHIP_AUX0` 33 + `NARROW_AUX_COLS` 141 + 1). `CHIP_MULT_NARROW`,
+  `CHIP_OUT` and every derived offset in `ChipTableEmit` move with it.
+* **`CHIP_TABLE_AIR_JSON` re-emits** — 391 gates → 180, 1,078 definitions → 1,286, and the
+  `chipState16Table` variant with it. The AIR fingerprint changes, so **the VK rotates**; the old
+  artifact must REFUSE to load, not be reinterpreted.
+* **The Rust witness generator is the real work, and it does not exist yet.**
+  `poseidon2_permute_aux_witness` (`circuit/src/plonky3_prover.rs:492`) writes 352 values per
+  permutation; the narrow layout needs 141 — the eight external blocks plus one post-S-box lane per
+  internal round. Until that lands, the cutover is not routable, and saying "the Lean is landed"
+  would be the proven-in-Lean-is-not-routable error.
+* **`sbox_registers: 1`** (`descriptor_ir2.rs:3524-3528`) is currently a pin describing a layout the
+  chip deliberately does not use. This is the moment to make it mean something or delete it.
+* **Every fixture carrying a chip trace re-generates**, and the devnet re-genesises.
+
+The v1 hash sites (`lean_descriptor_air.rs:1754`, `POSEIDON2_PERM_AUX_COLS = 352`) are a SEPARATE
+and Rust-authored spelling of the same algebra; they are debt already, and the narrow cutover does
+not touch them. -/
 
 end Dregg2.Circuit.Emit.Poseidon2RoundGates
