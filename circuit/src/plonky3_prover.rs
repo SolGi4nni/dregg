@@ -501,6 +501,157 @@ pub fn poseidon2_permute_aux_witness(input: [BabyBear; WIDTH]) -> Vec<BabyBear> 
     out
 }
 
+// ============================================================================
+// The NARROW aux layout — the witness side of `permEmissionNarrow`
+// ============================================================================
+//
+// ⚑ SUBSTRATE. Everything below is a WITNESS GENERATOR. It authors no constraint. Its
+// specification is Lean, and specifically
+// `metatheory/Dregg2/Circuit/Emit/Poseidon2RoundGates.lean` §8:
+//
+//   * the column layout is `narrowBase` / `narrowBlockWidth` / `NARROW_AUX_COLS` (§8a),
+//     whose tiling of `[0, 141)` is a KERNEL `decide` there (`narrow_blocks_tile`);
+//   * the committed VALUES are `narrowAuxWitness` (§8d) — a projection of the same
+//     `permBlocks` trace the wide arm commits, not a second computation of the round;
+//   * that the 141 gates accept exactly the wide arm's accepting assignments under this
+//     projection is `narrow_accepts_exactly_the_wide_witnesses` (§8e).
+//
+// The functions here CONFORM to that; they are not its authority. `circuit/tests/
+// poseidon2_narrow_witness.rs` is where the conformance is checked against the Lean-emitted
+// object rather than asserted in a comment.
+
+/// Committed aux columns one Poseidon2 permutation costs in the **narrow** layout:
+/// one 16-lane block per EXTERNAL round, ONE lane per INTERNAL round, and NOTHING for the
+/// initial linear layer.
+///
+/// Lean: `Poseidon2RoundGates.NARROW_AUX_COLS`, `narrow_aux_cols_is_141`.
+pub const POSEIDON2_PERM_AUX_COLS_NARROW: usize = EXTERNAL_ROUNDS * WIDTH + INTERNAL_ROUNDS; // 141
+
+/// Is round `r` a full (external) round? Lean: `isExternalRound`.
+#[must_use]
+pub const fn poseidon2_round_is_external(r: usize) -> bool {
+    r < HALF_EXTERNAL || r >= HALF_EXTERNAL + INTERNAL_ROUNDS
+}
+
+/// Committed lanes round `r` costs the narrow layout. Lean: `narrowBlockWidth`.
+#[must_use]
+pub const fn poseidon2_narrow_block_width(r: usize) -> usize {
+    if poseidon2_round_is_external(r) {
+        WIDTH
+    } else {
+        1
+    }
+}
+
+/// The first narrow aux column of round `r`'s block: the four opening external blocks, then
+/// the thirteen single internal lanes, then the four closing external blocks.
+///
+/// Lean: `narrowBase`. The tiling this induces is proved exactly (no alias, no gap) by
+/// `narrow_blocks_tile`.
+#[must_use]
+pub const fn poseidon2_narrow_base(r: usize) -> usize {
+    if r < HALF_EXTERNAL {
+        WIDTH * r
+    } else if r < HALF_EXTERNAL + INTERNAL_ROUNDS {
+        WIDTH * HALF_EXTERNAL + (r - HALF_EXTERNAL)
+    } else {
+        WIDTH * HALF_EXTERNAL + INTERNAL_ROUNDS + WIDTH * (r - HALF_EXTERNAL - INTERNAL_ROUNDS)
+    }
+}
+
+/// Compute the **narrow** aux block (length [`POSEIDON2_PERM_AUX_COLS_NARROW`]) for a concrete
+/// input state — the witness `permEmissionNarrow`'s 141 gates bind.
+///
+/// This is the same permutation trace [`poseidon2_permute_aux_witness`] writes, PROJECTED:
+///
+/// * an EXTERNAL round contributes its whole 16-lane output block (identical to the wide arm's
+///   block for that round);
+/// * an INTERNAL round contributes ONE value, `(state[0] + rc[r][0])^7` — the post-S-box lane
+///   0, taken BEFORE the diagonal layer. Its fifteen siblings are affine in it and are carried
+///   as definitions rather than columns;
+/// * the initial linear layer contributes NOTHING; it is a linear function of a seed the row
+///   already holds.
+///
+/// ⚠ The value committed for an internal round is *not* a lane of the wide arm's block for that
+/// round — it is the S-box output the wide arm's block is the diagonal image of. Lean states the
+/// projection at `narrowAuxWitness` (§8d) and it is exactly this loop.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
+pub fn poseidon2_permute_aux_witness_narrow(input: [BabyBear; WIDTH]) -> Vec<BabyBear> {
+    let round_states = poseidon2_trace(&input);
+    let rc = &*ROUND_CONSTANTS;
+    let mut out = Vec::with_capacity(POSEIDON2_PERM_AUX_COLS_NARROW);
+    for r in 0..TOTAL_ROUNDS {
+        debug_assert_eq!(out.len(), poseidon2_narrow_base(r));
+        if poseidon2_round_is_external(r) {
+            for j in 0..WIDTH {
+                out.push(round_states[r + 1][j]);
+            }
+        } else {
+            // `round_states[r]` is round `r`'s INPUT state (block 0 is the post-initial-linear
+            // -layer state, block `r + 1` is round `r`'s output).
+            out.push(crate::poseidon2::Poseidon2State::sbox(
+                round_states[r][0] + rc[r][0],
+            ));
+        }
+    }
+    debug_assert_eq!(out.len(), POSEIDON2_PERM_AUX_COLS_NARROW);
+    out
+}
+
+/// Recover the WIDE aux block (352 values) from a narrow one plus the permutation input — the
+/// witness-side reading of `narrowSat_forces_the_trace` (§8e): the 141 committed lanes leave
+/// nothing free, so every one of the 352 the wide arm commits is a function of them.
+///
+/// Every value is *rebuilt from the narrow input* — the initial linear layer from `input`, an
+/// internal round's sixteen output lanes from the narrow arm's committed post-S-box lane and the
+/// previous block. Nothing here calls [`poseidon2_trace`], so agreement with
+/// [`poseidon2_permute_aux_witness`] is a genuine check and not a tautology.
+///
+/// # Panics
+/// If `narrow` is not [`POSEIDON2_PERM_AUX_COLS_NARROW`] long.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
+#[must_use]
+pub fn poseidon2_wide_aux_from_narrow(
+    input: [BabyBear; WIDTH],
+    narrow: &[BabyBear],
+) -> Vec<BabyBear> {
+    assert_eq!(
+        narrow.len(),
+        POSEIDON2_PERM_AUX_COLS_NARROW,
+        "narrow aux block must be {POSEIDON2_PERM_AUX_COLS_NARROW} values"
+    );
+    let rc = &*ROUND_CONSTANTS;
+    let mut st = crate::poseidon2::Poseidon2State::from_elements(&input);
+    st.external_linear_layer();
+    let mut out: Vec<BabyBear> = Vec::with_capacity(POSEIDON2_AUX_COLS);
+    out.extend_from_slice(&st.state);
+    for r in 0..TOTAL_ROUNDS {
+        let base = poseidon2_narrow_base(r);
+        if poseidon2_round_is_external(r) {
+            // The wide arm commits exactly what the narrow arm commits here.
+            for j in 0..WIDTH {
+                st.state[j] = narrow[base + j];
+            }
+        } else {
+            // The 16:1. Lane 0 is the COMMITTED post-S-box value, lanes 1..15 stay as they were,
+            // and the round's output is the diagonal layer of that. `rc[r][0]` is used only to
+            // check the committed lane is the one the gate names — see the assertion below.
+            debug_assert_eq!(
+                narrow[base],
+                crate::poseidon2::Poseidon2State::sbox(st.state[0] + rc[r][0]),
+                "narrow lane for internal round {r} is not the post-S-box value"
+            );
+            st.state[0] = narrow[base];
+            st.internal_linear_layer();
+        }
+        out.extend_from_slice(&st.state);
+    }
+    debug_assert_eq!(out.len(), POSEIDON2_AUX_COLS);
+    out
+}
+
 // NOTE on S-box arithmetization (measured 2026-06-11, .docs-history-noclaude/PROOF-ECONOMICS.md §2c):
 // a 1-register variant of the gadget above (committed cube `s3 = x³` per S-box, so no
 // constraint exceeds degree 3 — the `sbox_registers = 1` shape the IR-v2 chip
