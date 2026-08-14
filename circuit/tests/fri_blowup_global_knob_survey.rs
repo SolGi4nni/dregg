@@ -9,6 +9,22 @@
 //!
 //! This file measures the OTHER descriptors. It changes no deployed constant.
 //!
+//! ## ⚑⚑ 2026-08-14 — AN ASSERTION IN THIS FILE WAS INVERTED, AND IT HAD FROZEN A BUG AS A LAW
+//!
+//! §1 used to `assert!(!chip_refusals.is_empty())` — *at least one chip-bearing descriptor MUST
+//! refuse at `(2,57)`* — on the reading that the Poseidon2 chip's degree-7 S-box floors the
+//! blowup at 3. **That refusal was a one-line row-order bug in `p3-fri`**
+//! (`get_evaluations_on_domain`'s extrapolation path applied `bit_reverse_rows()` once too many:
+//! right values, wrong rows, wrong quotient, a well-formed proof its own verifier rejects). The
+//! gate written to stop someone claiming `lb = 2` was free had become the thing stopping anyone
+//! from discovering that it is — it would have gone RED the moment the bug was fixed.
+//!
+//! The fix is in `vendor/plonky3-fri-82cfad73/src/two_adic_pcs.rs` (upstream PR #1982 is the same
+//! change, open with CHANGES_REQUESTED). It is settled by construction — both PCS paths against an
+//! independent coset DFT, a degree-7 AIR verifying at `lb = 2`, and a corrupted trace still
+//! rejecting — in `circuit/tests/fri_extrapolation_row_order.rs`. Every "IS NOT A POINT" and
+//! "floor" in this file now means "takes the extrapolation code path", not "refuses".
+//!
 //! ## What is held fixed
 //!
 //! The security-PARITY points named in `ir2_config`'s own docblock — `(6,19)`, `(2,57)`, `(1,114)`
@@ -141,8 +157,10 @@ fn cases() -> Vec<Case> {
 
     // ── turn-chain binding: 7 declared columns and ZERO range lookups — the narrowest
     // production-dispatched descriptor here. ⚑ It DOES pull in the chip table (one `TID_P2`
-    // lookup binds the chain digest), which is why it refuses at (2,57) despite carrying no
-    // hashing in its own row: the chip is pulled in by the constraint LIST, not by width.
+    // lookup binds the chain digest) despite carrying no hashing in its own row: the chip is
+    // pulled in by the constraint LIST, not by width. That used to make it REFUSE at (2,57); since
+    // the `p3-fri` row-order fix it proves there like everything else, and it stays in this grid
+    // as the cheapest case that still exercises the quotient-extrapolation path.
     {
         let roots: Vec<BabyBear> = (0..5).map(|i| BabyBear::new(100 + i)).collect();
         let turns: Vec<(BabyBear, BabyBear)> = (0..4).map(|i| (roots[i], roots[i + 1])).collect();
@@ -341,9 +359,14 @@ fn committed_main_width(desc: &EffectVmDescriptor2) -> (usize, usize, usize) {
 struct Point {
     lb: usize,
     q: usize,
-    /// `Err(reason)` when the PROVER refused this rung for this descriptor — the load-bearing
-    /// column. A blowup below a table's constraint-degree floor is not a slower point, it is
-    /// NOT A POINT, and a sweep that panics on it hides that from the table.
+    /// `Err(reason)` when the PROVER refused this rung for this descriptor, or when the proof it
+    /// produced failed self-verify — the load-bearing column, and a sweep that panics on a refusal
+    /// hides it from the table.
+    ///
+    /// ⚑ 2026-08-14: this column used to be EXPECTED to be `Err` at `lb = 2` for chip-bearing
+    /// descriptors. It is not any more. The `OodEvaluationMismatch` those rows carried was a
+    /// row-order bug in `p3-fri`'s extrapolation path, now fixed in
+    /// `vendor/plonky3-fri-82cfad73`; see the note on the assertion at the end of §1.
     outcome: Result<(usize, f64, f64), String>,
 }
 
@@ -355,8 +378,11 @@ struct Measured {
     /// Range lookups the main layout carries — the second regressor of the §1b predictor.
     range_lookups: usize,
     /// Does this descriptor pull in the Poseidon2 CHIP table? (`TID_P2` / `TID_P2_NARROW` lookup.)
-    /// The chip carries the inline degree-7 x⁷ S-box, so it is the table whose degree sets the
-    /// descriptor's blowup FLOOR.
+    /// The chip carries the inline degree-7 x⁷ S-box — the highest constraint degree in the
+    /// registry, and therefore the first table to take `p3-fri`'s quotient-extrapolation path as
+    /// `log_blowup` comes down. It used to be read as the table that FLOORED the blowup; since
+    /// the row-order fix that path is correct and there is no floor. The column stays because it
+    /// still names which descriptors exercise the extrapolation branch at all.
     chip: bool,
     points: Vec<Point>,
 }
@@ -522,8 +548,8 @@ fn every_provable_descriptor_at_every_parity_point() {
                 apm / bpm,
                 bvm / avm,
             ),
-            (Ok((ab, _, _)), Err(_)) => println!(
-                "{:<28}{chip:>6}{:>8}{ab:>12}{:>12}   — lb=2 IS NOT A POINT FOR THIS DESCRIPTOR",
+            (Ok((ab, _, _)), Err(e)) => println!(
+                "{:<28}{chip:>6}{:>8}{ab:>12}{:>12}   ⚑ UNEXPECTED REFUSAL AT lb=2: {e}",
                 m.label, m.committed, "REFUSED",
             ),
             _ => println!(
@@ -566,38 +592,78 @@ fn every_provable_descriptor_at_every_parity_point() {
             Some((m, (b.0 as f64 - a.0 as f64) / 38.0, m.range_lookups))
         })
         .collect();
-    // TWO regressors, NO intercept: a per-query cost must vanish as the committed columns do.
-    // Normal equations for `P = α·W + β·n_lk`.
-    let (mut aa, mut ab, mut bb, mut ay, mut by) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    // ⚑ THREE regressors as of 2026-08-14, and the third one is the whole story of this repair.
+    //
+    // The old fit had TWO — `W_committed_main` and `n_range_lookups` — because it was fitted on
+    // the descriptors that could be MEASURED at (2,57), and until the `p3-fri` row-order fix that
+    // set excluded every chip-bearing one. **A model calibrated on a censored sample.** With the
+    // censoring removed it misses the chip-bearing rows by up to 99%: `poseidon2-hash-arity2` has
+    // THREE committed main columns and pays +96,868 bytes, which no function of `(3, 0)` predicts.
+    //
+    // The reason is structural and was always true: a query opens one row of EVERY committed
+    // matrix, and the Poseidon2 CHIP table is a committed matrix whose width is not in
+    // `W_committed_main` at all. Its contribution is a near-CONSTANT — the chip table has a fixed
+    // width and its own Merkle depth — so it enters as an INDICATOR, not as a width.
+    //
+    // Still NO intercept: a per-query cost must vanish as the committed matrices do.
+    // Normal equations for `P = α·W + β·n_lk + γ·[chip]`, solved by Gaussian elimination on the
+    // 3x3 (the 2x2 closed form does not extend and a hand-inlined 3x3 inverse is unreadable).
+    let mut nrm = [[0.0f64; 4]; 3];
     for (m, y, nlk) in &fitted {
-        let (w, l) = (m.committed as f64, *nlk as f64);
-        aa += w * w;
-        ab += w * l;
-        bb += l * l;
-        ay += w * y;
-        by += l * y;
+        let x = [m.committed as f64, *nlk as f64, m.chip as u8 as f64];
+        for i in 0..3 {
+            for j in 0..3 {
+                nrm[i][j] += x[i] * x[j];
+            }
+            nrm[i][3] += x[i] * y;
+        }
     }
-    let det = aa * bb - ab * ab;
-    let (slope_w, slope_l) = if det.abs() > 1e-9 {
-        ((ay * bb - by * ab) / det, (by * aa - ay * ab) / det)
-    } else {
-        (ay / aa, 0.0)
-    };
+    let mut sol = [0.0f64; 3];
+    {
+        let mut a = nrm;
+        for col in 0..3 {
+            let piv = (col..3)
+                .max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))
+                .expect("nonempty");
+            a.swap(col, piv);
+            assert!(
+                a[col][col].abs() > 1e-9,
+                "the design matrix is singular in column {col}: this grid no longer varies one of \
+                 (committed width, range lookups, chip presence) independently, so the fit below \
+                 is not identified and every §1b byte count priced off it is decoration."
+            );
+            for r in 0..3 {
+                if r == col {
+                    continue;
+                }
+                let f = a[r][col] / a[col][col];
+                for c in col..4 {
+                    a[r][c] -= f * a[col][c];
+                }
+            }
+        }
+        for i in 0..3 {
+            sol[i] = a[i][3] / a[i][i];
+        }
+    }
+    let (slope_w, slope_l, slope_chip) = (sol[0], sol[1], sol[2]);
     println!(
         "\n═══ THE STRUCTURAL PREDICTOR, CALIBRATED ON THIS RUN ═══\n\
-         fit  Δbytes(6→2) = 38 · ({slope_w:.3} · W_committed_main + {slope_l:.3} · n_range_lookups)\n\
-         frozen in §1b as ({P_PER_COLUMN} , {P_PER_RANGE_LOOKUP}) — a large drift here means the \
-         registry census below is priced off a stale fit."
+         fit  Δbytes(6→2) = 38 · ({slope_w:.3} · W_committed_main + {slope_l:.3} · n_range_lookups \
+         + {slope_chip:.1} · [chip])\n\
+         frozen in §1b as ({P_PER_COLUMN} , {P_PER_RANGE_LOOKUP} , {P_PER_CHIP}) — a large drift \
+         here means the registry census below is priced off a stale fit.\n\
+         ⚑ The chip term is NEW (2026-08-14). It could not be fitted before the `p3-fri` row-order \
+         fix, because no chip-bearing descriptor could be measured at (2,57) to fit it ON."
     );
     println!(
-        "\n{:<28}{:>8}{:>7}{:>14}{:>14}{:>10}{:>12}",
-        "descriptor", "commit", "rng lk", "Δ measured", "Δ predicted", "err %", "err bytes"
+        "\n{:<28}{:>8}{:>7}{:>6}{:>14}{:>14}{:>10}{:>12}",
+        "descriptor", "commit", "rng lk", "chip", "Δ measured", "Δ predicted", "err %", "err bytes"
     );
     let mut worst = 0.0f64;
     for (m, y, nlk) in &fitted {
         let measured = y * 38.0;
-        let predicted =
-            38.0 * (P_PER_COLUMN * m.committed as f64 + P_PER_RANGE_LOOKUP * *nlk as f64);
+        let predicted = predicted_delta_bytes(m.committed, *nlk, m.chip);
         let err = if measured.abs() > 1.0 {
             (predicted - measured) / measured * 100.0
         } else {
@@ -605,10 +671,11 @@ fn every_provable_descriptor_at_every_parity_point() {
         };
         worst = worst.max(err.abs());
         println!(
-            "{:<28}{:>8}{:>7}{:>14.0}{:>14.0}{:>9.1}%{:>+12.0}",
+            "{:<28}{:>8}{:>7}{:>6}{:>14.0}{:>14.0}{:>9.1}%{:>+12.0}",
             m.label,
             m.committed,
             nlk,
+            if m.chip { "YES" } else { "-" },
             measured,
             predicted,
             err,
@@ -620,10 +687,13 @@ fn every_provable_descriptor_at_every_parity_point() {
          (the frozen §1b coefficients claim ±{P_FIT_WORST_ERR_PCT:.0}%)"
     );
     assert!(
-        worst < 120.0,
-        "the frozen §1b predictor missed by {worst:.1}% on the set it was fitted to — it is no \
-         longer describing this tree and every §1b byte count is decoration. Re-fit \
-         P_PER_COLUMN/P_PER_RANGE_LOOKUP from the printed slopes."
+        worst < 1.5 * P_FIT_WORST_ERR_PCT,
+        "the frozen §1b predictor missed by {worst:.1}% on the set it was fitted to, against its \
+         own claimed ±{P_FIT_WORST_ERR_PCT:.0}% — it is no longer describing this tree and every \
+         §1b byte count is decoration. Re-fit P_PER_COLUMN / P_PER_RANGE_LOOKUP / P_PER_CHIP from \
+         the printed slopes, and if the CHIP term is what drifted, check first whether a second \
+         chip-shaped table (`TID_P2_NARROW`, `chip_state16`) has entered the grid — the indicator \
+         is one bit and cannot tell two of them apart."
     );
 
     // ── THE PROBE. Two independently-recorded costs, asserted.
@@ -672,27 +742,59 @@ fn every_provable_descriptor_at_every_parity_point() {
         );
     }
 
-    // ── ⚑ AND THE FLOOR IS REAL. At least one CHIP-BEARING descriptor must REFUSE at lb=2:
-    // the Poseidon2 chip's inline degree-7 x⁷ S-box needs a quotient degree of 6, and
-    // `log_blowup = 2` (blowup 4) cannot carry it. A green sweep in which every descriptor proves
-    // at every rung would mean this harness is not exercising the chip at all — and "land lb=2
-    // globally" would read as free when it is not expressible.
-    let chip_refusals: Vec<&str> = all
+    // ── ⚑⚑ THIS ASSERTION USED TO BE ITS OWN NEGATION. Read the note before editing it.
+    //
+    // Until 2026-08-14 the lines below asserted that at least one chip-bearing descriptor MUST
+    // REFUSE at (2,57) — "the floor is real" — on the reading that the Poseidon2 chip's inline
+    // degree-7 x⁷ S-box needs a quotient of degree 6 that a blowup of 4 cannot carry.
+    //
+    // **The refusal was a bug in `p3-fri`, and this gate had frozen it as a law.** Its
+    // extrapolation path (`get_evaluations_on_domain`'s `else` branch, reached exactly when
+    // `log_blowup < ceil(log2(d-1))` for some matrix) applied `bit_reverse_rows()` once too many:
+    // right values, wrong row order, wrong quotient, a well-formed proof its own verifier
+    // rejects. Fixed in `vendor/plonky3-fri-82cfad73/src/two_adic_pcs.rs`; proved by construction
+    // in `circuit/tests/fri_extrapolation_row_order.rs` (both paths equal an independent coset
+    // DFT; a degree-7 AIR verifies at lb=2; a corrupted trace still rejects).
+    //
+    // So the assertion is INVERTED, to the correct behaviour: a chip-bearing descriptor must
+    // PROVE AND VERIFY at (2,57) like every other one. It goes red if the bug returns — by a
+    // vendor re-sync, by a cargo git checkout shadowing the `[patch]`ed path, or by anyone
+    // "restoring" the old law.
+    let chip_cases: Vec<&Measured> = all.iter().filter(|m| m.chip).collect();
+    assert!(
+        !chip_cases.is_empty(),
+        "no case in this grid pulls in the Poseidon2 chip table, so the lb=2 leg below asserts \
+         nothing. The chip is the highest-degree table in the registry (d=7); if it has left this \
+         grid, the grid is no longer measuring the descriptor that used to set the floor."
+    );
+    let chip_refusals: Vec<(&str, &String)> = chip_cases
         .iter()
-        .filter(|m| m.chip && m.points.iter().any(|p| p.lb == 2 && p.outcome.is_err()))
-        .map(|m| m.label)
+        .filter_map(|m| {
+            m.points
+                .iter()
+                .find(|p| p.lb == 2)
+                .and_then(|p| p.outcome.as_ref().err())
+                .map(|e| (m.label, e))
+        })
         .collect();
     assert!(
-        !chip_refusals.is_empty(),
-        "no chip-bearing descriptor refused at (2,57). Either the chip S-box degree dropped (in \
-         which case PROOF-ECONOMICS §2c's 'degree-7 chip needs blowup >= 6' clause is stale and \
-         the whole lb=2 question reopens) or no case in this grid pulls in the chip table."
+        chip_refusals.is_empty(),
+        "⚑ chip-bearing descriptors REFUSED at (2,57): {chip_refusals:?}\n  A degree-7 AIR at \
+         log_blowup = 2 is a supported config — the `⌈log₂(d−1)⌉` 'floor' is a row-order bug in \
+         `p3-fri`'s extrapolation path, not a soundness bound. An `OodEvaluationMismatch` here \
+         means the fix in `vendor/plonky3-fri-82cfad73/src/two_adic_pcs.rs` is not in this build. \
+         Do NOT re-invert this assertion: run \
+         `cargo test -p dregg-circuit --release --test fri_extrapolation_row_order` first — that \
+         file settles the question by construction, and if IT is green while this is red the \
+         difference is which `p3-fri` got linked."
     );
     println!(
-        "\n⚑ (2,57) is NOT A POINT for these chip-bearing descriptors: {chip_refusals:?}\n  \
-         The Poseidon2 chip carries the INLINE degree-7 x^7 S-box; a blowup of 4 cannot carry its \
-         quotient. `log_blowup` is therefore NOT a free global knob — it is floored, \
-         per-descriptor, by the highest-degree table that descriptor's constraint list pulls in."
+        "\n✅ (2,57) IS A POINT for all {} chip-bearing descriptors in this grid.\n  The Poseidon2 \
+         chip carries the INLINE degree-7 x^7 S-box, whose quotient needs 8 chunks against a \
+         blowup of 4. plonky3 computes that quotient by re-interpolating off the committed LDE, \
+         and — since the row-order fix — computes it CORRECTLY. `log_blowup` is a free global \
+         knob again; the only ceiling on it is two-adicity (see `the_row_ceiling_…` below).",
+        chip_cases.len()
     );
 }
 
@@ -700,22 +802,63 @@ fn every_provable_descriptor_at_every_parity_point() {
 // §1b — THE WHOLE REGISTRY, under the predictor calibrated in §1.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The no-intercept two-regressor fit from §1's measured set:
-/// `per-query bytes ≈ 8.623 · W_committed_main + 43.613 · n_range_lookups`.
-/// A per-query cost must vanish as the committed columns vanish, so the fit carries no intercept.
+/// The no-intercept THREE-regressor fit from §1's measured set:
+/// `per-query bytes ≈ P_PER_COLUMN · W_committed_main + P_PER_RANGE_LOOKUP · n_range_lookups
+/// + P_PER_CHIP · [descriptor pulls in the Poseidon2 chip table]`.
+/// A per-query cost must vanish as the committed matrices vanish, so the fit carries no intercept.
 /// §1 re-derives these from the run's own measurements and reports the drift; they are frozen here
 /// so §1b can price the descriptors §1 cannot prove.
-const P_PER_COLUMN: f64 = 8.623;
-const P_PER_RANGE_LOOKUP: f64 = 43.613;
-/// Measured worst per-descriptor error of that fit on the §1 set (2026-08-04, release, this box).
+///
+/// ⚑ **The chip term was added 2026-08-14 and the other two moved with it.** Until the `p3-fri`
+/// row-order fix, no chip-bearing descriptor could be MEASURED at `(2,57)`, so the fit was
+/// calibrated on a **censored sample** and had no chip regressor to find. With the censoring
+/// removed the old two-regressor form misses those rows by up to **99%**: `poseidon2-hash-arity2`
+/// has THREE committed main columns and pays **+96,868 bytes**, which no function of `(3, 0)`
+/// predicts. The chip table is a committed matrix of its own — every query opens a row of it and
+/// a Merkle path to it — and its width is not in `W_committed_main`, so it enters as an
+/// INDICATOR rather than as a width.
+/// ⚑ And the tell that the chip term is REAL and not a curve-fit: adding it moved the other two
+/// coefficients by **0.01%** — `8.623 → 8.622` and `43.613 → 43.617`, against a chip term of
+/// **2535.3 per query**. The old fit was not wrong about the chip-free descriptors; it simply had
+/// no term for a matrix it had never been allowed to see. Chip-bearing per-descriptor error goes
+/// from **76–99%** to **0.0–4.3%**.
+const P_PER_COLUMN: f64 = 8.622;
+const P_PER_RANGE_LOOKUP: f64 = 43.617;
+const P_PER_CHIP: f64 = 2535.3;
+/// Measured worst per-descriptor error of that fit on the §1 set (2026-08-14, release, this box).
 /// Quoted with every §1b number so no reader takes a predicted byte count for a measured one.
+///
+/// ⚠ The worst row is `presentation-freshness` at **−63%** (43 committed columns, 2 range
+/// lookups, no chip: predicted 17,403, measured 46,996) — **exactly where it was under the old
+/// two-regressor fit.** The chip term did not touch it (it is chip-free) and did not need to: the
+/// `±63%` this constant has always claimed was a fact about THIS descriptor, correct for the
+/// chip-free population the fit was calibrated on and completely uninformative about the
+/// chip-bearing half it had never been allowed to see. Every other chip-free row is within 25% and
+/// every chip-bearing row within 4.3%, so this remains **one descriptor carrying a committed
+/// matrix none of the three regressors names** — a fourth term waiting to be found, not noise, and
+/// the same shape of defect the chip term just fixed, one table further down.
+///
+/// The measured Δbytes are byte-identical across runs (46,996 every time); only the wall clocks in
+/// the grid above move, and those are contention, not the artifact.
 const P_FIT_WORST_ERR_PCT: f64 = 63.0;
 
-/// ⚑ **THE OTHER 83 DESCRIPTORS.** For every by-name golden: is `(2,57)` even a POINT for it
-/// (does its constraint list pull in the degree-7 Poseidon2 chip?), and if so what does the
-/// blowup drop cost it on the wire? The chip column is STRUCTURAL and exact — it is read off the
-/// same constraint list `Presence::of` reads. The byte column is PREDICTED and carries its
-/// calibration error.
+/// `Δbytes(6,19 → 2,57)` under the frozen fit. One definition, used by §1's error table and §1b's
+/// registry census, so the two can never drift into pricing the same descriptor differently.
+fn predicted_delta_bytes(committed: usize, range_lookups: usize, chip: bool) -> f64 {
+    38.0 * (P_PER_COLUMN * committed as f64
+        + P_PER_RANGE_LOOKUP * range_lookups as f64
+        + P_PER_CHIP * chip as u8 as f64)
+}
+
+/// ⚑ **THE OTHER 83 DESCRIPTORS.** For every by-name golden: what does the blowup drop cost it on
+/// the wire, and does its constraint list pull in the degree-7 Poseidon2 chip (i.e. does it take
+/// `p3-fri`'s quotient-extrapolation path at `lb = 2`)? The chip column is STRUCTURAL and exact —
+/// it is read off the same constraint list `Presence::of` reads. The byte column is PREDICTED and
+/// carries its calibration error.
+///
+/// ⚑ 2026-08-14: the chip column used to mean "`(2,57)` is NOT A POINT for this descriptor", and
+/// chip-bearing goldens were excluded from the predicted total. That exclusion was pricing a
+/// `p3-fri` row-order bug (see §1's inverted assertion); every golden is now priced.
 #[test]
 fn the_whole_registry_priced_under_the_calibrated_predictor() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/descriptors/by-name");
@@ -737,8 +880,8 @@ fn the_whole_registry_priced_under_the_calibrated_predictor() {
     );
     println!(
         "predicted Δbytes(6,19 → 2,57) = 38 · ({P_PER_COLUMN} · W_committed + \
-         {P_PER_RANGE_LOOKUP} · n_range_lookups), calibrated in §1, worst measured error \
-         ±{P_FIT_WORST_ERR_PCT:.0}%"
+         {P_PER_RANGE_LOOKUP} · n_range_lookups + {P_PER_CHIP} · [chip]), calibrated in §1, \
+         worst measured error ±{P_FIT_WORST_ERR_PCT:.0}%"
     );
     println!(
         "\n{:<58}{:>7}{:>9}{:>7}{:>6}{:>14}",
@@ -769,10 +912,8 @@ fn the_whole_registry_priced_under_the_calibrated_predictor() {
         if chip {
             chip_bearing += 1;
         }
-        let pred = 38.0 * (P_PER_COLUMN * committed as f64 + P_PER_RANGE_LOOKUP * nlk as f64);
-        if !chip {
-            total_pred += pred;
-        }
+        let pred = predicted_delta_bytes(committed, nlk, chip);
+        total_pred += pred;
         rows.push((name, declared, committed, nlk, chip, pred));
     }
     // Widest first — the descriptors the global knob costs the most.
@@ -781,23 +922,24 @@ fn the_whole_registry_priced_under_the_calibrated_predictor() {
         println!(
             "{name:<58}{declared:>7}{committed:>9}{nlk:>7}{:>6}{:>14}",
             if *chip { "YES" } else { "-" },
-            if *chip {
-                "n/a (refuses)".to_string()
-            } else {
-                format!("{:+.0}", pred)
-            }
+            format!("{:+.0}", pred)
         );
     }
     if !unparsed.is_empty() {
         println!("\n⚠ goldens neither checker parsed (excluded from the census): {unparsed:?}");
     }
     println!(
-        "\n{chip_bearing} of {} goldens pull in the Poseidon2 chip table, so (2,57) IS NOT A POINT \
-         for them — a global lb=2 would not be a slower/bigger config for those descriptors, it \
-         would be an UNPROVABLE one. Predicted total extra wire across the {} chip-FREE goldens: \
-         {:.1} MiB per proof-set.",
+        "\n{chip_bearing} of {} goldens pull in the Poseidon2 chip table — i.e. take `p3-fri`'s \
+         quotient-extrapolation path at lb=2 rather than the truncation path. Since the row-order \
+         fix that is a code path, not a refusal: (2,57) is a POINT for all {} of them, and the \
+         predicted total extra wire across the WHOLE registry is {:.1} MiB per proof-set. ⚠ The \
+         wire is the axis the drop LOSES on, together with the verifier (2.28x more Poseidon2 \
+         permutations, measured). The prover is the axis it WINS on: 15.19x fewer prover \
+         permutations, grind-free, on the IR-v2 descriptor batch — exact counts, not wall clock, \
+         from `ir2_phase_profile.rs::poseidon2_permutation_counts_per_phase` §D2. This census \
+         prices one side only.",
         rows.len(),
-        rows.len() - chip_bearing,
+        rows.len(),
         total_pred / (1024.0 * 1024.0)
     );
 

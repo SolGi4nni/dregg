@@ -12,6 +12,37 @@
 //! can just assume that every polynomial is defined over the subgroup of the relevant size.
 //!
 //! If we changed our domain construction (e.g., using multiple cosets), we would need to carefully reconsider these assumptions.
+//!
+//! ---
+//!
+//! # ⚑ DREGG DELTA 2 — `get_evaluations_on_domain`'s extrapolation path had the rows wrong
+//!
+//! Upstream `82cfad73` (and every `p3-fri` through 0.6.3, and `main` at `f5b7977e`) applies
+//! `bit_reverse_rows()` **once too many** on the re-interpolation fallback of
+//! `get_evaluations_on_domain`. The fast path (a prefix of the bit-reversed committed LDE,
+//! then one reversal) returns **natural** row order; the slow path's `coset_dft_batch` is
+//! already natural, and the trailing reversal turned it **bit-reversed**. The caller then
+//! evaluates the AIR constraints on permuted trace rows, builds a wrong quotient, and emits
+//! a complete, well-formed proof its own verifier rejects with `OodEvaluationMismatch`.
+//!
+//! The slow path runs exactly when a matrix's quotient domain exceeds its committed LDE,
+//! i.e. when `log_blowup < log_quotient_degree = ⌈log₂(d−1)⌉` for that AIR's max constraint
+//! degree `d`. That is why the symptom reads as "a degree-7 S-box requires `log_blowup ≥ 3`":
+//! **the floor was never a soundness bound, a FRI property, or a fact about the field — it
+//! was this row permutation.** With the fix, a degree-7 AIR verifies `Ok` at `log_blowup = 2`
+//! and a corrupted trace still rejects.
+//!
+//! Introduced upstream by PR #1352 / `b9863b6b` (2026-03-02) — the same commit that deleted
+//! the guarding `assert!(lde.height() >= domain.size())`, turning a loud panic into a silently
+//! invalid proof. The test that commit added, named `extrapolation`, takes the FAST path
+//! (`shift == GENERATOR` and `32 >= 16`) and never enters the branch it was written to cover.
+//! Upstream PR #1982 is this same one-line change; it is open with CHANGES_REQUESTED as of
+//! 2026-08-14, so we carry it here.
+//!
+//! Verified by construction in `circuit/tests/fri_extrapolation_row_order.rs` (both PCS paths
+//! agree with an independent `coset_dft_batch`; a degree-7 AIR verifies at `log_blowup = 2`;
+//! a corrupted trace still rejects) and end-to-end by
+//! `circuit/tests/fri_blowup_global_knob_survey.rs`.
 
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
@@ -468,6 +499,16 @@ where
         // The committed LDE contains bit-reversed evaluations over `gH`.
         // Un-bit-reverse, coset iDFT to recover coefficients, truncate to
         // the original polynomial degree, then coset DFT onto the target domain.
+        //
+        // ⚑ DREGG DELTA 2 (2026-08-14) — THE ROW-ORDER FIX. See the header of this file.
+        // `coset_dft_batch` yields evaluations in NATURAL order (its `Evaluations` is a
+        // `BitReversedMatrixView` whose *stored* buffer is natural). The fast path above
+        // returns a natural-order matrix (bit-reversed storage + one `bit_reverse_rows`).
+        // Upstream's slow path applied ONE `bit_reverse_rows()` to an already-natural
+        // result, so the two paths disagreed in row order: right values, wrong rows.
+        // The inserted `.bit_reverse_rows()` below cancels the trailing one (the call is
+        // an involution), making both paths agree. It is FREE for `Radix2DitParallel`:
+        // the added call just unwraps the `BitReversedMatrixView`.
         let poly_height = lde.height() >> self.fri.log_blowup;
         let lde_mat = lde.as_view().bit_reverse_rows().to_row_major_matrix();
         let mut coeffs = self.dft.coset_idft_batch(lde_mat, Val::GENERATOR);
@@ -477,6 +518,7 @@ where
         let result = self
             .dft
             .coset_dft_batch(coeffs, domain.shift())
+            .bit_reverse_rows()
             .to_row_major_matrix();
         let result_width = result.width();
 

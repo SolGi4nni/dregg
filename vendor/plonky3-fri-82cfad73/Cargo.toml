@@ -9,7 +9,7 @@ homepage = "https://github.com/Plonky3/Plonky3"
 
 [package.metadata.dregg]
 upstream-revision = "82cfad73cd734d37a0d51953094f970c531817ec"
-local-delta = "Injectable, proof-wire-identical TwoAdic FRI matrix-fold backend"
+local-delta = "Injectable, proof-wire-identical TwoAdic FRI matrix-fold backend; plus the `get_evaluations_on_domain` row-order fix (upstream PR #1982, open/CHANGES_REQUESTED) — see the header of src/two_adic_pcs.rs"
 
 [dependencies]
 p3-challenger = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }

@@ -7170,17 +7170,27 @@ fn instance_airs(
 /// DROPPING blowup at parity (the (2, 57) / (1, 114) points) inflates it. The next
 /// step up, (7, 17), buys only ~6.5 KiB for a further prover doubling: declined.
 ///
-/// ⚑ **CORRECTION 2026-08-04 — `(2, 57)` AND `(1, 114)` ARE NOT POINTS FOR MOST OF THIS
-/// REGISTRY, AND THE SENTENCE ABOVE READ AS THOUGH THEY WERE.** They are security-parity
-/// points on the two QUERY columns; they are not reachable configs. Every descriptor whose
+/// ⚑ **CORRECTION 2026-08-04, RETRACTED 2026-08-14 — `(2, 57)` AND `(1, 114)` ARE POINTS
+/// FOR THE WHOLE REGISTRY AFTER ALL.** The 08-04 correction read: *"every descriptor whose
 /// constraint list pulls in the Poseidon2 chip table REFUSES to prove at `log_blowup = 2`
-/// (`OodEvaluationMismatch { index: Some(1) }`, index 1 being the chip) because the chip's
-/// inline degree-7 x⁷ S-box needs a degree-6 quotient and a blowup of 4 cannot carry it.
-/// **38 of the 91 by-name goldens pull it in.** Measured by
-/// `circuit/tests/fri_blowup_global_knob_survey.rs`; the degree is the one frozen as
-/// `chip = 7` in `tests::ir2_degree_budget`. So the lowest parity rung the WHOLE registry
-/// can reach is `(3, 39)` — which is not one of the three named above — and the lowest a
-/// chip-free descriptor can reach is `(2, 57)`.
+/// (`OodEvaluationMismatch { index: Some(1) }`) because the chip's inline degree-7 x⁷ S-box
+/// needs a degree-6 quotient and a blowup of 4 cannot carry it."* **The refusal was real and
+/// the explanation was wrong.** `p3-fri`'s `get_evaluations_on_domain` extrapolation path —
+/// the branch taken exactly when a matrix's quotient domain outgrows its committed LDE, i.e.
+/// when `log_blowup < ⌈log₂(d−1)⌉` — applied `bit_reverse_rows()` once too many. Right
+/// values, wrong row order, wrong quotient, a well-formed proof its own verifier rejects.
+/// One inserted call in `vendor/plonky3-fri-82cfad73/src/two_adic_pcs.rs` fixes it (upstream
+/// PR #1982 is the same change, open with CHANGES_REQUESTED); settled by construction in
+/// `circuit/tests/fri_extrapolation_row_order.rs` — both PCS paths against an independent
+/// coset DFT, a degree-7 AIR verifying at `lb = 2`, and a corrupted trace still rejecting.
+///
+/// **So `⌈log₂(d−1)⌉` is not a floor.** It is the threshold at which the prover switches from
+/// truncating the committed LDE to re-interpolating off it — one iDFT+DFT per matrix, not a
+/// refusal. The constraint that IS real is the two-adicity ceiling
+/// (`max rows = 2^(TWO_ADICITY − log_blowup)`), and it runs the other way: lower blowup buys
+/// rows. `(2, 57)` also RAISES the commit-phase column (`ε_C ∝ ρ^{−3/2}`), which is the one
+/// that binds at the wrap. The 43-of-132 chip-bearing count still names which descriptors take
+/// the extrapolation path; it no longer names which ones can be proved.
 ///
 /// ⚠ And "parity" covers the two query columns ONLY. From `@[export] dregg_fri_ledger`,
 /// `(6,19) → (2,57)`: capacity `130 → 130` and Johnson `73 → 73`, but per-fold `109 → 118`
