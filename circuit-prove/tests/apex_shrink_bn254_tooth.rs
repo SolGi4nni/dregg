@@ -6,7 +6,7 @@
 //! 1. fold a real 2-turn rotated chain (`prove_turn_chain_recursive`, the same
 //!    fixture as `recursion_vk_determinism.rs`) → the apex
 //!    `BatchStarkProof<DreggRecursionConfig>` (BabyBear Poseidon2-W16 hashing,
-//!    `ir2_leaf_wrap_config` FRI knobs);
+//!    `turn_chain_root_config` FRI knobs);
 //! 2. verify the apex host-side (the input to the shrink is genuinely valid);
 //! 3. prove the apex-verifier AIR over it UNDER `DreggOuterConfig`
 //!    (`apex_shrink::shrink_apex_to_outer`) → the SHRINK PROOF, whose Merkle
@@ -20,7 +20,7 @@
 //! run with:
 //!   cargo test -p dregg-circuit-prove --release --test apex_shrink_bn254_tooth -- --ignored --nocapture
 //!
-//! ANSWERS:         does ONE fixed 2-turn rotated transfer chain fold to an apex that verifies under ir2_leaf_wrap_config, shrink under DreggOuterConfig to a proof whose main and quotient Merkle roots exceed 31 bits, verify through the RUST verify_shrink_proof — and does that same verifier REJECT the proof with one opened trace value incremented by ONE?
+//! ANSWERS:         does ONE fixed 2-turn rotated transfer chain fold to an apex that verifies under the turn chain's ROOT config, shrink under DreggOuterConfig to a proof whose main and quotient Merkle roots exceed 31 bits, verify through the RUST verify_shrink_proof — and does that same verifier REJECT the proof with one opened trace value incremented by ONE?
 //! DOES NOT ANSWER: whether the gnark BN254 verifier accepts these bytes (step 4 is the Rust twin of that check, never the Go one), whether the apex AIR constrains what the two turns MEAN, or whether any chain other than this one hard-coded fixture shrinks at all.
 
 use std::time::Instant;
@@ -29,7 +29,7 @@ use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit_prove::apex_shrink::{shrink_apex_to_outer, verify_shrink_proof};
 use dregg_circuit_prove::dregg_outer_config::{OUTER_DIGEST_ELEMS, create_outer_config};
 use dregg_circuit_prove::ivc_turn_chain::{
-    FinalizedTurn, ir2_leaf_wrap_config, prove_turn_chain_recursive,
+    FinalizedTurn, prove_turn_chain_recursive, turn_chain_root_config,
 };
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::verify_recursive_batch_proof_with_config;
@@ -44,7 +44,7 @@ use p3_symmetric::MerkleCap;
 /// cheap single-source-of-truth for a doc line that is also runtime output.
 fn scope() {
     println!(
-        "ANSWERS:         does ONE fixed 2-turn rotated transfer chain fold to an apex that verifies under ir2_leaf_wrap_config, shrink under DreggOuterConfig to a proof whose main and quotient Merkle roots exceed 31 bits, verify through the RUST verify_shrink_proof — and does that same verifier REJECT the proof with one opened trace value incremented by ONE?"
+        "ANSWERS:         does ONE fixed 2-turn rotated transfer chain fold to an apex that verifies under the turn chain's ROOT config, shrink under DreggOuterConfig to a proof whose main and quotient Merkle roots exceed 31 bits, verify through the RUST verify_shrink_proof — and does that same verifier REJECT the proof with one opened trace value incremented by ONE?"
     );
     println!(
         "DOES NOT ANSWER: whether the gnark BN254 verifier accepts these bytes (step 4 is the Rust twin of that check, never the Go one), whether the apex AIR constrains what the two turns MEAN, or whether any chain other than this one hard-coded fixture shrinks at all."
@@ -115,11 +115,22 @@ fn real_apex_shrinks_bn254_native_and_verifies() {
     let whole = prove_turn_chain_recursive(&the_chain()).expect("the fixed 2-turn chain folds");
     let apex_time = t0.elapsed();
 
-    let inner_config = ir2_leaf_wrap_config();
+    // ⚑ **THE APEX ROOT IS READ AT THE TOWER'S ROOT CONFIG, NOT AT THE LEAF WRAP'S.** This used to
+    // be `ir2_leaf_wrap_config()`, and had been RED since the 2026-08-08 mint split: a turn-chain
+    // leaf now mints at `create_recursion_config`'s engine, so every fold above it — the apex
+    // included — emits `(lb 3, q 38)`, and reading it at the pre-split `(lb 6, q 19)` dies exactly
+    // as `config.rs` predicts, `QueryProofCountMismatch { expected: 19, got: 38 }`.
+    //
+    // The sibling `apex_shrink_gnark_fixture.rs` was fixed on 2026-08-08 and carries the write-up;
+    // this twin was not, so THE wrap capstone tooth has been unpassable for six days while saying
+    // `#[ignore = "SLOW"]` rather than "broken". Found 2026-08-14 by the grind-schedule lane, which
+    // ran it as an outer-path witness and had to establish it was not its own regression first.
+    // (`documented != detected`: the fix landed in one of two tests and nobody re-ran the other.)
+    let inner_config = turn_chain_root_config();
 
     // ---- 2. the apex is genuinely valid BEFORE we shrink it ---------------
     verify_recursive_batch_proof_with_config(&whole.root.0, &inner_config)
-        .expect("the real apex verifies under ir2_leaf_wrap_config");
+        .expect("the real apex verifies under the turn chain's ROOT config");
 
     let apex_bytes = postcard::to_allocvec(&whole.root.0)
         .expect("apex proof postcard-serializes")

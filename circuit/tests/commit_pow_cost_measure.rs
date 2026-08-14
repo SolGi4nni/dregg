@@ -95,14 +95,32 @@ fn commit_pow_price_per_bit() {
     //
     //   * The rate above is the ACHIEVED rate, and it is a SINGLE-CORE rate wearing a whole-machine
     //     name. The seconds column below is therefore still CORRECT AS MEASURED — do not multiply
-    //     it by anything — but it is not a hardware floor.
-    //   * A windowed parallel-`min` grind (§G3 strategy C) returns BYTE-FOR-BYTE the same witness
-    //     and measures **7.49× on the critical path at 12 threads**. If that lands, every seconds
-    //     figure below divides by ~T, and `commit_proof_of_work_bits` gets ~3.6 bits cheaper.
+    //     it by anything.
     //
-    // The old sentence was written to stop a reader double-counting parallelism; today it makes one
-    // count parallelism that is gone. Leaving it would be keeping a cost verdict whose premise is
-    // refuted, which is worse than having no comment at all.
+    // ⚑ AND THAT IS ALREADY OUT OF DATE AGAIN, IN THE OTHER DIRECTION. The paragraph above ended
+    // "a windowed parallel-`min` grind … IF THAT LANDS, every seconds figure below divides by ~T".
+    // **It landed the same day** (`11cff8852`): all five grind sites now use a windowed parallel
+    // min that returns byte-for-byte the same witness (checked over 128 transcripts, exhaustive
+    // minimality, and end-to-end on real serialized proofs at three thread counts — §G6/§G7).
+    //
+    // So, MEASURED post-fix at 12 threads over 512 draws: the critical path falls **10.6× on the
+    // mean and 11.8× on the p99** while total work rises **12.6%**. Consequences for this test:
+    //
+    //   * **The seconds column below is now a ~10× OVER-estimate on a 12-core box**, and it stays
+    //     an over-estimate on any machine with more cores. It is a single-core figure and the grind
+    //     is no longer single-core. Re-run `grind_rate_per_sec` before quoting it.
+    //   * `commit_proof_of_work_bits` is correspondingly ~3.4 bits cheaper than this test prices it
+    //     (log2 of the measured 10.6). Every `commit_pow` in the tree is still 0; this changes what
+    //     turning one on would cost, not what anything currently costs.
+    //
+    // ⚠ **Do not read the two figures above as one number.** 10.6× is a CRITICAL-PATH ratio and
+    // +12.6% is a WORK ratio; they have different units and move in opposite directions, because a
+    // windowed scan does not stop at the first hit. Multiplying them is meaningless.
+    //
+    // The lesson this comment is now on its SECOND instance of: a cost verdict outlives its
+    // premise. The first premise (`find_map_any`) left in a hardening commit; the second
+    // ("if that lands") was satisfied hours after it was written. Both times the paragraph stayed
+    // put. Notes: `~/dev/zkml-research/notes/grind-fix.md`.
     println!(
         "  {:<10}{:>16}{:>20}{:>14}",
         "cpow bits", "perms total", "achieved (s)", "runnable?"

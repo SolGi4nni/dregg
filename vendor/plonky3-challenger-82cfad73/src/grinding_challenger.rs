@@ -94,11 +94,23 @@ use crate::{
 /// * **large `c`** — fewer joins and, at `c = 8`, literally fixed work (one window over 64 draws,
 ///   measured), but a proportionally larger constant cost.
 ///
-/// `c = 1/4` is picked from the measured sweep in `grind_phase_measure.rs` §G3/§G6, not from
-/// roundness: it is inside the flat basin of the measured `E[latency]` curve, costs **1.13x** the
-/// expected total work (so the serial/1-thread path regresses by 13%, not by `c`), and keeps the
-/// window at `2^bits / 4` candidates = 4,096 batches at the deployed `bits = 16`, which is ~340
-/// batches per worker on a 12-core box — large enough that the join is a few percent.
+/// ⚑ **Every EXACT column says smaller `c` is better, monotonically** — over 512 draws at `T = 12`
+/// the mean critical path is `0.087 / 0.089 / 0.094 / 0.106` of the old path's at
+/// `c = 1/16, 1/8, 1/4, 1/2`, and total work is `1.032 / 1.063 / 1.126 / 1.267`. The only thing
+/// opposing `c -> 0` is the per-window rayon barrier, and a barrier is **invisible to an operation
+/// count**, so it was measured on its own (96 tasks on 12 threads, no work in them, min of 4096:
+/// **7.1 us**) and the latency derived from the exact counts rather than benchmarked.
+///
+/// `c = 1/4` is the **minimax** choice across the uncertainty in that one measured constant, not
+/// the argmin at its measured value: `c = 1/8` wins by 3% if a barrier really costs 7.1 us, and
+/// loses everywhere above ~2x that, while `c = 1/4` is within 6% of the best across a 10x range.
+/// It costs **1.126x** the expected total work (so a serial/1-thread grind regresses ~13%), holds
+/// the barrier to **3.1%** of a window, and puts the window at `2^bits / 4` candidates = 4,096
+/// batches at the deployed `bits = 16`.
+///
+/// ⚠ A whole-grind wall clock cannot pick this parameter on a contended box and was not allowed to:
+/// across two runs at load 24 and load 62 the timed column moved its own minimum from `c = 1/4` to
+/// `c = 2`. `grind_phase_measure.rs` §G3 ⑤ prints both so the disagreement stays visible.
 const GRIND_WINDOW_C_NUM: u64 = 1;
 const GRIND_WINDOW_C_DEN: u64 = 4;
 
@@ -153,7 +165,13 @@ where
     S: Fn(u64) -> Option<T> + Sync + Send,
 {
     // A zero window would not advance; a window wider than the span is just one window.
-    let window = window.max(1).min(span.max(1));
+    //
+    // ⚑ The `usize` clamp is load-bearing on a 32-bit target and a no-op on a 64-bit one. The
+    // window is iterated as a `usize` range (that is what makes it INDEXED, see above), so a
+    // window wider than `usize::MAX` would TRUNCATE, silently skip candidates, and could return a
+    // non-minimal witness — the one way this schedule could reach the answer. `default_grind_window`
+    // returns up to `2^61` for a 64-bit field, so the bound is reachable in principle.
+    let window = window.max(1).min(span.max(1)).min(usize::MAX as u64);
     let threads = current_num_threads().max(1) as u64;
     let mut lo = 0u64;
     while lo < span {
