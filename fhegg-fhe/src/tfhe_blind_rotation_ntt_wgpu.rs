@@ -170,7 +170,6 @@ struct ResidentPbsStage {
 }
 
 struct GpuContext {
-    _instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
     adapter: String,
@@ -211,17 +210,22 @@ struct GpuContext {
 
 impl GpuContext {
     fn initialize() -> GpuState {
-        let instance = wgpu::Instance::default();
-        let Some(adapter) =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                ..Default::default()
-            }))
-        else {
-            return GpuState::Unavailable(TorusCpuFallbackReason::NoAdapter);
+        // The SHARED device — see `gpu_device`. This kernel's own SHAPE POLICY below is
+        // deliberately NOT centralized there: it is a statement about what
+        // `torus_pbs_transform_resident.wgsl` needs (9 storage buffers, a 256-wide workgroup,
+        // 16 KiB of workgroup storage), which only this module knows. It reads the shared
+        // adapter's limits and refuses exactly as before.
+        let shared = match crate::gpu_device::shared_gpu() {
+            Ok(shared) => shared,
+            Err(crate::gpu_device::SharedGpuUnavailable::NoAdapter) => {
+                return GpuState::Unavailable(TorusCpuFallbackReason::NoAdapter);
+            }
+            Err(crate::gpu_device::SharedGpuUnavailable::DeviceRequestFailed(error)) => {
+                return GpuState::Unavailable(TorusCpuFallbackReason::DeviceRequestFailed(error));
+            }
         };
-        let info = adapter.get_info();
-        let limits = adapter.limits();
+        let info = &shared.info;
+        let limits = shared.limits.clone();
         if limits.max_storage_buffers_per_shader_stage < 9
             || limits.max_compute_invocations_per_workgroup < 256
             || limits.max_compute_workgroup_size_x < 256
@@ -229,24 +233,10 @@ impl GpuContext {
         {
             return GpuState::Unavailable(TorusCpuFallbackReason::ShapeExceedsAdapterLimits);
         }
-        let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("TFHE transform-resident PBS"),
-                required_features: wgpu::Features::empty(),
-                required_limits: limits.clone(),
-                memory_hints: Default::default(),
-            },
-            None,
-        )) {
-            Ok(pair) => pair,
-            Err(error) => {
-                return GpuState::Unavailable(TorusCpuFallbackReason::DeviceRequestFailed(
-                    error.to_string(),
-                ));
-            }
-        };
+        let device = shared.device.clone();
+        let queue = shared.queue.clone();
 
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = shared.validation_scope();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("torus_pbs_transform_resident.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
@@ -422,10 +412,9 @@ impl GpuContext {
         let centered_modulus_switch_batch = make_scalar_chain("centered_modulus_switch_batch");
         let add_large_lwe_pairs = make_scalar_chain("add_large_lwe_pairs");
         let context = Self {
-            _instance: instance,
             device,
             queue,
-            adapter: info.name,
+            adapter: info.name.clone(),
             backend: format!("{:?}", info.backend),
             limits,
             bgl,
@@ -460,7 +449,7 @@ impl GpuContext {
             centered_modulus_switch_batch,
             add_large_lwe_pairs,
         };
-        if let Some(error) = pollster::block_on(context.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return GpuState::Unavailable(TorusCpuFallbackReason::PipelineUnavailable(format!(
                 "transform-resident PBS shader validation failed: {error}"
             )));
@@ -524,7 +513,7 @@ impl GpuContext {
         }
 
         let crt_words = build_crt_data(&plan.rows);
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let bsk_spectra = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -669,7 +658,7 @@ impl GpuContext {
         }
         self.queue.submit([encoder.finish()]);
         self.device.poll(wgpu::Maintain::Wait);
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(TransformPbsGpuError::Execution(format!(
                 "TFHE BSK transform/upload failed: {error}"
             )));
@@ -765,7 +754,7 @@ impl GpuContext {
             ));
         }
 
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let accumulator_a = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -927,7 +916,7 @@ impl GpuContext {
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output_bytes);
         self.queue.submit([encoder.finish()]);
         self.device.poll(wgpu::Maintain::Wait);
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(TransformPbsGpuError::Execution(format!(
                 "TFHE transform-resident PBS dispatch failed: {error}"
             )));
@@ -1219,7 +1208,7 @@ impl GpuContext {
             ));
         }
 
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let digits = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1756,7 +1745,7 @@ impl GpuContext {
             self.queue.submit([encoder.finish()]);
         }
         self.device.poll(wgpu::Maintain::Wait);
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(TransformPbsGpuError::Execution(format!(
                 "TFHE resident comparison dispatch failed: {error}"
             )));

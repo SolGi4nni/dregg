@@ -110,6 +110,9 @@ pub mod fhir;
 /// Exact bounded-domain BFV zero conversion using complementary-root pairs.
 pub mod fhir_paired_root_zero;
 pub mod gpu_arena;
+/// The one `wgpu::Device` every GPU kernel in this crate binds. Two devices cannot share a buffer,
+/// so a per-module device made cross-kernel residency unreachable rather than unimplemented.
+pub mod gpu_device;
 pub mod gpu_qualification;
 /// The sumcheck prover's multilinear fold, on the arena's device — the fusion seam between an FHE
 /// evaluation's resident intermediates and a prover's evaluation tables.

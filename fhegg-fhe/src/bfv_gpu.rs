@@ -29,21 +29,12 @@ struct GpuCtx {
 fn ctx() -> Option<&'static GpuCtx> {
     static CTX: OnceLock<Option<GpuCtx>> = OnceLock::new();
     CTX.get_or_init(|| {
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))?; // wgpu 24: request_adapter yields Option — None (headless CI) → caller falls back to CPU
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("bfv-fold"),
-                required_features: wgpu::Features::empty(),
-                required_limits: adapter.limits(),
-                memory_hints: Default::default(),
-            },
-            None,
-        ))
-        .ok()?;
+        // The SHARED device — see `gpu_device`. `Err` here is headless CI (no adapter) or a device
+        // refusal, exactly the two cases the old per-module `request_adapter`/`request_device` pair
+        // folded into `None`; the caller still falls back to the CPU fold.
+        let shared = crate::gpu_device::shared_gpu().ok()?;
+        let device = shared.device.clone();
+        let queue = shared.queue.clone();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bfv_fold.wgsl"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/bfv_fold.wgsl").into()),

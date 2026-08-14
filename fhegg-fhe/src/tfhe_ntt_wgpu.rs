@@ -210,7 +210,6 @@ pub(crate) fn signed_residue(value: i64, modulus: u64) -> u64 {
 }
 
 struct GpuContext {
-    _instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
     adapter: String,
@@ -222,30 +221,16 @@ struct GpuContext {
 
 impl GpuContext {
     fn initialize() -> GpuState {
-        let instance = wgpu::Instance::default();
-        let Some(adapter) =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                ..Default::default()
-            }))
-        else {
+        // The SHARED device — see `gpu_device`. Both former failure modes (no adapter, device
+        // refused) collapsed into `GpuState::Unavailable` here already, and still do.
+        let Ok(shared) = crate::gpu_device::shared_gpu() else {
             return GpuState::Unavailable;
         };
-        let info = adapter.get_info();
-        let limits = adapter.limits();
-        let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("TFHE exact RNS-NTT batch"),
-                required_features: wgpu::Features::empty(),
-                required_limits: limits.clone(),
-                memory_hints: Default::default(),
-            },
-            None,
-        )) {
-            Ok(pair) => pair,
-            Err(_) => return GpuState::Unavailable,
-        };
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let info = &shared.info;
+        let limits = shared.limits.clone();
+        let device = shared.device.clone();
+        let queue = shared.queue.clone();
+        let scope = shared.validation_scope();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("torus_ntt_montgomery.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
@@ -280,16 +265,15 @@ impl GpuContext {
         };
         let fused_product = make("fused_product");
         let context = Self {
-            _instance: instance,
             device,
             queue,
-            adapter: info.name,
+            adapter: info.name.clone(),
             backend: format!("{:?}", info.backend),
             limits,
             bgl,
             fused_product,
         };
-        if let Some(error) = pollster::block_on(context.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return GpuState::Broken(format!(
                 "TFHE exact RNS-NTT shader validation failed: {error}"
             ));
@@ -352,7 +336,7 @@ impl GpuContext {
         let lhs_words = pack(lhs);
         let rhs_words = pack(rhs);
 
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let lhs_buf = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -461,7 +445,7 @@ impl GpuContext {
         encoder.copy_buffer_to_buffer(&lhs_buf, 0, &read_buf, 0, bytes);
         self.queue.submit([encoder.finish()]);
         self.device.poll(wgpu::Maintain::Wait);
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(NttBatchError::Execution(format!(
                 "TFHE NTT buffer/bind/dispatch validation failed: {error}"
             )));

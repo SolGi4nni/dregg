@@ -145,7 +145,6 @@ pub(crate) fn run_extract_keyswitch_prepared(
 }
 
 struct GpuContext {
-    _instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
     adapter: String,
@@ -161,35 +160,24 @@ struct GpuContext {
 
 impl GpuContext {
     fn initialize() -> GpuState {
-        let instance = wgpu::Instance::default();
-        let Some(adapter) =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                ..Default::default()
-            }))
-        else {
-            return GpuState::Unavailable(TorusCpuFallbackReason::NoAdapter);
-        };
-        let info = adapter.get_info();
-        let limits = adapter.limits();
-        let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("TFHE device-resident blind rotation"),
-                required_features: wgpu::Features::empty(),
-                required_limits: limits.clone(),
-                memory_hints: Default::default(),
-            },
-            None,
-        )) {
-            Ok(pair) => pair,
-            Err(error) => {
-                return GpuState::Unavailable(TorusCpuFallbackReason::DeviceRequestFailed(
-                    error.to_string(),
-                ));
+        // The SHARED device — see `gpu_device`. The blind-rotation accumulator now lives in the
+        // same device as every other kernel here, which is the precondition for handing it on
+        // without a host round trip.
+        let shared = match crate::gpu_device::shared_gpu() {
+            Ok(shared) => shared,
+            Err(crate::gpu_device::SharedGpuUnavailable::NoAdapter) => {
+                return GpuState::Unavailable(TorusCpuFallbackReason::NoAdapter);
+            }
+            Err(crate::gpu_device::SharedGpuUnavailable::DeviceRequestFailed(error)) => {
+                return GpuState::Unavailable(TorusCpuFallbackReason::DeviceRequestFailed(error));
             }
         };
+        let info = &shared.info;
+        let limits = shared.limits.clone();
+        let device = shared.device.clone();
+        let queue = shared.queue.clone();
 
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = shared.validation_scope();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("torus_blind_rotation.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
@@ -254,10 +242,9 @@ impl GpuContext {
             cache: None,
         });
         let context = Self {
-            _instance: instance,
             device,
             queue,
-            adapter: info.name,
+            adapter: info.name.clone(),
             backend: format!("{:?}", info.backend),
             limits,
             bgl,
@@ -267,7 +254,7 @@ impl GpuContext {
             keyswitch_bgl,
             extract_keyswitch,
         };
-        if let Some(error) = pollster::block_on(context.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return GpuState::Unavailable(TorusCpuFallbackReason::PipelineUnavailable(format!(
                 "TFHE blind-rotation shader validation failed: {error}"
             )));
@@ -317,7 +304,7 @@ impl GpuContext {
 
         let accumulator_limbs = to_limbs(accumulator);
         let bsk_limbs = to_limbs(standard_bsk);
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let accumulator_a = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -450,7 +437,7 @@ impl GpuContext {
         encoder.copy_buffer_to_buffer(final_accumulator, 0, &readback, 0, accumulator_bytes);
         self.queue.submit([encoder.finish()]);
         self.device.poll(wgpu::Maintain::Wait);
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(BlindRotationGpuError::Execution(format!(
                 "TFHE blind-rotation dispatch failed: {error}"
             )));
@@ -513,7 +500,7 @@ impl GpuContext {
 
         let bsk_limbs = to_limbs(standard_bsk);
         let ksk_limbs = to_limbs(standard_ksk);
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let bsk = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -529,7 +516,7 @@ impl GpuContext {
                 usage: wgpu::BufferUsages::STORAGE,
             });
         self.device.poll(wgpu::Maintain::Wait);
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(BlindRotationGpuError::Execution(format!(
                 "TFHE prepared-key upload failed: {error}"
             )));
@@ -604,7 +591,7 @@ impl GpuContext {
         }
 
         let accumulator_limbs = to_limbs(accumulator);
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let accumulator_a = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -785,7 +772,7 @@ impl GpuContext {
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output_bytes);
         self.queue.submit([encoder.finish()]);
         self.device.poll(wgpu::Maintain::Wait);
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(BlindRotationGpuError::Execution(format!(
                 "TFHE PBS-shaped dispatch failed: {error}"
             )));

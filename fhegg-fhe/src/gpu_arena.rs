@@ -398,25 +398,14 @@ pub fn fold_resident_or_cpu(
 
 /// None if there is no wgpu adapter (headless).
 pub fn arena() -> Option<Arena> {
-    let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))?;
-    let limits = adapter.limits();
-    let max_storage_bytes = limits
-        .max_buffer_size
-        .min(u64::from(limits.max_storage_buffer_binding_size));
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("bfv-arena"),
-            required_features: wgpu::Features::empty(),
-            required_limits: limits,
-            memory_hints: Default::default(),
-        },
-        None,
-    ))
-    .ok()?;
+    // The SHARED device — see `gpu_device`. Every arena in the process binds the same one, so a
+    // `ResidentHandle` from one arena and a buffer from any other kernel in this crate are
+    // allocations of a single device and can be bound by a single dispatch. That is the whole
+    // point; it is also why two arenas are now cheap (no second device) rather than isolating.
+    let shared = crate::gpu_device::shared_gpu().ok()?;
+    let device = shared.device.clone();
+    let queue = shared.queue.clone();
+    let max_storage_bytes = shared.max_storage_bytes();
     // The SAME fold shader bfv_gpu dispatches — one pipeline, two call shapes (one-shot vs resident).
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("bfv_fold.wgsl (arena)"),
@@ -613,6 +602,15 @@ impl Arena {
     pub fn clear_pool(&self) {
         self.pool.lock().unwrap().clear();
         self.tables.lock().unwrap().clear();
+    }
+
+    /// The device this arena binds — the crate's one shared device (see [`crate::gpu_device`]).
+    ///
+    /// Exposed so a caller can *check* the consolidation rather than take it on faith: two arenas
+    /// used to hold two devices, and a handle from one could not be bound by the other.
+    #[must_use]
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
     }
 
     /// The device buffer backing a resident ciphertext set. Handed out (as a cheap Arc-backed clone)
@@ -907,6 +905,79 @@ impl Arena {
             shape,
             variable_times: cts.iter().map(|c| c.variable_time).collect(),
             bounds: cts.iter().map(|c| u128::from(c.plain_bound)).collect(),
+        }
+    }
+
+    /// ⚑ THE FUSION SEAM. Register a buffer ANOTHER kernel on the shared device filled as a
+    /// resident ciphertext set this arena's fold pipeline can bind.
+    ///
+    /// This is the method the whole consolidation exists to make expressible. `bfv_ntt_gpu`'s
+    /// resident transform writes `[polynomial][rns row][coefficient]` with each coefficient a
+    /// `(lo, hi)` u32 pair — byte-identical to what `bfv_fold.wgsl` reads — so an NTT output IS a
+    /// fold input, with no repack, no copy and no host round trip. Before `gpu_device` there was no
+    /// way to say that: the NTT's buffer belonged to a device this arena could not name, and two
+    /// wgpu devices cannot share a buffer.
+    ///
+    /// The caller supplies the scalar bookkeeping that does not live on the device (shape, per-set
+    /// plaintext bounds, variable-time flags), exactly as [`Self::upload`] derives it from the
+    /// `LeanCiphertext`s it consumes. The wrap gate downstream therefore bites identically.
+    ///
+    /// # Panics
+    ///
+    /// Fail-loud, matching `upload`'s frozen infallible signature: on a non-3-modulus shape, on a
+    /// buffer whose size is not exactly `n_cts * ct_bytes` (which would silently fold garbage or
+    /// out-of-range lanes), or on bookkeeping whose length disagrees with `n_cts`.
+    pub fn adopt_resident(
+        &self,
+        buf: wgpu::Buffer,
+        shape_of: &LeanCiphertext,
+        n_cts: usize,
+        bounds: &[u64],
+        variable_times: &[bool],
+    ) -> ResidentHandle {
+        let shape = Shape::of(shape_of);
+        assert_eq!(
+            shape.moduli.len(),
+            3,
+            "gpu_arena adopt: fold shader supports exactly 3 RNS moduli (got {})",
+            shape.moduli.len()
+        );
+        assert!(n_cts > 0, "gpu_arena adopt: empty resident set");
+        assert_eq!(
+            bounds.len(),
+            n_cts,
+            "gpu_arena adopt: one plaintext bound per resident ciphertext"
+        );
+        assert_eq!(
+            variable_times.len(),
+            n_cts,
+            "gpu_arena adopt: one variable-time flag per resident ciphertext"
+        );
+        let expected = shape
+            .ct_bytes()
+            .checked_mul(n_cts as u64)
+            .expect("gpu_arena adopt: buffer-size overflow");
+        assert_eq!(
+            buf.size(),
+            expected,
+            "gpu_arena adopt: adopted buffer is {} bytes, but this shape needs exactly {expected}",
+            buf.size()
+        );
+        assert!(
+            buf.usage().contains(wgpu::BufferUsages::STORAGE),
+            "gpu_arena adopt: adopted buffer is not STORAGE and cannot be bound by the fold"
+        );
+        let id = {
+            let mut pool = self.pool.lock().unwrap();
+            pool.push(PoolEntry { buf, n_cts });
+            pool.len() - 1
+        };
+        ResidentHandle {
+            id,
+            n_cts,
+            shape,
+            variable_times: variable_times.to_vec(),
+            bounds: bounds.iter().map(|&b| u128::from(b)).collect(),
         }
     }
 

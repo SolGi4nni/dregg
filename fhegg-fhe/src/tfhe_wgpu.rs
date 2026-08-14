@@ -542,37 +542,25 @@ fn gpu_context() -> Result<&'static GpuContext, TorusCpuFallbackReason> {
 }
 
 fn init_gpu() -> GpuAvailability {
-    let instance = wgpu::Instance::default();
-    let Some(adapter) =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-    else {
-        return GpuAvailability::Unavailable(TorusCpuFallbackReason::NoAdapter);
-    };
-    let limits = adapter.limits();
-    let info = adapter.get_info();
-    let device_request = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("fhEgg torus negacyclic MAC"),
-            required_features: wgpu::Features::empty(),
-            required_limits: limits.clone(),
-            memory_hints: Default::default(),
-        },
-        None,
-    ));
-    let (device, queue) = match device_request {
-        Ok(pair) => pair,
-        Err(error) => {
+    // The SHARED device — see `gpu_device`. The two failure modes map onto the same two
+    // `TorusCpuFallbackReason` variants this site already produced.
+    let shared = match crate::gpu_device::shared_gpu() {
+        Ok(shared) => shared,
+        Err(crate::gpu_device::SharedGpuUnavailable::NoAdapter) => {
+            return GpuAvailability::Unavailable(TorusCpuFallbackReason::NoAdapter);
+        }
+        Err(crate::gpu_device::SharedGpuUnavailable::DeviceRequestFailed(error)) => {
             return GpuAvailability::Unavailable(TorusCpuFallbackReason::DeviceRequestFailed(
-                error.to_string(),
+                error,
             ));
         }
     };
+    let limits = shared.limits.clone();
+    let info = &shared.info;
+    let device = shared.device.clone();
+    let queue = shared.queue.clone();
 
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = shared.validation_scope();
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("torus_negacyclic_mac.wgsl"),
         source: wgpu::ShaderSource::Wgsl(include_str!("shaders/torus_negacyclic_mac.wgsl").into()),
@@ -600,7 +588,7 @@ fn init_gpu() -> GpuAvailability {
         compilation_options: Default::default(),
         cache: None,
     });
-    if let Some(error) = pollster::block_on(device.pop_error_scope()) {
+    if let Some(error) = scope.pop() {
         return GpuAvailability::Unavailable(TorusCpuFallbackReason::PipelineUnavailable(
             error.to_string(),
         ));
@@ -612,7 +600,7 @@ fn init_gpu() -> GpuAvailability {
         pipeline,
         bind_group_layout,
         limits,
-        adapter_name: info.name,
+        adapter_name: info.name.clone(),
         backend: format!("{:?}", info.backend),
     })
 }
@@ -738,7 +726,7 @@ impl GpuContext {
             ],
         });
 
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -766,7 +754,7 @@ impl GpuContext {
             TorusMacError::GpuExecution(format!("readback callback disappeared: {error}"))
         })?;
         map_result.map_err(|error| TorusMacError::GpuExecution(error.to_string()))?;
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(TorusMacError::GpuExecution(error.to_string()));
         }
 
@@ -2075,37 +2063,26 @@ fn external_gpu_context() -> Result<&'static ExternalGpuContext, TorusCpuFallbac
 }
 
 fn init_external_gpu() -> ExternalGpuAvailability {
-    let instance = wgpu::Instance::default();
-    let Some(adapter) =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-    else {
-        return ExternalGpuAvailability::Unavailable(TorusCpuFallbackReason::NoAdapter);
-    };
-    let limits = adapter.limits();
-    let info = adapter.get_info();
-    let device_request = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("fhEgg TFHE external product"),
-            required_features: wgpu::Features::empty(),
-            required_limits: limits.clone(),
-            memory_hints: Default::default(),
-        },
-        None,
-    ));
-    let (device, queue) = match device_request {
-        Ok(pair) => pair,
-        Err(error) => {
+    // The SHARED device — see `gpu_device`. This is the same device `init_gpu` above binds, so the
+    // MAC kernel and the external-product kernel are now one device's pipelines rather than two
+    // devices that could not exchange a buffer.
+    let shared = match crate::gpu_device::shared_gpu() {
+        Ok(shared) => shared,
+        Err(crate::gpu_device::SharedGpuUnavailable::NoAdapter) => {
+            return ExternalGpuAvailability::Unavailable(TorusCpuFallbackReason::NoAdapter);
+        }
+        Err(crate::gpu_device::SharedGpuUnavailable::DeviceRequestFailed(error)) => {
             return ExternalGpuAvailability::Unavailable(
-                TorusCpuFallbackReason::DeviceRequestFailed(error.to_string()),
+                TorusCpuFallbackReason::DeviceRequestFailed(error),
             );
         }
     };
+    let limits = shared.limits.clone();
+    let info = &shared.info;
+    let device = shared.device.clone();
+    let queue = shared.queue.clone();
 
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = shared.validation_scope();
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("torus_external_product.wgsl"),
         source: wgpu::ShaderSource::Wgsl(
@@ -2145,7 +2122,7 @@ fn init_external_gpu() -> ExternalGpuAvailability {
             compilation_options: Default::default(),
             cache: None,
         });
-    if let Some(error) = pollster::block_on(device.pop_error_scope()) {
+    if let Some(error) = scope.pop() {
         return ExternalGpuAvailability::Unavailable(TorusCpuFallbackReason::PipelineUnavailable(
             error.to_string(),
         ));
@@ -2158,7 +2135,7 @@ fn init_external_gpu() -> ExternalGpuAvailability {
         external_product_pipeline,
         bind_group_layout,
         limits,
-        adapter_name: info.name,
+        adapter_name: info.name.clone(),
         backend: format!("{:?}", info.backend),
     })
 }
@@ -2287,7 +2264,7 @@ impl ExternalGpuContext {
             ],
         });
 
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -2327,7 +2304,7 @@ impl ExternalGpuContext {
             ))
         })?;
         map_result.map_err(|error| TorusMacError::GpuExecution(error.to_string()))?;
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(TorusMacError::GpuExecution(error.to_string()));
         }
 

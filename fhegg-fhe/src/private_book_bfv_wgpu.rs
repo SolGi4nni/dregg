@@ -67,34 +67,17 @@ enum GpuCtxState {
 fn gpu_ctx() -> &'static GpuCtxState {
     static CTX: OnceLock<GpuCtxState> = OnceLock::new();
     CTX.get_or_init(|| {
-        let instance = wgpu::Instance::default();
-        let Some(adapter) =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                ..Default::default()
-            }))
-        else {
-            return GpuCtxState::Unavailable("no wgpu adapter".to_owned());
+        // The SHARED device — see `gpu_device`. Both former failure strings are preserved through
+        // `SharedGpuUnavailable`'s Display, so a caller reading `adapter_name()`/the unavailable
+        // reason still sees a message of the same shape.
+        let shared = match crate::gpu_device::shared_gpu() {
+            Ok(shared) => shared,
+            Err(reason) => return GpuCtxState::Unavailable(reason.to_string()),
         };
-        let adapter_name = adapter.get_info().name;
-        let adapter_limits = adapter.limits();
-        let max_storage_bytes = adapter_limits
-            .max_buffer_size
-            .min(u64::from(adapter_limits.max_storage_buffer_binding_size));
-        let requested_limits = adapter_limits.clone();
-        let Ok((device, queue)) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("private-book-bfv-signed-dot"),
-                required_features: wgpu::Features::empty(),
-                required_limits: requested_limits,
-                memory_hints: Default::default(),
-            },
-            None,
-        )) else {
-            return GpuCtxState::Unavailable(format!(
-                "wgpu device request failed for {adapter_name}"
-            ));
-        };
+        let adapter_name = shared.info.name.clone();
+        let max_storage_bytes = shared.max_storage_bytes();
+        let device = shared.device.clone();
+        let queue = shared.queue.clone();
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("private_book_signed_dot.wgsl"),

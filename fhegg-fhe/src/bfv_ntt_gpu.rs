@@ -665,6 +665,55 @@ impl RnsNttEngine {
         self.transform_odd_batch(inputs, moduli, OddNttDirection::Forward)
     }
 
+    /// Forward negacyclic NTT of a batch, left RESIDENT on the shared device — the FHE half of the
+    /// NTT -> fold hand-off.
+    ///
+    /// There is deliberately **no CPU fallback here**. Every other entry point on this engine may
+    /// answer on the CPU and label the backend; this one's entire contract is "a device buffer the
+    /// next kernel binds", which a CPU answer cannot honour. It therefore fails loudly
+    /// (`WgpuRequired`) rather than returning something the caller would have to branch on — a
+    /// silent CPU answer here would turn a fusion measurement into a measurement of nothing.
+    ///
+    /// # Errors
+    ///
+    /// `WgpuRequired` when there is no shared device or the adapter cannot take this shape;
+    /// `GpuExecution` on a pipeline/validation failure.
+    pub fn forward_odd_batch_resident(
+        &self,
+        inputs: &[RnsPoly],
+        moduli: &[u64],
+    ) -> Result<ResidentNttBatch> {
+        let first = inputs
+            .first()
+            .ok_or(BfvNttError::InvalidShape("odd-NTT batch is empty"))?;
+        let degree = validate_poly(first, moduli, "input")?;
+        for input in &inputs[1..] {
+            if validate_poly(input, moduli, "input")? != degree {
+                return Err(BfvNttError::InvalidShape(
+                    "odd-NTT batch polynomials have different degrees",
+                ));
+            }
+        }
+        let (plan, _host_plan_cache_hit) = self.cached_plan(degree, moduli)?;
+        let gpu = match gpu_state() {
+            GpuState::Ready(gpu) => gpu,
+            GpuState::Unavailable(reason) => return Err(BfvNttError::WgpuRequired(reason.clone())),
+            GpuState::Broken(reason) => return Err(BfvNttError::GpuExecution(reason.clone())),
+        };
+        gpu.supports(plan.as_ref(), inputs.len())
+            .map_err(BfvNttError::WgpuRequired)?;
+        let (buffer, bytes, gpu_static_table_uploads) =
+            gpu.transform_odd_batch_resident(inputs, plan.as_ref(), OddNttDirection::Forward)?;
+        Ok(ResidentNttBatch {
+            buffer,
+            bytes,
+            polynomials: inputs.len(),
+            degree: plan.degree,
+            moduli: plan.moduli.clone(),
+            gpu_static_table_uploads,
+        })
+    }
+
     /// Batched exact inverse transform, including inverse twist and `n^-1`
     /// normalization independently for every polynomial.
     pub fn inverse_odd_batch(
@@ -1340,7 +1389,6 @@ fn gpu_state() -> &'static GpuState {
 }
 
 struct GpuCtx {
-    _instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
     adapter: String,
@@ -1373,35 +1421,62 @@ struct GpuStaticTables {
     twists: wgpu::Buffer,
 }
 
+/// The resident product of [`GpuCtx::encode_batch`] — the batch's coefficient words, transformed in
+/// place, still on the shared device.
+///
+/// ⚑ The layout is `[polynomial][rns row][coefficient]` with each coefficient a `(lo, hi)` u32 pair.
+/// That is **byte-identical** to what `gpu_arena`'s `bfv_fold.wgsl` reads as its `input` binding, so
+/// an NTT output is a fold input with no reinterpretation, no repack and no copy. The two kernels
+/// have agreed on this layout all along; what they did not have until `gpu_device` landed was a
+/// device on which both could name the same buffer.
+struct EncodedBatch {
+    coefficients: wgpu::Buffer,
+    output_bytes: u64,
+    output_words: usize,
+    gpu_static_table_uploads: usize,
+    /// Bind groups, their uniform buffers and the operand/table buffers must outlive
+    /// `encoder.finish()`. Carrying them here keeps the encoded commands' resources alive exactly
+    /// as the single-function version did by keeping them in scope until after `submit`.
+    _retained: (
+        wgpu::Buffer,
+        Arc<GpuStaticTables>,
+        Vec<wgpu::Buffer>,
+        Vec<wgpu::BindGroup>,
+    ),
+}
+
+/// A forward/inverse NTT batch left on the shared device, ready to be bound by the next kernel.
+///
+/// Handing out a `wgpu::Buffer` is the point: `gpu_arena::Arena::adopt_resident` registers this
+/// exact allocation as a resident ciphertext set and folds it without a host round trip. Before the
+/// device consolidation this type could not have existed — the buffer belonged to a device the
+/// arena could not name.
+pub struct ResidentNttBatch {
+    /// Transformed coefficients, `[polynomial][rns row][coefficient]`, each coefficient `(lo, hi)`.
+    pub buffer: wgpu::Buffer,
+    pub bytes: u64,
+    pub polynomials: usize,
+    pub degree: usize,
+    pub moduli: Vec<u64>,
+    /// How many static-table uploads this call paid (0 on a warm parameter family).
+    pub gpu_static_table_uploads: usize,
+}
+
 impl GpuCtx {
     fn initialize() -> GpuState {
-        let instance = wgpu::Instance::default();
-        let Some(adapter) =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                ..Default::default()
-            }))
-        else {
-            return GpuState::Unavailable("no wgpu adapter".to_owned());
+        // The SHARED device — see `gpu_device`. This kernel's resident coefficient buffers are now
+        // allocations of the same device as the arena's, which is what makes an NTT -> fold
+        // hand-off expressible at all.
+        let shared = match crate::gpu_device::shared_gpu() {
+            Ok(shared) => shared,
+            Err(reason) => return GpuState::Unavailable(reason.to_string()),
         };
-        let info = adapter.get_info();
-        let limits = adapter.limits();
-        let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("bfv-rns-ntt"),
-                required_features: wgpu::Features::empty(),
-                required_limits: limits.clone(),
-                memory_hints: Default::default(),
-            },
-            None,
-        )) {
-            Ok(pair) => pair,
-            Err(error) => {
-                return GpuState::Unavailable(format!("wgpu device request failed: {error}"));
-            }
-        };
+        let info = &shared.info;
+        let limits = shared.limits.clone();
+        let device = shared.device.clone();
+        let queue = shared.queue.clone();
 
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = shared.validation_scope();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bfv_ntt.wgsl"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/bfv_ntt.wgsl").into()),
@@ -1441,11 +1516,10 @@ impl GpuCtx {
         let bit_reverse_lhs_mont = make_pipeline("bit_reverse_lhs_mont");
         let stage_lhs = make_pipeline("stage_lhs");
         let finalize_lhs = make_pipeline("finalize_lhs");
-        if let Some(error) = pollster::block_on(device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return GpuState::Broken(format!("BFV NTT shader validation failed: {error}"));
         }
         GpuState::Ready(Self {
-            _instance: instance,
             device,
             queue,
             adapter: format!("{} ({:?})", info.name, info.backend),
@@ -1542,6 +1616,47 @@ impl GpuCtx {
         self.execute_batch(inputs, None, plan, GpuNttOperation::Transform(direction))
     }
 
+    /// The RESIDENT batch: encode, submit, and stop. No readback copy, no `Maintain::Wait`, no
+    /// host unpack — the transformed coefficients stay in device memory and the returned buffer is
+    /// handed to the next kernel.
+    ///
+    /// Not waiting is deliberate and is safe for the validation scope: wgpu records validation
+    /// errors synchronously while commands are encoded and submitted, so popping immediately after
+    /// `submit` sees exactly the errors `execute_batch` sees after its wait. What the wait buys
+    /// `execute_batch` is the *readback*, and there is no readback here — which is the entire
+    /// point of the measurement this enables.
+    fn transform_odd_batch_resident(
+        &self,
+        inputs: &[RnsPoly],
+        plan: &NttPlan,
+        direction: OddNttDirection,
+    ) -> Result<(wgpu::Buffer, u64, usize)> {
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("bfv-rns-ntt-resident"),
+            });
+        let encoded = self.encode_batch(
+            inputs,
+            None,
+            plan,
+            GpuNttOperation::Transform(direction),
+            &mut encoder,
+        )?;
+        self.queue.submit([encoder.finish()]);
+        if let Some(error) = scope.pop() {
+            return Err(BfvNttError::GpuExecution(format!(
+                "resident buffer/bind/dispatch validation failed: {error}"
+            )));
+        }
+        Ok((
+            encoded.coefficients,
+            encoded.output_bytes,
+            encoded.gpu_static_table_uploads,
+        ))
+    }
+
     fn static_tables(&self, plan: &NttPlan) -> (Arc<GpuStaticTables>, usize) {
         use wgpu::util::DeviceExt;
 
@@ -1624,13 +1739,18 @@ impl GpuCtx {
         (prepared, 3)
     }
 
-    fn execute_batch(
+    /// Encodes the whole dispatch chain for one batched transform/multiply into `encoder`, leaving
+    /// the result IN PLACE in the returned coefficient buffer. Nothing is submitted, copied back or
+    /// waited on — that is the caller's choice, and it is the ONLY difference between the deployed
+    /// host-in/host-out path and the resident hand-off the arena consumes.
+    fn encode_batch(
         &self,
         lhs: &[RnsPoly],
         rhs: Option<&[RnsPoly]>,
         plan: &NttPlan,
         operation: GpuNttOperation,
-    ) -> Result<(Vec<RnsPoly>, usize)> {
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<EncodedBatch> {
         use wgpu::util::DeviceExt;
 
         if lhs.is_empty() || rhs.is_some_and(|rhs| rhs.len() != lhs.len()) {
@@ -1638,11 +1758,6 @@ impl GpuCtx {
                 "GPU NTT batch is empty or operand batch lengths differ",
             ));
         }
-
-        // Any buffer/bind/dispatch validation failure is a kernel error. It
-        // must not escape as an uncaptured panic or be converted into a CPU
-        // capability fallback.
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
 
         let pack = |polynomials: &[RnsPoly]| -> Vec<u32> {
             let mut words =
@@ -1678,19 +1793,8 @@ impl GpuCtx {
             });
         let (static_tables, gpu_static_table_uploads) = self.static_tables(plan);
 
-        let output_bytes = (lhs_words.len() * std::mem::size_of::<u32>()) as u64;
-        let read_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("bfv-ntt-readback"),
-            size: output_bytes,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("bfv-rns-ntt"),
-            });
+        let output_words = lhs_words.len();
+        let output_bytes = (output_words * std::mem::size_of::<u32>()) as u64;
         let mut metadata_buffers = Vec::new();
         let mut bind_groups = Vec::new();
         let modulus_rows = plan.moduli.len() as u32;
@@ -1805,11 +1909,50 @@ impl GpuCtx {
             }
         }
         drop(dispatch);
-        encoder.copy_buffer_to_buffer(&lhs_buf, 0, &read_buf, 0, output_bytes);
+        Ok(EncodedBatch {
+            coefficients: lhs_buf,
+            output_bytes,
+            output_words,
+            gpu_static_table_uploads,
+            _retained: (rhs_buf, static_tables, metadata_buffers, bind_groups),
+        })
+    }
+
+    /// The deployed host-in/host-out batch: encode, append the readback copy to the SAME encoder,
+    /// submit once, wait, unpack. Byte-for-byte the sequence this function performed inline before
+    /// `encode_batch` was factored out of it — one encoder, one submission, one wait.
+    fn execute_batch(
+        &self,
+        lhs: &[RnsPoly],
+        rhs: Option<&[RnsPoly]>,
+        plan: &NttPlan,
+        operation: GpuNttOperation,
+    ) -> Result<(Vec<RnsPoly>, usize)> {
+        // Any buffer/bind/dispatch validation failure is a kernel error. It
+        // must not escape as an uncaptured panic or be converted into a CPU
+        // capability fallback. The scope is serialized across the shared device
+        // (see `gpu_device`) and self-balances on the `?`-returns below, which
+        // used to leave it open forever.
+        let scope = crate::gpu_device::ValidationScope::for_device(&self.device);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("bfv-rns-ntt"),
+            });
+        let encoded = self.encode_batch(lhs, rhs, plan, operation, &mut encoder)?;
+        let output_bytes = encoded.output_bytes;
+        let gpu_static_table_uploads = encoded.gpu_static_table_uploads;
+        let read_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bfv-ntt-readback"),
+            size: output_bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&encoded.coefficients, 0, &read_buf, 0, output_bytes);
 
         self.queue.submit([encoder.finish()]);
         self.device.poll(wgpu::Maintain::Wait);
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = scope.pop() {
             return Err(BfvNttError::GpuExecution(format!(
                 "buffer/bind/dispatch validation failed: {error}"
             )));
@@ -1826,7 +1969,7 @@ impl GpuCtx {
             .map_err(|error| BfvNttError::GpuExecution(error.to_string()))?;
         let mapped = slice.get_mapped_range();
         let words: &[u32] = bytemuck::cast_slice(&mapped);
-        let output = if words.len() == lhs_words.len() {
+        let output = if words.len() == encoded.output_words {
             let mut output_polynomials = Vec::with_capacity(lhs.len());
             let mut cursor = 0usize;
             for _ in lhs {
