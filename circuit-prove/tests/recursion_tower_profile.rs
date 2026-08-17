@@ -1054,14 +1054,17 @@ fn l3_apex_and_l4_shrink_census() {
 ///      Falsifier guard: the K16 proof's own embedded `table_packing` must SAY K16/rec4 — a
 ///      params-ignoring prover would otherwise render a default-packing proof as "K16 proved"
 ///      (the falsifier-that-stopped-falsifying class);
-///   4. **refusal** — re-run witness generation, corrupt ONE mid-chain `HornerAcc` `out` cell
-///      in the Alu trace AND its witness-bus copy (a CONSISTENT single-step forgery: the
-///      packed chain state is carried positionally — `out = prev_row_out·b + c − a` — so no
-///      bus lookup can catch it; only the packed-row chain arithmetic the K16 layout
-///      rearranges can), assert the mutation took BEFORE any verdict is read, then prove and
-///      require refusal at prove or at verify.
+///   4. **refusal** — re-run witness generation through the same inline path, prove a CLEAN
+///      baseline (validating the path and pinning its proof bytes), then corrupt ONE
+///      chain-TAIL `HornerAcc` `out` cell — the committed `out_last` of its packed group
+///      (⚠ a MID-chain `out` is NOT a committed cell at K-packing: `trace_to_matrix`
+///      recomputes the intermediates from operands, so mutating one is a no-op the first
+///      version of this test mistook for unsoundness) — in the Alu trace AND its
+///      witness-bus copy, assert the mutation took, prove, assert the forged proof's bytes
+///      DIFFER from the clean baseline (the mutation must reach the committed artifact or
+///      no verdict exists), and require refusal at prove or at verify.
 #[test]
-#[ignore = "MEASUREMENT+TOOTH: one real leaf prove + one wrap circuit build + three wrap proves. --ignored --nocapture --test-threads=1"]
+#[ignore = "MEASUREMENT+TOOTH: one real leaf prove + one wrap circuit build + four wrap proves. --ignored --nocapture --test-threads=1"]
 fn k16_wrap_proves_and_a_corrupted_trace_refuses() {
     use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
         recursion_vk_fingerprint, verify_recursive_batch_proof_with_config,
@@ -1256,6 +1259,18 @@ fn k16_wrap_proves_and_a_corrupted_trace_refuses() {
     //
     // Inline `prove_next_layer`'s non-cached body so the traces are in hand between witness
     // generation and proving — every step below `runner.run()` is verbatim its recipe.
+    //
+    // ⚑ MUTATION SITE, chosen off the COMMITTED layout (`alu_air.rs::trace_to_matrix`,
+    // read 2026-08-17): a `PackedHorner(first, k)` group commits the FIRST op's `a,b,c`,
+    // the per-step `(a_t, c_t)` pairs, recomputed intermediate accs, and the LAST op's
+    // `out` — a MID-chain `out` is NOT a committed cell (the intermediates are recomputed
+    // from operands), so mutating one is a no-op on the committed artifact. The first
+    // version of this test did exactly that and its "refusal" assert fired on a proof that
+    // was legitimately accepted — the falsifier was dead, not the prover unsound. The
+    // mutation is now a chain-TAIL `out` (last op of its chain ⇒ last op of its packed
+    // group ⇒ committed and bus-carried), and the arm carries an artifact-level falsifier:
+    // the corrupted proof's bytes must DIFFER from a clean same-path baseline, or the
+    // mutation demonstrably never reached the commitment and the arm refuses to conclude.
     let preprocessors: Vec<Box<dyn NpoPreprocessor<P3BabyBear>>> = vec![
         poseidon2_preprocessor::<P3BabyBear>(),
         recompose_preprocessor::<P3BabyBear>(false),
@@ -1278,7 +1293,7 @@ fn k16_wrap_proves_and_a_corrupted_trace_refuses() {
         .expect("K16 table-AIR extraction for the corrupted arm");
     let (t_airs, degrees): (Vec<_>, Vec<usize>) = airs_degrees.into_iter().unzip();
 
-    let mut traces = {
+    let gen_traces = || {
         let public_inputs = vr.pack_public_inputs(&input).expect("pack public inputs");
         let private_inputs = vr.pack_private_inputs(&input).expect("pack private inputs");
         let mut runner = circuit.runner();
@@ -1295,16 +1310,46 @@ fn k16_wrap_proves_and_a_corrupted_trace_refuses() {
         runner.run().expect("witness generation")
     };
 
-    // The mutation: one mid-chain HornerAcc `out`, +1, in BOTH the Alu trace and the witness
-    // bus (rebuilt — `WitnessTrace` has no setter), so the forgery is bus-CONSISTENT and only
-    // the positional chain arithmetic can refuse it.
+    // The prover for this arm — verbatim the prove_next_layer recipe at K16/rec4.
+    // (`DreggRecursionConfig` is non-ZK, so ext_degrees == degrees — `prove_next_layer` adds
+    // `config.is_zk()` = 0 here.)
+    let prover_data = ProverData::from_airs_and_degrees(&mint_config, &t_airs, &degrees);
+    let circuit_prover_data =
+        CircuitProverData::new(prover_data, primitive_columns, non_primitive_columns);
+    let mut prover = BatchStarkProver::new(mint_config.clone())
+        .with_table_packing(k16_packing.clone())
+        .with_alu_variant(AirVariant::Baseline);
+    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);
+    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W24);
+    prover.register_recompose_table::<D>(false);
+    prover.register_expose_claim_table::<D>();
+
+    // Clean baseline through the SAME inline path: validates the path independently and
+    // provides the proof bytes the corrupted proof must differ from.
+    let clean_traces = gen_traces();
+    let baseline = prover
+        .prove_all_tables(&clean_traces, &circuit_prover_data)
+        .expect("the clean inline-path K16 prove succeeds");
+    verify_recursive_batch_proof_with_config(&baseline, &mint_config)
+        .expect("the clean inline-path K16 proof verifies");
+    let baseline_bytes = postcard::to_allocvec(&baseline).expect("baseline postcards");
+    drop(clean_traces);
+
+    // The mutation: one chain-TAIL HornerAcc `out`, +1, in BOTH the Alu trace and the
+    // witness bus (rebuilt — `WitnessTrace` has no setter). A chain tail is the last op of
+    // its packed group, so its `out` IS the committed `out_last` cell and carries the
+    // group's bus `mult_out`; the packed-row chain arithmetic (and any downstream
+    // consumer's bus check against the corrupted witness) must refuse it.
+    let mut traces = gen_traces();
     let (mut_idx, orig_out) = {
         let alu = &traces.alu_trace;
-        let i = (0..alu.op_kind.len().saturating_sub(1))
+        let n_ops = alu.op_kind.len();
+        let i = (0..n_ops)
             .find(|&i| {
-                alu.op_kind[i] == AluOpKind::HornerAcc && alu.op_kind[i + 1] == AluOpKind::HornerAcc
+                alu.op_kind[i] == AluOpKind::HornerAcc
+                    && (i + 1 == n_ops || alu.op_kind[i + 1] != AluOpKind::HornerAcc)
             })
-            .expect("a mid-chain HornerAcc exists (216,330 of them)");
+            .expect("a chain-tail HornerAcc exists");
         (i, alu.values[i][3])
     };
     let delta = EF::ONE;
@@ -1325,7 +1370,7 @@ fn k16_wrap_proves_and_a_corrupted_trace_refuses() {
     traces.witness_trace = WitnessTrace::new(wit_vals);
 
     // ⚑ MUTATION ASSERTED BEFORE THE VERDICT IS READ (the falsifier-that-stopped-falsifying
-    // class): both copies must have actually changed.
+    // class): both copies must have actually changed — and below, the proof bytes must too.
     assert_ne!(
         traces.alu_trace.values[mut_idx][3], orig_out,
         "Alu mutation did not take"
@@ -1340,24 +1385,11 @@ fn k16_wrap_proves_and_a_corrupted_trace_refuses() {
         "witness-bus mutation did not take"
     );
     println!(
-        "mutation asserted: HornerAcc op #{mut_idx} out (witness id {}) += 1, in Alu trace AND \
-         witness bus; successor op is also HornerAcc (mid-chain)",
-        out_wid.0
+        "mutation asserted: chain-tail HornerAcc op #{mut_idx} out (witness id {}) += 1, in \
+         Alu trace AND witness bus (successor op kind: {:?})",
+        out_wid.0,
+        traces.alu_trace.op_kind.get(mut_idx + 1)
     );
-
-    // Prove + verify the corrupted trace — verbatim the prove_next_layer recipe at K16/rec4.
-    // (`DreggRecursionConfig` is non-ZK, so ext_degrees == degrees — `prove_next_layer` adds
-    // `config.is_zk()` = 0 here.)
-    let prover_data = ProverData::from_airs_and_degrees(&mint_config, &t_airs, &degrees);
-    let circuit_prover_data =
-        CircuitProverData::new(prover_data, primitive_columns, non_primitive_columns);
-    let mut prover = BatchStarkProver::new(mint_config.clone())
-        .with_table_packing(k16_packing.clone())
-        .with_alu_variant(AirVariant::Baseline);
-    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);
-    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W24);
-    prover.register_recompose_table::<D>(false);
-    prover.register_expose_claim_table::<D>();
 
     let t = Instant::now();
     let prove_attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1381,11 +1413,21 @@ fn k16_wrap_proves_and_a_corrupted_trace_refuses() {
                  come from the verifier",
                 t.elapsed()
             );
+            // The artifact-level falsifier: if the mutation never reached the committed
+            // transcript, the proof is byte-identical to the clean baseline and this arm
+            // has measured NOTHING — refuse to conclude rather than read the verdict.
+            let forged_bytes = postcard::to_allocvec(&forged).expect("forged postcards");
+            assert_ne!(
+                forged_bytes, baseline_bytes,
+                "⛔ the mutation did not reach the committed artifact (proof bytes identical \
+                 to the clean baseline) — the falsifier is DEAD, no refusal verdict exists"
+            );
             let verdict = verify_recursive_batch_proof_with_config(&forged, &mint_config);
             assert!(
                 verdict.is_err(),
-                "⛔⛔ THE CORRUPTED K16 TRACE VERIFIED — the packed-row Horner chain constraint \
-                 does not cover the mutated lane at K16; the geometry is UNSOUND and must not land"
+                "⛔⛔ THE CORRUPTED K16 TRACE VERIFIED — a committed chain-tail Horner cell \
+                 was forged (proof bytes differ from clean) and the K16 packed-row chain \
+                 constraint did not refuse; the geometry is UNSOUND and must not land"
             );
             println!("✅ REFUSED at VERIFY: {}", verdict.unwrap_err());
         }
