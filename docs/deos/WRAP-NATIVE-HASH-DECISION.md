@@ -134,6 +134,22 @@ both matter.
    (b) **GKR-batch the reduced openings** (one sumcheck replaces ~14,300 per-column
    ExtMuls → the ~3.2M residual toward ~0.3M). Full stack → **~1.5–2M**.
 
+⚑ **CORRECTION 2026-08-16 to lever 3(b).** As written it is not a backend rewrite: a sumcheck over
+the α-combination ends in an MLE-evaluation claim on the opened values, and their only commitment
+is a Merkle leaf, which cannot answer it — so 3(b) is a **PCS replacement**, and the
+`→ ~0.3M` endpoint is not reachable over two-adic FRI. Full reasoning and the re-tag in
+`APEX-VERIFIER-AIR-REDUCTION.md`'s Lever D. The *algebraic* half of 3(b) — sharing the
+query-dependent Horner chain across a matrix's opening points, `q·P·n → q·n + P·n` — **is**
+reachable, is landed (`emberian/plonky3-recursion@b471aca`), and measures ×1.806 on `HornerAcc` /
+×1.436 on the leaf wrap's committed cells, dropping the ALU table one power-of-two rung.
+Note: `zkml-research/notes/sumcheck-batched-opening.md`.
+
+⚑ Note also that on the **gnark** side this ask was already retired as MARGINAL after the
+`S_z − S_x` hoist (`HORIZONLOG.md:18344`, `S_x` arithmetic ≈ 0.32M). That verdict is about the
+gnark circuit only — it never reached `plonky3-recursion`, and the point-sharing half is still
+open in `stark_open_input.go`'s `deriveOpenInputReducedNative`, which recomputes `S_x` per
+`(matrix, point)`.
+
 **⚠ FLAG — RESOLVED (2026-07-12).** At the time of the experiments the
 rotated-proof pipeline was broken at HEAD (`generate_rotated_effect_vm_trace`
 panicked on a 59≠56 wide-commit carrier count), so Exp 1's apex perm count was

@@ -154,7 +154,7 @@ table contributes 0 shrink rows, so the win here is on the reduced-opening
 *column count* generally, most impactful when the apex actually carries wide
 segment tables.)
 
-### Lever D — GKR-batch the reduced openings (**COORDINATION-REQUIRED**)
+### Lever D — GKR-batch the reduced openings (**~~COORDINATION-REQUIRED~~ → PCS-REQUIRED**)
 
 Replace the ~14,300 per-column `HornerAcc` ALU ops with one sumcheck (GKR) that
 batches all reduced openings — collapsing the ALU 2^15 residual toward ~2^12.
@@ -164,6 +164,37 @@ emitted by the **in-circuit FRI verifier inside the recursion backend**
 `open_input`) — changing them to a sumcheck is a **recursion-backend rewrite in
 the `plonky3-recursion` fork**, not an `apex_shrink.rs` change. **Coordination-
 required** (fork work), and the largest of the four.
+
+> ### ⚑ CORRECTED 2026-08-16 — the tag above is wrong, and it is not a fork-ownership question.
+>
+> A sumcheck over `Σ_k α^k v_k` terminates in a claim about the **multilinear extension of the
+> opened values at a random point**, `Ṽ(r)`. The verifier can discharge that in exactly two ways:
+> recompute it from the `N` values (Θ(N) — no saving), or **open it from a commitment to `V`**.
+> The only commitment those values have is the child MMCS's **Merkle leaf**, which supports no
+> evaluation opening. And the verifier already holds every one of them in the clear — it must,
+> to hash them into the per-query leaf sponge.
+>
+> **So Lever D needs an evaluation-binding commitment on the opened values. Two-adic FRI gives
+> univariate openings only.** It is a PCS replacement (the Jagged→BaseFold / Stacked→WHIR move
+> SP1 6.4 and OpenVM 2.0 both made), not a backend rewrite, and it should be scheduled and priced
+> as one. `zkml-research/notes/sumcheck-batched-opening.md` §0a.
+>
+> **What IS reachable, and landed:** the algebraic half of the same idea.
+> `emberian/plonky3-recursion@b471aca` shares the query-dependent Horner chain across a matrix's
+> opening points (`q·P·n → q·n + P·n`), which needs no new commitment because it is one field
+> expression re-associated. Measured on the deployed leaf wrap: `HornerAcc` 390,716 → 216,330
+> (×1.806), `Alu` 441,684 → 267,526 (×1.651), **the ALU table drops 2^18 → 2^17**, wrap cells
+> 58,249,216 → 40,554,496 (×1.436), Poseidon2 share 36.45% → 52.36%. `perms`, `recompose` and
+> `Hint` are unchanged to the digit, and the **global max height does not move** — so this has
+> Lever A's property of leaving the FRI shape alone, at a larger cut.
+>
+> ⚠ **FLAG DAY (VK rotation, not a wire change).** The child proof is untouched bit for bit and no
+> serialized shape moves, but every in-circuit FRI verify emits a different op list, so **every
+> `RecursionVk` fingerprint moves** — leaf wrap, fold, apex, shrink. Re-emit: the vk-spine values,
+> `chain/gnark/fixtures/apex_vk_identity.json`, the pinned `DreggApexRecursionVk`
+> (`chain/gnark/settlement_circuit.go:170`), then the Groth16 setup +
+> `DreggGroth16Verifier25.sol` + the `bridge/src/ethereum.rs` calldata keccak pin. The
+> `Cargo.toml` pin is still `fc3c6df`; the branch is `lane/batched-reduced-opening`.
 
 ### Lever E — AIR-level redundancy in `apex_shrink.rs`'s own construction (**MINE**) — audited, none found
 
