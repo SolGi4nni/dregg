@@ -146,9 +146,12 @@ Note: `zkml-research/notes/sumcheck-batched-opening.md`.
 
 ⚑ Note also that on the **gnark** side this ask was already retired as MARGINAL after the
 `S_z − S_x` hoist (`HORIZONLOG.md:18344`, `S_x` arithmetic ≈ 0.32M). That verdict is about the
-gnark circuit only — it never reached `plonky3-recursion`, and the point-sharing half is still
-open in `stark_open_input.go`'s `deriveOpenInputReducedNative`, which recomputes `S_x` per
-`(matrix, point)`.
+gnark circuit only — **it never reached `plonky3-recursion`.** And gnark had already taken the
+point-sharing half too: `stark_open_input.go:445-465` computes `sx` once per matrix, *outside* the
+`for pt` loop, commented *"S_x … shared by both opening points of this matrix (p(x) is the single
+Merkle-opened row)"*. So the Rust in-circuit verifier was the **only** rung still paying `P` chains
+per query, and the identity it now uses is the same one gnark's host reference twin has been
+crossing against a real proof since 2026-07-13.
 
 **⚠ FLAG — RESOLVED (2026-07-12).** At the time of the experiments the
 rotated-proof pipeline was broken at HEAD (`generate_rotated_effect_vm_trace`
