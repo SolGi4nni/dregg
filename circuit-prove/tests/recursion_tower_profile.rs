@@ -1025,3 +1025,374 @@ fn l3_apex_and_l4_shrink_census() {
         6,
     );
 }
+
+// ===========================================================================
+// §D — THE K≠2 PROOF: packing follow-up tooth #1 (`notes/galois-levers.md` §6)
+// ===========================================================================
+
+/// ⚑ **PROVE A WRAP AT K≠2.** The grid (§A `g_packing_grid_over_the_deployed_leaf_wrap`)
+/// measured `a4/K16/rec4` as the in-family minimum — wrap 40,554,496 → **28,971,008** cells,
+/// ×2.011 cumulative, global max height 2¹⁸ → 2¹⁶ — **via the prover's own shape-extraction
+/// call, with no proof ever minted at any K ≠ 2.** This test banks the claim: it is
+/// satisfiable-and-refutable by construction (it proves or it refuses), and it carries its own
+/// falsifier.
+///
+/// Four arms, in order, over ONE leaf prove + ONE wrap circuit build (the deployed wrap
+/// pipeline exactly: circuit at `recursion_layer_over(ir2_leaf_wrap_config())` — verify the
+/// lb6/19q/pow16 child in-circuit, mint at lb3/38q/pow14 — the same object
+/// `prove_descriptor_leaf_rotated_with_config` hands `build_and_prove_next_layer`):
+///
+///   1. **control** — the packing-invariant op census must reproduce the grid's control to the
+///      digit (Alu 267,526 / HornerAcc 216,330 / in-circuit perms 38,168 / recompose 160,263)
+///      before any geometry or proof is read;
+///   2. **geometry** — shape extraction must reproduce the measured 40,554,496 (deployed
+///      `a4/K2/rec1`) and 28,971,008 (`a4/K16/rec4`) cells and the 2¹⁸ → 2¹⁶ height drop;
+///   3. **prove + verify** — `prove_next_layer` at the K16/rec4 params, verified by the
+///      PRODUCTION entry (`verify_recursive_batch_proof_with_config`, which reads the packing
+///      off the proof); plus a deployed-packing prove of the same circuit so the VK rotation is
+///      MEASURED, not asserted: both verify, and the two `recursion_vk_fingerprint`s differ.
+///      Falsifier guard: the K16 proof's own embedded `table_packing` must SAY K16/rec4 — a
+///      params-ignoring prover would otherwise render a default-packing proof as "K16 proved"
+///      (the falsifier-that-stopped-falsifying class);
+///   4. **refusal** — re-run witness generation, corrupt ONE mid-chain `HornerAcc` `out` cell
+///      in the Alu trace AND its witness-bus copy (a CONSISTENT single-step forgery: the
+///      packed chain state is carried positionally — `out = prev_row_out·b + c − a` — so no
+///      bus lookup can catch it; only the packed-row chain arithmetic the K16 layout
+///      rearranges can), assert the mutation took BEFORE any verdict is read, then prove and
+///      require refusal at prove or at verify.
+#[test]
+#[ignore = "MEASUREMENT+TOOTH: one real leaf prove + one wrap circuit build + three wrap proves. --ignored --nocapture --test-threads=1"]
+fn k16_wrap_proves_and_a_corrupted_trace_refuses() {
+    use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
+        recursion_vk_fingerprint, verify_recursive_batch_proof_with_config,
+    };
+    use dregg_recursion_verify::config::recursion_layer_over;
+    use p3_batch_stark::ProverData;
+    use p3_circuit::ops::Poseidon2Config;
+    use p3_circuit::tables::WitnessTrace;
+    use p3_circuit::{NpoTypeId, WitnessId};
+    use p3_circuit_prover::{AirVariant, BatchStarkProver, CircuitProverData};
+    use p3_field::PrimeCharacteristicRing;
+    use p3_recursion::{PcsRecursionBackend, ProveNextLayerParams, VerifierCircuitResult};
+
+    let (desc, trace, dpis, map_heaps, mem_boundary) = rotated_transfer_workload();
+    let child_config = ir2_leaf_wrap_config();
+
+    let t = Instant::now();
+    let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        &desc,
+        &trace,
+        &dpis,
+        &mem_boundary,
+        &map_heaps,
+        &UMemBoundaryWitness::default(),
+        &child_config,
+    )
+    .expect("the rotated transfer leaf proves at the leaf-wrap config");
+    println!("[upper bound] inner IR-v2 prove: {:?}", t.elapsed());
+
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(&desc, &inner, &dpis, &child_config).expect("verify triple");
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner,
+            common_data: &common,
+            table_public_inputs,
+        };
+    let backend = create_recursion_backend();
+    // The deployed wrap engine split: in-circuit verify at the child's mint knobs, MINT at
+    // lb3/38q/pow14 — what `prove_descriptor_leaf_rotated_with_config` runs.
+    let mint_config = recursion_layer_over(&child_config);
+    let t = Instant::now();
+    let (circuit, vr) = build_next_layer_circuit_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
+        &input,
+        &mint_config,
+        &backend,
+        None,
+    )
+    .expect("the leaf-wrap verification circuit builds");
+    println!("[upper bound] wrap circuit build: {:?}", t.elapsed());
+
+    // ── ARM 1: the packing-invariant control, to the digit, BEFORE anything else is read ──
+    let c = census(&circuit);
+    print_census("K16 tooth — packing-INVARIANT control", &c);
+    assert_eq!(
+        c.alu_total(),
+        267_526,
+        "Alu op census drifted from the grid's control"
+    );
+    assert_eq!(
+        c.n_horner, 216_330,
+        "HornerAcc census drifted from the grid's control"
+    );
+    assert_eq!(
+        c.in_circuit_perms(),
+        38_168,
+        "in-circuit Poseidon2 perm census drifted from the grid's control"
+    );
+    assert_eq!(
+        c.npo_by_type.get("recompose").copied().unwrap_or(0),
+        160_263,
+        "recompose census drifted from the grid's control"
+    );
+
+    // ── ARM 2: the measured geometry, reproduced by the same extraction the prover runs ──
+    let deployed_packing = TablePacking::new(1, 4);
+    let k16_packing = TablePacking::new(1, 4)
+        .with_horner_pack_k(16)
+        .with_npo_lanes(NpoTypeId::recompose(), 4);
+
+    let shapes_dep = shapes_recursion(&circuit, &deployed_packing);
+    let cells_dep: u64 = shapes_dep.iter().map(|s| s.cells_all()).sum();
+    let maxdeg_dep = shapes_dep.iter().map(|s| s.degree).max().unwrap();
+    let shapes_k16 = shapes_recursion(&circuit, &k16_packing);
+    print_shapes(
+        "a4/K16/rec4 — the grid minimum, now to be PROVEN",
+        &shapes_k16,
+        3,
+    );
+    let cells_k16: u64 = shapes_k16.iter().map(|s| s.cells_all()).sum();
+    let maxdeg_k16 = shapes_k16.iter().map(|s| s.degree).max().unwrap();
+    assert_eq!(
+        cells_dep, 40_554_496,
+        "deployed a4/K2 wrap cells drifted from the grid"
+    );
+    assert_eq!(
+        cells_k16, 28_971_008,
+        "a4/K16/rec4 wrap cells drifted from the grid"
+    );
+    assert_eq!(maxdeg_dep, 18, "deployed global max height should be 2^18");
+    assert_eq!(maxdeg_k16, 16, "K16/rec4 global max height should be 2^16");
+    let alu16 = shapes_k16
+        .iter()
+        .find(|s| s.name == "Alu")
+        .expect("Alu table");
+    assert_eq!(
+        (alu16.degree, alu16.main_width, alu16.prep_width),
+        (14, 216, 157),
+        "the K16 Alu geometry drifted from the grid (2^14 × 216+157)"
+    );
+    println!(
+        "geometry confirmed: deployed {cells_dep} cells (max 2^{maxdeg_dep}) → K16/rec4 \
+         {cells_k16} cells (max 2^{maxdeg_k16}), ×{:.3}",
+        cells_dep as f64 / cells_k16 as f64
+    );
+
+    // ── ARM 3: prove at K16/rec4, verify at the production entry; measure the VK rotation ──
+    let params_k16 = ProveNextLayerParams {
+        table_packing: k16_packing.clone(),
+        constraint_profile: ConstraintProfile::Standard,
+    };
+    let t = Instant::now();
+    let out_k16 = p3_recursion::prove_next_layer::<DreggRecursionConfig, Ir2Air, _, D>(
+        &input,
+        &circuit,
+        &vr,
+        &mint_config,
+        &backend,
+        &params_k16,
+        None,
+    )
+    .expect("⛔ the wrap REFUSED to prove at a4/K16/rec4");
+    println!("[upper bound] K16/rec4 wrap prove: {:?}", t.elapsed());
+
+    // Falsifier guard: the proof itself must carry the K16/rec4 packing.
+    assert_eq!(
+        out_k16.0.table_packing.horner_packed_steps(),
+        16,
+        "proof does not carry K16"
+    );
+    assert_eq!(
+        out_k16.0.table_packing.alu_lanes(),
+        4,
+        "proof does not carry a4"
+    );
+    assert_eq!(
+        out_k16.0.table_packing.npo_lanes(&NpoTypeId::recompose()),
+        Some(4),
+        "proof does not carry rec4"
+    );
+
+    verify_recursive_batch_proof_with_config(&out_k16.0, &mint_config)
+        .expect("⛔ the K16/rec4 wrap proof FAILED production verification");
+    let vk_k16 = recursion_vk_fingerprint(&out_k16.0);
+    println!(
+        "✅ a4/K16/rec4 wrap: proved and production-verified. vk = {}",
+        vk_k16.to_hex()
+    );
+
+    let t = Instant::now();
+    let out_dep = p3_recursion::prove_next_layer::<DreggRecursionConfig, Ir2Air, _, D>(
+        &input,
+        &circuit,
+        &vr,
+        &mint_config,
+        &backend,
+        &ProveNextLayerParams::default(),
+        None,
+    )
+    .expect("the deployed-packing control wrap proves");
+    println!("[upper bound] deployed a4/K2 wrap prove: {:?}", t.elapsed());
+    verify_recursive_batch_proof_with_config(&out_dep.0, &mint_config)
+        .expect("the deployed-packing control proof verifies");
+    let vk_dep = recursion_vk_fingerprint(&out_dep.0);
+    println!(
+        "deployed a4/K2 control: proved and verified. vk = {}",
+        vk_dep.to_hex()
+    );
+    assert_ne!(
+        vk_dep, vk_k16,
+        "⛔ the packing retune did NOT rotate the VK — the preprocessed commitment does not \
+         cover the packing, so \"VK rotation only\" is FALSE and the deployment story is wrong"
+    );
+    println!(
+        "⚑ VK ROTATION MEASURED: deployed {} ≠ K16 {}",
+        vk_dep.to_hex(),
+        vk_k16.to_hex()
+    );
+
+    // ── ARM 4: the corrupted-trace refusal at the SAME geometry, mutation asserted first ──
+    //
+    // Inline `prove_next_layer`'s non-cached body so the traces are in hand between witness
+    // generation and proving — every step below `runner.run()` is verbatim its recipe.
+    let preprocessors: Vec<Box<dyn NpoPreprocessor<P3BabyBear>>> = vec![
+        poseidon2_preprocessor::<P3BabyBear>(),
+        recompose_preprocessor::<P3BabyBear>(false),
+        expose_claim_preprocessor::<P3BabyBear>(),
+    ];
+    let air_builders: Vec<Box<dyn NpoAirBuilder<DreggRecursionConfig, D>>> = {
+        let mut b = poseidon2_air_builders::<DreggRecursionConfig, D>();
+        b.extend(recompose_air_builders::<DreggRecursionConfig, D>(1, false));
+        b.extend(expose_claim_air_builders::<DreggRecursionConfig, D>());
+        b
+    };
+    let (airs_degrees, primitive_columns, non_primitive_columns) =
+        get_airs_and_degrees_with_prep::<DreggRecursionConfig, EF, D>(
+            &circuit,
+            &k16_packing,
+            &preprocessors,
+            &air_builders,
+            ConstraintProfile::Standard,
+        )
+        .expect("K16 table-AIR extraction for the corrupted arm");
+    let (t_airs, degrees): (Vec<_>, Vec<usize>) = airs_degrees.into_iter().unzip();
+
+    let mut traces = {
+        let public_inputs = vr.pack_public_inputs(&input).expect("pack public inputs");
+        let private_inputs = vr.pack_private_inputs(&input).expect("pack private inputs");
+        let mut runner = circuit.runner();
+        runner
+            .set_public_inputs(&public_inputs)
+            .expect("public inputs");
+        runner
+            .set_private_inputs(&private_inputs)
+            .expect("private inputs");
+        let op_ids = <_ as VerifierCircuitResult<DreggRecursionConfig, Ir2Air>>::op_ids(&vr);
+        backend
+            .set_private_data(&mint_config, &mut runner, op_ids, &input)
+            .expect("FRI private data");
+        runner.run().expect("witness generation")
+    };
+
+    // The mutation: one mid-chain HornerAcc `out`, +1, in BOTH the Alu trace and the witness
+    // bus (rebuilt — `WitnessTrace` has no setter), so the forgery is bus-CONSISTENT and only
+    // the positional chain arithmetic can refuse it.
+    let (mut_idx, orig_out) = {
+        let alu = &traces.alu_trace;
+        let i = (0..alu.op_kind.len().saturating_sub(1))
+            .find(|&i| {
+                alu.op_kind[i] == AluOpKind::HornerAcc && alu.op_kind[i + 1] == AluOpKind::HornerAcc
+            })
+            .expect("a mid-chain HornerAcc exists (216,330 of them)");
+        (i, alu.values[i][3])
+    };
+    let delta = EF::ONE;
+    let corrupted_out = orig_out + delta;
+    traces.alu_trace.values[mut_idx][3] = corrupted_out;
+    let out_wid: WitnessId = traces.alu_trace.indices[mut_idx][3];
+    let n_wit = traces.witness_trace.num_rows();
+    let mut wit_vals: Vec<EF> = (0..n_wit)
+        .map(|j| {
+            *traces
+                .witness_trace
+                .get_value(WitnessId(j as u32))
+                .expect("witness value")
+        })
+        .collect();
+    let orig_wit = wit_vals[out_wid.0 as usize];
+    wit_vals[out_wid.0 as usize] = orig_wit + delta;
+    traces.witness_trace = WitnessTrace::new(wit_vals);
+
+    // ⚑ MUTATION ASSERTED BEFORE THE VERDICT IS READ (the falsifier-that-stopped-falsifying
+    // class): both copies must have actually changed.
+    assert_ne!(
+        traces.alu_trace.values[mut_idx][3], orig_out,
+        "Alu mutation did not take"
+    );
+    assert_eq!(traces.alu_trace.values[mut_idx][3], corrupted_out);
+    assert_ne!(
+        *traces
+            .witness_trace
+            .get_value(out_wid)
+            .expect("witness value"),
+        orig_wit,
+        "witness-bus mutation did not take"
+    );
+    println!(
+        "mutation asserted: HornerAcc op #{mut_idx} out (witness id {}) += 1, in Alu trace AND \
+         witness bus; successor op is also HornerAcc (mid-chain)",
+        out_wid.0
+    );
+
+    // Prove + verify the corrupted trace — verbatim the prove_next_layer recipe at K16/rec4.
+    // (`DreggRecursionConfig` is non-ZK, so ext_degrees == degrees — `prove_next_layer` adds
+    // `config.is_zk()` = 0 here.)
+    let prover_data = ProverData::from_airs_and_degrees(&mint_config, &t_airs, &degrees);
+    let circuit_prover_data =
+        CircuitProverData::new(prover_data, primitive_columns, non_primitive_columns);
+    let mut prover = BatchStarkProver::new(mint_config.clone())
+        .with_table_packing(k16_packing.clone())
+        .with_alu_variant(AirVariant::Baseline);
+    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);
+    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W24);
+    prover.register_recompose_table::<D>(false);
+    prover.register_expose_claim_table::<D>();
+
+    let t = Instant::now();
+    let prove_attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        prover.prove_all_tables(&traces, &circuit_prover_data)
+    }));
+    match prove_attempt {
+        Err(panic) => {
+            let msg = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            println!("✅ REFUSED at PROVE (panic) after {:?}: {msg}", t.elapsed());
+        }
+        Ok(Err(e)) => {
+            println!("✅ REFUSED at PROVE (error) after {:?}: {e}", t.elapsed());
+        }
+        Ok(Ok(forged)) => {
+            println!(
+                "[upper bound] corrupted-trace prove completed in {:?}; the refusal must now \
+                 come from the verifier",
+                t.elapsed()
+            );
+            let verdict = verify_recursive_batch_proof_with_config(&forged, &mint_config);
+            assert!(
+                verdict.is_err(),
+                "⛔⛔ THE CORRUPTED K16 TRACE VERIFIED — the packed-row Horner chain constraint \
+                 does not cover the mutated lane at K16; the geometry is UNSOUND and must not land"
+            );
+            println!("✅ REFUSED at VERIFY: {}", verdict.unwrap_err());
+        }
+    }
+    println!(
+        "\n⚑ K≠2 BANKED: a4/K16/rec4 proves ({cells_k16} cells, max 2^{maxdeg_k16}), the \
+         production verifier accepts it, the VK rotates, and a consistent single-step Horner \
+         forgery at the same geometry refuses."
+    );
+}
