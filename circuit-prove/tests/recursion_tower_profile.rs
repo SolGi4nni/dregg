@@ -677,6 +677,94 @@ fn l1_leaf_wrap_over_the_deployed_ir2_leaf() {
     print_shapes("L1 leaf wrap @ pre-split lb6 (for contrast)", &shapes, 6);
 }
 
+/// GALOIS-LEVERS lane: the SAME wrap circuit's committed geometry across `TablePacking`
+/// variants — `(alu_lanes, horner_pack_k, recompose npo_lanes)`.
+///
+/// The op list is built ONCE and never changes; only the table shapes move. Every point on
+/// this grid is therefore a **VK rotation, not a wire change** — the same precedent class as
+/// the landed reduced-opening split (`notes/sumcheck-batched-opening.md` §3): child proof
+/// byte-identical, accepted predicate identical, wrap preprocessed commitment rotates.
+///
+/// Why this grid exists: after the reduced-opening split, the wrap's `Alu` table is dominated
+/// by per-query `HornerAcc` chains over BASE-field opened values against the single ext
+/// challenge α — chains that `compute_schedule` places on lane 0 at `horner_packed_steps = 2`
+/// while the other `alu_lanes - 1` lanes ride along mostly idle. The cells-per-Horner-step is
+/// then `(76 + 59) / 2 ≈ 67` at the deployed `p1/a4/K2`, against a linear-in-K packed-step
+/// cost of `~8 main + ~7 prep` cells. The grid measures where the real minimum sits.
+#[test]
+#[ignore = "MEASUREMENT: one real rotated IR-v2 prove + one leaf-wrap CIRCUIT BUILD, then shape extraction per packing point. --ignored --nocapture --test-threads=1"]
+fn g_packing_grid_over_the_deployed_leaf_wrap() {
+    use p3_circuit::NpoTypeId;
+
+    let (desc, trace, dpis, map_heaps, mem_boundary) = rotated_transfer_workload();
+    let config = ir2_leaf_wrap_config();
+
+    let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        &desc,
+        &trace,
+        &dpis,
+        &mem_boundary,
+        &map_heaps,
+        &UMemBoundaryWitness::default(),
+        &config,
+    )
+    .expect("the rotated transfer leaf proves at the leaf-wrap config");
+
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(&desc, &inner, &dpis, &config).expect("verify triple");
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner,
+            common_data: &common,
+            table_public_inputs,
+        };
+    let backend = create_recursion_backend();
+    let (circuit, _vr) =
+        build_next_layer_circuit_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
+            &input, &config, &backend, None,
+        )
+        .expect("the leaf-wrap verification circuit builds");
+
+    let c = census(&circuit);
+    print_census(
+        "wrap over the deployed leaf — op census (packing-INVARIANT: the control)",
+        &c,
+    );
+
+    // (alu_lanes, horner_pack_k, recompose_lanes). First row is the deployed control.
+    let grid: &[(usize, usize, usize)] = &[
+        (4, 2, 1), // deployed p1/a4/K2 — must reproduce the landed geometry exactly
+        (4, 4, 1),
+        (4, 8, 1),
+        (2, 8, 1),
+        (1, 8, 1),
+        (2, 16, 1),
+        (4, 16, 1),
+        (4, 12, 1),
+        (4, 24, 1),
+        (4, 32, 1),
+        (4, 64, 1),
+        (8, 16, 1),
+        (2, 8, 4),  // recompose lane retune on a good ALU point
+        (4, 2, 4),  // recompose lane retune alone, against the deployed control
+        (4, 16, 4), // the combined candidate: K16 + recompose out of the height-pin
+        (4, 32, 4),
+    ];
+
+    for &(alu_lanes, horner_k, rec_lanes) in grid {
+        let packing = TablePacking::new(1, alu_lanes)
+            .with_horner_pack_k(horner_k)
+            .with_npo_lanes(NpoTypeId::recompose(), rec_lanes);
+        let shapes = shapes_recursion(&circuit, &packing);
+        print_shapes(
+            &format!("packing p1/a{alu_lanes}/K{horner_k}/rec{rec_lanes}"),
+            &shapes,
+            3,
+        );
+    }
+}
+
 // ===========================================================================
 // §B — THE PERMUTATION COUNTER, WHERE IT DOES REACH: the child of layer 1
 // ===========================================================================
