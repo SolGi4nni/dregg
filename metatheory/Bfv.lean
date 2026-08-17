@@ -71,6 +71,7 @@ import Bfv.Noise
 import Bfv.Fold
 import Bfv.Ring
 import Bfv.CrossLimb
+import Bfv.ZqSumcheck
 
 /-! Namespace-wide axiom hygiene: every theorem under `Bfv` pinned to the kernel triple. -/
 #assert_namespace_axioms Bfv
