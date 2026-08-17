@@ -141,6 +141,17 @@ GATES=(
   # scan trips the non-vacuity floors. The working tree is never touched.
   "check-guard-discipline|180|python3 scripts/check-guard-discipline.py --rev HEAD"
   "check-guard-discipline-red|60|python3 scripts/check-guard-discipline.py --self-test"
+  # ⚑ THE ANTI-VACUITY TOOTH MAY NOT ITSELF BE VACUOUS. Added 2026-08-16 after
+  # `RecursiveAggregation.real_engine_sound` was found discharging "So `EngineSound` is
+  # INHABITED — the headline is not vacuous" at `RealProof := Unit` + `acceptAll := fun _ =>
+  # true`: one proof inhabitant, a verifier with no `false` in its range, so no forgery was
+  # even EXPRESSIBLE and the structure could not be refuted from the verify side at any
+  # aggregate. `#assert_axioms`, `#keystone_audit` and the guard ratchet were all green on it,
+  # because each asks "is this proved?" and it was. Two siblings had the same shape.
+  # Gates on the FINDING against a ledger (unlisted = red, stale row = red), not on its own
+  # self-test; `-red` proves the detector can fire.
+  "anti-vacuity-witness|120|python3 scripts/check-anti-vacuity-witness.py"
+  "anti-vacuity-witness-red|60|python3 scripts/check-anti-vacuity-witness.py --self-test"
   # ⚑ ELABORATION COST, ratcheted on DECLARATIONS and SHAPE — never on a stopwatch. The same
   # modules measured 5-11x apart in-build vs standalone on hbox in one hour (PolishchukSpielman
   # 565 s vs 51.3 s), because ~50 concurrent `lean` processes each carry a ~2.4 GB working set

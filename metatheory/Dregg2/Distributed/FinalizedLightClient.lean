@@ -236,7 +236,7 @@ kernel `decide` does not reduce `finalLeaderAt` — the SANCTIONED non-vacuity t
 section Realize
 
 open Dregg2.Circuit.RecursiveAggregation
-  (RealProof acceptAll zCH zRH zcmb zcompress zcompressN realAggregate realSteps real_engine_sound
+  (RealProof realVerify zCH zRH zcmb zcompress zcompressN realAggregate realSteps real_engine_sound
    AggregateAttests)
 open Dregg2.Exec.ConsensusExec (teethGenesis)
 open Dregg2.Distributed.BlocklaceFinality
@@ -283,7 +283,7 @@ theorem finalized_light_client_fires_for
     (hbound : Bound RealProof realAggregate cert realAggregate.finalRoot) :
     FinalizedHistoryAttested RealProof zCH zRH zcmb zcompress zcompressN
       realAggregate teethGenesis realSteps cert realAggregate.finalRoot :=
-  light_client_accepts_finalized_history RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  light_client_accepts_finalized_history RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps cert realAggregate.finalRoot
     real_engine_sound rfl hbound hcert
 

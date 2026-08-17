@@ -667,7 +667,7 @@ and anchor at its GENUINE head. -/
 section Realize
 
 open Dregg2.Circuit.RecursiveAggregation
-  (RealProof acceptAll zCH zRH zcmb zcompress zcompressN realAggregate realSteps real_engine_sound)
+  (RealProof realVerify zCH zRH zcmb zcompress zcompressN realAggregate realSteps real_engine_sound)
 open Dregg2.Exec.ConsensusExec (teethGenesis)
 
 /-- A concrete honest-setup VK anchor for the realizing instance. -/
@@ -689,11 +689,11 @@ the DEPLOYED `r3VerifyCore` accepts and `r3_unfoolable` delivers a real `R3Attes
 theorem r3_fires_on_real_chain :
     R3Attested RealProof zCH zRH zcmb zcompress zcompressN
       realAggregate teethGenesis realSteps realAggregate.finalRoot :=
-  r3_unfoolable RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  r3_unfoolable RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps lane0
     (broadcast realAggregate.finalRoot) (broadcast realAggregate.finalRoot) realVk realVk
     (lane0_broadcast realAggregate.finalRoot).symm real_engine_sound
-    (by simp [r3VerifyCore, acceptAll])
+    (by simp [r3VerifyCore, realVerify, realAggregate])
 
 /-- **`r3_real_chain_turn_executed` (the attestation is REAL).** Reading R3's conclusion on the witnessed
 instance: the (only) turn of the honest history executed — `recCexec teethGenesis honestTurn = some _`. So
@@ -703,17 +703,17 @@ theorem r3_real_chain_turn_executed :
       = some Dregg2.Distributed.HistoryAggregation.honestStep.post := by
   have h := r3_fires_on_real_chain.integrity
               Dregg2.Distributed.HistoryAggregation.honestStep (by simp [realSteps])
-  simpa [Dregg2.Distributed.HistoryAggregation.honestStep] using h
+  exact h
 
 /-- **`r3_wrong_head_rejected` (non-vacuity, NEGATIVE — the width tooth BITES on the real instance).** A
 wide anchored head differing from the genuine one ONLY OUTSIDE LANE 0 makes the DEPLOYED core REJECT on
 the realizing instance. Under the PRE-FIX core the very same pair was ACCEPTED (`narrowHead_conflates`),
 so this is the repair biting on a real aggregate, not a restatement. -/
 theorem r3_wrong_head_rejected :
-    r3VerifyCore (acceptAll realAggregate.root) realVk realVk
+    r3VerifyCore (realVerify realAggregate.root) realVk realVk
       (broadcast realAggregate.finalRoot)
       (fun i => if i = 1 then realAggregate.finalRoot + 1 else realAggregate.finalRoot) = false := by
-  refine r3_wide_head_mismatch_rejected (acceptAll realAggregate.root) realVk realVk _ _ ?_
+  refine r3_wide_head_mismatch_rejected (realVerify realAggregate.root) realVk realVk _ _ ?_
   intro h
   have h1 : realAggregate.finalRoot = realAggregate.finalRoot + 1 := by
     simpa [broadcast] using congrFun h 1
@@ -724,9 +724,9 @@ instance).** A presented fingerprint that is not the honest-setup anchor is REJE
 aggregate verifies and the heads match exactly. Under the PRE-FIX self-anchored seam the same input was
 ACCEPTED (`selfAnchoredVk_accepts_foreign_root`). -/
 theorem r3_foreign_vk_rejected :
-    r3VerifyCore (acceptAll realAggregate.root) (bumpVk realVk) realVk
+    r3VerifyCore (realVerify realAggregate.root) (bumpVk realVk) realVk
       (broadcast realAggregate.finalRoot) (broadcast realAggregate.finalRoot) = false :=
-  vkPin_refuses_the_foreign_root (acceptAll realAggregate.root) realVk _ _
+  vkPin_refuses_the_foreign_root (realVerify realAggregate.root) realVk _ _
 
 /-! ### The wire reflects the core — the falsification vectors, on the exported entry.
 

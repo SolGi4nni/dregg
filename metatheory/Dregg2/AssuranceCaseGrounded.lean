@@ -247,18 +247,20 @@ We therefore exhibit non-vacuity of the DELTA — the derived engine — on the 
 chain (`teethGenesis ⟶ honestStep.post`), reusing the grounded apex's concrete realizer pieces: the
 binding-AIR extraction is discharged CONCRETELY (`satisfies_one`/`represents_one` — so the keystone
 `binding_air_discharges_binding_sound` is genuinely load-bearing), the recursion leg is the honest
-accepting verifier, and the ONLY non-concrete input is the per-leaf `Forall₂ LeafRefinement` under the
-accepting verifier — the SAME audited `Satisfied2`/STARK floor every grounded module carries (named
+realizing verifier (`RecursiveAggregation.realVerify`, which REFUSES `forged` since 2026-08-16 — it was
+the one-inhabitant `acceptAll` before, and every `verify _ = true` obligation here was free), and the
+ONLY non-concrete input is the per-leaf `Forall₂ LeafRefinement` — the SAME audited `Satisfied2`/STARK
+floor every grounded module carries (named
 `hleaves`, not a hole). So the engine the grounded capstone threads into E is inhabited on a real
 executor run, and concludes a TRUE executor fact. -/
 theorem grounded_capstone_engine_fires
     (hash : List ℤ → ℤ) (S : CommitSurface) (hCR : Poseidon2SpongeCR hash)
     (hleaves : List.Forall₂
-      (fun (p : RealProof) (st : ChainStep) => Nonempty (LeafRefinement RealProof acceptAll hash S p st))
+      (fun (p : RealProof) (st : ChainStep) => Nonempty (LeafRefinement RealProof realVerify hash S p st))
       realAggregate.leafProofs realSteps) :
     AggregateAttests RealProof zCH zRH zcmb zcompress zcompressN realAggregate teethGenesis realSteps := by
   -- the binding-AIR extraction, discharged concretely on the honest step (as in `GroundedApex`).
-  have hbe : BindingExtract RealProof acceptAll hash zCH zRH zcmb zcompress zcompressN
+  have hbe : BindingExtract RealProof realVerify hash zCH zRH zcmb zcompress zcompressN
       realAggregate realSteps := by
     intro _
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
@@ -269,14 +271,14 @@ theorem grounded_capstone_engine_fires
     simp only [realAggregate, pubOf, realSteps]
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
       honestStep (by simp)
-  have hrec : acceptAll realAggregate.root = true →
-      (∀ p ∈ realAggregate.leafProofs, acceptAll p = true)
-        ∧ acceptAll realAggregate.bindingProof = true :=
-    fun _ => ⟨fun _ _ => rfl, rfl⟩
+  have hrec : realVerify realAggregate.root = true →
+      (∀ p ∈ realAggregate.leafProofs, realVerify p = true)
+        ∧ realVerify realAggregate.bindingProof = true :=
+    fun _ => ⟨realVerify_of_all_honest realAggregate.leafProofs (by decide), rfl⟩
   -- the engine the grounded capstone threads into E, on the honest chain — then the whole-history apex.
-  exact light_client_verifies_whole_history RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  exact light_client_verifies_whole_history RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps
-    (engineSound_grounded RealProof acceptAll hash S hCR zCH zRH zcmb zcompress zcompressN
+    (engineSound_grounded RealProof realVerify hash S hCR zCH zRH zcmb zcompress zcompressN
       realAggregate teethGenesis realSteps hleaves hbe hrec)
     rfl
 
@@ -292,10 +294,10 @@ STARK floor). -/
 theorem grounded_capstone_engine_fires_v2
     (hash : List ℤ → ℤ) (S : CommitSurface) (hCR : Poseidon2SpongeCR hash)
     (hleaves : List.Forall₂
-      (fun (p : RealProof) (st : ChainStep) => Nonempty (LeafRefinement RealProof acceptAll hash S p st))
+      (fun (p : RealProof) (st : ChainStep) => Nonempty (LeafRefinement RealProof realVerify hash S p st))
       realAggregate.leafProofs realSteps) :
     AggregateAttests RealProof zCH zRH zcmb zcompress zcompressN realAggregate teethGenesis realSteps := by
-  have hbe : BindingExtract RealProof acceptAll hash zCH zRH zcmb zcompress zcompressN
+  have hbe : BindingExtract RealProof realVerify hash zCH zRH zcmb zcompress zcompressN
       realAggregate realSteps := by
     intro _
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
@@ -307,13 +309,16 @@ theorem grounded_capstone_engine_fires_v2
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
       honestStep (by simp)
   -- the carried `hrec` is GONE: the recursion leg comes from the concrete honest tree + per-node carrier.
-  exact light_client_verifies_whole_history RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  exact light_client_verifies_whole_history RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps
-    (engineSound_grounded_v2 RealProof acceptAll hash S hCR zCH zRH zcmb zcompress zcompressN
+    (engineSound_grounded_v2 RealProof realVerify hash S hCR zCH zRH zcmb zcompress zcompressN
       Dregg2.Circuit.RecursiveSoundFromNodes.zH
       realAggregate teethGenesis realSteps hleaves hbe
       honestTree honest_node_carrier rfl
-      (by intro p _; cases p; simp [leavesP, honestTree])
+      (by
+        intro p hp
+        have : p = RealProof.honest := by simpa [realAggregate] using hp
+        subst this; simp [leavesP, honestTree])
       (by simp [leavesP, honestTree, realAggregate]))
     rfl
 

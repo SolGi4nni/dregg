@@ -578,70 +578,156 @@ theorem non_omission_from_verification
 
 end Engine
 
-/-! ## 5. NON-VACUITY — the named hypotheses are REALIZABLE (witnessed BOTH ways).
+/-! ## 5. NON-VACUITY — the named hypotheses are REALIZABLE, at an engine that can REFUSE.
 
 The headline would be hollow if `EngineSound` were unsatisfiable, or if `verify agg.root = true`
 could not occur. We exhibit a CONCRETE realizing instance over the `HistoryAggregation.honestStep`
-chain (a real 1-step executor run over the teeth genesis): a `verify` that accepts, an `Aggregate`
-whose root/leaf/binding all verify, and an `EngineSound` proof — so the headline fires on a real
-chain and concludes a real `AggregateAttests`. We ALSO witness the negative: a `verify` that REJECTS
-gives a vacuously-true `EngineSound` (no obligation), and the headline is not invoked — the tooth is
-in the `binding_sound`/`leaf_sound` implications, which §6 shows separate honest from
-tampered. -/
+chain (a real 1-step executor run over the teeth genesis): an `Aggregate` whose root/leaf/binding all
+verify, and an `EngineSound` proof — so the headline fires on a real chain and concludes a real
+`AggregateAttests`.
+
+⚑⚑ **[2026-08-16 — THE ANTI-VACUITY TOOTH WAS ITSELF VACUOUS, AND THIS SECTION CLAIMED THE OPPOSITE.]**
+Until this commit the realizing engine was `RealProof := Unit` with `acceptAll : RealProof → Bool :=
+fun _ => true`: a proof carrier with exactly ONE inhabitant, and a verifier whose range does not
+contain `false`. `real_engine_sound` then discharged `recursive_sound` with a bare `rfl` — `verify p =
+true` holds for EVERY `p` because there is only one `p` and `verify` is a constant — while its
+docstring read *"So `EngineSound` is INHABITED — the headline is not vacuous."*
+
+That is the worst shape a vacuity has: it is the tooth whose whole job is to REFUTE vacuity, and it
+was discharged where the discrimination it claims to exhibit is not expressible. At `Unit`/`acceptAll`
+a forged proof does not EXIST, `EngineSound` cannot be refuted from the verify side at ANY aggregate,
+and the entire recursion leg is inert. A witness at `Unit` with an accept-everything predicate passes
+every automated check this repo had, which is why it survived.
+
+The engine below has TWO proof inhabitants and a verifier that REFUSES one of them. That buys three
+statements the old instance could not even make, proved in §5a:
+  * `EngineSound` is SATISFIABLE — `real_engine_sound`, same shape as before, honest aggregate;
+  * `EngineSound` is REFUTABLE — `engineSound_refutable_at_forged_leaf` /
+    `…_at_forged_binding`: a forged leaf or binding proof under an otherwise honest, VERIFYING root
+    makes the structure FALSE, and it is `recursive_sound`'s own conclusion that kills it;
+  * the headline CANNOT FIRE on a forged root — `light_client_refuses_forged_root`.
+Satisfiable AND refutable AND not provable is the shape a real boundary has; two of those three were
+unstatable here before.
+
+⚠ **What this instance still does NOT establish — stated here as a theorem, not left to be found.**
+The commitment portal is `zCH/zRH/zcmb/zcompress/zcompressN`, all CONSTANT ZERO, so every root is `0`
+and `AggregateAttests.ordered` carries no information at this instance. That is not a caveat, it is
+`zero_portal_chainBound_is_free` below: at this portal `ChainBound` holds for EVERY list of steps,
+tampered ones included. §5b converts exactly that degeneracy into the two load-bearing
+counterexamples. So §5 witnesses the ENGINE — proofs, verification, refusal — and witnesses NOTHING
+about the hash portal. No reader should take `light_client_fires_on_real_chain`'s `ordered` field as
+evidence that the temporal tooth bites; the tooth that bites on ordering is §6's
+`tampered_aggregate_cannot_bind`, at a GENERAL portal. -/
 
 section Realize
 
 open Dregg2.Exec.ConsensusExec (teethGenesis honestTurn)
 
-/-- A trivial proof carrier (Unit) and an ACCEPTING verifier — the realizing engine instance. -/
-abbrev RealProof := Unit
-def acceptAll : RealProof → Bool := fun _ => true
+/-- The realizing proof carrier. TWO inhabitants, so that a forgery is EXPRESSIBLE — the single thing
+`Unit` could not do. `honest` models a proof the recursion engine produced; `forged` models one it did
+not. -/
+inductive RealProof where
+  /-- A proof the engine accepts. -/
+  | honest : RealProof
+  /-- A proof the engine REJECTS — the inhabitant `Unit` did not have. -/
+  | forged : RealProof
+  deriving DecidableEq, Repr
+
+/-- The realizing verifier. It REFUSES: `realVerify` is a genuine decision with `false` in its range,
+not the constant `fun _ => true` that used to stand here. Every tooth in §5a is downstream of this one
+line. -/
+def realVerify : RealProof → Bool
+  | .honest => true
+  | .forged => false
+
+/-- **`realVerify_discriminates` (READ THIS BEFORE ANY VERDICT BELOW).** The carrier has two DISTINCT
+inhabitants and the verifier separates them. This is the assertion that the adversary of §5a is a real
+adversary; it is stated before the refusals so that an edit which collapses the carrier, or which makes
+`realVerify` accept everything again, fails HERE — loudly — instead of silently re-vacuifying every
+theorem in this section while leaving them all green. -/
+theorem realVerify_discriminates :
+    RealProof.honest ≠ RealProof.forged
+      ∧ realVerify RealProof.honest = true
+      ∧ realVerify RealProof.forged = false :=
+  ⟨by decide, rfl, rfl⟩
 
 /-- The §8 portal realized by constant-zero hashes for the witness (the realizing instance only needs
 the structure to typecheck + the soundness implications to hold; the CR carriers are not invoked here
-because the engine hypotheses are supplied DIRECTLY as the realized facts). -/
+because the engine hypotheses are supplied DIRECTLY as the realized facts). ⚠ Its degeneracy is
+`zero_portal_chainBound_is_free`, immediately below — read that before reading any `ordered` field
+concluded at this portal. -/
 def zCH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ := fun _ _ => 0
 def zRH : Dregg2.Exec.RecordKernelState → ℤ := fun _ => 0
 def zcmb : ℤ → ℤ → ℤ := fun _ _ => 0
 def zcompress : ℤ → ℤ → ℤ := fun _ _ => 0
 def zcompressN : List ℤ → ℤ := fun _ => 0
 
+/-- **⚠ `zero_portal_chainBound_is_free` — THE PORTAL OF THIS SECTION PROVES NOTHING ABOUT ORDER.**
+`chainedCommit` is `compressN [_, _]`, so at `zcompressN = fun _ => 0` every step root is `0` and
+`Continues` is `0 = 0` for EVERY adjacent pair. Hence `ChainBound` holds at this portal for EVERY list
+of steps — reordered, truncated, spliced, or fabricated. The `ordered` field that
+`light_client_fires_on_real_chain` delivers is therefore FREE, obtainable with no aggregate and no
+verification at all, and must not be read as the temporal tooth biting. Naming it as a theorem is the
+point: the degeneracy is now a proved, citable fact instead of a sentence a reader may skip. -/
+theorem zero_portal_chainBound_is_free (steps : List ChainStep) :
+    ChainBound zCH zRH zcmb zcompress zcompressN steps := by
+  induction steps with
+  | nil => trivial
+  | cons _s rest ih =>
+    cases rest with
+    | nil => trivial
+    | cons _s' _rest' => exact ⟨rfl, ih⟩
+
 /-- The realizing 1-step chain: the honest executor step over the teeth genesis. -/
 def realSteps : List ChainStep := [honestStep]
 
-/-- The realizing aggregate: every proof is the accepting `Unit`; the public roots are the genuine
-endpoints of `realSteps` (so `binding_sound`'s pin holds by `rfl`). -/
+/-- The realizing aggregate: every carried proof is `honest` (so every one of them VERIFIES under a
+verifier that could have refused); the public roots are the genuine endpoints of `realSteps` (so
+`binding_sound`'s pin holds by `rfl`). -/
 def realAggregate : Aggregate RealProof where
-  root := ()
-  leafProofs := [()]
-  bindingProof := ()
+  root := .honest
+  leafProofs := [.honest]
+  bindingProof := .honest
   genesisRoot := ChainStep.oldRoot zCH zRH zcmb zcompress zcompressN honestStep
   finalRoot := foldedFinalRoot zCH zRH zcmb zcompress zcompressN teethGenesis realSteps
   chainDigest := 0
   numTurns := 1
 
-/-- **`real_engine_sound` (non-vacuity, positive).** The named soundness hypotheses are
-SATISFIABLE on a real chain: `EngineSound` holds for the accepting verifier, the realizing aggregate,
-the teeth genesis, and the honest 1-step chain. Each implication is discharged concretely — the leaf
-soundness yields the genuine `recCexec teethGenesis honestTurn = some _` (the honest step's `commits`),
-the binding soundness yields the singleton `ChainBound` + the genuine root pins. So `EngineSound` is
-INHABITED — the headline is not vacuous. -/
+/-- Helper: every proof in an all-`honest` list verifies. Used by the three `EngineSound` witnesses;
+note that unlike the `fun _ => true` it replaces, this needs its membership hypothesis — that is the
+whole difference. -/
+theorem realVerify_of_all_honest (ps : List RealProof) (h : ∀ q ∈ ps, q = RealProof.honest) :
+    ∀ p ∈ ps, realVerify p = true := fun p hp => by rw [h p hp]; rfl
+
+/-- **`real_engine_sound` (SATISFIABILITY — one half of a boundary, and only that half).** The named
+soundness hypotheses HOLD on a real chain: `EngineSound` is inhabited at the realizing verifier, the
+realizing aggregate, the teeth genesis, and the honest 1-step chain. Each implication is discharged
+concretely — the leaf soundness yields the genuine `recCexec teethGenesis honestTurn = some _` (the
+honest step's `commits`), the binding soundness the singleton `ChainBound` plus the genuine root pins.
+
+⚑ **This theorem alone does not refute vacuity, and the version of it that claimed to was wrong.**
+A predicate satisfiable at EVERY input is `True` wearing a costume, and satisfiability cannot tell the
+two apart. The refutation of vacuity is this theorem TOGETHER WITH §5a's refusals, which is why
+`engineSound_is_a_real_boundary` states the conjunction and is the thing to cite. What is genuinely
+concrete here: the antecedents are all TRUE (`realVerify` accepts `honest`), so all three obligations
+are really discharged rather than skipped — and `leaf_sound` is discharged by the step's OWN executor
+witness. What is NOT established here: anything about the hash portal
+(`zero_portal_chainBound_is_free`). -/
 theorem real_engine_sound :
-    EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
       realAggregate teethGenesis realSteps := by
   refine { recursive_sound := ?_, leaf_sound := ?_, binding_sound := ?_ }
   · intro _
-    refine ⟨fun p hp => ?_, rfl⟩
-    -- every leaf is `()`; `acceptAll _ = true`.
-    rfl
-  · -- the positional pairing: leaf `()` ↦ step `honestStep`, whose `commits` IS the executor witness.
-    show List.Forall₂ _ [()] realSteps
+    exact ⟨realVerify_of_all_honest realAggregate.leafProofs (by decide), rfl⟩
+  · -- the positional pairing: leaf `honest` ↦ step `honestStep`, whose `commits` IS the witness.
+    show List.Forall₂ _ [RealProof.honest] realSteps
     refine List.Forall₂.cons ?_ (List.Forall₂.nil)
     intro _
     exact honestStep.commits
   · intro _
     refine ⟨?_, ?_, ?_, ?_⟩
-    · -- ChainBound on a singleton is `True`.
+    · -- ChainBound on a singleton is `True`. (⚠ and at this portal it is free at EVERY length —
+      -- `zero_portal_chainBound_is_free`.)
       simp [realSteps, ChainBound]
     · -- genesisRoot is defined as the genuine oldRoot of the head step.
       simp [realAggregate, realSteps]
@@ -650,6 +736,78 @@ theorem real_engine_sound :
     · -- numTurns = 1 IS the singleton chain's length (the count pin, added 2026-07-28).
       rfl
 
+/-! ### 5a. ⚑ THE REFUSAL TEETH — the realizing engine REJECTS forged proofs.
+
+`real_engine_sound` establishes only that `EngineSound` is satisfiable. These theorems establish the
+other half: at the SAME engine, it is also FALSE somewhere, and the falsity is driven by the verifier
+actually refusing. None of them was statable at `Unit`/`acceptAll`, where the range of `verify` has no
+`false` and there is no second proof value to forge.
+
+Each forgery asserts that it IS a forgery — that the mutated field genuinely differs from the honest
+one — BEFORE the verdict is read. A mutation that quietly stopped being a mutation would otherwise
+leave a green tooth behind, which is exactly how the defect above survived. -/
+
+/-- The forged-root aggregate: `realAggregate` with a FORGED root, everything else the honest witness. -/
+def forgedRootAggregate : Aggregate RealProof := { realAggregate with root := .forged }
+
+/-- **`forged_root_differs` (the mutation IS a mutation).** Read before the verdict below. -/
+theorem forged_root_differs : forgedRootAggregate.root ≠ realAggregate.root := by decide
+
+/-- **`light_client_refuses_forged_root` (THE ONE CHECK FAILS).** The light client's single check —
+`verify agg.root = true`, the hypothesis `light_client_verifies_whole_history` takes — is UNSATISFIABLE
+at the forged-root aggregate, so the headline is never invoked and no attestation is obtained. Under
+`acceptAll` this statement was FALSE: every root verified, including every forgery. -/
+theorem light_client_refuses_forged_root : realVerify forgedRootAggregate.root ≠ true := by decide
+
+/-- The aggregate carrying a FORGED LEAF proof beneath an honest, VERIFYING root — the prover who slips
+one unverifiable leg into an otherwise good aggregate. -/
+def forgedLeafAggregate : Aggregate RealProof := { realAggregate with leafProofs := [.forged] }
+
+/-- **`forged_leaf_differs` (the mutation IS a mutation).** -/
+theorem forged_leaf_differs : forgedLeafAggregate.leafProofs ≠ realAggregate.leafProofs := by decide
+
+/-- **⚑ `engineSound_refutable_at_forged_leaf` — THE TOOTH THAT MATTERS.** NO `EngineSound` exists for
+an aggregate whose root VERIFIES but whose leaf is FORGED. The root is `honest`, so
+`recursive_sound`'s antecedent holds and its conclusion is forced: every leaf must verify. The leaf is
+`forged`, and `realVerify forged = false`. Contradiction — so the boundary REFUSES the mixed aggregate.
+
+This is the statement the old `Unit` instance could not make at all: with one proof value there is no
+forged leaf to slip, and with `fun _ => true` the forced conclusion is free. Note that it is the
+recursion hypothesis itself doing the rejecting, not a side condition bolted on. -/
+theorem engineSound_refutable_at_forged_leaf :
+    ¬ EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
+        forgedLeafAggregate teethGenesis realSteps := by
+  intro es
+  exact absurd ((es.recursive_sound rfl).1 RealProof.forged (by decide)) (by decide)
+
+/-- The aggregate whose BINDING leaf is forged under an honest, verifying root. -/
+def forgedBindingAggregate : Aggregate RealProof := { realAggregate with bindingProof := .forged }
+
+/-- **`forged_binding_differs` (the mutation IS a mutation).** -/
+theorem forged_binding_differs :
+    forgedBindingAggregate.bindingProof ≠ realAggregate.bindingProof := by decide
+
+/-- **`engineSound_refutable_at_forged_binding`.** The same refusal on the OTHER leg: a forged
+`TurnChainBindingAir` leaf under a verifying root contradicts `recursive_sound`'s second conjunct. So
+the chain-binding leg cannot be dropped or faked while the aggregate still satisfies the boundary. -/
+theorem engineSound_refutable_at_forged_binding :
+    ¬ EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
+        forgedBindingAggregate teethGenesis realSteps := by
+  intro es
+  exact absurd (es.recursive_sound rfl).2 (by decide)
+
+/-- **⚑⚑ `engineSound_is_a_real_boundary` — THE ACTUAL ANTI-VACUITY STATEMENT, AND THE ONE TO CITE.**
+At one and the same engine, `EngineSound` is SATISFIABLE (the honest aggregate) and REFUTABLE (the
+forged-leaf aggregate). A predicate with both properties is neither `True` in disguise nor unreachable:
+it DISCRIMINATES. `real_engine_sound` on its own gives the left conjunct only, and the left conjunct
+alone is what the pre-2026-08-16 file presented as the refutation of vacuity. -/
+theorem engineSound_is_a_real_boundary :
+    EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
+        realAggregate teethGenesis realSteps
+      ∧ ¬ EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
+        forgedLeafAggregate teethGenesis realSteps :=
+  ⟨real_engine_sound, engineSound_refutable_at_forged_leaf⟩
+
 /-- **`light_client_fires_on_real_chain` (the headline is WITNESSED).** On the realizing
 instance, the light-client headline concludes `AggregateAttests`: verifying the (accepting)
 root attests the honest 1-step history. So `light_client_verifies_whole_history` is non-vacuous — it
@@ -657,17 +815,26 @@ fires on a real chain and delivers a real attestation, not an empty implication.
 theorem light_client_fires_on_real_chain :
     AggregateAttests RealProof zCH zRH zcmb zcompress zcompressN
       realAggregate teethGenesis realSteps :=
-  light_client_verifies_whole_history RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  light_client_verifies_whole_history RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps real_engine_sound rfl
 
 /-- **`real_chain_first_turn_executed` (the attestation is REAL).** Reading the conclusion
 of the witnessed headline: the first (only) turn of the realizing history executed —
 `recCexec teethGenesis honestTurn = some _`. So the light client's attestation is a TRUE fact about a
-real executor run, not a formal husk. -/
+real executor run, not a formal husk.
+
+⚠ **[2026-08-16 — what this theorem does and does NOT add, since the old proof obscured it.]** The
+conclusion is ALSO available directly from `honestStep.commits` with no aggregate and no verification;
+until this commit the proof closed with `simpa [honestStep] using h`, and Lean's `unnecessarySimpa`
+linter was reporting — in the build output, every build — that plain `simp [honestStep]` closed the
+goal, i.e. that `h` (the whole light-client attestation) was DISCARDED. It is now `exact h`, so the
+proof TERM genuinely routes through `light_client_fires_on_real_chain` and cannot be shortcut. What
+this theorem establishes is that the route exists and delivers a true executor fact — NOT that the
+fact was otherwise unobtainable. -/
 theorem real_chain_first_turn_executed :
     recCexec teethGenesis honestTurn = some honestStep.post := by
   have h := light_client_fires_on_real_chain.every_turn honestStep (by simp [realSteps])
-  simpa [honestStep] using h
+  exact h
 
 /-- **`anchored_fires_on_real_chain` (genesis-anchor non-vacuity, POSITIVE).** On the realizing
 instance, anchoring to the GENUINE genesis (`realAggregate.genesisRoot`) fires `AnchoredAttests`: the
@@ -676,14 +843,20 @@ genesis anchor is not vacuous — the true-genesis history passes. -/
 theorem anchored_fires_on_real_chain :
     AnchoredAttests RealProof zCH zRH zcmb zcompress zcompressN
       realAggregate teethGenesis realSteps realAggregate.genesisRoot :=
-  light_client_verifies_anchored_history RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  light_client_verifies_anchored_history RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps realAggregate.genesisRoot real_engine_sound rfl rfl
 
 /-- **`anchored_tooth_bites_on_real_chain` (genesis-anchor non-vacuity, NEGATIVE — the tooth BITES).**
 A WRONG expected genesis (the genuine genesis + 1, which differs) admits NO `AnchoredAttests` on the
 realizing instance: any such witness contradicts its own `genesis_anchored` field. So the anchor is a
 REAL discriminator (satisfiable AND refutable), not a vacuous conjunct — a fabricated-genesis history is
-REJECTED. -/
+REJECTED.
+
+⚑ **This is the pattern §5a now supplies for the ENGINE.** The genesis anchor had a satisfiable/refutable
+PAIR from the start; the engine had only the satisfiable half, at a verifier that could not refuse, and
+that asymmetry is precisely what let `real_engine_sound`'s "the headline is not vacuous" stand unexamined
+for so long. When a section exhibits a positive witness, look for its negative twin; if the twin cannot
+even be STATED at the chosen instance, the instance is the defect. -/
 theorem anchored_tooth_bites_on_real_chain
     (anch : AnchoredAttests RealProof zCH zRH zcmb zcompress zcompressN
       realAggregate teethGenesis realSteps (realAggregate.genesisRoot + 1)) :
@@ -708,7 +881,11 @@ excluding a counterexample that VERIFICATION already excluded.
 **Verification had not.** The engine side is INHABITABLE at both counterexample chains, which is what
 this section proves: `omitting_engine_sound` and `minting_engine_sound` are real `EngineSound`
 instances over a chain that DROPS a receipt and a chain that MINTS `400`. Nothing in them is faked —
-`acceptAll` accepts, so all three implications have TRUE antecedents and must be discharged;
+`realVerify` accepts the `honest` proofs these aggregates carry, so all three implications have TRUE
+antecedents and must be discharged — and since 2026-08-16 that verifier can REFUSE (§5a), so the
+counterexamples below are no longer stated at an engine that accepts everything by construction:
+verification genuinely fails to exclude these chains, rather than trivially failing to exclude
+anything at all;
 `leaf_sound`'s positional pairing is discharged by each `ChainStep`'s OWN `commits` field (both
 chains are built from genuine `recCexec` steps); and `binding_sound`'s four obligations hold with
 the aggregate's public roots DEFINED to be the genuine ones.
@@ -729,12 +906,13 @@ the seam. At the constant portal both roots are `0`, so the temporal tooth still
 `HistoryAggregation.chainLogColl_fires_at_the_omitting_chain` fires at. -/
 def omittingSteps : List ChainStep := [honestStep, honestStep]
 
-/-- The aggregate over `omittingSteps`: every proof is the accepting `Unit`, and the four public
-commitments are the genuine ones of that chain, so `binding_sound`'s pins hold definitionally. -/
+/-- The aggregate over `omittingSteps`: every carried proof is `honest` (so it verifies under a
+verifier that can refuse), and the four public commitments are the genuine ones of that chain, so
+`binding_sound`'s pins hold definitionally. -/
 def omittingAggregate : Aggregate RealProof where
-  root := ()
-  leafProofs := [(), ()]
-  bindingProof := ()
+  root := .honest
+  leafProofs := [.honest, .honest]
+  bindingProof := .honest
   genesisRoot := ChainStep.oldRoot zCH zRH zcmb zcompress zcompressN honestStep
   finalRoot := foldedFinalRoot zCH zRH zcmb zcompress zcompressN teethGenesis omittingSteps
   chainDigest := 0
@@ -746,12 +924,12 @@ obligations are discharged by `honestStep.commits`, the genuine executor witness
 and the binding leaf's `ChainBound` is the constant portal's `rfl`. This is the fact that makes the
 non-omission S3's load-bearing tooth statable at the S3's own hypotheses. -/
 theorem omitting_engine_sound :
-    EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
       omittingAggregate teethGenesis omittingSteps := by
   refine { recursive_sound := ?_, leaf_sound := ?_, binding_sound := ?_ }
   · intro _
-    exact ⟨fun _ _ => rfl, rfl⟩
-  · show List.Forall₂ _ [(), ()] omittingSteps
+    exact ⟨realVerify_of_all_honest omittingAggregate.leafProofs (by decide), rfl⟩
+  · show List.Forall₂ _ [RealProof.honest, RealProof.honest] omittingSteps
     exact List.Forall₂.cons (fun _ => honestStep.commits)
       (List.Forall₂.cons (fun _ => honestStep.commits) List.Forall₂.nil)
   · intro _
@@ -786,7 +964,7 @@ theorem non_omission_from_verification_unconditional_false :
         SeamTurnMatch steps →
         LogChained g steps := by
   intro hall
-  have h := hall RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  have h := hall RealProof realVerify zCH zRH zcmb zcompress zcompressN
     omittingAggregate teethGenesis omittingSteps omitting_engine_sound rfl rfl ⟨rfl, trivial⟩
   exact absurd (congrArg List.length h.2.1) (by decide)
 
@@ -798,9 +976,9 @@ def mintingSteps : List ChainStep := [honestStep, richStep]
 
 /-- The aggregate over `mintingSteps` — same shape as `omittingAggregate`, genuine public pins. -/
 def mintingAggregate : Aggregate RealProof where
-  root := ()
-  leafProofs := [(), ()]
-  bindingProof := ()
+  root := .honest
+  leafProofs := [.honest, .honest]
+  bindingProof := .honest
   genesisRoot := ChainStep.oldRoot zCH zRH zcmb zcompress zcompressN honestStep
   finalRoot := foldedFinalRoot zCH zRH zcmb zcompress zcompressN teethGenesis mintingSteps
   chainDigest := 0
@@ -811,12 +989,12 @@ def mintingAggregate : Aggregate RealProof where
 from the steps' own `commits` witnesses (`honestStep`'s and `richStep`'s), and the binding leaf's
 tooth is the constant portal's `rfl`. -/
 theorem minting_engine_sound :
-    EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
       mintingAggregate teethGenesis mintingSteps := by
   refine { recursive_sound := ?_, leaf_sound := ?_, binding_sound := ?_ }
   · intro _
-    exact ⟨fun _ _ => rfl, rfl⟩
-  · show List.Forall₂ _ [(), ()] mintingSteps
+    exact ⟨realVerify_of_all_honest mintingAggregate.leafProofs (by decide), rfl⟩
+  · show List.Forall₂ _ [RealProof.honest, RealProof.honest] mintingSteps
     exact List.Forall₂.cons (fun _ => honestStep.commits)
       (List.Forall₂.cons (fun _ => richStep.commits) List.Forall₂.nil)
   · intro _
@@ -868,7 +1046,7 @@ theorem conserves_from_verification_unconditional_false :
         KernelGenesisPin g steps →
         recTotal (lastStateOf g steps).kernel = recTotal g.kernel := by
   intro hall
-  have h := hall RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  have h := hall RealProof realVerify zCH zRH zcmb zcompress zcompressN
     mintingAggregate teethGenesis mintingSteps minting_engine_sound rfl rfl
   exact absurd h (by decide)
 
@@ -1205,6 +1383,19 @@ end Accumulator
 -- whole-history NON-OMISSION derived from `verify agg.root` (the rotated commit binds every receipt log):
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.non_omission_from_verification
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.real_engine_sound
+-- ⚑⚑ 2026-08-16 — the REFUSAL half of §5, which did not exist while the witness engine was
+-- `Unit`/`acceptAll`. `engineSound_is_a_real_boundary` is the theorem to cite for non-vacuity;
+-- `real_engine_sound` alone is satisfiability, and satisfiability alone cannot see a `True` in
+-- disguise. `zero_portal_chainBound_is_free` is the NEGATIVE result naming what §5 still cannot show.
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.realVerify_discriminates
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.zero_portal_chainBound_is_free
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.forged_root_differs
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.light_client_refuses_forged_root
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.forged_leaf_differs
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.engineSound_refutable_at_forged_leaf
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.forged_binding_differs
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.engineSound_refutable_at_forged_binding
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.engineSound_is_a_real_boundary
 -- ⚑⚑ the two S3s' LOAD-BEARING teeth, at the S3s' OWN hypotheses (2026-08-01). The
 -- `HistoryAggregation` `_unconditional_false` pair refutes the `ChainBound`-hypothesised keystones,
 -- NOT these S3s, whose `EngineSound` + `hroot` is strictly stronger; both S3s cited it anyway.
@@ -1637,6 +1828,62 @@ theorem real_tree_count :
 
 /-- And that count is literally `2` — a TRUE arithmetic fact, not a husk. -/
 theorem real_tree_count_is_two : (exposedSeg realTree).count = 2 := rfl
+
+/-! ### 9a. ⚑ THE REFUSAL TOOTH FOR `SegSound`, AND WHAT §9's PORTAL GIVES AWAY FREE.
+
+[2026-08-16.] `real_seg_sound` above is the SAME shape the §5 defect had: an "is INHABITED … the
+discharge is not vacuous" claim, at a status predicate `fun _ => True` that cannot refuse and a
+constant-zero digest combiner `zH`. It was found by `scripts/check-anti-vacuity-witness.py` in the
+same pass that repaired §5 and `RecursiveSoundFromNodes` §7.
+
+The status predicate here genuinely cannot refuse and is not worth faking otherwise — but `SegSound`
+is NOT `True` in disguise even so, and that is provable: its leaf clause pins the exposed segment to
+the GENUINE `leafSeg`, so a leaf exposing anything else refutes it whatever the status says. That is
+the honest refutation, and it is the one below. -/
+
+/-- A leaf exposing a segment that is NOT its genuine `leafSeg` — the `count` is `2` where the honest
+leaf's is `1`. One executed step cannot summarize as two. -/
+def misCountTree : AggTree :=
+  .leaf honestStep
+    { leafSeg zCH zRH zcmb zcompress zcompressN zH honestStep with count := 2 }
+
+/-- **`misCountTree_differs` (the mutation IS a mutation).** The forged leaf segment differs from the
+genuine one. Read before the verdict below. -/
+theorem misCountTree_differs :
+    exposedSeg misCountTree ≠ leafSeg zCH zRH zcmb zcompress zcompressN zH honestStep := by
+  intro h; exact absurd (congrArg Seg.count h) (by decide)
+
+/-- **⚑ `segSound_refutable_at_miscounted_leaf` (THE TOOTH).** `SegSound` is FALSE on a tree whose leaf
+exposes a segment other than its genuine `leafSeg` — even at the `fun _ => True` status, whose antecedent
+is free. So the LAYER-1 floor DISCRIMINATES: `real_seg_sound` is one side of a real boundary, not an
+inhabitation of a predicate that holds everywhere. -/
+theorem segSound_refutable_at_miscounted_leaf :
+    ¬ SegSound zCH zRH zcmb zcompress zcompressN zH (fun _ => True) misCountTree := by
+  intro hs
+  exact misCountTree_differs (hs trivial).2
+
+/-- **`segSound_is_a_real_floor`** — satisfiable (`real_seg_sound`) AND refutable, at one status. This
+is the statement to cite for §9's non-vacuity; `real_seg_sound` alone is the left conjunct. -/
+theorem segSound_is_a_real_floor :
+    SegSound zCH zRH zcmb zcompress zcompressN zH (fun _ => True) realTree
+      ∧ ¬ SegSound zCH zRH zcmb zcompress zcompressN zH (fun _ => True) misCountTree :=
+  ⟨real_seg_sound, segSound_refutable_at_miscounted_leaf⟩
+
+/-- **⚠ `real_tree_ordered_is_free_at_this_portal` — READ THIS BESIDE `real_tree_ordered`.**
+`real_tree_ordered` presents "a genuine `ChainBound` over the two executed leaves — the whole-chain
+ordered binding, derived from the segment tree, on a real run". At §9's portal that conclusion is
+obtainable with NO tree, NO segment machinery and NO soundness hypothesis, because
+`zero_portal_chainBound_is_free` holds for every list of steps. The DERIVATION in `real_tree_ordered`
+is real; its CONCLUSION carries no ordering information here. Whoever ports §9 to a portal with content
+should re-read that theorem first — this is the negative result naming what §9 does not show. -/
+theorem real_tree_ordered_is_free_at_this_portal :
+    ∀ steps : List ChainStep, ChainBound zCH zRH zcmb zcompress zcompressN steps :=
+  zero_portal_chainBound_is_free
+
+#assert_axioms misCountTree_differs
+#assert_axioms segSound_refutable_at_miscounted_leaf
+#assert_axioms segSound_is_a_real_floor
+#assert_axioms real_tree_ordered_is_free_at_this_portal
 
 end SegRealize
 

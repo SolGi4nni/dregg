@@ -1,0 +1,66 @@
+# anti-vacuity-witness-allowlist.txt — the LEDGER for check-anti-vacuity-witness.py.
+#
+# Each row is a declaration that ANNOUNCES anti-vacuity work and rides a DEGENERATE
+# substrate (a constant-`true`/`True` predicate, or a `Unit`/`PUnit`-carried witness)
+# with NO refusal companion in its file. Format:
+#
+#     <path> | <declaration> | <evidence> | REASON: <why it is here>
+#
+# ⚑ A ROW IS NOT AN ABSOLUTION. Read this before adding one.
+# Every row below is UNDONE WORK, not a theorem of the model. The repair is always the
+# same and it is cheap: give the instance a witness with more than one inhabitant and a
+# predicate that can REFUSE, then prove the refusal, so the file states
+# SATISFIABLE ∧ REFUTABLE at one instance. The finished template is
+# `Dregg2/Circuit/RecursiveAggregation.engineSound_is_a_real_boundary` (+ §5a's
+# `engineSound_refutable_at_forged_leaf`), with the second worked example at
+# `Dregg2/Circuit/RecursiveSoundFromNodes.nodeCarrier_is_a_real_floor` and the third at
+# `RecursiveAggregation.segSound_is_a_real_floor`. All three were rows here on 2026-08-16
+# and were RETIRED the same day; the ledger is meant to shrink that way.
+#
+# The ratchet: a finding NOT listed here is RED, and a row that no longer triggers is
+# ALSO RED (retire it). So fixing a site FORCES its row out, and the ledger cannot
+# quietly accumulate descriptions of things that stopped being true.
+#
+# BASELINE, 2026-08-16. The three repaired sites are gone from this list. The remaining
+# rows were produced by the detector and have NOT been read one by one — they are
+# labelled UNTRIAGED, which is a statement about MY knowledge, not a verdict that they
+# are fine. Do not cite a row as evidence a site is acceptable. When you triage one,
+# replace UNTRIAGED with what you found, and if the answer is "degenerate", fix it and
+# delete the row.
+metatheory/Dregg2/Authority/CaveatChain.lean | honest_tail_tagged | line~490 degenerate=windowed,windowedLast | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Bridge/InterchainAdapterDecision.lean | reachedConsensusCore_correct | line~83 degenerate=reachesConsensusSpec | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/AggregationAirSound.lean | honest_satHashed | line~446 degenerate=zSponge | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/AggregationAirSound.lean | keystone_fires | line~453 degenerate=zSponge | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/ApexFloorFree.lean | descriptorRefinesFree_trivial | line~468 degenerate=trivialKstep | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/Argus/Policy.lean | sumEquals_witnessed_has_circuit_teeth | line~525 degenerate=RowEncodesSum | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/CorrelatedAgreement/Scaffolding.lean | min_distance_fires | line~338 degenerate=c0 | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/DeployedCapTree.lean | deployedEncodes_inhabited | line~1375 degenerate=demoVkOfTag | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/Emit/FoldRefine.lean | goodTrace_satisfied | line~629 degenerate=concreteFoldHash | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/Emit/FoldRefine.lean | goodTrace_foldStepValid | line~656 degenerate=concreteFoldHash | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/Emit/FoldRefine.lean | goodTrace_removal_certified | line~662 degenerate=concreteFoldHash | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/Emit/LightClientMinaHashFold.lean | noChainColl_self | line~245 degenerate=NoChainColl | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/Emit/LightClientMinaHashFold.lean | noChainColl_of_no_collision | line~257 degenerate=NoChainColl | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/Emit/LightClientTmHashFold.lean | chainFrom_binding_on | line~156 degenerate=ChainCovered | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/FloorsNonVacuous.lean | satisfied2Faithful_transferV3 | line~264 degenerate=permOut0 | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/FloorsNonVacuous.lean | keystone_collapse_recipe | line~286 degenerate=permOut0 | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/FloorsNonVacuousWaveLifecycle.lean | cellDestroy_readout_inhabited | line~197 degenerate=cZero | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/FloorsNonVacuousWaveLifecycle.lean | refusal_readout_inhabited | line~265 degenerate=cZero | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/FloorsNonVacuousWaveMiscNotes.lean | heapWrite_readout_inhabited | line~366 degenerate=heapWriteRow0 | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/FloorsNonVacuousWavePermsProgram.lean | setProgram_readout_inhabited | line~277 degenerate=cZero | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Circuit/StateTransitionAirSound.lean | keystone_fires | line~467 degenerate=HashThread | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/Bridge.lean | reference_cascade_nonvacuous | line~430 degenerate=base | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/Deco.lean | sample_relation | line~476 degenerate=refMac | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/Deco.lean | reference_cascade_nonvacuous | line~588 degenerate=base,refMac | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/HermineTSUF.lean | exProb_advantage | line~944 degenerate=exProbForger | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/HybridCombiner.lean | goodKDF_propagates_classical | line~453 degenerate=goodKDF | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/HybridCombiner.lean | goodKDF_propagates_pq | line~459 degenerate=goodKDF | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/MlKemDelta.lean | perCoeff_tail_satisfiable | line~227 degenerate=zeroModel | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/MlKemDelta.lean | mlkem768_delta_fires | line~237 degenerate=zeroModel | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/MlKemDelta.lean | exactConvTail_reduction_fires | line~2289 degenerate=zeroModel | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/MlKemDelta.lean | coeffBR_prefactor_satisfiable | line~2536 degenerate=zeroModel | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/MlKemDelta.lean | coeffTailAtom_satisfiable | line~2659 degenerate=zeroModel | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/RandomnessBeacon.lean | hashBeacon_honest_slot_cr | line~314 degenerate=beaconOfHash,idMultisetHash | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Crypto/SortitionGame.lean | toyVRF_elected_unique | line~179 degenerate=toyVRF | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Exec/ConditionalTurn.lean | runOrder_abschain | line~512 degenerate=AbsChain | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Dregg2/Verify/StripeAttest.lean | stripe_deco_cascade_nonvacuous | line~123 degenerate=emptyBase | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model
+metatheory/Market/CertQp.lean | qp1_cert_valid | line~275 degenerate=lamL1,lamU1 | REASON: UNTRIAGED (baseline 2026-08-16) — undone work, not a theorem of the model

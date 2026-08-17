@@ -546,7 +546,7 @@ rule), so it is taken parametrically (`hcert`) — its executable existence is r
 section Realize
 
 open Dregg2.Circuit.RecursiveAggregation
-  (RealProof acceptAll zCH zRH zcmb zcompress zcompressN realAggregate realSteps real_engine_sound)
+  (RealProof realVerify zCH zRH zcmb zcompress zcompressN realAggregate realSteps real_engine_sound)
 open Dregg2.Exec.ConsensusExec (teethGenesis)
 open Dregg2.Distributed.FinalizedLightClient (realCert realAnchor real_bound)
 open Dregg2.Distributed.BlocklaceFinality (finalLeaderAt isSuperRatified waveLastRound)
@@ -572,13 +572,13 @@ self-containment; a false `#guard` is a build error — the node's REAL rule on 
 
 /-- **`settle_fires_on_real_child` (NON-VACUITY, parametric in the realized cert).** For any valid child
 cert, the settlement is ACCEPTED over the realizing finalized child chain into the registered account:
-all four crypto legs are discharged (`real_engine_sound`, `acceptAll`, `real_bound`, the supplied
+all four crypto legs are discharged (`real_engine_sound`, `realVerify`, `real_bound`, the supplied
 `hcert`), the child IS the registered chain, the height is the aggregate's count (`1`), and it advances
 the registered height `0`. So `SettleAccepts` is INHABITED on a real, quorum-finalized child — the
 predicate is not vacuous. -/
 theorem settle_fires_on_real_child
     (hcert : CertValid realCert) :
-    SettleAccepts RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    SettleAccepts RealProof realVerify zCH zRH zcmb zcompress zcompressN
       realAccount realSettle teethGenesis realSteps where
   engine          := real_engine_sound
   root_ok         := rfl
@@ -595,7 +595,7 @@ theorem real_settlement_binds_child_fold
     (hcert : CertValid realCert) :
     (applySettle RealProof realAccount realSettle).latestRoot
       = some (foldedFinalRoot zCH zRH zcmb zcompress zcompressN teethGenesis realSteps) :=
-  settled_root_is_child_final_fold RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  settled_root_is_child_final_fold RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAccount realSettle teethGenesis realSteps (settle_fires_on_real_child hcert)
 
 /-- **`real_settlement_advances` (the advance FIRES).** The realizing settlement advances the registered
@@ -603,7 +603,7 @@ account's height from `0` to `1` — a genuine monotone advance on a real finali
 theorem real_settlement_advances
     (hcert : CertValid realCert) :
     realAccount.latestHeight < (applySettle RealProof realAccount realSettle).latestHeight :=
-  settle_advances_monotone RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  settle_advances_monotone RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAccount realSettle teethGenesis realSteps (settle_fires_on_real_child hcert)
 
 end Realize

@@ -382,7 +382,7 @@ theorem unfoolability_attestation_fires :
       Dregg2.Exec.ConsensusExec.teethGenesis
       Dregg2.Circuit.RecursiveAggregation.realSteps :=
   unfoolability_attestation_floor_free
-    Dregg2.Circuit.RecursiveAggregation.acceptAll
+    Dregg2.Circuit.RecursiveAggregation.realVerify
     Dregg2.Circuit.RecursiveAggregation.zCH Dregg2.Circuit.RecursiveAggregation.zRH
     Dregg2.Circuit.RecursiveAggregation.zcmb Dregg2.Circuit.RecursiveAggregation.zcompress
     Dregg2.Circuit.RecursiveAggregation.zcompressN

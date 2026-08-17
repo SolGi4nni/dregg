@@ -212,46 +212,68 @@ theorem engineSound_recursive_derived
   leaf_sound := hleaf
   binding_sound := hbindsound
 
-/-! ## 7. NON-VACUITY — the fold FIRES on a real honest 2-leaf tree.
+/-! ## 7. NON-VACUITY — the fold FIRES on a real honest 2-leaf tree, at a verifier that can REFUSE.
 
 The fold would be hollow if no tree satisfied the per-node carrier with a verifying root. We exhibit an
-honest 2-leaf combine — `[1→2] ⋆ [2→3]`, the same shape `AggAirSound.honestNode` exhibits — over an
-accepting verifier: the per-node carrier holds (both leaves verify; the combine is `CombineOk` with the
-genuine `combineSeg` parent and the `2 = 2` seam), and `recursive_sound_from_nodes` concludes a REAL
-`recursive_sound` — verifying the root forces both wrapped leaf proofs and the binding leaf to verify. -/
+honest 2-leaf combine — `[1→2] ⋆ [2→3]`, the same shape `AggAirSound.honestNode` exhibits: the per-node
+carrier holds (both leaves verify; the combine is `CombineOk` with the genuine `combineSeg` parent and
+the `2 = 2` seam), and `recursive_sound_from_nodes` concludes a REAL `recursive_sound` — verifying the
+root forces both wrapped leaf proofs and the binding leaf to verify.
+
+⚑⚑ **[2026-08-16 — THIS SECTION WAS THE SECOND INSTANCE OF A CLASS.]** It used to read
+`def accept : Unit → Bool := fun _ => true` over `honestTree : PTree Unit`, and then claim, of theorems
+proved at that instance, "the carrier is INHABITED", "the fold FIRES", "the discharge of the carried
+`hrec` is non-vacuous". At a one-inhabitant proof type with a constant-`true` verifier, EVERY tree
+satisfies `NodeCarrier` — including a tree whose leaves are garbage — so the carrier's inhabitation
+carried no information, and `honest_all_leaves_verify` (`∀ p ∈ leavesP honestTree, accept p = true`) was
+provable by `fun _ _ => rfl` with `all_leaves_verify`, the whole point of the file, entirely inert. The
+sibling instance is `RecursiveAggregation`'s `real_engine_sound`, repaired the same day and the same way.
+
+The witness now runs at `RecursiveAggregation.RealProof` / `realVerify` — two inhabitants, and a verifier
+with `false` in its range — so §7a can state the negative the old instance could not: a tree carrying a
+FORGED leaf under a verifying node has NO `NodeCarrier`, and the fold's conclusion is unobtainable for
+it. Inhabitation plus refutation is the pair; inhabitation alone never was. -/
 
 section Vacuity
 
-/-- The accepting verifier and the trivial digest combiner for the witness. -/
-def accept : Unit → Bool := fun _ => true
+open Dregg2.Circuit.RecursiveAggregation (RealProof realVerify)
+
+/-- The trivial digest combiner for the witness. (⚠ Like `RecursiveAggregation`'s constant-zero portal,
+this is degenerate on the HASH axis and witnesses nothing about digest binding — that tooth is
+`AggAirSound.combine_digest_binds`, at a real sponge. What §7 witnesses is the PROOF-PROPAGATION axis,
+and there the verifier below genuinely discriminates.) -/
 def zH : ℤ → ℤ → ℤ := fun _ _ => 0
 
 /-- Honest left/right segments `1 → 2` and `2 → 3` (count 1 each); the seam `2 = 2` holds. -/
 def honL : Seg := { firstOld := 1, lastNew := 2, count := 1, acc := 0 }
 def honR : Seg := { firstOld := 2, lastNew := 3, count := 1, acc := 0 }
 
-/-- The honest 2-leaf tree: two accepting leaves, the node exposing their genuine `combineSeg`. -/
-def honestTree : PTree Unit :=
-  .node () (combineSeg zH honL honR) (.leaf () honL) (.leaf () honR)
+/-- The honest 2-leaf tree: two `honest` leaves, the node exposing their genuine `combineSeg`. -/
+def honestTree : PTree RealProof :=
+  .node .honest (combineSeg zH honL honR) (.leaf .honest honL) (.leaf .honest honR)
 
-/-- **`honest_node_carrier` (the carrier is INHABITED).** The per-node carrier holds on the honest
-tree: the node arm gives both leaves verifying (`accept _ = true`) and `CombineOk` (the parent is the
-genuine fold; the seam `honL.lastNew = 2 = honR.firstOld` is `rfl`); the leaves carry `True`. -/
-theorem honest_node_carrier : NodeCarrier accept zH honestTree := by
+/-- **`honest_node_carrier` (the carrier is INHABITED — at a verifier that could have refused).** The
+per-node carrier holds on the honest tree: the node arm gives both leaves verifying and `CombineOk` (the
+parent is the genuine fold; the seam `honL.lastNew = 2 = honR.firstOld` is `rfl`); the leaves carry
+`True`. Unlike the `fun _ => true` version this replaces, the two `verify (rootP _) = true` obligations
+are discharged by the leaves ACTUALLY being `honest` — `forged_leaf_tree_has_no_carrier` below is the
+proof that this is a real obligation and not a formality. -/
+theorem honest_node_carrier : NodeCarrier realVerify zH honestTree := by
   refine ⟨fun _ => ⟨⟨rfl, rfl⟩, ?_⟩, trivial, trivial⟩
   exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- **`honest_all_leaves_verify` (the fold FIRES).** A verifying root forces every wrapped leaf proof
-to verify — a real, non-vacuous firing of `all_leaves_verify` on the honest 2-leaf tree. -/
-theorem honest_all_leaves_verify : ∀ p ∈ leavesP honestTree, accept p = true :=
-  all_leaves_verify accept zH honestTree honest_node_carrier rfl
+to verify — a real firing of `all_leaves_verify` on the honest 2-leaf tree. (At the old `accept`, this
+statement was provable by `fun _ _ => rfl` and `all_leaves_verify` was not used for anything.) -/
+theorem honest_all_leaves_verify : ∀ p ∈ leavesP honestTree, realVerify p = true :=
+  all_leaves_verify realVerify zH honestTree honest_node_carrier rfl
 
-/-- The realizing aggregate: every wrapped proof is the accepting `Unit`; its leaf list / binding leaf
-are exactly the honest tree's leaves. -/
-def honestAgg : Aggregate Unit where
-  root := ()
-  leafProofs := [(), ()]
-  bindingProof := ()
+/-- The realizing aggregate: every wrapped proof is `honest`; its leaf list / binding leaf are exactly
+the honest tree's leaves. -/
+def honestAgg : Aggregate RealProof where
+  root := .honest
+  leafProofs := [.honest, .honest]
+  bindingProof := .honest
   genesisRoot := 0
   finalRoot := 0
   chainDigest := 0
@@ -259,24 +281,66 @@ def honestAgg : Aggregate Unit where
 
 /-- **`honest_recursive_sound` (THE DISCHARGED `hrec` FIRES).** `recursive_sound_from_nodes` produces a
 genuine `recursive_sound` on the honest tree+aggregate: verifying the root forces both wrapped leaf
-proofs and the binding leaf to verify. So the discharge of the carried `hrec` is non-vacuous — it is a
-real instance of the exact shape `EngineSound.recursive_sound` demands. -/
+proofs and the binding leaf to verify. So the discharge of the carried `hrec` is a real instance of the
+exact shape `EngineSound.recursive_sound` demands. -/
 theorem honest_recursive_sound :
-    accept honestAgg.root = true →
-      (∀ p ∈ honestAgg.leafProofs, accept p = true) ∧ accept honestAgg.bindingProof = true :=
-  recursive_sound_from_nodes accept zH honestAgg honestTree honest_node_carrier
+    realVerify honestAgg.root = true →
+      (∀ p ∈ honestAgg.leafProofs, realVerify p = true) ∧ realVerify honestAgg.bindingProof = true :=
+  recursive_sound_from_nodes realVerify zH honestAgg honestTree honest_node_carrier
     rfl
-    (fun p _ => by cases p; exact List.mem_cons_self)
+    (fun p hp => by
+      -- every wrapped leaf is `honest`, hence a member of the aggregate's leaf list.
+      have : p = RealProof.honest := by simpa [honestAgg] using hp
+      subst this; exact List.mem_cons_self)
     List.mem_cons_self
 
 /-- **`honest_node_seg_is_combine` (the CombineOk arm chains, WITNESSED).** On the honest node, the
 exposed segment IS the genuine `combineSeg` of the children's and the seam continues — a real firing of
 `node_seg_is_combine` (hence of `combineOk_eq`) on the honest combine. -/
 theorem honest_node_seg_is_combine :
-    (combineSeg zH honL honR) = combineSeg zH (segP (PTree.leaf () honL)) (segP (PTree.leaf () honR))
-      ∧ (segP (PTree.leaf () honL)).lastNew = (segP (PTree.leaf () honR)).firstOld :=
-  node_seg_is_combine accept zH () (combineSeg zH honL honR)
-    (.leaf () honL) (.leaf () honR) honest_node_carrier rfl
+    (combineSeg zH honL honR)
+        = combineSeg zH (segP (PTree.leaf RealProof.honest honL))
+            (segP (PTree.leaf RealProof.honest honR))
+      ∧ (segP (PTree.leaf RealProof.honest honL)).lastNew
+        = (segP (PTree.leaf RealProof.honest honR)).firstOld :=
+  node_seg_is_combine realVerify zH RealProof.honest (combineSeg zH honL honR)
+    (.leaf .honest honL) (.leaf .honest honR) honest_node_carrier rfl
+
+/-! ### 7a. ⚑ THE REFUSAL TOOTH — the carrier REJECTS a tree with a forged leaf.
+
+`honest_node_carrier` says `NodeCarrier` is inhabited. On its own that is compatible with `NodeCarrier`
+being `True` in disguise, which at the old `accept = fun _ => true` it LITERALLY was (every clause is an
+implication into `verify _ = true`, and that conclusion was free). These two theorems supply the missing
+half at the same instance: the carrier is also FALSE somewhere, and the falsity is the verifier refusing.
+
+The forgery asserts that it differs from the honest tree BEFORE the verdict is read. -/
+
+/-- The forged tree: the honest 2-leaf combine with its RIGHT leaf replaced by an unverifiable proof —
+the prover who folds one bad leg into an otherwise correct aggregation. -/
+def forgedLeafTree : PTree RealProof :=
+  .node .honest (combineSeg zH honL honR) (.leaf .honest honL) (.leaf .forged honR)
+
+/-- **`forged_leaf_tree_differs` (the mutation IS a mutation).** The forged tree's wrapped leaves are
+not the honest tree's. Read before the verdict below. -/
+theorem forged_leaf_tree_differs : leavesP forgedLeafTree ≠ leavesP honestTree := by decide
+
+/-- **⚑ `forged_leaf_tree_has_no_carrier` (THE TOOTH).** There is NO `NodeCarrier` for a tree whose node
+verifies but whose right leaf is forged: the node arm's antecedent holds (`realVerify honest = true`), so
+it forces `realVerify (rootP (.leaf forged honR)) = true`, which is `false`. So the per-node aggregation
+floor genuinely EXCLUDES the mixed tree — and consequently `all_leaves_verify` cannot be run on it, which
+is the whole content of "the fold is sound". At `Unit`/`accept` this theorem is unstatable: there is no
+forged leaf, and the carrier admits every tree. -/
+theorem forged_leaf_tree_has_no_carrier : ¬ NodeCarrier realVerify zH forgedLeafTree := by
+  intro hc
+  exact absurd (hc.1 rfl).1.2 (by decide)
+
+/-- **⚑⚑ `nodeCarrier_is_a_real_floor` — THE ANTI-VACUITY STATEMENT FOR THIS FILE, AND THE ONE TO CITE.**
+At one and the same verifier, `NodeCarrier` is SATISFIABLE (the honest tree) and REFUTABLE (the
+forged-leaf tree). `honest_node_carrier` alone gives only the left conjunct, and the left conjunct alone
+is what this section presented as non-vacuity before 2026-08-16. -/
+theorem nodeCarrier_is_a_real_floor :
+    NodeCarrier realVerify zH honestTree ∧ ¬ NodeCarrier realVerify zH forgedLeafTree :=
+  ⟨honest_node_carrier, forged_leaf_tree_has_no_carrier⟩
 
 end Vacuity
 
@@ -290,5 +354,9 @@ end Vacuity
 #assert_axioms honest_all_leaves_verify
 #assert_axioms honest_recursive_sound
 #assert_axioms honest_node_seg_is_combine
+-- ⚑⚑ 2026-08-16 — the REFUSAL half of §7, unstatable while the witness ran at `Unit`/`fun _ => true`.
+#assert_axioms forged_leaf_tree_differs
+#assert_axioms forged_leaf_tree_has_no_carrier
+#assert_axioms nodeCarrier_is_a_real_floor
 
 end Dregg2.Circuit.RecursiveSoundFromNodes

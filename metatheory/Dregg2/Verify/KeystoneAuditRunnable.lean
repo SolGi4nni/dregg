@@ -196,7 +196,7 @@ theorem execFullForestG_unauthorized_fails_satisfiable :
 `argusStrand teethGenesis [honestTurn]` STEPS `interpChained` on one real command list (the honest
 cell-0→cell-1 transfer of 10) and produces a concrete one-step strand. We FIRE both keystones on it:
 `conserves` (the ledger total `100` is preserved) and `light_client` (a concrete `EngineSound` over the
-accepting verifier ⇒ `AggregateAttests` ∧ `Run`). Teeth = `tampered_argus_strand_rejected` (a reordered
+realizing verifier ⇒ `AggregateAttests` ∧ `Run`). Teeth = `tampered_argus_strand_rejected` (a reordered
 strand cannot bind) — the existing apex anti-ghost. -/
 
 section ArgusStrand
@@ -206,7 +206,8 @@ open Dregg2.Distributed.HistoryAggregation (ChainStep ChainBound lastStateOf fol
   stateRoot zeroTurn)
 open Dregg2.Circuit.RecursiveAggregation (Aggregate EngineSound AggregateAttests
   light_client_verifies_whole_history)
-open Dregg2.Circuit.RecursiveAggregation (RealProof acceptAll zCH zRH zcmb zcompress zcompressN)
+open Dregg2.Circuit.RecursiveAggregation
+  (RealProof realVerify realVerify_of_all_honest zCH zRH zcmb zcompress zcompressN)
 open Dregg2.Exec.ConsensusExec (teethGenesis honestTurn)
 open Dregg2.Exec (recTotal recChainedSystem recCexec)
 
@@ -214,12 +215,12 @@ open Dregg2.Exec (recTotal recChainedSystem recCexec)
 def argusSteps : List ChainStep := (argusStrand teethGenesis [honestTurn]).getD []
 
 /-- The accepting aggregate over the honest Argus strand (toy zero-hashes; every proof is the accepting
-`Unit`; the public roots are the genuine endpoints of `argusSteps`, so `binding_sound`'s pins hold). The
+`honest`; the public roots are the genuine endpoints of `argusSteps`, so `binding_sound`'s pins hold). The
 Argus analogue of `RecursiveAggregation.realAggregate`. -/
 def argusAggregate : Aggregate RealProof where
-  root := ()
-  leafProofs := [()]
-  bindingProof := ()
+  root := .honest
+  leafProofs := [.honest]
+  bindingProof := .honest
   genesisRoot := match argusSteps.head? with
     | none   => stateRoot zCH zRH zcmb zcompress zcompressN teethGenesis.kernel zeroTurn
     | some s => ChainStep.oldRoot zCH zRH zcmb zcompress zcompressN s
@@ -244,14 +245,14 @@ theorem argus_strand_conserves_satisfiable :
 /-- **the shared ARGUS-STRAND teeth — a reordered strand cannot bind.** `tampered_argus_strand_rejected`:
 no sound aggregate can attest a strand whose `newRoot`/`oldRoot` chain is broken (a reorder/drop). The
 keystones are NOT `:= True` — a tampered strand is refuted. We instantiate it on a concrete
-`acceptAll` engine over the toy zero-hashes, deriving `False` from a deliberately broken chain link. -/
+`realVerify` engine over the toy zero-hashes, deriving `False` from a deliberately broken chain link. -/
 theorem argus_strand_teeth
     (s s' : ChainStep)
-    (es : EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN realAggregate teethGenesis [s, s'])
+    (es : EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN realAggregate teethGenesis [s, s'])
     (hbreak : ChainStep.newRoot zCH zRH zcmb zcompress zcompressN s
                 ≠ ChainStep.oldRoot zCH zRH zcmb zcompress zcompressN s')
-    (hverify : acceptAll realAggregate.bindingProof = true) : False :=
-  tampered_argus_strand_rejected acceptAll zCH zRH zcmb zcompress zcompressN
+    (hverify : realVerify realAggregate.bindingProof = true) : False :=
+  tampered_argus_strand_rejected realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis s s' es hbreak hverify
 
 /-- `argusSteps` is a concrete SINGLETON: the strand of `[honestTurn]` is one `argusChainStep`. We
@@ -280,16 +281,19 @@ theorem argusSteps_singleton : ∃ x : ChainStep, argusSteps = [x] := by
   | [x] => exact ⟨x, rfl⟩
   | x :: y :: rest => rw [hm] at hlen; simp at hlen
 
-/-- The accepting `EngineSound` over the honest Argus strand. Each step's `commits` field IS the
+/-- The `EngineSound` over the honest Argus strand, at the verifier that REFUSES `forged`
+(`RecursiveAggregation.realVerify`; before 2026-08-16 this ran at the one-inhabitant `acceptAll`, where
+the recursion leg was free). Each step's `commits` field IS the
 verified-executor witness (`recCexec pre turn = some post`), so `leaf_sound` is `fun _ => x.commits`;
 the binding pins hold BY DEFINITION of `argusAggregate`'s roots (mirroring `real_engine_sound`). -/
 theorem argus_engine_sound :
-    EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
       argusAggregate teethGenesis argusSteps := by
   obtain ⟨x, hx⟩ := argusSteps_singleton
   refine { recursive_sound := ?_, leaf_sound := ?_, binding_sound := ?_ }
-  · intro _; exact ⟨fun p _ => rfl, rfl⟩
-  · -- positional pairing: the single accepting leaf ↦ the single step, whose `commits` is the witness.
+  · intro _
+    exact ⟨realVerify_of_all_honest argusAggregate.leafProofs (by decide), rfl⟩
+  · -- positional pairing: the single `honest` leaf ↦ the single step, whose `commits` is the witness.
     rw [hx]
     exact List.Forall₂.cons (fun _ => x.commits) List.Forall₂.nil
   · intro _
@@ -304,7 +308,7 @@ theorem argus_engine_sound :
       show argusAggregate.numTurns = _
       simp only [argusAggregate, hx, List.length_cons, List.length_nil]
 
-/-- **`argus_strand_light_client_satisfiable`.** A light client checking ONLY `acceptAll
+/-- **`argus_strand_light_client_satisfiable`.** A light client checking ONLY `realVerify
 argusAggregate.root` over the stepped honest Argus strand obtains `AggregateAttests` (every Argus turn
 executed) AND a genuine `Run` from genesis. Fired on the concrete `argusStrand` run + the inhabited
 `argus_engine_sound`. -/
@@ -313,7 +317,7 @@ theorem argus_strand_light_client_satisfiable :
       ∧ AggregateAttests RealProof zCH zRH zcmb zcompress zcompressN argusAggregate teethGenesis steps
       ∧ Dregg2.Execution.Run recChainedSystem teethGenesis (lastStateOf teethGenesis steps) :=
   ⟨argusSteps, argusStrand_honest_eq,
-    argus_strand_light_client acceptAll zCH zRH zcmb zcompress zcompressN argusAggregate
+    argus_strand_light_client realVerify zCH zRH zcmb zcompress zcompressN argusAggregate
       teethGenesis [honestTurn] argusSteps argusStrand_honest_eq argus_engine_sound rfl⟩
 
 end ArgusStrand

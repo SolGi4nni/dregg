@@ -53,7 +53,8 @@ open Dregg2.Circuit.CircuitSoundness
    PublishedCommit Verdict verifyBatch vkOfRegistry StarkSound Registry EffectIdx)
 open Dregg2.Circuit.RecursiveAggregation
   (EngineSound Aggregate AggregateAttests light_client_verifies_whole_history
-   acceptAll RealProof realAggregate realSteps zCH zRH zcmb zcompress zcompressN)
+   realVerify RealProof realVerify_of_all_honest realAggregate realSteps
+   zCH zRH zcmb zcompress zcompressN)
 open Dregg2.Circuit.BindingAirSound
   (BindingRow BindingPublic Satisfies Represents binding_air_discharges_binding_sound
    foldedFinalRoot_eq_lastNew satisfies_one represents_one rowOf pubOf)
@@ -302,14 +303,23 @@ theorem lightclient_unfoolable_grounded_live
 
 The grounded headlines would be hollow if no realizer data inhabited them. We exercise each on the honest
 teeth-genesis chain (reusing the reduction files' honest instances), leaving exactly the named audited
-floor (a `Satisfied2` witness under an accepting verifier / an accepting `verifyBatch`) — never a hole. -/
+floor (a `Satisfied2` witness under the realizing verifier / an accepting `verifyBatch`) — never a hole.
+
+⚑ **[2026-08-16 — the substrate under this whole section changed.]** These witnesses used to run at
+`RecursiveAggregation.RealProof := Unit` with `acceptAll := fun _ => true`. A one-inhabitant proof type
+whose verifier has no `false` in its range makes every `verify _ = true` obligation free, so "the
+constructor is inhabited over the ACCEPTING verifier" was a claim about a bundle in which the recursion
+leg could not fail. The substrate is now the two-inhabitant `RealProof` and `realVerify`, which REFUSES
+`forged` — see `RecursiveAggregation.engineSound_is_a_real_boundary` and its refusal teeth. The witnesses
+below are unchanged in shape; what changed is that their `verify _ = true` obligations now have content. -/
 
 section Vacuity
 
 /-- **`engineSound_grounded_constructs` (the engine constructor FIRES — ⚑ REPAIRED 2026-08-03).**
 On the honest 1-step chain (`teethGenesis ⟶ honestStep.post`), `engineSound_grounded` PRODUCES a
-genuine `EngineSound` **over the ACCEPTING verifier**, with EVERY input constructed: the per-leaf
-`LeafRefinement` (its `bridge` premise `acceptAll () = true` HOLDS, so the `Satisfied2` witness, the
+genuine `EngineSound` **over the realizing verifier** (which REFUSES `forged` — 2026-08-16; it was
+`acceptAll` and could not), with EVERY input constructed: the per-leaf
+`LeafRefinement` (its `bridge` premise `realVerify RealProof.honest = true` HOLDS, so the `Satisfied2` witness, the
 faithful `StateDecode` and the lift are all exhibited), the binding-AIR extraction
 (`satisfies_one`/`represents_one` — so the binding keystone is genuinely load-bearing), and the
 recursion leg.
@@ -327,12 +337,12 @@ it is not evidence that the leaf leg constrains anything. -/
 theorem engineSound_grounded_constructs
     (hash : List ℤ → ℤ) (S : CommitSurface) (hCR : Poseidon2SpongeCR hash)
     (d : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2) (τ : Turn) :
-    EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    EngineSound RealProof realVerify zCH zRH zcmb zcompress zcompressN
       realAggregate teethGenesis realSteps := by
   have hleaves : List.Forall₂
-      (fun p s => Nonempty (LeafRefinement RealProof acceptAll hash S p s))
+      (fun p s => Nonempty (LeafRefinement RealProof realVerify hash S p s))
       realAggregate.leafProofs realSteps := by
-    show List.Forall₂ _ [()] [honestStep]
+    show List.Forall₂ _ [RealProof.honest] [honestStep]
     refine List.Forall₂.cons ⟨?_⟩ List.Forall₂.nil
     exact
       { d       := d
@@ -345,7 +355,7 @@ theorem engineSound_grounded_constructs
            ApexFloorFree.satisfied2_emptyTrace hash d _ _,
            ⟨rfl, rfl, emptyKernel_wf, emptyKernel_wf⟩,
            fun _ => honestStep.commits⟩ }
-  have hbe : BindingExtract RealProof acceptAll hash zCH zRH zcmb zcompress zcompressN
+  have hbe : BindingExtract RealProof realVerify hash zCH zRH zcmb zcompress zcompressN
       realAggregate realSteps := by
     intro _
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
@@ -356,23 +366,24 @@ theorem engineSound_grounded_constructs
     simp only [realAggregate, pubOf, realSteps]
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
       honestStep (by simp)
-  exact engineSound_grounded RealProof acceptAll hash S hCR
+  exact engineSound_grounded RealProof realVerify hash S hCR
     zCH zRH zcmb zcompress zcompressN realAggregate teethGenesis realSteps
-    hleaves hbe (fun _ => ⟨fun _ _ => rfl, rfl⟩)
+    hleaves hbe
+    (fun _ => ⟨realVerify_of_all_honest realAggregate.leafProofs (by decide), rfl⟩)
 
 /-- **`grounded_light_client_fires` (THE GROUNDED WHOLE-HISTORY APEX FIRES).** On the honest chain, with
-an ACCEPTING verifier, `light_client_verifies_whole_history_grounded` fires and concludes a TRUE executor
+the realizing verifier (which can refuse), `light_client_verifies_whole_history_grounded` fires and concludes a TRUE executor
 fact — `recCexec teethGenesis honestTurn = some honestStep.post`. The binding-AIR extraction is discharged
 CONCRETELY (`satisfies_one`/`represents_one` over the honest step — so the keystone
 `binding_air_discharges_binding_sound` is genuinely load-bearing), and the only non-concrete input is the
-per-leaf `Forall₂ LeafRefinement` under the accepting verifier — the SAME audited `Satisfied2`/STARK floor
+per-leaf `Forall₂ LeafRefinement` — the SAME audited `Satisfied2`/STARK floor
 every module here carries (named `hleaves`, not a hole). -/
 theorem grounded_light_client_fires
     (hash : List ℤ → ℤ) (S : CommitSurface) (hCR : Poseidon2SpongeCR hash)
-    (hleaves : List.Forall₂ (fun p s => Nonempty (LeafRefinement RealProof acceptAll hash S p s))
+    (hleaves : List.Forall₂ (fun p s => Nonempty (LeafRefinement RealProof realVerify hash S p s))
       (realAggregate.leafProofs) realSteps) :
     recCexec teethGenesis honestTurn = some honestStep.post := by
-  have hbe : BindingExtract RealProof acceptAll hash zCH zRH zcmb zcompress zcompressN
+  have hbe : BindingExtract RealProof realVerify hash zCH zRH zcmb zcompress zcompressN
       realAggregate realSteps := by
     intro _
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
@@ -383,15 +394,15 @@ theorem grounded_light_client_fires
     simp only [realAggregate, pubOf, realSteps]
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
       honestStep (by simp)
-  have hrec : acceptAll realAggregate.root = true →
-      (∀ p ∈ realAggregate.leafProofs, acceptAll p = true)
-        ∧ acceptAll realAggregate.bindingProof = true :=
-    fun _ => ⟨fun _ _ => rfl, rfl⟩
-  have hatt := light_client_verifies_whole_history_grounded RealProof acceptAll hash S hCR
+  have hrec : realVerify realAggregate.root = true →
+      (∀ p ∈ realAggregate.leafProofs, realVerify p = true)
+        ∧ realVerify realAggregate.bindingProof = true :=
+    fun _ => ⟨realVerify_of_all_honest realAggregate.leafProofs (by decide), rfl⟩
+  have hatt := light_client_verifies_whole_history_grounded RealProof realVerify hash S hCR
     zCH zRH zcmb zcompress zcompressN realAggregate teethGenesis realSteps
     hleaves hbe hrec rfl
   have h := hatt.every_turn honestStep (by simp [realSteps])
-  simpa [honestStep] using h
+  exact h
 
 /-- **`grounded_light_client_fires_v2` (THE NO-CARRIED-FRI WHOLE-HISTORY APEX FIRES).** As
 `grounded_light_client_fires`, but through `light_client_verifies_whole_history_grounded_v2`: the carried
@@ -402,10 +413,10 @@ the apex still concludes the TRUE executor fact `recCexec teethGenesis honestTur
 The only non-concrete input remains the per-leaf `Forall₂ LeafRefinement` (the audited STARK floor). -/
 theorem grounded_light_client_fires_v2
     (hash : List ℤ → ℤ) (S : CommitSurface) (hCR : Poseidon2SpongeCR hash)
-    (hleaves : List.Forall₂ (fun p s => Nonempty (LeafRefinement RealProof acceptAll hash S p s))
+    (hleaves : List.Forall₂ (fun p s => Nonempty (LeafRefinement RealProof realVerify hash S p s))
       (realAggregate.leafProofs) realSteps) :
     recCexec teethGenesis honestTurn = some honestStep.post := by
-  have hbe : BindingExtract RealProof acceptAll hash zCH zRH zcmb zcompress zcompressN
+  have hbe : BindingExtract RealProof realVerify hash zCH zRH zcmb zcompress zcompressN
       realAggregate realSteps := by
     intro _
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
@@ -417,15 +428,18 @@ theorem grounded_light_client_fires_v2
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
       honestStep (by simp)
   -- the carried `hrec` is GONE: the recursion leg comes from the concrete honest tree + per-node carrier.
-  have hatt := light_client_verifies_whole_history_grounded_v2 RealProof acceptAll hash S hCR
+  have hatt := light_client_verifies_whole_history_grounded_v2 RealProof realVerify hash S hCR
     zCH zRH zcmb zcompress zcompressN RecursiveSoundFromNodes.zH
     realAggregate teethGenesis realSteps hleaves hbe
     honestTree honest_node_carrier rfl
-    (by intro p _; cases p; simp [leavesP, honestTree])
+    (by
+      intro p hp
+      have : p = RealProof.honest := by simpa [realAggregate] using hp
+      subst this; simp [leavesP, honestTree])
     (by simp [leavesP, honestTree, realAggregate])
     rfl
   have h := hatt.every_turn honestStep (by simp [realSteps])
-  simpa [honestStep] using h
+  exact h
 
 /-- **`lightclient_unfoolable_grounded_fires` (THE GROUNDED SINGLE-TRANSITION APEX FIRES).** On the
 genuine empty-cell boundary (`emptyState ⟶ emptyState`, whose `recStateCommit`-bound roots are CONCRETE —

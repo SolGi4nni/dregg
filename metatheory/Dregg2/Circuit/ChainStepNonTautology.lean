@@ -225,7 +225,7 @@ theorem fire_E_genuine :
         (Unfoolable Reference.refVerify Reference.refProduced)
     ∧ (Foolable Reference.refVerify Reference.refProduced
         → ¬ ExtractsTo Reference.refVerify Reference.refSat) :=
-  light_client_E_genuine RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  light_client_E_genuine RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps real_engine_sound rfl
     Reference.refVerify Reference.refSat Reference.refProduced Reference.refSatBinds
 
@@ -250,7 +250,7 @@ occupy the good branch — `Reference.badNotUnfoolable` refutes it — so the §
 (instantiated at `badVerify`) is FORCED into the REAL break branch: extractability is broken.
 The dichotomy genuinely discriminates the two twins on concrete instances. -/
 theorem fire_twin_forced_broke : ¬ ExtractsTo Reference.badVerify Reference.refSat := by
-  have h := (light_client_E_genuine RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  have h := (light_client_E_genuine RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps real_engine_sound rfl
     Reference.badVerify Reference.refSat Reference.refProduced Reference.refSatBinds).2.2.2.1
   rcases h with hgood | hbroke
@@ -262,7 +262,7 @@ theorem fire_twin_forced_broke : ¬ ExtractsTo Reference.badVerify Reference.ref
 `light_client_E_genuine` converts it into the concrete floor break `¬ExtractsTo` — the
 `fooling_breaks_floor` reduction firing end-to-end THROUGH the conjoined E-statement. -/
 theorem fire_twin_breaks_floor : ¬ ExtractsTo Reference.badVerify Reference.refSat :=
-  (light_client_E_genuine RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+  (light_client_E_genuine RealProof realVerify zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps real_engine_sound rfl
     Reference.badVerify Reference.refSat Reference.refProduced Reference.refSatBinds).2.2.2.2
     Reference.badFoolable
