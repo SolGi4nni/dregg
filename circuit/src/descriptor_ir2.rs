@@ -4043,8 +4043,8 @@ where
 ///    unsatisfiable constraint. A proof produced or accepted under an inadequate challenge supply
 ///    cannot verify. `check_descriptor2` refuses the same descriptor one stage earlier, at decode;
 ///    this is the backstop, and it is closed, not open. Substituting `ExprEF::ZERO` — the pattern
-///    `eval_table_expr` uses for an out-of-range `Shr` — would have evaluated the identity AT THE
-///    ORIGIN, which a prover can satisfy for free.
+///    the table evaluator (`flat_eval::FlatExpr::eval_table`) uses for an out-of-range `Shr` —
+///    would have evaluated the identity AT THE ORIGIN, which a prover can satisfy for free.
 ///
 /// ⚠ `chal_gate` is a CALLER-SUPPLIED arm rather than an inline one, because the extension-field
 /// assert needs `ExtensionBuilder + PermutationAirBuilder` and `Ir2UniAir` rides `p3-uni-stark`,
