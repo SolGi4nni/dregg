@@ -845,6 +845,26 @@ pub struct AgentRuntime {
     executor_signing_seed: Option<[u8; 32]>,
 }
 
+/// Validity horizon (wall-clock seconds) stamped onto turns this SDK constructs on the
+/// `AgentRuntime::execute` / `execute_on` / sub-agent submit paths.
+///
+/// The Lean producer's wire marshal REQUIRES the turn envelope's `valid_until`
+/// (`dregg_turn::lean_apply::produce_via_lean` / `lean_shadow::turn_to_wire_turn`); leaving it
+/// `None` here means every turn these paths build falls off the verified Lean producer to the
+/// legacy Rust producer, per-turn, forever — silently, since `ProducerOutcome::Fallback` is not
+/// surfaced to the caller. Mirrors `default_valid_until` in `node/src/api.rs` (same rationale,
+/// same fix — see issue #46): wall-clock now + a generous horizon, never a block height (which
+/// would already be in the past as a timestamp and expire the turn immediately).
+const SDK_TURN_VALIDITY_HORIZON_SECS: i64 = 3600;
+
+fn default_valid_until() -> Option<i64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    Some(now + SDK_TURN_VALIDITY_HORIZON_SECS)
+}
+
 impl AgentRuntime {
     /// Create a new agent runtime with simplified ownership.
     ///
@@ -1294,7 +1314,7 @@ impl AgentRuntime {
             call_forest: forest,
             fee,
             memo: None,
-            valid_until: None,
+            valid_until: default_valid_until(),
             previous_receipt_hash,
             depends_on: Vec::new(),
             conservation_proof: None,
@@ -1357,7 +1377,7 @@ impl AgentRuntime {
             call_forest: forest,
             fee,
             memo: None,
-            valid_until: None,
+            valid_until: default_valid_until(),
             previous_receipt_hash: None,
             depends_on: Vec::new(),
             conservation_proof: None,
@@ -2167,7 +2187,7 @@ impl SubAgent {
             call_forest: forest,
             fee: 5_000,
             memo: None,
-            valid_until: None,
+            valid_until: default_valid_until(),
             previous_receipt_hash,
             depends_on: Vec::new(),
             conservation_proof: None,
@@ -2204,5 +2224,49 @@ impl SubAgent {
     /// Get the sub-agent's current nonce.
     pub fn nonce(&self) -> u64 {
         *self.nonce.lock().unwrap()
+    }
+}
+
+/// Issue #46 (github.com/emberian/dregg): the SDK's turn-construction sites stamped
+/// `valid_until: None`, which the Lean producer's wire marshal rejects — silently demoting
+/// every SDK-built turn to the legacy Rust producer, forever. Pin `default_valid_until()`'s
+/// contract directly so the sentinel can never regress back to `None` unnoticed.
+#[cfg(test)]
+mod default_valid_until_tests {
+    use super::*;
+
+    /// The sentinel must be `Some` (a `None` here is exactly the bug: it silently falls the
+    /// turn off the verified Lean producer to the legacy Rust producer — see module docs on
+    /// `default_valid_until`).
+    #[test]
+    fn default_valid_until_is_some() {
+        assert!(
+            default_valid_until().is_some(),
+            "a None here silently falls every SDK-built turn off the verified Lean producer \
+             (issue #46) — the sentinel must always be Some"
+        );
+    }
+
+    /// The stamped deadline must be strictly in the future (wall-clock `now` at the call site,
+    /// which is always <= `now` observed here) and within the declared horizon — never a block
+    /// height (which would already be in the past as a timestamp and expire the turn on arrival).
+    #[test]
+    fn default_valid_until_is_a_future_wall_clock_horizon() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let stamped =
+            default_valid_until().expect("must be Some, see default_valid_until_is_some");
+        assert!(
+            stamped > now,
+            "stamped valid_until ({stamped}) must be strictly after now ({now}), or the turn \
+             expires before it can ever be submitted"
+        );
+        assert!(
+            stamped <= now + SDK_TURN_VALIDITY_HORIZON_SECS,
+            "stamped valid_until ({stamped}) must not exceed the declared horizon (now={now} + \
+             {SDK_TURN_VALIDITY_HORIZON_SECS}s)"
+        );
     }
 }
