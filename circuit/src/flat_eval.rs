@@ -341,6 +341,8 @@ impl FlatExpr {
 // the SAME decoded descriptor the tree walk reads, index-parallel to it.
 // ============================================================================
 
+use std::sync::{Arc, Mutex, Weak};
+
 use crate::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2};
 use crate::lean_descriptor_air::VmConstraint;
 use crate::table_air::LeanTableAir;
@@ -444,6 +446,37 @@ impl CompiledTable {
                 .collect(),
         }
     }
+}
+
+/// **Compile-once cache for table tapes, keyed by `Arc` IDENTITY.**
+///
+/// The shared table AIRs (`table_air::chip_table_air_shared()` and friends) are process-global
+/// `Arc<LeanTableAir>` statics, but `Ir2Air::lean_table` runs once per instance assembly — the
+/// prover builds the instance set at prove entry AND at its unconditional self-verify, and the
+/// verifier builds it again. Compiling the chip's 1,518 expressions per assembly put ~0.15 ms
+/// per call on the measured A/B (hbox, `notes/air-interpreter.md` §6) — paid at every prove
+/// (×2) and every verify, while the tape only amortizes over the prover's per-chunk
+/// invocations. This cache makes the compile once-per-process for the shared statics.
+///
+/// ⚠ Keyed by **pointer identity of a live `Arc`**, held as `Weak` — never by display name
+/// (names collide: `reference-a-display-name-is-not-a-key`) and never by a bare pointer (a
+/// dropped-and-reallocated `Arc` at the same address must MISS, and does: its `Weak` no longer
+/// upgrades, and dead entries are pruned before lookup). Two distinct `Arc`s carrying equal
+/// tables compile separately — identity, not equality, is the contract.
+pub(crate) fn compiled_table_for(air: &Arc<LeanTableAir>) -> Arc<CompiledTable> {
+    static CACHE: Mutex<Vec<(Weak<LeanTableAir>, Arc<CompiledTable>)>> = Mutex::new(Vec::new());
+    let mut cache = CACHE.lock().unwrap();
+    cache.retain(|(w, _)| w.strong_count() > 0);
+    for (w, compiled) in cache.iter() {
+        if let Some(live) = w.upgrade()
+            && Arc::ptr_eq(&live, air)
+        {
+            return compiled.clone();
+        }
+    }
+    let compiled = Arc::new(CompiledTable::compile(air));
+    cache.push((Arc::downgrade(air), compiled.clone()));
+    compiled
 }
 
 #[cfg(test)]

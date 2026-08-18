@@ -3829,7 +3829,7 @@ impl Ir2Air {
             "table air \"{}\" declares {} preprocessed columns but was built without a matrix",
             air.name, air.prep_width
         );
-        let compiled = Arc::new(crate::flat_eval::CompiledTable::compile(&air));
+        let compiled = crate::flat_eval::compiled_table_for(&air);
         Ir2Air::LeanTable {
             air,
             prep: None,
@@ -3862,7 +3862,7 @@ impl Ir2Air {
                 prep.width()
             ));
         }
-        let compiled = Arc::new(crate::flat_eval::CompiledTable::compile(&air));
+        let compiled = crate::flat_eval::compiled_table_for(&air);
         Ok(Ir2Air::LeanTable {
             air,
             prep: Some(prep),
