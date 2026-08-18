@@ -1266,10 +1266,8 @@ mod tests {
             r#",{{"t":"gate","body":{{"t":"var","v":{}}}}}],"hash_sites""#,
             sched::ROOTS_BASE
         );
-        let mutated_json = BILATERAL_AGGREGATION_DESCRIPTOR_JSON.replace(
-            r#"],"hash_sites""#,
-            &injected,
-        );
+        let mutated_json =
+            BILATERAL_AGGREGATION_DESCRIPTOR_JSON.replace(r#"],"hash_sites""#, &injected);
         assert_ne!(
             mutated_json, BILATERAL_AGGREGATION_DESCRIPTOR_JSON,
             "the mutation must actually have been applied — a `replace` of a pattern that has left \
