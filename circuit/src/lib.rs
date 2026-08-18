@@ -395,6 +395,13 @@ pub mod plonky3_recursion;
 /// `prove_batch`) live here — all on verify-floor p3 deps (`p3-batch-stark` /
 /// `p3-uni-stark`), so the whole module is unconditional in the verify floor.
 pub mod descriptor_ir2;
+/// Feature-gated (`eval-count`) invocation census for the descriptor interpreters — see the
+/// module header. Compiled out of the deployed prover entirely.
+#[cfg(feature = "eval-count")]
+pub mod eval_census;
+/// The flat (compiled) postfix evaluator for the descriptor interpreters — prover-side
+/// evaluation machinery only; the Lean descriptor remains the sole author of the algebra.
+pub(crate) mod flat_eval;
 
 /// The decoder for a Lean-authored TABLE AIR — the shared auxiliary instances
 /// (`MapAbsent` first) whose algebra used to be hand-written Rust. Rust

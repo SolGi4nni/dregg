@@ -253,10 +253,10 @@ fn a_preprocessed_matrix_supplied_to_a_prep_free_air_is_refused() {
 fn the_preprocessed_width_of_every_lean_table_air_is_pinned() {
     use p3_air::BaseAir;
     let pw_of = |t: dregg_circuit::table_air::LeanTableAir| {
-        let air = dregg_circuit::descriptor_ir2::Ir2Air::LeanTable {
-            air: std::sync::Arc::new(t),
-            prep: None,
-        };
+        // Through the constructor (the variant now carries a crate-private flat compilation, so
+        // the constructor is the only door — its `prep_width == 0` assert holds for every
+        // singleton in the list below; the exact-public family is checked field-directly).
+        let air = dregg_circuit::descriptor_ir2::Ir2Air::lean_table(std::sync::Arc::new(t));
         <dregg_circuit::descriptor_ir2::Ir2Air as BaseAir<
             p3_baby_bear::BabyBear,
         >>::preprocessed_width(&air)

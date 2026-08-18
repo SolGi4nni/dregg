@@ -67,6 +67,9 @@ rmp-serde = { version = "1.2" }
 [features]
 default = ["plonky3"]
 plonky3 = []
+# Invocation census for the interpreted AIR evaluators (`src/eval_census.rs`). COUNT-arm
+# instrument only: off by default so the deployed/clock path carries no instrumentation.
+eval-count = []
 
 [dev-dependencies]
 criterion = { workspace = true }

@@ -1137,26 +1137,13 @@ pub enum WindowExpr {
 }
 
 impl WindowExpr {
-    /// Evaluate as an `AB::Expr` polynomial over the current (`local`) + next (`next`) rows.
-    /// Mirrors Lean `WindowExpr.eval` reading `env.loc`/`env.nxt`, and the Rust hand-AIR's
-    /// `local[..]` / `next[..]` reads inside a `builder.when_transition()` arm.
-    pub(crate) fn eval_expr<AB>(&self, local: &[AB::Var], next: &[AB::Var]) -> AB::Expr
-    where
-        AB: AirBuilder,
-        AB::F: PrimeField32,
-    {
-        match self {
-            WindowExpr::Loc(i) => local[*i].into(),
-            WindowExpr::Nxt(i) => next[*i].into(),
-            WindowExpr::Const(c) => const_to_expr::<AB>(*c),
-            WindowExpr::Add(a, b) => {
-                a.eval_expr::<AB>(local, next) + b.eval_expr::<AB>(local, next)
-            }
-            WindowExpr::Mul(a, b) => {
-                a.eval_expr::<AB>(local, next) * b.eval_expr::<AB>(local, next)
-            }
-        }
-    }
+    // ⓘ `WindowExpr::eval_expr` (the recursive boxed-tree walk, mirroring Lean
+    // `WindowExpr.eval` reading `env.loc`/`env.nxt`) is GONE (2026-08-18): the deployed
+    // evaluator is now the flat postfix tape `flat_eval::FlatExpr::of_window` /
+    // `eval_base`, compiled once per `Ir2Air` construction and replaying the same tree
+    // operation-for-operation (gate: byte-identical proofs,
+    // `tests/air_interp_census.rs::bytes_sweep`). Deleted rather than kept as a second
+    // evaluator nothing calls — two evaluators that agree today are two that disagree later.
 
     // ⓘ `WindowExpr::degree` is GONE (2026-08-02). Its only caller was `LeanTableAir::max_degree`,
     // and a table AIR's expression is `TableExpr` now — whose degree must resolve `Shr` through the
@@ -1180,53 +1167,26 @@ impl WindowExpr {
     }
 }
 
-/// **Evaluate a Lean-authored table AIR's expression** as an `AB::Expr` polynomial over the current
-/// (`local`) and next (`next`) rows, against a definition vector `dv` that has ALREADY been resolved
-/// for this row.
-///
-/// ⚑ `TableExpr::Shr(i)` is a CLONE of `dv[i]`, never a re-walk of `defs[i]`. That is what makes
-/// the emitted DAG cost the prover what the deployed hand-written arm costs it: on the prover's
-/// folder `AB::Expr` is a packed field value, so the clone is a copy of a number, and the chip's
-/// 16 per-round S-box values are computed once each and read 35 times — exactly the sharing
-/// `poseidon2_permute_expr_lanes` had as Rust locals. Measured on the chip: 70,524 field operations
-/// as a tree, 2,943 shared.
-///
-/// ⚠ An out-of-range `Shr` reads ZERO. That case is unreachable — `LeanTableAir::check` refuses a
-/// forward reference and an out-of-range index at DECODE time, and the artifacts are `include_str!`d
-/// so a failure there is a build-time defect — but the evaluator must be total, and a `0` is the
-/// value a dropped definition would have. It is the refusal upstream that is load-bearing, not this
-/// fallback.
-pub(crate) fn eval_table_expr<AB>(
-    e: &crate::table_air::TableExpr,
-    local: &[AB::Var],
-    next: &[AB::Var],
-    prep: &[AB::Var],
-    dv: &[AB::Expr],
-) -> AB::Expr
-where
-    AB: AirBuilder,
-    AB::F: PrimeField32,
-{
-    use crate::table_air::TableExpr as TE;
-    match e {
-        TE::Loc(i) => local[*i].into(),
-        TE::Nxt(i) => next[*i].into(),
-        TE::Const(c) => const_to_expr::<AB>(*c),
-        TE::Shr(i) => dv.get(*i).cloned().unwrap_or_else(|| AB::Expr::ZERO),
-        // ⚑ A DIFFERENT COLUMN SPACE — the verifier-recomputed preprocessed row, never the
-        // committed one. `LeanTableAir::check` has already bounded every index here against the
-        // emission's own `prep_width`, so this slice access is in range by decode.
-        TE::Prep(i) => prep[*i].into(),
-        TE::Add(a, b) => {
-            eval_table_expr::<AB>(a, local, next, prep, dv)
-                + eval_table_expr::<AB>(b, local, next, prep, dv)
-        }
-        TE::Mul(a, b) => {
-            eval_table_expr::<AB>(a, local, next, prep, dv)
-                * eval_table_expr::<AB>(b, local, next, prep, dv)
-        }
-    }
-}
+// ⓘ `eval_table_expr` (the recursive `TableExpr` walk) is GONE (2026-08-18): the deployed
+// evaluator is `flat_eval::FlatExpr::of_table` / `eval_table`, which carries the same three
+// contracts the walk did:
+//
+// ⚑ `Shr(i)` is a CLONE of the already-resolved `dv[i]`, never a re-walk of `defs[i]`. That is
+// what makes the emitted DAG cost the prover what the deleted hand-written arm cost it: on the
+// prover's folder `AB::Expr` is a packed field value, so the clone is a copy of a number, and
+// the chip's 16 per-round S-box values are computed once each and read 35 times — exactly the
+// sharing `poseidon2_permute_expr_lanes` had as Rust locals. Measured on the chip: 70,524
+// field operations as a tree, 2,943 shared.
+//
+// ⚠ An out-of-range `Shr` reads ZERO. That case is unreachable — `LeanTableAir::check` refuses
+// a forward reference and an out-of-range index at DECODE time, and the artifacts are
+// `include_str!`d so a failure there is a build-time defect — but the evaluator stays total,
+// and a `0` is the value a dropped definition would have. It is the refusal upstream that is
+// load-bearing, not the fallback.
+//
+// And `Prep(i)` reads a DIFFERENT COLUMN SPACE — the verifier-recomputed preprocessed row,
+// never the committed one; `LeanTableAir::check` bounds every index against the emission's own
+// `prep_width`.
 
 /// ⚑ **A two-row arithmetic expression WITH A CHALLENGE LEAF** (Lean `DescriptorIR2.ChalExpr`).
 ///
@@ -1282,40 +1242,11 @@ pub enum ChalExpr {
 }
 
 impl ChalExpr {
-    /// Evaluate as an `AB::ExprEF` polynomial over the current row, the next row, and the drawn
-    /// challenges. Mirrors Lean `ChalExpr.evalIn` exactly: base-field column reads are lifted into
-    /// the extension, the challenge leaf reads the randomness slice.
-    ///
-    /// `challenges` is `builder.permutation_randomness()` already mapped into `AB::ExprEF`. The
-    /// caller is responsible for having REFUSED a descriptor whose declared count exceeds its
-    /// length; see [`eval_row_local_constraints`], which emits an unsatisfiable constraint rather
-    /// than reading past the end.
-    pub(crate) fn eval_expr_ext<AB>(
-        &self,
-        local: &[AB::Var],
-        next: &[AB::Var],
-        challenges: &[AB::ExprEF],
-    ) -> AB::ExprEF
-    where
-        AB: AirBuilder + p3_air::ExtensionBuilder,
-        AB::F: PrimeField32,
-    {
-        match self {
-            ChalExpr::Loc(i) => AB::ExprEF::from(Into::<AB::Expr>::into(local[*i])),
-            ChalExpr::Nxt(i) => AB::ExprEF::from(Into::<AB::Expr>::into(next[*i])),
-            ChalExpr::Const(c) => AB::ExprEF::from(const_to_expr::<AB>(*c)),
-            // ⚑ THE LEAF. Bounds-checked at decode (`check_descriptor2`) and fail-CLOSED at eval.
-            ChalExpr::Chal(i) => challenges[*i].clone(),
-            ChalExpr::Add(a, b) => {
-                a.eval_expr_ext::<AB>(local, next, challenges)
-                    + b.eval_expr_ext::<AB>(local, next, challenges)
-            }
-            ChalExpr::Mul(a, b) => {
-                a.eval_expr_ext::<AB>(local, next, challenges)
-                    * b.eval_expr_ext::<AB>(local, next, challenges)
-            }
-        }
-    }
+    // ⓘ `ChalExpr::eval_expr_ext` (the recursive walk mirroring Lean `ChalExpr.evalIn`) is
+    // GONE (2026-08-18): the deployed evaluator is `flat_eval::FlatExpr::of_chal` / `eval_ext`,
+    // same semantics — base-field column reads lifted into the extension, the challenge leaf
+    // cloning the randomness slice (bounds-checked at decode by `check_descriptor2`, and the
+    // short-slice case fail-CLOSED by the caller before any tape runs).
 
     /// The maximum column index referenced (over both row tags), if any. Lean `ChalExpr.maxVar`.
     pub(crate) fn max_var(&self) -> Option<usize> {
@@ -2840,10 +2771,7 @@ pub fn ir2_eval_accepts(
         };
         rows.push(filled.iter().map(|&x| to_p3(x)).collect());
     }
-    let air = Ir2Air::Main {
-        desc: desc.clone(),
-        layout: MainLayoutPub(layout),
-    };
+    let air = Ir2Air::main_instance(desc.clone(), layout);
     for row_index in 0..height {
         let next_index = (row_index + 1) % height;
         let mut builder = Ir2RowLocalBuilder {
@@ -3736,6 +3664,12 @@ pub enum Ir2Air {
         desc: EffectVmDescriptor2,
         /// Resolved aux layout.
         layout: MainLayoutPub,
+        /// ⚑ The FLAT COMPILATION of the row-local algebra (`flat_eval`), built by
+        /// [`Ir2Air::main_instance`] from the same decoded descriptor, index-parallel to
+        /// `desc.constraints`. Pure evaluation machinery: the descriptor stays the sole author
+        /// of the algebra, and the tape replays the tree operation-for-operation (the gate on
+        /// that claim is byte-identical proofs — `tests/air_interp_census.rs::bytes_sweep`).
+        compiled: Arc<crate::flat_eval::CompiledMain>,
     },
     /// ⚑ **A WHOLE Lean-authored TABLE AIR, interpreted** — the shared auxiliary instances whose
     /// algebra used to be hand-written Rust arms of this very `match`.
@@ -3820,6 +3754,10 @@ pub enum Ir2Air {
         /// manifest VALUES come from the descriptor, and `preprocessed_trace` must materialize them
         /// at whatever field p3 instantiates the AIR over.
         prep: Option<Arc<PrepMatrix>>,
+        /// The flat compilation of the emission's defs/gates/interactions (`flat_eval`), built
+        /// by the constructors from the same wire object. Evaluation machinery only — the Lean
+        /// emission remains the sole author of the algebra.
+        compiled: Arc<crate::flat_eval::CompiledTable>,
     },
 }
 
@@ -3891,7 +3829,12 @@ impl Ir2Air {
             "table air \"{}\" declares {} preprocessed columns but was built without a matrix",
             air.name, air.prep_width
         );
-        Ir2Air::LeanTable { air, prep: None }
+        let compiled = Arc::new(crate::flat_eval::CompiledTable::compile(&air));
+        Ir2Air::LeanTable {
+            air,
+            prep: None,
+            compiled,
+        }
     }
 
     /// A Lean-authored table instance WITH its verifier-recomputed preprocessed matrix.
@@ -3919,10 +3862,27 @@ impl Ir2Air {
                 prep.width()
             ));
         }
+        let compiled = Arc::new(crate::flat_eval::CompiledTable::compile(&air));
         Ok(Ir2Air::LeanTable {
             air,
             prep: Some(prep),
+            compiled,
         })
+    }
+
+    /// The main instance for a checked descriptor + resolved layout. The ONLY constructor of
+    /// `Ir2Air::Main`: it compiles the flat evaluation tapes (`flat_eval`) from the same
+    /// decoded descriptor, so the tape list cannot drift from the constraint list.
+    fn main_instance(desc: EffectVmDescriptor2, layout: MainLayout) -> Self {
+        let compiled = Arc::new(crate::flat_eval::CompiledMain::compile(
+            &desc,
+            layout.submasks.iter().map(|sb| (&sb.keep, &sb.held)),
+        ));
+        Ir2Air::Main {
+            desc,
+            layout: MainLayoutPub(layout),
+            compiled,
+        }
     }
 
     /// The decoded Lean emission behind a table instance, if this is one.
@@ -4096,6 +4056,7 @@ where
 /// than silently skipped.
 fn eval_row_local_constraints<AB, C>(
     desc: &EffectVmDescriptor2,
+    compiled: &crate::flat_eval::CompiledMain,
     builder: &mut AB,
     local: &[AB::Var],
     next: &[AB::Var],
@@ -4104,34 +4065,42 @@ fn eval_row_local_constraints<AB, C>(
 ) where
     AB: AirBuilder,
     AB::F: PrimeField32,
-    C: FnMut(&mut AB, &ChalGateSpec, &[AB::Var], &[AB::Var]),
+    C: FnMut(&mut AB, &ChalGateSpec, &crate::flat_eval::FlatExpr, &[AB::Var], &[AB::Var]),
 {
-    for k in &desc.constraints {
+    use crate::flat_eval::CompiledK;
+    // `compiled` is built by the `Ir2Air` constructors from THIS descriptor, index-parallel to
+    // `constraints`; the zip below is exact and the kind-mismatch arms are structurally
+    // unreachable. The tapes replay the boxed trees operation-for-operation (`flat_eval`
+    // module header), so every `(sel, body)` here is the same polynomial the tree walk built.
+    debug_assert_eq!(desc.constraints.len(), compiled.constraints.len());
+    let mut stack: Vec<AB::Expr> = Vec::new();
+    for (k, ck) in desc.constraints.iter().zip(&compiled.constraints) {
         // `(selector, body)`. `None` means the WHOLE domain — no multiplier at all, so the
         // emitted polynomial is the body itself and a foreign verifier folds `C` unmultiplied.
-        let (sel, body): (Option<AB::Expr>, AB::Expr) = match k {
+        let (sel, body): (Option<AB::Expr>, AB::Expr) = match (k, ck) {
             // ⚑ `Gate` is asserted on the TRANSITION domain, not every row — so it is VACUOUS on
             // the last row. That is the deployed semantics and Lean models it exactly
             // (`VmConstraint.holdsVm .gate` is `True` when `isLast`), which is why every
             // `RotatedKernelRefinement*` theorem is scoped to an ACTIVE row. A descriptor that
             // needs a row-local body on the WHOLE domain must emit `windowGate` with
             // `onTransition := false` instead — that form is live (the Mina fixture's `C0`).
-            VmConstraint2::Base(VmConstraint::Gate(body)) => {
-                (Some(builder.is_transition()), body.eval_expr::<AB>(local))
-            }
-            VmConstraint2::Base(VmConstraint::Transition { hi, lo }) => {
+            (VmConstraint2::Base(VmConstraint::Gate(_)), CompiledK::Body(f)) => (
+                Some(builder.is_transition()),
+                f.eval_base::<AB>(local, next, &mut stack),
+            ),
+            (VmConstraint2::Base(VmConstraint::Transition { hi, lo }), _) => {
                 let n: AB::Expr = next[EFFECTVM_STATE_BEFORE_BASE + hi].into();
                 let l: AB::Expr = local[EFFECTVM_STATE_AFTER_BASE + lo].into();
                 (Some(builder.is_transition()), n - l)
             }
-            VmConstraint2::Base(VmConstraint::Boundary { row, body }) => (
+            (VmConstraint2::Base(VmConstraint::Boundary { row, .. }), CompiledK::Body(f)) => (
                 Some(match row {
                     VmRow::First => builder.is_first_row(),
                     VmRow::Last => builder.is_last_row(),
                 }),
-                body.eval_expr::<AB>(local),
+                f.eval_base::<AB>(local, next, &mut stack),
             ),
-            VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) => (
+            (VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }), _) => (
                 Some(match row {
                     VmRow::First => builder.is_first_row(),
                     VmRow::Last => builder.is_last_row(),
@@ -4140,9 +4109,9 @@ fn eval_row_local_constraints<AB, C>(
             ),
             // The two-row windowed gate. `on_transition` fires only on the transition (the
             // cumulative-sum arm); otherwise the body vanishes on every row, wrap row included.
-            VmConstraint2::WindowGate(w) => (
+            (VmConstraint2::WindowGate(w), CompiledK::Body(f)) => (
                 w.on_transition.then(|| builder.is_transition()),
-                w.body.eval_expr::<AB>(local, next),
+                f.eval_base::<AB>(local, next, &mut stack),
             ),
             // ⚑ THE RECURSION SEAM (Lean `DescriptorIR2.ProofBind.holdsAt`). This arm used to sit
             // in the `continue` list below with the bus kinds — but unlike them it emitted NO bus
@@ -4170,7 +4139,7 @@ fn eval_row_local_constraints<AB, C>(
             //
             // Emitted as its own `assert_zero`s rather than through the shared tail below,
             // because the arm produces many bodies and the tail asserts exactly one.
-            VmConstraint2::ProofBind(p) => {
+            (VmConstraint2::ProofBind(p), _) => {
                 let guard = p.guard.eval_expr::<AB>(local);
                 builder.assert_zero(guard.clone() * (guard.clone() - AB::Expr::ONE));
                 // ⚑ **THE FOURTH COPY OF A COUPLING THAT WAS AN ARTIFACT — 2026-08-06.** This arm
@@ -4223,16 +4192,28 @@ fn eval_row_local_constraints<AB, C>(
             //
             // The selector is folded in as an extension multiplication rather than through the
             // shared base-field tail below, which asserts an `AB::Expr`.
-            VmConstraint2::ChalGate(g) => {
-                chal_gate(builder, g, local, next);
+            (VmConstraint2::ChalGate(g), CompiledK::ChalBody(f)) => {
+                chal_gate(builder, g, f, local, next);
                 continue;
             }
             // The bus-bearing kinds carry no row-local algebra — their content is the multiset /
             // lookup argument, emitted by the caller that HAS a bus.
-            VmConstraint2::Lookup(_)
-            | VmConstraint2::MemOp(_)
-            | VmConstraint2::MapOp(_)
-            | VmConstraint2::UMemOp(_) => continue,
+            (
+                VmConstraint2::Lookup(_)
+                | VmConstraint2::MemOp(_)
+                | VmConstraint2::MapOp(_)
+                | VmConstraint2::UMemOp(_),
+                _,
+            ) => continue,
+            // The constructor compiles the tape list from the same constraint list; a kind
+            // mismatch here is a compiler defect, and evaluating anything in its place would
+            // change what is constrained.
+            (
+                VmConstraint2::Base(VmConstraint::Gate(_) | VmConstraint::Boundary { .. })
+                | VmConstraint2::WindowGate(_)
+                | VmConstraint2::ChalGate(_),
+                _,
+            ) => unreachable!("flat compilation drifted from the descriptor's constraint list"),
         };
         builder.assert_zero(match sel {
             Some(s) => s * body,
@@ -4247,13 +4228,22 @@ where
     AB::F: PrimeField32,
 {
     fn eval(&self, builder: &mut AB) {
+        #[cfg(feature = "eval-count")]
+        crate::eval_census::record::<AB>(match self {
+            Ir2Air::Main { .. } => "main",
+            Ir2Air::LeanTable { air, .. } => &air.name,
+        });
         let (local, next): (Vec<AB::Var>, Vec<AB::Var>) = {
             let main = builder.main();
             (main.current_slice().to_vec(), main.next_slice().to_vec())
         };
         match self {
             // ----------------------------------------------------------------
-            Ir2Air::Main { desc, layout } => {
+            Ir2Air::Main {
+                desc,
+                layout,
+                compiled,
+            } => {
                 let pv: Vec<AB::Expr> = builder.public_values().iter().map(|&v| v.into()).collect();
 
                 // -- The row-local constraints, in DESCRIPTOR LIST ORDER. --
@@ -4261,13 +4251,19 @@ where
                 // ⚑ The challenge arm (2026-08-05). See `eval_row_local_constraints`'s header for
                 // why it arrives as a closure, and `ChalExpr` for the Fiat–Shamir story.
                 let declared_challenges = desc.challenges;
+                let mut ext_stack: Vec<AB::ExprEF> = Vec::new();
                 eval_row_local_constraints(
                     desc,
+                    compiled,
                     builder,
                     &local,
                     &next,
                     &pv,
-                    |b: &mut AB, g: &ChalGateSpec, loc: &[AB::Var], nxt: &[AB::Var]| {
+                    |b: &mut AB,
+                     g: &ChalGateSpec,
+                     f: &crate::flat_eval::FlatExpr,
+                     loc: &[AB::Var],
+                     nxt: &[AB::Var]| {
                         let challenges: Vec<AB::ExprEF> = b
                             .permutation_randomness()
                             .iter()
@@ -4286,7 +4282,7 @@ where
                             b.assert_zero(AB::Expr::ONE);
                             return;
                         }
-                        let body = g.body.eval_expr_ext::<AB>(loc, nxt, &challenges);
+                        let body = f.eval_ext::<AB>(loc, nxt, &challenges, &mut ext_stack);
                         if g.on_transition {
                             let sel: AB::ExprEF = b.is_transition().into();
                             b.assert_zero_ext(sel * body);
@@ -4369,7 +4365,8 @@ where
                 }
 
                 // -- Submask lookups: the bitwise a&b=a relation at SUBMASK_BITS. --
-                for sb in &layout.0.submasks {
+                let mut stack: Vec<AB::Expr> = Vec::new();
+                for (sb, (f_keep, f_held)) in layout.0.submasks.iter().zip(&compiled.submasks) {
                     let mut keep_recomp = AB::Expr::ZERO;
                     let mut held_recomp = AB::Expr::ZERO;
                     let mut w = AB::Expr::ONE;
@@ -4384,8 +4381,12 @@ where
                         held_recomp += hb * w.clone();
                         w = w.clone() + w;
                     }
-                    builder.assert_zero(keep_recomp - sb.keep.eval_expr::<AB>(&local));
-                    builder.assert_zero(held_recomp - sb.held.eval_expr::<AB>(&local));
+                    builder.assert_zero(
+                        keep_recomp - f_keep.eval_base::<AB>(&local, &next, &mut stack),
+                    );
+                    builder.assert_zero(
+                        held_recomp - f_held.eval_base::<AB>(&local, &next, &mut stack),
+                    );
                 }
 
                 // -- Mem ops: send the instrumented row on the memory log bus. --
@@ -4454,7 +4455,9 @@ where
             // Gates first, then interactions, each in the emitted order, so the assembled AIR is
             // constraint-identical to the deleted arm (checked by
             // `circuit/tests/mapabsent_lean_emission_differential.rs`).
-            Ir2Air::LeanTable { air: t, .. } => {
+            Ir2Air::LeanTable {
+                air: t, compiled, ..
+            } => {
                 // ⚑ **THE DEFINITION PRELUDE — this is the memoisation, and it is the whole point
                 // of the `defs` list.** Each shared sub-expression is evaluated ONCE per row into
                 // an `AB::Expr` and every `TableExpr::Shr` then CLONES that value. On the prover's
@@ -4480,12 +4483,13 @@ where
                     builder.preprocessed().current_slice()[..t.prep_width].to_vec()
                 };
 
+                let mut stack: Vec<AB::Expr> = Vec::new();
                 let mut dv: Vec<AB::Expr> = Vec::with_capacity(t.defs.len());
-                for d in &t.defs {
-                    let value = eval_table_expr::<AB>(d, &local, &next, &prep, &dv);
+                for d in &compiled.defs {
+                    let value = d.eval_table::<AB>(&local, &next, &prep, &dv, &mut stack);
                     dv.push(value);
                 }
-                for g in &t.gates {
+                for (g, f) in t.gates.iter().zip(&compiled.gates) {
                     // The ROW FILTER, as a selector FACTOR rather than a filtered sub-builder:
                     // p3's `FilteredAirBuilder::assert_zero(x)` is literally
                     // `inner.assert_zero(x * condition)`, and this is the same polynomial. Doing
@@ -4499,19 +4503,18 @@ where
                         TableRowSel::Last => Some(builder.is_last_row()),
                         TableRowSel::Transition => Some(builder.is_transition()),
                     };
-                    let body = eval_table_expr::<AB>(&g.body, &local, &next, &prep, &dv);
+                    let body = f.eval_table::<AB>(&local, &next, &prep, &dv, &mut stack);
                     builder.assert_zero(match sel {
                         Some(s) => s * body,
                         None => body,
                     });
                 }
-                for it in &t.interactions {
-                    let tuple: Vec<AB::Expr> = it
-                        .tuple
+                for (it, (f_tuple, f_mult)) in t.interactions.iter().zip(&compiled.interactions) {
+                    let tuple: Vec<AB::Expr> = f_tuple
                         .iter()
-                        .map(|e| eval_table_expr::<AB>(e, &local, &next, &prep, &dv))
+                        .map(|f| f.eval_table::<AB>(&local, &next, &prep, &dv, &mut stack))
                         .collect();
-                    let mult = eval_table_expr::<AB>(&it.mult, &local, &next, &prep, &dv);
+                    let mult = f_mult.eval_table::<AB>(&local, &next, &prep, &dv, &mut stack);
                     match it.op {
                         TableBusOp::Query => {
                             LookupBus::new(&it.bus).lookup_key(builder, tuple, mult);
@@ -4567,6 +4570,10 @@ where
 #[derive(Clone, Debug)]
 pub struct Ir2UniAir {
     desc: EffectVmDescriptor2,
+    /// The flat compilation of the row-local algebra (`flat_eval`), built by [`Ir2UniAir::new`]
+    /// from the same descriptor. No submasks: `new` refuses every descriptor that declares
+    /// ranges (and submask blocks only arise from range/submask lookups).
+    compiled: Arc<crate::flat_eval::CompiledMain>,
 }
 
 impl Ir2UniAir {
@@ -4636,7 +4643,11 @@ impl Ir2UniAir {
                 desc.name
             ));
         }
-        Ok(Ir2UniAir { desc })
+        let compiled = Arc::new(crate::flat_eval::CompiledMain::compile(
+            &desc,
+            std::iter::empty(),
+        ));
+        Ok(Ir2UniAir { desc, compiled })
     }
 
     /// The descriptor this AIR interprets.
@@ -4682,6 +4693,8 @@ where
     AB::F: PrimeField32,
 {
     fn eval(&self, builder: &mut AB) {
+        #[cfg(feature = "eval-count")]
+        crate::eval_census::record::<AB>("uni:main");
         let (local, next): (Vec<AB::Var>, Vec<AB::Var>) = {
             let main = builder.main();
             (main.current_slice().to_vec(), main.next_slice().to_vec())
@@ -4693,6 +4706,7 @@ where
         // that subtraction would silently drop a constraint, so there is nothing here to skip.
         eval_row_local_constraints(
             &self.desc,
+            &self.compiled,
             builder,
             &local,
             &next,
@@ -4701,7 +4715,11 @@ where
             // uni-stark instance has no lookup contexts and therefore no challenges), so this arm
             // is unreachable — and if that refusal is ever weakened, the proof stops verifying
             // rather than the constraint quietly disappearing.
-            |b: &mut AB, _g: &ChalGateSpec, _l: &[AB::Var], _n: &[AB::Var]| {
+            |b: &mut AB,
+             _g: &ChalGateSpec,
+             _f: &crate::flat_eval::FlatExpr,
+             _l: &[AB::Var],
+             _n: &[AB::Var]| {
                 b.assert_zero(AB::Expr::ONE);
             },
         );
@@ -7092,10 +7110,7 @@ fn instance_airs(
     layout: MainLayout,
     presence: Presence,
 ) -> Vec<Ir2Air> {
-    let mut airs = vec![Ir2Air::Main {
-        desc: desc.clone(),
-        layout: MainLayoutPub(layout),
-    }];
+    let mut airs = vec![Ir2Air::main_instance(desc.clone(), layout)];
     if presence.chip {
         airs.push(Ir2Air::lean_table(crate::table_air::chip_table_air_shared()));
     }
@@ -7933,10 +7948,7 @@ fn batch_airs_and_matrices(
                 desc.public_input_count
             ));
         }
-        airs.push(Ir2Air::Main {
-            desc: desc.clone(),
-            layout: MainLayoutPub(layout),
-        });
+        airs.push(Ir2Air::main_instance(desc.clone(), layout));
         matrices.push(to_matrix(trace));
         pvs.push(public_inputs[i].iter().map(|&v| to_p3(v)).collect());
 
@@ -8112,10 +8124,7 @@ where
                 desc.public_input_count
             ));
         }
-        airs.push(Ir2Air::Main {
-            desc: desc.clone(),
-            layout: MainLayoutPub(layout),
-        });
+        airs.push(Ir2Air::main_instance(desc.clone(), layout));
         pvs.push(
             public_inputs[i]
                 .iter()
